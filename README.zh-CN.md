@@ -15,6 +15,12 @@
 
 </div>
 
+## 🚀 快速上手
+
+1. **新建**：命令面板 / 丝带点「新建思维导图」→ 生成 `思维导图-YYYY-MM-DD.mindmap.md` 并进入导图视图。
+2. **编辑**：文件就是普通 Markdown，大纲即导图——增删改节点、拖拽排序、配置图片/链接。
+3. **回写**：用「以 Markdown 编辑」随时切回；改动会写回文件（布局 / 视口记在插件 `data.json`）。
+
 ---
 
 ![MindMap Studio](assets/mindmap-zh.png)

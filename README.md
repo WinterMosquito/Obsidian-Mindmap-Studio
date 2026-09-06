@@ -15,6 +15,12 @@
 
 </div>
 
+## 🚀 Quick start
+
+1. **Create**: run **New mind map** (command palette or ribbon) — a `思维导图-YYYY-MM-DD.mindmap.md` file is created and opens as a mind map.
+2. **Edit**: the file is ordinary Markdown, so its outline becomes the map — add/edit/delete nodes, drag to rearrange, attach images or links.
+3. **Back & save**: use **Edit as Markdown** to return anytime; edits are written back to the file (layout & viewport live in the plugin's `data.json`).
+
 ---
 
 ![MindMap Studio](assets/mindmap.png)
