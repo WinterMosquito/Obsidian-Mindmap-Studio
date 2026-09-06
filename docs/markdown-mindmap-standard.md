@@ -1,7 +1,7 @@
 # Markdown ↔ 思维导图映射标准（MindMap Studio）
 
 > 关联实现：`src/md-outline.ts` / `src/md-serialize.ts` / `src/view-wikilink.ts`
-> 回归测试：`scratch/md-roundtrip/`（69 断言：解析结构、层级深度、往返不动点、编辑合成；含代码围栏 opaque、深树防溢出、URL 自动链接）
+> 回归测试：`scratch/md-roundtrip/`（75 断言：解析结构、层级深度、往返不动点、编辑合成；含代码围栏 opaque、深树防溢出、URL 自动链接、目标转义/归一）
 >
 > 本标准定义**双向**映射：① 一个标准的 Obsidian Markdown 文件如何**渲染**为思维导图；② 导图中的编辑如何**无损回写**为该 Markdown。**所有渲染/回写行为以此为准**；实现与本标准不一致处视为缺陷。
 
