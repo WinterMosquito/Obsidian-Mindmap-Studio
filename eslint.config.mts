@@ -1,4 +1,8 @@
-import tseslint from 'typescript-eslint';
+/* 本项目的 ESLint 配置，基于 eslint-plugin-obsidianmd ^0.4.2。
+   0.4.2 起 recommended 为自包含清单：已含 ESLint core、typescript-eslint
+   recommendedTypeChecked（含 no-floating-promises）、全部 obsidianmd 规则与
+   Obsidian globals——勿再展开 tseslint 清单（会报 plugin 重定义）。
+   参见插件 docs/configuration.md。 */
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import globals from 'globals';
 import { globalIgnores, defineConfig } from 'eslint/config';
@@ -8,15 +12,16 @@ export default defineConfig(
 		'node_modules',
 		'dist',
 		'vendor/**',
+		'scripts/**',
 		'esbuild.config.mjs',
 		'version-bump.mjs',
 		'versions.json',
 		'main.js',
-		'package.json',
 		'package-lock.json',
 		'tsconfig.json',
 		'vitest.config.ts',
 	]),
+	...obsidianmd.configs.recommended,
 	{
 		languageOptions: {
 			globals: {
@@ -29,15 +34,6 @@ export default defineConfig(
 				tsconfigRootDir: import.meta.dirname,
 				extraFileExtensions: ['.json'],
 			},
-		},
-	},
-	// typescript-eslint recommended + no-floating-promises
-	...tseslint.configs.recommended,
-	{
-		files: ['**/*.ts'],
-		rules: {
-			// 阻止「忘记 await Promise」类静默 bug；项目逐步启用中（src 全量已纳入）
-			'@typescript-eslint/no-floating-promises': 'error',
 		},
 	},
 	{
@@ -72,7 +68,6 @@ export default defineConfig(
 			},
 		},
 	},
-	...obsidianmd.configs.recommended,
 	{
 		files: ['src/modal-*.ts'],
 		rules: {

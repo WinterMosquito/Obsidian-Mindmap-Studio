@@ -8,10 +8,10 @@ import { createNewMindMap } from './creation';
 import { fitMindMap } from './mindmap';
 import { isMindMapMarkdownFile, openAsMindMap } from './md-open';
 import { t } from './i18n';
-import type TheMindMapPlugin from './main';
+import type MindMapStudioPlugin from './main';
 
 /** 注册全部命令面板命令与丝带图标（onload 时调用一次） */
-export function registerCommands(plugin: TheMindMapPlugin): void {
+export function registerCommands(plugin: MindMapStudioPlugin): void {
 	plugin.addCommand({
 		id: 'create-new-mindmap',
 		name: t(plugin.settings.language, 'command.createMindMap'),
@@ -44,10 +44,14 @@ export function registerCommands(plugin: TheMindMapPlugin): void {
 		name: t(plugin.settings.language, 'command.searchNodes'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
-			if (checking) {
-				return Boolean(view);
+			// 引擎未就绪时搜索栏无法工作（openSearchBar 静默返回），视为不可用
+			if (!view?.mindMap) {
+				return false;
 			}
-			view?.openSearchBar();
+			if (checking) {
+				return true;
+			}
+			view.openSearchBar();
 			return true;
 		},
 	});
@@ -57,12 +61,14 @@ export function registerCommands(plugin: TheMindMapPlugin): void {
 		name: t(plugin.settings.language, 'command.fitCanvas'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
+			// 引擎未就绪时 fit 静默无效果，视为不可用（避免"可用却无反应"）
+			if (!view?.mindMap) {
+				return false;
+			}
 			if (checking) {
-				return Boolean(view);
+				return true;
 			}
-			if (view?.mindMap) {
-				fitMindMap(view.mindMap);
-			}
+			fitMindMap(view.mindMap);
 			return true;
 		},
 	});
@@ -85,10 +91,14 @@ export function registerCommands(plugin: TheMindMapPlugin): void {
 		name: t(plugin.settings.language, 'command.exportPng'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
-			if (checking) {
-				return Boolean(view);
+			// 引擎未就绪时导出静默无效果，视为不可用（避免"可用却无反应"）
+			if (!view?.mindMap) {
+				return false;
 			}
-			void view?.exportPNG();
+			if (checking) {
+				return true;
+			}
+			void view.exportPNG();
 			return true;
 		},
 	});

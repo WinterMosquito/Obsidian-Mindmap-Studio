@@ -10,6 +10,35 @@ export const MD_FILE_SUFFIX = '.mindmap.md';
 /** 代码块语言标识 */
 export const CODE_BLOCK_LANGUAGE = 'mindmap';
 
+/**
+ * .mindmap.md 标记的判定/剥离/拼接唯一实现（大小写不敏感）。
+ * 勿在各模块手写同名正则或 replace——此前散落 4 处，规则变更需改多处。
+ */
+const MD_MARKER_RE = /\.mindmap\.md$/i;
+/** basename 上复合后缀的 stem 段（'笔记.mindmap' 中的 '.mindmap'） */
+const MD_STEM_SUFFIX_RE = /\.mindmap$/i;
+
+/** 名称（路径或文件名）是否以 .mindmap.md 结尾 */
+export function hasMindMapMarker(name: string): boolean {
+	return MD_MARKER_RE.test(name);
+}
+
+/** 剥离 basename 上的 .mindmap stem 段（'笔记.mindmap' → '笔记'；无则原样） */
+export function stripMindMapStem(basename: string): string {
+	return basename.replace(MD_STEM_SUFFIX_RE, '');
+}
+
+/** 保证名称以 .mindmap.md 结尾（容忍误输入 .mindmap 或已有完整后缀） */
+export function withMindMapMarker(name: string): string {
+	if (MD_MARKER_RE.test(name)) {
+		return name;
+	}
+	if (MD_STEM_SUFFIX_RE.test(name)) {
+		return `${name}.md`;
+	}
+	return `${name}${MD_FILE_SUFFIX}`;
+}
+
 export interface LayoutOption {
 	value: string;
 	label: TranslationKey;

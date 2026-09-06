@@ -1,11 +1,10 @@
 /**
  * 导出子系统：PNG / Markdown 导出与下载工具。
  * （导出 JSON / 导入 JSON 已随专有格式支持删除）
+ * DoExport 插件访问与导出倍率切换收口在 mindmap.exportMindMapPng。
  */
-import { Notice } from 'obsidian';
-import { errorMessage } from '../errors';
-import { runWithExportScale } from '../mindmap';
-import { t } from '../i18n';
+import { notifyError } from '../errors';
+import { exportMindMapPng } from '../mindmap';
 import type { MindMapViewContext } from './view-context';
 
 const FALLBACK_NAME = 'mindmap';
@@ -18,20 +17,11 @@ export async function exportPNG(view: MindMapViewContext): Promise<void> {
 	// 捕获本地实例：导出期间视图可能被关闭（view.mindMap 被置空），
 	// 用局部引用避免空指针。
 	const mindMap = view.mindMap;
-	const exporter = mindMap.doExport;
-	if (!exporter?.export) {
-		return;
-	}
 	try {
-		// 导出倍率的临时写入与恢复收口在 mindmap.runWithExportScale
-		const result = await runWithExportScale(
+		const result = await exportMindMapPng(
 			mindMap,
 			view.plugin.settings.exportScale,
-			() => exporter.export(
-				'png',
-				false,
-				view.file?.basename ?? FALLBACK_NAME,
-			),
+			view.file?.basename ?? FALLBACK_NAME,
 		);
 		if (result) {
 			const fileName = `${view.file?.basename ?? FALLBACK_NAME}.png`;
@@ -42,7 +32,7 @@ export async function exportPNG(view: MindMapViewContext): Promise<void> {
 			}
 		}
 	} catch (error) {
-		new Notice(`${t(view.lang, 'export.pngFailed')}${errorMessage(error)}`);
+		notifyError(view.lang, 'export.pngFailed', error);
 	}
 }
 

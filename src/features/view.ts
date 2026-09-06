@@ -25,17 +25,19 @@ import {
 	TFile,
 	WorkspaceLeaf,
 } from 'obsidian';
-import type TheMindMapPlugin from '../main';
+import type MindMapStudioPlugin from '../main';
 import { Language, t } from '../i18n';
 import {
 	canOpenInObsidian,
 	isSystemMediaExtension,
+	MD_FILE_SUFFIX,
+	stripMindMapStem,
 	VIEW_TYPE,
 } from '../constants';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 import { isHttpUrl } from '../domain/url';
 import { createDebouncer } from '../concurrency';
-import { errorMessage } from '../errors';
+import { notifyError } from '../errors';
 import { resolvePathToFile } from '../links-resolve';
 import { walkCorrectImageSizesByAspect } from '../images-path';
 import { sanitizeFileName } from '../images-save';
@@ -43,16 +45,12 @@ import { isMindMapMarkdownFile, openAsMarkdown } from '../md-open';
 import { registerWikilinkInteractions } from './view-wikilink';
 import type { MindMapViewContext } from './view-context';
 import { parseWikilink } from '../domain/wikilink';
+import { ENGINE_COMMANDS } from '../mindmap';
 import { DocumentService, SavePipeline } from '../services/document-service';
 import { EngineController } from '../services/engine-controller';
 import {
 	buildSearchBar,
-	closeSearchBar,
-	doSearch,
 	openSearchBar,
-	searchNext,
-	searchPrev,
-	updateSearchCount,
 } from './view-search';
 import { exportPNG } from './view-export';
 import { arrangeMindMap, buildToolbar, refreshToolbar } from './view-toolbar';
@@ -68,7 +66,7 @@ import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { EventBinder } from '../event-binder';
 
 export class MindMapView extends FileView implements MindMapViewContext {
-	plugin: TheMindMapPlugin;
+	plugin: MindMapStudioPlugin;
 	canvasEl: HTMLElement | null = null;
 	toolbarEl: HTMLElement | null = null;
 	searchBarEl: HTMLElement | null = null;
@@ -133,7 +131,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		return this.mdDocumentMode;
 	}
 
-	constructor(leaf: WorkspaceLeaf, plugin: TheMindMapPlugin) {
+	constructor(leaf: WorkspaceLeaf, plugin: MindMapStudioPlugin) {
 		super(leaf);
 		this.plugin = plugin;
 		this.isDark = document.body.hasClass('theme-dark');
@@ -147,7 +145,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			isAutoSave: () => this.plugin.settings.autoSave,
 			// 写盘失败弹用户可见提示（管线内部已 console.error 记录详情）
 			onSaveError: (error) => {
-				new Notice(`${t(this.lang, 'save.failed')}${errorMessage(error)}`);
+				notifyError(this.lang, 'save.failed', error);
 			},
 		});
 		this.engine = new EngineController({
@@ -224,6 +222,22 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		);
 		this.scope?.register(['Mod'], 'f', () => {
 			this.openSearchBar();
+			return false;
+		});
+		// 对齐 Obsidian 官方编辑约定（help: Editing shortcuts）：
+		// Undo = Mod+Z；Redo = Mod+Shift+Z 或 Mod+Y。属系统级编辑快捷键
+		// （非命令默认热键，不违反社区规范的 no-default-hotkeys），
+		// 引擎自身未绑定这两个键，此处接管并阻止冒泡。
+		this.scope?.register(['Mod'], 'z', () => {
+			this.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
+			return false;
+		});
+		this.scope?.register(['Mod', 'Shift'], 'z', () => {
+			this.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+			return false;
+		});
+		this.scope?.register(['Mod'], 'y', () => {
+			this.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
 			return false;
 		});
 
@@ -373,12 +387,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 		const title = (this.engine.getRootText() ?? '').trim();
 		const sanitized = sanitizeFileName(title).trim();
-		const base = file.basename.replace(/\.mindmap$/i, '');
+		const base = stripMindMapStem(file.basename);
 		if (!sanitized || sanitized === base) {
 			return; // 未改名或非法名
 		}
 		const folder = file.parent ? `${file.parent.path}/` : '';
-		const newPath = `${folder}${sanitized}.mindmap.md`;
+		const newPath = `${folder}${sanitized}${MD_FILE_SUFFIX}`;
 		if (newPath === file.path) {
 			return;
 		}
@@ -450,26 +464,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	openSearchBar(): void {
 		openSearchBar(this);
-	}
-
-	closeSearchBar(): void {
-		closeSearchBar(this);
-	}
-
-	private doSearch(): void {
-		doSearch(this);
-	}
-
-	private searchNext(): void {
-		searchNext(this);
-	}
-
-	private searchPrev(): void {
-		searchPrev(this);
-	}
-
-	private updateSearchCount(): void {
-		updateSearchCount(this);
 	}
 
 	// ==================== 导出（委托 view-export.ts） ====================

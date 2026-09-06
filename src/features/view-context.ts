@@ -13,7 +13,7 @@ import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 import type { EventBinder } from '../event-binder';
 import type { Language } from '../i18n';
 import type { StatusBarService } from '../status-bar';
-import type { TheMindMapSettings } from '../settings';
+import type { MindMapStudioSettings } from '../settings';
 import type { ViewStateStore } from '../view-state';
 
 /**
@@ -24,7 +24,7 @@ import type { ViewStateStore } from '../view-state';
  */
 export interface ViewPluginContext {
 	/** 插件设置（活引用，完整设置面） */
-	readonly settings: TheMindMapSettings;
+	readonly settings: MindMapStudioSettings;
 	/** 视图状态存储（布局/视口/打开偏好，按文件路径） */
 	readonly viewState: ViewStateStore;
 	/** 状态栏服务（节点计数展示/清空；DOM 由插件层持有） */

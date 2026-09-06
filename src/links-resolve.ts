@@ -6,11 +6,12 @@
  * （官方解析轨）与 images-save.findAttachmentFile / images-path.lookupIndexedFile
  * （索引轨）双轨并存、覆盖形态互有盲区；现按形态路由收敛到此——
  * 远程/数据地址直接拒绝，obsidian:// 与资源地址（app://）按形态直达，
- * 完整路径走 vault 直查，basename/链接文本交由官方 getFirstLinkpathDest
+ * 完整路径走 vault 直查，file:// 绝对路径经官方 FileSystemAdapter.getBasePath()
+ * 剥离库根归一为相对路径，basename/链接文本交由官方 getFirstLinkpathDest
  * （与 Obsidian 内部一致），最后以共享缓存索引兜底 URL 编码名/路径后缀等
  * 历史形态。
  */
-import { App, TFile, normalizePath } from 'obsidian';
+import { App, FileSystemAdapter, TFile, normalizePath } from 'obsidian';
 import { isAppResourceUrl, isRemoteOrDataUrl } from './domain/url';
 import { fileLookupIndex, lookupIndexedFile } from './file-lookup';
 
@@ -60,7 +61,7 @@ export function resolvePathToFile(
 		return lookupIndexedFile(text, app, fileLookupIndex.get(app));
 	}
 
-	let file = app.vault.getAbstractFileByPath(normalizePath(text));
+	const file = app.vault.getAbstractFileByPath(normalizePath(text));
 	if (file instanceof TFile) {
 		return file;
 	}
@@ -68,21 +69,19 @@ export function resolvePathToFile(
 	if (text.startsWith('file://')) {
 		try {
 			const decoded = decodeURIComponent(text.replace(/^file:\/\//, ''));
-			const vaultName = app.vault.getName();
-			// 库名必须是「独立路径段」（前为开始或 /，后为 / 或结尾），并取最后一个
-			// 匹配（真正的库根），避免父目录名恰好包含库名时切出损坏的相对路径。
-			const seg = vaultName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			const re = new RegExp(`(?:^|/)(${seg})(?=/|$)`, 'g');
-			let m: RegExpExecArray | null = null;
-			let end = -1;
-			while ((m = re.exec(decoded))) {
-				end = m.index + m[1]!.length;
-			}
-			if (end >= 0) {
-				const rel = decoded.slice(end).replace(/^\/+/, '');
-				file = app.vault.getAbstractFileByPath(rel);
-				if (file instanceof TFile) {
-					return file;
+			// 官方 API：FileSystemAdapter.getBasePath() 返回库根的真实绝对路径。
+			// （旧实现按「库显示名」在路径中猜库根——库改名后即失配。）
+			const adapter = app.vault.adapter;
+			if (adapter instanceof FileSystemAdapter) {
+				const rel = stripVaultBase(
+					decoded.replace(/\\/g, '/'),
+					adapter.getBasePath().replace(/\\/g, '/').replace(/\/+$/, ''),
+				);
+				if (rel) {
+					const hit = app.vault.getAbstractFileByPath(normalizePath(rel));
+					if (hit instanceof TFile) {
+						return hit;
+					}
 				}
 			}
 		} catch {
@@ -99,6 +98,24 @@ export function resolvePathToFile(
 
 	// 索引兜底：URL 编码文件名、路径后缀等历史/异常形态（O(1)）
 	return lookupIndexedFile(text, app, fileLookupIndex.get(app));
+}
+
+/**
+ * 把库内文件的绝对路径归一为库内相对路径（官方 getBasePath 前缀剥离）。
+ * 前缀匹配大小写不敏感（Windows 磁盘路径大小写不保证一致），
+ * 按原串长度切片，保留文件真实大小写。
+ * @returns 库内相对路径；非绝对路径或不在库内时返回 null
+ */
+function stripVaultBase(absPath: string, basePath: string): string | null {
+	if (!absPath.startsWith('/')) {
+		return null; // 需为绝对路径
+	}
+	const lower = absPath.toLowerCase();
+	const lowerBase = basePath.toLowerCase();
+	if (!lower.startsWith(`${lowerBase}/`)) {
+		return null;
+	}
+	return absPath.slice(basePath.length + 1);
 }
 
 /**

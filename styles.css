@@ -1,4 +1,5 @@
 /* ===== simple-mind-map library styles ===== */
+/* 来源：vendor/simple-mind-map.css —— 本段由 `npm run sync-vendor-css` 重新生成，勿手工编辑 */
 /* node_modules/simple-mind-map/dist/simpleMindMap.esm.css */
 .ql-container {
   box-sizing: border-box;
@@ -1070,10 +1071,22 @@ simple-mind-map/dist/simpleMindMap.esm.css:
      *)
   *)
 */
+/*! Bundled license information:
 
-
-
-
+simple-mind-map/dist/simpleMindMap.esm.css:
+  (*! Bundled license information:
+  
+  quill/dist/quill.snow.css:
+    (*!
+     * Quill Editor v2.0.2
+     * https://quilljs.com
+     * Copyright (c) 2017-2024, Slab
+     * Copyright (c) 2014, Jason Chen
+     * Copyright (c) 2013, salesforce.com
+     *)
+  *)
+*/
+/* ===== End simple-mind-map library styles ===== */
 /* ===== Obsidian plugin styles ===== */
 /* ========== MindMap Studio Plugin Styles ========== */
 

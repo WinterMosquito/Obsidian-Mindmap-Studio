@@ -6,6 +6,7 @@ import { Notice, setIcon } from 'obsidian';
 import { LAYOUT_OPTIONS } from '../constants';
 import {
 	arrangeMindMap as arrangeMindMapEngine,
+	ENGINE_COMMANDS,
 	fitMindMap,
 	zoomInMindMap,
 	zoomOutMindMap,
@@ -39,20 +40,20 @@ export function buildToolbar(view: MindMapViewContext): void {
 		leftGroup.createDiv('mindmap-toolbar-separator');
 	}
 	createToolButton(leftGroup, t(view.lang, 'toolbar.addChild'), 'plus', () => {
-		view.mindMap?.execCommand('INSERT_CHILD_NODE');
+		view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE);
 	});
 	createToolButton(leftGroup, t(view.lang, 'toolbar.addSibling'), 'circle-plus', () => {
-		view.mindMap?.execCommand('INSERT_NODE');
+		view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_NODE);
 	});
 	createToolButton(leftGroup, t(view.lang, 'toolbar.deleteNode'), 'trash-2', () => {
 		deleteActiveNode(view);
 	});
 	leftGroup.createDiv('mindmap-toolbar-separator');
 	createToolButton(leftGroup, t(view.lang, 'toolbar.undo'), 'undo', () => {
-		view.mindMap?.execCommand('BACK');
+		view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
 	});
 	createToolButton(leftGroup, t(view.lang, 'toolbar.redo'), 'redo', () => {
-		view.mindMap?.execCommand('FORWARD');
+		view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
 	});
 	createToolButton(
 		leftGroup,

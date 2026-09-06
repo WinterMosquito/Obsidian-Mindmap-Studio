@@ -2,10 +2,20 @@
  * 搜索栏子系统：构建搜索栏 DOM 与搜索/上下跳转/计数逻辑。
  * 从 view.ts 抽取，逻辑以接收 MindMapViewContext 实例的模块函数组织；
  * view.ts 中的同名方法保留为外观（委托到这里的实现），调用方无需改动。
+ * 引擎 Search 插件的访问（search/jump/matchNodeList 等）经 mindmap.ts
+ * 防腐收口函数进行，本模块不触碰引擎内部状态。
  */
 import { setIcon } from 'obsidian';
 import { createDebouncer, type Debouncer } from '../concurrency';
 import { t } from '../i18n';
+import {
+	endMindMapSearch,
+	getSearchCurrentIndex,
+	getSearchMatchCount,
+	jumpToSearchIndex,
+	searchMindMap,
+	searchNextInMindMap,
+} from '../mindmap';
 import type { MindMapViewContext } from './view-context';
 
 /** 构建搜索栏（DOM 与事件监听） */
@@ -75,7 +85,7 @@ export function closeSearchBar(view: MindMapViewContext): void {
 	searchDebouncers.get(view)?.cancel();
 	searchDebouncers.delete(view);
 	view.searchBarEl.addClass('mindmap-search-bar-hidden');
-	view.mindMap?.search?.endSearch();
+	endMindMapSearch(view.mindMap);
 	if (view.searchInput) {
 		view.searchInput.value = '';
 	}
@@ -89,7 +99,7 @@ const SEARCH_DEBOUNCE_MS = 180;
 
 /** 执行搜索（带防抖：停顿后再搜） */
 export function doSearch(view: MindMapViewContext): void {
-	if (!view.mindMap?.search || !view.searchInput) {
+	if (!view.mindMap || !view.searchInput) {
 		return;
 	}
 	let debouncer = searchDebouncers.get(view);
@@ -101,52 +111,51 @@ export function doSearch(view: MindMapViewContext): void {
 }
 
 function runSearch(view: MindMapViewContext): void {
-	if (!view.mindMap?.search || !view.searchInput) {
+	if (!view.mindMap || !view.searchInput) {
 		return;
 	}
 	const keyword = view.searchInput.value.trim();
 	if (!keyword) {
-		view.mindMap.search.endSearch();
+		endMindMapSearch(view.mindMap);
 		view.searchCountEl?.setText('');
 		return;
 	}
-	view.mindMap.search.search(keyword, () => updateSearchCount(view));
+	searchMindMap(view.mindMap, keyword, () => updateSearchCount(view));
 }
 
 /** 跳到下一个匹配 */
 export function searchNext(view: MindMapViewContext): void {
-	view.mindMap?.search?.searchNext(() => updateSearchCount(view));
+	searchNextInMindMap(view.mindMap, () => updateSearchCount(view));
 }
 
 /** 跳到上一个匹配（循环） */
 export function searchPrev(view: MindMapViewContext): void {
-	if (!view.mindMap?.search) {
+	if (!view.mindMap) {
 		return;
 	}
-	const matches = view.mindMap.search.matchNodeList;
-	if (!matches || matches.length === 0) {
+	const matches = getSearchMatchCount(view.mindMap);
+	if (matches === 0) {
 		return;
 	}
-	let index = view.mindMap.search.currentIndex - 1;
+	let index = getSearchCurrentIndex(view.mindMap) - 1;
 	if (index < 0) {
-		index = matches.length - 1;
+		index = matches - 1;
 	}
-	view.mindMap.search.jump(index, () => updateSearchCount(view));
+	jumpToSearchIndex(view.mindMap, index, () => updateSearchCount(view));
 }
 
 /** 更新匹配计数显示 */
 export function updateSearchCount(view: MindMapViewContext): void {
-	if (!view.searchCountEl || !view.mindMap?.search) {
+	if (!view.searchCountEl) {
 		return;
 	}
-	const matches = view.mindMap.search.matchNodeList;
-	const current = view.mindMap.search.currentIndex;
-	if (!matches || matches.length === 0) {
+	const matches = getSearchMatchCount(view.mindMap);
+	const current = getSearchCurrentIndex(view.mindMap);
+	if (matches === 0) {
 		view.searchCountEl.setText(t(view.lang, 'common.noMatch'));
 		view.searchCountEl.addClass('mindmap-search-no-result');
 		return;
 	}
 	view.searchCountEl.removeClass('mindmap-search-no-result');
-	view.searchCountEl.setText(`${current + 1}/${matches.length}`);
+	view.searchCountEl.setText(`${current + 1}/${matches}`);
 }
-

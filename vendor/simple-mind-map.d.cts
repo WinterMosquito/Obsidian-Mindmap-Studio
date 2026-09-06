@@ -1,7 +1,7 @@
 /**
  * Hand-written type declarations for the vendored simple-mind-map engine
- * (simple-mind-map 0.14.0-fix.3, extracted verbatim from the original
- * compiled plugin bundle — see vendor/simple-mind-map.js).
+ * (simple-mind-map 0.14.0-fix.3, compiled bundle in vendor/simple-mind-map.cjs;
+ * packaging & upgrade workflow: vendor/BUILD.md).
  *
  * Only the API surface actually used by this plugin is declared.
  */

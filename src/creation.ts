@@ -6,25 +6,12 @@
  * 并在创建后自动把当前标签切换到导图视图（openAsMindMap）。
  */
 import { App, Notice, normalizePath } from 'obsidian';
-import { MD_FILE_SUFFIX } from './constants';
-import { errorMessage } from './errors';
+import { withMindMapMarker } from './constants';
+import { notifyError } from './errors';
 import { t, type Language } from './i18n';
 import { buildDefaultMindMapName, createDefaultMarkdownContent } from './markdown';
 import { openAsMindMap } from './md-open';
 import { openNameInputModal } from './modal-name';
-
-/** 保证用户输入以 .mindmap.md 结尾（容忍误输入 .mindmap / .mindmap.md） */
-function withMdSuffix(name: string): string {
-	if (MD_FILE_SUFFIX_RE.test(name)) {
-		return name;
-	}
-	if (/\.mindmap$/i.test(name)) {
-		return `${name}.md`;
-	}
-	return `${name}${MD_FILE_SUFFIX}`;
-}
-
-const MD_FILE_SUFFIX_RE = /\.mindmap\.md$/i;
 
 /**
  * 新建思维导图（需求：新建应为 Markdown 文件而非专有格式）：
@@ -51,7 +38,7 @@ export async function createNewMindMap(
 		const fileName = await ensureUniqueFileName(
 			app,
 			folder,
-			withMdSuffix(name || defaultName),
+			withMindMapMarker(name || defaultName),
 		);
 		const path = normalizePath(`${folder}/${fileName}`);
 		// 新建内容为标准 Markdown 大纲；中心主题 = 文件名（虚拟文档根）
@@ -63,7 +50,7 @@ export async function createNewMindMap(
 		await openAsMindMap(leaf, file);
 		new Notice(t(language, 'command.created'));
 	} catch (error) {
-		new Notice(`${t(language, 'command.createFailed')}${errorMessage(error)}`);
+		notifyError(language, 'command.createFailed', error);
 	}
 }
 

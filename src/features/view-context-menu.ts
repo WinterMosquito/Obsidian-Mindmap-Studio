@@ -3,7 +3,7 @@
  * 菜单动作（复制/粘贴/链接/图片/删除等）委托给 view-node-actions.ts。
  */
 import { Menu } from 'obsidian';
-import { findNodeByDom, fitMindMap } from '../mindmap';
+import { ENGINE_COMMANDS, findNodeByDom, fitMindMap, startNodeTextEdit } from '../mindmap';
 import {
 	addImageToActiveNode,
 	addLinkToActiveNode,
@@ -68,13 +68,13 @@ export function setupContextMenu(view: MindMapViewContext): void {
 			item
 				.setTitle(t(view.lang, 'toolbar.undoShort'))
 				.setIcon('undo')
-				.onClick(() => view.mindMap?.execCommand('BACK')),
+				.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.BACK)),
 		);
 		menu.addItem((item) =>
 			item
 				.setTitle(t(view.lang, 'toolbar.redoShort'))
 				.setIcon('redo')
-				.onClick(() => view.mindMap?.execCommand('FORWARD')),
+				.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD)),
 		);
 		menu.showAtPosition({ x: event.clientX, y: event.clientY });
 	});
@@ -97,22 +97,19 @@ function showNodeContextMenu(
 		item
 			.setTitle(t(view.lang, 'menu.editText'))
 			.setIcon('pencil')
-			// 引擎无 ENTER_TEXT_EDIT 命令；node_dblclick 是文本编辑的官方入口
-			.onClick(() =>
-				mindMap.emit('node_dblclick', node, null, true),
-			),
+			.onClick(() => startNodeTextEdit(mindMap, node)),
 	);
 	menu.addItem((item) =>
 		item
 			.setTitle(t(view.lang, 'menu.addChild'))
 			.setIcon('plus')
-			.onClick(() => mindMap.execCommand('INSERT_CHILD_NODE')),
+			.onClick(() => mindMap.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE)),
 	);
 	menu.addItem((item) =>
 		item
 			.setTitle(t(view.lang, 'menu.addSibling'))
 			.setIcon('circle-plus')
-			.onClick(() => mindMap.execCommand('INSERT_NODE')),
+			.onClick(() => mindMap.execCommand(ENGINE_COMMANDS.INSERT_NODE)),
 	);
 	menu.addSeparator();
 	menu.addItem((item) =>

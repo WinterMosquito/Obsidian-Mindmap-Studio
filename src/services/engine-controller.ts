@@ -19,8 +19,11 @@ import {
 	createMindMap,
 	destroyMindMap,
 	fitMindMap,
+	getRenderRoot,
+	getRootText,
 	getThemeConfig,
 	isDarkTheme,
+	isEditingText,
 } from '../mindmap';
 import { ensureUniqueUids } from '../markdown';
 import {
@@ -239,24 +242,14 @@ export class EngineController {
 		return this.mindMap?.getData() ?? null;
 	}
 
-	/** 用户是否正在节点文本编辑框内打字（防腐：renderer.textEdit 内部状态） */
+	/** 用户是否正在节点文本编辑框内打字（防腐收口在 mindmap.isEditingText） */
 	isEditingText(): boolean {
-		const mindMap = this.mindMap;
-		if (!mindMap) {
-			return false;
-		}
-		const textEdit = (
-			mindMap.renderer as unknown as {
-				textEdit?: { isShowTextEdit(): boolean };
-			}
-		).textEdit;
-		return textEdit?.isShowTextEdit() ?? false;
+		return isEditingText(this.mindMap);
 	}
 
-	/** 根（中心主题）节点文本（防腐：renderer.root 内部状态） */
+	/** 根（中心主题）节点文本（防腐收口在 mindmap.getRootText） */
 	getRootText(): string | null {
-		const rootText = this.mindMap?.renderer.root?.getData('text');
-		return typeof rootText === 'string' ? rootText : null;
+		return getRootText(this.mindMap);
 	}
 
 	/** 持久化当前视口（关闭/卸载/切回 Markdown 前调用） */
@@ -342,7 +335,7 @@ export class EngineController {
 	 * 子串匹配是保守近似（宁可误报触发精确路径，不可漏报导致引用残留）。
 	 */
 	private rendererTreeHasMatchingRef(file: TFile, oldPath: string): boolean {
-		const root = this.mindMap?.renderer?.root;
+		const root = getRenderRoot(this.mindMap);
 		if (!root) {
 			return false;
 		}

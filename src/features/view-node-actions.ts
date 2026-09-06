@@ -4,12 +4,16 @@
  */
 import { App, Notice, TFile } from 'obsidian';
 import {
+	ENGINE_COMMANDS,
 	forceRemoveNodeData,
 	getActiveNode,
+	getRenderRoot,
 	setNodeText,
 } from '../mindmap';
-import { createSetNodeImageOptions } from '../images-path';
-import { createAspectSetNodeImageOptions } from '../images-path';
+import {
+	createAspectSetNodeImageOptions,
+	createSetNodeImageOptions,
+} from '../images-path';
 import { saveImageToVault } from '../images-save';
 import { resolvePathToFile } from '../links-resolve';
 import { openImageEditorModal } from '../modal-image';
@@ -43,7 +47,7 @@ export async function addLinkToActiveNode(view: MindMapViewContext): Promise<voi
 	if (result === null) {
 		return;
 	}
-	view.mindMap?.execCommand('SET_NODE_HYPERLINK', node, result.link);
+	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, result.link);
 	// URL/协议链接：仅添加超链接图标——不把 <url> 当作节点文本（尖括号内链接不渲染）。
 	if (result.link && isHyperlinkProtocolUrl(result.link)) {
 		// 保持「仅图标」：若节点文本仍是旧 URL 显示名（历史/旧行为残留），清空，
@@ -79,7 +83,7 @@ function applyNodeText(view: MindMapViewContext, node: MindMapNode, text: string
 /** 单独移除节点图片（不影响节点与其他数据） */
 export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): void {
 	view.mindMap?.execCommand(
-		'SET_NODE_IMAGE',
+		ENGINE_COMMANDS.SET_NODE_IMAGE,
 		node,
 		createSetNodeImageOptions(null),
 	);
@@ -94,7 +98,7 @@ export function clearNodeHyperlink(
 	if (!current) {
 		return;
 	}
-	view.mindMap?.execCommand('SET_NODE_HYPERLINK', node, '');
+	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, '');
 	view.scheduleSave();
 }
 
@@ -109,12 +113,14 @@ export async function addImageToActiveNode(view: MindMapViewContext): Promise<vo
 	const result = await openImageEditorModal(
 		view.app,
 		current,
-		(file, maxSizeMB) =>
+		(file, maxSizeMB, nameOverride) =>
 			saveImageToVault({
 				app: view.app,
 				sourcePath: view.file?.path ?? '',
 				file,
 				maxSizeMB,
+				// 弹窗内剪贴板粘贴按 Obsidian 核心约定命名
+				filename: nameOverride,
 				lang: view.lang,
 			}),
 		view.lang,
@@ -143,7 +149,7 @@ export async function applyNodeImage(
 ): Promise<void> {
 	const { display, mdTarget } = normalizeImageReference(url, view.app);
 	const options = await createAspectSetNodeImageOptions(display);
-	view.mindMap?.execCommand('SET_NODE_IMAGE', node, options);
+	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_IMAGE, node, options);
 	// 记录/清除 md 回写目标（引擎不识别该字段，仅序列化用）
 	const data = node.getData() as MdNodeData;
 	const oldTarget = data.mdImageTarget ?? '';
@@ -204,7 +210,7 @@ export function deleteActiveNode(view: MindMapViewContext): void {
 	}
 	const parent = node.parent;
 	const nodeData = node.nodeData;
-	mindMap.execCommand('REMOVE_NODE');
+	mindMap.execCommand(ENGINE_COMMANDS.REMOVE_NODE);
 	// 兜底：uid 重复/缺失时引擎按 uid 的删除可能失败，按对象身份强制清除
 	if (parent) {
 		forceRemoveNodeData(mindMap, parent, nodeData);
@@ -237,9 +243,9 @@ export function pasteNodeAsChild(
 	// 且渲染为异步，不能依赖激活列表）。
 	// 未选中节点时挂到根节点下：引擎在 appointNodes 与激活列表均为空时
 	// 直接 return，空数组粘贴会静默失效。
-	const parent = node ?? view.mindMap?.renderer?.root ?? null;
+	const parent = node ?? getRenderRoot(view.mindMap);
 	view.mindMap?.execCommand(
-		'INSERT_CHILD_NODE',
+		ENGINE_COMMANDS.INSERT_CHILD_NODE,
 		false,
 		parent ? [parent] : [],
 		{ ...clipboardData, isActive: false },

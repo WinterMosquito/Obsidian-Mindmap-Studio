@@ -1,6 +1,6 @@
 /**
  * 文件浏览器「新建」菜单注入（file-explorer 的 fileCreator 菜单）。
- * 从 main.ts 拆出（原 TheMindMapPlugin.injectIntoFileCreator）。
+ * 从 main.ts 拆出（原 MindMapStudioPlugin.injectIntoFileCreator）。
  *
  * ⚠️ 私有 API 风险说明：Obsidian 未公开注入 fileCreator 菜单的公共 API
  * （obsidian.d.ts 仅有 file-menu / files-menu 事件，且无 fileCreator 类型），

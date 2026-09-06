@@ -21,6 +21,37 @@ import { walkTree } from './domain/tree';
 
 export { getCodeBlockThemeConfig, getThemeConfig, isDarkTheme } from './mindmap-theme';
 
+/**
+ * 引擎命令名常量：execCommand 的魔法字符串收口于此。
+ * 此前命令名散布 7 个文件共 18 处，拼写错误只能运行期发现、
+ * 引擎升级时无法编译期定位影响面；统一经本表引用后：
+ * - 属性名拼错编译期即报错；
+ * - 引擎升级改命令名时只改本表并按引用定位调用点。
+ */
+export const ENGINE_COMMANDS = {
+	/** 撤销 */
+	BACK: 'BACK',
+	/** 重做 */
+	FORWARD: 'FORWARD',
+	/** 插入子节点（可 appointNodes 指定父节点与初始数据） */
+	INSERT_CHILD_NODE: 'INSERT_CHILD_NODE',
+	/** 插入同级节点 */
+	INSERT_NODE: 'INSERT_NODE',
+	/** 删除激活节点 */
+	REMOVE_NODE: 'REMOVE_NODE',
+	/** 重置布局（清除自由拖拽位置，不打乱 children 顺序） */
+	RESET_LAYOUT: 'RESET_LAYOUT',
+	/** 更新节点数据字段 */
+	SET_NODE_DATA: 'SET_NODE_DATA',
+	/** 设置节点超链接（空串清除） */
+	SET_NODE_HYPERLINK: 'SET_NODE_HYPERLINK',
+	/** 设置节点图片（SetNodeImageOptions） */
+	SET_NODE_IMAGE: 'SET_NODE_IMAGE',
+} as const;
+
+/** 引擎命令名（ENGINE_COMMANDS 的值类型） */
+export type EngineCommand = (typeof ENGINE_COMMANDS)[keyof typeof ENGINE_COMMANDS];
+
 export interface CreateMindMapOptions {
 	layout: string;
 	themePref: string;
@@ -213,7 +244,7 @@ export function arrangeMindMap(mindMap: MindMap | null): boolean {
 		if (typeof mindMap.execCommand !== 'function') {
 			return false;
 		}
-		mindMap.execCommand('RESET_LAYOUT');
+		mindMap.execCommand(ENGINE_COMMANDS.RESET_LAYOUT);
 		window.setTimeout(() => fitMindMap(mindMap), 80);
 		return true;
 	} catch (error) {
@@ -277,6 +308,25 @@ export async function runWithExportScale<T>(
 	}
 }
 
+/**
+ * 以导出倍率导出 PNG（DoExport 插件未注册/不可用时返回 null，如代码块
+ * 实例）。错误向调用方传播（由 UI 层弹用户可见提示）。
+ * doExport/exporter 为引擎插件内部形态，访问收口在本函数。
+ */
+export async function exportMindMapPng(
+	mindMap: MindMap,
+	scale: number,
+	fileName: string,
+): Promise<Blob | string | null> {
+	const exporter = mindMap.doExport;
+	if (!exporter?.export) {
+		return null;
+	}
+	return runWithExportScale(mindMap, scale, () =>
+		exporter.export('png', false, fileName),
+	);
+}
+
 /** 更新节点文本：先改节点数据，再经引擎命令同步并重绘 */
 export function setNodeText(
 	mindMap: MindMap,
@@ -285,7 +335,7 @@ export function setNodeText(
 ): void {
 	node.nodeData.data.text = text;
 	try {
-		mindMap.execCommand('SET_NODE_DATA', node, { text });
+		mindMap.execCommand(ENGINE_COMMANDS.SET_NODE_DATA, node, { text });
 	} catch {
 		// SET_NODE_DATA 不可用等情形：直接数据已改，交由重绘
 	}
@@ -308,4 +358,84 @@ export function forceRemoveNodeData(
 		parent.nodeData.children.splice(index, 1);
 		mindMap.render();
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 搜索子系统（Search 插件）的防腐收口
+//
+// 代码块实例不注册 Search 插件（forCodeBlock），运行时 search 为 undefined，
+// 全部包装函数内部判空静默。matchNodeList/currentIndex 等插件内部状态
+// 不再被 view-search 直接触碰。
+// ---------------------------------------------------------------------------
+
+/** 执行关键字搜索（Search 插件未注册时静默） */
+export function searchMindMap(
+	mindMap: MindMap | null,
+	keyword: string,
+	callback?: () => void,
+): void {
+	mindMap?.search?.search(keyword, callback);
+}
+
+/** 跳到下一个搜索命中（Search 插件未注册时静默） */
+export function searchNextInMindMap(
+	mindMap: MindMap | null,
+	callback?: () => void,
+): void {
+	mindMap?.search?.searchNext(callback);
+}
+
+/** 结束搜索并清除高亮（Search 插件未注册时静默） */
+export function endMindMapSearch(mindMap: MindMap | null): void {
+	mindMap?.search?.endSearch();
+}
+
+/** 当前搜索命中总数（未搜索/插件未注册时为 0） */
+export function getSearchMatchCount(mindMap: MindMap | null): number {
+	return mindMap?.search?.matchNodeList?.length ?? 0;
+}
+
+/** 当前搜索命中下标（0 起；未搜索/插件未注册时为 0） */
+export function getSearchCurrentIndex(mindMap: MindMap | null): number {
+	return mindMap?.search?.currentIndex ?? 0;
+}
+
+/** 跳转到指定命中（Search 插件未注册时静默） */
+export function jumpToSearchIndex(
+	mindMap: MindMap | null,
+	index: number,
+	callback?: () => void,
+): void {
+	mindMap?.search?.jump(index, callback);
+}
+
+// ---------------------------------------------------------------------------
+// 引擎内部状态的最后收口（renderer.textEdit / node_dblclick 触发）
+// ---------------------------------------------------------------------------
+
+/** 用户是否正在节点文本编辑框内打字（防腐：renderer.textEdit 内部状态） */
+export function isEditingText(mindMap: MindMap | null): boolean {
+	if (!mindMap) {
+		return false;
+	}
+	const textEdit = (
+		mindMap.renderer as unknown as {
+			textEdit?: { isShowTextEdit(): boolean };
+		}
+	).textEdit;
+	return textEdit?.isShowTextEdit() ?? false;
+}
+
+/** 根（中心主题）节点文本（防腐：renderer.root 内部状态） */
+export function getRootText(mindMap: MindMap | null): string | null {
+	const rootText = mindMap?.renderer.root?.getData('text');
+	return typeof rootText === 'string' ? rootText : null;
+}
+
+/**
+ * 触发节点文本编辑：引擎无 ENTER_TEXT_EDIT 命令，
+ * node_dblclick 事件是文本编辑的官方入口（右键菜单「编辑文本」用）。
+ */
+export function startNodeTextEdit(mindMap: MindMap, node: MindMapNode): void {
+	mindMap.emit('node_dblclick', node, null, true);
 }

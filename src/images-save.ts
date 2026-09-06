@@ -5,8 +5,8 @@
 import { App, Notice, TFile, normalizePath } from 'obsidian';
 import { isImageExtension } from './constants';
 import { createSerialQueue } from './concurrency';
-import { errorMessage } from './errors';
-import { t, type Language } from './i18n';
+import { notifyError } from './errors';
+import { t, tf, type Language } from './i18n';
 
 /**
  * 图片保存走全局串行队列原语：「文件名选择 + vault 写入」非原子，
@@ -53,8 +53,26 @@ export interface SaveImageOptions {
 	maxSizeMB?: number;
 	/** 可选真实文件名（text/uri-list 解码，修复乱码） */
 	preferredName?: string;
+	/**
+	 * 显式命名（最高优先级，覆盖 File.name 与 preferredName）：
+	 * 剪贴板粘贴按 Obsidian 核心约定命名（Pasted image YYYYMMDDHHMMSS）时使用。
+	 */
+	filename?: string;
 	/** 提示语言，默认 'zh' */
 	lang?: Language;
+}
+
+/**
+ * Obsidian 核心的粘贴图片命名约定：`Pasted image YYYYMMDDHHMMSS`。
+ * 见官方帮助「Editing and formatting/Attachments」——粘贴的附件由 Obsidian
+ * 在默认附件位置创建文件；核心实际命名即此前缀 + 秒级时间戳（不本地化），
+ * 用户的工作流（搜索、反链、笔记引用）依赖该约定，故对齐。
+ */
+export function buildPastedImageName(now = new Date()): string {
+	const pad = (n: number): string => String(n).padStart(2, '0');
+	return `Pasted image ${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(
+		now.getDate(),
+	)}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
 /**
@@ -77,6 +95,7 @@ async function saveImageToVaultInner({
 	file,
 	maxSizeMB = 10,
 	preferredName,
+	filename,
 	lang = 'zh',
 }: SaveImageOptions): Promise<TFile | null> {
 	const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
@@ -89,28 +108,29 @@ async function saveImageToVaultInner({
 	if (file.size > maxBytes) {
 		const sizeMB = (file.size / 1024 / 1024).toFixed(1);
 		new Notice(
-			t(lang, 'attachment.tooLarge')
-				.replace('{size}', sizeMB)
-				.replace('{max}', String(maxSizeMB)),
+			tf(lang, 'attachment.tooLarge', { size: sizeMB, max: maxSizeMB }),
 		);
 		return null;
 	}
 	try {
 		// 文件名选择与乱码修复：
-		// 1. 默认用 File.name（用户拖入文件的真实原名，如「冬天.jpeg」）；
-		// 2. 仅当 File.name 含乱码标志 U+FFFD（部分 Windows 来源被系统 ANSI
+		// 1. filename 显式命名最高优先（粘贴图片的 Obsidian 核心约定命名）；
+		// 2. 默认用 File.name（用户拖入文件的真实原名，如「冬天.jpeg」）；
+		// 3. 仅当 File.name 含乱码标志 U+FFFD（部分 Windows 来源被系统 ANSI
 		//    代码页错误解码）时，才改用 preferredName（text/uri-list 解码名）；
 		//    避免 preferredName 在个别来源中被错误转写而覆盖用户原名；
-		// 3. 按 Unicode 码点截断，避免把 emoji 等代理对切成乱码。
+		// 4. 按 Unicode 码点截断，避免把 emoji 等代理对切成乱码。
 		const needsNameFix = file.name.includes('\uFFFD');
 		const rawName = needsNameFix && preferredName ? preferredName : file.name;
 		const safeName = rawName.includes('\uFFFD') ? '' : rawName;
-		const baseName = sanitizeFileName(
-			truncateByCodePoint(
-				safeName.replace(/\.[^.]+$/, '') || 'image',
-				50,
-			),
-		);
+		const baseName = filename
+			? sanitizeFileName(truncateByCodePoint(filename, 50))
+			: sanitizeFileName(
+					truncateByCodePoint(
+						safeName.replace(/\.[^.]+$/, '') || 'image',
+						50,
+					),
+				);
 		// 文件名保持原名（不加时间戳/随机后缀）；
 		// 遵循系统「附件存放位置」设置：必须传入 sourcePath。
 		const fileName = `${baseName}.${ext}`;
@@ -146,7 +166,7 @@ async function saveImageToVaultInner({
 		return await app.vault.createBinary(targetPath, data);
 	} catch (error) {
 		console.error('保存图片失败', error);
-		new Notice(`${t(lang, 'attachment.saveFailed')}${errorMessage(error)}`);
+		notifyError(lang, 'attachment.saveFailed', error);
 		return null;
 	}
 }

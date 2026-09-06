@@ -59,13 +59,27 @@ export function createDebouncer(delayMs: number): Debouncer {
 	};
 }
 
+export interface ThrottlerOptions {
+	/**
+	 * 尾随执行后重置节流窗口（lastRun 归零）：下一次 run 立即执行。
+	 * 适用于「停止高频操作后最终状态必须立即可见，且后续首次调用不应
+	 * 被上一窗口再推迟」的场景（如状态栏计数刷新）。默认 false：尾随
+	 * 执行占用新窗口，下一次 run 最早在 limitMs 后执行。
+	 */
+	trailingResetsWindow?: boolean;
+}
+
 export interface Throttler {
 	/** 首次立即执行；窗口内的后续调用只排一次尾随执行 */
 	run(fn: () => void): void;
 	cancel(): void;
 }
 
-export function createThrottler(limitMs: number): Throttler {
+export function createThrottler(
+	limitMs: number,
+	options: ThrottlerOptions = {},
+): Throttler {
+	const trailingResetsWindow = options.trailingResetsWindow === true;
 	let lastRunAt = 0;
 	let trailing: number | null = null;
 	return {
@@ -81,7 +95,9 @@ export function createThrottler(limitMs: number): Throttler {
 			}
 			trailing = window.setTimeout(() => {
 				trailing = null;
-				lastRunAt = Date.now();
+				// 尾随执行即「最新状态已展示」：按需重置窗口，
+				// 下一次 run 立即生效而不是再等一个完整窗口
+				lastRunAt = trailingResetsWindow ? 0 : Date.now();
 				fn();
 			}, limitMs - elapsed);
 		},

@@ -8,10 +8,11 @@
  *   引擎销毁后的兜底快照（pendingTree）由管线自身持有。
  */
 import { App, TFile } from 'obsidian';
+import { stripMindMapStem } from '../constants';
 import { createDebouncer, createSerialQueue } from '../concurrency';
 import { parseMdOutline } from '../md-outline';
 import { serializeMdBody } from '../md-serialize';
-import { normalizeImageSizes, walkResolveImagePaths } from '../images-path';
+import { walkResolveImagePaths } from '../images-path';
 import { isMindMapMarkdownFile } from '../md-open';
 import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
 
@@ -25,7 +26,7 @@ export interface DocumentLoadResult {
 }
 
 /**
- * 文档读写：读文件 → md 大纲解析为导图树（图片地址/尺寸就地校正）。
+ * 文档读写：读文件 → md 大纲解析为导图树（图片地址就地解析为资源地址）。
  * 抛错时由调用方处理（文件删除/损坏等半加载场景）。
  */
 export class DocumentService {
@@ -39,12 +40,13 @@ export class DocumentService {
 	/** 解析文件内容：Markdown 大纲 → 导图树（渲染层定位，无专有格式分支） */
 	private parse(content: string, file: TFile): DocumentLoadResult {
 		// 根（中心主题）文本 = 文件名（去 .mindmap 后缀）；改名由视图编排
-		const rootName = file.basename.replace(/\.mindmap$/i, '') || file.basename;
+		const rootName = stripMindMapStem(file.basename) || file.basename;
 		const parsed = parseMdOutline(content, rootName);
 		const tree = parsed.tree;
-		// 图片：库内路径/外链 → 资源地址（mdImageTarget 保留原目标串，供回写）
+		// 图片：库内路径/外链 → 资源地址（mdImageTarget 保留原目标串，供回写）。
+		// 图片尺寸不在此归一：视图加载走 walkCorrectImageSizesByAspect（按原始
+		// 比例，探测失败自动回退固定尺寸），代码块路径自行调用 normalizeImageSizes。
 		walkResolveImagePaths(tree, this.app);
-		normalizeImageSizes(tree);
 		return {
 			tree,
 			frontmatter: parsed.frontmatter,

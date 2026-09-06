@@ -7,6 +7,7 @@
  * - 往返不动点：parse → serialize → parse → serialize 输出稳定，
  *   未编辑行（含 [[]]/![]/代码围栏）逐字保留
  * - 编辑合成：用户改文本/换图后按节点合成新行、未触碰行保持原文
+ * - rawOk 分支矩阵：链接清除/新增/换链不残留、编辑多行保留链接 token
  * - 健壮性回归：深树无栈溢出（显式栈）、代码围栏不被解析成标题/列表
  *
  * 运行：npm test
@@ -457,6 +458,55 @@ test('Markdown ⇄ mindmap 往返回归', () => {
 			'hydrate(viewState 值对象) 不生效——防止误用',
 		);
 	}
+
+	// -------------------------------------------------------------------------
+	// 六、rawOk「未编辑检测」分支矩阵（md-serialize）：
+	// 数据无损性核心启发式——文本判定（text === mdDerivedText）、图片判定
+	// （特征在 mdRaw）、链接判定（新增/更新/清除走合成；plain 豁免）
+	// -------------------------------------------------------------------------
+	{
+		// ① 链接清除：heading 节点 hyperlink 清空但 mdRaw 仍含 [[..]] → 合成剥离
+		const tree = parseMdOutline('# [[旧目标]] 标题\n', '根').tree;
+		const h = tree.children[0]!;
+		eq(h.data?.text, '旧目标 标题', '解析：wikilink 剥壳，显示名并入节点文本');
+		delete h.data.hyperlink; // 用户清除链接（clearNodeHyperlink 语义）
+		const out = serializeMdBody(tree, null);
+		assert(!out.includes('[['), '链接清除后 mdRaw 不原样回写（旧链接不复活）');
+		assert(out.includes('# 旧目标 标题'), '清除链接后保留纯文本标题');
+	}
+
+	{
+		// ② 有 mdRaw 的节点新增链接（hyperlink 特征不在 mdRaw）→ 走合成回写
+		const tree = parseMdOutline('- 纯文本项\n', '根').tree;
+		const li = tree.children[0]!;
+		li.data.hyperlink = '[[新目标]]';
+		const out = serializeMdBody(tree, null);
+		assert(out.includes('[[新目标]]'), '新增链接走合成回写（mdRaw 原样覆盖会丢链接）');
+		assert(out.includes('纯文本项'), '合成行保留节点文本');
+	}
+
+	{
+		// ③ 换链 + 可见文本同步（addLinkToActiveNode 语义）：纯 token 节点不残留旧名
+		const tree = parseMdOutline('- [[旧目标|别名]]\n', '根').tree;
+		const li = tree.children[0]!;
+		li.data.hyperlink = '[[新目标]]';
+		li.data.text = '新目标';
+		const out = serializeMdBody(tree, null);
+		assert(out.includes('- [[新目标]]'), '换链后纯 token 节点只输出新链接');
+		assert(!out.includes('旧目标') && !out.includes('别名'), '旧目标与旧显示名不残留');
+	}
+
+	{
+		// ④ 编辑多行文本：合成首行保留链接 token、续行输出
+		const tree = parseMdOutline('- [[目标|别名]] 说明\n', '根').tree;
+		const li = tree.children[0]!;
+		li.data.text = '别名 说明\n第二行';
+		const out = serializeMdBody(tree, null);
+		assert(out.includes('- 别名 说明 [[目标|别名]]'), '编辑文本后合成首行保留链接 token');
+		assert(out.includes('第二行'), '多行文本续行输出');
+	}
+	// （plain 段落的 rawOk 豁免——mdRaw 含 [[..]] 但 hyperlink 恒空 → 逐字回写——
+	//  已由「段落（plain）行内 [[..]] / [](url) …逐字回写」用例锁定。）
 
 	// -------------------------------------------------------------------------
 	// 汇总：失败时抛错让 vitest 标红（成功时输出统计）

@@ -151,4 +151,36 @@ describe('createThrottler', () => {
 		await vi.advanceTimersByTimeAsync(1000);
 		expect(fn).toHaveBeenCalledTimes(1);
 	});
+
+	it('trailingResetsWindow：尾随执行后下一次 run 立即执行（状态栏语义）', async () => {
+		const throttler = createThrottler(500, { trailingResetsWindow: true });
+		const fn = vi.fn();
+		throttler.run(fn); // 首跑立即
+		await vi.advanceTimersByTimeAsync(100);
+		throttler.run(fn); // 窗口内 → 排尾随（500ms 处）
+		await vi.advanceTimersByTimeAsync(400);
+		expect(fn).toHaveBeenCalledTimes(2); // 尾随已执行，窗口已重置
+		throttler.run(fn); // 立即执行，不再等窗口
+		expect(fn).toHaveBeenCalledTimes(3);
+		await vi.advanceTimersByTimeAsync(100);
+		throttler.run(fn); // 新窗口内 → 排尾随
+		await vi.advanceTimersByTimeAsync(400);
+		expect(fn).toHaveBeenCalledTimes(4);
+	});
+
+	it('默认行为不变：尾随执行占用新窗口（下一次 run 需再等一个窗口）', async () => {
+		const throttler = createThrottler(500);
+		const fn = vi.fn();
+		throttler.run(fn);
+		await vi.advanceTimersByTimeAsync(100);
+		throttler.run(fn); // 尾随排在 500ms 处
+		await vi.advanceTimersByTimeAsync(400);
+		expect(fn).toHaveBeenCalledTimes(2);
+		throttler.run(fn); // 距尾随 0ms < 500 → 排新尾随而非立即执行
+		expect(fn).toHaveBeenCalledTimes(2);
+		await vi.advanceTimersByTimeAsync(499);
+		expect(fn).toHaveBeenCalledTimes(2);
+		await vi.advanceTimersByTimeAsync(1);
+		expect(fn).toHaveBeenCalledTimes(3);
+	});
 });

@@ -8,8 +8,8 @@
  */
 import { Notice } from 'obsidian';
 import { getActiveNode } from '../mindmap';
-import { saveImageToVault } from '../images-save';
-import { errorMessage } from '../errors';
+import { buildPastedImageName, saveImageToVault } from '../images-save';
+import { notifyError } from '../errors';
 import { applyNodeImage } from './view-node-actions';
 import { t } from '../i18n';
 import type { MindMapViewContext } from './view-context';
@@ -80,6 +80,9 @@ async function handlePasteEvent(
 			app: view.app,
 			sourcePath: view.file?.path ?? '',
 			file: imageFile,
+			// 剪贴板粘贴按 Obsidian 核心约定命名（Pasted image YYYYMMDDHHMMSS），
+			// 覆盖系统提供的临时名（image.png 等），与官方粘贴行为对齐
+			filename: buildPastedImageName(),
 			lang: view.lang,
 		});
 		if (saved) {
@@ -88,8 +91,6 @@ async function handlePasteEvent(
 		}
 	} catch (error) {
 		console.error('粘贴图片失败', error);
-		new Notice(
-			`${t(view.lang, 'common.pasteImageFailed')}${errorMessage(error)}`,
-		);
+		notifyError(view.lang, 'common.pasteImageFailed', error);
 	}
 }

@@ -2,7 +2,7 @@
  * Markdown 代码块渲染：```mindmap ... ```
  */
 import { App, MarkdownRenderChild } from 'obsidian';
-import { TheMindMapSettings } from './settings';
+import { MindMapStudioSettings } from './settings';
 import { MindMap, MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 import {
 	createMindMap,
@@ -16,14 +16,14 @@ import { parseMdOutline } from './md-outline';
 
 export class MindMapCodeBlock extends MarkdownRenderChild {
 	app: App;
-	settings: TheMindMapSettings;
+	settings: MindMapStudioSettings;
 	source: string;
 	mindMap: MindMap | null = null;
 	private cssChangeHandler: (() => void) | null = null;
 
 	constructor(
 		app: App,
-		settings: TheMindMapSettings,
+		settings: MindMapStudioSettings,
 		source: string,
 		containerEl: HTMLElement,
 		sourcePath = '',

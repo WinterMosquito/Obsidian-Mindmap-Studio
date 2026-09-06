@@ -5,7 +5,7 @@ import { Notice, type TFile } from 'obsidian';
 import { isImageExtension, MAX_IMAGE_SIZE_MB } from '../constants';
 import { saveImageToVault } from '../images-save';
 import { extractDroppedFileNames, resolveDroppedFile } from '../links-resolve';
-import { getActiveNode } from '../mindmap';
+import { ENGINE_COMMANDS, getActiveNode, getRenderRoot } from '../mindmap';
 import { applyNodeImage } from './view-node-actions';
 import { t } from '../i18n';
 import { formatWikilink } from '../domain/wikilink';
@@ -105,14 +105,14 @@ async function handleDroppedDocument(
 ): Promise<void> {
 	const link = formatWikilink(file.basename);
 	if (selected) {
-		view.mindMap?.execCommand('SET_NODE_HYPERLINK', selected, link);
+		view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, selected, link);
 		new Notice(`${t(view.lang, 'common.linkedTo')} [[${file.basename}]]`);
 	} else {
 		// 原逻辑：挂到根节点下并链接（通过 appointNodes 指定父节点，
 		// 不依赖激活列表；初始数据直接携带文本与链接）
-		const root = view.mindMap?.renderer?.root;
+		const root = getRenderRoot(view.mindMap);
 		if (root) {
-			view.mindMap?.execCommand('INSERT_CHILD_NODE', false, [root], {
+			view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [root], {
 				text: file.basename,
 				hyperlink: link,
 				isActive: false,

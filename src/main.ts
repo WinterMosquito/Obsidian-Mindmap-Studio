@@ -12,8 +12,8 @@
 import { Plugin, TFile, TFolder } from 'obsidian';
 import { CODE_BLOCK_LANGUAGE, VIEW_TYPE } from './constants';
 import {
-	TheMindMapSettings,
-	TheMindMapSettingTab,
+	MindMapStudioSettings,
+	MindMapStudioSettingTab,
 	sanitizeSettings,
 } from './settings';
 import { MindMapView } from './features/view';
@@ -36,8 +36,8 @@ import { updateStatusBar } from './features/view-status';
 import { injectIntoFileCreator } from './features/file-creator';
 import { OpenAsPreferenceRestorer } from './open-as-restore';
 
-export default class TheMindMapPlugin extends Plugin {
-	settings!: TheMindMapSettings;
+export default class MindMapStudioPlugin extends Plugin {
+	settings!: MindMapStudioSettings;
 	statusBarEl: HTMLElement | null = null;
 	/**
 	 * 状态栏服务（节点计数展示/清空）：DOM 与 i18n 格式化归插件层，
@@ -179,32 +179,28 @@ export default class TheMindMapPlugin extends Plugin {
 			},
 		);
 
-		// Vault 文件事件同步（重命名/删除/创建时更新打开导图的引用与查找缓存）
+		// Vault 文件事件同步（重命名/删除/创建时更新打开导图的引用与查找缓存，
+		// 并经 hooks 迁移/清理视图状态键——事件单一注册入口，避免双订阅）
 		this.vaultSync = new VaultSyncService(this.app);
-		this.vaultSync.attach(this);
-
-		// 视图状态（布局/视口）随文件改名/删除迁移键或清理
-		this.registerEvent(
-			this.app.vault.on('rename', (file, oldPath) => {
+		this.vaultSync.attach(this, {
+			onRename: (file, oldPath) => {
 				if (file instanceof TFile && isMindMapMarkdownFile(file)) {
 					this.viewState.renameKey(oldPath, file.path);
 				} else {
 					this.viewState.removeKey(oldPath);
 				}
-			}),
-		);
-		this.registerEvent(
-			this.app.vault.on('delete', (file) => {
+			},
+			onDelete: (file) => {
 				this.viewState.removeKey(file.path);
-			}),
-		);
+			},
+		});
 
-		this.addSettingTab(new TheMindMapSettingTab(this.app, this));
+		this.addSettingTab(new MindMapStudioSettingTab(this.app, this));
 	}
 
 	onunload(): void {
 		// 排空未落盘的视图状态（防抖定时器）
-		this.viewState.flushNow?.();
+		this.viewState.flushNow();
 		this.statusBarEl = null;
 	}
 

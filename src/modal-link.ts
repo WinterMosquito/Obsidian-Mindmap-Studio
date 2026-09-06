@@ -6,15 +6,9 @@
  * - 返回 { link, label }：link 为写入 md 的链接文本（[[..]] 或 url），
  *   label 为可见文本（笔记名/别名/文件名），供导图节点文本对齐。
  */
-import {
-	App,
-	Modal,
-	AbstractInputSuggest,
-	TFile,
-	setIcon,
-} from 'obsidian';
+import { App, Modal } from 'obsidian';
 import { t, type Language } from './i18n';
-import { createButton } from './modal-common';
+import { createButton, createModalSettle, VaultFileSuggest } from './modal-common';
 import { isLinkAttachmentExtension } from './constants';
 import { formatWikilink } from './domain/wikilink';
 
@@ -25,72 +19,14 @@ export interface LinkPickResult {
 	label?: string;
 }
 
-/** 联想候选：md 笔记或可链接附件 */
-class NoteLinkSuggest extends AbstractInputSuggest<TFile> {
-	constructor(
-		app: App,
-		inputEl: HTMLInputElement,
-		private notes: TFile[],
-		private attachments: TFile[],
-		private onChoose: (file: TFile, isNote: boolean) => void,
-	) {
-		super(app, inputEl);
-	}
-
-	getSuggestions(query: string): TFile[] {
-		const keyword = query.toLowerCase().trim();
-		if (!keyword) {
-			return [];
-		}
-		const result: TFile[] = [];
-		const push = (files: TFile[]): void => {
-			for (const file of files) {
-				if (file.basename.toLowerCase().includes(keyword)) {
-					result.push(file);
-					if (result.length >= 20) {
-						return;
-					}
-				}
-			}
-		};
-		push(this.notes);
-		push(this.attachments);
-		return result;
-	}
-
-	renderSuggestion(file: TFile, el: HTMLElement): void {
-		const isNote = file.extension === 'md';
-		const icon = el.createSpan({
-			cls: 'mindmap-link-suggest-icon',
-		});
-		setIcon(icon, isNote ? 'file-text' : 'file');
-		el.createSpan({
-			text: isNote ? file.basename : file.name,
-		});
-		const path = el.createSpan({ cls: 'note-path', text: file.parent?.path ?? '' });
-		path.addClass('mindmap-link-suggest-path');
-	}
-
-	selectSuggestion(file: TFile, _evt: MouseEvent | KeyboardEvent): void {
-		this.onChoose(file, file.extension === 'md');
-	}
-}
-
 export function openLinkEditorModal(
 	app: App,
 	current: string,
 	lang: Language,
 ): Promise<LinkPickResult | null> {
 	return new Promise((resolve) => {
-		let settled = false;
-		const settle = (value: LinkPickResult | null): void => {
-			if (settled) {
-				return;
-			}
-			settled = true;
-			resolve(value);
-		};
 		const modal = new Modal(app);
+		const settle = createModalSettle<LinkPickResult>(modal, resolve);
 		modal.titleEl.setText(t(lang, 'modal.link.title'));
 		const root = modal.contentEl.createDiv('mindmap-link-editor');
 		const input = root.createEl('input', {
@@ -117,32 +53,42 @@ export function openLinkEditorModal(
 				modal.close();
 				return;
 			}
-		// 保持裸文本：是否包裹为 [[..]] 由序列化的 renderHyperlink 统一决定，
-		// 避免此处与 md-serialize 的链接渲染规则产生第二套真相。
-		settle({ link: v });
-		modal.close();
+			// 保持裸文本：是否包裹为 [[..]] 由序列化的 renderHyperlink 统一决定，
+			// 避免此处与 md-serialize 的链接渲染规则产生第二套真相。
+			settle({ link: v });
+			modal.close();
 		};
 
-		new NoteLinkSuggest(app, input, markdownFiles, attachments, (file, isNote) => {
-			if (isNote) {
-				const unique =
-					markdownFiles.filter((f) => f.basename === file.basename)
-						.length === 1;
-				// 同名笔记用路径消歧（Obsidian 双链 [[路径/名|名]] 语义）
-				settle(
-					unique
-						? { link: formatWikilink(file.basename), label: file.basename }
-						: {
-								link: formatWikilink(file.path, file.basename),
-								label: file.basename,
-							},
-				);
-			} else {
-				// 附件：完整库内路径链接（保留扩展名可见）
-				settle({ link: formatWikilink(file.path), label: file.name });
-			}
-			modal.close();
-		});
+		// 联想候选：md 笔记在前、附件在后（与原两段 push 的顺序一致）
+		new VaultFileSuggest(
+			app,
+			input,
+			[...markdownFiles, ...attachments],
+			(file) =>
+				file.extension === 'md'
+					? { icon: 'file-text', label: file.basename }
+					: { icon: 'file', label: file.name },
+			(file) => {
+				if (file.extension === 'md') {
+					const unique =
+						markdownFiles.filter((f) => f.basename === file.basename)
+							.length === 1;
+					// 同名笔记用路径消歧（Obsidian 双链 [[路径/名|名]] 语义）
+					settle(
+						unique
+							? { link: formatWikilink(file.basename), label: file.basename }
+							: {
+									link: formatWikilink(file.path, file.basename),
+									label: file.basename,
+								},
+					);
+				} else {
+					// 附件：完整库内路径链接（保留扩展名可见）
+					settle({ link: formatWikilink(file.path), label: file.name });
+				}
+				modal.close();
+			},
+		);
 
 		// 联想浮层未打开时 Enter 直接提交原始输入
 		input.addEventListener('keydown', (event) => {
@@ -165,8 +111,6 @@ export function openLinkEditorModal(
 		createButton(buttons, t(lang, 'modal.confirm'), 'primary', () => {
 			commitRaw(input.value);
 		});
-		// 兜底：Esc / 非按钮路径关闭时 Promise 必然 resolve
-		modal.onClose = () => settle(null);
 		modal.open();
 	});
 }

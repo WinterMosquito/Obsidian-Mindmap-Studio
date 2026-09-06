@@ -6,59 +6,12 @@
  * - 确认返回规范引用：库内图片 → vault 相对路径（md 回写 ![[路径]]），
  *   外链 → 原样 URL。
  */
-import {
-	App,
-	Modal,
-	AbstractInputSuggest,
-	TFile,
-	setIcon,
-} from 'obsidian';
+import { App, Modal, TFile } from 'obsidian';
 import { isImageExtension, MAX_IMAGE_SIZE_MB } from './constants';
 import { isAppResourceUrl, isExternalImageRef } from './domain/url';
 import { t, type Language } from './i18n';
-import { createButton } from './modal-common';
-
-/** 库内图片联想（Obsidian 风格） */
-class ImageFileSuggest extends AbstractInputSuggest<TFile> {
-	constructor(
-		app: App,
-		inputEl: HTMLInputElement,
-		private images: TFile[],
-		private onChoose: (file: TFile) => void,
-	) {
-		super(app, inputEl);
-	}
-
-	getSuggestions(query: string): TFile[] {
-		const keyword = query.toLowerCase().trim();
-		if (!keyword) {
-			return [];
-		}
-		const result: TFile[] = [];
-		for (const file of this.images) {
-			if (file.basename.toLowerCase().includes(keyword)) {
-				result.push(file);
-				if (result.length >= 20) {
-					break;
-				}
-			}
-		}
-		return result;
-	}
-
-	renderSuggestion(file: TFile, el: HTMLElement): void {
-		const icon = el.createSpan({ cls: 'mindmap-link-suggest-icon' });
-		setIcon(icon, 'image');
-		el.createSpan({ text: file.name });
-		const path = el.createSpan({ cls: 'note-path' });
-		path.setText(file.parent?.path ?? '');
-		path.addClass('mindmap-link-suggest-path');
-	}
-
-	selectSuggestion(file: TFile, _evt: MouseEvent | KeyboardEvent): void {
-		this.onChoose(file);
-	}
-}
+import { buildPastedImageName } from './images-save';
+import { createButton, createModalSettle, VaultFileSuggest } from './modal-common';
 
 /** 输入是否为外链/数据地址（无需库内解析）：domain/url 单一权威 */
 function isExternalImageUrl(value: string): boolean {
@@ -68,19 +21,16 @@ function isExternalImageUrl(value: string): boolean {
 export function openImageEditorModal(
 	app: App,
 	current: string,
-	saveImage: (file: File, maxSizeMB?: number) => Promise<TFile | null>,
+	saveImage: (
+		file: File,
+		maxSizeMB?: number,
+		nameOverride?: string,
+	) => Promise<TFile | null>,
 	lang: Language,
 ): Promise<string | null> {
 	return new Promise((resolve) => {
-		let settled = false;
-		const settle = (value: Parameters<typeof resolve>[0]): void => {
-			if (settled) {
-				return;
-			}
-			settled = true;
-			resolve(value);
-		};
 		const modal = new Modal(app);
+		const settle = createModalSettle<string>(modal, resolve);
 		modal.titleEl.setText(t(lang, 'modal.image.title'));
 		const root = modal.contentEl.createDiv('mindmap-image-editor');
 
@@ -181,11 +131,12 @@ export function openImageEditorModal(
 			fileStatus.toggleClass('is-error', isError);
 		};
 
-		/** 保存本地文件后，把库内相对路径填入输入框（规范引用） */
-		const saveAndApply = async (file: File): Promise<void> => {
+		/** 保存本地文件后，把库内相对路径填入输入框（规范引用）。
+		 *  nameOverride：剪贴板粘贴时按 Obsidian 核心约定命名（Pasted image …） */
+		const saveAndApply = async (file: File, nameOverride?: string): Promise<void> => {
 			setFileStatus(t(lang, 'modal.image.saving'));
 			try {
-				const saved = await saveImage(file, MAX_IMAGE_SIZE_MB);
+				const saved = await saveImage(file, MAX_IMAGE_SIZE_MB, nameOverride);
 				if (saved) {
 					input.value = saved.path;
 					renderPreview(saved.path);
@@ -220,7 +171,7 @@ export function openImageEditorModal(
 						const file = new File([blob], `clipboard.${ext}`, {
 							type: imageType,
 						});
-						await saveAndApply(file);
+						await saveAndApply(file, buildPastedImageName());
 						return;
 					}
 				}
@@ -236,17 +187,20 @@ export function openImageEditorModal(
 		});
 
 		// 库内图片联想：选择后填入库内相对路径
-		const vaultImages = app.vault.getFiles().filter((f) => {
-			if (f.extension === 'md') {
-				return false;
-			}
-			return isImageExtension(f.extension);
-		});
-		new ImageFileSuggest(app, input, vaultImages, (file) => {
-			input.value = file.path;
-			renderPreview(file.path);
-			updateStatus(file.path);
-		});
+		const vaultImages = app.vault
+			.getFiles()
+			.filter((f) => isImageExtension(f.extension));
+		new VaultFileSuggest(
+			app,
+			input,
+			vaultImages,
+			(file) => ({ icon: 'image', label: file.name }),
+			(file) => {
+				input.value = file.path;
+				renderPreview(file.path);
+				updateStatus(file.path);
+			},
+		);
 
 		const buttons = root.createDiv();
 		buttons.addClass('mindmap-modal-action-row');
@@ -262,7 +216,6 @@ export function openImageEditorModal(
 			settle(input.value.trim());
 			modal.close();
 		});
-		modal.onClose = () => settle(null);
 		modal.open();
 	});
 }

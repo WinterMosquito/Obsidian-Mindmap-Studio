@@ -6,7 +6,7 @@
  */
 import { App, Modal } from 'obsidian';
 import { t, type Language } from './i18n';
-import { createButton } from './modal-common';
+import { createButton, createModalSettle } from './modal-common';
 
 export function openNameInputModal(
 	app: App,
@@ -15,17 +15,10 @@ export function openNameInputModal(
 	lang: Language,
 ): Promise<string | null> {
 	return new Promise((resolve) => {
-		// settle 守卫 + onClose 兜底：点击遮罩等非按钮路径关闭时
-		// Promise 也必然 resolve，避免调用方 await 永久挂起。
-		let settled = false;
-		const settle = (value: Parameters<typeof resolve>[0]): void => {
-			if (settled) {
-				return;
-			}
-			settled = true;
-			resolve(value);
-		};
 		const modal = new Modal(app);
+		// settle 守卫 + onClose 兜底（createModalSettle）：点击遮罩等非按钮
+		// 路径关闭时 Promise 也必然 resolve，避免调用方 await 永久挂起。
+		const settle = createModalSettle<string>(modal, resolve);
 		modal.titleEl.setText(t(lang, 'command.createMindMap'));
 		const root = modal.contentEl.createDiv('mindmap-name-editor');
 
@@ -46,9 +39,8 @@ export function openNameInputModal(
 				input.focus();
 				return;
 			}
-			// 先 settle 再 close：Obsidian 的 Modal.close() 会同步触发 onClose（兜底
-			// settle(null)），若先 close 则 onClose 的 settle(null) 会抢先 resolve(null)，
-			// 导致用户输入的名称被当作取消、导图不创建。
+			// 先 settle 再 close：Obsidian 的 Modal.close() 会同步触发 onClose
+			// （兜底 settle(null)），若先 close 则用户输入的名称会被当作取消。
 			settle(name);
 			modal.close();
 		};
@@ -69,8 +61,6 @@ export function openNameInputModal(
 			modal.close();
 		});
 		createButton(buttons, t(lang, 'modal.confirm'), 'primary', confirm);
-		// 兜底：用户按 Esc 或任何非按钮路径关闭弹窗时，避免 Promise 永不 resolve
-		modal.onClose = () => settle(null);
 		modal.open();
 	});
 }

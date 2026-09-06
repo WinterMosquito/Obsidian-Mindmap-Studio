@@ -6,10 +6,7 @@
  * leaf 切到本插件的导图视图（编辑与阅读模式下入口均可用），并可随时切回。
  */
 import { MarkdownView, TFile, WorkspaceLeaf } from 'obsidian';
-import { VIEW_TYPE } from './constants';
-
-/** 触发判定：md 文件且路径以 .mindmap.md 结尾（大小写不敏感） */
-const MD_MARKER_RE = /\.mindmap\.md$/i;
+import { hasMindMapMarker, VIEW_TYPE } from './constants';
 
 /**
  * 「以思维导图打开」偏好写入钩子（由插件注册，经 view-state 记录
@@ -29,7 +26,7 @@ export function isMindMapMarkdownFile(
 	return (
 		!!file &&
 		file.extension === 'md' &&
-		MD_MARKER_RE.test(file.path)
+		hasMindMapMarker(file.path)
 	);
 }
 

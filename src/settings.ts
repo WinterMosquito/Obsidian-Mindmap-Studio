@@ -3,12 +3,12 @@ import {
 	PluginSettingTab,
 	type SettingDefinitionItem,
 } from 'obsidian';
-import type TheMindMapPlugin from './main';
+import type MindMapStudioPlugin from './main';
 import { LAYOUT_OPTIONS, THEME_OPTIONS } from './constants';
 import { Language, LANGUAGE_OPTIONS, t } from './i18n';
 
 /** 插件设置 */
-export interface TheMindMapSettings {
+export interface MindMapStudioSettings {
 	defaultLayout: string;
 	defaultTheme: string;
 	autoSave: boolean;
@@ -20,7 +20,7 @@ export interface TheMindMapSettings {
 	language: Language;
 }
 
-export const DEFAULT_SETTINGS: TheMindMapSettings = {
+export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	defaultLayout: 'logicalStructure',
 	defaultTheme: 'default',
 	autoSave: true,
@@ -42,12 +42,12 @@ export const DEFAULT_SETTINGS: TheMindMapSettings = {
  */
 export function sanitizeSettings(
 	raw: Record<string, unknown>,
-): TheMindMapSettings {
-	const pickString = (key: keyof TheMindMapSettings): string | undefined => {
+): MindMapStudioSettings {
+	const pickString = (key: keyof MindMapStudioSettings): string | undefined => {
 		const value = raw[key];
 		return typeof value === 'string' ? value : undefined;
 	};
-	const pickNumber = (key: keyof TheMindMapSettings): number | undefined => {
+	const pickNumber = (key: keyof MindMapStudioSettings): number | undefined => {
 		const value = raw[key];
 		const num =
 			typeof value === 'number'
@@ -57,7 +57,7 @@ export function sanitizeSettings(
 					: NaN;
 		return Number.isFinite(num) ? num : undefined;
 	};
-	const pickBool = (key: keyof TheMindMapSettings): boolean | undefined => {
+	const pickBool = (key: keyof MindMapStudioSettings): boolean | undefined => {
 		const value = raw[key];
 		return typeof value === 'boolean' ? value : undefined;
 	};
@@ -95,10 +95,10 @@ const LIVE_REFRESH_SETTING_KEYS = new Set<string>([
 ]);
 
 /** 设置面板 */
-export class TheMindMapSettingTab extends PluginSettingTab {
-	plugin: TheMindMapPlugin;
+export class MindMapStudioSettingTab extends PluginSettingTab {
+	plugin: MindMapStudioPlugin;
 
-	constructor(app: App, plugin: TheMindMapPlugin) {
+	constructor(app: App, plugin: MindMapStudioPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -216,10 +216,15 @@ export class TheMindMapSettingTab extends PluginSettingTab {
 	/**
 	 * 声明式设置写回（1.13+）：变更设置、持久化，
 	 * 并按需即时应用到已打开的视图。
+	 *
+	 * 写回经 sanitizeSettings 校验归一（与 data.json 加载共用同一不变式），
+	 * 不裸写内存对象——宿主对 slider 等控件传值的类型变化不会绕过校验。
 	 */
 	override setControlValue(key: string, value: unknown): void {
-		(this.plugin.settings as unknown as Record<string, unknown>)[key] =
-			value;
+		this.plugin.settings = sanitizeSettings({
+			...this.plugin.settings,
+			[key]: value,
+		});
 		void this.plugin.saveSettings();
 		if (LIVE_REFRESH_SETTING_KEYS.has(key)) {
 			this.plugin.applySettingsToViews();

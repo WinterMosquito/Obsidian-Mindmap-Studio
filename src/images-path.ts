@@ -96,7 +96,8 @@ function cacheImageSize(
 ): void {
 	IMAGE_SIZE_CACHE.set(url, size);
 	if (IMAGE_SIZE_CACHE.size > IMAGE_SIZE_CACHE_MAX) {
-		const oldest = IMAGE_SIZE_CACHE.keys().next().value;
+		// Map 保序：解构取最早插入的键删除；size > MAX 保证非空
+		const [oldest] = IMAGE_SIZE_CACHE.keys();
 		if (oldest !== undefined) {
 			IMAGE_SIZE_CACHE.delete(oldest);
 		}

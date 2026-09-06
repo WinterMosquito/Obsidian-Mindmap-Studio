@@ -390,3 +390,19 @@ export function t(lang: Language, key: TranslationKey): string {
 	}
 	return ZH[key];
 }
+
+/**
+ * 取文案并替换 {name} 占位符（此前仅 images-save 用 .replace 链手工替换）。
+ * @param params 占位符名 → 值（数字/字符串）
+ */
+export function tf(
+	lang: Language,
+	key: TranslationKey,
+	params: Record<string, string | number>,
+): string {
+	let text = t(lang, key);
+	for (const [name, value] of Object.entries(params)) {
+		text = text.replaceAll(`{${name}}`, String(value));
+	}
+	return text;
+}
