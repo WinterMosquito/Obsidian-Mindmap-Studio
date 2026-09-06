@@ -13,16 +13,19 @@ export async function exportPNG(view: MindMapView): Promise<void> {
 	if (!view.mindMap) {
 		return;
 	}
-	const mindMapAny = view.mindMap as unknown as {
+	// 捕获本地实例：导出期间视图可能被关闭（view.mindMap 被置空），
+	// 用局部引用避免 finally 里空指针，并兜底忽略恢复倍率的边角失败。
+	const mindMap = view.mindMap;
+	const mindMapAny = mindMap as unknown as {
 		opt?: Record<string, unknown>;
 	};
 	const oldScale = mindMapAny.opt?.minExportImgCanvasScale;
 	try {
-		const exporter = view.mindMap.doExport;
+		const exporter = mindMap.doExport;
 		if (!exporter?.export) {
 			return;
 		}
-		view.mindMap.updateConfig({
+		mindMap.updateConfig({
 			minExportImgCanvasScale: view.plugin.settings.exportScale,
 		});
 		const result = await exporter.export(
@@ -43,11 +46,16 @@ export async function exportPNG(view: MindMapView): Promise<void> {
 			`${t(view.lang, 'export.pngFailed')}${error instanceof Error ? error.message : String(error)}`,
 		);
 	} finally {
-		// 导出后恢复临时改动的导出倍率，避免残留到后续渲染/其它导出
-		if (oldScale !== undefined) {
-			view.mindMap.updateConfig({ minExportImgCanvasScale: oldScale });
-		} else if (mindMapAny.opt) {
-			delete mindMapAny.opt.minExportImgCanvasScale;
+		// 导出后恢复临时改动的导出倍率，避免残留到后续渲染/其它导出。
+		// 视图已关闭/引擎已销毁时忽略（防止 finally 逃逸抛出未处理异常）。
+		try {
+			if (oldScale !== undefined) {
+				mindMap.updateConfig({ minExportImgCanvasScale: oldScale });
+			} else if (mindMapAny.opt) {
+				delete mindMapAny.opt.minExportImgCanvasScale;
+			}
+		} catch {
+			// 忽略：引擎已销毁等边角情况
 		}
 	}
 }

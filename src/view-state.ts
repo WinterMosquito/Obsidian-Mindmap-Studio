@@ -36,7 +36,12 @@ export class ViewStateStore {
 					raw as Record<string, unknown>,
 				)) {
 					if (state && typeof state === 'object') {
-						this.map.set(path, state as PathState);
+						const s = state as Record<string, unknown>;
+						// 形状校验：只接受含已知字段的视图状态，丢弃畸形/异常条目
+						// （防手改 data.json、引擎升级后 view 结构变化等导致的坏数据渗入）。
+						if ('layout' in s || 'view' in s || 'openAs' in s) {
+							this.map.set(path, s);
+						}
 					}
 				}
 			}

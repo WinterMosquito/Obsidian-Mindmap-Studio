@@ -70,6 +70,11 @@ export function closeSearchBar(view: MindMapView): void {
 	if (!view.searchBarEl) {
 		return;
 	}
+	// 取消未决的防抖搜索，避免关闭后在空结果上继续触发
+	if (searchTimers.has(view)) {
+		window.clearTimeout(searchTimers.get(view));
+		searchTimers.delete(view);
+	}
 	view.searchBarEl.addClass('mindmap-search-bar-hidden');
 	view.mindMap?.search?.endSearch();
 	if (view.searchInput) {
@@ -79,8 +84,28 @@ export function closeSearchBar(view: MindMapView): void {
 	view.canvasEl?.focus();
 }
 
-/** 执行搜索 */
+/** 防抖定时器（按视图），避免每键全量重搜 */
+const searchTimers = new WeakMap<MindMapView, number>();
+const SEARCH_DEBOUNCE_MS = 180;
+
+/** 执行搜索（带防抖：停顿后再搜） */
 export function doSearch(view: MindMapView): void {
+	if (!view.mindMap?.search || !view.searchInput) {
+		return;
+	}
+	if (searchTimers.has(view)) {
+		window.clearTimeout(searchTimers.get(view));
+	}
+	searchTimers.set(
+		view,
+		window.setTimeout(() => {
+			searchTimers.delete(view);
+			runSearch(view);
+		}, SEARCH_DEBOUNCE_MS),
+	);
+}
+
+function runSearch(view: MindMapView): void {
 	if (!view.mindMap?.search || !view.searchInput) {
 		return;
 	}
@@ -129,3 +154,4 @@ export function updateSearchCount(view: MindMapView): void {
 	view.searchCountEl.removeClass('mindmap-search-no-result');
 	view.searchCountEl.setText(`${current + 1}/${matches.length}`);
 }
+

@@ -49,10 +49,18 @@ export function resolvePathToFile(
 		try {
 			const decoded = decodeURIComponent(text.replace(/^file:\/\//, ''));
 			const vaultName = app.vault.getName();
-			const index = decoded.indexOf(vaultName);
-			if (index >= 0) {
-				const path = decoded.slice(index + vaultName.length + 1);
-				file = app.vault.getAbstractFileByPath(path);
+			// 库名必须是「独立路径段」（前为开始或 /，后为 / 或结尾），并取最后一个
+			// 匹配（真正的库根），避免父目录名恰好包含库名时切出损坏的相对路径。
+			const seg = vaultName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const re = new RegExp(`(?:^|/)(${seg})(?=/|$)`, 'g');
+			let m: RegExpExecArray | null = null;
+			let end = -1;
+			while ((m = re.exec(decoded))) {
+				end = m.index + m[1]!.length;
+			}
+			if (end >= 0) {
+				const rel = decoded.slice(end).replace(/^\/+/, '');
+				file = app.vault.getAbstractFileByPath(rel);
 				if (file instanceof TFile) {
 					return file;
 				}

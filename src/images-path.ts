@@ -396,16 +396,20 @@ export async function walkCorrectImageSizesByAspect(
 	let changed = false;
 	await Promise.all(
 		nodes.map(async (node) => {
-			const size = await computeAspectImageSize(node.data?.image ?? '');
-			const current = node.data?.imageSize;
-			if (
-				!current ||
-				current.width !== size.width ||
-				current.height !== size.height ||
-				current.custom !== size.custom
-			) {
-				node.data.imageSize = size;
-				changed = true;
+			try {
+				const size = await computeAspectImageSize(node.data?.image ?? '');
+				const current = node.data?.imageSize;
+				if (
+					!current ||
+					current.width !== size.width ||
+					current.height !== size.height ||
+					current.custom !== size.custom
+				) {
+					node.data.imageSize = size;
+					changed = true;
+				}
+			} catch {
+				// 单节点探测异常：跳过该节点，保留现有尺寸，不中断整树校正
 			}
 		}),
 	);

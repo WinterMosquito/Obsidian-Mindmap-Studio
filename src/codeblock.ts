@@ -37,23 +37,33 @@ export class MindMapCodeBlock extends MarkdownRenderChild {
 	onload(): void {
 		this.containerEl.empty();
 		this.containerEl.addClass('mindmap-codeblock-container');
-		const tree = this.parseSource();
 		const canvasEl = this.containerEl.createDiv('mindmap-codeblock-canvas');
-		const isDark = document.body.hasClass('theme-dark');
-		this.mindMap = createMindMap(canvasEl, tree, {
-			layout: this.settings.codeBlockDefaultLayout,
-			themePref: 'default',
-			isDark,
-			enableDrag: false,
-			// 代码块无导出/搜索 UI：不注册这两个插件（见 mindmap.ts forCodeBlock）
-			forCodeBlock: true,
-			// 性能模式跟随设置（默认开启，≥阈值自动虚拟渲染）；代码块交互不受影响
-			performanceMode: this.settings.performanceMode,
-			performanceThreshold: this.settings.performanceThreshold,
-			lang: this.settings.language,
-		});
-		this.mindMap.setThemeConfig(getCodeBlockThemeConfig(isDark));
-		this.mindMap.render();
+		try {
+			const tree = this.parseSource();
+			const isDark = document.body.hasClass('theme-dark');
+			this.mindMap = createMindMap(canvasEl, tree, {
+				layout: this.settings.codeBlockDefaultLayout,
+				themePref: 'default',
+				isDark,
+				enableDrag: false,
+				// 代码块无导出/搜索 UI：不注册这两个插件（见 mindmap.ts forCodeBlock）
+				forCodeBlock: true,
+				// 性能模式跟随设置（默认开启，≥阈值自动虚拟渲染）；代码块交互不受影响
+				performanceMode: this.settings.performanceMode,
+				performanceThreshold: this.settings.performanceThreshold,
+				lang: this.settings.language,
+			});
+			this.mindMap.setThemeConfig(getCodeBlockThemeConfig(isDark));
+			this.mindMap.render();
+		} catch (error) {
+			// 畸形源码/引擎异常：清理半创建实例并给出可读提示，避免卸载后残留监听
+			console.error('渲染 mindmap 代码块失败:', error);
+			destroyMindMap(this.mindMap);
+			this.mindMap = null;
+			canvasEl.empty();
+			canvasEl.setText(t(this.settings.language, 'common.notLoaded'));
+			return;
+		}
 		this.cssChangeHandler = () => {
 			const dark = document.body.hasClass('theme-dark');
 			this.mindMap?.setThemeConfig(getCodeBlockThemeConfig(dark));

@@ -345,6 +345,7 @@ export class MindMapView extends FileView {
 		if (!this.canvasEl) {
 			return;
 		}
+		try {
 		// 修复缺失/重复的 uid（避免引擎按 uid 查找节点时误删/漏删）
 		ensureUniqueUids(tree);
 		this.destroyMindMapInstance();
@@ -403,6 +404,13 @@ export class MindMapView extends FileView {
 		}
 		// 首帧后：有保存的视口（缩放/平移）则恢复，否则适配全图
 		window.setTimeout(() => this.restoreOrFitViewport(), 150);
+		} catch (error) {
+			// 畸形树/引擎内部异常：记录并保持视图可用，避免异常逃逸出回调
+			console.error('渲染思维导图失败:', error);
+			this.destroyMindMapInstance();
+			this.canvasEl?.empty();
+			new Notice(`${t(this.lang, 'common.notLoaded')}`);
+		}
 	}
 
 	/** 打开后恢复保存的视口；无则 fit 全图 */
@@ -519,7 +527,9 @@ export class MindMapView extends FileView {
 		if (!this.mindMap) {
 			return;
 		}
-		const data = this.mindMap.getData();
+		// 深拷贝后重建：initMindMap 会先销毁旧引擎并原地改写 uid（ensureUniqueUids），
+		// 传活引用会在销毁期间被就地修改（依赖旧引擎不再回写该对象），存在隐患。
+		const data = structuredClone(this.mindMap.getData());
 		this.initMindMap(data);
 	}
 
