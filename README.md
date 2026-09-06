@@ -7,8 +7,8 @@
 > Mind map rendering for Markdown inside Obsidian. Open `.mindmap.md` — a normal Markdown file — and edit it as a mind map; the Markdown outline round-trips losslessly. Powered by the [simple-mind-map](https://github.com/wanglin2/mind-map) engine, developed by [WinterMosquito](https://github.com/WinterMosquito).
 
 <p align="center">
-  <img src="https://img.shields.io/github/v/release/WinterMosquito/mindmap-studio?label=Release&color=blue" alt="Latest release" />
-  <img src="https://img.shields.io/github/license/WinterMosquito/mindmap-studio?label=License&color=green" alt="License" />
+  <img src="https://img.shields.io/github/v/release/WinterMosquito/Obsidian-Mindmap-Studio?label=Release&color=blue" alt="Latest release" />
+  <img src="https://img.shields.io/github/license/WinterMosquito/Obsidian-Mindmap-Studio?label=License&color=green" alt="License" />
   <img src="https://img.shields.io/badge/Obsidian-1.13.0%2B-purple" alt="Obsidian version" />
   <img src="https://img.shields.io/badge/Platform-Desktop-blue" alt="Platform" />
 </p>
@@ -45,7 +45,7 @@ The full Markdown ↔ mind-map mapping rules are in [`docs/markdown-mindmap-stan
 ## 📦 Install
 
 - **Community plugins** (once listed): Settings → Community plugins → search *MindMap Studio*.
-- **From GitHub Releases (recommended)**: download the latest release assets (`main.js`, `manifest.json`, `styles.css`) from the repo [Releases](https://github.com/WinterMosquito/mindmap-studio/releases) page, then copy them into `<vault>/.obsidian/plugins/mindmap-studio/` and enable in Settings → Community plugins.
+- **From GitHub Releases (recommended)**: download the latest release assets (`main.js`, `manifest.json`, `styles.css`) from the repo [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) page, then copy them into `<vault>/.obsidian/plugins/mindmap-studio/` and enable in Settings → Community plugins.
 - **Build from source**: `npm install && npm run build` produces `main.js`; copy it together with `manifest.json` and `styles.css` into the plugin folder.
 
 > Requires Obsidian 1.13.0+, desktop (Electron). Config is stored locally (plugin `data.json`); no telemetry. `main.js` is built in CI and attached to each GitHub Release (it is not committed to the repo).
