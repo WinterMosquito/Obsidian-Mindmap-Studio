@@ -164,8 +164,11 @@ export default class TheMindMapPlugin extends Plugin {
 			}),
 		);
 
-		// 文件浏览器「新建文件」菜单注入
-		this.layoutReadyCallback = () => this.injectIntoFileCreator();
+		// 文件浏览器「新建文件」菜单注入 + 启动后恢复「偏好为思维导图」的叶子
+		this.layoutReadyCallback = () => {
+			this.injectIntoFileCreator();
+			this.restoreOpenAsPreferences();
+		};
 		this.app.workspace.onLayoutReady(this.layoutReadyCallback);
 		this.registerEvent(
 			this.app.workspace.on('layout-change', () => this.injectIntoFileCreator()),
@@ -231,6 +234,31 @@ export default class TheMindMapPlugin extends Plugin {
 		);
 
 		this.addSettingTab(new TheMindMapSettingTab(this.app, this));
+	}
+
+	/**
+	 * 启动/布局就绪后，把「偏好为思维导图」的 `.mindmap.md`（当前仍以 Markdown 视图
+	 * 打开的叶子）自动切回导图视图。
+	 *
+	 * 作用：弥补 `active-leaf-change` 在**工作区恢复（重启）**时对初始叶子可能不触发、
+	 * 或触发瞬间 file 尚未就位的遗漏——否则重启后文件会以 Markdown 打开，且布局
+	 * （仅在导图视图加载时按路径读取）不会被应用。
+	 */
+	private restoreOpenAsPreferences(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+			const view = leaf.view;
+			if (!(view instanceof MarkdownView)) {
+				continue;
+			}
+			const file = view.file;
+			if (!file || !isMindMapMarkdownFile(file)) {
+				continue;
+			}
+			if (this.viewState.getOpenAs(file.path) !== 'mindmap') {
+				continue;
+			}
+			void openAsMindMap(leaf, file);
+		}
 	}
 
 	onunload(): void {
