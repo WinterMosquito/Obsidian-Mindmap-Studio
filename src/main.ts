@@ -255,8 +255,9 @@ export default class TheMindMapPlugin extends Plugin {
 	 * （仅在导图视图加载时按路径读取）不会被应用。
 	 */
 	private restoreOpenAsPreferences(): void {
-		let switched = 0;
-		for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+		const markdownLeaves = this.app.workspace.getLeavesOfType('markdown');
+		let matched = 0;
+		for (const leaf of markdownLeaves) {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView)) {
 				continue;
@@ -271,11 +272,12 @@ export default class TheMindMapPlugin extends Plugin {
 			void openAsMindMap(leaf, file).catch((error) =>
 				console.error('自动切换思维导图视图失败:', file.path, error),
 			);
-			switched++;
+			matched++;
 		}
-		if (switched > 0) {
-			console.debug(`已恢复 ${switched} 个「以思维导图打开」的视图`);
-		}
+		// 诊断：记录每次扫描的结果，便于定位恢复时序问题（启动期一次性，可后期移除）
+		console.warn(
+			`[MindMap Studio] restoreOpenAsPreferences: markdownViews=${markdownLeaves.length}, matched=${matched}`,
+		);
 	}
 
 	onunload(): void {
