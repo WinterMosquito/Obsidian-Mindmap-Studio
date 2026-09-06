@@ -50,12 +50,13 @@ npm run build
 
 ```
 src/
-  main.ts           # 插件入口：生命周期、视图注册、command/file-menu/hover 源、文件事件同步
-  domain/           # 纯领域逻辑（无 Obsidian/引擎依赖）
+  main.ts           # 插件入口：生命周期、视图注册、command/file-menu/hover 源、
+                    #   文件事件同步、状态栏服务装配、视图切换后状态栏跟随
+  domain/           # 纯领域逻辑（零依赖：lint no-restricted-imports 强制禁 obsidian/上层/vendor）
     wikilink.ts     #   双链解析/构造唯一权威（parse/format/display）
     url.ts          #   URL/地址形态谓词唯一权威（isHttpUrl/isExternalImageRef/isSchemeUrl 等）
     tree.ts         #   walkTree 先序遍历（显式栈防溢出，visit 返回 false 短路）
-    md-meta.ts      #   MdNodeMeta：节点 data 上 md* 元数据的类型契约
+    md-meta.ts      #   MdNodeMeta：节点 data 上 md* 元数据的类型契约（纯契约，无引擎类型）
   services/
     document-service.ts # md 文档读取解析 + 保存管线（防抖/串行排空/卸载快照兜底，onSaveError 上报）
     engine-controller.ts# 引擎实例生命周期 + 防腐收口（renderer 内部不外泄）
@@ -69,15 +70,21 @@ src/
   open-as-restore.ts# 「以思维导图打开」偏好恢复（active-leaf-change/file-open/启动多档延时）
   system-open.ts    # 系统默认应用打开库内文件（桌面端 shell.openPath）
   errors.ts         # errorMessage(error)：面向用户的错误消息格式化唯一实现
+  node-data.ts      # MdNodeData 黏合类型（引擎 MindMapNodeData + domain MdNodeMeta；
+                    #   放 src 根层保持 domain 零依赖）
+  status-bar.ts     # StatusBarService 契约 + 插件层实现（节点计数展示/清空，DOM 归插件层）
   md-outline.ts     # Markdown 大纲 → 导图树（frontmatter 跳过、标题/列表、行内 token；mdRaw 保真）
   md-serialize.ts   # 导图树 → Markdown（未编辑逐字回写/编辑合成；链接/图片新增检测）
   md-open.ts        # .mindmap.md 触发判定、视图切换、打开方式偏好钩子
   markdown.ts       # 新建文件默认内容/文件名、uid 修复（ensureUniqueUids）
   view-state.ts     # 按文件路径持久化布局/视口/openAs 到插件 data.json（ViewStateStore）
-  images-path.ts    # 图片地址解析、全库查找索引（FileLookupIndexService 单例）、尺寸校正
+  images-path.ts    # 图片地址→资源地址（经统一解析入口）、外部地址判断、尺寸校正
   images-save.ts    # 图片入库（走 concurrency 串行队列）、文件名清理
-  links-resolve.ts  # 库内文件解析（路径/拖拽落点）
-  links-tree.ts     # 树内引用更新（重命名/删除）
+  file-lookup.ts    # 全库文件查找索引原语（buildFileLookupIndex/FileLookupIndexService/
+                    #   lookupIndexedFile；多种地址形态→TFile 的 O(1) 缓存查询）
+  links-resolve.ts  # 统一解析入口 resolvePathToFile：按形态路由（远程拒绝/obsidian:///
+                    #   资源地址→索引/路径直查/file://→官方 getFirstLinkpathDest→索引兜底）
+  links-tree.ts     # 树内引用更新（重命名/清除共用同一遍历实现，mode 参数区分）
   modal-*.ts        # 链接/图片/命名弹窗（官方 AbstractInputSuggest 联想）
   mindmap.ts        # 引擎封装（创建/销毁/节点工具）+ 防腐收口（缩放/getRenderRoot/setNodeText/
                     #   forceRemoveNodeData/getNodeGroupEl/runWithExportScale/countTreeNodes）
@@ -119,6 +126,8 @@ npm test        # vitest run（CI 在 build 后、lint 前执行）
 - 所有 DOM/事件/定时器监听使用 `this.register*` 助手注册，保证卸载清理；引擎实例事件经 `EventBinder` 记录统一销毁。
 - URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；防抖/节流/串行队列一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
 - 引擎内部形态（`node.group`、导出倍率 `opt` 等）的访问只出现在 `mindmap.ts` 防腐收口函数中，视图层经具名函数使用。
+- 库内文件解析只走 `links-resolve.resolvePathToFile` 统一入口（勿自建 getAbstractFileByPath/索引/线性扫描组合）；索引原语在 `file-lookup.ts`。
+- view-* 模块经 `ViewPluginContext` 访问插件能力（settings 活引用/viewState/statusBar 服务），不接触插件实例与状态栏 DOM；节点/悬停等视图态用模块级 WeakMap 内聚，不加到 `MindMapViewContext`。
 - 引擎 vendor 文件不可手工编辑；升级时用官方源码重新打包并替换。
 
 ## 发布流程

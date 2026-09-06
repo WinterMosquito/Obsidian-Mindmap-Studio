@@ -13,7 +13,7 @@
  */
 import { App, Plugin, TAbstractFile, TFile } from 'obsidian';
 import { VIEW_TYPE } from './constants';
-import { fileLookupIndex } from './images-path';
+import { fileLookupIndex } from './file-lookup';
 
 /** MindMapView 的最小结构接口：仅暴露本服务需要的成员 */
 interface MindMapViewLike {

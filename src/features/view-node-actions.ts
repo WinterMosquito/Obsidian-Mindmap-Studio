@@ -10,7 +10,8 @@ import {
 } from '../mindmap';
 import { createSetNodeImageOptions } from '../images-path';
 import { createAspectSetNodeImageOptions } from '../images-path';
-import { findAttachmentFile, saveImageToVault } from '../images-save';
+import { saveImageToVault } from '../images-save';
+import { resolvePathToFile } from '../links-resolve';
 import { openImageEditorModal } from '../modal-image';
 import { openLinkEditorModal } from '../modal-link';
 import { t } from '../i18n';
@@ -20,12 +21,15 @@ import {
 	isHyperlinkProtocolUrl,
 } from '../domain/url';
 import { linkDisplayText } from '../domain/wikilink';
-import type { MdNodeData } from '../domain/md-meta';
+import type { MdNodeData } from '../node-data';
 import type {
 	MindMapNode,
 	MindMapNodeData,
 } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
+
+/** 视图剪贴板（WeakMap 按视图持有：视图关闭后可回收；状态不暴露到 context） */
+const clipboards = new WeakMap<MindMapViewContext, MindMapNodeData>();
 
 /** 给当前激活节点添加链接（无节点时提示） */
 export async function addLinkToActiveNode(view: MindMapViewContext): Promise<void> {
@@ -168,7 +172,7 @@ function normalizeImageReference(
 	}
 	if (isAppResourceUrl(url)) {
 		// 资源地址：反查库内路径（md 回写目标）
-		const file = findAttachmentFile(app, url);
+		const file = resolvePathToFile(url, app);
 		return { display: url, mdTarget: file?.path ?? null };
 	}
 	if (isExternalImageRef(url)) {
@@ -213,7 +217,7 @@ export function copyNode(view: MindMapViewContext, node: MindMapNode): void {
 	const data = node.getData
 		? (node.getData() as MindMapNodeData)
 		: node.nodeData.data;
-	view.clipboardNode = JSON.parse(JSON.stringify(data)) as MindMapNodeData;
+	clipboards.set(view, JSON.parse(JSON.stringify(data)) as MindMapNodeData);
 	new Notice(t(view.lang, 'common.nodeCopied'));
 }
 
@@ -222,13 +226,13 @@ export function pasteNodeAsChild(
 	view: MindMapViewContext,
 	node: MindMapNode | null,
 ): void {
-	if (!view.clipboardNode) {
+	const cached = clipboards.get(view);
+	if (!cached) {
 		new Notice(t(view.lang, 'common.clipboardEmpty'));
 		return;
 	}
 	// 复制的是节点数据；剥离 uid 与激活状态后作为新节点的初始数据
-	const { uid: _uid, isActive: _isActive, ...clipboardData } =
-		view.clipboardNode;
+	const { uid: _uid, isActive: _isActive, ...clipboardData } = cached;
 	// 通过 appointNodes 指定父节点（引擎的 ACTIVE_NODE 命令不存在，
 	// 且渲染为异步，不能依赖激活列表）。
 	// 未选中节点时挂到根节点下：引擎在 appointNodes 与激活列表均为空时

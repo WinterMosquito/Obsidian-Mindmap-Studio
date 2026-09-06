@@ -32,7 +32,7 @@ import {
 	isSystemMediaExtension,
 	VIEW_TYPE,
 } from '../constants';
-import type { MindMap, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 import { isHttpUrl } from '../domain/url';
 import { createDebouncer } from '../concurrency';
 import { errorMessage } from '../errors';
@@ -77,7 +77,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	layoutSelect: HTMLSelectElement | null = null;
 	isDark = false;
 	ready = false;
-	clipboardNode: MindMapNodeData | null = null;
 
 	/** md 文档读取/解析（渲染层数据面） */
 	private documents: DocumentService;
@@ -92,9 +91,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 跨文件（view-search）共享，故公开。
 	 */
 	viewEvents = new EventBinder();
-	/** 附件悬浮预览防抖（view-dnd.ts 读写） */
-	lastHoverPreviewEl: Element | null = null;
-	lastHoverPreviewAt = 0;
 	private boundHandleCssChange: (() => void) | null = null;
 	/**
 	 * 文件加载去重：onOpen 与 onLoadFile 都会为同一文件触发加载
@@ -562,17 +558,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 清理视图生命周期作用域的事件（搜索输入框 input/keydown 等）
 		this.viewEvents.destroy();
 		this.engine.destroyInstance();
-		if (this.plugin.statusBarEl) {
-			this.plugin.statusBarEl.setText('');
-			// 仍有其他打开的思维导图视图时，恢复其节点计数
-			//（状态栏为插件级共享元素，本视图关闭不应清空其他视图的计数）。
-			this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
-				const other = leaf.view;
-				if (other instanceof MindMapView && other !== this && other.mindMap) {
-					updateStatusBar(other);
-				}
-			});
-		}
+		// 清空状态栏后，若仍有其他打开的思维导图视图则恢复其计数
+		//（状态栏为插件级共享元素，本视图关闭不应清空其他视图的计数）。
+		this.plugin.statusBar.clear();
+		this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
+			const other = leaf.view;
+			if (other instanceof MindMapView && other !== this && other.mindMap) {
+				updateStatusBar(other);
+			}
+		});
 	}
 
 	onResize(): void {

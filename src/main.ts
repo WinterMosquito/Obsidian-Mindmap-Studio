@@ -30,12 +30,23 @@ import { t } from './i18n';
 import { VaultSyncService } from './vault-sync';
 import { ViewStateStore } from './view-state';
 import { PluginDataWriter } from './persistence';
+import { ElementStatusBarService } from './status-bar';
+import type { StatusBarService } from './status-bar';
+import { updateStatusBar } from './features/view-status';
 import { injectIntoFileCreator } from './features/file-creator';
 import { OpenAsPreferenceRestorer } from './open-as-restore';
 
 export default class TheMindMapPlugin extends Plugin {
 	settings!: TheMindMapSettings;
 	statusBarEl: HTMLElement | null = null;
+	/**
+	 * 状态栏服务（节点计数展示/清空）：DOM 与 i18n 格式化归插件层，
+	 * 视图侧只广播计数；元素/语言经惰性取值器获取，onunload 后静默。
+	 */
+	readonly statusBar: StatusBarService = new ElementStatusBarService(
+		() => this.statusBarEl,
+		() => this.settings.language,
+	);
 	/**
 	 * data.json 写盘器（串行队列 + 写前重读合并 + 内部吞错）。
 	 * 先于 viewState 声明：字段按声明顺序初始化，viewState 的持久化回调依赖它。
@@ -70,6 +81,19 @@ export default class TheMindMapPlugin extends Plugin {
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.setText(t(this.settings.language, 'common.mindMap'));
+
+		// 视图切换后状态栏跟随激活视图：导图视图刷新计数，其余清空
+		// （此前切到非导图视图后残留上一个导图的节点计数）
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', () => {
+				const view = this.app.workspace.getActiveViewOfType(MindMapView);
+				if (view) {
+					updateStatusBar(view);
+				} else {
+					this.statusBar.clear();
+				}
+			}),
+		);
 
 		// 文件右键：.mindmap.md 以思维导图打开；文件夹右键：新建思维导图
 		this.registerEvent(

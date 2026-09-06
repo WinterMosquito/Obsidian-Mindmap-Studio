@@ -9,20 +9,26 @@
  * - MindMapView 结构化实现（implements），无运行时改动。
  */
 import type { App, TFile } from 'obsidian';
-import type { MindMap, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 import type { EventBinder } from '../event-binder';
 import type { Language } from '../i18n';
+import type { StatusBarService } from '../status-bar';
+import type { TheMindMapSettings } from '../settings';
+import type { ViewStateStore } from '../view-state';
 
-/** view-* 模块所需的插件能力窄化视图（结构化匹配，不依赖 main.ts 插件类） */
+/**
+ * view-* 模块所需的插件能力窄化视图（结构化匹配，不依赖 main.ts 插件类）。
+ *
+ * settings 为活引用：插件 loadSettings 时整体替换对象，经插件实例每次
+ * 读取的都是当前设置（设置面板保存后立即生效，无需重新装配）。
+ */
 export interface ViewPluginContext {
-	/** 状态栏元素（插件未启用状态栏时为 null） */
-	statusBarEl: HTMLElement | null;
-	settings: {
-		/** 导出画布缩放倍数 */
-		exportScale: number;
-		/** 新文件默认布局 */
-		defaultLayout: string;
-	};
+	/** 插件设置（活引用，完整设置面） */
+	readonly settings: TheMindMapSettings;
+	/** 视图状态存储（布局/视口/打开偏好，按文件路径） */
+	readonly viewState: ViewStateStore;
+	/** 状态栏服务（节点计数展示/清空；DOM 由插件层持有） */
+	readonly statusBar: StatusBarService;
 }
 
 export interface MindMapViewContext {
@@ -38,13 +44,6 @@ export interface MindMapViewContext {
 
 	// ---- 语言 ----
 	readonly lang: Language;
-
-	// ---- 视图状态（view-* 模块可读写）----
-	/** 复制/剪切缓存的节点数据（粘贴用） */
-	clipboardNode: MindMapNodeData | null;
-	/** 悬停预览去重（view-wikilink 写） */
-	lastHoverPreviewEl: Element | null;
-	lastHoverPreviewAt: number;
 
 	// ---- UI 元素 ----
 	/** 引擎画布容器（引擎重建时替换） */

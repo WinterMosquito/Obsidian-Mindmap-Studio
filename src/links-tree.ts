@@ -1,19 +1,68 @@
 /**
  * 思维导图树引用更新：文件重命名/删除后，同步树内图片与 [[链接]] 引用。
  * 从 links.ts 拆出。
+ *
+ * 重命名与清除共享同一遍历实现，仅待匹配形态与替换值不同：
+ * - rename：引用改指向新位置（移入回收站场景退化为清除）；
+ * - clear：引用一律清空。
  */
 import { App, TFile } from 'obsidian';
-import { fileLookupIndex } from './images-path';
+import { fileLookupIndex } from './file-lookup';
 import { walkTree } from './domain/tree';
 import { formatWikilink, parseWikilink } from './domain/wikilink';
+import type { WikilinkParts } from './domain/wikilink';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 /** Obsidian 库内回收站目录（vault 根下的 .trash） */
 const TRASH_DIR = '.trash';
 
+/** 引用更新模式：rename = 改指向新位置；clear = 清除引用 */
+type ReferenceUpdateMode = 'rename' | 'clear';
+
+/**
+ * 待匹配的旧引用形态集合：资源地址与 [[链接]] 两种载体各一组。
+ */
+interface ReferenceTargets {
+	/** 资源地址的路径形态：相等或后缀匹配即命中 */
+	readonly urlPaths: readonly string[];
+	/** 资源地址的文件名形态：地址最后一段精确匹配（含 URL 编码形态） */
+	readonly urlNames: readonly string[];
+	/** [[链接]] target 的合法形态（兼容 [[note]] 与 [[folder/note]]） */
+	readonly linkTargets: readonly string[];
+}
+
+/** 去除 Markdown 笔记扩展名 */
+function stripMd(path: string): string {
+	return path.replace(/\.md$/, '');
+}
+
+/** 文件是否位于库内回收站 */
+function isTrashedPath(path: string): boolean {
+	return path === TRASH_DIR || path.startsWith(`${TRASH_DIR}/`);
+}
+
+/** 重命名场景：以旧路径/旧名派生待匹配形态（含当前名兜底历史数据） */
+function renameTargets(oldPath: string, file: TFile): ReferenceTargets {
+	const oldLastSegment = oldPath.split('/').pop() ?? '';
+	return {
+		urlPaths: [oldPath, stripMd(oldPath)],
+		urlNames: [file.name, oldLastSegment.replace(/\.[^.]+$/, '')],
+		linkTargets: [stripMd(oldLastSegment), oldPath, stripMd(oldPath)],
+	};
+}
+
+/** 删除场景：以文件当前路径/名派生待匹配形态 */
+function deleteTargets(file: TFile): ReferenceTargets {
+	return {
+		urlPaths: [file.path, stripMd(file.path)],
+		urlNames: [file.name],
+		linkTargets: [file.basename, file.path, stripMd(file.path)],
+	};
+}
+
 /**
  * 判断导图树是否含任何图片、附件或超链接节点。
- * 文件重命名/删除的引用更新前先短路：纯文本导图无需建索引、无需遍历。
+ * 引用更新前先短路：纯文本导图无需建索引、无需遍历整树。
  */
 function treeHasImageOrAttachmentOrLink(tree: MindMapTreeNode): boolean {
 	let found = false;
@@ -50,44 +99,15 @@ function urlComparisonForms(url: string): string[] {
 }
 
 /**
- * 判断节点存储的地址是否指向指定文件（文件删除/回收场景）。
- * 支持库内路径、资源地址（app://）、裸文件名等历史形态；
+ * 判断节点存储的地址是否指向目标文件：
  * 路径按相等/后缀匹配，文件名按地址最后一段精确匹配
  * （避免 `a.png` 这类短名误命中 `ba.png` 的后缀）。
  */
-function urlRefersToFile(url: string, file: TFile): boolean {
-	const paths = [file.path, file.path.replace(/\.md$/, '')];
-	for (const form of urlComparisonForms(url)) {
-		for (const path of paths) {
-			if (form === path || form.endsWith(path)) {
-				return true;
-			}
-		}
-		const lastSegment = form.split('/').pop() ?? '';
-		if (
-			lastSegment === file.name ||
-			lastSegment === encodeURIComponent(file.name)
-		) {
-			return true;
-		}
-	}
-	return false;
-}
-
-/**
- * 判断节点存储的地址是否指向旧路径/旧文件名（文件重命名/移入回收站场景）。
- * 与 urlRefersToFile 相同的匹配策略，但以旧路径与旧文件名为准。
- */
-function urlRefersToOldFile(
+function urlMatchesTarget(
 	url: string,
-	oldPath: string,
-	file: TFile,
+	paths: readonly string[],
+	names: readonly string[],
 ): boolean {
-	const oldBasename = (oldPath.split('/').pop() ?? '').replace(
-		/\.[^.]+$/,
-		'',
-	);
-	const paths = [oldPath, oldPath.replace(/\.md$/, '')];
 	for (const form of urlComparisonForms(url)) {
 		for (const path of paths) {
 			if (form === path || form.endsWith(path)) {
@@ -95,7 +115,7 @@ function urlRefersToOldFile(
 			}
 		}
 		const lastSegment = form.split('/').pop() ?? '';
-		for (const name of [file.name, oldBasename]) {
+		for (const name of names) {
 			if (
 				lastSegment === name ||
 				lastSegment === encodeURIComponent(name)
@@ -108,86 +128,18 @@ function urlRefersToOldFile(
 }
 
 /**
- * 文件重命名后，更新思维导图树中对旧文件的引用（图片、附件与 [[链接]]）。
- * 返回是否有变更。
- *
- * 特殊场景：文件被移入 Obsidian 库内回收站（.trash/）——用户视角是"删除"，
- * 此时应清除树内对旧路径的引用，而不是把引用改指向回收站位置
- * （否则节点会继续显示"已删除"的附件/图片，直到重新打开才更新）。
+ * 重命名后的 [[链接]] 改写：仅替换链接目标，保留 #区块 / |别名 等尾巴；
+ * 保留路径前缀（[[folder/新名]]），无前缀时用裸 basename。
  */
-export function updateReferencesOnRename(
-	tree: MindMapTreeNode,
-	file: TFile,
-	oldPath: string,
-	app: App,
-): boolean {
-	// 短路：纯文本导图（无图片/附件/链接）无需建索引、无需遍历整树
-	if (!treeHasImageOrAttachmentOrLink(tree)) {
-		return false;
-	}
-	// 性能：复用全库共享缓存索引（文件重命名事件高频触发，避免每次全库重建）
-	const resourceIndex = fileLookupIndex.get(app);
-	const trashed =
-		file.path === TRASH_DIR || file.path.startsWith(`${TRASH_DIR}/`);
-	let changed = false;
-	walkTree(tree, (node) => {
-		if (node.data?.image) {
-			const imagePath = resolveVaultPathForCompare(
-				node.data.image,
-				resourceIndex,
-			);
-			if (urlRefersToOldFile(imagePath, oldPath, file)) {
-				node.data.image = trashed ? '' : app.vault.getResourcePath(file);
-				changed = true;
-			}
-		}
-		if (node.data?.attachmentUrl) {
-			const attachmentPath = resolveVaultPathForCompare(
-				node.data.attachmentUrl,
-				resourceIndex,
-			);
-			if (urlRefersToOldFile(attachmentPath, oldPath, file)) {
-				node.data.attachmentUrl = trashed
-					? ''
-					: app.vault.getResourcePath(file);
-				node.data.attachmentName = trashed ? '' : file.name;
-				changed = true;
-			}
-		}
-		if (node.data?.hyperlink) {
-			const parts = parseWikilink(node.data.hyperlink);
-			const oldBasename =
-				oldPath.split('/').pop()?.replace(/\.md$/, '') ?? '';
-			const oldPathNoExt = oldPath.replace(/\.md$/, '');
-			// 兼容 [[note]] 与全路径 [[folder/note]]（后者无 .md 扩展名）
-			if (
-				parts &&
-				(parts.target === oldBasename ||
-					parts.target === oldPath ||
-					parts.target === oldPathNoExt)
-			) {
-				if (trashed) {
-					// 移入回收站等同删除：清除链接
-					node.data.hyperlink = '';
-				} else {
-					// 仅替换链接目标，保留 #区块 / |别名 等尾巴
-					const tail = `${parts.block ? `#${parts.block}` : ''}${
-						parts.alias ? `|${parts.alias}` : ''
-					}`;
-					// 保留路径前缀：[[folder/新名]]；无前缀时用裸 basename
-					const prefix = parts.target.includes('/')
-						? parts.target.split('/').slice(0, -1).join('/')
-						: '';
-					const newTarget = prefix
-						? `${prefix}/${file.basename}`
-						: file.basename;
-					node.data.hyperlink = formatWikilink(`${newTarget}${tail}`);
-				}
-				changed = true;
-			}
-		}
-	});
-	return changed;
+function renamedWikilink(parts: WikilinkParts, file: TFile): string {
+	const tail = `${parts.block ? `#${parts.block}` : ''}${
+		parts.alias ? `|${parts.alias}` : ''
+	}`;
+	const prefix = parts.target.includes('/')
+		? parts.target.split('/').slice(0, -1).join('/')
+		: '';
+	const newTarget = prefix ? `${prefix}/${file.basename}` : file.basename;
+	return formatWikilink(`${newTarget}${tail}`);
 }
 
 /** 通过索引把资源地址还原为库内路径（O(1)） */
@@ -200,20 +152,35 @@ function resolveVaultPathForCompare(
 }
 
 /**
- * 文件删除后，清除思维导图树中对它的引用（图片、附件与 [[链接]]）。
+ * 引用更新的统一实现（rename/clear 共享同一遍历）。
  * 返回是否有变更。
  */
-export function removeReferencesOnDelete(
+function updateReferences(
 	tree: MindMapTreeNode,
+	mode: ReferenceUpdateMode,
 	file: TFile,
 	app: App,
+	oldPath?: string,
 ): boolean {
 	// 短路：纯文本导图（无图片/附件/链接）无需建索引、无需遍历整树
 	if (!treeHasImageOrAttachmentOrLink(tree)) {
 		return false;
 	}
-	// 性能：复用全库共享缓存索引（文件删除事件高频触发，避免每次全库重建）
+	// 性能：复用全库共享缓存索引（文件重命名/删除事件高频触发，避免每次全库重建）
 	const resourceIndex = fileLookupIndex.get(app);
+	// 特殊场景：文件被移入 Obsidian 库内回收站（.trash/）——用户视角是"删除"，
+	// 重命名模式下退化为清除引用，而不是把引用改指向回收站位置
+	// （否则节点会继续显示"已删除"的附件/图片，直到重新打开才更新）。
+	const trashed = mode === 'rename' && isTrashedPath(file.path);
+	const targets =
+		mode === 'rename' && oldPath !== undefined
+			? renameTargets(oldPath, file)
+			: deleteTargets(file);
+	// clear 与回收站场景的替换值一律为空串（资源地址同理，不调用 getResourcePath）
+	let replacementUrl = '';
+	if (mode === 'rename' && !trashed) {
+		replacementUrl = app.vault.getResourcePath(file);
+	}
 	let changed = false;
 	walkTree(tree, (node) => {
 		if (node.data?.image) {
@@ -221,8 +188,8 @@ export function removeReferencesOnDelete(
 				node.data.image,
 				resourceIndex,
 			);
-			if (urlRefersToFile(imagePath, file)) {
-				node.data.image = '';
+			if (urlMatchesTarget(imagePath, targets.urlPaths, targets.urlNames)) {
+				node.data.image = replacementUrl;
 				changed = true;
 			}
 		}
@@ -231,25 +198,48 @@ export function removeReferencesOnDelete(
 				node.data.attachmentUrl,
 				resourceIndex,
 			);
-			if (urlRefersToFile(attachmentPath, file)) {
-				node.data.attachmentUrl = '';
-				node.data.attachmentName = '';
+			if (urlMatchesTarget(attachmentPath, targets.urlPaths, targets.urlNames)) {
+				node.data.attachmentUrl = replacementUrl;
+				node.data.attachmentName = replacementUrl ? file.name : '';
 				changed = true;
 			}
 		}
 		if (node.data?.hyperlink) {
 			const parts = parseWikilink(node.data.hyperlink);
 			// 兼容 [[note]] 与全路径 [[folder/note]]（后者无 .md 扩展名）
-			if (
-				parts &&
-				(parts.target === file.basename ||
-					parts.target === file.path ||
-					parts.target === file.path.replace(/\.md$/, ''))
-			) {
-				node.data.hyperlink = '';
+			if (parts && targets.linkTargets.includes(parts.target)) {
+				node.data.hyperlink =
+					mode === 'rename' && !trashed
+						? renamedWikilink(parts, file)
+						: '';
 				changed = true;
 			}
 		}
 	});
 	return changed;
+}
+
+/**
+ * 文件重命名后，更新思维导图树中对旧文件的引用（图片、附件与 [[链接]]）。
+ * 返回是否有变更。
+ */
+export function updateReferencesOnRename(
+	tree: MindMapTreeNode,
+	file: TFile,
+	oldPath: string,
+	app: App,
+): boolean {
+	return updateReferences(tree, 'rename', file, app, oldPath);
+}
+
+/**
+ * 文件删除后，清除思维导图树中对它的引用（图片、附件与 [[链接]]）。
+ * 返回是否有变更。
+ */
+export function removeReferencesOnDelete(
+	tree: MindMapTreeNode,
+	file: TFile,
+	app: App,
+): boolean {
+	return updateReferences(tree, 'clear', file, app);
 }

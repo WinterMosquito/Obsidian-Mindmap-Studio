@@ -9,7 +9,6 @@
  * 元数据仅为本插件序列化层服务，引擎不识别（渲染无语义），
  * 不写入 .mindmap.md 文件正文。
  */
-import type { MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
 
 /** 行类型（data.mdType）：md 三种行形态 */
 export type MdLineType = 'heading' | 'list' | 'plain';
@@ -35,6 +34,3 @@ export interface MdNodeMeta {
 	/** 图片的原始库内引用（![[路径]] 的路径）：换图检测与回写目标 */
 	mdImageTarget?: string;
 }
-
-/** 引擎节点 data（渲染字段）+ 渲染层 md 元数据的合并视图 */
-export type MdNodeData = MindMapNodeData & MdNodeMeta;

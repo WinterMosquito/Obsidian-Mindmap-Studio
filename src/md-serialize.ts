@@ -13,10 +13,10 @@
 
 import { App } from 'obsidian';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
-import { findAttachmentFile } from './images-save';
+import { resolvePathToFile } from './links-resolve';
 import { formatWikilink, linkDisplayText, wikilinkLinkpath } from './domain/wikilink';
 import { isSchemeUrl } from './domain/url';
-import type { MdNodeData } from './domain/md-meta';
+import type { MdNodeData } from './node-data';
 
 /** 链接目标是否需要尖括号包裹（含空格/括号/<>/\，否则会破坏 `(…)` 闭合） */
 function needsDestBraces(dest: string): boolean {
@@ -66,7 +66,7 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 		return `![[${target}]]`;
 	}
 	if (app) {
-		const file = findAttachmentFile(app, image);
+		const file = resolvePathToFile(image, app);
 		if (file) {
 			return `![[${file.path}]]`;
 		}
@@ -84,7 +84,7 @@ function imageVaultPath(data: MdNodeData, app: App | null): string | null {
 		return null;
 	}
 	if (app) {
-		return findAttachmentFile(app, image)?.path ?? null;
+		return resolvePathToFile(image, app)?.path ?? null;
 	}
 	return image;
 }

@@ -16,6 +16,14 @@ import type { MindMapViewContext } from './view-context';
 /** 悬停防抖（与附件预览共用状态字段，互斥触发） */
 const HOVER_DEBOUNCE_MS = 400;
 
+/** 悬停预览去重状态（WeakMap 按视图持有：上次预览的目标元素与时间） */
+interface HoverPreviewState {
+	el: Element | null;
+	at: number;
+}
+
+const hoverPreviewStates = new WeakMap<MindMapViewContext, HoverPreviewState>();
+
 /** 注册 wikilink 的悬停预览与 Ctrl/Cmd+点击（initMindMap 内调用一次） */
 export function registerWikilinkInteractions(view: MindMapViewContext): void {
 	if (!view.mindMap) {
@@ -61,14 +69,16 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 				return;
 			}
 			const now = Date.now();
+			const state = hoverPreviewStates.get(view) ?? { el: null, at: 0 };
+			hoverPreviewStates.set(view, state);
 			if (
-				targetEl === view.lastHoverPreviewEl &&
-				now - view.lastHoverPreviewAt < HOVER_DEBOUNCE_MS
+				targetEl === state.el &&
+				now - state.at < HOVER_DEBOUNCE_MS
 			) {
 				return;
 			}
-			view.lastHoverPreviewEl = targetEl;
-			view.lastHoverPreviewAt = now;
+			state.el = targetEl;
+			state.at = now;
 			view.app.workspace.trigger('hover-link', {
 				event,
 				source: VIEW_TYPE,

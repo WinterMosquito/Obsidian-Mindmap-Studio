@@ -1,15 +1,18 @@
 /**
- * 图片地址处理：外部地址判断、路径解析/序列化、查找索引、树遍历、
+ * 图片地址处理：外部地址判断、路径解析/序列化、树遍历、
  * 节点图片选项与统一尺寸。从 images.ts 拆出。
+ *
+ * 库内文件解析统一走 links-resolve.resolvePathToFile（官方轨 + 索引兜底）；
+ * 全库查找索引原语在 file-lookup.ts（本模块不再持有）。
  */
-import { App, TFile, normalizePath } from 'obsidian';
+import { App } from 'obsidian';
 import { IMAGE_HEIGHT, IMAGE_WIDTH } from './constants';
 import {
 	isAppResourceUrl,
 	isExternalImageRef,
-	isRemoteOrDataUrl,
 } from './domain/url';
 import { walkTree } from './domain/tree';
+import { resolvePathToFile } from './links-resolve';
 import type {
 	MindMapTreeNode,
 	SetNodeImageOptions,
@@ -22,178 +25,36 @@ export function isExternalUrl(url: string): boolean {
 
 /**
  * 将节点数据中的图片地址解析为 Obsidian 可访问的资源地址。
- * 库内相对路径会转换为 vault 资源地址。
+ * 库内相对路径（含资源地址以外的历史形态）经统一解析入口转换为
+ * vault 资源地址；外部地址原样返回。
  */
-export function resolveImagePath(
-	url: string,
-	app: App,
-	allFiles?: TFile[],
-): string {
+export function resolveImagePath(url: string, app: App): string {
 	if (!url || isExternalUrl(url)) {
 		return url;
 	}
-	try {
-		const normalized = normalizePath(url);
-		const file = app.vault.getAbstractFileByPath(normalized);
-		if (file instanceof TFile) {
-			return app.vault.getResourcePath(file);
-		}
-		const name = normalized.split('/').pop() || normalized;
-		for (const candidate of allFiles ?? app.vault.getFiles()) {
-			if (candidate.name === name) {
-				return app.vault.getResourcePath(candidate);
-			}
-		}
-	} catch (error) {
-		console.error('解析图片路径失败:', url, error);
-	}
-	return url;
+	const file = resolvePathToFile(url, app);
+	return file ? app.vault.getResourcePath(file) : url;
 }
 
 /** 递归解析树中所有节点的图片/附件地址（加载文件时调用）：库内路径 → 资源地址 */
 export function walkResolveImagePaths(tree: MindMapTreeNode, app: App): void {
-	// 性能：一次获取库文件列表，避免逐节点全库扫描
-	const allFiles = app.vault.getFiles();
 	walkTree(tree, (node) => {
 		if (node.data?.image) {
-			node.data.image = resolveImagePath(node.data.image, app, allFiles);
+			node.data.image = resolveImagePath(node.data.image, app);
 		}
 		if (node.data?.attachmentUrl) {
 			node.data.attachmentUrl = resolveImagePath(
 				node.data.attachmentUrl,
 				app,
-				allFiles,
 			);
 		}
 	});
 }
 
-/**
- * 构建「多种地址形态 → TFile」的查找索引：
- * - 库内路径（folder/name.ext）
- * - 资源地址（app://...，getResourcePath 输出）
- * - 文件名与 URL 编码文件名
- * - 路径后缀（folder/name.ext，兼容绝对路径/历史数据形态）
- * 一次构建后供整树遍历 / 批量查找 O(1) 复用。
- */
-export function buildFileLookupIndex(
-	app: App,
-	allFiles: TFile[],
-): Map<string, TFile> {
-	const index = new Map<string, TFile>();
-	for (const file of allFiles) {
-		index.set(file.path, file);
-		const name = file.name;
-		index.set(name, file);
-		try {
-			index.set(encodeURIComponent(name), file);
-		} catch {
-			// 个别文件名编码失败，跳过该形态
-		}
-		const segments = file.path.split('/');
-		for (let i = 2; i <= segments.length; i++) {
-			index.set(segments.slice(-i).join('/'), file);
-		}
-		try {
-			index.set(app.vault.getResourcePath(file), file);
-		} catch {
-			// 个别文件资源地址计算失败，跳过该形态
-		}
-	}
-	return index;
-}
-
 // ---------------------------------------------------------------------------
-// 缓存的文件查找索引（FileLookupIndexService）
-//
-// 全库构建一次索引需要对每个文件调用 getResourcePath（大库下可达数百毫秒）。
-// 而多个高频路径都会触发重建：自动保存（md 图片路径回写）、
-// 文件重命名/删除（引用更新）、附件点击/悬浮（findAttachmentFile）。
-// 文件列表在 create/rename/delete 事件之外不会变化，因此：
-// - 缓存索引按「文件数量」快速比对复用（数量未变且无事件失效 → 直接复用）；
-// - vault-sync 在 create/rename/delete 事件里调用 fileLookupIndex.invalidate()
-//   显式失效，保证缓存与库一致（修改内容不影响索引，无需失效）。
-// 失效后下一次查询（含失效事件的同批处理）会重建，时序上无竞态。
+// 缓存的文件查找索引已迁至 file-lookup.ts（FileLookupIndexService）：
+// 索引是图片/附件/链接解析共用的通用原语，不属图片模块。
 // ---------------------------------------------------------------------------
-
-/**
- * 全库文件查找索引服务：「多种地址形态 → TFile」的 O(1) 查找缓存。
- * 缓存按库文件数量判效，`invalidate` 供库事件（create/rename/delete）主动失效。
- */
-export class FileLookupIndexService {
-	private cache: Map<string, TFile> | null = null;
-	private cacheCount = 0;
-
-	/** 获取（可能缓存的）全库文件查找索引；文件数量变化时自动重建 */
-	get(app: App): Map<string, TFile> {
-		const files = app.vault.getFiles();
-		if (this.cache && this.cacheCount === files.length) {
-			return this.cache;
-		}
-		this.cache = buildFileLookupIndex(app, files);
-		this.cacheCount = files.length;
-		return this.cache;
-	}
-
-	/** 库文件列表变化（create/rename/delete）后使缓存失效 */
-	invalidate(): void {
-		this.cache = null;
-		this.cacheCount = 0;
-	}
-}
-
-/** 插件级单例：全库唯一 vault，缓存全局共享（vault-sync 在库事件时失效） */
-export const fileLookupIndex = new FileLookupIndexService();
-
-/**
- * 通过索引把任意地址形态解析为库内 TFile（O(1)，索引缺失键时按后缀回退）。
- * 外部地址（http/data/blob）返回 null。
- */
-export function lookupIndexedFile(
-	url: string,
-	app: App,
-	index: Map<string, TFile>,
-): TFile | null {
-	if (!url || isRemoteOrDataUrl(url)) {
-		return null;
-	}
-	try {
-		const byPath = app.vault.getAbstractFileByPath(normalizePath(url));
-		if (byPath instanceof TFile) {
-			return byPath;
-		}
-		for (const candidate of uniqueCandidates(url)) {
-			const hit = index.get(candidate);
-			if (hit) {
-				return hit;
-			}
-			const segments = candidate.replace(/\\/g, '/').split('/');
-			for (let i = 1; i <= segments.length; i++) {
-				const suffixHit = index.get(segments.slice(-i).join('/'));
-				if (suffixHit) {
-					return suffixHit;
-				}
-			}
-		}
-	} catch (error) {
-		console.error('解析附件文件失败:', url, error);
-	}
-	return null;
-}
-
-/** 原样地址 + URL 解码地址（去重）作为索引查询候选 */
-function uniqueCandidates(url: string): string[] {
-	const candidates = [url];
-	try {
-		const decoded = decodeURIComponent(url);
-		if (decoded !== url) {
-			candidates.push(decoded);
-		}
-	} catch {
-		// 含未编码 % 等字符时仅用原样地址
-	}
-	return candidates;
-}
 
 /** 生成统一的 SET_NODE_IMAGE 参数 */
 export function createSetNodeImageOptions(url: string | null): SetNodeImageOptions {

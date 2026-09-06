@@ -41,6 +41,28 @@ export default defineConfig(
 		},
 	},
 	{
+		files: ['src/domain/**/*.ts'],
+		rules: {
+			// domain 是纯领域逻辑层：零依赖（标准库除外），可在纯 Node 环境单测。
+			// 引擎类型黏合（MdNodeData）放 src/node-data.ts，不放 domain。
+			'no-restricted-imports': [
+				'error',
+				{
+					patterns: [
+						{
+							group: ['..', '../*', '../**'],
+							message: 'domain 不得反向依赖上层模块或 vendor（黏合类型放 src 根层）',
+						},
+						{
+							group: ['obsidian', 'obsidian/*'],
+							message: 'domain 不得依赖 Obsidian API',
+						},
+					],
+				},
+			],
+		},
+	},
+	{
 		files: ['src/system-open.ts'],
 		languageOptions: {
 			globals: {

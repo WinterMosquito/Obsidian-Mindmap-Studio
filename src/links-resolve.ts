@@ -1,13 +1,23 @@
 /**
  * 库内文件解析：把任意输入（路径 / obsidian:// / file:// / 文件名 /
- * 拖拽数据）解析为库内 TFile。从 links.ts 拆出。
+ * 资源地址 / 拖拽数据）解析为库内 TFile。从 links.ts 拆出。
+ *
+ * 本模块是「任意地址形态 → TFile」的统一入口：此前 resolvePathToFile
+ * （官方解析轨）与 images-save.findAttachmentFile / images-path.lookupIndexedFile
+ * （索引轨）双轨并存、覆盖形态互有盲区；现按形态路由收敛到此——
+ * 远程/数据地址直接拒绝，obsidian:// 与资源地址（app://）按形态直达，
+ * 完整路径走 vault 直查，basename/链接文本交由官方 getFirstLinkpathDest
+ * （与 Obsidian 内部一致），最后以共享缓存索引兜底 URL 编码名/路径后缀等
+ * 历史形态。
  */
-import { App, TFile } from 'obsidian';
+import { App, TFile, normalizePath } from 'obsidian';
+import { isAppResourceUrl, isRemoteOrDataUrl } from './domain/url';
+import { fileLookupIndex, lookupIndexedFile } from './file-lookup';
 
 /**
  * 将任意字符串解析为库内 TFile：
- * 支持库内路径、obsidian:// 链接、file:// 绝对路径、文件名。
- * basename/链接文本形态交由官方 getFirstLinkpathDest 解析（与 Obsidian 内部一致）。
+ * 支持库内路径、obsidian:// 链接、资源地址（app://）、file:// 绝对路径、
+ * 文件名与 URL 编码/路径后缀等历史形态。
  */
 export function resolvePathToFile(
 	input: string,
@@ -17,6 +27,11 @@ export function resolvePathToFile(
 		return null;
 	}
 	const text = input.trim();
+
+	// 远程/数据地址（http/https/data/blob）不可能映射到库内文件
+	if (isRemoteOrDataUrl(text)) {
+		return null;
+	}
 
 	if (text.startsWith('obsidian://')) {
 		try {
@@ -40,7 +55,12 @@ export function resolvePathToFile(
 		return null;
 	}
 
-	let file = app.vault.getAbstractFileByPath(text);
+	// 资源地址（app://...）：经共享缓存索引解析（含编码/后缀形态回退）
+	if (isAppResourceUrl(text)) {
+		return lookupIndexedFile(text, app, fileLookupIndex.get(app));
+	}
+
+	let file = app.vault.getAbstractFileByPath(normalizePath(text));
 	if (file instanceof TFile) {
 		return file;
 	}
@@ -72,7 +92,13 @@ export function resolvePathToFile(
 
 	// 官方链接解析器（getFirstLinkpathDest）：basename/链接文本 → 文件，
 	// 行为与 Obsidian 内部 [[链接]] 解析一致（含大小写、扩展名与同名消歧规则）。
-	return app.metadataCache.getFirstLinkpathDest(text, '');
+	const official = app.metadataCache.getFirstLinkpathDest(text, '');
+	if (official) {
+		return official;
+	}
+
+	// 索引兜底：URL 编码文件名、路径后缀等历史/异常形态（O(1)）
+	return lookupIndexedFile(text, app, fileLookupIndex.get(app));
 }
 
 /**

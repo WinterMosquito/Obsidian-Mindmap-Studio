@@ -21,7 +21,7 @@
 
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 import { formatWikilink } from './domain/wikilink';
-import type { MdNodeData } from './domain/md-meta';
+import type { MdNodeData } from './node-data';
 
 export interface MdParseResult {
 	tree: MindMapTreeNode;

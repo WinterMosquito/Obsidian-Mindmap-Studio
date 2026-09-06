@@ -1,13 +1,11 @@
 /**
- * 图片保存与查找：图片文件入库（遵循附件存放位置规则）、
- * 文件名清理、图片地址解析回库内文件。从 images.ts 拆出。
+ * 图片保存：图片文件入库（遵循附件存放位置规则）、文件名清理。
+ * 从 images.ts 拆出；地址解析回库内文件统一走 links-resolve.resolvePathToFile。
  */
 import { App, Notice, TFile, normalizePath } from 'obsidian';
 import { isImageExtension } from './constants';
 import { createSerialQueue } from './concurrency';
 import { errorMessage } from './errors';
-import { fileLookupIndex, lookupIndexedFile } from './images-path';
-import { isRemoteOrDataUrl } from './domain/url';
 import { t, type Language } from './i18n';
 
 /**
@@ -35,19 +33,6 @@ export function sanitizeFileName(name: string): string {
 function truncateByCodePoint(text: string, max: number): string {
 	const chars = Array.from(text);
 	return chars.length <= max ? text : chars.slice(0, max).join('');
-}
-
-/**
- * 宽松兜底匹配：URL 解码后是否等于库内路径或以库内路径结尾。
- * 历史数据中可能保存了 file:// 绝对路径、URL 编码路径等形态。
- */
-function matchesDecodedPath(url: string, file: TFile): boolean {
-	try {
-		const decoded = decodeURIComponent(url);
-		return decoded === file.path || decoded.endsWith(`/${file.path}`);
-	} catch {
-		return false;
-	}
 }
 
 /**
@@ -164,47 +149,4 @@ async function saveImageToVaultInner({
 		new Notice(`${t(lang, 'attachment.saveFailed')}${errorMessage(error)}`);
 		return null;
 	}
-}
-
-/**
- * 将节点中的图片/附件地址解析回库内 TFile。
- * 支持库内路径与资源地址（app://...）；外部地址返回 null。
- * 性能：先走全库共享缓存索引 O(1) 查询（附件点击/悬浮高频路径），
- * 索引未命中（罕见形态）才回退线性扫描。
- * @param allFiles 可选：调用方缓存的库文件列表（避免重复 getFiles）
- */
-export function findAttachmentFile(
-	app: App,
-	url: string,
-	allFiles?: TFile[],
-): TFile | null {
-	if (!url || isRemoteOrDataUrl(url)) {
-		return null;
-	}
-	try {
-		// 库内路径（权威、始终最新）
-		const byPath = app.vault.getAbstractFileByPath(normalizePath(url));
-		if (byPath instanceof TFile) {
-			return byPath;
-		}
-		// 快速路径：共享缓存索引（资源地址/文件名/路径后缀等形态 O(1)）
-		const hit = lookupIndexedFile(url, app, fileLookupIndex.get(app));
-		if (hit) {
-			return hit;
-		}
-		// 兜底：线性扫描（兼容索引未覆盖的历史/异常形态）
-		for (const file of allFiles ?? app.vault.getFiles()) {
-			if (
-				app.vault.getResourcePath(file) === url ||
-				url.endsWith(encodeURIComponent(file.name)) ||
-				matchesDecodedPath(url, file) ||
-				url.split(/[\\/]/).pop() === file.name
-			) {
-				return file;
-			}
-		}
-	} catch (error) {
-		console.error('解析图片文件失败:', url, error);
-	}
-	return null;
 }
