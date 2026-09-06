@@ -169,7 +169,7 @@ export async function applyNodeImage(
 }
 
 /** 引用归一：显示地址 + md 回写目标 */
-export function normalizeImageReference(
+function normalizeImageReference(
 	url: string,
 	app: App,
 ): { display: string; mdTarget: string | null } {

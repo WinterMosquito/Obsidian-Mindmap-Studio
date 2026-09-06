@@ -38,7 +38,7 @@ export const THEME_OPTIONS: ThemeOption[] = [
 ];
 
 /** 支持的图片扩展名（拖拽插入） */
-export const IMAGE_EXTENSIONS = [
+const IMAGE_EXTENSIONS = [
 	'png',
 	'jpg',
 	'jpeg',
@@ -54,7 +54,7 @@ export const IMAGE_EXTENSIONS = [
  * 在导图中以 [[库内路径]] 链接形式引用（Obsidian 打开/系统应用）。
  * 图片不在此列——图片走 image 语义（![[...]] 渲染）。
  */
-export const LINK_ATTACHMENT_EXTENSIONS = [
+const LINK_ATTACHMENT_EXTENSIONS = [
 	// 音频
 	'mp3',
 	'wav',
@@ -126,7 +126,7 @@ export function isImageExtension(extension: string): boolean {
  * 音频/视频不在其中：Obsidian 桌面端没有音频/视频的标签页视图，
  * 打开后会交由系统默认应用并留下一个空白标签页（见 SYSTEM_MEDIA_EXTENSIONS）。
  */
-export const OBSIDIAN_RENDER_EXTENSIONS: ReadonlySet<string> = new Set([
+const OBSIDIAN_RENDER_EXTENSIONS: ReadonlySet<string> = new Set([
 	'md',
 	'canvas',
 	'pdf',
@@ -182,7 +182,7 @@ export const OBSIDIAN_RENDER_EXTENSIONS: ReadonlySet<string> = new Set([
  * 系统媒体（音频/视频）：Obsidian 无标签页视图，点击后应改由系统默认应用打开
  * （桌面端 shell.openPath），而不是在 Obsidian 中新建空白标签页。
  */
-export const SYSTEM_MEDIA_EXTENSIONS: ReadonlySet<string> = new Set([
+const SYSTEM_MEDIA_EXTENSIONS: ReadonlySet<string> = new Set([
 	// 音频
 	'mp3',
 	'wav',
@@ -225,29 +225,6 @@ export function isSystemMediaExtension(extension: string): boolean {
 export function generateUid(): string {
 	return `tmm-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 }
-
-export interface ColorPreset {
-	name: TranslationKey;
-	fillColor: string;
-	color: string;
-}
-
-/** 节点样式颜色预设 */
-export const STYLE_PRESETS: ColorPreset[] = [
-	{ name: 'color.default', fillColor: '', color: '' },
-	{ name: 'color.blue', fillColor: '#dbeafe', color: '#1e40af' },
-	{ name: 'color.green', fillColor: '#dcfce7', color: '#166534' },
-	{ name: 'color.yellow', fillColor: '#fef9c3', color: '#854d0e' },
-	{ name: 'color.red', fillColor: '#fee2e2', color: '#991b1b' },
-	{ name: 'color.purple', fillColor: '#f3e8ff', color: '#6b21a8' },
-	{ name: 'color.orange', fillColor: '#ffedd5', color: '#9a3412' },
-	{ name: 'color.pink', fillColor: '#fce7f3', color: '#9d174d' },
-	{ name: 'color.cyan', fillColor: '#cffafe', color: '#155e75' },
-	{ name: 'color.gray', fillColor: '#f3f4f6', color: '#374151' },
-];
-
-/** 节点样式字号选项 */
-export const FONT_SIZE_OPTIONS = [12, 13, 14, 16, 18, 20, 24];
 
 /**
  * 统一的节点图片显示尺寸。

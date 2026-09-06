@@ -152,7 +152,7 @@ export function getActiveNode(mindMap: MindMap | null): MindMapNode | null {
 }
 
 /** 递归统计节点数量 */
-export function countNodes(tree: MindMapTreeNode | null): number {
+function countNodes(tree: MindMapTreeNode | null): number {
 	if (!tree) {
 		return 0;
 	}
