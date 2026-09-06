@@ -256,7 +256,6 @@ export default class TheMindMapPlugin extends Plugin {
 	 */
 	private restoreOpenAsPreferences(): void {
 		const markdownLeaves = this.app.workspace.getLeavesOfType('markdown');
-		let matched = 0;
 		for (const leaf of markdownLeaves) {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView)) {
@@ -272,12 +271,7 @@ export default class TheMindMapPlugin extends Plugin {
 			void openAsMindMap(leaf, file).catch((error) =>
 				console.error('自动切换思维导图视图失败:', file.path, error),
 			);
-			matched++;
 		}
-		// 诊断：记录每次扫描的结果，便于定位恢复时序问题（启动期一次性，可后期移除）
-		console.warn(
-			`[MindMap Studio] restoreOpenAsPreferences: markdownViews=${markdownLeaves.length}, matched=${matched}`,
-		);
 	}
 
 	onunload(): void {
@@ -300,7 +294,10 @@ export default class TheMindMapPlugin extends Plugin {
 			data = {};
 		}
 		const raw = data as Record<string, unknown>;
-		this.viewState.hydrate(raw.viewState);
+		// hydrate 期望收到「整个 data.json 对象」（内部读取 data['viewState']），
+		// 而非视图状态对象本身；传错会导致 viewState 映射从未载入，
+		// 使 getOpenAs/getLayout 恒为 undefined —— 重启后不切导图视图、布局丢失。
+		this.viewState.hydrate(raw);
 		delete raw.viewState;
 		this.settings = sanitizeSettings(raw);
 	}

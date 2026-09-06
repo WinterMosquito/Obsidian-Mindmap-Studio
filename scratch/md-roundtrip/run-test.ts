@@ -14,6 +14,7 @@
 import { parseMdOutline } from '../../src/md-outline';
 import { serializeMdBody } from '../../src/md-serialize';
 import { ensureUniqueUids } from '../../src/markdown';
+import { ViewStateStore } from '../../src/view-state';
 
 type MNode = { data?: Record<string, unknown>; children?: MNode[] };
 
@@ -418,6 +419,38 @@ const roundTrip = (md: string): { mdRaw: string; md2: string } => {
 	};
 	walk(dup);
 	eq(seen.size, 3, '全部节点 uid 唯一');
+}
+
+// ---------------------------------------------------------------------------
+// 视图状态 hydration（回归：hydrate 期望「整个 data.json 对象」，而非 viewState 值）
+// ---------------------------------------------------------------------------
+{
+	const store = new ViewStateStore(() => {}, 999999);
+	// 正确用法：传整个对象（内部读取 data['viewState']）
+	store.hydrate({
+		viewState: {
+			'a/b.mindmap.md': {
+				openAs: 'mindmap',
+				layout: 'catalogOrganization',
+			},
+		},
+	});
+	eq(store.getOpenAs('a/b.mindmap.md'), 'mindmap', 'hydrate(整个对象)：读 openAs');
+	eq(
+		store.getLayout('a/b.mindmap.md'),
+		'catalogOrganization',
+		'hydrate(整个对象)：读 layout',
+	);
+	// 错误用法：直接传 viewState 值对象（loadSettings 曾误传）→ 不生效（锁定契约）
+	const wrong = new ViewStateStore(() => {}, 999999);
+	wrong.hydrate({
+		'a/b.mindmap.md': { openAs: 'mindmap', layout: 'catalogOrganization' },
+	} as never);
+	eq(
+		wrong.getOpenAs('a/b.mindmap.md'),
+		undefined,
+		'hydrate(viewState 值对象) 不生效——防止误用',
+	);
 }
 
 // ---------------------------------------------------------------------------
