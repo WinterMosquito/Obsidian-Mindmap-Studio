@@ -41,12 +41,45 @@ The plugin is a **rendering layer**, not a file-format converter. `.mindmap.md` 
 
 ## 📖 Usage
 
-- **Create**: command/ribbon `New mind map` creates a `思维导图YYYY-MM-DD.mindmap.md` and opens the mind-map view.
-- **Open**: use `Open as mind map` (command or file context menu); the file opens in the mind-map view. The last view you chose is remembered.
-- **Edit**: add/edit/delete nodes, rearrange, set images/links. Switch back to Markdown via `Edit as Markdown` (restores source/preview mode).
-- **Layout/viewport**: preserved per file; `Fit to canvas`, zoom, and arrange are on the toolbar.
+### 1) Create & open a mind map
+- Run **New mind map** (command palette or ribbon) → a file like `思维导图-2026-09-06.mindmap.md` is created and opens in the mind-map view.
+- Any `.mindmap.md` file opens from its **context menu → Open as mind map** (or the same command). The view you chose is remembered.
 
-The full Markdown ↔ mind-map mapping rules are in [`docs/markdown-mindmap-standard.md`](docs/markdown-mindmap-standard.md).
+### 2) How Markdown becomes a map
+Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a mind map and writes your edits back:
+
+```markdown
+# 项目计划                  ← 中心主题（= 文件名）
+## 目标                     ← 一级子主题 (#)
+- 里程碑一                  ← 子主题（列表）
+- 里程碑二
+###### 细则                ← 6 级标题
+- 第 7 级列表项              ← 标题下的列表缩进 → 第 7 级
+```
+
+> `#`–`######` → topic levels 1–6 · nested lists go deeper · `[[note]]` → clickable link · `![[img]]` → image · paragraphs & fenced code stay as text.
+
+### 3) Everyday actions (in the mind-map view)
+| Want to | Do |
+|---|---|
+| Edit a node's text | Double-click the node (or press Enter) |
+| Add a child / sibling | Right-click the node → **Insert child / New node** |
+| Delete a node | Right-click → **Delete** |
+| Add a link | Select a node → toolbar/menu **Insert link** (pick a vault note or paste a URL) |
+| Add an image | Select a node → **Insert image** (from vault, clipboard, or a file) |
+| Rearrange | Drag the node |
+| Clean the layout | Toolbar: **Auto arrange**, **Fit to canvas**, zoom |
+| Find a node | Toolbar search box |
+| Export | Toolbar **Export PNG** |
+| Back to Markdown | **Edit as Markdown** (restores source/preview mode) |
+
+### 4) Saving & persistence
+- Unedited lines are written back **verbatim** (frontmatter preserved).
+- Layout, viewport and "open as" are kept per file in the plugin `data.json` — **never** in the file.
+- Editing the **center topic** renames the `.mindmap.md` (Obsidian updates links/backlinks).
+- Config is local; no telemetry.
+
+The full Markdown ↔ mind-map mapping rules live in [`docs/markdown-mindmap-standard.md`](docs/markdown-mindmap-standard.md).
 
 ## 📦 Install
 
