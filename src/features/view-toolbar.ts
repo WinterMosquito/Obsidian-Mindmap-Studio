@@ -4,7 +4,12 @@
  */
 import { Notice, setIcon } from 'obsidian';
 import { LAYOUT_OPTIONS } from '../constants';
-import { arrangeMindMap as arrangeMindMapEngine, fitMindMap } from '../mindmap';
+import {
+	arrangeMindMap as arrangeMindMapEngine,
+	fitMindMap,
+	zoomInMindMap,
+	zoomOutMindMap,
+} from '../mindmap';
 import { openSearchBar } from './view-search';
 import { exportPNG } from './view-export';
 import {
@@ -93,10 +98,10 @@ export function buildToolbar(view: MindMapViewContext): void {
 		fitMindMap(view.mindMap),
 	);
 	createToolButton(rightGroup, t(view.lang, 'toolbar.zoomIn'), 'zoom-in', () =>
-		view.mindMap?.view.enlarge(),
+		zoomInMindMap(view.mindMap),
 	);
 	createToolButton(rightGroup, t(view.lang, 'toolbar.zoomOut'), 'zoom-out', () =>
-		view.mindMap?.view.narrow(),
+		zoomOutMindMap(view.mindMap),
 	);
 	rightGroup.createDiv('mindmap-toolbar-separator');
 	createToolButton(rightGroup, t(view.lang, 'toolbar.exportPng'), 'image', () => {

@@ -3,20 +3,21 @@
  * 节点图片选项与统一尺寸。从 images.ts 拆出。
  */
 import { App, TFile, normalizePath } from 'obsidian';
+import { IMAGE_HEIGHT, IMAGE_WIDTH } from './constants';
 import {
-	IMAGE_HEIGHT,
-	IMAGE_WIDTH,
-	URL_PREFIXES,
-} from './constants';
+	isAppResourceUrl,
+	isExternalImageRef,
+	isRemoteOrDataUrl,
+} from './domain/url';
 import { walkTree } from './domain/tree';
-import {
+import type {
 	MindMapTreeNode,
 	SetNodeImageOptions,
 } from '../vendor/simple-mind-map.cjs';
 
-/** 是否为外部/绝对地址（无需按库内路径解析） */
+/** 是否为外部/绝对地址（无需按库内路径解析）：库内资源地址以外的远程/数据/file:// 形态 */
 export function isExternalUrl(url: string): boolean {
-	return URL_PREFIXES.some((prefix) => url.startsWith(prefix));
+	return isAppResourceUrl(url) || isExternalImageRef(url);
 }
 
 /**
@@ -153,13 +154,7 @@ export function lookupIndexedFile(
 	app: App,
 	index: Map<string, TFile>,
 ): TFile | null {
-	if (
-		!url ||
-		url.startsWith('http://') ||
-		url.startsWith('https://') ||
-		url.startsWith('data:') ||
-		url.startsWith('blob:')
-	) {
+	if (!url || isRemoteOrDataUrl(url)) {
 		return null;
 	}
 	try {

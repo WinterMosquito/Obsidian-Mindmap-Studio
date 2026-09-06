@@ -11,8 +11,8 @@ import {
 	copyNode,
 	deleteActiveNode,
 	pasteNodeAsChild,
+	removeNodeImage,
 } from './view-node-actions';
-import { removeNodeImage } from './view-attachments';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { arrangeMindMap } from './view-toolbar';
 import { t } from '../i18n';

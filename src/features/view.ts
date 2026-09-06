@@ -33,6 +33,9 @@ import {
 	VIEW_TYPE,
 } from '../constants';
 import type { MindMap, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
+import { isHttpUrl } from '../domain/url';
+import { createDebouncer } from '../concurrency';
+import { errorMessage } from '../errors';
 import { resolvePathToFile } from '../links-resolve';
 import { walkCorrectImageSizesByAspect } from '../images-path';
 import { sanitizeFileName } from '../images-save';
@@ -55,9 +58,12 @@ import { exportPNG } from './view-export';
 import { arrangeMindMap, buildToolbar, refreshToolbar } from './view-toolbar';
 import { setupDragAndDrop } from './view-dnd';
 import { setupContextMenu } from './view-context-menu';
-import { openFileWithSystemApp } from './view-attachments';
+import { openFileWithSystemApp } from '../system-open';
 import { handleWindowPaste, setupPasteHandler } from './view-paste';
-import { updateStatusBar } from './view-status';
+import {
+	cancelStatusBarUpdate,
+	updateStatusBar,
+} from './view-status';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { EventBinder } from '../event-binder';
 
@@ -89,9 +95,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/** 附件悬浮预览防抖（view-dnd.ts 读写） */
 	lastHoverPreviewEl: Element | null = null;
 	lastHoverPreviewAt = 0;
-	/** 状态栏节流（view-status.ts 读写，onClose 清理） */
-	lastStatusBarUpdate = 0;
-	statusBarTrailingTimer: number | null = null;
 	private boundHandleCssChange: (() => void) | null = null;
 	/**
 	 * 文件加载去重：onOpen 与 onLoadFile 都会为同一文件触发加载
@@ -146,6 +149,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			getSnapshot: () => this.engine.getDataSnapshot(),
 			getFrontmatter: () => this.mdFrontmatter,
 			isAutoSave: () => this.plugin.settings.autoSave,
+			// 写盘失败弹用户可见提示（管线内部已 console.error 记录详情）
+			onSaveError: (error) => {
+				new Notice(`${t(this.lang, 'save.failed')}${errorMessage(error)}`);
+			},
 		});
 		this.engine = new EngineController({
 			app: this.app,
@@ -256,10 +263,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 文件切换：作废本文件尚未执行的初始化重试，防止过期 tree 随后渲染
 		this.engine.invalidateInit();
 		this.savePipeline.cancelTimer();
-		if (this.titleRenameTimer !== null) {
-			window.clearTimeout(this.titleRenameTimer);
-			this.titleRenameTimer = null;
-		}
+		this.titleRenameDebouncer.cancel();
 		// 先保存当前视口，再写盘正文（引擎随后销毁）
 		this.engine.persistViewport();
 		await this.savePipeline.save();
@@ -349,19 +353,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 把 .mindmap.md 文件重命名为该文本（Obsidian 原生更新链接/反链）。
 	 * 双向：外部改名后视图重载，中心随新文件名。md 正文不承载根行。
 	 */
-	private titleRenameTimer: number | null = null;
+	/** 中心主题改名防抖（1.5s，连续编辑只取最后一次） */
+	private titleRenameDebouncer = createDebouncer(1500);
 
 	private scheduleTitleRename(): void {
 		if (!this.file) {
 			return;
 		}
-		if (this.titleRenameTimer !== null) {
-			window.clearTimeout(this.titleRenameTimer);
-		}
-		this.titleRenameTimer = window.setTimeout(() => {
-			this.titleRenameTimer = null;
+		this.titleRenameDebouncer.schedule(() => {
 			void this.performTitleRename();
-		}, 1500);
+		});
 	}
 
 	private async performTitleRename(): Promise<void> {
@@ -494,33 +495,35 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		const sourcePath = this.file?.path ?? '';
 		const wiki = parseWikilink(link);
 		if (wiki) {
-			// 解析 [[目标]] 到具体库内文件：Obsidian 可渲染才开标签页；
-			// 系统媒体（音频/视频）走系统应用；其余类型不开空白页
+			// 解析 [[目标]] 到具体库内文件
 			const dest = this.app.metadataCache.getFirstLinkpathDest(
 				wiki.target,
 				sourcePath,
 			);
-			if (dest && !canOpenInObsidian(dest.extension)) {
-				if (isSystemMediaExtension(dest.extension)) {
-					openFileWithSystemApp(this.app, dest, this.lang);
-				} else {
-					new Notice(t(this.lang, 'common.cannotPreview'));
-				}
-				return;
-			}
-			void this.app.workspace.openLinkText(
-				wiki.inner,
-				sourcePath,
-				openNew ? 'tab' : false,
-			);
+			this.openResolvedTarget(dest, wiki.inner, sourcePath, openNew);
 			return;
 		}
-		if (link.startsWith('http://') || link.startsWith('https://')) {
+		if (isHttpUrl(link)) {
 			window.open(link, '_blank');
 			return;
 		}
-		// 其余按库内路径处理：Obsidian 可渲染才开标签页；系统媒体走系统应用；其余不开空白页
+		// 其余按库内路径处理
 		const file = resolvePathToFile(link, this.app);
+		this.openResolvedTarget(file, link, sourcePath, openNew);
+	}
+
+	/**
+	 * 打开已解析的库内目标（wiki 与库内路径两分支共用）：
+	 * Obsidian 可渲染才开标签页；系统媒体（音频/视频）走系统应用；
+	 * 其余类型不开空白页；目标未解析到时交给 openLinkText
+	 * （Obsidian 原生"未找到/新建笔记"行为）。
+	 */
+	private openResolvedTarget(
+		file: TFile | null,
+		linkText: string,
+		sourcePath: string,
+		openNew: boolean,
+	): void {
 		if (file && !canOpenInObsidian(file.extension)) {
 			if (isSystemMediaExtension(file.extension)) {
 				openFileWithSystemApp(this.app, file, this.lang);
@@ -530,7 +533,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			return;
 		}
 		void this.app.workspace.openLinkText(
-			link,
+			linkText,
 			sourcePath,
 			openNew ? 'tab' : false,
 		);
@@ -552,14 +555,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 视图关闭：作废尚未执行的初始化重试（容器即将脱离 DOM）
 		this.engine.invalidateInit();
 		this.savePipeline.cancelTimer();
-		if (this.titleRenameTimer !== null) {
-			window.clearTimeout(this.titleRenameTimer);
-			this.titleRenameTimer = null;
-		}
-		if (this.statusBarTrailingTimer !== null) {
-			window.clearTimeout(this.statusBarTrailingTimer);
-			this.statusBarTrailingTimer = null;
-		}
+		this.titleRenameDebouncer.cancel();
+		cancelStatusBarUpdate(this);
 		this.engine.persistViewport();
 		await this.savePipeline.save();
 		// 清理视图生命周期作用域的事件（搜索输入框 input/keydown 等）

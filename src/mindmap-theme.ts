@@ -48,20 +48,26 @@ export function isDarkTheme(themePref: string, isDark: boolean): boolean {
 }
 
 /**
- * 思维导图视图的主题配置。
- * imgMaxWidth/imgMaxHeight 使用统一的固定图片尺寸，
- * 保证所有图片等高且完整呈现在子主题框架内。
+ * 主题配置唯一实现：视图主题与代码块主题此前是两份 90% 重复的手写配置
+ * （仅背景与字号不同），任何配色/结构调整都需要改两处。收敛后差异
+ * （背景色、三级字号）由参数表达。
  */
-export function getThemeConfig(isDark: boolean): Record<string, unknown> {
+function buildThemeConfig(
+	isDark: boolean,
+	variant: {
+		background: string;
+		fontSizes: { root: number; second: number; node: number };
+	},
+): Record<string, unknown> {
 	const colors: ThemeColors = isDark ? DARK_COLORS : LIGHT_COLORS;
 	return {
-		backgroundColor: isDark ? '#1e1e1e' : '#ffffff',
+		backgroundColor: variant.background,
 		imgMaxWidth: IMAGE_WIDTH,
 		imgMaxHeight: IMAGE_HEIGHT,
 		root: {
 			fillColor: colors.rootFill,
 			color: colors.rootText,
-			fontSize: 16,
+			fontSize: variant.fontSizes.root,
 			fontWeight: 'bold',
 			borderColor: 'transparent',
 			borderWidth: 0,
@@ -70,7 +76,7 @@ export function getThemeConfig(isDark: boolean): Record<string, unknown> {
 		second: {
 			fillColor: colors.secondFill,
 			color: colors.secondText,
-			fontSize: 14,
+			fontSize: variant.fontSizes.second,
 			borderColor: colors.border,
 			borderWidth: 1,
 			borderRadius: BORDER_RADIUS,
@@ -78,7 +84,7 @@ export function getThemeConfig(isDark: boolean): Record<string, unknown> {
 		node: {
 			fillColor: colors.nodeFill,
 			color: colors.nodeText,
-			fontSize: 13,
+			fontSize: variant.fontSizes.node,
 			borderColor: colors.border,
 			borderWidth: 1,
 			borderRadius: BORDER_RADIUS,
@@ -97,50 +103,24 @@ export function getThemeConfig(isDark: boolean): Record<string, unknown> {
 	};
 }
 
+/**
+ * 思维导图视图的主题配置。
+ * imgMaxWidth/imgMaxHeight 使用统一的固定图片尺寸，
+ * 保证所有图片等高且完整呈现在子主题框架内。
+ */
+export function getThemeConfig(isDark: boolean): Record<string, unknown> {
+	return buildThemeConfig(isDark, {
+		background: isDark ? '#1e1e1e' : '#ffffff',
+		fontSizes: { root: 16, second: 14, node: 13 },
+	});
+}
+
 /** Markdown 代码块中思维导图的主题配置（透明背景、更小字号） */
 export function getCodeBlockThemeConfig(
 	isDark: boolean,
 ): Record<string, unknown> {
-	const colors: ThemeColors = isDark ? DARK_COLORS : LIGHT_COLORS;
-	return {
-		backgroundColor: 'transparent',
-		imgMaxWidth: IMAGE_WIDTH,
-		imgMaxHeight: IMAGE_HEIGHT,
-		root: {
-			fillColor: colors.rootFill,
-			color: colors.rootText,
-			fontSize: 15,
-			fontWeight: 'bold',
-			borderColor: 'transparent',
-			borderWidth: 0,
-			borderRadius: BORDER_RADIUS,
-		},
-		second: {
-			fillColor: colors.secondFill,
-			color: colors.secondText,
-			fontSize: 13,
-			borderColor: colors.border,
-			borderWidth: 1,
-			borderRadius: BORDER_RADIUS,
-		},
-		node: {
-			fillColor: colors.nodeFill,
-			color: colors.nodeText,
-			fontSize: 12,
-			borderColor: colors.border,
-			borderWidth: 1,
-			borderRadius: BORDER_RADIUS,
-		},
-		lineColor: colors.line,
-		lineWidth: 2,
-		...(isDark
-			? {
-					expandBtnStyle: {
-						color: '#999',
-						fill: '#333',
-						strokeColor: '#666',
-					},
-				}
-			: {}),
-	};
+	return buildThemeConfig(isDark, {
+		background: 'transparent',
+		fontSizes: { root: 15, second: 13, node: 12 },
+	});
 }

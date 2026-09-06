@@ -7,6 +7,7 @@
  */
 import { App, Notice, normalizePath } from 'obsidian';
 import { MD_FILE_SUFFIX } from './constants';
+import { errorMessage } from './errors';
 import { t, type Language } from './i18n';
 import { buildDefaultMindMapName, createDefaultMarkdownContent } from './markdown';
 import { openAsMindMap } from './md-open';
@@ -62,11 +63,7 @@ export async function createNewMindMap(
 		await openAsMindMap(leaf, file);
 		new Notice(t(language, 'command.created'));
 	} catch (error) {
-		new Notice(
-			`${t(language, 'command.createFailed')}${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
+		new Notice(`${t(language, 'command.createFailed')}${errorMessage(error)}`);
 	}
 }
 

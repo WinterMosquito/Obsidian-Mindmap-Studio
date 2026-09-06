@@ -14,6 +14,7 @@ import {
 	setIcon,
 } from 'obsidian';
 import { isImageExtension, MAX_IMAGE_SIZE_MB } from './constants';
+import { isAppResourceUrl, isExternalImageRef } from './domain/url';
 import { t, type Language } from './i18n';
 import { createButton } from './modal-common';
 
@@ -59,15 +60,9 @@ class ImageFileSuggest extends AbstractInputSuggest<TFile> {
 	}
 }
 
-/** 输入是否为外链/数据地址（无需库内解析） */
+/** 输入是否为外链/数据地址（无需库内解析）：domain/url 单一权威 */
 function isExternalImageUrl(value: string): boolean {
-	return (
-		value.startsWith('http://') ||
-		value.startsWith('https://') ||
-		value.startsWith('data:') ||
-		value.startsWith('blob:') ||
-		value.startsWith('file://')
-	);
+	return isExternalImageRef(value);
 }
 
 export function openImageEditorModal(
@@ -116,7 +111,7 @@ export function openImageEditorModal(
 		// app:// 引用来自用户可编辑 Markdown，解码失败（畸形 % 序列）须回退原值
 		// 而非抛 URIError——抛错会让整个图片弹窗打不开（无未处理拒绝）。
 		let initialRef = current;
-		if (current.startsWith('app://')) {
+		if (isAppResourceUrl(current)) {
 			try {
 				initialRef = decodeURIComponent(
 					current.replace(/^app:\/\/[^/]*\//, ''),

@@ -57,7 +57,7 @@ export function createMindMap(
 	options: CreateMindMapOptions,
 ): MindMap {
 	const dark = isDarkTheme(options.themePref, options.isDark);
-	const nodeCount = countNodes(data);
+	const nodeCount = countTreeNodes(data);
 	const performanceEnabled =
 		options.performanceMode && nodeCount >= options.performanceThreshold;
 
@@ -152,8 +152,10 @@ export function getActiveNode(mindMap: MindMap | null): MindMapNode | null {
 	return mindMap?.renderer ? mindMap.renderer.activeNodeList[0] ?? null : null;
 }
 
-/** 递归统计节点数量 */
-function countNodes(tree: MindMapTreeNode | null): number {
+/** 递归统计树节点数量（数据树/渲染节点树同构，均可用） */
+export function countTreeNodes<T extends { children?: readonly T[] | null }>(
+	tree: T | null,
+): number {
 	if (!tree) {
 		return 0;
 	}
@@ -217,5 +219,93 @@ export function arrangeMindMap(mindMap: MindMap | null): boolean {
 	} catch (error) {
 		console.error('自动整理失败', error);
 		return false;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 引擎内部形态的防腐收口
+//
+// 视图/特性层禁止直接触碰引擎内部结构（node.group、导出倍率 opt 裸读写等）；
+// 需要这些能力时经由本模块的具名函数，内部形态的适配只出现在这里。
+// ---------------------------------------------------------------------------
+
+/** 放大画布（工具栏缩放） */
+export function zoomInMindMap(mindMap: MindMap | null): void {
+	mindMap?.view.enlarge();
+}
+
+/** 缩小画布（工具栏缩放） */
+export function zoomOutMindMap(mindMap: MindMap | null): void {
+	mindMap?.view.narrow();
+}
+
+/** 当前渲染树的根节点（性能模式/初始化中间态等场景可能为 null） */
+export function getRenderRoot(mindMap: MindMap | null): MindMapNode | null {
+	return mindMap?.renderer.root ?? null;
+}
+
+/** 节点渲染 group 的根 DOM 元素（hover-link 等场景的锚点；group 为引擎内部字段） */
+export function getNodeGroupEl(node: MindMapNode): Element | null {
+	const group = (node as unknown as { group?: { node?: Element } }).group;
+	return group?.node ?? null;
+}
+
+/**
+ * 以临时导出倍率执行导出任务：进入时写入 minExportImgCanvasScale，
+ * 任务结束（无论成败）恢复原值；原值不存在时删除该键，避免残留到
+ * 后续渲染。引擎销毁等边角情况下恢复失败静默忽略。
+ */
+export async function runWithExportScale<T>(
+	mindMap: MindMap,
+	scale: number,
+	task: () => Promise<T> | T,
+): Promise<T> {
+	const oldScale = mindMap.opt.minExportImgCanvasScale;
+	try {
+		mindMap.updateConfig({ minExportImgCanvasScale: scale });
+		return await task();
+	} finally {
+		try {
+			if (oldScale !== undefined) {
+				mindMap.updateConfig({ minExportImgCanvasScale: oldScale });
+			} else {
+				delete mindMap.opt.minExportImgCanvasScale;
+			}
+		} catch {
+			// 忽略：引擎已销毁等边角情况
+		}
+	}
+}
+
+/** 更新节点文本：先改节点数据，再经引擎命令同步并重绘 */
+export function setNodeText(
+	mindMap: MindMap,
+	node: MindMapNode,
+	text: string,
+): void {
+	node.nodeData.data.text = text;
+	try {
+		mindMap.execCommand('SET_NODE_DATA', node, { text });
+	} catch {
+		// SET_NODE_DATA 不可用等情形：直接数据已改，交由重绘
+	}
+	mindMap.render();
+}
+
+/**
+ * 删除节点兜底：uid 重复/缺失时引擎按 uid 的删除可能失败，
+ * 按对象身份从父节点数据中强制移除并重绘。
+ */
+export function forceRemoveNodeData(
+	mindMap: MindMap,
+	parent: MindMapNode,
+	nodeData: MindMapTreeNode,
+): void {
+	const index = parent.nodeData.children.findIndex(
+		(child) => child === nodeData,
+	);
+	if (index !== -1) {
+		parent.nodeData.children.splice(index, 1);
+		mindMap.render();
 	}
 }

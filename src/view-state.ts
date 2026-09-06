@@ -9,13 +9,15 @@
  * - layout: 布局类型（logicalStructure/mindMap/...）
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）
  */
+import { createDebouncer, type Debouncer } from './concurrency';
+
 export type PathState = Record<string, unknown>;
 
 const VIEW_STATE_KEY = 'viewState';
 
 export class ViewStateStore {
 	private map = new Map<string, PathState>();
-	private timer: number | null = null;
+	private debouncer: Debouncer;
 
 	/**
 	 * @param persist     序列化后的状态写盘回调（由插件注入，合并 data.json）
@@ -24,7 +26,9 @@ export class ViewStateStore {
 	constructor(
 		private persist: (state: Record<string, PathState>) => void,
 		private debounceMs = 600,
-	) {}
+	) {
+		this.debouncer = createDebouncer(debounceMs);
+	}
 
 	/** 从插件 data.json 载入（顶层 viewState 键） */
 	hydrate(data: unknown): void {
@@ -105,20 +109,14 @@ export class ViewStateStore {
 	}
 
 	private schedulePersist(): void {
-		if (this.timer !== null) {
-			window.clearTimeout(this.timer);
-		}
-		this.timer = window.setTimeout(() => {
-			this.timer = null;
+		this.debouncer.schedule(() => {
 			this.persist(this.serialize());
-		}, this.debounceMs);
+		});
 	}
 
 	/** 立即排空未落盘的变更（插件卸载/视图关闭时调用） */
 	flushNow(): void {
-		if (this.timer !== null) {
-			window.clearTimeout(this.timer);
-			this.timer = null;
+		if (this.debouncer.cancel()) {
 			this.persist(this.serialize());
 		}
 	}

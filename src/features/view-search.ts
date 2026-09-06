@@ -4,6 +4,7 @@
  * view.ts 中的同名方法保留为外观（委托到这里的实现），调用方无需改动。
  */
 import { setIcon } from 'obsidian';
+import { createDebouncer, type Debouncer } from '../concurrency';
 import { t } from '../i18n';
 import type { MindMapViewContext } from './view-context';
 
@@ -71,10 +72,8 @@ export function closeSearchBar(view: MindMapViewContext): void {
 		return;
 	}
 	// 取消未决的防抖搜索，避免关闭后在空结果上继续触发
-	if (searchTimers.has(view)) {
-		window.clearTimeout(searchTimers.get(view));
-		searchTimers.delete(view);
-	}
+	searchDebouncers.get(view)?.cancel();
+	searchDebouncers.delete(view);
 	view.searchBarEl.addClass('mindmap-search-bar-hidden');
 	view.mindMap?.search?.endSearch();
 	if (view.searchInput) {
@@ -84,8 +83,8 @@ export function closeSearchBar(view: MindMapViewContext): void {
 	view.canvasEl?.focus();
 }
 
-/** 防抖定时器（按视图），避免每键全量重搜 */
-const searchTimers = new WeakMap<MindMapViewContext, number>();
+/** 防抖器（按视图），避免每键全量重搜 */
+const searchDebouncers = new WeakMap<MindMapViewContext, Debouncer>();
 const SEARCH_DEBOUNCE_MS = 180;
 
 /** 执行搜索（带防抖：停顿后再搜） */
@@ -93,16 +92,12 @@ export function doSearch(view: MindMapViewContext): void {
 	if (!view.mindMap?.search || !view.searchInput) {
 		return;
 	}
-	if (searchTimers.has(view)) {
-		window.clearTimeout(searchTimers.get(view));
+	let debouncer = searchDebouncers.get(view);
+	if (!debouncer) {
+		debouncer = createDebouncer(SEARCH_DEBOUNCE_MS);
+		searchDebouncers.set(view, debouncer);
 	}
-	searchTimers.set(
-		view,
-		window.setTimeout(() => {
-			searchTimers.delete(view);
-			runSearch(view);
-		}, SEARCH_DEBOUNCE_MS),
-	);
+	debouncer.schedule(() => runSearch(view));
 }
 
 function runSearch(view: MindMapViewContext): void {

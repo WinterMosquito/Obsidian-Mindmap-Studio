@@ -8,18 +8,13 @@
  * 前置：main.ts 已 registerHoverLinkSource(VIEW_TYPE)，否则 core 忽略 hover-link。
  */
 import { VIEW_TYPE } from '../constants';
+import { getNodeGroupEl } from '../mindmap';
 import { wikilinkLinkpath } from '../domain/wikilink';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 
 /** 悬停防抖（与附件预览共用状态字段，互斥触发） */
 const HOVER_DEBOUNCE_MS = 400;
-
-/** 节点引擎 group 的 DOM（用作 hover-link 锚元素；group 为引擎内部字段） */
-function nodeGroupEl(node: MindMapNode): Element | null {
-	const group = (node as unknown as { group?: { node?: Element } }).group;
-	return group?.node ?? null;
-}
 
 /** 注册 wikilink 的悬停预览与 Ctrl/Cmd+点击（initMindMap 内调用一次） */
 export function registerWikilinkInteractions(view: MindMapViewContext): void {
@@ -61,7 +56,7 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 			if (!linktext) {
 				return;
 			}
-			const targetEl = nodeGroupEl(node);
+			const targetEl = getNodeGroupEl(node);
 			if (!targetEl) {
 				return;
 			}

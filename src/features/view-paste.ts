@@ -9,6 +9,7 @@
 import { Notice } from 'obsidian';
 import { getActiveNode } from '../mindmap';
 import { saveImageToVault } from '../images-save';
+import { errorMessage } from '../errors';
 import { applyNodeImage } from './view-node-actions';
 import { t } from '../i18n';
 import type { MindMapViewContext } from './view-context';
@@ -88,7 +89,7 @@ async function handlePasteEvent(
 	} catch (error) {
 		console.error('粘贴图片失败', error);
 		new Notice(
-			`${t(view.lang, 'common.pasteImageFailed')}${error instanceof Error ? error.message : String(error)}`,
+			`${t(view.lang, 'common.pasteImageFailed')}${errorMessage(error)}`,
 		);
 	}
 }

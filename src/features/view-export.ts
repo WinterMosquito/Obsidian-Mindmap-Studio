@@ -3,6 +3,8 @@
  * （导出 JSON / 导入 JSON 已随专有格式支持删除）
  */
 import { Notice } from 'obsidian';
+import { errorMessage } from '../errors';
+import { runWithExportScale } from '../mindmap';
 import { t } from '../i18n';
 import type { MindMapViewContext } from './view-context';
 
@@ -14,24 +16,22 @@ export async function exportPNG(view: MindMapViewContext): Promise<void> {
 		return;
 	}
 	// 捕获本地实例：导出期间视图可能被关闭（view.mindMap 被置空），
-	// 用局部引用避免 finally 里空指针，并兜底忽略恢复倍率的边角失败。
+	// 用局部引用避免空指针。
 	const mindMap = view.mindMap;
-	const mindMapAny = mindMap as unknown as {
-		opt?: Record<string, unknown>;
-	};
-	const oldScale = mindMapAny.opt?.minExportImgCanvasScale;
+	const exporter = mindMap.doExport;
+	if (!exporter?.export) {
+		return;
+	}
 	try {
-		const exporter = mindMap.doExport;
-		if (!exporter?.export) {
-			return;
-		}
-		mindMap.updateConfig({
-			minExportImgCanvasScale: view.plugin.settings.exportScale,
-		});
-		const result = await exporter.export(
-			'png',
-			false,
-			view.file?.basename ?? FALLBACK_NAME,
+		// 导出倍率的临时写入与恢复收口在 mindmap.runWithExportScale
+		const result = await runWithExportScale(
+			mindMap,
+			view.plugin.settings.exportScale,
+			() => exporter.export(
+				'png',
+				false,
+				view.file?.basename ?? FALLBACK_NAME,
+			),
 		);
 		if (result) {
 			const fileName = `${view.file?.basename ?? FALLBACK_NAME}.png`;
@@ -42,21 +42,7 @@ export async function exportPNG(view: MindMapViewContext): Promise<void> {
 			}
 		}
 	} catch (error) {
-		new Notice(
-			`${t(view.lang, 'export.pngFailed')}${error instanceof Error ? error.message : String(error)}`,
-		);
-	} finally {
-		// 导出后恢复临时改动的导出倍率，避免残留到后续渲染/其它导出。
-		// 视图已关闭/引擎已销毁时忽略（防止 finally 逃逸抛出未处理异常）。
-		try {
-			if (oldScale !== undefined) {
-				mindMap.updateConfig({ minExportImgCanvasScale: oldScale });
-			} else if (mindMapAny.opt) {
-				delete mindMapAny.opt.minExportImgCanvasScale;
-			}
-		} catch {
-			// 忽略：引擎已销毁等边角情况
-		}
+		new Notice(`${t(view.lang, 'export.pngFailed')}${errorMessage(error)}`);
 	}
 }
 

@@ -4,29 +4,18 @@
  */
 import { App, Notice, TFile, normalizePath } from 'obsidian';
 import { isImageExtension } from './constants';
+import { createSerialQueue } from './concurrency';
+import { errorMessage } from './errors';
 import { fileLookupIndex, lookupIndexedFile } from './images-path';
+import { isRemoteOrDataUrl } from './domain/url';
 import { t, type Language } from './i18n';
 
 /**
- * 图片保存串行队列：「文件名选择 + vault 写入」非原子，并发保存同名图片
- * 若各自通过存在性检查再分别 createBinary，会写同一目标
+ * 图片保存走全局串行队列原语：「文件名选择 + vault 写入」非原子，
+ * 并发保存同名图片若各自通过存在性检查再分别 createBinary，会写同一目标
  * （TOCTOU，后写覆盖先写）。排队执行保证互斥原子性。
  */
-class ImageSaveQueue {
-	private chain: Promise<unknown> = Promise.resolve();
-
-	enqueue<T>(task: () => Promise<T>): Promise<T> {
-		const run = this.chain.then(task);
-		// 无论本次成败都推进队列（错误已在任务内部处理并返回 null）
-		this.chain = run.then(
-			() => undefined,
-			() => undefined,
-		);
-		return run;
-	}
-}
-
-const saveQueue = new ImageSaveQueue();
+const saveQueue = createSerialQueue();
 
 /** 清理文件名中的非法字符（含控制字符） */
 export function sanitizeFileName(name: string): string {
@@ -88,13 +77,13 @@ export interface SaveImageOptions {
  * 存储路径遵循 Obsidian 系统设置中的"附件存放位置"规则
  * （通过 `fileManager.getAvailablePathForAttachment` 获取）。
  *
- * 保存串行化：「文件名选择 + 写入」在内部排队（见 ImageSaveQueue）。
+ * 保存串行化：「文件名选择 + 写入」在内部排队（见文件头 saveQueue）。
  * @returns 保存后的 TFile；失败时返回 null 并弹提示
  */
 export function saveImageToVault(
 	options: SaveImageOptions,
 ): Promise<TFile | null> {
-	return saveQueue.enqueue(() => saveImageToVaultInner(options));
+	return saveQueue(() => saveImageToVaultInner(options));
 }
 
 async function saveImageToVaultInner({
@@ -172,11 +161,7 @@ async function saveImageToVaultInner({
 		return await app.vault.createBinary(targetPath, data);
 	} catch (error) {
 		console.error('保存图片失败', error);
-		new Notice(
-			`${t(lang, 'attachment.saveFailed')}${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
+		new Notice(`${t(lang, 'attachment.saveFailed')}${errorMessage(error)}`);
 		return null;
 	}
 }
@@ -193,13 +178,7 @@ export function findAttachmentFile(
 	url: string,
 	allFiles?: TFile[],
 ): TFile | null {
-	if (
-		!url ||
-		url.startsWith('http://') ||
-		url.startsWith('https://') ||
-		url.startsWith('data:') ||
-		url.startsWith('blob:')
-	) {
+	if (!url || isRemoteOrDataUrl(url)) {
 		return null;
 	}
 	try {

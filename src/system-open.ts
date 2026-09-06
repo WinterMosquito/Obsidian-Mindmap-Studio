@@ -1,21 +1,9 @@
 /**
- * 图片/系统应用工具：移除节点图片、用系统默认应用打开库内文件。
- * （节点附件/回收等旧能力已随专有格式支持删除；wikilink 悬停见 view-wikilink）
+ * 系统应用打开：用系统默认应用打开库内文件（仅桌面端）。
+ * 从 view-attachments.ts 拆出（该文件其余能力已并入 view-node-actions.ts）。
  */
 import { App, FileSystemAdapter, Notice, Platform, TFile } from 'obsidian';
-import { createSetNodeImageOptions } from '../images-path';
-import { t, type Language } from '../i18n';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
-import type { MindMapViewContext } from './view-context';
-
-/** 单独移除节点图片（不影响节点与其他数据） */
-export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): void {
-	view.mindMap?.execCommand(
-		'SET_NODE_IMAGE',
-		node,
-		createSetNodeImageOptions(null),
-	);
-}
+import { t, type Language } from './i18n';
 
 /**
  * 用系统默认应用打开库内文件（仅桌面端；移动端无系统应用入口，仅提示）。

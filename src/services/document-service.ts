@@ -8,6 +8,7 @@
  *   引擎销毁后的兜底快照（pendingTree）由管线自身持有。
  */
 import { App, TFile } from 'obsidian';
+import { createDebouncer, createSerialQueue } from '../concurrency';
 import { parseMdOutline } from '../md-outline';
 import { serializeMdBody } from '../md-serialize';
 import { normalizeImageSizes, walkResolveImagePaths } from '../images-path';
@@ -63,6 +64,8 @@ export interface SavePipelineDeps {
 	getFrontmatter(): string | null;
 	/** 自动保存开关（关闭时 schedule 不生效，显式 save 仍可用） */
 	isAutoSave(): boolean;
+	/** 写盘失败回调（视图据此弹用户可见提示；缺省仅 console.error） */
+	onSaveError?(error: unknown): void;
 }
 
 const SAVE_DELAY_MS = 800;
@@ -76,13 +79,15 @@ const SAVE_DELAY_MS = 800;
  * - 文件已删除时不重建（Obsidian 删除 .mindmap 会触发 onUnloadFile）。
  */
 export class SavePipeline {
-	private saveTimeout: number | null = null;
+	private debouncer = createDebouncer(SAVE_DELAY_MS);
+	/** 串行写盘队列：所有 save 调用共享，调用方可 await 完整排空 */
+	private enqueue = createSerialQueue();
 	private saveInProgress = false;
 	private savePending = false;
 	/** 待写快照：视图卸载时引擎已销毁，用它兜底最后一批编辑 */
 	private pendingTree: MindMapTreeNode | null = null;
-	/** 串行写盘链：所有 save 调用共享，调用方可 await 完整排空 */
-	private saveChain: Promise<void> = Promise.resolve();
+	/** 最近一次写盘任务（写入中再触发时，await 它即等价于等排空） */
+	private activeSave: Promise<void> = Promise.resolve();
 
 	constructor(private readonly deps: SavePipelineDeps) {}
 
@@ -91,20 +96,14 @@ export class SavePipeline {
 		if (!this.deps.isAutoSave() || !this.deps.getFile()) {
 			return;
 		}
-		if (this.saveTimeout) {
-			window.clearTimeout(this.saveTimeout);
-		}
-		this.saveTimeout = window.setTimeout(() => {
+		this.debouncer.schedule(() => {
 			void this.save();
-		}, SAVE_DELAY_MS);
+		});
 	}
 
 	/** 取消尚未执行的防抖保存（文件切换/视图关闭时调用） */
 	cancelTimer(): void {
-		if (this.saveTimeout) {
-			window.clearTimeout(this.saveTimeout);
-			this.saveTimeout = null;
-		}
+		this.debouncer.cancel();
 	}
 
 	async save(): Promise<void> {
@@ -123,33 +122,37 @@ export class SavePipeline {
 			// 提前快照保证最后一批编辑不丢失。
 			this.savePending = true;
 			this.pendingTree = this.deps.getSnapshot() ?? this.pendingTree;
-			return this.saveChain;
+			return this.activeSave;
 		}
 		const file = current;
 		this.saveInProgress = true;
-		this.saveChain = (async () => {
-			// 循环排空：写盘期间若又有编辑（savePending），继续写最新快照
-			let tree = this.deps.getSnapshot();
-			while (tree && this.deps.app.vault.getAbstractFileByPath(file.path)) {
-				try {
-					await this.deps.app.vault.modify(
-						file,
-						this.serialize(tree),
-					);
-				} catch (error) {
-					console.error('保存思维导图失败', error);
+		this.activeSave = this.enqueue(async () => {
+			try {
+				// 循环排空：写盘期间若又有编辑（savePending），继续写最新快照
+				let tree = this.deps.getSnapshot();
+				while (tree && this.deps.app.vault.getAbstractFileByPath(file.path)) {
+					try {
+						await this.deps.app.vault.modify(
+							file,
+							this.serialize(tree),
+						);
+					} catch (error) {
+						console.error('保存思维导图失败', error);
+						this.deps.onSaveError?.(error);
+					}
+					if (!this.savePending) {
+						tree = null;
+						break;
+					}
+					this.savePending = false;
+					tree = this.deps.getSnapshot() ?? this.pendingTree;
+					this.pendingTree = null;
 				}
-				if (!this.savePending) {
-					tree = null;
-					break;
-				}
-				this.savePending = false;
-				tree = this.deps.getSnapshot() ?? this.pendingTree;
-				this.pendingTree = null;
+			} finally {
+				this.saveInProgress = false;
 			}
-			this.saveInProgress = false;
-		})();
-		return this.saveChain;
+		});
+		return this.activeSave;
 	}
 
 	/** 序列化为 md 大纲 + 原样 frontmatter（布局不入文件），保证尾随换行 */

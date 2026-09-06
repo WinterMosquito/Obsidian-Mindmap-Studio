@@ -132,7 +132,7 @@ export function updateReferencesOnRename(
 	let changed = false;
 	walkTree(tree, (node) => {
 		if (node.data?.image) {
-			const imagePath = serializeImagePathForCompare(
+			const imagePath = resolveVaultPathForCompare(
 				node.data.image,
 				resourceIndex,
 			);
@@ -142,7 +142,7 @@ export function updateReferencesOnRename(
 			}
 		}
 		if (node.data?.attachmentUrl) {
-			const attachmentPath = serializeImagePathForCompare(
+			const attachmentPath = resolveVaultPathForCompare(
 				node.data.attachmentUrl,
 				resourceIndex,
 			);
@@ -191,7 +191,7 @@ export function updateReferencesOnRename(
 }
 
 /** 通过索引把资源地址还原为库内路径（O(1)） */
-function serializeImagePathForCompare(
+function resolveVaultPathForCompare(
 	url: string,
 	index: Map<string, TFile>,
 ): string {
@@ -217,7 +217,7 @@ export function removeReferencesOnDelete(
 	let changed = false;
 	walkTree(tree, (node) => {
 		if (node.data?.image) {
-			const imagePath = serializeImagePathForCompare(
+			const imagePath = resolveVaultPathForCompare(
 				node.data.image,
 				resourceIndex,
 			);
@@ -227,7 +227,7 @@ export function removeReferencesOnDelete(
 			}
 		}
 		if (node.data?.attachmentUrl) {
-			const attachmentPath = serializeImagePathForCompare(
+			const attachmentPath = resolveVaultPathForCompare(
 				node.data.attachmentUrl,
 				resourceIndex,
 			);

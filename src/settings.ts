@@ -3,7 +3,7 @@ import {
 	PluginSettingTab,
 	type SettingDefinitionItem,
 } from 'obsidian';
-import TheMindMapPlugin from './main';
+import type TheMindMapPlugin from './main';
 import { LAYOUT_OPTIONS, THEME_OPTIONS } from './constants';
 import { Language, LANGUAGE_OPTIONS, t } from './i18n';
 
@@ -33,6 +33,56 @@ export const DEFAULT_SETTINGS: TheMindMapSettings = {
 	performanceThreshold: 500,
 	language: 'zh',
 };
+
+/**
+ * 校验/归一化从 data.json 读出的设置。历史或手工数据可能含非法类型
+ * （如 language:'fr'、exportScale:'2'、performanceThreshold:'abc'），
+ * 直接 Object.assign 会让坏值覆盖默认值并流入运算（NaN/错误语言回退）。
+ * 只采纳「类型正确 + 取值合法」的键，其余用默认值。
+ */
+export function sanitizeSettings(
+	raw: Record<string, unknown>,
+): TheMindMapSettings {
+	const pickString = (key: keyof TheMindMapSettings): string | undefined => {
+		const value = raw[key];
+		return typeof value === 'string' ? value : undefined;
+	};
+	const pickNumber = (key: keyof TheMindMapSettings): number | undefined => {
+		const value = raw[key];
+		const num =
+			typeof value === 'number'
+				? value
+				: typeof value === 'string' && value.trim() !== ''
+					? Number(value)
+					: NaN;
+		return Number.isFinite(num) ? num : undefined;
+	};
+	const pickBool = (key: keyof TheMindMapSettings): boolean | undefined => {
+		const value = raw[key];
+		return typeof value === 'boolean' ? value : undefined;
+	};
+	const language = pickString('language');
+	return {
+		defaultLayout:
+			pickString('defaultLayout') ?? DEFAULT_SETTINGS.defaultLayout,
+		defaultTheme: pickString('defaultTheme') ?? DEFAULT_SETTINGS.defaultTheme,
+		autoSave: pickBool('autoSave') ?? DEFAULT_SETTINGS.autoSave,
+		exportScale: pickNumber('exportScale') ?? DEFAULT_SETTINGS.exportScale,
+		codeBlockDefaultLayout:
+			pickString('codeBlockDefaultLayout') ??
+			DEFAULT_SETTINGS.codeBlockDefaultLayout,
+		enableDrag: pickBool('enableDrag') ?? DEFAULT_SETTINGS.enableDrag,
+		performanceMode:
+			pickBool('performanceMode') ?? DEFAULT_SETTINGS.performanceMode,
+		performanceThreshold:
+			pickNumber('performanceThreshold') ??
+			DEFAULT_SETTINGS.performanceThreshold,
+		language:
+			language === 'zh' || language === 'en'
+				? language
+				: DEFAULT_SETTINGS.language,
+	};
+}
 
 /** 变更后需要即时应用到已打开视图的设置项 */
 const LIVE_REFRESH_SETTING_KEYS = new Set<string>([

@@ -83,7 +83,7 @@ async function handleDroppedVaultFile(view: MindMapViewContext, file: TFile): Pr
 			await applyNodeImage(view, selected, url);
 			new Notice(`${t(view.lang, 'common.imageSetOnNode')}${file.name}`);
 		} else {
-			new Notice(t(view.lang, 'common.selectNodeBeforeDropImage'));
+			new Notice(t(view.lang, 'common.selectNodeBeforeDrop'));
 		}
 		return;
 	}

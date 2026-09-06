@@ -41,7 +41,7 @@ export default defineConfig(
 		},
 	},
 	{
-		files: ['src/features/view-attachments.ts'],
+		files: ['src/system-open.ts'],
 		languageOptions: {
 			globals: {
 				// require('electron') 是 Obsidian 桌面插件获取系统 API 的标准做法，
@@ -64,6 +64,9 @@ export default defineConfig(
 		rules: {
 			// 测试桩与回归脚本不在 Obsidian 插件运行时上下文，无需遵守「避免 console」条款。
 			'obsidianmd/rule-custom-message': 'off',
+			// tests/setup.ts 把 window 桩到 globalThis（Node 测试环境无 window，
+			// concurrency 原语的 window.setTimeout 需落到可被 fake timers 拦截的定时器）。
+			'obsidianmd/no-global-this': 'off',
 		},
 	},
 );

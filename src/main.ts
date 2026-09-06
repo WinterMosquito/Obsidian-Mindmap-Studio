@@ -1,27 +1,20 @@
 /**
  * MindMap Studio —— Obsidian 思维导图插件入口。
  *
- * 生命周期职责（遵循 obsidian-sample-plugin 规范）：
- * - onload: 注册视图/扩展名/代码块处理器/事件监听/设置面板
- * - onunload: 清理
- * 业务逻辑分别位于 settings.ts / commands.ts / creation.ts / view.ts /
- * codeblock.ts / mindmap.ts / images.ts / links.ts / markdown.ts / modals.ts。
+ * 本类只做装配与生命周期编排（遵循 obsidian-sample-plugin 规范）：
+ * - onload: 设置载入、注册视图/扩展名/代码块处理器/事件监听/设置面板；
+ *   「打开方式记忆」的自动切换与文件浏览器菜单注入委托给
+ *   open-as-restore.ts / features/file-creator.ts；
+ * - onunload: 排空未落盘的视图状态后清理。
+ * 业务逻辑分别位于 settings.ts / commands.ts / creation.ts / features/view.ts /
+ * codeblock.ts / mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
  */
+import { Plugin, TFile, TFolder } from 'obsidian';
+import { CODE_BLOCK_LANGUAGE, VIEW_TYPE } from './constants';
 import {
-	MarkdownView,
-	Menu,
-	Plugin,
-	TFile,
-	TFolder,
-} from 'obsidian';
-import {
-	CODE_BLOCK_LANGUAGE,
-	VIEW_TYPE,
-} from './constants';
-import {
-	DEFAULT_SETTINGS,
 	TheMindMapSettings,
 	TheMindMapSettingTab,
+	sanitizeSettings,
 } from './settings';
 import { MindMapView } from './features/view';
 import { MindMapCodeBlock } from './codeblock';
@@ -36,65 +29,22 @@ import { registerCommands } from './commands';
 import { t } from './i18n';
 import { VaultSyncService } from './vault-sync';
 import { ViewStateStore } from './view-state';
-
-/**
- * 校验/归一化从 data.json 读出的设置。历史或手工数据可能含非法类型
- * （如 language:'fr'、exportScale:'2'、performanceThreshold:'abc'），
- * 直接 Object.assign 会让坏值覆盖默认值并流入运算（NaN/错误语言回退）。
- * 只采纳「类型正确 + 取值合法」的键，其余用默认值。
- */
-function sanitizeSettings(raw: Record<string, unknown>): TheMindMapSettings {
-	const pickString = (key: keyof TheMindMapSettings): string | undefined => {
-		const value = raw[key];
-		return typeof value === 'string' ? value : undefined;
-	};
-	const pickNumber = (key: keyof TheMindMapSettings): number | undefined => {
-		const value = raw[key];
-		const num =
-			typeof value === 'number'
-				? value
-				: typeof value === 'string' && value.trim() !== ''
-					? Number(value)
-					: NaN;
-		return Number.isFinite(num) ? num : undefined;
-	};
-	const pickBool = (key: keyof TheMindMapSettings): boolean | undefined => {
-		const value = raw[key];
-		return typeof value === 'boolean' ? value : undefined;
-	};
-	const language = pickString('language');
-	return {
-		defaultLayout:
-			pickString('defaultLayout') ?? DEFAULT_SETTINGS.defaultLayout,
-		defaultTheme: pickString('defaultTheme') ?? DEFAULT_SETTINGS.defaultTheme,
-		autoSave: pickBool('autoSave') ?? DEFAULT_SETTINGS.autoSave,
-		exportScale: pickNumber('exportScale') ?? DEFAULT_SETTINGS.exportScale,
-		codeBlockDefaultLayout:
-			pickString('codeBlockDefaultLayout') ??
-			DEFAULT_SETTINGS.codeBlockDefaultLayout,
-		enableDrag: pickBool('enableDrag') ?? DEFAULT_SETTINGS.enableDrag,
-		performanceMode:
-			pickBool('performanceMode') ?? DEFAULT_SETTINGS.performanceMode,
-		performanceThreshold:
-			pickNumber('performanceThreshold') ??
-			DEFAULT_SETTINGS.performanceThreshold,
-		language:
-			language === 'zh' || language === 'en'
-				? language
-				: DEFAULT_SETTINGS.language,
-	};
-}
+import { PluginDataWriter } from './persistence';
+import { injectIntoFileCreator } from './features/file-creator';
+import { OpenAsPreferenceRestorer } from './open-as-restore';
 
 export default class TheMindMapPlugin extends Plugin {
 	settings!: TheMindMapSettings;
 	statusBarEl: HTMLElement | null = null;
+	/**
+	 * data.json 写盘器（串行队列 + 写前重读合并 + 内部吞错）。
+	 * 先于 viewState 声明：字段按声明顺序初始化，viewState 的持久化回调依赖它。
+	 */
+	private readonly dataWriter = new PluginDataWriter(this);
 	/** 视图状态（布局/视口，按文件路径）——与设置合并写 data.json */
 	viewState = new ViewStateStore((state) => {
-		void this.commitData({ viewState: state });
+		void this.dataWriter.write({ viewState: state });
 	}, 600);
-	/** data.json 写盘串行链：所有 commitData 排队执行，避免并发读-改-写互相覆盖 */
-	private dataCommitChain: Promise<void> = Promise.resolve();
-	private layoutReadyCallback: (() => void) | null = null;
 	/** Vault 文件事件同步服务（rename/delete/create） */
 	private vaultSync!: VaultSyncService;
 
@@ -166,24 +116,28 @@ export default class TheMindMapPlugin extends Plugin {
 			}),
 		);
 
-		// 文件浏览器「新建文件」菜单注入 + 启动后恢复「偏好为思维导图」的叶子
-		this.layoutReadyCallback = () => {
-			this.injectIntoFileCreator();
-			// Obsidian 恢复叶子是异步的：可能先建 markdown 视图、稍后才绑定文件，
-			// 且切换到导图视图后还可能被尚未结束的恢复流程短暂覆盖。故多档延时
-			// 扫描——早/中/晚各试一次，恢复流程结束后即固定为导图视图。
-			[400, 1500, 3500].forEach((ms) =>
-				window.setTimeout(() => this.restoreOpenAsPreferences(), ms),
-			);
-		};
-		this.app.workspace.onLayoutReady(this.layoutReadyCallback);
-		this.registerEvent(
-			this.app.workspace.on('layout-change', () => this.injectIntoFileCreator()),
+		// 打开方式记忆：偏好为 mindmap 的 .mindmap.md 以 markdown 视图被激活时，
+		// 自动切入导图视图（重新打开仍为思维导图）。
+		const restorer = new OpenAsPreferenceRestorer(
+			this.app,
+			this.app.workspace,
+			this.viewState,
+			(view) => view instanceof MindMapView,
 		);
-		// 运行期兜底：任何文件打开时，若它是偏好为思维导图的 .mindmap.md 且当前在
-		// markdown 视图，也切回导图视图（与 active-leaf-change 互补）。
+		restorer.register(this);
+
+		// 文件浏览器「新建文件」菜单注入 + 启动后恢复「偏好为思维导图」的叶子
+		const injectFileCreatorMenu = (): void => {
+			injectIntoFileCreator(this.app, this.settings.language, (folderPath) => {
+				void createNewMindMap(this.app, this.settings.language, folderPath);
+			});
+		};
+		this.app.workspace.onLayoutReady(() => {
+			injectFileCreatorMenu();
+			restorer.scheduleStartupRestore();
+		});
 		this.registerEvent(
-			this.app.workspace.on('file-open', () => this.restoreOpenAsPreferences()),
+			this.app.workspace.on('layout-change', () => injectFileCreatorMenu()),
 		);
 
 		// Markdown 代码块渲染
@@ -221,59 +175,7 @@ export default class TheMindMapPlugin extends Plugin {
 			}),
 		);
 
-		// 打开方式记忆：偏好为 mindmap 的 .mindmap.md 以 markdown 视图被激活时，
-		// 自动切入导图视图（重新打开仍为思维导图）。
-		// 用 active-leaf-change（携带已激活 leaf）而非 file-open（时序上活动视图
-		// 可能尚未切换为 markdown，会导致漏判）。
-		this.registerEvent(
-			this.app.workspace.on('active-leaf-change', (leaf) => {
-				if (!leaf || leaf.view instanceof MindMapView) {
-					return; // 已是导图视图（含在导图标签内切换文件）
-				}
-				const markdownView = leaf.view;
-				if (!(markdownView instanceof MarkdownView)) {
-					return;
-				}
-				const file = markdownView.file;
-				if (!file || !isMindMapMarkdownFile(file)) {
-					return;
-				}
-				if (this.viewState.getOpenAs(file.path) !== 'mindmap') {
-					return;
-				}
-				void openAsMindMap(leaf, file);
-			}),
-		);
-
 		this.addSettingTab(new TheMindMapSettingTab(this.app, this));
-	}
-
-	/**
-	 * 启动/布局就绪后，把「偏好为思维导图」的 `.mindmap.md`（当前仍以 Markdown 视图
-	 * 打开的叶子）自动切回导图视图。
-	 *
-	 * 作用：弥补 `active-leaf-change` 在**工作区恢复（重启）**时对初始叶子可能不触发、
-	 * 或触发瞬间 file 尚未就位的遗漏——否则重启后文件会以 Markdown 打开，且布局
-	 * （仅在导图视图加载时按路径读取）不会被应用。
-	 */
-	private restoreOpenAsPreferences(): void {
-		const markdownLeaves = this.app.workspace.getLeavesOfType('markdown');
-		for (const leaf of markdownLeaves) {
-			const view = leaf.view;
-			if (!(view instanceof MarkdownView)) {
-				continue;
-			}
-			const file = view.file;
-			if (!file || !isMindMapMarkdownFile(file)) {
-				continue;
-			}
-			if (this.viewState.getOpenAs(file.path) !== 'mindmap') {
-				continue;
-			}
-			void openAsMindMap(leaf, file).catch((error) =>
-				console.error('自动切换思维导图视图失败:', file.path, error),
-			);
-		}
 	}
 
 	onunload(): void {
@@ -306,26 +208,13 @@ export default class TheMindMapPlugin extends Plugin {
 
 	/**
 	 * 合并写盘（历史格式：设置位于 data.json 顶层；viewState 为额外顶层键）。
-	 * 每次写前重读合并，避免设置/视图状态互相覆盖。
+	 * 写盘排队与重读合并在 PluginDataWriter 内部完成。
 	 */
 	async saveSettings(): Promise<void> {
-		await this.commitData({ ...this.settings, viewState: this.viewState.serialize() });
-	}
-
-	private async commitData(data: Record<string, unknown>): Promise<void> {
-		// 串行化 + 内部吞错：所有写盘经同一链排队，且基于上一次写后的结果重读合并，
-		// 避免并发读-改-写互相覆盖；写盘失败仅记录，不产生未处理拒绝（void 调用安全）。
-		const run = async (): Promise<void> => {
-			try {
-				const current: Record<string, unknown> =
-					((await this.loadData()) as Record<string, unknown> | null) ?? {};
-				await this.saveData({ ...current, ...data });
-			} catch (error) {
-				console.error('写入插件配置失败', error);
-			}
-		};
-		this.dataCommitChain = this.dataCommitChain.then(run, run);
-		await this.dataCommitChain;
+		await this.dataWriter.write({
+			...this.settings,
+			viewState: this.viewState.serialize(),
+		});
 	}
 
 	/** 设置变更后应用到所有打开的思维导图视图 */
@@ -337,59 +226,5 @@ export default class TheMindMapPlugin extends Plugin {
 				view.refreshMindMap();
 			}
 		});
-	}
-
-	/**
-	 * 向文件浏览器的「新建」菜单注入「新建思维导图」。
-	 *
-	 * ⚠️ 私有 API 风险说明：Obsidian 未公开注入 fileCreator 菜单的公共 API
-	 * （obsidian.d.ts 仅有 file-menu / files-menu 事件，且无 fileCreator 类型），
-	 * 本实现采用社区通行的防御式访问（Templater 等插件同款做法）：
-	 * - 特性检测：fileCreator / menu 缺失或结构变化时静默跳过，不崩溃；
-	 * - 菜单重建检测：以菜单对象引用作为注入标记，Obsidian 重建菜单对象后
-	 *   引用变化会自动重新注入（旧标记为布尔值，菜单重建后会失效）；
-	 * - 整体 try/catch：私有 API 变更抛异常时静默降级，不影响插件其他功能。
-	 * 若未来 Obsidian 提供公共 API，应优先替换为公共实现。
-	 */
-	private injectIntoFileCreator(): void {
-		try {
-			this.app.workspace.getLeavesOfType('file-explorer').forEach((leaf) => {
-				const explorerView = leaf.view as unknown as {
-					fileCreator?: { menu?: Menu; folder?: TFolder | null } | null;
-					/** 已注入的菜单对象引用（菜单重建后重新注入） */
-					_mindMapInjectedMenu?: Menu | null;
-				};
-				const fileCreator = explorerView.fileCreator;
-				// 特性检测：私有 API 不存在或结构变化时静默跳过
-				if (!fileCreator?.menu) {
-					return;
-				}
-				// 同一菜单对象已注入过则跳过；
-				// 菜单对象被 Obsidian 重建（引用变化）时重新注入
-				if (explorerView._mindMapInjectedMenu === fileCreator.menu) {
-					return;
-				}
-				fileCreator.menu.addItem((item) =>
-					item
-						.setTitle(t(this.settings.language, 'command.createMindMap'))
-						.setIcon('dot-network')
-						.onClick(() => {
-							void createNewMindMap(
-								this.app,
-								this.settings.language,
-								fileCreator.folder?.path ?? '',
-							);
-						}),
-				);
-				explorerView._mindMapInjectedMenu = fileCreator.menu;
-			});
-		} catch (error) {
-			// 私有 API 变更时静默降级：命令面板 / 文件夹右键 / 丝带图标
-			// 等公共入口不受影响
-			console.debug(
-				'注入文件浏览器「新建」菜单失败（Obsidian 私有 API 可能已变更）',
-				error,
-			);
-		}
 	}
 }

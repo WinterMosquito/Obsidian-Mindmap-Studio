@@ -45,9 +45,6 @@ export interface MindMapViewContext {
 	/** 悬停预览去重（view-wikilink 写） */
 	lastHoverPreviewEl: Element | null;
 	lastHoverPreviewAt: number;
-	/** 状态栏节流（view-status 写） */
-	lastStatusBarUpdate: number;
-	statusBarTrailingTimer: number | null;
 
 	// ---- UI 元素 ----
 	/** 引擎画布容器（引擎重建时替换） */

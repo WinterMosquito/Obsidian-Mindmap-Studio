@@ -12,15 +12,11 @@
  */
 
 import { App } from 'obsidian';
-import { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 import { findAttachmentFile } from './images-save';
 import { formatWikilink, linkDisplayText, wikilinkLinkpath } from './domain/wikilink';
+import { isSchemeUrl } from './domain/url';
 import type { MdNodeData } from './domain/md-meta';
-
-/** 是否为外部/协议 URL（http(s)://、obsidian://、ftp:// … 含 scheme://） */
-function isDestUrl(link: string): boolean {
-	return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(link);
-}
 
 /** 链接目标是否需要尖括号包裹（含空格/括号/<>/\，否则会破坏 `(…)` 闭合） */
 function needsDestBraces(dest: string): boolean {
@@ -46,7 +42,7 @@ function renderHyperlink(data: MdNodeData): string | null {
 			: text.split('\n')[0] || hyperlink;
 	// URL / 协议链接 → 直接写为标准 autolink <url>（Obsidian 识别为可点链接，
 	// 含空格/括号的 URL 也安全；无需 [label](<url>)）
-	if (isDestUrl(hyperlink)) {
+	if (isSchemeUrl(hyperlink)) {
 		return `<${hyperlink}>`;
 	}
 	if (data.mdLinkStyle === 'md') {

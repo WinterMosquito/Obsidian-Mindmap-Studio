@@ -87,7 +87,6 @@ const ZH = {
 	'common.cannotOpen': '无法打开该文件类型',
 
 	// ===== 拖拽/导入 =====
-	'common.selectNodeBeforeDropImage': '请先选择一个节点再拖入图片',
 	'common.selectNodeBeforeDrop': '请先选择一个节点，再拖入图片',
 	'common.onlySupportedFiles':
 		'仅支持拖入 Markdown 笔记或图片文件',
@@ -171,6 +170,9 @@ const ZH = {
 
 	// ===== 导出 =====
 	'export.pngFailed': '导出 PNG 失败：',
+
+	// ===== 保存 =====
+	'save.failed': '保存思维导图失败：',
 
 	// ===== 图片保存 =====
 	'attachment.tooLarge': '图片过大（{size}MB），最大支持 {max}MB',
@@ -262,7 +264,6 @@ const EN: Record<TranslationKey, string> = {
 	'common.cannotOpen': 'Cannot open this file type',
 
 	// ===== 拖拽/导入 =====
-	'common.selectNodeBeforeDropImage': 'Please select a node before dropping images',
 	'common.selectNodeBeforeDrop': 'Please select a node before dropping an image',
 	'common.onlySupportedFiles':
 		'Only Markdown notes or image files are supported',
@@ -351,6 +352,9 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 导出 =====
 	'export.pngFailed': 'Export PNG failed: ',
+
+	// ===== 保存 =====
+	'save.failed': 'Failed to save mind map: ',
 
 	// ===== 图片保存 =====
 	'attachment.tooLarge':

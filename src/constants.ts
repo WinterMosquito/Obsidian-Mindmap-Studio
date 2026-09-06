@@ -50,11 +50,10 @@ const IMAGE_EXTENSIONS = [
 ];
 
 /**
- * 可链接的附件扩展（音/视/PDF 等库内文件）：
- * 在导图中以 [[库内路径]] 链接形式引用（Obsidian 打开/系统应用）。
- * 图片不在此列——图片走 image 语义（![[...]] 渲染）。
+ * 音频/视频扩展基表：Obsidian 桌面端没有音频/视频的标签页视图。
+ * 「可链接附件」与「系统媒体」两个清单的公共部分（派生避免逐字重复）。
  */
-const LINK_ATTACHMENT_EXTENSIONS = [
+const AUDIO_VIDEO_EXTENSIONS = [
 	// 音频
 	'mp3',
 	'wav',
@@ -81,6 +80,15 @@ const LINK_ATTACHMENT_EXTENSIONS = [
 	'flv',
 	'wmv',
 	'ts',
+];
+
+/**
+ * 可链接的附件扩展（音/视/PDF 等库内文件）：
+ * 在导图中以 [[库内路径]] 链接形式引用（Obsidian 打开/系统应用）。
+ * 图片不在此列——图片走 image 语义（![[...]] 渲染）。
+ */
+const LINK_ATTACHMENT_EXTENSIONS = [
+	...AUDIO_VIDEO_EXTENSIONS,
 	// 文档
 	'pdf',
 	'epub',
@@ -92,26 +100,6 @@ export function isLinkAttachmentExtension(extension: string): boolean {
 	return LINK_ATTACHMENT_EXTENSIONS.includes(extension.toLowerCase());
 }
 
-/** 外部 URL / obsidian 协议链接 */
-export function isExternalOrProtocolUrl(value: string): boolean {
-	return (
-		value.startsWith('http://') ||
-		value.startsWith('https://') ||
-		value.startsWith('obsidian://') ||
-		value.startsWith('file://')
-	);
-}
-
-/** 视为外部地址的 URL 前缀 */
-export const URL_PREFIXES = [
-	'http://',
-	'https://',
-	'data:',
-	'blob:',
-	'file://',
-	'app://',
-];
-
 /** 粘贴/拖入图片大小上限（MB） */
 export const MAX_IMAGE_SIZE_MB = 10;
 
@@ -119,6 +107,16 @@ export const MAX_IMAGE_SIZE_MB = 10;
 export function isImageExtension(extension: string): boolean {
 	return IMAGE_EXTENSIONS.includes(extension.toLowerCase());
 }
+
+/** Obsidian 可渲染清单中的图片段：拖拽图片扩展 + Obsidian 额外支持的位图格式 */
+const OBSIDIAN_RENDER_IMAGE_EXTENSIONS = [
+	...IMAGE_EXTENSIONS,
+	'avif',
+	'apng',
+	'jxl',
+	'tif',
+	'tiff',
+];
 
 /**
  * Obsidian 能在标签页中渲染、不会出现空白页的扩展名（md/canvas/PDF/图片/纯文本·代码）。
@@ -133,19 +131,7 @@ const OBSIDIAN_RENDER_EXTENSIONS: ReadonlySet<string> = new Set([
 	// 思维导图（本插件注册了视图，可在 Obsidian 标签页中打开）
 	'mindmap',
 	// 图片
-	'png',
-	'jpg',
-	'jpeg',
-	'gif',
-	'bmp',
-	'svg',
-	'webp',
-	'ico',
-	'avif',
-	'apng',
-	'jxl',
-	'tif',
-	'tiff',
+	...OBSIDIAN_RENDER_IMAGE_EXTENSIONS,
 	// 纯文本 / 代码（Obsidian 以文本方式渲染，不会空白）
 	'txt',
 	'text',
@@ -182,34 +168,9 @@ const OBSIDIAN_RENDER_EXTENSIONS: ReadonlySet<string> = new Set([
  * 系统媒体（音频/视频）：Obsidian 无标签页视图，点击后应改由系统默认应用打开
  * （桌面端 shell.openPath），而不是在 Obsidian 中新建空白标签页。
  */
-const SYSTEM_MEDIA_EXTENSIONS: ReadonlySet<string> = new Set([
-	// 音频
-	'mp3',
-	'wav',
-	'm4a',
-	'm4b',
-	'm4s',
-	'ogg',
-	'oga',
-	'opus',
-	'weba',
-	'flac',
-	'aac',
-	'amr',
-	'wma',
-	'3gp',
-	// 视频
-	'mp4',
-	'm4v',
-	'webm',
-	'ogv',
-	'mov',
-	'mkv',
-	'avi',
-	'flv',
-	'wmv',
-	'ts',
-]);
+const SYSTEM_MEDIA_EXTENSIONS: ReadonlySet<string> = new Set(
+	AUDIO_VIDEO_EXTENSIONS,
+);
 
 /** 判断某扩展名能否在 Obsidian 标签页中直接打开（可渲染、不出现空白标签页） */
 export function canOpenInObsidian(extension: string): boolean {

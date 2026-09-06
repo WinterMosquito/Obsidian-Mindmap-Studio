@@ -3,13 +3,22 @@
  * 被工具栏（view-toolbar.ts）与右键菜单（view-context-menu.ts）共用。
  */
 import { App, Notice, TFile } from 'obsidian';
-import { getActiveNode } from '../mindmap';
+import {
+	forceRemoveNodeData,
+	getActiveNode,
+	setNodeText,
+} from '../mindmap';
+import { createSetNodeImageOptions } from '../images-path';
 import { createAspectSetNodeImageOptions } from '../images-path';
 import { findAttachmentFile, saveImageToVault } from '../images-save';
 import { openImageEditorModal } from '../modal-image';
 import { openLinkEditorModal } from '../modal-link';
 import { t } from '../i18n';
-import { isExternalOrProtocolUrl } from '../constants';
+import {
+	isAppResourceUrl,
+	isExternalImageRef,
+	isHyperlinkProtocolUrl,
+} from '../domain/url';
 import { linkDisplayText } from '../domain/wikilink';
 import type { MdNodeData } from '../domain/md-meta';
 import type {
@@ -32,7 +41,7 @@ export async function addLinkToActiveNode(view: MindMapViewContext): Promise<voi
 	}
 	view.mindMap?.execCommand('SET_NODE_HYPERLINK', node, result.link);
 	// URL/协议链接：仅添加超链接图标——不把 <url> 当作节点文本（尖括号内链接不渲染）。
-	if (result.link && isExternalOrProtocolUrl(result.link)) {
+	if (result.link && isHyperlinkProtocolUrl(result.link)) {
 		// 保持「仅图标」：若节点文本仍是旧 URL 显示名（历史/旧行为残留），清空，
 		// 避免节点内残留一个过期的 URL 文本。
 		if (current) {
@@ -58,17 +67,18 @@ export async function addLinkToActiveNode(view: MindMapViewContext): Promise<voi
 
 /** 更新节点文本并让引擎重绘该节点（不改写引擎其它状态） */
 function applyNodeText(view: MindMapViewContext, node: MindMapNode, text: string): void {
-	const mindMap = view.mindMap;
-	if (!mindMap) {
-		return;
+	if (view.mindMap) {
+		setNodeText(view.mindMap, node, text);
 	}
-	node.nodeData.data.text = text;
-	try {
-		mindMap.execCommand('SET_NODE_DATA', node, { text });
-	} catch {
-		// SET_NODE_DATA 不可用等情形：直接数据已改，交由重绘
-	}
-	mindMap.render();
+}
+
+/** 单独移除节点图片（不影响节点与其他数据） */
+export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): void {
+	view.mindMap?.execCommand(
+		'SET_NODE_IMAGE',
+		node,
+		createSetNodeImageOptions(null),
+	);
 }
 
 /** 清除节点超链接（不影响节点其他数据） */
@@ -156,18 +166,12 @@ function normalizeImageReference(
 	if (!url) {
 		return { display: '', mdTarget: null };
 	}
-	if (url.startsWith('app://')) {
+	if (isAppResourceUrl(url)) {
 		// 资源地址：反查库内路径（md 回写目标）
 		const file = findAttachmentFile(app, url);
 		return { display: url, mdTarget: file?.path ?? null };
 	}
-	if (
-		url.startsWith('http://') ||
-		url.startsWith('https://') ||
-		url.startsWith('data:') ||
-		url.startsWith('blob:') ||
-		url.startsWith('file://')
-	) {
+	if (isExternalImageRef(url)) {
 		return { display: url, mdTarget: null };
 	}
 	// 其余按库内路径：解析为资源地址显示，记录库内路径
@@ -199,13 +203,7 @@ export function deleteActiveNode(view: MindMapViewContext): void {
 	mindMap.execCommand('REMOVE_NODE');
 	// 兜底：uid 重复/缺失时引擎按 uid 的删除可能失败，按对象身份强制清除
 	if (parent) {
-		const index = parent.nodeData.children.findIndex(
-			(child) => child === nodeData,
-		);
-		if (index !== -1) {
-			parent.nodeData.children.splice(index, 1);
-			mindMap.render();
-		}
+		forceRemoveNodeData(mindMap, parent, nodeData);
 	}
 	view.scheduleSave();
 }
