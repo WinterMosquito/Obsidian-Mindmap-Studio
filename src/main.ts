@@ -92,6 +92,8 @@ export default class TheMindMapPlugin extends Plugin {
 	viewState = new ViewStateStore((state) => {
 		void this.commitData({ viewState: state });
 	}, 600);
+	/** data.json 写盘串行链：所有 commitData 排队执行，避免并发读-改-写互相覆盖 */
+	private dataCommitChain: Promise<void> = Promise.resolve();
 	private layoutReadyCallback: (() => void) | null = null;
 	/** Vault 文件事件同步服务（rename/delete/create） */
 	private vaultSync!: VaultSyncService;
@@ -311,9 +313,19 @@ export default class TheMindMapPlugin extends Plugin {
 	}
 
 	private async commitData(data: Record<string, unknown>): Promise<void> {
-		const current: Record<string, unknown> =
-			((await this.loadData()) as Record<string, unknown> | null) ?? {};
-		await this.saveData({ ...current, ...data });
+		// 串行化 + 内部吞错：所有写盘经同一链排队，且基于上一次写后的结果重读合并，
+		// 避免并发读-改-写互相覆盖；写盘失败仅记录，不产生未处理拒绝（void 调用安全）。
+		const run = async (): Promise<void> => {
+			try {
+				const current: Record<string, unknown> =
+					((await this.loadData()) as Record<string, unknown> | null) ?? {};
+				await this.saveData({ ...current, ...data });
+			} catch (error) {
+				console.error('写入插件配置失败', error);
+			}
+		};
+		this.dataCommitChain = this.dataCommitChain.then(run, run);
+		await this.dataCommitChain;
 	}
 
 	/** 设置变更后应用到所有打开的思维导图视图 */

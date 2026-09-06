@@ -43,10 +43,15 @@ export async function openAsMindMap(
 	const mode: 'source' | 'preview' =
 		leaf.view instanceof MarkdownView ? leaf.view.getMode() : 'source';
 	openAsPreferenceHook?.(file.path);
-	await leaf.setViewState({
-		type: VIEW_TYPE,
-		state: { file: file.path, mdBackMode: mode },
-	});
+	try {
+		await leaf.setViewState({
+			type: VIEW_TYPE,
+			state: { file: file.path, mdBackMode: mode },
+		});
+	} catch (error) {
+		// 叶子可能已被替换/分离：记录即可，避免 void 调用产生未处理拒绝
+		console.error('切换到思维导图视图失败:', error);
+	}
 }
 
 /** 从导图视图切回 Markdown（mode: source 编辑 / preview 阅读） */
@@ -55,8 +60,12 @@ export async function openAsMarkdown(
 	file: TFile,
 	mode: 'source' | 'preview' = 'source',
 ): Promise<void> {
-	await leaf.setViewState({
-		type: 'markdown',
-		state: { file: file.path, mode },
-	});
+	try {
+		await leaf.setViewState({
+			type: 'markdown',
+			state: { file: file.path, mode },
+		});
+	} catch (error) {
+		console.error('切换到 Markdown 视图失败:', error);
+	}
 }
