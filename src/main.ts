@@ -167,10 +167,12 @@ export default class TheMindMapPlugin extends Plugin {
 		// 文件浏览器「新建文件」菜单注入 + 启动后恢复「偏好为思维导图」的叶子
 		this.layoutReadyCallback = () => {
 			this.injectIntoFileCreator();
-			this.restoreOpenAsPreferences();
-			// Obsidian 恢复工作区时，叶子可能在 onLayoutReady 之后才异步绑定到文件
-			// （此时 view.file 尚为空），延时再扫一次兜底，确保重启后仍切回导图视图。
-			window.setTimeout(() => this.restoreOpenAsPreferences(), 400);
+			// Obsidian 恢复叶子是异步的：可能先建 markdown 视图、稍后才绑定文件，
+			// 且切换到导图视图后还可能被尚未结束的恢复流程短暂覆盖。故多档延时
+			// 扫描——早/中/晚各试一次，恢复流程结束后即固定为导图视图。
+			[400, 1500, 3500].forEach((ms) =>
+				window.setTimeout(() => this.restoreOpenAsPreferences(), ms),
+			);
 		};
 		this.app.workspace.onLayoutReady(this.layoutReadyCallback);
 		this.registerEvent(
@@ -253,6 +255,7 @@ export default class TheMindMapPlugin extends Plugin {
 	 * （仅在导图视图加载时按路径读取）不会被应用。
 	 */
 	private restoreOpenAsPreferences(): void {
+		let switched = 0;
 		for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView)) {
@@ -265,7 +268,13 @@ export default class TheMindMapPlugin extends Plugin {
 			if (this.viewState.getOpenAs(file.path) !== 'mindmap') {
 				continue;
 			}
-			void openAsMindMap(leaf, file);
+			void openAsMindMap(leaf, file).catch((error) =>
+				console.error('自动切换思维导图视图失败:', file.path, error),
+			);
+			switched++;
+		}
+		if (switched > 0) {
+			console.debug(`已恢复 ${switched} 个「以思维导图打开」的视图`);
 		}
 	}
 
