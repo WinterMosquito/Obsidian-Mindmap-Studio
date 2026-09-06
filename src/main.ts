@@ -1,5 +1,5 @@
 /**
- * The Mind Map —— Obsidian 思维导图插件入口。
+ * MindMap Studio —— Obsidian 思维导图插件入口。
  *
  * 生命周期职责（遵循 obsidian-sample-plugin 规范）：
  * - onload: 注册视图/扩展名/代码块处理器/事件监听/设置面板
@@ -109,7 +109,7 @@ export default class TheMindMapPlugin extends Plugin {
 		// 悬停预览源：导图节点上的 [[wikilink]] 触发 Obsidian 原生页面预览
 		// （core 只处理已注册 hoverLinkSource 的事件，未注册会静默忽略）
 		this.registerHoverLinkSource(VIEW_TYPE, {
-			display: 'The Mind Map',
+			display: 'MindMap Studio',
 			defaultMod: false,
 		});
 

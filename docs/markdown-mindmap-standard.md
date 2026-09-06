@@ -1,4 +1,4 @@
-# Markdown ↔ 思维导图映射标准（The Mind Map）
+# Markdown ↔ 思维导图映射标准（MindMap Studio）
 
 > 关联实现：`src/md-outline.ts` / `src/md-serialize.ts` / `src/view-wikilink.ts`
 > 回归测试：`scratch/md-roundtrip/`（69 断言：解析结构、层级深度、往返不动点、编辑合成；含代码围栏 opaque、深树防溢出、URL 自动链接）

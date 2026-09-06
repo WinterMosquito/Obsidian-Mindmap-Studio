@@ -2,13 +2,13 @@
 
 <div align="center">
 
-# 🧠 The Mind Map
+# 🧠 MindMap Studio
 
 > 在 Obsidian 中将 Markdown 渲染为思维导图。打开 `.mindmap.md` —— 一个普通的 Markdown 文件 —— 以思维导图编辑；Markdown 大纲可无损往返。基于 [simple-mind-map](https://github.com/wanglin2/mind-map) 引擎，由 [WinterMosquito](https://github.com/WinterMosquito) 开发。
 
 <p align="center">
-  <img src="https://img.shields.io/github/v/release/WinterMosquito/The-Mind-Map?label=Release&color=blue" alt="Latest release" />
-  <img src="https://img.shields.io/github/license/WinterMosquito/The-Mind-Map?label=License&color=green" alt="License" />
+  <img src="https://img.shields.io/github/v/release/WinterMosquito/mindmap-studio?label=Release&color=blue" alt="Latest release" />
+  <img src="https://img.shields.io/github/license/WinterMosquito/mindmap-studio?label=License&color=green" alt="License" />
   <img src="https://img.shields.io/badge/Obsidian-1.13.0%2B-purple" alt="Obsidian version" />
   <img src="https://img.shields.io/badge/Platform-%E6%A1%8C%E9%9D%A2-blue" alt="Platform" />
 </p>
@@ -17,9 +17,9 @@
 
 ---
 
-![The Mind Map](assets/mindmap-zh.png)
+![MindMap Studio](assets/mindmap-zh.png)
 
-## ✨ 为什么用 The Mind Map
+## ✨ 为什么用 MindMap Studio
 
 插件是一个**渲染层**，而非格式转换器。`.mindmap.md` 是 100% 标准 Markdown —— 你的笔记、链接、反向链接、全文搜索与 Git 照常生效。插件把 Markdown 大纲解析为思维导图；你在导图中编辑后，改动会写回为 Markdown。
 
@@ -44,8 +44,8 @@
 
 ## 📦 安装
 
-- **社区插件**（上架后）：设置 → 第三方插件 → 搜索 *The Mind Map*。
-- **从 GitHub Release 安装（推荐）**：从仓库 [Releases](https://github.com/WinterMosquito/The-Mind-Map/releases) 页面下载最新版本的附件（`main.js`、`manifest.json`、`styles.css`），复制到 `<库>/.obsidian/plugins/the-mind-map/`，再到「设置 → 第三方插件」启用。
+- **社区插件**（上架后）：设置 → 第三方插件 → 搜索 *MindMap Studio*。
+- **从 GitHub Release 安装（推荐）**：从仓库 [Releases](https://github.com/WinterMosquito/mindmap-studio/releases) 页面下载最新版本的附件（`main.js`、`manifest.json`、`styles.css`），复制到 `<库>/.obsidian/plugins/mindmap-studio/`，再到「设置 → 第三方插件」启用。
 - **从源码构建**：`npm install && npm run build` 生成 `main.js`，与 `manifest.json`、`styles.css` 一起放入插件目录。
 
 > 需要 Obsidian 1.13.0+，桌面端（Electron）。配置仅存本地（插件 `data.json`），无遥测。`main.js` 由 CI 构建并随每个 GitHub Release 发布（不提交进仓库）。

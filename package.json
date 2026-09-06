@@ -1,5 +1,5 @@
 {
-	"name": "mindmap",
+	"name": "mindmap-studio",
 	"version": "0.0.1",
 	"description": "Mind map rendering for Markdown in Obsidian: edit .mindmap.md as a mind map with Markdown outline round-trip and Obsidian-native links/images.",
 	"main": "main.js",
@@ -18,7 +18,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/WinterMosquito/The-Mind-Map.git"
+		"url": "git+https://github.com/WinterMosquito/mindmap-studio.git"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
