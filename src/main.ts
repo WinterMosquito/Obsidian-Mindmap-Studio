@@ -168,10 +168,18 @@ export default class TheMindMapPlugin extends Plugin {
 		this.layoutReadyCallback = () => {
 			this.injectIntoFileCreator();
 			this.restoreOpenAsPreferences();
+			// Obsidian 恢复工作区时，叶子可能在 onLayoutReady 之后才异步绑定到文件
+			// （此时 view.file 尚为空），延时再扫一次兜底，确保重启后仍切回导图视图。
+			window.setTimeout(() => this.restoreOpenAsPreferences(), 400);
 		};
 		this.app.workspace.onLayoutReady(this.layoutReadyCallback);
 		this.registerEvent(
 			this.app.workspace.on('layout-change', () => this.injectIntoFileCreator()),
+		);
+		// 运行期兜底：任何文件打开时，若它是偏好为思维导图的 .mindmap.md 且当前在
+		// markdown 视图，也切回导图视图（与 active-leaf-change 互补）。
+		this.registerEvent(
+			this.app.workspace.on('file-open', () => this.restoreOpenAsPreferences()),
 		);
 
 		// Markdown 代码块渲染
