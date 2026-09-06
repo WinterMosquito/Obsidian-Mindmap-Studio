@@ -13,7 +13,9 @@
 
 import { App } from 'obsidian';
 import { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
-import { findAttachmentFile } from './images';
+import { findAttachmentFile } from './images-save';
+import { formatWikilink, linkDisplayText, wikilinkLinkpath } from './domain/wikilink';
+import type { MdNodeData } from './domain/md-meta';
 
 /** 是否为外部/协议 URL（http(s)://、obsidian://、ftp:// … 含 scheme://） */
 function isDestUrl(link: string): boolean {
@@ -26,7 +28,7 @@ function needsDestBraces(dest: string): boolean {
 }
 
 /** 行内 token 渲染：链接（仅合成路径使用） */
-function renderHyperlink(data: Record<string, unknown>): string | null {
+function renderHyperlink(data: MdNodeData): string | null {
 	const hyperlink = data.hyperlink;
 	if (typeof hyperlink !== 'string' || !hyperlink) {
 		return null;
@@ -54,20 +56,17 @@ function renderHyperlink(data: Record<string, unknown>): string | null {
 		return `[${label}](${dest})`;
 	}
 	// 其余（库内路径等非 URL）：裸目标 → 包一层 [[..]]（引擎语义一致）
-	return `[[${hyperlink}]]`;
+	return formatWikilink(hyperlink);
 }
 
 /** 行内 token 渲染：图片（仅合成路径使用） */
-function renderImage(
-	data: Record<string, unknown>,
-	app: App | null,
-): string | null {
+function renderImage(data: MdNodeData, app: App | null): string | null {
 	const image = data.image;
 	if (typeof image !== 'string' || !image) {
 		return null;
 	}
 	const target = data.mdImageTarget;
-	if (typeof target === 'string' && image === target) {
+	if (target && image === target) {
 		return `![[${target}]]`;
 	}
 	if (app) {
@@ -83,10 +82,7 @@ function renderImage(
 }
 
 /** 图片当前库内路径（view 把 image 解析为资源地址后反查）；无则原样 */
-function imageVaultPath(
-	data: Record<string, unknown>,
-	app: App | null,
-): string | null {
+function imageVaultPath(data: MdNodeData, app: App | null): string | null {
 	const image = data.image;
 	if (typeof image !== 'string' || !image) {
 		return null;
@@ -102,16 +98,12 @@ function hyperlinkFeature(hyperlink: string): string | null {
 	if (!hyperlink) {
 		return null;
 	}
-	if (hyperlink.startsWith('[[')) {
-		// [[target|alias]] → 目标部分（不含别名）
-		const inner = hyperlink.slice(2, -2);
-		return inner.split('|')[0] ?? null;
-	}
-	return hyperlink; // http / obsidian:// / 库内路径
+	// [[target|alias]] → 目标部分（不含别名）；http / obsidian:// / 库内路径原样
+	return wikilinkLinkpath(hyperlink) ?? hyperlink;
 }
 
 /** 链接的「可见文本」（Obsidian 语义：别名 → 去 .md 的目标名 / URL 原样） */
-function nodeLinkDisplay(data: Record<string, unknown>): string | null {
+function nodeLinkDisplay(data: MdNodeData): string | null {
 	const hyperlink = data.hyperlink;
 	if (typeof hyperlink !== 'string' || !hyperlink) {
 		return null;
@@ -123,22 +115,13 @@ function nodeLinkDisplay(data: Record<string, unknown>): string | null {
 		}
 		return hyperlink;
 	}
-	if (hyperlink.startsWith('[[')) {
-		const inner = hyperlink.slice(2, -2);
-		const parts = inner.split('|');
-		if (parts.length > 1 && parts[1]) {
-			return parts[1]; // 别名
-		}
-		const name = (parts[0] ?? '').split('/').pop() ?? '';
-		return name.replace(/\.md$/, '');
-	}
-	return hyperlink;
+	return linkDisplayText(hyperlink);
 }
 
 /** 图片的「文件名显示名」（parse 时纯图节点文本回退值） */
-function imageSelfText(data: Record<string, unknown>): string | null {
+function imageSelfText(data: MdNodeData): string | null {
 	const target = data.mdImageTarget;
-	if (typeof target !== 'string' || !target) {
+	if (!target) {
 		return null;
 	}
 	return target.split('/').pop() ?? null;
@@ -156,9 +139,9 @@ function imageSelfText(data: Record<string, unknown>): string | null {
  *   新增/更新链接 → 合成回写，避免 mdRaw 原样覆盖导致链接丢失）。
  */
 function rawOk(
-	data: Record<string, unknown>,
+	data: MdNodeData,
 	app: App | null,
-): data is Record<string, unknown> & { mdRaw: string } {
+): data is MdNodeData & { mdRaw: string } {
 	const raw = data.mdRaw;
 	if (typeof raw !== 'string') {
 		return false;
@@ -194,10 +177,7 @@ function rawOk(
 }
 
 /** 合成路径：节点文本首行（剥壳文本 + 行尾链接/图片 token） */
-function composeFirstLine(
-	data: Record<string, unknown>,
-	app: App | null,
-): string {
+function composeFirstLine(data: MdNodeData, app: App | null): string {
 	const text = typeof data.text === 'string' ? data.text.split('\n')[0] ?? '' : '';
 	let line = text.trimEnd();
 	const token = renderHyperlink(data) ?? renderImage(data, app);
@@ -236,7 +216,7 @@ export function serializeMdBody(
 		restIndent: string,
 		app: App | null,
 	): string[] => {
-		const data: Record<string, unknown> = child.data ?? {};
+		const data: MdNodeData = child.data ?? {};
 		if (rawOk(data, app)) {
 			const rawLines = data.mdRaw.split('\n');
 			return [
@@ -294,8 +274,8 @@ export function serializeMdBody(
 			}
 			const child = frame.children[frame.index]!;
 			frame.index++;
-			const data: Record<string, unknown> = child.data ?? {};
-			const type = data.mdType as string | undefined;
+			const data: MdNodeData = child.data ?? {};
+			const type = data.mdType;
 			if (type === 'heading') {
 				frame.orderedCount = 0;
 				const level = Math.min(6, Math.max(1, Number(data.mdLevel) || 1));
@@ -329,7 +309,7 @@ export function serializeMdBody(
 			const marker =
 				data.mdMarker === 'ordered'
 					? `${frame.orderedCount + 1}.`
-					: (data.mdMarker as string) || '-';
+					: data.mdMarker || '-';
 			frame.orderedCount =
 				data.mdMarker === 'ordered' ? frame.orderedCount + 1 : 0;
 			const indent = '  '.repeat(frame.listIndent);

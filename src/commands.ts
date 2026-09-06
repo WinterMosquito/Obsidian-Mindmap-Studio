@@ -3,7 +3,7 @@
  * 生命周期（registerView、事件监听、设置面板）由 main.ts 负责。
  */
 import { MarkdownView } from 'obsidian';
-import { MindMapView } from './view';
+import { MindMapView } from './features/view';
 import { createNewMindMap } from './creation';
 import { fitMindMap } from './mindmap';
 import { isMindMapMarkdownFile, openAsMindMap } from './md-open';

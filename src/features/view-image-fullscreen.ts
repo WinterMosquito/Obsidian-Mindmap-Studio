@@ -5,13 +5,13 @@
  * 基于 Obsidian Modal 实现：组件生命周期（打开/关闭/清理）由 Obsidian 管理。
  */
 import { App, Modal } from 'obsidian';
-import { t, type Language } from './i18n';
-import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapView } from './view';
+import { t, type Language } from '../i18n';
+import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapViewContext } from './view-context';
 
 /** 打开节点图片的全屏查看（灯箱）；节点无图片时不动作 */
 export function openNodeImageFullscreen(
-	view: MindMapView,
+	view: MindMapViewContext,
 	node: MindMapNode,
 ): void {
 	const url = (node.getData?.('image') as string) || '';

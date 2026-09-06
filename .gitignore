@@ -21,8 +21,5 @@ data.json
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
 
-# scratch（其余临时物忽略；保留往返回归测试供仓库内运行）
-scratch/*
-!scratch/md-roundtrip/
-!scratch/md-roundtrip/**
-scratch/md-roundtrip/*.cjs
+# WorkBuddy 本地工作区（助手记忆/任务数据，非项目源码）
+.workbuddy/

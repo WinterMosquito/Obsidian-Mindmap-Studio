@@ -6,6 +6,7 @@
  */
 import { generateUid } from './constants';
 import { t, type Language } from './i18n';
+import { walkTree } from './domain/tree';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 /**
@@ -41,10 +42,8 @@ export function buildDefaultMindMapName(lang: Language = 'zh', now = new Date())
 export function ensureUniqueUids(tree: MindMapTreeNode): boolean {
 	const seen = new Set<string>();
 	let changed = false;
-	// 显式栈替代递归：树深度可由导入内容任意构造，递归会栈溢出
-	const stack: MindMapTreeNode[] = [tree];
-	while (stack.length > 0) {
-		const node = stack.pop()!;
+	// walkTree 用显式栈遍历：树深度可由导入内容任意构造，递归会栈溢出
+	walkTree(tree, (node) => {
 		if (!node.data) {
 			node.data = { text: '' };
 		}
@@ -55,11 +54,6 @@ export function ensureUniqueUids(tree: MindMapTreeNode): boolean {
 		} else {
 			seen.add(uid);
 		}
-		if (node.children) {
-			for (const child of node.children) {
-				stack.push(child);
-			}
-		}
-	}
+	});
 	return changed;
 }

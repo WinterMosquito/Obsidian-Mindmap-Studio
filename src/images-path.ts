@@ -8,6 +8,7 @@ import {
 	IMAGE_WIDTH,
 	URL_PREFIXES,
 } from './constants';
+import { walkTree } from './domain/tree';
 import {
 	MindMapTreeNode,
 	SetNodeImageOptions,
@@ -48,42 +49,11 @@ export function resolveImagePath(
 	return url;
 }
 
-/**
- * 将节点数据中的图片地址序列化回库内路径（保存文件时调用）。
- * 索引一次构建后 O(1) 查询，避免每张图片线性扫描全部文件。
- */
-export function serializeImagePath(
-	url: string,
-	app: App,
-	resourceIndex: Map<string, TFile>,
-): string {
-	if (
-		!url ||
-		url.startsWith('http://') ||
-		url.startsWith('https://') ||
-		url.startsWith('data:')
-	) {
-		return url;
-	}
-	if (!url.startsWith('file://') && !url.startsWith('app://')) {
-		return normalizePath(url);
-	}
-	try {
-		const file = lookupIndexedFile(url, app, resourceIndex);
-		if (file) {
-			return file.path;
-		}
-	} catch (error) {
-		console.error('序列化图片路径失败:', url, error);
-	}
-	return url;
-}
-
 /** 递归解析树中所有节点的图片/附件地址（加载文件时调用）：库内路径 → 资源地址 */
 export function walkResolveImagePaths(tree: MindMapTreeNode, app: App): void {
 	// 性能：一次获取库文件列表，避免逐节点全库扫描
 	const allFiles = app.vault.getFiles();
-	const walk = (node: MindMapTreeNode): void => {
+	walkTree(tree, (node) => {
 		if (node.data?.image) {
 			node.data.image = resolveImagePath(node.data.image, app, allFiles);
 		}
@@ -94,30 +64,7 @@ export function walkResolveImagePaths(tree: MindMapTreeNode, app: App): void {
 				allFiles,
 			);
 		}
-		node.children?.forEach(walk);
-	};
-	walk(tree);
-}
-
-/** 递归序列化树中所有节点的图片/附件地址（保存文件时调用）：资源地址 → 库内路径 */
-export function walkSerializeImagePaths(tree: MindMapTreeNode, app: App): void {
-	// 性能：复用全库共享缓存索引（自动保存高频调用，避免每次保存全库重建），
-	// 每个节点 O(1) 查询，避免逐节点线性扫描文件并重复计算资源地址。
-	const index = getCachedFileLookupIndex(app);
-	const walk = (node: MindMapTreeNode): void => {
-		if (node.data?.image) {
-			node.data.image = serializeImagePath(node.data.image, app, index);
-		}
-		if (node.data?.attachmentUrl) {
-			node.data.attachmentUrl = serializeImagePath(
-				node.data.attachmentUrl,
-				app,
-				index,
-			);
-		}
-		node.children?.forEach(walk);
-	};
-	walk(tree);
+	});
 }
 
 /**
@@ -156,37 +103,46 @@ export function buildFileLookupIndex(
 }
 
 // ---------------------------------------------------------------------------
-// 缓存的文件查找索引
+// 缓存的文件查找索引（FileLookupIndexService）
 //
 // 全库构建一次索引需要对每个文件调用 getResourcePath（大库下可达数百毫秒）。
 // 而多个高频路径都会触发重建：自动保存（md 图片路径回写）、
 // 文件重命名/删除（引用更新）、附件点击/悬浮（findAttachmentFile）。
 // 文件列表在 create/rename/delete 事件之外不会变化，因此：
 // - 缓存索引按「文件数量」快速比对复用（数量未变且无事件失效 → 直接复用）；
-// - main.ts 在 create/rename/delete 事件里调用 invalidateFileLookupIndexCache()
+// - vault-sync 在 create/rename/delete 事件里调用 fileLookupIndex.invalidate()
 //   显式失效，保证缓存与库一致（修改内容不影响索引，无需失效）。
 // 失效后下一次查询（含失效事件的同批处理）会重建，时序上无竞态。
 // ---------------------------------------------------------------------------
 
-let cachedFileLookup: Map<string, TFile> | null = null;
-let cachedFileLookupCount = 0;
+/**
+ * 全库文件查找索引服务：「多种地址形态 → TFile」的 O(1) 查找缓存。
+ * 缓存按库文件数量判效，`invalidate` 供库事件（create/rename/delete）主动失效。
+ */
+export class FileLookupIndexService {
+	private cache: Map<string, TFile> | null = null;
+	private cacheCount = 0;
 
-/** 获取（可能缓存的）全库文件查找索引；文件数量变化时自动重建 */
-export function getCachedFileLookupIndex(app: App): Map<string, TFile> {
-	const files = app.vault.getFiles();
-	if (cachedFileLookup && cachedFileLookupCount === files.length) {
-		return cachedFileLookup;
+	/** 获取（可能缓存的）全库文件查找索引；文件数量变化时自动重建 */
+	get(app: App): Map<string, TFile> {
+		const files = app.vault.getFiles();
+		if (this.cache && this.cacheCount === files.length) {
+			return this.cache;
+		}
+		this.cache = buildFileLookupIndex(app, files);
+		this.cacheCount = files.length;
+		return this.cache;
 	}
-	cachedFileLookup = buildFileLookupIndex(app, files);
-	cachedFileLookupCount = files.length;
-	return cachedFileLookup;
+
+	/** 库文件列表变化（create/rename/delete）后使缓存失效 */
+	invalidate(): void {
+		this.cache = null;
+		this.cacheCount = 0;
+	}
 }
 
-/** 库文件列表变化（create/rename/delete）后使缓存失效 */
-export function invalidateFileLookupIndexCache(): void {
-	cachedFileLookup = null;
-	cachedFileLookupCount = 0;
-}
+/** 插件级单例：全库唯一 vault，缓存全局共享（vault-sync 在库事件时失效） */
+export const fileLookupIndex = new FileLookupIndexService();
 
 /**
  * 通过索引把任意地址形态解析为库内 TFile（O(1)，索引缺失键时按后缀回退）。
@@ -386,13 +342,11 @@ export async function walkCorrectImageSizesByAspect(
 	tree: MindMapTreeNode,
 ): Promise<boolean> {
 	const nodes: MindMapTreeNode[] = [];
-	const collect = (node: MindMapTreeNode): void => {
+	walkTree(tree, (node) => {
 		if (node.data?.image) {
 			nodes.push(node);
 		}
-		node.children?.forEach(collect);
-	};
-	collect(tree);
+	});
 	let changed = false;
 	await Promise.all(
 		nodes.map(async (node) => {
@@ -421,7 +375,7 @@ export async function walkCorrectImageSizesByAspect(
  * 加载与保存时都会调用，保证新旧文件中的图片都以固定高度完整呈现。
  */
 export function normalizeImageSizes(tree: MindMapTreeNode): void {
-	const walk = (node: MindMapTreeNode): void => {
+	walkTree(tree, (node) => {
 		if (node.data?.image) {
 			node.data.imageSize = {
 				width: IMAGE_WIDTH,
@@ -429,7 +383,5 @@ export function normalizeImageSizes(tree: MindMapTreeNode): void {
 				custom: false,
 			};
 		}
-		node.children?.forEach(walk);
-	};
-	walk(tree);
+	});
 }

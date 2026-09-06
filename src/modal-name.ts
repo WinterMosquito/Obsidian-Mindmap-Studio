@@ -48,7 +48,7 @@ export function openNameInputModal(
 			}
 			// 先 settle 再 close：Obsidian 的 Modal.close() 会同步触发 onClose（兜底
 			// settle(null)），若先 close 则 onClose 的 settle(null) 会抢先 resolve(null)，
-			// 导致用户输入的名称被当作取消、导图不创建。与 modal-note.ts 的正确顺序一致。
+			// 导致用户输入的名称被当作取消、导图不创建。
 			settle(name);
 			modal.close();
 		};

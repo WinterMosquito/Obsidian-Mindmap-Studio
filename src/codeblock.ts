@@ -11,7 +11,7 @@ import {
 } from './mindmap';
 import { t } from './i18n';
 import { ensureUniqueUids } from './markdown';
-import { normalizeImageSizes, walkResolveImagePaths } from './images';
+import { normalizeImageSizes, walkResolveImagePaths } from './images-path';
 import { parseMdOutline } from './md-outline';
 
 export class MindMapCodeBlock extends MarkdownRenderChild {

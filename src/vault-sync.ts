@@ -13,7 +13,7 @@
  */
 import { App, Plugin, TAbstractFile, TFile } from 'obsidian';
 import { VIEW_TYPE } from './constants';
-import { invalidateFileLookupIndexCache } from './images';
+import { fileLookupIndex } from './images-path';
 
 /** MindMapView 的最小结构接口：仅暴露本服务需要的成员 */
 interface MindMapViewLike {
@@ -42,7 +42,7 @@ export class VaultSyncService {
 
 	/** 文件重命名：失效查找缓存 + 同步打开导图的引用 */
 	private handleRename(file: TAbstractFile, oldPath: string): void {
-		invalidateFileLookupIndexCache();
+		fileLookupIndex.invalidate();
 		if (!(file instanceof TFile)) {
 			return;
 		}
@@ -55,7 +55,7 @@ export class VaultSyncService {
 
 	/** 文件删除：失效查找缓存 + 同步打开导图的引用 */
 	private handleDelete(file: TAbstractFile): void {
-		invalidateFileLookupIndexCache();
+		fileLookupIndex.invalidate();
 		if (!(file instanceof TFile)) {
 			return;
 		}
@@ -68,7 +68,7 @@ export class VaultSyncService {
 
 	/** 文件创建：失效查找缓存（新文件的路径/资源地址立即可查） */
 	private handleCreate(file: TAbstractFile): void {
-		invalidateFileLookupIndexCache();
+		fileLookupIndex.invalidate();
 		void file;
 	}
 

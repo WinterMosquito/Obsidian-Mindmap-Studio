@@ -3,7 +3,7 @@
  * 菜单动作（复制/粘贴/链接/图片/删除等）委托给 view-node-actions.ts。
  */
 import { Menu } from 'obsidian';
-import { findNodeByDom, fitMindMap } from './mindmap';
+import { findNodeByDom, fitMindMap } from '../mindmap';
 import {
 	addImageToActiveNode,
 	addLinkToActiveNode,
@@ -15,12 +15,12 @@ import {
 import { removeNodeImage } from './view-attachments';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { arrangeMindMap } from './view-toolbar';
-import { t } from './i18n';
-import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapView } from './view';
+import { t } from '../i18n';
+import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapViewContext } from './view-context';
 
 /** 注册右键菜单监听（引擎重建时随 initMindMap 调用） */
-export function setupContextMenu(view: MindMapView): void {
+export function setupContextMenu(view: MindMapViewContext): void {
 	if (!view.canvasEl || !view.mindMap) {
 		return;
 	}
@@ -82,7 +82,7 @@ export function setupContextMenu(view: MindMapView): void {
 
 /** 节点右键菜单（含单独移除图片/附件） */
 function showNodeContextMenu(
-	view: MindMapView,
+	view: MindMapViewContext,
 	event: MouseEvent,
 	node: MindMapNode,
 ): void {

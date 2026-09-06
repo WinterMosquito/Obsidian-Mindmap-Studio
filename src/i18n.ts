@@ -85,7 +85,6 @@ const ZH = {
 	'common.nodeCreatedAndLinked': '已创建节点并链接到',
 	'common.cannotPreview': '无法在 Obsidian 中预览该文件类型',
 	'common.cannotOpen': '无法打开该文件类型',
-	'common.unknownError': '未知错误',
 
 	// ===== 拖拽/导入 =====
 	'common.selectNodeBeforeDropImage': '请先选择一个节点再拖入图片',
@@ -103,7 +102,6 @@ const ZH = {
 	'modal.link.title': '设置节点链接',
 	'modal.link.placeholder': '输入 URL 或搜索笔记/附件…',
 	'modal.link.clear': '清除链接',
-	'link.noMatchNote': '未找到匹配的笔记，将使用输入的文本作为链接',
 
 	// ===== 弹窗 - 图片 =====
 	'modal.image.title': '设置节点图片',
@@ -125,12 +123,10 @@ const ZH = {
 
 	// ===== 弹窗 - 命名 =====
 	'modal.name.folder': '文件夹：',
-	'modal.name.placeholder': '输入名称...',
 
 	// ===== 通用按钮 =====
 	'modal.cancel': '取消',
 	'modal.confirm': '确定',
-	'modal.close': '关闭',
 
 	// ===== 设置 =====
 	'settings.title': '设置',
@@ -154,8 +150,6 @@ const ZH = {
 	'settings.codeBlockLayoutDesc': 'Markdown 代码块中渲染思维导图的默认布局',
 	'settings.language': '语言',
 	'settings.languageDesc': '界面语言',
-	'settings.langZh': '中文',
-	'settings.langEn': 'English',
 
 	// ===== 布局选项 =====
 	'layout.logical': '逻辑结构图',
@@ -169,18 +163,6 @@ const ZH = {
 	'theme.default': '默认（跟随 Obsidian 主题）',
 	'theme.forceLight': '强制亮色',
 	'theme.forceDark': '强制暗色',
-
-	// ===== 节点样式预设颜色 =====
-	'color.default': '默认',
-	'color.blue': '蓝色',
-	'color.green': '绿色',
-	'color.yellow': '黄色',
-	'color.red': '红色',
-	'color.purple': '紫色',
-	'color.orange': '橙色',
-	'color.pink': '粉色',
-	'color.cyan': '青色',
-	'color.gray': '灰色',
 
 	// ===== 搜索栏按钮提示 =====
 	'search.prev': '上一个 (shift+enter)',
@@ -278,7 +260,6 @@ const EN: Record<TranslationKey, string> = {
 	'common.nodeCreatedAndLinked': 'Node created and linked to ',
 	'common.cannotPreview': 'Cannot preview this file type in Obsidian',
 	'common.cannotOpen': 'Cannot open this file type',
-	'common.unknownError': 'Unknown error',
 
 	// ===== 拖拽/导入 =====
 	'common.selectNodeBeforeDropImage': 'Please select a node before dropping images',
@@ -296,8 +277,6 @@ const EN: Record<TranslationKey, string> = {
 	'modal.link.title': 'Set Node Link',
 	'modal.link.placeholder': 'Enter a URL or search notes/attachments…',
 	'modal.link.clear': 'Clear Link',
-	'link.noMatchNote':
-		'No matching note found; the input text will be used as the link',
 
 	// ===== 弹窗 - 图片 =====
 	'modal.image.title': 'Set Node Image',
@@ -321,12 +300,10 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 弹窗 - 命名 =====
 	'modal.name.folder': 'Folder: ',
-	'modal.name.placeholder': 'Enter name...',
 
 	// ===== 通用按钮 =====
 	'modal.cancel': 'Cancel',
 	'modal.confirm': 'OK',
-	'modal.close': 'Close',
 
 	// ===== 设置 =====
 	'settings.title': 'Settings',
@@ -353,8 +330,6 @@ const EN: Record<TranslationKey, string> = {
 		'Default layout for mind map rendered in Markdown code blocks',
 	'settings.language': 'Language',
 	'settings.languageDesc': 'UI language',
-	'settings.langZh': '中文',
-	'settings.langEn': 'English',
 
 	// ===== 布局选项 =====
 	'layout.logical': 'Logical Structure',
@@ -368,18 +343,6 @@ const EN: Record<TranslationKey, string> = {
 	'theme.default': 'Default (follow Obsidian theme)',
 	'theme.forceLight': 'Force Light',
 	'theme.forceDark': 'Force Dark',
-
-	// ===== 节点样式预设颜色 =====
-	'color.default': 'Default',
-	'color.blue': 'Blue',
-	'color.green': 'Green',
-	'color.yellow': 'Yellow',
-	'color.red': 'Red',
-	'color.purple': 'Purple',
-	'color.orange': 'Orange',
-	'color.pink': 'Pink',
-	'color.cyan': 'Cyan',
-	'color.gray': 'Gray',
 
 	// ===== 搜索栏按钮提示 =====
 	'search.prev': 'Previous (shift+enter)',

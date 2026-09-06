@@ -1,14 +1,14 @@
 /**
  * 搜索栏子系统：构建搜索栏 DOM 与搜索/上下跳转/计数逻辑。
- * 从 view.ts 抽取，逻辑以接收 MindMapView 实例的模块函数组织；
+ * 从 view.ts 抽取，逻辑以接收 MindMapViewContext 实例的模块函数组织；
  * view.ts 中的同名方法保留为外观（委托到这里的实现），调用方无需改动。
  */
 import { setIcon } from 'obsidian';
-import { t } from './i18n';
-import type { MindMapView } from './view';
+import { t } from '../i18n';
+import type { MindMapViewContext } from './view-context';
 
 /** 构建搜索栏（DOM 与事件监听） */
-export function buildSearchBar(view: MindMapView): void {
+export function buildSearchBar(view: MindMapViewContext): void {
 	const searchBar = view.searchBarEl;
 	if (!searchBar) {
 		return;
@@ -57,7 +57,7 @@ export function buildSearchBar(view: MindMapView): void {
 }
 
 /** 打开搜索栏并聚焦输入框 */
-export function openSearchBar(view: MindMapView): void {
+export function openSearchBar(view: MindMapViewContext): void {
 	if (!view.searchBarEl || !view.mindMap) {
 		return;
 	}
@@ -66,7 +66,7 @@ export function openSearchBar(view: MindMapView): void {
 }
 
 /** 关闭搜索栏并结束引擎搜索 */
-export function closeSearchBar(view: MindMapView): void {
+export function closeSearchBar(view: MindMapViewContext): void {
 	if (!view.searchBarEl) {
 		return;
 	}
@@ -85,11 +85,11 @@ export function closeSearchBar(view: MindMapView): void {
 }
 
 /** 防抖定时器（按视图），避免每键全量重搜 */
-const searchTimers = new WeakMap<MindMapView, number>();
+const searchTimers = new WeakMap<MindMapViewContext, number>();
 const SEARCH_DEBOUNCE_MS = 180;
 
 /** 执行搜索（带防抖：停顿后再搜） */
-export function doSearch(view: MindMapView): void {
+export function doSearch(view: MindMapViewContext): void {
 	if (!view.mindMap?.search || !view.searchInput) {
 		return;
 	}
@@ -105,7 +105,7 @@ export function doSearch(view: MindMapView): void {
 	);
 }
 
-function runSearch(view: MindMapView): void {
+function runSearch(view: MindMapViewContext): void {
 	if (!view.mindMap?.search || !view.searchInput) {
 		return;
 	}
@@ -119,12 +119,12 @@ function runSearch(view: MindMapView): void {
 }
 
 /** 跳到下一个匹配 */
-export function searchNext(view: MindMapView): void {
+export function searchNext(view: MindMapViewContext): void {
 	view.mindMap?.search?.searchNext(() => updateSearchCount(view));
 }
 
 /** 跳到上一个匹配（循环） */
-export function searchPrev(view: MindMapView): void {
+export function searchPrev(view: MindMapViewContext): void {
 	if (!view.mindMap?.search) {
 		return;
 	}
@@ -140,7 +140,7 @@ export function searchPrev(view: MindMapView): void {
 }
 
 /** 更新匹配计数显示 */
-export function updateSearchCount(view: MindMapView): void {
+export function updateSearchCount(view: MindMapViewContext): void {
 	if (!view.searchCountEl || !view.mindMap?.search) {
 		return;
 	}

@@ -15,10 +15,8 @@ import {
 } from 'obsidian';
 import { t, type Language } from './i18n';
 import { createButton } from './modal-common';
-import {
-	isExternalOrProtocolUrl,
-	isLinkAttachmentExtension,
-} from './constants';
+import { isLinkAttachmentExtension } from './constants';
+import { formatWikilink } from './domain/wikilink';
 
 export interface LinkPickResult {
 	/** 链接文本（写入 md：[[..]] 或 url/obsidian://） */
@@ -119,8 +117,10 @@ export function openLinkEditorModal(
 				modal.close();
 				return;
 			}
-			settle(isExternalOrProtocolUrl(v) ? { link: v } : { link: v });
-			modal.close();
+		// 保持裸文本：是否包裹为 [[..]] 由序列化的 renderHyperlink 统一决定，
+		// 避免此处与 md-serialize 的链接渲染规则产生第二套真相。
+		settle({ link: v });
+		modal.close();
 		};
 
 		new NoteLinkSuggest(app, input, markdownFiles, attachments, (file, isNote) => {
@@ -131,15 +131,15 @@ export function openLinkEditorModal(
 				// 同名笔记用路径消歧（Obsidian 双链 [[路径/名|名]] 语义）
 				settle(
 					unique
-						? { link: `[[${file.basename}]]`, label: file.basename }
+						? { link: formatWikilink(file.basename), label: file.basename }
 						: {
-								link: `[[${file.path}|${file.basename}]]`,
+								link: formatWikilink(file.path, file.basename),
 								label: file.basename,
 							},
 				);
 			} else {
 				// 附件：完整库内路径链接（保留扩展名可见）
-				settle({ link: `[[${file.path}]]`, label: file.name });
+				settle({ link: formatWikilink(file.path), label: file.name });
 			}
 			modal.close();
 		});

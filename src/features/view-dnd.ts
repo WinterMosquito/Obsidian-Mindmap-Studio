@@ -2,17 +2,18 @@
  * 画布拖拽与文件输入：库内文件拖入（图片/笔记）、外部图片导入。从 view.ts 拆出。
  */
 import { Notice, type TFile } from 'obsidian';
-import { isImageExtension, MAX_IMAGE_SIZE_MB } from './constants';
-import { saveImageToVault } from './images';
-import { extractDroppedFileNames, resolveDroppedFile } from './links';
-import { getActiveNode } from './mindmap';
+import { isImageExtension, MAX_IMAGE_SIZE_MB } from '../constants';
+import { saveImageToVault } from '../images-save';
+import { extractDroppedFileNames, resolveDroppedFile } from '../links-resolve';
+import { getActiveNode } from '../mindmap';
 import { applyNodeImage } from './view-node-actions';
-import { t } from './i18n';
-import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapView } from './view';
+import { t } from '../i18n';
+import { formatWikilink } from '../domain/wikilink';
+import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapViewContext } from './view-context';
 
 /** 注册画布拖拽监听（引擎重建时随 initMindMap 调用） */
-export function setupDragAndDrop(view: MindMapView): void {
+export function setupDragAndDrop(view: MindMapViewContext): void {
 	if (!view.canvasEl) {
 		return;
 	}
@@ -53,7 +54,7 @@ export function setupDragAndDrop(view: MindMapView): void {
 }
 
 /** 拖入文件分发：库内文件 vs 外部附件 */
-async function handleFileDrop(view: MindMapView, event: DragEvent): Promise<void> {
+async function handleFileDrop(view: MindMapViewContext, event: DragEvent): Promise<void> {
 	const dataTransfer = event.dataTransfer;
 	if (!dataTransfer) {
 		return;
@@ -72,7 +73,7 @@ async function handleFileDrop(view: MindMapView, event: DragEvent): Promise<void
  * - 已选中主题 → 直接归入该主题；
  * - 未选中 → 按原逻辑处理（提示选择或挂到根节点下）。
  */
-async function handleDroppedVaultFile(view: MindMapView, file: TFile): Promise<void> {
+async function handleDroppedVaultFile(view: MindMapViewContext, file: TFile): Promise<void> {
 	const selected = getActiveNode(view.mindMap);
 	const url = view.app.vault.getResourcePath(file);
 	const extension = file.extension.toLowerCase();
@@ -98,11 +99,11 @@ async function handleDroppedVaultFile(view: MindMapView, file: TFile): Promise<v
 
 /** 拖入文档：已选中主题 → 链接；未选中 → 挂到根节点下并链接 */
 async function handleDroppedDocument(
-	view: MindMapView,
+	view: MindMapViewContext,
 	file: TFile,
 	selected: MindMapNode | null,
 ): Promise<void> {
-	const link = `[[${file.basename}]]`;
+	const link = formatWikilink(file.basename);
 	if (selected) {
 		view.mindMap?.execCommand('SET_NODE_HYPERLINK', selected, link);
 		new Notice(`${t(view.lang, 'common.linkedTo')} [[${file.basename}]]`);
@@ -127,7 +128,7 @@ async function handleDroppedDocument(
  * 再归入选中的主题（未选中时提示先选择）。
  */
 async function handleExternalFilesDrop(
-	view: MindMapView,
+	view: MindMapViewContext,
 	dataTransfer: DataTransfer,
 ): Promise<void> {
 	const files = Array.from(dataTransfer.files);
@@ -178,14 +179,14 @@ async function handleExternalFilesDrop(
 		if (!file) {
 			continue;
 		}
-		const saved = await saveImageToVault(
-			view.app,
+		const saved = await saveImageToVault({
+			app: view.app,
 			sourcePath,
 			file,
-			MAX_IMAGE_SIZE_MB,
-			useRealNames ? realNames[index] : undefined,
-			view.lang,
-		);
+			maxSizeMB: MAX_IMAGE_SIZE_MB,
+			preferredName: useRealNames ? realNames[index] : undefined,
+			lang: view.lang,
+		});
 		if (!saved) {
 			continue;
 		}

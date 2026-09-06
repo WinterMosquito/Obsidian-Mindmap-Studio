@@ -20,6 +20,8 @@
  */
 
 import { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
+import { formatWikilink } from './domain/wikilink';
+import type { MdNodeData } from './domain/md-meta';
 
 export interface MdParseResult {
 	tree: MindMapTreeNode;
@@ -122,7 +124,7 @@ function tokenDisplay(tok: InlineToken): string {
 }
 
 /** buildInlineData 的稳定字段（text/mdRaw/mdDerivedText 恒为 string） */
-interface InlineData extends Record<string, unknown> {
+interface InlineData extends MdNodeData {
 	text: string;
 	mdRaw: string;
 	mdDerivedText: string;
@@ -161,7 +163,7 @@ function buildInlineData(raw: string): InlineData {
 		if (tok.kind === 'wiki') {
 			if (!firstLink) {
 				firstLink = true;
-				data.hyperlink = `[[${tok.target}${tok.label ? `|${tok.label}` : ''}]]`;
+				data.hyperlink = formatWikilink(tok.target, tok.label || undefined);
 				data.mdLinkStyle = 'wiki';
 				// 引擎链接图标原生 title（悬停提示目标名，提示可点）
 				data.hyperlinkTitle = tokenDisplay(tok);
@@ -444,17 +446,14 @@ export function parseMdOutline(
 			) {
 				const top = listStack[listStack.length - 1]!.node;
 				const inline = buildInlineData(line.text);
-				const prevText =
-					typeof top.data.text === 'string' ? top.data.text : '';
-				const prevDerived =
-					typeof top.data.mdDerivedText === 'string'
-						? top.data.mdDerivedText
-						: '';
-				const prevRaw =
-					typeof top.data.mdRaw === 'string' ? top.data.mdRaw : '';
-				top.data.text = `${prevText}\n${inline.text}`;
-				top.data.mdDerivedText = `${prevDerived}\n${inline.text}`;
-				top.data.mdRaw = `${prevRaw}\n${line.text}`;
+				// 解析产物携带 md* 元数据，按渲染层合并视图收窄（引擎类型未声明）
+				const topData = top.data as MdNodeData;
+				const prevText = topData.text ?? '';
+				const prevDerived = topData.mdDerivedText ?? '';
+				const prevRaw = topData.mdRaw ?? '';
+				topData.text = `${prevText}\n${inline.text}`;
+				topData.mdDerivedText = `${prevDerived}\n${inline.text}`;
+				topData.mdRaw = `${prevRaw}\n${line.text}`;
 				continue;
 			}
 			listStack = [];

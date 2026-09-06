@@ -17,6 +17,7 @@ import {
 } from '../vendor/simple-mind-map.cjs';
 import { getThemeConfig, isDarkTheme } from './mindmap-theme';
 import { t, type Language } from './i18n';
+import { walkTree } from './domain/tree';
 
 export { getCodeBlockThemeConfig, getThemeConfig, isDarkTheme } from './mindmap-theme';
 
@@ -156,10 +157,10 @@ function countNodes(tree: MindMapTreeNode | null): number {
 	if (!tree) {
 		return 0;
 	}
-	let count = 1;
-	for (const child of tree.children ?? []) {
-		count += countNodes(child);
-	}
+	let count = 0;
+	walkTree(tree, () => {
+		count++;
+	});
 	return count;
 }
 
@@ -178,19 +179,15 @@ export function findNodeByDom(
 		return null;
 	}
 	let result: MindMapNode | null = null;
-	const walk = (node: MindMapNode): void => {
-		if (result) {
-			return;
-		}
-		if (node.uid === uid || node.getData('uid') === uid) {
-			result = node;
-			return;
-		}
-		(node.children ?? []).forEach(walk);
-	};
 	const root = mindMap.renderer.root;
 	if (root) {
-		walk(root);
+		walkTree(root, (node) => {
+			if (node.uid === uid || node.getData('uid') === uid) {
+				result = node;
+				return false; // 命中即终止整树遍历
+			}
+			return undefined;
+		});
 	}
 	return result;
 }

@@ -16,5 +16,5 @@
 		"allowJs": true,
 		"lib": ["ES2021", "DOM"]
 	},
-	"include": ["src/**/*.ts", "vendor/**/*.d.cts"]
+	"include": ["src/**/*.ts", "tests/**/*.ts", "vendor/**/*.d.cts"]
 }

@@ -10,7 +10,7 @@ import { MD_FILE_SUFFIX } from './constants';
 import { t, type Language } from './i18n';
 import { buildDefaultMindMapName, createDefaultMarkdownContent } from './markdown';
 import { openAsMindMap } from './md-open';
-import { openNameInputModal } from './modals';
+import { openNameInputModal } from './modal-name';
 
 /** 保证用户输入以 .mindmap.md 结尾（容忍误输入 .mindmap / .mindmap.md） */
 function withMdSuffix(name: string): string {

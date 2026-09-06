@@ -1,12 +1,13 @@
 /**
  * 状态栏：节点计数展示（带节流与尾随刷新）。从 view.ts 拆出。
  */
-import { t } from './i18n';
-import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapView } from './view';
+import { t } from '../i18n';
+import { walkTree } from '../domain/tree';
+import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapViewContext } from './view-context';
 
 /** 更新状态栏节点计数（data_change 高频事件下节流，尾随定时器保证最终值） */
-export function updateStatusBar(view: MindMapView): void {
+export function updateStatusBar(view: MindMapViewContext): void {
 	if (!view.plugin.statusBarEl) {
 		return;
 	}
@@ -41,9 +42,9 @@ function countRenderNodes(node: MindMapNode | null): number {
 	if (!node) {
 		return 0;
 	}
-	let count = 1;
-	for (const child of node.children) {
-		count += countRenderNodes(child);
-	}
+	let count = 0;
+	walkTree(node, () => {
+		count++;
+	});
 	return count;
 }

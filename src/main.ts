@@ -23,7 +23,7 @@ import {
 	TheMindMapSettings,
 	TheMindMapSettingTab,
 } from './settings';
-import { MindMapView } from './view';
+import { MindMapView } from './features/view';
 import { MindMapCodeBlock } from './codeblock';
 import { createNewMindMap } from './creation';
 import {

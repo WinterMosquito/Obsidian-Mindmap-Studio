@@ -3,7 +3,9 @@
  * 从 links.ts 拆出。
  */
 import { App, TFile } from 'obsidian';
-import { getCachedFileLookupIndex } from './images';
+import { fileLookupIndex } from './images-path';
+import { walkTree } from './domain/tree';
+import { formatWikilink, parseWikilink } from './domain/wikilink';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 /** Obsidian 库内回收站目录（vault 根下的 .trash） */
@@ -15,21 +17,17 @@ const TRASH_DIR = '.trash';
  */
 function treeHasImageOrAttachmentOrLink(tree: MindMapTreeNode): boolean {
 	let found = false;
-	const walk = (node: MindMapTreeNode): void => {
-		if (found) {
-			return;
-		}
+	walkTree(tree, (node) => {
 		if (
 			node.data?.image ||
 			node.data?.attachmentUrl ||
 			node.data?.hyperlink
 		) {
 			found = true;
-			return;
+			return false; // 命中即终止整树遍历
 		}
-		node.children?.forEach(walk);
-	};
-	walk(tree);
+		return undefined;
+	});
 	return found;
 }
 
@@ -128,11 +126,11 @@ export function updateReferencesOnRename(
 		return false;
 	}
 	// 性能：复用全库共享缓存索引（文件重命名事件高频触发，避免每次全库重建）
-	const resourceIndex = getCachedFileLookupIndex(app);
+	const resourceIndex = fileLookupIndex.get(app);
 	const trashed =
 		file.path === TRASH_DIR || file.path.startsWith(`${TRASH_DIR}/`);
 	let changed = false;
-	const walk = (node: MindMapTreeNode): void => {
+	walkTree(tree, (node) => {
 		if (node.data?.image) {
 			const imagePath = serializeImagePathForCompare(
 				node.data.image,
@@ -157,44 +155,38 @@ export function updateReferencesOnRename(
 			}
 		}
 		if (node.data?.hyperlink) {
-			const link = node.data.hyperlink;
-			if (link.startsWith('[[')) {
-				const inner = link.slice(2, -2);
-				// 目标部分是第一个 | 或 # 之前的内容（支持 [[路径#区块|别名]]）
-				const firstSep = inner.search(/[|#]/);
-				const target =
-					firstSep === -1 ? inner : inner.slice(0, firstSep);
-				const oldBasename =
-					oldPath.split('/').pop()?.replace(/\.md$/, '') ?? '';
-				const oldPathNoExt = oldPath.replace(/\.md$/, '');
-				// 兼容 [[note]] 与全路径 [[folder/note]]（后者无 .md 扩展名）
-				if (
-					target === oldBasename ||
-					target === oldPath ||
-					target === oldPathNoExt
-				) {
-					if (trashed) {
-						// 移入回收站等同删除：清除链接
-						node.data.hyperlink = '';
-					} else {
-						// 仅替换链接目标，保留 #区块 / |别名 等尾巴
-						const rest = firstSep === -1 ? '' : inner.slice(firstSep);
-						// 保留路径前缀：[[folder/新名]]；无前缀时用裸 basename
-						const prefix = target.includes('/')
-							? target.split('/').slice(0, -1).join('/')
-							: '';
-						const newTarget = prefix
-							? `${prefix}/${file.basename}`
-							: file.basename;
-						node.data.hyperlink = `[[${newTarget}${rest}]]`;
-					}
-					changed = true;
+			const parts = parseWikilink(node.data.hyperlink);
+			const oldBasename =
+				oldPath.split('/').pop()?.replace(/\.md$/, '') ?? '';
+			const oldPathNoExt = oldPath.replace(/\.md$/, '');
+			// 兼容 [[note]] 与全路径 [[folder/note]]（后者无 .md 扩展名）
+			if (
+				parts &&
+				(parts.target === oldBasename ||
+					parts.target === oldPath ||
+					parts.target === oldPathNoExt)
+			) {
+				if (trashed) {
+					// 移入回收站等同删除：清除链接
+					node.data.hyperlink = '';
+				} else {
+					// 仅替换链接目标，保留 #区块 / |别名 等尾巴
+					const tail = `${parts.block ? `#${parts.block}` : ''}${
+						parts.alias ? `|${parts.alias}` : ''
+					}`;
+					// 保留路径前缀：[[folder/新名]]；无前缀时用裸 basename
+					const prefix = parts.target.includes('/')
+						? parts.target.split('/').slice(0, -1).join('/')
+						: '';
+					const newTarget = prefix
+						? `${prefix}/${file.basename}`
+						: file.basename;
+					node.data.hyperlink = formatWikilink(`${newTarget}${tail}`);
 				}
+				changed = true;
 			}
 		}
-		node.children?.forEach(walk);
-	};
-	walk(tree);
+	});
 	return changed;
 }
 
@@ -221,9 +213,9 @@ export function removeReferencesOnDelete(
 		return false;
 	}
 	// 性能：复用全库共享缓存索引（文件删除事件高频触发，避免每次全库重建）
-	const resourceIndex = getCachedFileLookupIndex(app);
+	const resourceIndex = fileLookupIndex.get(app);
 	let changed = false;
-	const walk = (node: MindMapTreeNode): void => {
+	walkTree(tree, (node) => {
 		if (node.data?.image) {
 			const imagePath = serializeImagePathForCompare(
 				node.data.image,
@@ -246,23 +238,18 @@ export function removeReferencesOnDelete(
 			}
 		}
 		if (node.data?.hyperlink) {
-			const link = node.data.hyperlink;
-			if (link.startsWith('[[')) {
-				const inner = link.slice(2, -2);
-				const target = inner.split('|')[0]?.split('#')[0] ?? '';
-				// 兼容 [[note]] 与全路径 [[folder/note]]（后者无 .md 扩展名）
-				if (
-					target === file.basename ||
-					target === file.path ||
-					target === file.path.replace(/\.md$/, '')
-				) {
-					node.data.hyperlink = '';
-					changed = true;
-				}
+			const parts = parseWikilink(node.data.hyperlink);
+			// 兼容 [[note]] 与全路径 [[folder/note]]（后者无 .md 扩展名）
+			if (
+				parts &&
+				(parts.target === file.basename ||
+					parts.target === file.path ||
+					parts.target === file.path.replace(/\.md$/, ''))
+			) {
+				node.data.hyperlink = '';
+				changed = true;
 			}
 		}
-		node.children?.forEach(walk);
-	};
-	walk(tree);
+	});
 	return changed;
 }

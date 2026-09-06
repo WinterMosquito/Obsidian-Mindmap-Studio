@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS: TheMindMapSettings = {
 	language: 'zh',
 };
 
-/** 变更后需要即时应用到已打开视图的设置项（与 display() 的 onChange 行为一致） */
+/** 变更后需要即时应用到已打开视图的设置项 */
 const LIVE_REFRESH_SETTING_KEYS = new Set<string>([
 	'defaultLayout',
 	'defaultTheme',
@@ -165,7 +165,7 @@ export class TheMindMapSettingTab extends PluginSettingTab {
 
 	/**
 	 * 声明式设置写回（1.13+）：变更设置、持久化，
-	 * 并按需即时应用到已打开的视图（与 display() 的 onChange 行为一致）。
+	 * 并按需即时应用到已打开的视图。
 	 */
 	override setControlValue(key: string, value: unknown): void {
 		(this.plugin.settings as unknown as Record<string, unknown>)[key] =

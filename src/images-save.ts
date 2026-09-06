@@ -4,15 +4,29 @@
  */
 import { App, Notice, TFile, normalizePath } from 'obsidian';
 import { isImageExtension } from './constants';
-import { getCachedFileLookupIndex, lookupIndexedFile } from './images-path';
+import { fileLookupIndex, lookupIndexedFile } from './images-path';
 import { t, type Language } from './i18n';
 
 /**
- * 保存串行链：「文件名选择 + 写入」必须整体互斥。
- * 两个并发保存同名图片若各自通过存在性检查再分别 createBinary，
- * 会写同一目标（TOCTOU，后写覆盖先写）。链上排队保证原子性。
+ * 图片保存串行队列：「文件名选择 + vault 写入」非原子，并发保存同名图片
+ * 若各自通过存在性检查再分别 createBinary，会写同一目标
+ * （TOCTOU，后写覆盖先写）。排队执行保证互斥原子性。
  */
-let saveImageChain: Promise<unknown> = Promise.resolve();
+class ImageSaveQueue {
+	private chain: Promise<unknown> = Promise.resolve();
+
+	enqueue<T>(task: () => Promise<T>): Promise<T> {
+		const run = this.chain.then(task);
+		// 无论本次成败都推进队列（错误已在任务内部处理并返回 null）
+		this.chain = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
+	}
+}
+
+const saveQueue = new ImageSaveQueue();
 
 /** 清理文件名中的非法字符（含控制字符） */
 export function sanitizeFileName(name: string): string {
@@ -48,50 +62,49 @@ function matchesDecodedPath(url: string, file: TFile): boolean {
 }
 
 /**
+ * 保存图片到库的参数。
+ *
+ * 采用对象参数而非位置参数：本函数有 6 个形参、其中 4 个可选，
+ * 位置传参极易错位（曾发生把 `lang` 传给 `preferredName` 的事故，
+ * 因 Language 是 string 的子类型，TypeScript 完全不报错）。
+ */
+export interface SaveImageOptions {
+	/** Obsidian App 实例 */
+	app: App;
+	/** 当前思维导图文件路径（用于确定附件目录） */
+	sourcePath: string;
+	/** 要保存的图片文件 */
+	file: File;
+	/** 大小上限（MB），默认 10 */
+	maxSizeMB?: number;
+	/** 可选真实文件名（text/uri-list 解码，修复乱码） */
+	preferredName?: string;
+	/** 提示语言，默认 'zh' */
+	lang?: Language;
+}
+
+/**
  * 将图片文件保存到库的附件目录。
  * 存储路径遵循 Obsidian 系统设置中的"附件存放位置"规则
  * （通过 `fileManager.getAvailablePathForAttachment` 获取）。
- * @param app           Obsidian App 实例
- * @param sourcePath    当前思维导图文件路径（用于确定附件目录）
- * @param file          要保存的图片文件
- * @param maxSizeMB     大小上限（MB）
- * @param preferredName 可选真实文件名（text/uri-list 解码，修复乱码）
+ *
+ * 保存串行化：「文件名选择 + 写入」在内部排队（见 ImageSaveQueue）。
  * @returns 保存后的 TFile；失败时返回 null 并弹提示
  */
 export function saveImageToVault(
-	app: App,
-	sourcePath: string,
-	file: File,
-	maxSizeMB = 10,
-	preferredName?: string,
-	lang: Language = 'zh',
+	options: SaveImageOptions,
 ): Promise<TFile | null> {
-	const run = saveImageChain.then(() =>
-		saveImageToVaultInner(
-			app,
-			sourcePath,
-			file,
-			maxSizeMB,
-			preferredName,
-			lang,
-		),
-	);
-	// 无论本次成败都推进队列（错误已在内部处理并返回 null）
-	saveImageChain = run.then(
-		() => undefined,
-		() => undefined,
-	);
-	return run;
+	return saveQueue.enqueue(() => saveImageToVaultInner(options));
 }
 
-async function saveImageToVaultInner(
-	app: App,
-	sourcePath: string,
-	file: File,
+async function saveImageToVaultInner({
+	app,
+	sourcePath,
+	file,
 	maxSizeMB = 10,
-	preferredName?: string,
-	lang: Language = 'zh',
-): Promise<TFile | null> {
+	preferredName,
+	lang = 'zh',
+}: SaveImageOptions): Promise<TFile | null> {
 	const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
 	const isImage = file.type.startsWith('image/') || isImageExtension(ext);
 	if (!isImage) {
@@ -196,7 +209,7 @@ export function findAttachmentFile(
 			return byPath;
 		}
 		// 快速路径：共享缓存索引（资源地址/文件名/路径后缀等形态 O(1)）
-		const hit = lookupIndexedFile(url, app, getCachedFileLookupIndex(app));
+		const hit = lookupIndexedFile(url, app, fileLookupIndex.get(app));
 		if (hit) {
 			return hit;
 		}

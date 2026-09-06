@@ -1,16 +1,20 @@
 /**
  * 画布粘贴处理：容器内 Ctrl+V 粘贴图片（写入附件目录并设置节点图片）、
  * 窗口级兜底监听。从 view.ts 拆出。
+ *
+ * 本模块不 import MindMapView 类（否则与 view.ts 形成运行时循环依赖）：
+ * 类型走 MindMapViewContext；「激活视图是否为本视图」的判定由注册方
+ * （view.ts，持有类引用）完成后才调用 handleWindowPaste。
  */
 import { Notice } from 'obsidian';
-import { getActiveNode } from './mindmap';
-import { saveImageToVault } from './images';
+import { getActiveNode } from '../mindmap';
+import { saveImageToVault } from '../images-save';
 import { applyNodeImage } from './view-node-actions';
-import { t } from './i18n';
-import { MindMapView } from './view';
+import { t } from '../i18n';
+import type { MindMapViewContext } from './view-context';
 
 /** 注册画布容器粘贴监听（引擎重建时随 initMindMap 调用） */
-export function setupPasteHandler(view: MindMapView): void {
+export function setupPasteHandler(view: MindMapViewContext): void {
 	if (!view.containerEl) {
 		return;
 	}
@@ -23,18 +27,18 @@ export function setupPasteHandler(view: MindMapView): void {
 
 /**
  * 窗口级粘贴兜底（焦点在画布容器外时仍可粘贴）：
- * 仅在当前激活视图是本思维导图且剪贴板含图片时处理。
+ * 前置「激活视图为本视图」判定由注册方完成；这里仅做容器与输入框豁免。
  */
-export function handleWindowPaste(view: MindMapView, event: ClipboardEvent): void {
+export function handleWindowPaste(
+	view: MindMapViewContext,
+	event: ClipboardEvent,
+): void {
 	if (event.defaultPrevented) {
 		return;
 	}
 	const target = event.target as Node | null;
 	if (target && view.containerEl?.contains(target)) {
 		return; // 容器监听已处理
-	}
-	if (view.app.workspace.getActiveViewOfType(MindMapView) !== view) {
-		return;
 	}
 	if (
 		target instanceof HTMLInputElement ||
@@ -46,7 +50,7 @@ export function handleWindowPaste(view: MindMapView, event: ClipboardEvent): voi
 }
 
 async function handlePasteEvent(
-	view: MindMapView,
+	view: MindMapViewContext,
 	event: ClipboardEvent,
 ): Promise<void> {
 	const items = event.clipboardData?.items;
@@ -71,13 +75,12 @@ async function handlePasteEvent(
 	}
 	new Notice(t(view.lang, 'common.savingClipboardImage'));
 	try {
-		const saved = await saveImageToVault(
-			view.app,
-			view.file?.path ?? '',
-			imageFile,
-			undefined,
-			view.lang,
-		);
+		const saved = await saveImageToVault({
+			app: view.app,
+			sourcePath: view.file?.path ?? '',
+			file: imageFile,
+			lang: view.lang,
+		});
 		if (saved) {
 			await applyNodeImage(view, node, view.app.vault.getResourcePath(saved));
 			new Notice(`${t(view.lang, 'common.imageSavedTo')}${saved.path}`);

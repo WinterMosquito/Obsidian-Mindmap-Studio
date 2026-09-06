@@ -3,13 +3,13 @@
  * （节点附件/回收等旧能力已随专有格式支持删除；wikilink 悬停见 view-wikilink）
  */
 import { App, FileSystemAdapter, Notice, Platform, TFile } from 'obsidian';
-import { createSetNodeImageOptions } from './images';
-import { t, type Language } from './i18n';
-import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapView } from './view';
+import { createSetNodeImageOptions } from '../images-path';
+import { t, type Language } from '../i18n';
+import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapViewContext } from './view-context';
 
 /** 单独移除节点图片（不影响节点与其他数据） */
-export function removeNodeImage(view: MindMapView, node: MindMapNode): void {
+export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): void {
 	view.mindMap?.execCommand(
 		'SET_NODE_IMAGE',
 		node,

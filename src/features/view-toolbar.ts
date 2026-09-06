@@ -1,10 +1,10 @@
 /**
  * 工具栏逻辑：构建/重建工具栏、工具按钮、自动整理。从 view.ts 拆出。
- * 节点操作（备注/链接/图片/删除）委托给 view-node-actions.ts。
+ * 节点操作（链接/图片/删除）委托给 view-node-actions.ts。
  */
 import { Notice, setIcon } from 'obsidian';
-import { LAYOUT_OPTIONS } from './constants';
-import { arrangeMindMap as arrangeMindMapEngine, fitMindMap } from './mindmap';
+import { LAYOUT_OPTIONS } from '../constants';
+import { arrangeMindMap as arrangeMindMapEngine, fitMindMap } from '../mindmap';
 import { openSearchBar } from './view-search';
 import { exportPNG } from './view-export';
 import {
@@ -12,11 +12,11 @@ import {
 	addLinkToActiveNode,
 	deleteActiveNode,
 } from './view-node-actions';
-import { t } from './i18n';
-import type { MindMapView } from './view';
+import { t } from '../i18n';
+import type { MindMapViewContext } from './view-context';
 
 /** 构建工具栏（左：编辑/插入；中：布局；右：画布/导入导出） */
-export function buildToolbar(view: MindMapView): void {
+export function buildToolbar(view: MindMapViewContext): void {
 	if (!view.toolbarEl) {
 		return;
 	}
@@ -121,7 +121,7 @@ function createToolButton(
 }
 
 /** 自动整理（需求 3）：重新按布局算法对齐摆放各主题并适配画布 */
-export function arrangeMindMap(view: MindMapView): void {
+export function arrangeMindMap(view: MindMapViewContext): void {
 	if (!view.mindMap) {
 		new Notice(t(view.lang, 'common.notLoaded'));
 		return;
@@ -134,7 +134,7 @@ export function arrangeMindMap(view: MindMapView): void {
 }
 
 /** 设置变更后重建工具栏 */
-export function refreshToolbar(view: MindMapView): void {
+export function refreshToolbar(view: MindMapViewContext): void {
 	if (!view.toolbarEl) {
 		return;
 	}

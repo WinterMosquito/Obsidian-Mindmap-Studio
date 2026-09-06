@@ -46,27 +46,56 @@ npm run build
 
 ## 代码结构
 
+四层：`domain/`（纯领域逻辑）→ `services/`（视图服务）→ `features/`（UI 特性与视图控制器）→ 根（基础设施：markdown 渲染层、引擎封装、弹窗、插件核心）。
+
 ```
 src/
-  main.ts        # 插件入口：生命周期、视图注册、command/file-menu/hover 源、文件事件同步
-  view.ts        # 视图核心：加载/保存（md 往返）、布局/视口状态、标题重命名、引用更新
-  md-outline.ts  # Markdown 大纲 → 导图树（frontmatter 跳过、标题/列表、行内 token；mdRaw 保真）
-  md-serialize.ts# 导图树 → Markdown（未编辑逐字回写/编辑合成；链接/图片新增检测）
-  md-open.ts     # .mindmap.md 触发判定、视图切换、打开方式偏好钩子
-  view-wikilink.ts # wikilink 悬停预览 + Ctrl/Cmd+点击（与 Obsidian 阅读视图对齐）
-  view-state.ts  # 按文件路径持久化布局/视口/openAs 到插件 data.json
-  view-*.ts      # 工具栏/拖拽/右键/搜索/导出/状态栏/备注浮层/图片灯箱
-  modal-*.ts     # 链接/图片/命名弹窗（官方 AbstractInputSuggest 联想）
-  images-*.ts    # 图片解析/索引/保存（库内路径 ↔ 资源地址）、尺寸校正
-  links-*.ts     # 库内文件解析、树内引用更新（重命名/删除）
-  settings.ts    # 设置接口与设置面板（Obsidian 1.13+ 声明式）
-  codeblock.ts   # ```mindmap 代码块渲染（Markdown 大纲）
+  main.ts           # 插件入口：生命周期、视图注册、command/file-menu/hover 源、文件事件同步
+  domain/           # 纯领域逻辑（无 Obsidian/引擎依赖）
+    wikilink.ts     #   双链解析/构造唯一权威（parse/format/display）
+    tree.ts         #   walkTree 先序遍历（显式栈防溢出，visit 返回 false 短路）
+    md-meta.ts      #   MdNodeMeta：节点 data 上 md* 元数据的类型契约
+  services/
+    document-service.ts # md 文档读取解析 + 保存管线（防抖/串行排空/卸载快照兜底）
+    engine-controller.ts# 引擎实例生命周期 + 防腐收口（renderer 内部不外泄）
+  features/
+    view.ts         # Controller：Obsidian 生命周期编排、service 装配、链接跳转、标题重命名
+    view-context.ts # MindMapViewContext：view-* 对视图的访问契约（结构化窄接口）
+    view-*.ts       # 工具栏/拖拽/右键/搜索/导出/状态栏/图片灯箱/wikilink 交互/粘贴/节点操作/附件
+  md-outline.ts     # Markdown 大纲 → 导图树（frontmatter 跳过、标题/列表、行内 token；mdRaw 保真）
+  md-serialize.ts   # 导图树 → Markdown（未编辑逐字回写/编辑合成；链接/图片新增检测）
+  md-open.ts        # .mindmap.md 触发判定、视图切换、打开方式偏好钩子
+  markdown.ts       # 新建文件默认内容/文件名、uid 修复（ensureUniqueUids）
+  view-state.ts     # 按文件路径持久化布局/视口/openAs 到插件 data.json（ViewStateStore）
+  images-path.ts    # 图片地址解析、全库查找索引（FileLookupIndexService 单例）、尺寸校正
+  images-save.ts    # 图片入库（ImageSaveQueue 串行队列）、文件名清理
+  links-resolve.ts  # 库内文件解析（路径/拖拽落点）
+  links-tree.ts     # 树内引用更新（重命名/删除）
+  modal-*.ts        # 链接/图片/命名弹窗（官方 AbstractInputSuggest 联想）
+  mindmap.ts        # simple-mind-map 引擎封装（创建/销毁/节点工具）
+  mindmap-theme.ts  # 主题配置
+  event-binder.ts   # DOM/引擎事件绑定器（作用域化统一销毁）
+  settings.ts       # 设置接口与设置面板（Obsidian 1.13+ 声明式）
+  vault-sync.ts     # 库事件同步（引用更新、索引失效）
+  codeblock.ts      # ```mindmap 代码块渲染（Markdown 大纲）
+  i18n.ts / constants.ts / creation.ts
+tests/
+  md-roundtrip.test.ts # md 往返回归（78 断言：解析结构/深度/不动点/编辑合成/uid/视图状态）
+  domain.test.ts       # domain 层单测（wikilink 契约 + walkTree 语义）
+  mocks/obsidian.ts    # obsidian 最小 mock（vitest alias，包本身无运行时 JS）
 docs/
   markdown-mindmap-standard.md  # Markdown ↔ 思维导图映射规则（权威标准）
-scratch/
-  md-roundtrip/                  # 往返回归测试：解析结构/层级深度/不动点/编辑合成
-                                 #   运行：node scratch/md-roundtrip/build-test.mjs
 ```
+
+## 测试与 CI
+
+```bash
+npm test        # vitest run（CI 在 build 后、lint 前执行）
+```
+
+- vitest 配置 `vitest.config.ts`：`obsidian` → `tests/mocks/obsidian.ts` alias（包仅有类型声明，无运行时 JS）。
+- `tsconfig.json` 同时纳入 `src/` 与 `tests/`；`npm run build` 会先 `tsc -noEmit` 类型检查两者。
+- eslint 启用 `typescript-eslint` recommended + `no-floating-promises`（`tests/` 豁免 obsidianmd 的 console 规则）。
 
 ## 关键约定
 

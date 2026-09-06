@@ -3,13 +3,13 @@
  * （导出 JSON / 导入 JSON 已随专有格式支持删除）
  */
 import { Notice } from 'obsidian';
-import { t } from './i18n';
-import type { MindMapView } from './view';
+import { t } from '../i18n';
+import type { MindMapViewContext } from './view-context';
 
 const FALLBACK_NAME = 'mindmap';
 
 /** 导出为 PNG 文件（遵循导出倍率设置） */
-export async function exportPNG(view: MindMapView): Promise<void> {
+export async function exportPNG(view: MindMapViewContext): Promise<void> {
 	if (!view.mindMap) {
 		return;
 	}
