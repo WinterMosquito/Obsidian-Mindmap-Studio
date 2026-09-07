@@ -12,7 +12,8 @@ jobs:
 
         strategy:
             matrix:
-                node-version: [20.x, 22.x, 24.x]
+                # Node 20 已于 2026-04 结束安全维护，不再纳入矩阵
+                node-version: [22.x, 24.x]
                 # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
         steps:
