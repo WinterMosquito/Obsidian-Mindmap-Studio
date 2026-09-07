@@ -146,8 +146,6 @@ const ZH = {
 	'settings.exportScale': '导出图片倍率',
 	'settings.exportScaleDesc':
 		'导出 PNG 时的分辨率倍率（越高越清晰，文件越大）',
-	'settings.codeBlockLayout': '代码块默认布局',
-	'settings.codeBlockLayoutDesc': 'Markdown 代码块中渲染思维导图的默认布局',
 	'settings.language': '语言',
 	'settings.languageDesc': '界面语言',
 
@@ -185,7 +183,6 @@ const ZH = {
 	'nodeImage.alt': '节点图片',
 
 	// ===== 默认内容（新建思维导图） =====
-	'default.centerTopic': '中心主题',
 	'default.shortcutHint': '快捷键很好用！',
 	'default.tabHint': 'Tab：新建子节点',
 	'default.enterHint': 'Enter：新建同级节点',
@@ -328,9 +325,6 @@ const EN: Record<TranslationKey, string> = {
 	'settings.exportScale': 'Export Image Scale',
 	'settings.exportScaleDesc':
 		'Resolution scale when exporting PNG (higher = sharper, larger file)',
-	'settings.codeBlockLayout': 'Code Block Layout',
-	'settings.codeBlockLayoutDesc':
-		'Default layout for mind map rendered in Markdown code blocks',
 	'settings.language': 'Language',
 	'settings.languageDesc': 'UI language',
 
@@ -369,7 +363,6 @@ const EN: Record<TranslationKey, string> = {
 	'nodeImage.alt': 'Node Image',
 
 	// ===== 默认内容（新建思维导图） =====
-	'default.centerTopic': 'Central Topic',
 	'default.shortcutHint': 'Shortcuts work great!',
 	'default.tabHint': 'Tab: New child node',
 	'default.enterHint': 'Enter: New sibling node',

@@ -1197,78 +1197,19 @@ simple-mind-map/dist/simpleMindMap.esm.css:
 
 /* 引擎容器铺满画布（排除图片调宽手柄——它是绝对定位小方块，铺满会变成整屏色块） */
 .mindmap-canvas-container > div:not(.mindmap-img-resize-handle) {
-  width: 100% !important;
-  height: 100% !important;
+  width: 100%;
+  height: 100%;
 }
 
 /* ========== simple-mind-map 样式覆盖 ========== */
 
 .smm-container {
-  width: 100% !important;
-  height: 100% !important;
-}
-
-.smm-svg {
-  width: 100% !important;
-  height: 100% !important;
-}
-
-.smm-text-edit-input {
-  background: var(--background-primary) !important;
-  color: var(--text-normal) !important;
-  border: 2px solid var(--text-accent) !important;
-  border-radius: 4px !important;
-  padding: 4px 8px !important;
-  font-family: var(--font-text) !important;
-  font-size: inherit !important;
-  outline: none !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
-}
-
-.smm-note-tooltip {
-  background: var(--background-primary) !important;
-  color: var(--text-normal) !important;
-  border: 1px solid var(--background-modifier-border) !important;
-  border-radius: 6px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
-  max-width: 300px !important;
-  padding: 8px 12px !important;
-  font-size: 13px !important;
-  line-height: 1.5 !important;
-}
-
-.smm-note-tooltip * {
-  color: var(--text-normal) !important;
+  width: 100%;
+  height: 100%;
 }
 
 .smm-expand-btn {
-  cursor: pointer !important;
-}
-
-.smm-associative-line {
-  cursor: pointer !important;
-}
-
-/* ========== Markdown 代码块渲染 ========== */
-
-.mindmap-codeblock-container {
-  width: 100%;
-  margin: 1em 0;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--background-primary);
-}
-
-.mindmap-codeblock-canvas {
-  width: 100%;
-  height: 400px;
-  position: relative;
-}
-
-.mindmap-codeblock-canvas > div {
-  width: 100% !important;
-  height: 100% !important;
+  cursor: pointer;
 }
 
 /* ========== 暗色主题适配 ========== */
@@ -1305,10 +1246,6 @@ simple-mind-map/dist/simpleMindMap.esm.css:
 
   .mindmap-toolbar-label {
     display: none;
-  }
-
-  .mindmap-codeblock-canvas {
-    height: 300px;
   }
 }
 
@@ -1550,11 +1487,11 @@ simple-mind-map/dist/simpleMindMap.esm.css:
 /* ========== 图片拖拽调宽（image-resize.ts） ========== */
 
 /* hover 图片时的右下角手柄：拖动等比缩放，尺寸持久化到 data.json。
-   尺寸带 !important：防御容器子元素铺满规则（> div 100%）误伤 */
+   容器铺满规则已用 :not(.mindmap-img-resize-handle) 排除本手柄，故此处无需强制优先级 */
 .mindmap-img-resize-handle {
   position: absolute;
-  width: 12px !important;
-  height: 12px !important;
+  width: 12px;
+  height: 12px;
   border-radius: 3px;
   background: var(--interactive-accent);
   border: 1px solid var(--background-primary);

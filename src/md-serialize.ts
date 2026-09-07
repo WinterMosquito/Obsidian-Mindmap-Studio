@@ -15,7 +15,7 @@ import { App } from 'obsidian';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 import { resolvePathToFile } from './links-resolve';
 import { formatWikilink, linkDisplayText, wikilinkLinkpath } from './domain/wikilink';
-import { isSchemeUrl } from './domain/url';
+import { isRemoteOrDataUrl, isSchemeUrl } from './domain/url';
 import type { MdNodeData } from './node-data';
 
 /** 链接目标是否需要尖括号包裹（含空格/括号/<>/\，否则会破坏 `(…)` 闭合） */
@@ -89,7 +89,7 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 			return `![[${file.path}${sizeSuffix}]]`;
 		}
 	}
-	if (/^(https?:|data:|blob:)/.test(image)) {
+	if (isRemoteOrDataUrl(image)) {
 		// 外链 md 图片：官方语法尺寸在标签尾部（空 alt 即 ![|300](url)）
 		return `![${sizeSuffix}](${image})`;
 	}

@@ -19,7 +19,7 @@ import { getThemeConfig, isDarkTheme } from './mindmap-theme';
 import { t, type Language } from './i18n';
 import { walkTree } from './domain/tree';
 
-export { getCodeBlockThemeConfig, getThemeConfig, isDarkTheme } from './mindmap-theme';
+export { getThemeConfig, isDarkTheme } from './mindmap-theme';
 
 /**
  * 引擎命令名常量：execCommand 的魔法字符串收口于此。
@@ -49,9 +49,6 @@ export const ENGINE_COMMANDS = {
 	SET_NODE_IMAGE: 'SET_NODE_IMAGE',
 } as const;
 
-/** 引擎命令名（ENGINE_COMMANDS 的值类型） */
-export type EngineCommand = (typeof ENGINE_COMMANDS)[keyof typeof ENGINE_COMMANDS];
-
 export interface CreateMindMapOptions {
 	layout: string;
 	themePref: string;
@@ -60,11 +57,6 @@ export interface CreateMindMapOptions {
 	performanceMode: boolean;
 	performanceThreshold: number;
 	lang: Language;
-	/**
-	 * 代码块渲染：无导出/搜索 UI，不注册 DoExport/Search 插件，
-	 * 减少每代码块的实例化与监听成本（交互能力不受影响）。
-	 */
-	forCodeBlock?: boolean;
 	onHyperlinkJump?: ((link: string, node: MindMapNode) => void) | null;
 }
 
@@ -85,7 +77,6 @@ const RESET_LAYOUT_FIT_DELAY_MS = 80;
 /**
  * 创建思维导图实例并注册引擎插件。
  * 视图场景：选择、触控、关联线、键盘导航、导出、搜索全部启用；
- * 代码块场景（forCodeBlock）不注册导出/搜索插件，减少每代码块成本；
  * 节点拖拽按设置启用。
  */
 export function createMindMap(
@@ -132,12 +123,8 @@ export function createMindMap(
 	mindMap.addPlugin(TouchEvent);
 	mindMap.addPlugin(AssociativeLine);
 	mindMap.addPlugin(KeyboardNavigation);
-	// 代码块（只读展示）不需要导出/搜索插件：去掉它们省掉每代码块的
-	// 实例化与监听注册成本（vendor 为预打包单文件，不影响 bundle 体积）。
-	if (!options.forCodeBlock) {
-		mindMap.addPlugin(DoExport);
-		mindMap.addPlugin(Search);
-	}
+	mindMap.addPlugin(DoExport);
+	mindMap.addPlugin(Search);
 	if (options.enableDrag) {
 		mindMap.addPlugin(Drag);
 	}
@@ -327,8 +314,8 @@ export async function runWithExportScale<T>(
 }
 
 /**
- * 以导出倍率导出 PNG（DoExport 插件未注册/不可用时返回 null，如代码块
- * 实例）。错误向调用方传播（由 UI 层弹用户可见提示）。
+ * 以导出倍率导出 PNG（DoExport 插件不可用时返回 null）。错误向调用方
+ * 传播（由 UI 层弹用户可见提示）。
  * doExport/exporter 为引擎插件内部形态，访问收口在本函数。
  */
 export async function exportMindMapPng(
@@ -425,7 +412,7 @@ export interface DragDropState {
 	nextNode: MindMapNode | null;
 }
 
-/** 读取 Drag 插件实例的落点状态（插件未注册时返回 null，如代码块实例） */
+/** 读取 Drag 插件实例的落点状态（插件未注册时返回 null） */
 export function getDragDropState(mindMap: MindMap): DragDropState | null {
 	const drag = (mindMap as unknown as { drag?: DragDropState }).drag;
 	return drag ?? null;
@@ -523,9 +510,8 @@ export function forceRemoveNodeData(
 // ---------------------------------------------------------------------------
 // 搜索子系统（Search 插件）的防腐收口
 //
-// 代码块实例不注册 Search 插件（forCodeBlock），运行时 search 为 undefined，
-// 全部包装函数内部判空静默。matchNodeList/currentIndex 等插件内部状态
-// 不再被 view-search 直接触碰。
+// 运行时 search 插件可能未注册（引擎变体差异），搜索包装函数内部判空静默。
+// matchNodeList/currentIndex 等插件内部状态不再被 view-search 直接触碰。
 // ---------------------------------------------------------------------------
 
 /** 执行关键字搜索（Search 插件未注册时静默） */

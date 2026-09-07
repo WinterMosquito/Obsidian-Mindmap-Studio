@@ -13,7 +13,6 @@ export interface MindMapStudioSettings {
 	defaultTheme: string;
 	autoSave: boolean;
 	exportScale: number;
-	codeBlockDefaultLayout: string;
 	enableDrag: boolean;
 	performanceMode: boolean;
 	performanceThreshold: number;
@@ -25,7 +24,6 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	defaultTheme: 'default',
 	autoSave: true,
 	exportScale: 2,
-	codeBlockDefaultLayout: 'logicalStructure',
 	enableDrag: true,
 	// 默认开启性能模式：节点数超过阈值（performanceThreshold）时自动启用
 	// 虚拟渲染（仅渲染可视区域节点）。用户可在此关闭。
@@ -68,9 +66,6 @@ export function sanitizeSettings(
 		defaultTheme: pickString('defaultTheme') ?? DEFAULT_SETTINGS.defaultTheme,
 		autoSave: pickBool('autoSave') ?? DEFAULT_SETTINGS.autoSave,
 		exportScale: pickNumber('exportScale') ?? DEFAULT_SETTINGS.exportScale,
-		codeBlockDefaultLayout:
-			pickString('codeBlockDefaultLayout') ??
-			DEFAULT_SETTINGS.codeBlockDefaultLayout,
 		enableDrag: pickBool('enableDrag') ?? DEFAULT_SETTINGS.enableDrag,
 		performanceMode:
 			pickBool('performanceMode') ?? DEFAULT_SETTINGS.performanceMode,
@@ -197,15 +192,6 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 							min: 1,
 							max: 4,
 							step: 1,
-						},
-					},
-					{
-						name: t(this.lang, 'settings.codeBlockLayout'),
-						desc: t(this.lang, 'settings.codeBlockLayoutDesc'),
-						control: {
-							type: 'dropdown',
-							key: 'codeBlockDefaultLayout',
-							options: layoutOptions,
 						},
 					},
 				],

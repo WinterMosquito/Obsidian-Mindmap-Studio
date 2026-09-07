@@ -11,7 +11,6 @@ import {
 	createSetNodeImageOptions,
 	computeAspectImageSize,
 	isExternalUrl,
-	normalizeImageSizes,
 	resolveImagePath,
 	walkCorrectImageSizesByAspect,
 	walkResolveImagePaths,
@@ -125,7 +124,7 @@ describe('resolveImagePath / walkResolveImagePaths（地址解析路由）', () 
 	});
 });
 
-describe('createSetNodeImageOptions / normalizeImageSizes（统一尺寸）', () => {
+describe('createSetNodeImageOptions（统一尺寸）', () => {
 	it('空引用生成清除参数（url:null + 零尺寸）', () => {
 		expect(createSetNodeImageOptions(null)).toEqual({
 			url: null,
@@ -145,20 +144,6 @@ describe('createSetNodeImageOptions / normalizeImageSizes（统一尺寸）', ()
 			height: IMAGE_HEIGHT,
 			custom: false,
 		});
-	});
-
-	it('normalizeImageSizes 只改带图节点，文本节点不动', () => {
-		const tree = node({ text: 'r' }, [
-			node({ text: 'a', image: 'x.png' }),
-			node({ text: 'b' }),
-		]);
-		normalizeImageSizes(tree);
-		expect(tree.children[0]!.data.imageSize).toEqual({
-			width: IMAGE_WIDTH,
-			height: IMAGE_HEIGHT,
-			custom: false,
-		});
-		expect(tree.children[1]!.data.imageSize).toBeUndefined();
 	});
 });
 

@@ -7,8 +7,6 @@ import type { TranslationKey } from './i18n';
 export const VIEW_TYPE = 'mindmap-view';
 /** Markdown 渲染模式（.mindmap.md）的完整后缀（含点） */
 export const MD_FILE_SUFFIX = '.mindmap.md';
-/** 代码块语言标识 */
-export const CODE_BLOCK_LANGUAGE = 'mindmap';
 
 /**
  * .mindmap.md 标记的判定/剥离/拼接唯一实现（大小写不敏感）。

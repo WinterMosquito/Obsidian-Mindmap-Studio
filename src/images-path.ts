@@ -271,19 +271,3 @@ export async function walkCorrectImageSizesByAspect(
 	);
 	return changed;
 }
-
-/**
- * 递归规范化树中所有节点的图片尺寸为统一固定值（需求 1）。
- * 加载与保存时都会调用，保证新旧文件中的图片都以固定高度完整呈现。
- */
-export function normalizeImageSizes(tree: MindMapTreeNode): void {
-	walkTree(tree, (node) => {
-		if (node.data?.image) {
-			node.data.imageSize = {
-				width: IMAGE_WIDTH,
-				height: IMAGE_HEIGHT,
-				custom: false,
-			};
-		}
-	});
-}

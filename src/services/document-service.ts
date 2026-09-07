@@ -45,7 +45,7 @@ export class DocumentService {
 		const tree = parsed.tree;
 		// 图片：库内路径/外链 → 资源地址（mdImageTarget 保留原目标串，供回写）。
 		// 图片尺寸不在此归一：视图加载走 walkCorrectImageSizesByAspect（按原始
-		// 比例，探测失败自动回退固定尺寸），代码块路径自行调用 normalizeImageSizes。
+		// 比例，探测失败自动回退固定尺寸）。
 		walkResolveImagePaths(tree, this.app);
 		return {
 			tree,

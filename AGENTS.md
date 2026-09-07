@@ -61,7 +61,7 @@ src/
     md-meta.ts      #   MdNodeMeta：节点 data 上 md* 元数据的类型契约（纯契约，无引擎类型）
   services/
     document-service.ts # md 文档读取解析 + 保存管线（防抖/串行排空/卸载快照兜底，onSaveError 上报）；
-                        #   解析只做图片地址解析，不做尺寸归一（视图走 aspect 校正、代码块走 fixed）
+                        #   解析只做图片地址解析，不做尺寸归一（视图走 aspect 校正）
     engine-controller.ts# 引擎实例生命周期 + 防腐收口（renderer 内部不外泄）
   features/
     view.ts         # Controller：Obsidian 生命周期编排、service 装配、链接跳转、标题重命名
@@ -105,13 +105,12 @@ src/
                     #   exportMindMapPng/search* 系列/isEditingText/getRootText/startNodeTextEdit）
                     #   + ENGINE_COMMANDS：引擎命令名常量表（execCommand 勿再写魔法字符串）
                     #   —— 视图/特性层不直接触碰引擎 renderer/view/search/doExport 内部形态
-  mindmap-theme.ts  # 主题配置（buildThemeConfig 唯一实现，视图/代码块主题参数化差异）
+  mindmap-theme.ts  # 主题配置（buildThemeConfig 唯一实现，视图主题参数化差异）
   event-binder.ts   # DOM/引擎事件绑定器（作用域化统一销毁）
   settings.ts       # 设置接口与设置面板（Obsidian 1.13+ 声明式）+ sanitizeSettings
                     #   （data.json 加载与设置面板写回共用同一校验）；写回经
                     #   main.scheduleSettingsPersist 防抖（滑块突发合并，内存即时生效）
   vault-sync.ts     # 库事件同步单一入口（引用更新、索引失效；插件侧补充处理经 hooks 注入）
-  codeblock.ts      # ```mindmap 代码块渲染（Markdown 大纲）
   i18n.ts / constants.ts / creation.ts
                     # i18n：t() 取文案、tf() 占位符格式化；constants：MD_FILE_SUFFIX、
                     #   hasMindMapMarker/stripMindMapStem/withMindMapMarker（标记后缀唯一实现）

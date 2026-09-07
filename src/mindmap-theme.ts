@@ -1,5 +1,5 @@
 /**
- * simple-mind-map 引擎主题配置：亮/暗色配色、视图与代码块主题。
+ * simple-mind-map 引擎主题配置：亮/暗色配色、视图主题。
  * 从 mindmap.ts 拆出。
  */
 import { IMAGE_HEIGHT, IMAGE_WIDTH } from './constants';
@@ -48,9 +48,8 @@ export function isDarkTheme(themePref: string, isDark: boolean): boolean {
 }
 
 /**
- * 主题配置唯一实现：视图主题与代码块主题此前是两份 90% 重复的手写配置
- * （仅背景与字号不同），任何配色/结构调整都需要改两处。收敛后差异
- * （背景色、三级字号）由参数表达。
+ * 主题配置唯一实现：亮/暗配色与字号差异（背景色、三级字号）由 variant 参数
+ * 统一表达，视图主题是唯一调用方。
  */
 function buildThemeConfig(
 	isDark: boolean,
@@ -112,15 +111,5 @@ export function getThemeConfig(isDark: boolean): Record<string, unknown> {
 	return buildThemeConfig(isDark, {
 		background: isDark ? '#1e1e1e' : '#ffffff',
 		fontSizes: { root: 16, second: 14, node: 13 },
-	});
-}
-
-/** Markdown 代码块中思维导图的主题配置（透明背景、更小字号） */
-export function getCodeBlockThemeConfig(
-	isDark: boolean,
-): Record<string, unknown> {
-	return buildThemeConfig(isDark, {
-		background: 'transparent',
-		fontSizes: { root: 15, second: 13, node: 12 },
 	});
 }
