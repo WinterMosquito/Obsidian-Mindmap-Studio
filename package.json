@@ -1,6 +1,6 @@
 {
 	"name": "mindmap-studio",
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"description": "Mind map rendering for Markdown in Obsidian: edit .mindmap.md as a mind map with Markdown outline round-trip and Obsidian-native links/images.",
 	"main": "main.js",
 	"type": "module",
