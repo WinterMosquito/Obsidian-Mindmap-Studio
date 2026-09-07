@@ -130,7 +130,6 @@ tests/
   mocks/obsidian.ts    # obsidian 最小 mock（vitest alias，包本身无运行时 JS）
 docs/
   markdown-mindmap-standard.md  # Markdown ↔ 思维导图映射规则（权威标准）
-  code-quality-report.html      # 代码质量调研报告（2026-09）
 ```
 
 ## 测试与 CI
