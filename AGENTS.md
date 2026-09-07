@@ -150,7 +150,10 @@ npm run test:coverage  # vitest run --coverage（v8 provider，报告出 coverag
   检查），**勿再展开 `tseslint.configs.recommended`**（plugin 重定义冲突）。
   项目自有覆盖：domain 零依赖边界、统一解析入口强制（features/modal/services/src 根层
   直调 getAbstractFileByPath 拦截，links-resolve/file-lookup 收口点豁免，存在性检查
-  特例 eslint-disable 注明理由）、system-open 的 require 全局、modal/tests 豁免。
+  特例 eslint-disable 注明理由）、system-open 的 require 全局、modal/tests 豁免、
+  manifest.json 与 LICENSE 显式纳入 lint（官方 recommended 不自动拾取两者：
+  validate-manifest 自挂 files 块 + ts parser；validate-license 依赖官方内置未导出的
+  plain-text parser，等价实现在 scripts/plain-text-parser.mjs）。
 
 ## 关键约定
 

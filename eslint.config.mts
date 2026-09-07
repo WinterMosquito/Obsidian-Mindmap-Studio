@@ -5,6 +5,8 @@
    参见插件 docs/configuration.md。 */
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import globals from 'globals';
+import { parser } from 'typescript-eslint';
+import { plainTextParser } from './scripts/plain-text-parser.mjs';
 import { globalIgnores, defineConfig } from 'eslint/config';
 
 export default defineConfig(
@@ -23,6 +25,34 @@ export default defineConfig(
 		'vitest.config.ts',
 	]),
 	...obsidianmd.configs.recommended,
+	{
+		// 官方 recommended 仅给 package.json 挂 JSON 语言块，manifest.json 不会被
+		// `eslint .` 自动拾取；显式纳入以激活 obsidianmd/validate-manifest
+		// （必填键/类型/禁词 obsidian·plugin/描述格式校验，warning 级与官方一致）。
+		files: ['manifest.json'],
+		languageOptions: {
+			parser,
+			parserOptions: {
+				extraFileExtensions: ['.json'],
+			},
+		},
+		rules: {
+			'obsidianmd/validate-manifest': 'warn',
+		},
+	},
+	{
+		// LICENSE 校验：官方 validate-license 依赖插件内置的 plain-text parser，
+		// 该 parser 未导出且未挂入 recommended 配置，故自备等价行级 parser
+		// （scripts/plain-text-parser.mjs）。防止未来误换回官方样板版权行
+		// （Dynalist Inc.）或版权年份过期。
+		files: ['LICENSE'],
+		languageOptions: {
+			parser: plainTextParser,
+		},
+		rules: {
+			'obsidianmd/validate-license': 'warn',
+		},
+	},
 	{
 		languageOptions: {
 			globals: {
