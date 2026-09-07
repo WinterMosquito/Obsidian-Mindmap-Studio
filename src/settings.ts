@@ -134,10 +134,10 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 			{
 				type: 'group',
 				heading: t(this.lang, 'settings.title'),
-			items: [
-				{
-					name: t(this.lang, 'settings.language'),
-					desc: t(this.lang, 'settings.languageDesc'),
+				items: [
+					{
+						name: t(this.lang, 'settings.language'),
+						desc: t(this.lang, 'settings.languageDesc'),
 						control: {
 							type: 'dropdown',
 							key: 'language',
@@ -225,7 +225,9 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 			...this.plugin.settings,
 			[key]: value,
 		});
-		void this.plugin.saveSettings();
+		// 防抖落盘：滑块等高频控件逐档触发，写盘在 main 侧合并为一次
+		//（内存设置已经 sanitizeSettings 即时生效，不受防抖影响）
+		this.plugin.scheduleSettingsPersist();
 		if (LIVE_REFRESH_SETTING_KEYS.has(key)) {
 			this.plugin.applySettingsToViews();
 		}

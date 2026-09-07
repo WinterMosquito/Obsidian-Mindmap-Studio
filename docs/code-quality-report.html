@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="0xCBmDWNCl8inNjjDgaY0F">
+<head data-page-node-id="HbZpGjpy4uHCAAcbqQ1Dcj">
+<meta charset="UTF-8" data-page-node-id="UsVPzQYEJfGbt56rsADkJ1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="tBVtl5C44D8YAVbVOFXOMc">
+<title>Mindmap-Studio 代码质量审计报告（第二轮）</title>
+<style>
+  :root{
+    --ink:#1a2332; --ink-2:#3d4a5f; --ink-3:#6b7a90;
+    --bg:#f7f8fa; --card:#ffffff; --line:#e4e8ee;
+    --accent:#2563eb; --accent-soft:#eef4ff;
+    --good:#15803d; --good-soft:#ecfdf3;
+    --warn:#b45309; --warn-soft:#fff8eb;
+    --bad:#b91c1c; --bad-soft:#fef2f2;
+    --mono:"Cascadia Code",Consolas,"Courier New",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.75;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 32px 80px}
+  header{margin-bottom:36px}
+  .kicker{font-size:12px;letter-spacing:.18em;color:var(--accent);font-weight:700;text-transform:uppercase;margin-bottom:8px}
+  h1{font-size:30px;font-weight:700;letter-spacing:-.01em}
+  .meta{color:var(--ink-3);font-size:13.5px;margin-top:10px}
+  .meta code{font-family:var(--mono);font-size:12.5px;background:var(--accent-soft);padding:1px 6px;border-radius:4px;color:var(--accent)}
+  h2{font-size:21px;margin:44px 0 16px;padding-bottom:10px;border-bottom:2px solid var(--line);display:flex;align-items:center;gap:10px}
+  h2 .no{font-family:var(--mono);font-size:13px;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:2px 8px}
+  h3{font-size:16px;margin:22px 0 8px;color:var(--ink)}
+  p{margin:8px 0;color:var(--ink-2)}
+  strong{color:var(--ink)}
+  code{font-family:var(--mono);font-size:.9em;background:#eef1f5;padding:1px 6px;border-radius:4px;color:#0f3d7a}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px 28px;margin:16px 0;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .verdict{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:20px 0}
+  .v-item{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;text-align:center}
+  .v-score{font-size:26px;font-weight:800;line-height:1.2}
+  .v-label{font-size:12.5px;color:var(--ink-3);margin-top:4px}
+  .s-good{color:var(--good)} .s-warn{color:var(--warn)} .s-bad{color:var(--bad)}
+  .v-bar{height:5px;border-radius:3px;background:#edf0f4;margin-top:10px;overflow:hidden}
+  .v-bar i{display:block;height:100%;border-radius:3px}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.8px;background:var(--card);border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+  th{background:#f1f4f8;text-align:left;padding:10px 14px;font-weight:700;color:var(--ink-2);border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:10px 14px;border-bottom:1px solid #f0f2f6;vertical-align:top;color:var(--ink-2)}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;font-size:11.5px;font-weight:700;border-radius:20px;padding:1px 10px;white-space:nowrap}
+  .p-p1{background:var(--warn-soft);color:var(--warn);border:1px solid #f5d9a8}
+  .p-p2{background:var(--accent-soft);color:var(--accent);border:1px solid #c9dcfa}
+  .p-p3{background:#f1f5f9;color:#475569;border:1px solid #d7dee8}
+  .p-ok{background:var(--good-soft);color:var(--good);border:1px solid #bfe8cc}
+  .issue{border-left:4px solid var(--warn);background:var(--card);border-top:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0 12px 12px 0;padding:18px 22px;margin:14px 0}
+  .issue.p2{border-left-color:var(--accent)}
+  .issue.p3{border-left-color:#94a3b8}
+  .issue-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .issue-head h3{margin:0;font-size:15.5px}
+  .issue .loc{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+  .issue p{margin:8px 0 0}
+  ul{margin:8px 0 8px 22px;color:var(--ink-2)}
+  li{margin:4px 0}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}
+  @media(max-width:860px){.stat-grid,.verdict{grid-template-columns:1fr 1fr}}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .stat b{font-size:22px;font-weight:800;color:var(--accent)}
+  .stat span{display:block;font-size:12.5px;color:var(--ink-3);margin-top:2px}
+  .note{background:var(--accent-soft);border:1px solid #c9dcfa;border-radius:10px;padding:12px 18px;font-size:13.5px;color:#1e4d99;margin:14px 0}
+  .good-note{background:var(--good-soft);border:1px solid #bfe8cc;border-radius:10px;padding:12px 18px;font-size:13.5px;color:#166534;margin:14px 0}
+  footer{margin-top:56px;color:var(--ink-3);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body data-page-node-id="11avW4aEuF118OFx4zn6jL">
+<div class="wrap" data-page-node-id="o0hpQAyykXRdTheveTnebt">
+
+<header data-page-node-id="xwQsGoosDA64n1boOKVGEx">
+  <div class="kicker" data-page-node-id="Yr0LiqruPFtpHnBdO67tVB">Code Quality Audit · Round 2</div>
+  <h1 data-page-node-id="qQRty6uFB0nQtu4nxWhmSZ">Mindmap-Studio 代码质量审计报告（第二轮）</h1>
+  <div class="meta" data-page-node-id="i3wZ9UgEhB3umbLZcWagqR">
+    审计对象：<code data-page-node-id="p6XVHJ1A9yBnseo8BOrSB3">D:\Obsidian\Mindmap-Studio</code>（Obsidian 社区插件，v0.0.1）&nbsp;·&nbsp;
+    审计日期：2026-09-07 &nbsp;·&nbsp;
+    手段：全量模块深读（34 文件）+ 约定漂移机械扫描 + 覆盖率实测 + 验证四件套<br data-page-node-id="HPSpZ13Cg6BSSqunthyden">
+    上一轮基线：<code data-page-node-id="yP3DjimiMTNC3IbeXvGWe9">docs/code-quality-report.html</code>（2026-09-07 第一轮，git 历史保留）
+  </div>
+</header>
+
+<!-- ================= 01 总体结论 ================= -->
+<h2 data-page-node-id="7ClgqvtBGJ39xfyt5Alvpk"><span class="no" data-page-node-id="eLWod5hVBMoEHjlJE8q95G">01</span>总体结论</h2>
+
+<div class="good-note" data-page-node-id="JjyPQODZG8LS0clp7l6eNd">
+  <strong data-page-node-id="JqnEe0SbQNumIpdjS5xv97">本轮完整审计未发现任何 P0/P1 缺陷。</strong>上一轮确立的四层架构约定（domain 零依赖 → services → features → 根层）、引擎防腐层、并发原语收口在本轮全部 34 个源文件深读中逐项验证成立；第一轮收官后落地的 4 项性能优化与 3 项质量修复实现正确、测试到位。现存事项集中在<strong data-page-node-id="lcGb39DwRK5Wx8FIYktBap">测试可观测性</strong>（遗留 P2 ×3）与<strong data-page-node-id="bn0wg43jfdEOG7PZygOrqs">两处微优化</strong>（本轮新增 P3 ×2），均为可控改进项。
+</div>
+
+<div class="verdict" data-page-node-id="0EhpLsEp2ywksBJAi1vRxy">
+  <div class="v-item" data-page-node-id="apIBqz1Prg192TQphH7pj7">
+    <div class="v-score s-good" data-page-node-id="f5FSJwdsOWFPeJrMks32C8">A</div>
+    <div class="v-label" data-page-node-id="yCqXGgdOivyWa65n7OpfgR">可读性</div>
+    <div class="v-bar" data-page-node-id="Rj4hqmVjh2FIQY3CaYO1FW"><i style="width:92%;background:var(--good)" data-page-node-id="MAqCnXvpcia7hLwSE00XvT"></i></div>
+  </div>
+  <div class="v-item" data-page-node-id="MTNWzDMvBQ66T25vYaOODH">
+    <div class="v-score s-good" data-page-node-id="1zmwfMs4lNDlazirQ679xv">A-</div>
+    <div class="v-label" data-page-node-id="PCBvmO1IsfExPasGp7eZw1">可维护性</div>
+    <div class="v-bar" data-page-node-id="mz41w6IQlBNFxJteGBKffO"><i style="width:88%;background:var(--good)" data-page-node-id="PSqKFBQDJAj0Lf6Ser3au8"></i></div>
+  </div>
+  <div class="v-item" data-page-node-id="d3tui0dNQYvcAm6u9EKAfM">
+    <div class="v-score s-good" data-page-node-id="LbdEVJL4AmTrhtHvludIQz">B+</div>
+    <div class="v-label" data-page-node-id="nCXZE1I99D3yZEc4JMbec4">圈复杂度</div>
+    <div class="v-bar" data-page-node-id="IwyDDz9fj2z4cid4WNFZVA"><i style="width:78%;background:var(--good)" data-page-node-id="6HcHaFTTNl2E7kfCwDnIFm"></i></div>
+  </div>
+  <div class="v-item" data-page-node-id="wwFh2OX4CjlFIFZ7B1eBPx">
+    <div class="v-score s-warn" data-page-node-id="sbJKXv6Jadzc1zccqLels3">B</div>
+    <div class="v-label" data-page-node-id="QkRq3qYIIITs871CHH6wyN">测试覆盖率（上调）</div>
+    <div class="v-bar" data-page-node-id="A7PUFAUolk7dqJNZRThOwq"><i style="width:66%;background:var(--warn)" data-page-node-id="FrnDeXHPvBzuR952GQYHnJ"></i></div>
+  </div>
+  <div class="v-item" data-page-node-id="qvj0TluxkdMvAD3AiSODwS">
+    <div class="v-score s-good" data-page-node-id="voZVrVkdYhqXij4rD6wNPp">A-</div>
+    <div class="v-label" data-page-node-id="icfKYuCES0hDj1y3u6haV2">缺陷风险控制</div>
+    <div class="v-bar" data-page-node-id="GSMEWExwwVPKwZ02JR4lHx"><i style="width:86%;background:var(--good)" data-page-node-id="rIfhVA3aK4KozQgOpWjXep"></i></div>
+  </div>
+</div>
+
+<p data-page-node-id="p2z1EOOWcaKCr3wAzySJFs">覆盖率从上一轮的 B-（37.9% 估算）上调至 <strong data-page-node-id="CSCicLtwfM7o4vmZi6h6Gm">B</strong>：本轮实测语句覆盖 43.25%、<strong data-page-node-id="MGHze5meHk0sbabsRAPRO3">分支覆盖 86.87%</strong>。分层看，测试策略是明确的「业务逻辑高覆盖、UI 外壳低覆盖」——domain 层 100%、services 层 84.5%、解析/序列化/索引/并发核心 91–100%，只有 DOM 密集的 features 视图壳层（16.1%）缺自动化。分支覆盖接近 87% 说明逻辑路径的覆盖质量高，低的是 UI 骨架。</p>
+
+<div class="stat-grid" data-page-node-id="0MqCxCWuSm40pDuoYkfWZJ">
+  <div class="stat" data-page-node-id="Pa7BjbLjbWjWrgJ7YwM9Vm"><b data-page-node-id="BFskFGZ3IubjProSlk7QHL">252/252</b><span data-page-node-id="X2zH5CHtP1WBQ5LJJgBHLJ">vitest 用例通过（21 个测试文件）</span></div>
+  <div class="stat" data-page-node-id="sNNPYTDsCMQxgzMaF2redf"><b data-page-node-id="o3y3oXdANlcenaqpRgIRpl">0</b><span data-page-node-id="IUOR5CFwSB3D53Ix9HQiV8">tsc / eslint 错误</span></div>
+  <div class="stat" data-page-node-id="PEy6rcumJ8hSeVzi9JC3bw"><b data-page-node-id="ugWVmAMlXf7XQFFDaFyysW">86.87%</b><span data-page-node-id="8MF0xYyBKGcCibUln8ujWw">分支覆盖率（实测）</span></div>
+  <div class="stat" data-page-node-id="XNAY8hz3FAZpgrEUFBOxh9"><b data-page-node-id="CxtxwotLjIHfqKgA3pEpez">0 / 0</b><span data-page-node-id="DJB1KecUPyA2zTgnhBlqzA">本轮 P0/P1 新缺陷</span></div>
+</div>
+
+<!-- ================= 02 验证四件套与覆盖率 ================= -->
+<h2 data-page-node-id="a1P1hCiN9di455MozHuYic"><span class="no" data-page-node-id="Utni2si7zCP20Y1rz2VqzB">02</span>验证四件套与覆盖率实测</h2>
+
+<table data-page-node-id="5N3T0JZGqSW5IqF6GexT9t">
+  <tr data-page-node-id="Rkvepy2Xvg19ZliyBBm5oU"><th data-page-node-id="pzNFDpiysSkhBz7j1JRmz1">验证项</th><th data-page-node-id="nBn1zLtTFkOvbYnXcqaoxu">命令</th><th data-page-node-id="evHmCm1qm1ZPa5bzqtb9TR">结果</th></tr>
+  <tr data-page-node-id="d8uD4QXBCrpt9fgj7P9oIT"><td data-page-node-id="87z8UQE4qj9juW1fpNelOy">类型检查</td><td data-page-node-id="7qtI2fFvJk5qHW8wCBJ7tY"><code data-page-node-id="a8UGuwNDUkz0r7V3lq6MXJ">tsc -noEmit -skipLibCheck</code></td><td data-page-node-id="DzCsqBElfwBnbAGwTjcCTl"><span class="pill p-ok" data-page-node-id="Jy2AaxmRtN8QklGuwXx7rq">通过 · 0 错误</span></td></tr>
+  <tr data-page-node-id="pryCiC6mWOXfYBnMWWGuYL"><td data-page-node-id="IRg8aAS4jk3DJbiNdtli77">静态检查</td><td data-page-node-id="y4MkWCKuDhajGfIJCGr3v8"><code data-page-node-id="xPrEE2qTvQdnMprhBcdEAb">eslint .</code></td><td data-page-node-id="BwQAG0gOMjHMJCV7ux1DDs"><span class="pill p-ok" data-page-node-id="ZYDi6oUFrFeicJ3Gw5gvBX">通过 · 0 error</span></td></tr>
+  <tr data-page-node-id="AeRfcpDwpEOBuCKyos4PuS"><td data-page-node-id="yuoV3nQkeM8ujZnof6LZFA">单元测试</td><td data-page-node-id="ickH50VkBbiIQprxVqltrD"><code data-page-node-id="RKMGpVfRvEXhoNKbjlA3DT">vitest run</code></td><td data-page-node-id="lzmICksWYrcUMcf7XasTsM"><span class="pill p-ok" data-page-node-id="KIvyZgf4mnKelvYniIwXz9">252/252 通过（21 文件）</span></td></tr>
+  <tr data-page-node-id="mZJ3FNyoDosXk5MDiMGi9l"><td data-page-node-id="Bpcl49PY0MzO0FEu6gDepZ">生产构建</td><td data-page-node-id="za1GJySp9iJo1MAXu8tgka"><code data-page-node-id="S6CpQj5geGGkIhNERsA7IT">node esbuild.config.mjs production</code></td><td data-page-node-id="EE2ZX4AyBF6o5XKFVnF4DK"><span class="pill p-ok" data-page-node-id="bW10Ve7VjKYQRUmuTwA5qJ">通过</span></td></tr>
+  <tr data-page-node-id="a3orRtfsxPqdwfGz7VFMmS"><td data-page-node-id="Iz7wIvNmOmsmi8CPz9AzLa">覆盖率</td><td data-page-node-id="gNsOatjZtacIOBCP4Eenjg"><code data-page-node-id="B9kLMfwyXoG82LgIVszTSA">vitest run --coverage</code>（v8）</td><td data-page-node-id="qOXer9hrxn4ZVXXKPohvhE"><span class="pill p-p2" data-page-node-id="webpGlao6k55FwLBiy3obS">43.25% 语句 / 86.87% 分支 / 47.14% 函数</span></td></tr>
+</table>
+
+<h3 data-page-node-id="PvRHXgtMSFi4M4iXqRS1AF">分层覆盖率（实测）</h3>
+<table data-page-node-id="5GVSFtS0uXP5BWnnTOhbZF">
+  <tr data-page-node-id="0DlyZsuygHiqX2Qst0btBA"><th data-page-node-id="VZHkPoYDSgsAi91geEKO7G">分层</th><th data-page-node-id="oQJLqIGKI3jI5rVJ8CLaeE">语句覆盖</th><th data-page-node-id="ok1jFltNJbY9AE6x3fmM4C">代表文件</th><th data-page-node-id="RHu8cwsyyeZzEF8HOyEqip">评价</th></tr>
+  <tr data-page-node-id="osMPuazh43owbDIopCuhhE"><td data-page-node-id="F6L0l6MZoncsON51FgBFuE"><code data-page-node-id="a0l2zcfsK2nYTVTtyfuWm9">src/domain</code></td><td data-page-node-id="CpNRVwGHZIVCjBaHRd7Omd"><strong data-page-node-id="WEqPmwzq08PBpDoHGigSWG">100%</strong></td><td data-page-node-id="laucjZp9C5IXhALZneTl4H">tree / url / wikilink 100%，md-meta 为纯类型</td><td data-page-node-id="ELMmpRFidLFgfXvClXIycA">零依赖纯逻辑全覆盖</td></tr>
+  <tr data-page-node-id="hZc2AvAwfhSOAEAqh2tF0w"><td data-page-node-id="plsd66RVR78a08rdB9e5LF"><code data-page-node-id="8nQ1ghoA5A7s2UjETCH8DE">src/services</code></td><td data-page-node-id="o6GQSuviCP1lR9fmPvSNw0"><strong data-page-node-id="8N2LwA9mNXwOFMOEptYN0o">84.5%</strong></td><td data-page-node-id="wE7TPv7lx36ATZKqj1u3yq">document-service 85.7%、engine-controller 84.0%</td><td data-page-node-id="6c81C9obFQdHhRt9zSiGLz">保存管线/代际锁主干已测</td></tr>
+  <tr data-page-node-id="vFyHm39GS1DZNWALj4I6S3"><td data-page-node-id="WhFYETE4HovN0KpsA4dGqB">核心逻辑（根层）</td><td data-page-node-id="EHgaXoGXCooGfj0NkPyrzw"><strong data-page-node-id="KdGxDNf48KXdHoOb87AzHN">91–100%</strong></td><td data-page-node-id="XT8DEwkNmsPKjeWalEPua2">concurrency 100、persistence 100、links-tree 98.1、view-state 97.6、event-binder 97.9、file-lookup 94.7、md-outline 94.5、md-serialize 91.2、open-as-restore 93.4</td><td data-page-node-id="4nlGGIZPu5ikV2lJAEfP1s">往返保真/并发/竞态路径覆盖充分</td></tr>
+  <tr data-page-node-id="gDJVYgkk2wpdHHy9BJRxKA"><td data-page-node-id="2qFfFvYCEPIgzGCbOU5aew">中等覆盖</td><td data-page-node-id="axX9XbeKmJpOuezJcP7G38">34–59%</td><td data-page-node-id="0epDKRz0r4YQCD4GrJNmnP">links-resolve 34.9、markdown 58.8、settings 38.4、main 25.8、mindmap 24.3</td><td data-page-node-id="oiGmCypPdFPN4SUuIHROxI">links-resolve 欠测见发现 #1</td></tr>
+  <tr data-page-node-id="TViroazjRst08WdaMUmq5S"><td data-page-node-id="r18r0Gkh0w4jbmMCSzIm0F"><code data-page-node-id="PnaOQ5VXmivfuEN3lwOd7x">src/features</code>（UI 壳）</td><td data-page-node-id="qRcj5Yg8ZKCHPKi9z6DRdP">16.1%</td><td data-page-node-id="advChxjPXyOnIvG8WOsjXx">view.ts 20.7、view-node-actions 47.1、其余 &lt;21</td><td data-page-node-id="wdnzXNW39JPvI5BBSTpfNB">DOM 密集，依赖 UI 层 stub 基建（发现 #2）</td></tr>
+</table>
+
+<div class="note" data-page-node-id="kTWDEICecl6PeD2pO3ts1X">
+  备注：本轮实测时环境的批量删除守卫拦截了 v8 provider 对旧 <code data-page-node-id="gymfiYuwCX514f3c8Pjbgn">coverage/</code> 目录（124 个文件）的自动清理，改用独立输出目录 <code data-page-node-id="ebd6LI5MRVgWEtLD48TrQj">--coverage.reportsDirectory</code> 完成测量。建议将 <code data-page-node-id="CNmSRnYMmFFY8gsHGYLeD8">coverage/</code>、<code data-page-node-id="6vw0aq4EqHLTGh0NhAL2l7">coverage-audit-run/</code> 确认纳入 <code data-page-node-id="rOHKKNDtCtHmPcmlm5O0nK">.gitignore</code> 并择机手动清理。
+</div>
+
+<!-- ================= 03 约定符合性机械扫描 ================= -->
+<h2 data-page-node-id="tYBZtyKhKhI2ZJty6OFBDC"><span class="no" data-page-node-id="eZFX3qyKGpfCe2WaLdaACy">03</span>约定符合性机械扫描（全部通过）</h2>
+
+<table data-page-node-id="UEaGODG1tLLhchgOwbhZxL">
+  <tr data-page-node-id="HFRrxmZyADZxssSJo7foUG"><th data-page-node-id="app2Hhmy3kP4NgFK1SUrci">扫描项（AGENTS.md 约定）</th><th data-page-node-id="ZmBKTBhX1lDB6erywfLRIm">结果</th><th data-page-node-id="BOJDXwc5cdAOjoYMCD4NGl">说明</th></tr>
+  <tr data-page-node-id="r93aefz40r0Bqbqgf1xwia"><td data-page-node-id="bCOpHSZvPSBdlriJrjPTkJ">domain 零依赖边界</td><td data-page-node-id="ELrcwaHia9gMUEFtwTRxtA"><span class="pill p-ok" data-page-node-id="xUDNzDX1SMsS6lFJZsyACt">0 违例</span></td><td data-page-node-id="CQsRs9F2UvAsbxcdsMgNl4">domain 四件套仅相互引用 + 纯 TS</td></tr>
+  <tr data-page-node-id="CvadwXdyRkQFXV8EftnDjr"><td data-page-node-id="hi3UGtqOhqRZ9nbK5Acrw3"><code data-page-node-id="oyNC9eo12K6q8DGmGown93">any</code> / <code data-page-node-id="FdSUXKNf5CGDdSH941EaHA">TODO</code> / <code data-page-node-id="uauFYMQCPwocXnBoJq3mly">FIXME</code> / <code data-page-node-id="A83iCaYcCxHmY4QRuJZ7ap">console.log</code></td><td data-page-node-id="XuYUKi7bWcFcFRZionlVCi"><span class="pill p-ok" data-page-node-id="W5QEoIkmdxIsEz5v7403eU">0</span></td><td data-page-node-id="UiqfRXuQ6mFirG6aMs2lpR">错误路径统一 <code data-page-node-id="qsHZaSy0CnGk5lEds2NYT2">console.error</code>（惯例允许）</td></tr>
+  <tr data-page-node-id="QzJ62ByRcbNIZciGBZMH5U"><td data-page-node-id="V7gLaiIHYGJ0robaPn9TcH">定时器收口</td><td data-page-node-id="1FFaxHxaAqCtS6CUJvBAbp"><span class="pill p-ok" data-page-node-id="H2X5UHaKQbJpmkUqys20Mb">全部合规</span></td><td data-page-node-id="hDSsnVjMpNbZjp8O85hWon">setTimeout 均具名延迟常量或 concurrency 原语</td></tr>
+  <tr data-page-node-id="YO84N4BVAcQSoBmHMMUUbG"><td data-page-node-id="VpVlMPMlsySosFaVDKVB54"><code data-page-node-id="7GfrHEZw1OcXEiKJjprW20">as unknown as</code></td><td data-page-node-id="xABmYAo4xw2q6ozBKRqZpw"><span class="pill p-ok" data-page-node-id="dSYmrK4c2AoudtDC4voG12">11 处 · 全部合法</span></td><td data-page-node-id="ciFYL9H2DFT8CH9GRLqbJB">集中 ACL 收口点与私有 API 防御点，均有理由注释</td></tr>
+  <tr data-page-node-id="5GA5Q2QCd4tk6EqFNw6DCV"><td data-page-node-id="JaBsICvluEQQkniyJWIiKj"><code data-page-node-id="RbyGQfwJUD3b4vBVhLmshb">getAbstractFileByPath</code> 直调</td><td data-page-node-id="vnTWuiiyzPfZtZ7BHiXzaO"><span class="pill p-ok" data-page-node-id="i0EpHRyXp9xyICvVwWSkQD">10 处 · 全部合法</span></td><td data-page-node-id="FjvI3aP2CePXI7VBzIf6Re">存在性检查/解析统一入口，带 eslint-disable 理由</td></tr>
+  <tr data-page-node-id="F53AAs2BA8xwSzz2emTUTw"><td data-page-node-id="zD5WQvGqOIX7gqIKoOEExL">引擎命令魔法字符串</td><td data-page-node-id="cei6r3uQksi6tjZWGCVkF9"><span class="pill p-ok" data-page-node-id="XSjeYDH4ivaWrVhkjhIyF0">0</span></td><td data-page-node-id="9gqc6ePyzLVIeP7jdCq24P">全部经 <code data-page-node-id="TEQ4ZrbbP0toEUclRJWz9C">ENGINE_COMMANDS</code> 常量</td></tr>
+  <tr data-page-node-id="MtEJnkJqX7UBnfZRLOCUZ6"><td data-page-node-id="TaUUOwg3QTDmL8vrDxYNcq">Notice 文案直写</td><td data-page-node-id="0ZZtDJun3LDYCIfCjBursi"><span class="pill p-ok" data-page-node-id="8ODLUcxiwbX5aGYTK3hJbu">0</span></td><td data-page-node-id="uKT407KtwWBoMBI5c4RNbX">全部经 <code data-page-node-id="v83RFRiqOHgHBGinBWvhCU">t()</code> / <code data-page-node-id="cC77qhRIsZG5fa6gwueqrX">notifyError</code></td></tr>
+  <tr data-page-node-id="fXPYJayXmHYwA9I18e2PBl"><td data-page-node-id="5iSvc7WisABRBXfCdprMt2"><code data-page-node-id="TLcezbCrQgLlpo98czXUNs">.mindmap.md</code> 标记判定</td><td data-page-node-id="uV2RbHeRiEEynCWyBdFRUR"><span class="pill p-ok" data-page-node-id="neSHtTb6ASUzPRv4du5heP">单一实现</span></td><td data-page-node-id="L2IGpkEoltVBwUjGTpdTy5">constants.ts 收口，无第二套正则</td></tr>
+</table>
+
+<!-- ================= 04 上轮变更复核 ================= -->
+<h2 data-page-node-id="lNEuRkAEA9TUcMPezCx6po"><span class="no" data-page-node-id="M2YelFFFtzOg3phTSslBPC">04</span>上轮性能优化与质量修复复核（7/7 通过）</h2>
+
+<table data-page-node-id="LUfUUZbE0dx4FWUTB78BKo">
+  <tr data-page-node-id="cGy1TunDSB0wu7emI7DYrS"><th data-page-node-id="G5wAlmz0HVUodx6Oz8dERc">变更</th><th data-page-node-id="CbTCCH9S9lw9IjKMzduajp">复核结论</th></tr>
+  <tr data-page-node-id="v10tiWzGx55EmeVFBJHqLp"><td data-page-node-id="CVksRDdpb86K2FD3JMQHf4">file-lookup 查询快路径 + 自愈（#1）</td><td data-page-node-id="9lHhO9Fu5dThRJPIbr997b"><span class="pill p-ok" data-page-node-id="FNv9LxSj0p0cHpR95HHOq0">通过</span> <code data-page-node-id="Qw4lmyYWYsOMhLFXpyoDlL">get()</code> 命中零拷贝、<code data-page-node-id="FavM5ektdRHslmZNykeNh5">validate()</code> 已消除双 <code data-page-node-id="B4IDo1S9iq0n89XTmBoPCS">getFiles()</code>（<code data-page-node-id="oEXsfZ25C7gPpdhQ1AOd4x">rebuild(app, files?)</code> 接受预扫描列表），测试同步更新</td></tr>
+  <tr data-page-node-id="2Z5UtvjhqZmqWAd90SJrGk"><td data-page-node-id="CFedOIhGQEmrr90FrJjcyR">drag-target rAF 合帧（#2）</td><td data-page-node-id="aD9P1JEOgmRFNd8YIcfN8Z"><span class="pill p-ok" data-page-node-id="EBUxrgRCXMo5z51r1iVwx7">通过</span> pendingEvent + rafId 合帧、平方距离比较落地；会话清理路径无泄漏</td></tr>
+  <tr data-page-node-id="vIzQX1KW8AKA3iRyDZatU4"><td data-page-node-id="b8XhY7IVfI6YXBSVRswuuO">image-resize 尺寸未变跳过重渲染（#3）</td><td data-page-node-id="n20nwIro3MocSRPfMgkFvy"><span class="pill p-ok" data-page-node-id="RY8GGLtHquxuMeriIJ36Zl">通过</span> <code data-page-node-id="gIOXXW0bfIgJDPUzEi6fa1">applied</code> 守卫生效，避免 SET_NODE_DATA + 全量 render</td></tr>
+  <tr data-page-node-id="OOPD6CaiPjhV7rQ7IkPUdl"><td data-page-node-id="Y6JmbuktXDrWqEbJewXqRH">images-path 并发上限（#4）</td><td data-page-node-id="NbuuUjGb9x2L2zSpkODaC9"><span class="pill p-ok" data-page-node-id="8APgJKLVRE6b8xI133QIF9">通过</span> <code data-page-node-id="lyXR45iJmWSqpEFPOh4ttE">mapWithConcurrency</code>（上限 6）替换无界 Promise.all；同步 throw 防护 + 测试已补</td></tr>
+  <tr data-page-node-id="t8vXCi8fKmHCxpWiiI37K0"><td data-page-node-id="FZsAxtY7d1QW1xz1kDQoW7">mapWithConcurrency 同步 throw 修复</td><td data-page-node-id="rgK5ys41q8KW1o3080jP9Y"><span class="pill p-ok" data-page-node-id="Q4u9qc3FrC09OFlO9IegEC">通过</span> worker 调用已包 try/catch，rejected 状态可靠置位</td></tr>
+  <tr data-page-node-id="Dmo09H8rcZwwqm6oAnpxXj"><td data-page-node-id="9fAMxbMvQ0AJ3SG8izp3sI">errors.ts / 导入序等收口</td><td data-page-node-id="F00knevZv9ukmo5gHhnx4i"><span class="pill p-ok" data-page-node-id="2f2JL7ZQe6tjTLZT7TmcYQ">通过</span> notifyError 单一实现；import 顺序合规</td></tr>
+  <tr data-page-node-id="bQct8KuWUtf1xMPDifhrxj"><td data-page-node-id="2XMWIVQUKuRpdYig4AMHKe">文档完整性</td><td data-page-node-id="Y7ZL4uwr2x3yoEsUvfGO0Q"><span class="pill p-ok" data-page-node-id="rdDTwcmavqi8P4whQpwAaA">已恢复</span> 审计中发现 <code data-page-node-id="j7vC6wBqFPkm7p6gc20NAj">docs/markdown-mindmap-standard.md</code> 与 <code data-page-node-id="Lmwl9VBeMQDTSaRUXkjgj0">docs/code-quality-audit-guide.md</code> 两份权威文档被误删（同一批事件），均已 <code data-page-node-id="KjAyab0BGIIDQubczLGVdi">git checkout</code> 恢复，docs/ 现存 4 份文档完整</td></tr>
+</table>
+
+<!-- ================= 05 发现分级 ================= -->
+<h2 data-page-node-id="DscXBGk8x8IFFDL0GTw1yR"><span class="no" data-page-node-id="Nvr2FQmZKRnljwlUw8j7gp">05</span>发现分级</h2>
+
+<p data-page-node-id="y4fjyFCOJ3E7v9FPCuZHuY">本轮无 P1 及以上新发现。以下 4 项 P2 为第一轮遗留（仍未处理），2 项 P3 为本轮新增微优化观察。</p>
+
+<div class="issue p2" data-page-node-id="PLKOEQV5vv9za0GnL2M9Pz">
+  <div class="issue-head" data-page-node-id="eeb7RMyBG4z1bJqa9FDvub"><span class="pill p-p2" data-page-node-id="HbZAbZbyECt8xiS6C9phZJ">P2 · 测试</span><h3 data-page-node-id="X87O1D5KGkaz2oU7A3LAmx">#1 resolveDroppedFile 缺 DataTransfer 形态矩阵测试</h3><span class="loc" data-page-node-id="NY09JIzPE1H1lk1dIvnY93">src/links-resolve.ts</span></div>
+  <p data-page-node-id="C0Gku5aqklGBfav5aG2ex1">该函数是拖拽解析的复杂度重心：text/plain、uri-list、自定义类型、JSON 载荷、files、dragManager 六条路径 + 各类容错分支。当前 links-resolve 语句覆盖仅 34.9%（分支 83.3%），矩阵测试是补齐的最短路径。与第一轮结论一致，仍未处理。</p>
+</div>
+
+<div class="issue p2" data-page-node-id="rKeFGg5YtFEY4REU1AVVfa">
+  <div class="issue-head" data-page-node-id="AEy6cJQWezoJNdDDJeC89E"><span class="pill p-p2" data-page-node-id="NB0elK6RyAmY7GddlAwc3z">P2 · 测试</span><h3 data-page-node-id="ACtlcSbiQchiijXuvrOiGS">#2 UI 壳层缺 DOM stub 测试基建</h3><span class="loc" data-page-node-id="E0iwYvoBdogDdIkrWufHGw">src/features/*</span></div>
+  <p data-page-node-id="ZHI6hLlEiu1xNE2LRffB67">features 层覆盖率 16.1%（view.ts 20.7%、view-toolbar 8.3%、view-context-menu 4.4%）。工具栏构建、右键菜单、拖拽/粘贴事件装配目前完全依赖手工验证。建立轻量 DOM stub（或 jsdom/happy-dom 环境）后，可先覆盖高价值交互：删除兜底（deleteActiveNode 强删路径）、粘贴事件豁免逻辑、窗口兜底判定。</p>
+</div>
+
+<div class="issue p2" data-page-node-id="wyCy3E9xjzxRnm2CLtoaKQ">
+  <div class="issue-head" data-page-node-id="wzXMAPDSq7Gf7CiHkAuNUc"><span class="pill p-p2" data-page-node-id="XXswK2kxhQtkmjpXf0oJSs">P2 · 门禁</span><h3 data-page-node-id="3OIiXM0GhQEVSVLxLVEbUT">#3 vitest 未固化 coverage thresholds</h3><span class="loc" data-page-node-id="1yPf6GLcgcP57maROP92Ir">vitest.config.ts</span></div>
+  <p data-page-node-id="40HZjVsiC3s2ZIBkY5SU9o">当前覆盖率无阈值门禁，核心域（domain/services/md-outline/md-serialize/file-lookup/concurrency）的覆盖回归不可见。建议对上述目录设置 <code data-page-node-id="aZ8YfbHPAqXamSoX9h7SxY">thresholds</code>（如 branches ≥ 85），UI 壳层单独排除，待 #2 落地后再逐步收紧。</p>
+</div>
+
+<div class="issue p2" data-page-node-id="MhXikEjuYBbYUvcBILYFKY">
+  <div class="issue-head" data-page-node-id="PmNgd1SUnwlJtk4SCv2F2d"><span class="pill p-p2" data-page-node-id="mRRJB2M7gb0m0KAftlYufK">P2 · 封装</span><h3 data-page-node-id="lroQv5kAeBJsurjtAy7E7V">#4 view.ts 仍保留 3 个可变 DOM 字段</h3><span class="loc" data-page-node-id="V6N6vz7ZM3lD1IW9aodaMK">src/features/view.ts L80-82</span></div>
+  <p data-page-node-id="6pTnbW6PeN6CsdWHqjm3lc"><code data-page-node-id="OSS7GdRG9z6vuckeOdD1B1">searchInput / searchCountEl / layoutSelect</code> 仍由 view-search / view-toolbar 跨模块回填。已有 <code data-page-node-id="kFq8M5eh3ctHcB8pcnNsRV">ViewDomContext</code> 契约约束访问面（未列成员编译期拒绝），风险可控，但可写所有权仍散在视图类上。完整收口方向：builder 返回句柄由视图持有，或 view-* 内部自持、视图只读转发。</p>
+</div>
+
+<div class="issue p3" data-page-node-id="6kcq1xbZfIO0IM2Z0Vs4pr">
+  <div class="issue-head" data-page-node-id="7NeKb0KT1cv27CDAv6NMUH"><span class="pill p-p3" data-page-node-id="J0v5vTaSTbgGBtHIzd3bxc">P3 · 性能（本轮新增）</span><h3 data-page-node-id="hXuPRm4B7MGI7NQyWpPdAt">#5 resolveDroppedFile 顶部 getFiles() 急切求值</h3><span class="loc" data-page-node-id="VytgDhjspSxEF8ZeFIBbSO">src/links-resolve.ts L131</span></div>
+  <p data-page-node-id="9wcxgpC4QsJnzoDmxVV7zA"><code data-page-node-id="WtADBt7GPkPhPBPSknC4Ls">allFiles</code> 仅在最后的 <code data-page-node-id="glTJvBwvJJk8WN7i5a671f">dataTransfer.files</code> 兜底分支消费，但每次 drop 事件都先执行一次全库文件数组拷贝；text/plain / uri-list 命中时为纯浪费。拖拽是低频交互，影响极小；建议惰性化（移入该分支或用取值器）。同时顶部注释「一次拖拽多次解析，缓存文件列表」与实际消费点不符，可一并修正。</p>
+</div>
+
+<div class="issue p3" data-page-node-id="Jmi9CFgvk2NBAfKoCfjwmB">
+  <div class="issue-head" data-page-node-id="FT2YJXcwfi4fiUsQCR5A2o"><span class="pill p-p3" data-page-node-id="k7EJDL1SncljoI2s2Ktmap">P3 · 性能（本轮新增）</span><h3 data-page-node-id="cG90CDhmt9iQoi1nC94s98">#6 modal-image 预览每次按键重建 img</h3><span class="loc" data-page-node-id="SzYRYrm9XjltVPJ5AzFxu7">src/modal-image.ts L187-190</span></div>
+  <p data-page-node-id="wlMIc8NSr1mDcG1PldDIV3"><code data-page-node-id="wcZKecKCyKBXUQNFs4eJYU">input</code> 事件每次按键都 <code data-page-node-id="BKldIuyJydIPnKoxoaVLd5">renderPreview()</code> → <code data-page-node-id="dkaRdKOL80lyqJECXvO840">preview.empty()</code> + 新建 <code data-page-node-id="ZBiOsA3xDJ4siF8Ytt336U">&lt;img&gt;</code> 并重设 src，连续输入会反复触发资源重新加载。弹窗生命周期短、预览为本地资源，影响极小；可用「值未变短路 + 150ms 防抖」收口（concurrency.createDebouncer 现成）。</p>
+</div>
+
+<h3 data-page-node-id="FViXYWW28qBXzaKYV1T5JP">观察项（不计入发现）</h3>
+<ul data-page-node-id="4Evp1jRMiyBgCYUpljJxpS">
+  <li data-page-node-id="DfY4FsVDSThoEey8jlgoVp"><strong data-page-node-id="HIJ0Q1WwjzFdao4bSDCBYA">多图拖入逐张 Notice</strong>（view-dnd）：每张图片各弹一条通知，Obsidian 会自行堆叠排队，非缺陷；如介意可合并为计数式单条。</li>
+  <li data-page-node-id="nb3UqGrP9FoQsE1a2hwIns"><strong data-page-node-id="m3LxgmhBqjgD1TexBBYkmM">console.error 集中于错误路径</strong>：符合项目惯例（notifyError 管用户可见、console.error 管诊断详情）。</li>
+  <li data-page-node-id="4AckB5kRrKw9PNIeNC11Ao"><strong data-page-node-id="G1XjCe5f59WuttxhMzc40L">竞态防护复核为优</strong>：view.ts 的 loadingFilePath 三重过期检查、EngineController 代际锁 + ResizeObserver、SavePipeline 循环排空 + pendingTree 兜底，均属于高质量防御设计，有对应测试或注释论证。</li>
+</ul>
+
+<!-- ================= 06 路线图 ================= -->
+<h2 data-page-node-id="tB5cfX9cfkhoZwKskrpuxZ"><span class="no" data-page-node-id="RgJUnyOEISPdsxsQwhQuVx">06</span>改进路线图（更新版）</h2>
+
+<table data-page-node-id="yrpeU6FRziBbtNKWIpeSEu">
+  <tr data-page-node-id="ZmrWA9hJV6b8RHvvBmyekn"><th data-page-node-id="w50UzTK33VOvmlXrvFy63X">#</th><th data-page-node-id="gyrL3VqCgviTLyxxSpq6OJ">事项</th><th data-page-node-id="rDXnK1FLEpTsE51gnEQCcB">优先级</th><th data-page-node-id="SqgHMnbHC8enfBRXrp9BTQ">状态</th></tr>
+  <tr data-page-node-id="xAV8yaf5wVuxb697JwRLTh"><td data-page-node-id="DpvobhlT8vkun7WHOCeWCU">1</td><td data-page-node-id="csWUp2wN8aaQTJXMp6gLmI">四项性能优化（file-lookup / drag-target / image-resize / images-path）</td><td data-page-node-id="Rqu8ROCnTeAfn5DwfCqnGb">P1</td><td data-page-node-id="f99SBJhgseNt8pxt8quJOh"><span class="pill p-ok" data-page-node-id="ENjwKOZ8z4tieF9w0dmoay">已落地并复核</span></td></tr>
+  <tr data-page-node-id="qI8Rk9H2TEaiHY7dRwH3Re"><td data-page-node-id="WK04lqDU3Hz0LYwmgX6dkd">2</td><td data-page-node-id="GJjcDjs15DcFgAV2miLIW2">mapWithConcurrency 同步 throw 防护 + 测试</td><td data-page-node-id="fjIHjbs66F6ZwEFrCZMQir">P1</td><td data-page-node-id="QV9B38SJ7te419B23Js1Mh"><span class="pill p-ok" data-page-node-id="T26ZlFV6iaAjQDM2iry7uS">已落地并复核</span></td></tr>
+  <tr data-page-node-id="ynZyj7mBfQaXEWOxUnw7DP"><td data-page-node-id="KmcK6RvBqytxxruIXk3fky">3</td><td data-page-node-id="pGjO5C6pmUJvSuTE9bSGDl">resolveDroppedFile DataTransfer 矩阵测试</td><td data-page-node-id="EAYbQJCCHkadQFxAyYHjVw">P2</td><td data-page-node-id="0Xv6ldgvWlyz0KWUpUJQOq"><span class="pill p-p2" data-page-node-id="JbCEHXiqvWL0SeYAKHuAXV">待办（继承）</span></td></tr>
+  <tr data-page-node-id="M9jvFN8tLLAiY295VAnLmW"><td data-page-node-id="OeRMe6hIca9BJ7wsFQmhxy">4</td><td data-page-node-id="8t0X1OpwuigNMQ6HRPNnYQ">UI 壳层 DOM stub 测试基建 + 高价值交互用例</td><td data-page-node-id="11940TJ4NSZBdPj56P4ftg">P2</td><td data-page-node-id="1ygFluWATDP9DMYq4qQKHu"><span class="pill p-p2" data-page-node-id="MyhA2SogyihdIroV3dInHz">待办（继承）</span></td></tr>
+  <tr data-page-node-id="D7jgiP733iETMaCdptNiyw"><td data-page-node-id="WfH2OE0KRB9MmROhB0346F">5</td><td data-page-node-id="ZpJh9mL3ef4y9URZylGEYc">vitest coverage thresholds 门禁（核心域优先）</td><td data-page-node-id="SUkxxCdwu2pQ9gUsvzeouE">P2</td><td data-page-node-id="9MuJeD3PPtDIhXQX620pol"><span class="pill p-p2" data-page-node-id="xdS6MCCbml71MktD0dvmVS">待办（继承）</span></td></tr>
+  <tr data-page-node-id="RPFaHzhTNqLPUDfVJY2ogn"><td data-page-node-id="SJiYANsfjpkRYYSUJN7kPC">6</td><td data-page-node-id="qCunXf3LFszVvBcrBN2elB">view.ts 3 个可变 DOM 字段收口</td><td data-page-node-id="yC96zcZOto9UtnaeFuZAwd">P2</td><td data-page-node-id="BVmZ9jmaIzb4EYHMLwr8QP"><span class="pill p-p2" data-page-node-id="ovqJvmAfup9gMQQLFQg0GI">待办（继承）</span></td></tr>
+  <tr data-page-node-id="bSBaDOQiKBL2waKLMmmXwW"><td data-page-node-id="jwVSoDWvzyLyienEMCcrvb">7</td><td data-page-node-id="RHcO7L2uNIC4d9jwvgC031">resolveDroppedFile getFiles() 惰性化 + 注释修正</td><td data-page-node-id="bf2sXHuyNyDPBTJfuda3AG">P3</td><td data-page-node-id="amgrSAiXQmTohqU3UjO815"><span class="pill p-p3" data-page-node-id="Injel07QWCR1cZxoK9kZFB">本轮新增</span></td></tr>
+  <tr data-page-node-id="y38NWhSw2pFnajg0ZTEAkY"><td data-page-node-id="WysaXygCjEtp8R3XsGpD9m">8</td><td data-page-node-id="goFBInSklOrBVdLaRELP8q">modal-image 预览防抖 + 值短路</td><td data-page-node-id="vig8f622hBp6Ay01V89kGG">P3</td><td data-page-node-id="9LAKcXOgtlmtIbALs3IWBO"><span class="pill p-p3" data-page-node-id="FQ6iCRMtmBWamLRi4tkdSh">本轮新增</span></td></tr>
+  <tr data-page-node-id="xdLH4DlzkCZC7h4OhqcUGk"><td data-page-node-id="HzMNZuspBA2IZt6iNxUJFL">9</td><td data-page-node-id="thSJvNps39URUBQd9KKNFe">覆盖率产物目录 .gitignore 确认与清理</td><td data-page-node-id="WOvjQSrSivK09qBLezo6Hh">P3</td><td data-page-node-id="A6EFzpGqJLevPqFP9ZxcHQ"><span class="pill p-p3" data-page-node-id="Uh2ZOg7whfVqvwFfbTHg4y">本轮新增</span></td></tr>
+</table>
+
+<div class="good-note" data-page-node-id="pr5ewc5LLz6EOaGEBD6nwx">
+  <strong data-page-node-id="EG0WQKAEXOl0L5m5yciG1W">建议的推进顺序：</strong>先做 #7/#8（半小时级微优化，顺手落地）→ #5（门禁固化，防回归）→ #3（矩阵测试）→ #4（stub 基建，之后核心域阈值可提升到 90+）。#6 收益最低，可与 #4 合并处理。当前代码库功能与质量基线扎实，无阻塞项，可放心继续功能迭代。
+</div>
+
+<footer data-page-node-id="Hjf9cXLBLXdIa9iT5dOZCV">
+  Mindmap-Studio 第二轮代码质量审计 · 2026-09-07 ·
+  验证：tsc / eslint / vitest 252 用例 / esbuild production / v8 coverage ·
+  深读范围：src 全部 34 个源文件（含 domain、services、features 与 vendor 契约面）
+</footer>
+
+</div>
+</body>
+</html>

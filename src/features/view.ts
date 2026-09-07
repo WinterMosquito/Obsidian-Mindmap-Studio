@@ -63,7 +63,14 @@ import {
 	updateStatusBar,
 } from './view-status';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
+import { setupImageResize } from './image-resize';
+import { setupDragTargetAssist } from './drag-target';
 import { EventBinder } from '../event-binder';
+
+/** 视图状态里 mdBackMode 的白名单取值（非法/缺失回退 source） */
+function readMdBackMode(value: unknown): 'source' | 'preview' {
+	return value === 'preview' ? 'preview' : 'source';
+}
 
 export class MindMapView extends FileView implements MindMapViewContext {
 	plugin: MindMapStudioPlugin;
@@ -73,8 +80,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	searchInput: HTMLInputElement | null = null;
 	searchCountEl: HTMLElement | null = null;
 	layoutSelect: HTMLSelectElement | null = null;
-	isDark = false;
-	ready = false;
+	/** 当前深色主题（css-change 时重算；仅本类与引擎控制器装配面使用） */
+	private isDark = false;
 
 	/** md 文档读取/解析（渲染层数据面） */
 	private documents: DocumentService;
@@ -104,23 +111,23 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	private loadingFilePath: string | null = null;
 	/**
 	 * 当前布局（持久化到文件的唯一来源；不依赖 getData() 返回活引用还是深拷贝）。
-	 * 由 view-toolbar.ts 写入、本类与引擎初始化读写。
+	 * 由本类经 applyLayout/resolveLayout 维护（工具栏变更走 applyLayout 方法）。
 	 */
-	currentLayout: string | null = null;
+	private currentLayout: string | null = null;
 
 	/**
 	 * .mindmap.md 文档模式（B3 显式切换）：文件本质是 Markdown，用导图视图
 	 * 编辑并回写为 md 大纲。
 	 */
 	/** 进入前 markdown 视图模式（返回「以 Markdown 编辑」时恢复） */
-	mdBackMode: 'source' | 'preview' = 'source';
+	private mdBackMode: 'source' | 'preview' = 'source';
 	/** 原样保留的 frontmatter 块（保存时拼回文件头） */
-	mdFrontmatter: string | null = null;
+	private mdFrontmatter: string | null = null;
 	/**
 	 * 文档模式标记：parseDocument 时按文件名锁定（保存/回写恒为 md 大纲；
-	 * 标记用于工具栏返回按钮与相关交互的显示判定）。
+	 * 标记用于工具栏返回按钮与相关交互的显示判定）。外部读取走 isMdDocument()。
 	 */
-	mdDocumentMode = false;
+	private mdDocumentMode = false;
 
 	/** 引擎实例（view-* 模块经 context 只读访问） */
 	get mindMap(): MindMap | null {
@@ -180,6 +187,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				setupPasteHandler(this);
 				setupContextMenu(this);
 				registerWikilinkInteractions(this);
+				setupImageResize(this);
+				setupDragTargetAssist(this);
 			},
 			onEngineReady: (layout) => this.onEngineReady(layout),
 			onReferencesChanged: () => {
@@ -262,7 +271,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			handleWindowPaste(this, event);
 		});
 
-		this.ready = true;
 		resolveReady();
 		if (this.file) {
 			await this.loadMindMapFromFile(this.file);
@@ -307,14 +315,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			}
 			this.mdFrontmatter = doc.frontmatter;
 			this.mdDocumentMode = doc.isMdDocument;
-			// 记录进入前 markdown 模式（「以 Markdown 编辑」返回时恢复）
-			const state = this.leaf.getViewState().state as {
-				mdBackMode?: 'source' | 'preview';
-			};
-			this.mdBackMode = state?.mdBackMode ?? 'source';
+			// 记录进入前 markdown 模式（「以 Markdown 编辑」返回时恢复）：
+			// 视图状态未经校验（用户手改 workspace.json 等可能产生任意值），
+			// 按白名单取值，非法/缺失一律回退 source（与 ViewStateStore.hydrate
+			// 的防御风格一致）。
+			this.mdBackMode = readMdBackMode(
+				this.leaf.getViewState().state?.mdBackMode,
+			);
 			const tree = doc.tree;
 			// 按图片原始宽高比校正尺寸（统一高度、宽度按比例），
 			// 在首次渲染前完成，避免首帧用固定比例再跳变。
+			// 官方嵌入尺寸参数（![[图|300]]）的节点在此过程中按参数定尺寸。
 			await walkCorrectImageSizesByAspect(tree);
 			// 加载期间文件已切换：丢弃过期结果
 			if (this.loadingFilePath !== file.path) {

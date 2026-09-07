@@ -1195,7 +1195,8 @@ simple-mind-map/dist/simpleMindMap.esm.css:
   background: var(--background-primary);
 }
 
-.mindmap-canvas-container > div {
+/* 引擎容器铺满画布（排除图片调宽手柄——它是绝对定位小方块，铺满会变成整屏色块） */
+.mindmap-canvas-container > div:not(.mindmap-img-resize-handle) {
   width: 100% !important;
   height: 100% !important;
 }
@@ -1544,4 +1545,35 @@ simple-mind-map/dist/simpleMindMap.esm.css:
 
 .mindmap-modal-file-status.is-error {
   color: var(--text-error);
+}
+
+/* ========== 图片拖拽调宽（image-resize.ts） ========== */
+
+/* hover 图片时的右下角手柄：拖动等比缩放，尺寸持久化到 data.json。
+   尺寸带 !important：防御容器子元素铺满规则（> div 100%）误伤 */
+.mindmap-img-resize-handle {
+  position: absolute;
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 3px;
+  background: var(--interactive-accent);
+  border: 1px solid var(--background-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: nwse-resize;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease-in-out;
+}
+
+.mindmap-img-resize-handle.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ========== 拖拽换父高亮（drag-target.ts） ========== */
+
+/* 节点被拖动时，光标邻近的潜在新父节点高亮（识别范围扩大到节点包围盒外扩） */
+.mindmap-drag-target {
+  filter: drop-shadow(0 0 5px var(--mm-drag-target-color, #f59e0b));
 }

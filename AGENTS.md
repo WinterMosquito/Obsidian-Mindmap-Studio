@@ -67,6 +67,15 @@ src/
     view.ts         # Controller：Obsidian 生命周期编排、service 装配、链接跳转、标题重命名
     view-context.ts # MindMapViewContext：view-* 对视图的访问契约（结构化窄接口）
     view-*.ts       # 工具栏/拖拽/右键/搜索/导出/状态栏/图片灯箱/wikilink 交互/粘贴/节点操作
+    image-resize.ts # 节点图片拖拽调宽：hover 手柄 + 等比缩放（SET_NODE_DATA imageSize
+                    #   custom:true + render），持久化走 Obsidian 官方嵌入尺寸语法——
+                    #   结束时 scheduleSave，序列化合成回写 `|宽度`（不落 data.json）
+    drag-target.ts  # 拖拽换父辅助：优化「拖动节点重新链接」的识别范围——引擎原生
+                    #   判定要求指针精确落在目标矩形内，本模块在拖拽期间（仅拖拽中，
+                    #   node_dragging 起会话、mouseup/node_dragend 收）以「节点中心为
+                    #   锚点的均匀圆域」（TARGET_RADIUS_PX，与节点大小无关）取最近节点
+                    #   经 setDragOverlapTarget 外借给引擎，引擎精确命中时让位；
+                    #   松手走引擎原生 MOVE_NODE_TO
     file-creator.ts # 文件浏览器「新建」菜单注入（私有 API 防御式访问）
   concurrency.ts    # 并发原语唯一实现：串行队列/防抖/节流（SavePipeline/ViewStateStore/
                     #   状态栏计数等共用；节流支持 trailingResetsWindow 选项）
@@ -99,47 +108,60 @@ src/
   mindmap-theme.ts  # 主题配置（buildThemeConfig 唯一实现，视图/代码块主题参数化差异）
   event-binder.ts   # DOM/引擎事件绑定器（作用域化统一销毁）
   settings.ts       # 设置接口与设置面板（Obsidian 1.13+ 声明式）+ sanitizeSettings
-                    #   （data.json 加载与设置面板写回共用同一校验）
+                    #   （data.json 加载与设置面板写回共用同一校验）；写回经
+                    #   main.scheduleSettingsPersist 防抖（滑块突发合并，内存即时生效）
   vault-sync.ts     # 库事件同步单一入口（引用更新、索引失效；插件侧补充处理经 hooks 注入）
   codeblock.ts      # ```mindmap 代码块渲染（Markdown 大纲）
   i18n.ts / constants.ts / creation.ts
                     # i18n：t() 取文案、tf() 占位符格式化；constants：MD_FILE_SUFFIX、
                     #   hasMindMapMarker/stripMindMapStem/withMindMapMarker（标记后缀唯一实现）
 tests/
-  md-roundtrip.test.ts # md 往返回归（解析结构/深度/不动点/编辑合成/rawOk 分支矩阵/uid/视图状态）
+  md-roundtrip.test.ts # md 往返回归（describe/it 场景矩阵：解析结构/深度/不动点/编辑合成/rawOk 分支矩阵/uid/视图状态）
   domain.test.ts       # domain 层单测（wikilink 契约 + walkTree 语义）
   concurrency.test.ts  # 并发原语回归（串行队列/防抖/节流：错误传播、尾随保证、重置、窗口重置）
   url.test.ts          # URL 谓词边界（各语义的协议形态与否决集）
   save-pipeline.test.ts# SavePipeline 竞态回归（写入中再触发排空、失败上报、防抖/守卫）
-  view-state.test.ts   # ViewStateStore（hydrate 形状校验、防抖写盘、flushNow）
+  view-state.test.ts   # ViewStateStore（hydrate 形状校验、防抖写盘、flushNow 排空与写盘 Promise 透传）
   settings.test.ts     # sanitizeSettings（类型/取值校验、坏值回退默认）
+  engine-controller.test.ts # EngineController（初始化代际锁、ResizeObserver 零尺寸等待、装配/销毁、引用预检、拖拽抑制、refresh/视口）
+  event-binder.test.ts # EventBinder（注册即记录/销毁即清理：参数透传、监听器身份、幂等、单点抛错不阻断）
+  persistence.test.ts  # PluginDataWriter（写前重读合并不丢键、串行队列、内部吞错）
+  feature-helpers.test.ts # 特性纯函数（drag-target 识别范围几何、image-resize 等比缩放钳制）
   setup.ts             # vitest 全局 setup：Node 环境 window 桩（fake timers 生效）
   mocks/obsidian.ts    # obsidian 最小 mock（vitest alias，包本身无运行时 JS）
 docs/
   markdown-mindmap-standard.md  # Markdown ↔ 思维导图映射规则（权威标准）
+  code-quality-report.html      # 代码质量调研报告（2026-09）
 ```
 
 ## 测试与 CI
 
 ```bash
-npm test        # vitest run（CI 在 build 后、lint 前执行）
+npm test            # vitest run（CI 在 build 后、lint 前执行）
+npm run test:coverage  # vitest run --coverage（v8 provider，报告出 coverage/；CI 主矩阵版本执行并归档产物）
 ```
 
 - vitest 配置 `vitest.config.ts`：`obsidian` → `tests/mocks/obsidian.ts` alias（包仅有类型声明，无运行时 JS）。
+  coverage 含 `src/**`（排除 i18n/constants 纯文案与常量表），vendor 为预打包产物不纳入。
 - `tsconfig.json` 同时纳入 `src/` 与 `tests/`；`npm run build` 会先 `tsc -noEmit` 类型检查两者。
 - Lint 基线：`eslint-plugin-obsidianmd ^0.4.2`（与官方 eslint-plugin 仓库同版）。其
   `configs.recommended` 自包含（ESLint core + tseslint recommendedTypeChecked +
   全部 obsidianmd 规则 + sdl/import/depend/no-unsanitized 等三方插件 + package.json
   检查），**勿再展开 `tseslint.configs.recommended`**（plugin 重定义冲突）。
-  项目自有覆盖：domain 零依赖边界、system-open 的 require 全局、modal/tests 豁免。
+  项目自有覆盖：domain 零依赖边界、统一解析入口强制（features/modal/services/src 根层
+  直调 getAbstractFileByPath 拦截，links-resolve/file-lookup 收口点豁免，存在性检查
+  特例 eslint-disable 注明理由）、system-open 的 require 全局、modal/tests 豁免。
 
 ## 关键约定
 
 - 渲染层定位：正文保持纯 Markdown；布局/视口/打开偏好存 `data.json`（`viewState`，按文件路径），不写入文件。
+- 图片自定义尺寸（Obsidian 官方嵌入语法，不落 data.json）：`![[图.png|300]]`（仅宽、等比）/ `![[图.png|300x150]]`（宽高）/ `![alt|300](url)`（外链 md 图，尺寸在标签尾部）。解析进 `mdImageWidth/mdImageHeight`（domain/md-meta 契约）；`walkCorrectImageSizesByAspect` 对带参节点按参数定尺寸（仅宽时探测原始比例补高）；拖拽调宽改 engine `imageSize custom:true`，保存时 rawOk 尺寸特征（`目标|宽度`，终界 `]`/`x` 防前缀误匹配）不符 → 合成回写 `|宽度`。
+- 图片独占节点（渲染层语义）：纯图行（`- ![[x.png]]`）解析为**无文本节点**（不回退文件名占位），图片节点删除文字（右键「移除文字」/双击清空）后即被图片独占，往返保持；代价是纯图节点不参与文本搜索。图片嵌入语法（`![[..]]`/`![]()`）在 rawOk 的「链接已清除」检测中以负向断言排除（`(?<!!)\[\[`），图文混合行可逐字往返。
+- 拖拽换父辅助：引擎落点判定（指针须精确落在目标矩形内）之外，拖拽期间由 `drag-target.ts` 以两类锚点统一按指针距离最近仲裁后外借（引擎每帧重置三态、精确命中时让位）：**节点中心**（均匀圆域 `TARGET_RADIUS_PX`，与节点大小无关）→ 外借 `overlapNode`（挂子，`MOVE_NODE_TO`）；**相邻兄弟间隙中点** → 外借 `prevNode`（插到该兄弟之后，`INSERT_AFTER`）。引擎拖拽内部形态（三态/命令）访问收口在 `mindmap.ts` 的 `getDragDropState`/`setDragOverlapTarget`/`setDragPrevTarget`/`getNodeLayoutRect`/`toCanvasPoint`。
 - 中心主题 ⇄ 文件名：编辑根节点文本会重命名 `.mindmap.md`（Obsidian 原生更新链接/反链）；外部改名后视图重载中心随新名。
 - 图片/链接对齐 Obsidian：`![[路径]]`/`[[笔记]]` 往返；插入弹窗联想库内文件；悬停预览用 `registerHoverLinkSource` + `hover-link`。
 - 所有 DOM/事件/定时器监听使用 `this.register*` 助手注册，保证卸载清理；引擎实例事件经 `EventBinder` 记录统一销毁。
-- URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；防抖/节流/串行队列一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
+- URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；防抖/节流/串行队列/有界并发映射一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段；批量异步任务勿用无界 Promise.all，用 `mapWithConcurrency`）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
 - `.mindmap.md` 标记的判定/剥离/拼接一律用 `constants.ts` 的 `hasMindMapMarker` / `stripMindMapStem` / `withMindMapMarker`（勿手写同名正则或 replace）。
 - 引擎 `execCommand` 的命令名一律引用 `mindmap.ts` 的 `ENGINE_COMMANDS` 常量（勿写字符串字面量，拼错编译期即报错）。
 - 弹窗 Promise 的 settle 守卫与 onClose 兜底用 `modal-common.createModalSettle`；库内文件输入联想用 `modal-common.VaultFileSuggest`（勿再各写一份 AbstractInputSuggest 子类）。

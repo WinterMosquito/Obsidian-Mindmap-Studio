@@ -25,4 +25,16 @@ jobs:
             - run: npm ci
             - run: npm run build --if-present
             - run: npm test -- --reporter=verbose --bail=1
+            # 覆盖率报告（html/lcov 产物随 workflow 归档，文本摘要进日志；
+            # 仅在主矩阵版本执行一次，避免三倍上传）
+            - name: Test coverage
+              if: matrix.node-version == '24.x'
+              run: npm run test:coverage
+            - name: Upload coverage report
+              if: matrix.node-version == '24.x'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: coverage-report
+                  path: coverage/
+                  retention-days: 14
             - run: npm run lint

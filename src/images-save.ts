@@ -144,7 +144,11 @@ async function saveImageToVaultInner({
 		// 不依赖 getAvailablePathForAttachment 的具体重名策略，
 		// 也避免并发/历史同名文件被覆盖。
 		let retry = 0;
-		while (app.vault.getAbstractFileByPath(availablePath) && retry < 100) {
+		while (
+			// eslint-disable-next-line no-restricted-syntax -- 重名序号兜底是存在性检查，非文件解析
+			app.vault.getAbstractFileByPath(availablePath) &&
+			retry < 100
+		) {
 			retry++;
 			availablePath = normalizePath(
 				await app.fileManager.getAvailablePathForAttachment(
@@ -155,7 +159,11 @@ async function saveImageToVaultInner({
 		}
 		const targetPath = normalizePath(availablePath);
 		const folder = targetPath.substring(0, targetPath.lastIndexOf('/'));
-		if (folder && !app.vault.getAbstractFileByPath(folder)) {
+		if (
+			folder &&
+			// eslint-disable-next-line no-restricted-syntax -- 目录缺失判断是存在性检查，非文件解析
+			!app.vault.getAbstractFileByPath(folder)
+		) {
 			try {
 				await app.vault.createFolder(folder);
 			} catch {

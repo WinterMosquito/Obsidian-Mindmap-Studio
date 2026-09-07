@@ -13,6 +13,7 @@ import {
 	isExternalUrl,
 	normalizeImageSizes,
 	resolveImagePath,
+	walkCorrectImageSizesByAspect,
 	walkResolveImagePaths,
 } from '../src/images-path';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
@@ -204,5 +205,78 @@ describe('computeAspectImageSize（按原始比例探测，stub Image）', () =>
 			custom: true,
 		});
 		expect(FakeImage.instances.length).toBe(created);
+	});
+});
+
+describe('walkCorrectImageSizesByAspect（官方嵌入尺寸参数）', () => {
+	beforeEach(() => {
+		FakeImage.instances = [];
+		vi.stubGlobal('Image', FakeImage);
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('mdImageWidth：宽度取参数、高度按原始比例补齐（custom:true）', async () => {
+		const tree: MindMapTreeNode = {
+			data: {
+				text: '',
+				image: 'app://fake/pic.png',
+				mdImageTarget: 'pic.png',
+				mdImageWidth: 300,
+			},
+			children: [],
+		};
+		const pending = walkCorrectImageSizesByAspect(tree);
+		// 自然尺寸 300x100（比例 3:1）→ 高 = 300 * 100/300 = 100
+		FakeImage.instances.at(-1)!.emitLoad(300, 100);
+		await pending;
+		expect(tree.data?.imageSize).toEqual({ width: 300, height: 100, custom: true });
+	});
+
+	it('mdImageWidth + mdImageHeight：双参数直接生效（不探测）', async () => {
+		const tree: MindMapTreeNode = {
+			data: {
+				text: '',
+				image: 'app://fake/pic.png',
+				mdImageWidth: 120,
+				mdImageHeight: 80,
+			},
+			children: [],
+		};
+		await walkCorrectImageSizesByAspect(tree);
+		expect(tree.data?.imageSize).toEqual({ width: 120, height: 80, custom: true });
+		expect(FakeImage.instances).toHaveLength(0); // 双参数无需探测
+	});
+
+	it('无参数节点：统一高度按比例；已有 custom 尺寸不覆盖', async () => {
+		const tree: MindMapTreeNode = {
+			data: { text: '', image: 'app://fake/pic.png' },
+			children: [
+				{
+					data: {
+						text: '',
+						image: 'app://fake/pic.png',
+						imageSize: { width: 999, height: 111, custom: true },
+					},
+					children: [],
+				},
+			],
+		};
+		const pending = walkCorrectImageSizesByAspect(tree);
+		FakeImage.instances.at(-1)?.emitLoad(300, 100);
+		await pending;
+		// 根节点（无参数）：统一高度 IMAGE_HEIGHT、宽度按比例
+		expect(tree.data?.imageSize).toEqual({
+			width: Math.round((IMAGE_HEIGHT * 300) / 100),
+			height: IMAGE_HEIGHT,
+			custom: true,
+		});
+		// 子节点：custom 已存在 → 不覆盖
+		expect(tree.children[0]?.data?.imageSize).toEqual({
+			width: 999,
+			height: 111,
+			custom: true,
+		});
 	});
 });

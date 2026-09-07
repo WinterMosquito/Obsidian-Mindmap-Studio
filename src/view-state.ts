@@ -20,11 +20,13 @@ export class ViewStateStore {
 	private debouncer: Debouncer;
 
 	/**
-	 * @param persist     序列化后的状态写盘回调（由插件注入，合并 data.json）
+	 * @param persist     序列化后的状态写盘回调（由插件注入，合并 data.json）。
+	 *   可返回 Promise（如 PluginDataWriter.write）：防抖路径忽略返回值，
+	 *   flushNow 会原样返回给调用方，供卸载路径尽力跟踪写盘完成。
 	 * @param debounceMs  写盘防抖
 	 */
 	constructor(
-		private persist: (state: Record<string, PathState>) => void,
+		private persist: (state: Record<string, PathState>) => void | Promise<void>,
 		private debounceMs = 600,
 	) {
 		this.debouncer = createDebouncer(debounceMs);
@@ -109,15 +111,23 @@ export class ViewStateStore {
 	}
 
 	private schedulePersist(): void {
+		// 防抖路径 fire-and-forget：persist 返回 Promise 时不等待
+		//（注入的 PluginDataWriter.write 内部吞错，不会产生未处理拒绝）。
 		this.debouncer.schedule(() => {
-			this.persist(this.serialize());
+			void this.persist(this.serialize());
 		});
 	}
 
-	/** 立即排空未落盘的变更（插件卸载/视图关闭时调用） */
-	flushNow(): void {
+	/**
+	 * 立即排空未落盘的变更（插件卸载/视图关闭时调用）。
+	 * @returns 有未决变更时返回 persist 的结果（Promise 透传）；
+	 *   无未决变更返回 undefined。同步 onunload 无法 await 写盘，
+	 *   但可借此持有在途写盘（日志/测试跟踪），使排空语义可观测。
+	 */
+	flushNow(): Promise<void> | undefined {
 		if (this.debouncer.cancel()) {
-			this.persist(this.serialize());
+			return Promise.resolve(this.persist(this.serialize()));
 		}
+		return undefined;
 	}
 }

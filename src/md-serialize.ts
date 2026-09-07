@@ -55,26 +55,45 @@ function renderHyperlink(data: MdNodeData): string | null {
 	return formatWikilink(hyperlink);
 }
 
+/** 图片自定义尺寸的回写宽度（官方嵌入语法 `|宽度`；无自定义返回 null） */
+function customImageWidth(data: MdNodeData): number | null {
+	const size = data.imageSize;
+	if (
+		size?.custom &&
+		typeof size.width === 'number' &&
+		Number.isFinite(size.width) &&
+		size.width > 0
+	) {
+		return Math.round(size.width);
+	}
+	return null;
+}
+
 /** 行内 token 渲染：图片（仅合成路径使用） */
 function renderImage(data: MdNodeData, app: App | null): string | null {
 	const image = data.image;
 	if (typeof image !== 'string' || !image) {
 		return null;
 	}
+	// 官方嵌入尺寸参数：`|宽度`（仅宽、等比缩放）。见官方帮助
+	// 「Embed files」![[图|300]] 与「Basic formatting syntax」![alt|300](url)。
+	const width = customImageWidth(data);
+	const sizeSuffix = width !== null ? `|${width}` : '';
 	const target = data.mdImageTarget;
 	if (target && image === target) {
-		return `![[${target}]]`;
+		return `![[${target}${sizeSuffix}]]`;
 	}
 	if (app) {
 		const file = resolvePathToFile(image, app);
 		if (file) {
-			return `![[${file.path}]]`;
+			return `![[${file.path}${sizeSuffix}]]`;
 		}
 	}
 	if (/^(https?:|data:|blob:)/.test(image)) {
-		return `![](${image})`;
+		// 外链 md 图片：官方语法尺寸在标签尾部（空 alt 即 ![|300](url)）
+		return `![${sizeSuffix}](${image})`;
 	}
-	return `![[${image}]]`;
+	return `![[${image}${sizeSuffix}]]`;
 }
 
 /** 图片当前库内路径（view 把 image 解析为资源地址后反查）；无则原样 */
@@ -114,7 +133,10 @@ function nodeLinkDisplay(data: MdNodeData): string | null {
 	return linkDisplayText(hyperlink);
 }
 
-/** 图片的「文件名显示名」（parse 时纯图节点文本回退值） */
+/**
+ * 图片的「文件名显示名」（历史兼容：旧版本解析曾把文件名回退为纯图节点
+ * 文本，经「插入/更换图片」同步的遗留数据仍可能命中；现行解析不再产生）。
+ */
 function imageSelfText(data: MdNodeData): string | null {
 	const target = data.mdImageTarget;
 	if (!target) {
@@ -131,6 +153,8 @@ function imageSelfText(data: MdNodeData): string | null {
  *   在 mdRaw 中——view 加载把库内路径转 app:// 是可逆标准步（视为未变），
  *   而经「插入/更换图片」新增的引用不在 mdRaw 里 → 合成回写，避免旧 mdRaw
  *   覆盖导致新图引用丢失（mdImageTarget 可能被同步更新，不能作为比对基准）；
+ *   节点带自定义尺寸（拖拽调宽）时特征扩展为 `目标|宽度`（终界 `]`/`x`），
+ *   尺寸参数缺失或不符即合成回写最新尺寸；
  * - 链接判定：hyperlink 的目标特征串必须出现在 mdRaw 中（通过「插入链接」
  *   新增/更新链接 → 合成回写，避免 mdRaw 原样覆盖导致链接丢失）。
  */
@@ -146,10 +170,19 @@ function rawOk(
 		return false;
 	}
 	if (data.image !== undefined && data.image !== null && data.image !== '') {
-		// 当前图片特征（库内路径或外链原文）须已存在于 mdRaw
+		// 当前图片特征（库内路径或外链原文）须已存在于 mdRaw。
+		// 带自定义尺寸时特征含官方尺寸参数（`|宽度`）——尺寸被拖拽调整过
+		// （或 mdRaw 尚无尺寸参数）即判定已变更，走合成回写新尺寸。
+		// 终界检查（后随 `]` 或 `x`）：避免 `|30` 误匹配 `|300x150` 的前缀。
 		const rawImage = typeof data.image === 'string' ? data.image : null;
 		const feature = imageVaultPath(data, app) ?? rawImage;
-		if (feature && !raw.includes(feature)) {
+		const width = customImageWidth(data);
+		if (feature && width !== null) {
+			const sized = `${feature}|${width}`;
+			if (!raw.includes(`${sized}]`) && !raw.includes(`${sized}x`)) {
+				return false; // 图新增/更换/调整尺寸，需合成
+			}
+		} else if (feature && !raw.includes(feature)) {
 			return false; // 图新增/更换，需合成
 		}
 	}
@@ -162,8 +195,10 @@ function rawOk(
 		// 段落（plain）节点解析时本就不携带 hyperlink（多行文本无引擎单链），
 		// 其 mdRaw 里的 [[..]]/[](url) 是原文的一部分——必须逐字回写；
 		// 只有可携带链接的 heading/list 节点才可能是「用户清除了链接」。
+		// 图片嵌入语法（![[img]] / ![alt](url)）不是链接：负向先行断言排除，
+		// 否则图文混合行会被误判「链接已清除」而放弃逐字回写。
 		data.mdType !== 'plain' &&
-		/\[\[|\[[^\]]*\]\(/.test(raw)
+		/(?<!!)\[\[|(?<!!)\[[^\]]*\]\(/.test(raw)
 	) {
 		// 链接已被清除（hyperlink 为空）但 mdRaw 仍含链接语法：
 		// 需合成剥离为纯文本，否则旧 mdRaw 原样回写会让"清除链接"失效

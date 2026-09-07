@@ -25,3 +25,48 @@ export class FileSystemAdapter {
 export function normalizePath(p: unknown): string {
 	return String(p).replace(/\\/g, '/');
 }
+
+/* ==== 以下桩仅为「模块图可加载 / 类可继承」（如 main.ts 全导入链的测试）：
+   测试不实例化这些类的交互行为，方法按需补最小链式面 ==== */
+
+export class TAbstractFile {}
+export class MarkdownRenderChild {}
+export class Modal {}
+export class Component {}
+export class FileView {
+	leaf: unknown;
+	constructor(leaf?: unknown) {
+		this.leaf = leaf;
+	}
+}
+export class Menu {
+	addItem(_cb: unknown): Menu {
+		return this;
+	}
+	addSeparator(): Menu {
+		return this;
+	}
+	showAtPosition(_pos: unknown): void {}
+}
+export class ButtonComponent {
+	setButtonText(_t: string): ButtonComponent {
+		return this;
+	}
+	onClick(_cb: unknown): ButtonComponent {
+		return this;
+	}
+	setCta(): ButtonComponent {
+		return this;
+	}
+}
+export class AbstractInputSuggest {
+	constructor(_app: unknown, _inputEl: unknown) {}
+}
+export class Workspace {}
+export const Platform = {
+	isDesktopApp: true,
+	isMobile: false,
+	isIosApp: false,
+	isAndroidApp: false,
+};
+export function setIcon(_parent: unknown, _iconId: string): void {}

@@ -101,6 +101,18 @@ export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): vo
 	);
 }
 
+/**
+ * 移除节点文字（保留图片/链接等其余数据）：
+ * 图片节点移除文字后成为「图片独占节点」（serialize 走纯图 token 合成，
+ * 往返保持；见 md-serialize/md-outline 图片独占语义）。
+ */
+export function removeNodeText(view: MindMapViewContext, node: MindMapNode): void {
+	if (view.mindMap) {
+		setNodeText(view.mindMap, node, '');
+		view.scheduleSave();
+	}
+}
+
 /** 清除节点超链接（不影响节点其他数据） */
 export function clearNodeHyperlink(
 	view: MindMapViewContext,

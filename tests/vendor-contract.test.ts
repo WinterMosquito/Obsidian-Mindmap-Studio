@@ -108,6 +108,18 @@ describe('vendor 契约冒烟：防腐层触碰的引擎内部字段', () => {
 		'removeNodeWhenOutCanvas',
 		'enableFreeDrag',
 		'customHyperlinkJump',
+		// Drag 落点判定三态与命令（features/drag-target.ts 外借落点用：
+		// overlapNode 挂子 → MOVE_NODE_TO；prevNode 插兄弟 → INSERT_AFTER）
+		'overlapNode',
+		'prevNode',
+		'nextNode',
+		'checkOverlapNode',
+		'MOVE_NODE_TO',
+		'INSERT_AFTER',
+		'INSERT_BEFORE',
+		// 图片展示尺寸（features/image-resize.ts 拖拽调宽用）
+		'imageSize',
+		'getImgShowSize',
 	];
 
 	it('每个内部字段令牌在 bundle 中真实存在', () => {
@@ -124,7 +136,10 @@ describe('vendor 契约冒烟：插件依赖的引擎事件名', () => {
 		'node_contextmenu',
 		'node_dblclick',
 		'node_dragend',
+		'node_dragging',
 		'node_img_click',
+		'node_img_mouseenter',
+		'node_img_mouseleave',
 		'node_mouseenter',
 	];
 

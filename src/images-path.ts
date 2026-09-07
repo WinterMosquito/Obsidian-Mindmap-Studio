@@ -7,6 +7,7 @@
  */
 import { App } from 'obsidian';
 import { IMAGE_HEIGHT, IMAGE_WIDTH } from './constants';
+import { mapWithConcurrency } from './concurrency';
 import {
 	isAppResourceUrl,
 	isExternalImageRef,
@@ -17,6 +18,7 @@ import type {
 	MindMapTreeNode,
 	SetNodeImageOptions,
 } from '../vendor/simple-mind-map.cjs';
+import type { MdNodeData } from './node-data';
 
 /** 是否为外部/绝对地址（无需按库内路径解析）：库内资源地址以外的远程/数据/file:// 形态 */
 export function isExternalUrl(url: string): boolean {
@@ -81,6 +83,14 @@ export function createSetNodeImageOptions(url: string | null): SetNodeImageOptio
 
 /** 图片尺寸探测超时（毫秒）：加载失败/挂起时不阻塞渲染 */
 const IMAGE_PROBE_TIMEOUT_MS = 2500;
+
+/**
+ * 树级尺寸校正的探测并发上限：图片自然尺寸探测即一次完整解码，
+ * 大图打开时整树 Promise.all 会形成解码风暴（几十上百个并发解码
+ * 挤占渲染进程主线程与内存带宽、推迟首帧）；固定并发保持探测管线
+ * 饱和的同时为布局/渲染留出算力。
+ */
+const IMAGE_PROBE_CONCURRENCY = 6;
 
 /**
  * 图片自然尺寸探测缓存（url → 原始尺寸，仅缓存成功结果）。
@@ -192,8 +202,14 @@ export async function createAspectSetNodeImageOptions(
 }
 
 /**
- * 递归按图片原始比例校正树内所有图片尺寸（并发探测）。
+ * 递归按图片原始比例校正树内所有图片尺寸（有界并发探测）。
  * 返回是否有修改；探测失败的图片保持默认尺寸。
+ *
+ * 官方嵌入尺寸参数（mdImageWidth/mdImageHeight，来自 `![[图|300]]` /
+ * `![[图|300x150]]` / `![alt|300](url)`）优先：
+ * - 宽度恒取参数值；
+ * - 高度取参数值；仅宽度时按原始比例补齐（探测失败回退统一高度）；
+ * - 此类节点为 custom:true，不受默认校正影响。
  */
 export async function walkCorrectImageSizesByAspect(
 	tree: MindMapTreeNode,
@@ -205,10 +221,39 @@ export async function walkCorrectImageSizesByAspect(
 		}
 	});
 	let changed = false;
-	await Promise.all(
-		nodes.map(async (node) => {
+	await mapWithConcurrency(
+		nodes,
+		IMAGE_PROBE_CONCURRENCY,
+		async (node: MindMapTreeNode) => {
 			try {
-				const size = await computeAspectImageSize(node.data?.image ?? '');
+				const data = node.data as MdNodeData;
+				let size: { width: number; height: number; custom: boolean };
+				if (typeof data.mdImageWidth === 'number' && data.mdImageWidth > 0) {
+					// 官方尺寸参数：宽度取参数；高度取参数或按原始比例补齐
+					const width = data.mdImageWidth;
+					let height = data.mdImageHeight;
+					if (height === undefined) {
+						const natural = await probeImageNaturalSize(
+							typeof data.image === 'string' ? data.image : '',
+						);
+						height =
+							natural && natural.width > 0 && natural.height > 0
+								? Math.max(
+										1,
+										Math.round((width * natural.height) / natural.width),
+									)
+								: IMAGE_HEIGHT;
+					}
+					size = { width, height, custom: true };
+				} else {
+					// 无参数：默认统一高度按原始比例（已有自定义尺寸不覆盖，防御）
+					if (node.data?.imageSize?.custom) {
+						return;
+					}
+					size = await computeAspectImageSize(
+						typeof data.image === 'string' ? data.image : '',
+					);
+				}
 				const current = node.data?.imageSize;
 				if (
 					!current ||
@@ -222,7 +267,7 @@ export async function walkCorrectImageSizesByAspect(
 			} catch {
 				// 单节点探测异常：跳过该节点，保留现有尺寸，不中断整树校正
 			}
-		}),
+		},
 	);
 	return changed;
 }

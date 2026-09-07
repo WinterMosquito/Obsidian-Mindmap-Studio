@@ -56,13 +56,22 @@ describe('FileLookupIndexService（缓存判效与失效）', () => {
 		expect(second).toBe(first);
 	});
 
-	it('文件数量变化后重建', () => {
-		const app = fakeApp([file('a.png')]);
-		const first = service.get(app);
-		const bigger = fakeApp([file('a.png'), file('b.png')]);
-		const rebuilt = service.get(bigger);
-		expect(rebuilt).not.toBe(first);
+	it('get 走命中快路径：缓存存在即复用（不重扫文件列表）', () => {
+		const app1 = fakeApp([file('a.png')]);
+		const stale = service.get(app1);
+		const app2 = fakeApp([file('a.png'), file('b.png')]);
+		// get 不做数量比对（新鲜度由库事件 invalidate 保证）
+		expect(service.get(app2)).toBe(stale);
+	});
+
+	it('validate 按文件数量判效：数量变化重建、未变化复用', () => {
+		const app1 = fakeApp([file('a.png')]);
+		const stale = service.get(app1);
+		const app2 = fakeApp([file('a.png'), file('b.png')]);
+		const rebuilt = service.validate(app2);
+		expect(rebuilt).not.toBe(stale);
 		expect(rebuilt.get('b.png')).toBeDefined();
+		expect(service.validate(app2)).toBe(rebuilt);
 	});
 
 	it('invalidate 后立即重建', () => {
@@ -124,5 +133,19 @@ describe('lookupIndexedFile（形态匹配）', () => {
 	it('无命中返回 null', () => {
 		const app = fakeApp(files);
 		expect(lookupIndexedFile('nope.png', app, fileLookupIndex.get(app))).toBeNull();
+	});
+
+	it('索引过期未命中时自愈：validate 重建后重试命中', () => {
+		const app1 = fakeApp([file('assets/pic.png')]);
+		const stale = fileLookupIndex.get(app1);
+		// 库新增文件（模拟事件遗漏）：陈旧索引查不到 assets2/other.png，
+		// 未命中触发 validate 重建 → 新索引后缀命中
+		const app2 = fakeApp([
+			file('assets/pic.png'),
+			file('assets2/other.png'),
+		]);
+		expect(lookupIndexedFile('other.png', app2, stale)?.path).toBe(
+			'assets2/other.png',
+		);
 	});
 });

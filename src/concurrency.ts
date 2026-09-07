@@ -27,6 +27,66 @@ export function createSerialQueue(): SerialQueue {
 	};
 }
 
+/**
+ * 有界并发映射：最多 limit 个任务同时在途，空闲即补位（吞吐优于分批），
+ * 结果按输入顺序返回。任一任务失败 → 整体 reject（语义同 Promise.all），
+ * 失败后不再派发新任务（在途任务自然完成，结果被丢弃）。
+ * 用于把无界 Promise.all（如整树图片探测的解码风暴）压到固定并发。
+ */
+export function mapWithConcurrency<T, R>(
+	items: readonly T[],
+	limit: number,
+	worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+	return new Promise((resolve, reject) => {
+		const toError = (error: unknown): Error =>
+			error instanceof Error ? error : new Error(String(error));
+		const results = new Array<R>(items.length);
+		const maxActive = Math.max(1, limit);
+		let next = 0;
+		let active = 0;
+		let rejected = false;
+		const launch = (): void => {
+			while (!rejected && active < maxActive && next < items.length) {
+				const index = next++;
+				active++;
+				// worker 同步抛错（非 async 实现）收敛为整体 reject：
+				// 异常若逃逸出 launch（.then 回调内）会成为未处理拒绝，
+				// 且 rejected 不会置位导致拒绝后仍继续派发
+				let running: Promise<R>;
+				try {
+					running = worker(items[index]!, index);
+				} catch (error) {
+					rejected = true;
+					reject(toError(error));
+					return;
+				}
+				running.then(
+					(value) => {
+						if (rejected) {
+							return;
+						}
+						results[index] = value;
+						active--;
+						launch();
+						if (active === 0 && next >= items.length) {
+							resolve(results);
+						}
+					},
+					(error) => {
+						rejected = true;
+						reject(toError(error));
+					},
+				);
+			}
+			if (!rejected && active === 0 && next >= items.length) {
+				resolve(results);
+			}
+		};
+		launch();
+	});
+}
+
 export interface Debouncer {
 	/** 调度（或重置）一次延迟执行 */
 	schedule(fn: () => void): void;

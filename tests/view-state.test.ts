@@ -110,7 +110,7 @@ describe('ViewStateStore.flushNow（立即排空）', () => {
 		const persist = vi.fn();
 		const store = new ViewStateStore(persist, 600);
 		store.setLayout('a.mindmap.md', 'mindMap');
-		store.flushNow();
+		void store.flushNow();
 		expect(persist).toHaveBeenCalledTimes(1);
 		await vi.advanceTimersByTimeAsync(1000);
 		expect(persist).toHaveBeenCalledTimes(1); // 防抖已取消
@@ -119,7 +119,46 @@ describe('ViewStateStore.flushNow（立即排空）', () => {
 	it('无未决变更：不触发 persist', () => {
 		const persist = vi.fn();
 		const store = new ViewStateStore(persist, 600);
-		store.flushNow();
+		void store.flushNow();
 		expect(persist).not.toHaveBeenCalled();
+	});
+});
+
+describe('ViewStateStore.flushNow（写盘 Promise 透传）', () => {
+	/** 回归：卸载路径经 flushNow 跟踪在途写盘（PluginDataWriter.write 语义） */
+	it('persist 返回 Promise 时 flushNow 原样透传，等待即等写盘完成', async () => {
+		let resolveWrite: (() => void) | undefined;
+		const persist = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveWrite = resolve;
+				}),
+		);
+		const store = new ViewStateStore(persist, 600);
+		store.setLayout('a.mindmap.md', 'mindMap');
+		const flushing = store.flushNow();
+		expect(flushing).toBeInstanceOf(Promise);
+		let settled = false;
+		void flushing?.then(() => {
+			settled = true;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false); // 写盘未完成前 flushNow 不 resolve
+		resolveWrite?.();
+		await flushing;
+		expect(settled).toBe(true);
+	});
+
+	it('persist 返回 void 时 flushNow 仍返回已决议的 Promise', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 600);
+		store.setLayout('a.mindmap.md', 'mindMap');
+		await expect(store.flushNow()).resolves.toBeUndefined();
+	});
+
+	it('无未决变更时 flushNow 返回 undefined（调用方可选等待）', () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 600);
+		expect(store.flushNow()).toBeUndefined();
 	});
 });

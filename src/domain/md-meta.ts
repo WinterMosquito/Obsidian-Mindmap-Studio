@@ -33,4 +33,12 @@ export interface MdNodeMeta {
 	mdLinkText?: string;
 	/** 图片的原始库内引用（![[路径]] 的路径）：换图检测与回写目标 */
 	mdImageTarget?: string;
+	/**
+	 * 嵌入语法的显示尺寸参数（Obsidian 官方语法：`![[图|宽度]]` /
+	 * `![[图|宽x高]]` / `![alt|宽度](url)`）。仅宽度时高度按原始宽高比
+	 * 在加载校正时补齐；序列化时经 renderImage 回写 `|宽度`。
+	 */
+	mdImageWidth?: number;
+	/** 嵌入语法的显示高度（仅官方 `宽x高` 双参数写法携带；可选） */
+	mdImageHeight?: number;
 }

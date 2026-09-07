@@ -12,6 +12,7 @@ import {
 	createDebouncer,
 	createSerialQueue,
 	createThrottler,
+	mapWithConcurrency,
 } from '../src/concurrency';
 
 describe('createSerialQueue', () => {
@@ -58,6 +59,65 @@ describe('createSerialQueue', () => {
 		);
 		expect(await Promise.all(tasks)).toEqual([1, 2, 3]);
 		expect(maxConcurrent).toBe(1);
+	});
+});
+
+describe('mapWithConcurrency', () => {
+	it('结果按输入顺序返回，同时在途数不超过 limit', async () => {
+		let running = 0;
+		let maxConcurrent = 0;
+		const result = await mapWithConcurrency([1, 2, 3, 4, 5, 6, 7], 3, async (n) => {
+			running += 1;
+			maxConcurrent = Math.max(maxConcurrent, running);
+			await new Promise((r) => window.setTimeout(r, 1));
+			running -= 1;
+			return n * 2;
+		});
+		expect(result).toEqual([2, 4, 6, 8, 10, 12, 14]);
+		expect(maxConcurrent).toBe(3);
+	});
+
+	it('任务完成即补位（无分批等待：快任务不拖慢后续派发）', async () => {
+		// 第 1 个任务立即完成，其余挂起：limit=2 时第 3 个任务应立刻补位派发，
+		// 无需等第 2 个任务完成
+		let thirdStarted = false;
+		await mapWithConcurrency([0, 1, 2], 2, async (n) => {
+			if (n === 0) {
+				return 0; // 同步完成
+			}
+			if (n === 2) {
+				thirdStarted = true;
+			}
+			await new Promise((r) => window.setTimeout(r, 5));
+			return n;
+		});
+		expect(thirdStarted).toBe(true);
+	});
+
+	it('空数组立即完成', async () => {
+		await expect(mapWithConcurrency([], 3, async () => 0)).resolves.toEqual([]);
+	});
+
+	it('任务失败整体 reject（Promise.all 语义）', async () => {
+		await expect(
+			mapWithConcurrency([1, 2, 3], 2, async (n) => {
+				if (n === 2) {
+					throw new Error('boom');
+				}
+				return n;
+			}),
+		).rejects.toThrow('boom');
+	});
+
+	it('worker 同步抛错（非 async 实现）收敛为整体 reject', async () => {
+		await expect(
+			mapWithConcurrency([1, 2, 3], 2, (n): Promise<number> => {
+				if (n === 2) {
+					throw new Error('sync boom');
+				}
+				return Promise.resolve(n);
+			}),
+		).rejects.toThrow('sync boom');
 	});
 });
 

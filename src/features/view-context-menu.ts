@@ -3,7 +3,13 @@
  * 菜单动作（复制/粘贴/链接/图片/删除等）委托给 view-node-actions.ts。
  */
 import { Menu } from 'obsidian';
-import { ENGINE_COMMANDS, findNodeByDom, fitMindMap, startNodeTextEdit } from '../mindmap';
+import {
+	ENGINE_COMMANDS,
+	findNodeByDom,
+	fitMindMap,
+	getNodeDataString,
+	startNodeTextEdit,
+} from '../mindmap';
 import {
 	addImageToActiveNode,
 	addLinkToActiveNode,
@@ -12,6 +18,7 @@ import {
 	deleteActiveNode,
 	pasteNodeAsChild,
 	removeNodeImage,
+	removeNodeText,
 } from './view-node-actions';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { arrangeMindMap } from './view-toolbar';
@@ -164,6 +171,16 @@ function showNodeContextMenu(
 				.setIcon('image')
 				.onClick(() => removeNodeImage(view, node)),
 		);
+		// 移除文字（图片独占节点语义）：仅图片节点且确有文字时提供，
+		// 清空文字后节点被图片独占（纯图行往返保持）。
+		if (getNodeDataString(node, 'text').trim() !== '') {
+			menu.addItem((item) =>
+				item
+					.setTitle(t(view.lang, 'menu.removeText'))
+					.setIcon('eraser')
+					.onClick(() => removeNodeText(view, node)),
+			);
+		}
 	}
 	menu.addSeparator();
 	menu.addItem((item) =>

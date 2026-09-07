@@ -55,8 +55,48 @@ interface InlineToken {
 	kind: InlineTokenKind;
 	/** 链接目标 / 图片地址（不含 [[ ]] 与 []() 包裹） */
 	target: string;
-	/** 别名 / alt / 链接文本（可空） */
+	/** 别名 / alt / 链接文本（可空；图片 token 已剥离尺寸参数） */
 	label: string;
+	/** 嵌入图片的官方尺寸参数宽度（![[图|300]] / ![alt|300](url)） */
+	sizeWidth?: number;
+	/** 嵌入图片的官方尺寸参数高度（![[图|300x150]]；仅宽时不携带） */
+	sizeHeight?: number;
+}
+
+/** 官方尺寸参数：`宽度` 或 `宽度x高度`（数字字面量） */
+const IMG_SIZE_RE = /^(\d+)(?:x(\d+))?$/;
+
+/**
+ * 从嵌入图片的标签中剥离官方尺寸参数（Obsidian 帮助「Embed files /
+ * Basic formatting syntax」）：
+ * - wikilink：`![[图.png|300]]` / `![[图.png|300x150]]` —— wiki 正则吃掉
+ *   第一个 `|`，标签即尺寸本体；
+ * - md 图片：`![alt|300](url)` / `![Engelbart|100x145](url)` / `![250](url)`
+ *   —— 尺寸在标签尾部 `|` 之后（或整段标签即尺寸）。
+ * 非数字标签不是尺寸（嵌入不支持别名文本），原样保留。
+ */
+function parseImageLabel(label: string): {
+	alt: string;
+	sizeWidth?: number;
+	sizeHeight?: number;
+} {
+	let alt = label;
+	let width: number | undefined;
+	let height: number | undefined;
+	const withPipe = label.match(/^(.*)\|(\d+)(?:x(\d+))?$/);
+	if (withPipe) {
+		alt = (withPipe[1] ?? '').trim();
+		width = Number(withPipe[2]);
+		height = withPipe[3] !== undefined ? Number(withPipe[3]) : undefined;
+	} else if (IMG_SIZE_RE.test(label)) {
+		alt = '';
+		const m = label.match(IMG_SIZE_RE)!;
+		width = Number(m[1]);
+		height = m[2] !== undefined ? Number(m[2]) : undefined;
+	}
+	const sizeWidth = width !== undefined && width > 0 ? width : undefined;
+	const sizeHeight = height !== undefined && height > 0 ? height : undefined;
+	return { alt, sizeWidth, sizeHeight };
 }
 
 const INLINE_RE =
@@ -71,13 +111,27 @@ function tokenizeInline(raw: string): InlineToken[] {
 			// [[..]] 或 ![[..]]
 			const target = m[2] ?? '';
 			const label = (m[3] ?? '').trim();
-			out.push({
-				start: m.index,
-				end: m.index + m[0].length,
-				kind: m[1] === '!' ? 'wikiImg' : 'wiki',
-				target,
-				label,
-			});
+			if (m[1] === '!') {
+				// 嵌入图片：标签即官方尺寸参数（![[图|300]] / ![[图|300x150]]）
+				const { alt, sizeWidth, sizeHeight } = parseImageLabel(label);
+				out.push({
+					start: m.index,
+					end: m.index + m[0].length,
+					kind: 'wikiImg',
+					target,
+					label: alt,
+					sizeWidth,
+					sizeHeight,
+				});
+			} else {
+				out.push({
+					start: m.index,
+					end: m.index + m[0].length,
+					kind: 'wiki',
+					target,
+					label,
+				});
+			}
 		} else if (m[7] !== undefined) {
 			// autolink <url>（如 <https://…>）
 			out.push({
@@ -97,13 +151,27 @@ function tokenizeInline(raw: string): InlineToken[] {
 			if (m[4] !== '!' && target.startsWith('<') && target.endsWith('>')) {
 				target = target.slice(1, -1);
 			}
-			out.push({
-				start: m.index,
-				end: m.index + m[0].length,
-				kind: m[4] === '!' ? 'mdImg' : 'mdLink',
-				target,
-				label,
-			});
+			if (m[4] === '!') {
+				// 外链图片：尺寸在标签尾部（![alt|300](url) / ![250](url)）
+				const { alt, sizeWidth, sizeHeight } = parseImageLabel(label);
+				out.push({
+					start: m.index,
+					end: m.index + m[0].length,
+					kind: 'mdImg',
+					target,
+					label: alt,
+					sizeWidth,
+					sizeHeight,
+				});
+			} else {
+				out.push({
+					start: m.index,
+					end: m.index + m[0].length,
+					kind: 'mdLink',
+					target,
+					label,
+				});
+			}
 		}
 	}
 	return out;
@@ -111,6 +179,11 @@ function tokenizeInline(raw: string): InlineToken[] {
 
 /** token 的剥壳显示文本（节点文本中替换 [[]] 包裹后的样子） */
 function tokenDisplay(tok: InlineToken): string {
+	if (tok.kind === 'wikiImg' || tok.kind === 'mdImg') {
+		// 图片显示名恒为目标文件名（含扩展）：标签可能是尺寸参数（已剥离）
+		// 或空，不作为显示文本
+		return tok.target.split('/').pop() ?? tok.target;
+	}
 	if (tok.label) {
 		return tok.label;
 	}
@@ -118,8 +191,7 @@ function tokenDisplay(tok: InlineToken): string {
 		return tok.target;
 	}
 	const name = tok.target.split('/').pop() ?? tok.target;
-	// wiki 链接目标：仅去 .md（笔记显示名，Obsidian 语义）；附件/其它保留扩展；
-	// 图片保留文件名（含扩展）
+	// wiki 链接目标：仅去 .md（笔记显示名，Obsidian 语义）；附件/其它保留扩展
 	return tok.kind === 'wiki' ? name.replace(/\.md$/, '') : name;
 }
 
@@ -154,6 +226,14 @@ function buildInlineData(raw: string): InlineData {
 				firstImg = true;
 				data.image = tok.target;
 				data.mdImageTarget = tok.target;
+				// 官方嵌入尺寸参数（![[图|300]] / ![alt|300](url)）：仅首图生效，
+				// 高度缺省时由加载校正按原始宽高比补齐
+				if (tok.sizeWidth !== undefined) {
+					data.mdImageWidth = tok.sizeWidth;
+					if (tok.sizeHeight !== undefined) {
+						data.mdImageHeight = tok.sizeHeight;
+					}
+				}
 				// 首图以节点图呈现，不占文本
 			} else {
 				pieces.push(tokenDisplay(tok));
@@ -190,11 +270,11 @@ function buildInlineData(raw: string): InlineData {
 		}
 	}
 	pieces.push(raw.slice(cursor));
-	let text = pieces.join('').trim();
-	// 纯图节点：文本空时回退文件名（图仍在节点中显示，文本供搜索/悬浮）
-	if (!text && data.image) {
-		text = tokenDisplay(toks.find((t) => t.kind === 'wikiImg' || t.kind === 'mdImg')!);
-	}
+	// 纯图行 → 图片独占节点（text 为空）：图片是节点的全部内容，
+	// 不再回退文件名占位文本（旧行为会把文件名当作节点文本，
+	// 使「删文字后图片独占节点」无法在往返中保持）。
+	// 代价：纯图节点不参与文本搜索（图片文件名仍可经引擎 hover 查看）。
+	const text = pieces.join('').trim();
 	data.text = text;
 	data.mdDerivedText = text;
 	return data;

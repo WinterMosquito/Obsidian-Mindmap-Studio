@@ -62,6 +62,7 @@ const ZH = {
 	'menu.addImage': '添加图片',
 	'menu.viewImageFullscreen': '全屏查看图片',
 	'menu.removeImage': '移除图片',
+	'menu.removeText': '移除文字',
 	'menu.deleteNode': '删除节点',
 	'menu.pasteNode': '粘贴节点',
 
@@ -239,6 +240,7 @@ const EN: Record<TranslationKey, string> = {
 	'menu.addImage': 'Add Image',
 	'menu.viewImageFullscreen': 'View Image Fullscreen',
 	'menu.removeImage': 'Remove Image',
+	'menu.removeText': 'Remove Text',
 	'menu.deleteNode': 'Delete Node',
 	'menu.pasteNode': 'Paste Node',
 

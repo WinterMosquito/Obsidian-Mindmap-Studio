@@ -361,6 +361,148 @@ export function setNodeText(
 }
 
 /**
+ * 设置节点图片的自定义展示尺寸（content px，custom:true 引擎按值渲染）。
+ * 经 SET_NODE_DATA 合并写入；该命令只合并数据不触发重绘（与 SET_NODE_TEXT
+ * 同款语义），末尾须显式 render——否则拖拽调宽期间数据在变、画面不动。
+ */
+export function setNodeImageSize(
+	mindMap: MindMap,
+	node: MindMapNode,
+	width: number,
+	height: number,
+): void {
+	try {
+		mindMap.execCommand(ENGINE_COMMANDS.SET_NODE_DATA, node, {
+			imageSize: { width, height, custom: true },
+		});
+	} catch (error) {
+		console.error('设置节点图片尺寸失败', error);
+	}
+	mindMap.render();
+}
+
+/** 当前画布变换（content ↔ 画布视口坐标换算用；异常时回退恒等） */
+export interface DrawTransform {
+	scaleX: number;
+	scaleY: number;
+	translateX: number;
+	translateY: number;
+}
+
+export function getDrawTransform(mindMap: MindMap | null): DrawTransform {
+	try {
+		const t = mindMap?.view.getTransformData().transform as
+			| Partial<DrawTransform>
+			| undefined;
+		return {
+			scaleX: typeof t?.scaleX === 'number' && t.scaleX > 0 ? t.scaleX : 1,
+			scaleY: typeof t?.scaleY === 'number' && t.scaleY > 0 ? t.scaleY : 1,
+			translateX: typeof t?.translateX === 'number' ? t.translateX : 0,
+			translateY: typeof t?.translateY === 'number' ? t.translateY : 0,
+		};
+	} catch {
+		return { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 };
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Drag 插件落点判定（features/drag-target.ts 专用，防腐收口）
+//
+// 引擎拖拽落点要求指针精确落在目标节点矩形内（checkIsOverlap 的闭区间判定），
+// 狭小节点/快速拖动时难以命中。drag-target 模块在拖拽期间计算「外扩邻近
+// 最近节点」，经 setDragOverlapTarget 外借给引擎作为落点——引擎自身每帧
+// checkOverlapNode 重置三态，外借不会被陈旧状态阻塞；松手后由引擎原生
+// MOVE_NODE_TO 完成挂接。仅拖拽中生效（见 drag-target.ts）。
+// ---------------------------------------------------------------------------
+
+/** 引擎 Drag 插件的落点判定状态（三态，内部形态经本接口收口） */
+export interface DragDropState {
+	/** 引擎本轮判定的「挂为子节点」目标（null = 未命中） */
+	overlapNode: MindMapNode | null;
+	/** 引擎本轮判定的「插到其后」目标 */
+	prevNode: MindMapNode | null;
+	/** 引擎本轮判定的「插到其前」目标 */
+	nextNode: MindMapNode | null;
+}
+
+/** 读取 Drag 插件实例的落点状态（插件未注册时返回 null，如代码块实例） */
+export function getDragDropState(mindMap: MindMap): DragDropState | null {
+	const drag = (mindMap as unknown as { drag?: DragDropState }).drag;
+	return drag ?? null;
+}
+
+/** 外借落点：把邻近节点借给引擎作为「挂为子节点」目标（null 撤销外借） */
+export function setDragOverlapTarget(
+	mindMap: MindMap,
+	node: MindMapNode | null,
+): void {
+	const drag = (mindMap as unknown as { drag?: DragDropState }).drag;
+	if (drag) {
+		drag.overlapNode = node;
+	}
+}
+
+/**
+ * 外借落点：把兄弟间隙锚点借给引擎作为「插到该节点之后」目标
+ * （prevNode，null 撤销外借）。引擎松手走原生 INSERT_AFTER。
+ */
+export function setDragPrevTarget(
+	mindMap: MindMap,
+	node: MindMapNode | null,
+): void {
+	const drag = (mindMap as unknown as { drag?: DragDropState }).drag;
+	if (drag) {
+		drag.prevNode = node;
+	}
+}
+
+/** 节点布局矩形（content 坐标，引擎布局字段 left/top/width/height） */
+export function getNodeLayoutRect(
+	node: MindMapNode,
+): { left: number; top: number; width: number; height: number } {
+	const n = node as unknown as {
+		left?: number;
+		top?: number;
+		width?: number;
+		height?: number;
+	};
+	return {
+		left: typeof n.left === 'number' ? n.left : 0,
+		top: typeof n.top === 'number' ? n.top : 0,
+		width: typeof n.width === 'number' ? n.width : 0,
+		height: typeof n.height === 'number' ? n.height : 0,
+	};
+}
+
+/** 指针位置（引擎 toPos：相对画布的视口坐标，与变换后的节点矩形同空间） */
+export function toCanvasPoint(
+	mindMap: MindMap,
+	clientX: number,
+	clientY: number,
+): { x: number; y: number } {
+	try {
+		// toPos 为引擎运行时方法（d.cts 未声明，防腐收口于此）
+		const toPos = (
+			mindMap as unknown as {
+				toPos?: (x: number, y: number) => { x?: number; y?: number };
+			}
+		).toPos;
+		const p = toPos?.call(mindMap, clientX, clientY);
+		return {
+			x: typeof p?.x === 'number' ? p.x : NaN,
+			y: typeof p?.y === 'number' ? p.y : NaN,
+		};
+	} catch {
+		return { x: NaN, y: NaN };
+	}
+}
+
+/** 节点是否为根（中心主题）节点 */
+export function isRootNode(node: MindMapNode): boolean {
+	return node.isRoot === true;
+}
+
+/**
  * 删除节点兜底：uid 重复/缺失时引擎按 uid 的删除可能失败，
  * 按对象身份从父节点数据中强制移除并重绘。
  */

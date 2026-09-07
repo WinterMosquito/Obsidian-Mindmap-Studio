@@ -7,10 +7,14 @@
  * 全库构建一次索引需要对每个文件调用 getResourcePath（大库下可达数百毫秒）。
  * 而多个高频路径都会触发查询：自动保存（md 图片路径回写）、
  * 文件重命名/删除（引用更新）、附件点击/悬浮、链接跳转兜底。
- * 文件列表在 create/rename/delete 事件之外不会变化，因此：
- * - 缓存索引按「文件数量」快速比对复用（数量未变且无事件失效 → 直接复用）；
- * - vault-sync 在 create/rename/delete 事件里调用 fileLookupIndex.invalidate()
- *   显式失效，保证缓存与库一致（修改内容不影响索引，无需失效）。
+ * 文件列表在 create/rename/delete 事件之外不会变化，因此缓存分层保鲜：
+ * - 命中快路径：缓存存在即直接复用，不重扫文件列表——getFiles 每次调用
+ *   都全量拷贝数组，而保存序列化会逐图片节点反查（O(图片数×文件数)），
+ *   快路径把高频命中的成本压回 O(1)；
+ * - 事件失效：vault-sync 在 create/rename/delete 事件里调用
+ *   fileLookupIndex.invalidate() 显式失效（修改内容不影响索引，无需失效）；
+ * - 未命中自愈：索引未命中（事件遗漏等罕见场景）时经 validate 按文件
+ *   数量比对一次、必要时重建并重试，防陈旧索引漏检新文件。
  * 失效后下一次查询（含失效事件的同批处理）会重建，时序上无竞态。
  */
 import { App, TFile, normalizePath } from 'obsidian';
@@ -53,20 +57,43 @@ export function buildFileLookupIndex(
 
 /**
  * 全库文件查找索引服务：「多种地址形态 → TFile」的 O(1) 查找缓存。
- * 缓存按库文件数量判效，`invalidate` 供库事件（create/rename/delete）主动失效。
+ * 命中快路径不重扫文件列表（新鲜度由库事件 invalidate 保证）；
+ * `validate` 按文件数量比对校验（慢路径，供索引未命中时自愈调用）。
  */
 export class FileLookupIndexService {
 	private cache: Map<string, TFile> | null = null;
 	private cacheCount = 0;
 
-	/** 获取（可能缓存的）全库文件查找索引；文件数量变化时自动重建 */
+	/** 获取（可能缓存的）全库文件查找索引；缓存存在即复用，无则构建 */
 	get(app: App): Map<string, TFile> {
-		const files = app.vault.getFiles();
-		if (this.cache && this.cacheCount === files.length) {
+		if (this.cache) {
 			return this.cache;
 		}
-		this.cache = buildFileLookupIndex(app, files);
-		this.cacheCount = files.length;
+		return this.rebuild(app);
+	}
+
+	/**
+	 * 带数量比对的校验获取（慢路径）：文件数量与缓存时一致 → 复用；
+	 * 数量变化（或无缓存）→ 重建。仅在索引未命中时调用，
+	 * 避免高频命中路径反复付出 getFiles 的全量数组拷贝；
+	 * 重建复用同一次扫描结果，不重复调用 getFiles。
+	 */
+	validate(app: App): Map<string, TFile> {
+		if (this.cache) {
+			const files = app.vault.getFiles();
+			if (files.length === this.cacheCount) {
+				return this.cache;
+			}
+			return this.rebuild(app, files);
+		}
+		return this.rebuild(app);
+	}
+
+	/** 构建索引并更新缓存计数（files 可传入已扫描的文件列表避免重复扫描） */
+	private rebuild(app: App, files?: TFile[]): Map<string, TFile> {
+		const list = files ?? app.vault.getFiles();
+		this.cache = buildFileLookupIndex(app, list);
+		this.cacheCount = list.length;
 		return this.cache;
 	}
 
@@ -83,6 +110,8 @@ export const fileLookupIndex = new FileLookupIndexService();
 /**
  * 通过索引把任意地址形态解析为库内 TFile（O(1)，索引缺失键时按后缀回退）。
  * 外部地址（http/data/blob）返回 null。
+ * 索引未命中时按文件数量校验一次索引新鲜度（自愈防事件遗漏），
+ * 索引被重建则重试一轮候选。
  */
 export function lookupIndexedFile(
 	url: string,
@@ -93,25 +122,44 @@ export function lookupIndexedFile(
 		return null;
 	}
 	try {
-		const byPath = app.vault.getAbstractFileByPath(normalizePath(url));
-		if (byPath instanceof TFile) {
-			return byPath;
+		const hit = lookupCandidates(url, app, index);
+		if (hit) {
+			return hit;
 		}
-		for (const candidate of uniqueCandidates(url)) {
-			const hit = index.get(candidate);
-			if (hit) {
-				return hit;
-			}
-			const segments = candidate.replace(/\\/g, '/').split('/');
-			for (let i = 1; i <= segments.length; i++) {
-				const suffixHit = index.get(segments.slice(-i).join('/'));
-				if (suffixHit) {
-					return suffixHit;
-				}
-			}
+		// 未命中自愈：索引可能已随库事件过期（事件遗漏等罕见场景）。
+		// 数量比对重建后与传入索引不同 → 用新索引重试一轮；仍不命中返回 null。
+		const fresh = fileLookupIndex.validate(app);
+		if (fresh !== index) {
+			return lookupCandidates(url, app, fresh);
 		}
 	} catch (error) {
 		console.error('解析附件文件失败:', url, error);
+	}
+	return null;
+}
+
+/** 按直查 → 索引键 → 路径后缀的顺序在单个索引内尝试候选 */
+function lookupCandidates(
+	url: string,
+	app: App,
+	index: Map<string, TFile>,
+): TFile | null {
+	const byPath = app.vault.getAbstractFileByPath(normalizePath(url));
+	if (byPath instanceof TFile) {
+		return byPath;
+	}
+	for (const candidate of uniqueCandidates(url)) {
+		const hit = index.get(candidate);
+		if (hit) {
+			return hit;
+		}
+		const segments = candidate.replace(/\\/g, '/').split('/');
+		for (let i = 1; i <= segments.length; i++) {
+			const suffixHit = index.get(segments.slice(-i).join('/'));
+			if (suffixHit) {
+				return suffixHit;
+			}
+		}
 	}
 	return null;
 }

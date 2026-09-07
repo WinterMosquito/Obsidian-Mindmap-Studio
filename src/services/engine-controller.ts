@@ -2,8 +2,8 @@
  * 引擎控制器：simple-mind-map 实例的生命周期与防腐收口（EngineAdapter 职责）。
  * 从 view.ts 拆出（第 4 步）。
  *
- * - 引擎创建/销毁、初始化代际锁与零尺寸重试、主题/布局切换、视口持久化、
- *   引用更新预检在此收口；
+ * - 引擎创建/销毁、初始化代际锁与零尺寸等待（ResizeObserver 事件驱动）、
+ *   主题/布局切换、视口持久化、引用更新预检在此收口；
  * - 对引擎内部的直接访问（renderer.textEdit / renderer.root / view 变换）
  *   全部封装为显式方法（isEditingText / getRootText / 视口存取），
  *   视图层不再触碰引擎内部结构；
@@ -77,8 +77,6 @@ export interface EngineControllerDeps {
 
 /** 节点图片点击的拖拽抑制窗口（拖拽落点在图片上时浏览器仍触发 click） */
 const IMAGE_CLICK_DRAG_SUPPRESS_MS = 300;
-/** 引擎容器暂时不可见时的零尺寸重试间隔 */
-const INIT_RETRY_INTERVAL_MS = 200;
 /** 首帧后恢复视口的延迟（等待引擎完成首次布局） */
 const VIEWPORT_RESTORE_DELAY_MS = 150;
 
@@ -90,19 +88,27 @@ export class EngineController {
 
 	/**
 	 * 引擎初始化代际锁：每次新的 initMindMap 请求或视图卸载都会递增，
-	 * 使之前零尺寸定时重试作废——重试只允许在「仍是最近一次请求」
+	 * 使之前的零尺寸等待作废——初始化只允许在「仍是最近一次请求」
 	 * 且视图仍挂载时执行，避免文件切换/视图关闭后过期 tree 被渲染，
 	 * 进而把旧文件内容写进新文件。
 	 */
 	private initSeq = 0;
+	/**
+	 * 零尺寸等待的 ResizeObserver：容器暂时不可见（后台叶/折叠面板）时
+	 * 挂观察器等待尺寸就绪，尺寸恢复（叶被激活/展开）时事件驱动初始化。
+	 * 替代此前的 200ms 定时轮询——轮询对长期隐藏的叶形成常驻定时器
+	 * （隐藏的 Obsidian 叶不是后台标签页，浏览器不节流）。观察器在
+	 * 代际作废/引擎销毁时断开，不会跨生命周期泄漏。
+	 */
+	private initObserver: ResizeObserver | null = null;
 	/** 上次节点拖拽结束时间（拖拽后误触 click 的灯箱抑制） */
 	private lastNodeDragEndAt = 0;
 
 	constructor(private readonly deps: EngineControllerDeps) {}
 
 	/**
-	 * 初始化引擎（挂载点尺寸就绪前定时重试）。
-	 * 每次新的初始化请求递增代际，令旧的零尺寸重试作废。重试闭包与
+	 * 初始化引擎（挂载点尺寸就绪前经 ResizeObserver 等待）。
+	 * 每次新的初始化请求递增代际，令旧的零尺寸等待作废。观察器回调与
 	 * 本入口共用同一代际 + isConnected 双重守卫：文件切换（onUnloadFile/
 	 * 新的 initMindMap）或视图关闭（onClose）都会让旧请求静默退出，
 	 * 杜绝过期 tree 覆盖当前文件内容。
@@ -113,21 +119,52 @@ export class EngineController {
 			return;
 		}
 		const seq = ++this.initSeq;
-		const attempt = (): void => {
+		this.disconnectInitObserver();
+		// 尺寸就绪即同步创建；0 尺寸（后台叶/折叠面板）转观察器等待
+		if (this.tryRender(tree, seq)) {
+			return;
+		}
+		const observer = new ResizeObserver(() => {
+			if (this.initSeq !== seq) {
+				observer.disconnect();
+				return;
+			}
+			// 容器已被替换/脱离 DOM：本次请求作废
 			const el = this.deps.getCanvasEl();
-			if (!el || !el.isConnected || this.initSeq !== seq) {
+			if (!el || !el.isConnected) {
+				observer.disconnect();
 				return;
 			}
-			const rect = el.getBoundingClientRect();
-			if (rect.width === 0 || rect.height === 0) {
-				// 容器暂时不可见（后台叶/折叠面板）：定时重试而非 rAF 忙循环，
-				// 后台标签页由浏览器自动节流，恢复可见后必然初始化成功。
-				window.setTimeout(attempt, INIT_RETRY_INTERVAL_MS);
-				return;
+			if (this.tryRender(tree, seq)) {
+				observer.disconnect();
 			}
-			this.renderMindMap(tree);
-		};
-		attempt();
+			// 仍为 0 尺寸：保持观察，等待下一次尺寸变化（无轮询）
+		});
+		this.initObserver = observer;
+		observer.observe(canvasEl);
+	}
+
+	/**
+	 * 尺寸就绪时创建引擎（同步），否则返回 false 交由观察器等待。
+	 * 统一承载代际 + isConnected 守卫，供初始尝试与观察器回调共用。
+	 */
+	private tryRender(tree: MindMapTreeNode, seq: number): boolean {
+		const el = this.deps.getCanvasEl();
+		if (!el || !el.isConnected || this.initSeq !== seq) {
+			return false;
+		}
+		const rect = el.getBoundingClientRect();
+		if (rect.width === 0 || rect.height === 0) {
+			return false;
+		}
+		this.renderMindMap(tree);
+		return true;
+	}
+
+	/** 断开零尺寸等待的观察器（新请求接管 / 视图卸载 / 引擎销毁时） */
+	private disconnectInitObserver(): void {
+		this.initObserver?.disconnect();
+		this.initObserver = null;
 	}
 
 	/** 引擎实际创建（仅在 initMindMap 的守卫通过后调用一次） */
@@ -208,15 +245,17 @@ export class EngineController {
 
 	/** 销毁引擎实例并清理其作用域的全部 DOM/引擎事件 */
 	destroyInstance(): void {
+		this.disconnectInitObserver();
 		this.engineEvents.destroy();
 		destroyMindMap(this.mindMap);
 		this.mindMap = null;
 		this.deps.getCanvasEl()?.empty();
 	}
 
-	/** 作废尚未执行的初始化重试（文件切换/视图关闭时） */
+	/** 作废尚未执行的初始化等待（文件切换/视图关闭时） */
 	invalidateInit(): void {
 		this.initSeq++;
+		this.disconnectInitObserver();
 	}
 
 	/** 应用布局（仅引擎侧；会话字段与持久化由视图负责） */

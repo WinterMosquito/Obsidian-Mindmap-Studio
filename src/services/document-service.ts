@@ -115,7 +115,10 @@ export class SavePipeline {
 		}
 		// 文件已被删除时不应重新保存：Obsidian 删除 .mindmap 会触发 onUnloadFile，
 		// 此时若继续 vault.modify，会重建已被删除的文件（表现为"要删两次"）。
-		if (!this.deps.app.vault.getAbstractFileByPath(current.path)) {
+		if (
+			// eslint-disable-next-line no-restricted-syntax -- 删除守卫是存在性检查，非文件解析
+			!this.deps.app.vault.getAbstractFileByPath(current.path)
+		) {
 			return;
 		}
 		if (this.saveInProgress) {
@@ -132,7 +135,11 @@ export class SavePipeline {
 			try {
 				// 循环排空：写盘期间若又有编辑（savePending），继续写最新快照
 				let tree = this.deps.getSnapshot();
-				while (tree && this.deps.app.vault.getAbstractFileByPath(file.path)) {
+				while (
+					tree &&
+					// eslint-disable-next-line no-restricted-syntax -- 排空循环删除守卫是存在性检查，非文件解析
+					this.deps.app.vault.getAbstractFileByPath(file.path)
+				) {
 					try {
 						await this.deps.app.vault.modify(
 							file,

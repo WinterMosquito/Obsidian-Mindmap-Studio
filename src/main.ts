@@ -11,6 +11,7 @@
  */
 import { Plugin, TFile, TFolder } from 'obsidian';
 import { CODE_BLOCK_LANGUAGE, VIEW_TYPE } from './constants';
+import { createDebouncer } from './concurrency';
 import {
 	MindMapStudioSettings,
 	MindMapStudioSettingTab,
@@ -52,9 +53,19 @@ export default class MindMapStudioPlugin extends Plugin {
 	 * 先于 viewState 声明：字段按声明顺序初始化，viewState 的持久化回调依赖它。
 	 */
 	private readonly dataWriter = new PluginDataWriter(this);
-	/** 视图状态（布局/视口，按文件路径）——与设置合并写 data.json */
+	/**
+	 * 设置落盘防抖：设置面板高频控件（滑块拖动每档都触发 setControlValue）
+	 * 若逐次写盘，会形成「整文件重读+重写」的突发串行队列。内存设置即时
+	 * 生效（sanitizeSettings 不经防抖），仅磁盘写入合并突发。
+	 */
+	private readonly settingsPersistDebouncer = createDebouncer(400);
+	/**
+	 * 视图状态（布局/视口，按文件路径）——与设置合并写 data.json。
+	 * persist 回调返回写盘 Promise（write 内部吞错不会拒绝），
+	 * 供 ViewStateStore.flushNow 透传给卸载路径跟踪。
+	 */
 	viewState = new ViewStateStore((state) => {
-		void this.dataWriter.write({ viewState: state });
+		return this.dataWriter.write({ viewState: state });
 	}, 600);
 	/** Vault 文件事件同步服务（rename/delete/create） */
 	private vaultSync!: VaultSyncService;
@@ -199,8 +210,15 @@ export default class MindMapStudioPlugin extends Plugin {
 	}
 
 	onunload(): void {
-		// 排空未落盘的视图状态（防抖定时器）
-		this.viewState.flushNow();
+		// 排空未落盘的视图状态（防抖定时器）：同步 onunload 无法 await 写盘，
+		// 尽力启动在途写盘（flushNow 返回 PluginDataWriter.write 的 Promise，
+		// write 内部吞错，无未处理拒绝风险）。
+		void this.viewState.flushNow();
+		// 设置防抖有挂起时立即落盘（尽力，同上不等待）
+		if (this.settingsPersistDebouncer.isPending()) {
+			this.settingsPersistDebouncer.cancel();
+			void this.saveSettings();
+		}
 		this.statusBarEl = null;
 	}
 
@@ -227,13 +245,23 @@ export default class MindMapStudioPlugin extends Plugin {
 	}
 
 	/**
-	 * 合并写盘（历史格式：设置位于 data.json 顶层；viewState 为额外顶层键）。
+	 * 设置落盘（历史格式：设置位于 data.json 顶层）。
+	 * 只写设置键——viewState 由其自身防抖回调经写前重读合并落盘，
+	 * 设置变更无需携带全量视图状态快照（PluginDataWriter 合并保证互不丢键，
+	 * 免去每次设置变更对整个 viewState 映射的序列化与写放大）。
 	 * 写盘排队与重读合并在 PluginDataWriter 内部完成。
 	 */
 	async saveSettings(): Promise<void> {
-		await this.dataWriter.write({
-			...this.settings,
-			viewState: this.viewState.serialize(),
+		await this.dataWriter.write({ ...this.settings });
+	}
+
+	/**
+	 * 设置变更后的防抖持久化（设置面板 setControlValue 调用）：
+	 * 滑块等高频控件逐档触发，写盘合并为最后落盘一次。
+	 */
+	scheduleSettingsPersist(): void {
+		this.settingsPersistDebouncer.schedule(() => {
+			void this.saveSettings();
 		});
 	}
 

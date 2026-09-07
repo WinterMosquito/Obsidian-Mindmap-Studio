@@ -70,6 +70,7 @@ async function ensureUniqueFileName(
 	let index = 1;
 	// 性能：候选路径存在性检查代替全库路径 Set 构建（大库下每次创建 O(1)）
 	while (
+		// eslint-disable-next-line no-restricted-syntax -- 重名序号探测是存在性检查，非文件解析
 		app.vault.getAbstractFileByPath(normalizePath(`${folder}/${candidate}`))
 	) {
 		candidate = `${stem} ${index}${extension}`;
