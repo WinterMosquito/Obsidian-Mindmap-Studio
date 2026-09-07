@@ -16,6 +16,12 @@ export class PluginSettingTab {
 export class Notice {
 	constructor(_message?: string, _timeout?: number) {}
 }
+/** 供 links-resolve 的 file:// 分支 instanceof 判定（getBasePath 由测试覆写） */
+export class FileSystemAdapter {
+	getBasePath(): string {
+		return '/';
+	}
+}
 export function normalizePath(p: unknown): string {
 	return String(p).replace(/\\/g, '/');
 }

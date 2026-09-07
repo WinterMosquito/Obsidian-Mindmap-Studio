@@ -77,6 +77,12 @@ const HISTORY_LIMIT_NODE_COUNT = 2000;
 const HISTORY_LIMIT_MAX_COUNT = 100;
 
 /**
+ * 重置布局（RESET_LAYOUT）后延迟适配画布的间隔：等待引擎完成重排
+ * （引擎无「布局就绪」回调可用，定值延迟是当前唯一手段）。
+ */
+const RESET_LAYOUT_FIT_DELAY_MS = 80;
+
+/**
  * 创建思维导图实例并注册引擎插件。
  * 视图场景：选择、触控、关联线、键盘导航、导出、搜索全部启用；
  * 代码块场景（forCodeBlock）不注册导出/搜索插件，减少每代码块成本；
@@ -197,31 +203,33 @@ export function countTreeNodes<T extends { children?: readonly T[] | null }>(
 	return count;
 }
 
-/** 根据 DOM 元素查找对应节点（通过 data-uid） */
+/**
+ * 根据 DOM 元素查找对应节点：按「节点渲染 group 包含目标元素」的对象身份匹配。
+ * 旧实现读取节点 DOM 上的 data-uid 属性——vendor 契约冒烟测试证实引擎
+ * 从不写入该属性（bundle 全文零处），旧匹配恒失败；改为遍历渲染树用
+ * group 元素身份匹配（group 为引擎内部字段，访问收口在本函数）。
+ */
 export function findNodeByDom(
 	mindMap: MindMap | null,
-	el: HTMLElement,
+	el: Element,
 ): MindMapNode | null {
 	if (!mindMap?.renderer) {
 		return null;
 	}
-	const uid =
-		el.getAttribute('data-uid') ??
-		el.querySelector('[data-uid]')?.getAttribute('data-uid');
-	if (!uid) {
+	const root = mindMap.renderer.root;
+	if (!root) {
 		return null;
 	}
 	let result: MindMapNode | null = null;
-	const root = mindMap.renderer.root;
-	if (root) {
-		walkTree(root, (node) => {
-			if (node.uid === uid || node.getData('uid') === uid) {
-				result = node;
-				return false; // 命中即终止整树遍历
-			}
-			return undefined;
-		});
-	}
+	walkTree(root, (node) => {
+		const group = getNodeGroupEl(node);
+		// contains 对元素自身也返回 true，命中 group 本身或其内部子元素
+		if (group?.contains(el)) {
+			result = node;
+			return false; // 命中即终止整树遍历
+		}
+		return undefined;
+	});
 	return result;
 }
 
@@ -245,7 +253,7 @@ export function arrangeMindMap(mindMap: MindMap | null): boolean {
 			return false;
 		}
 		mindMap.execCommand(ENGINE_COMMANDS.RESET_LAYOUT);
-		window.setTimeout(() => fitMindMap(mindMap), 80);
+		window.setTimeout(() => fitMindMap(mindMap), RESET_LAYOUT_FIT_DELAY_MS);
 		return true;
 	} catch (error) {
 		console.error('自动整理失败', error);
@@ -279,6 +287,16 @@ export function getRenderRoot(mindMap: MindMap | null): MindMapNode | null {
 export function getNodeGroupEl(node: MindMapNode): Element | null {
 	const group = (node as unknown as { group?: { node?: Element } }).group;
 	return group?.node ?? null;
+}
+
+/**
+ * 读取节点 data 的字符串字段（防腐收口：getData 返回 unknown，
+ * 此前 `(node.getData?.('x') as string) || ''` 式强转散布于各 view-* 模块；
+ * 空值/非字符串一律归一为空串）。
+ */
+export function getNodeDataString(node: MindMapNode, key: string): string {
+	const value = node.getData?.(key);
+	return typeof value === 'string' ? value : '';
 }
 
 /**

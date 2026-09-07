@@ -2,11 +2,12 @@
  * 节点操作：增删改节点（链接/图片）、复制粘贴、删除。
  * 被工具栏（view-toolbar.ts）与右键菜单（view-context-menu.ts）共用。
  */
-import { App, Notice, TFile } from 'obsidian';
+import { App, Notice } from 'obsidian';
 import {
 	ENGINE_COMMANDS,
 	forceRemoveNodeData,
 	getActiveNode,
+	getNodeDataString,
 	getRenderRoot,
 	setNodeText,
 } from '../mindmap';
@@ -35,14 +36,25 @@ import type { MindMapViewContext } from './view-context';
 /** 视图剪贴板（WeakMap 按视图持有：视图关闭后可回收；状态不暴露到 context） */
 const clipboards = new WeakMap<MindMapViewContext, MindMapNodeData>();
 
-/** 给当前激活节点添加链接（无节点时提示） */
-export async function addLinkToActiveNode(view: MindMapViewContext): Promise<void> {
+/**
+ * 取当前激活节点；无则提示「请先选择一个节点」并返回 null。
+ * 工具栏/右键各入口共用的前置守卫（此前 3 处逐字重复）。
+ */
+export function requireActiveNode(view: MindMapViewContext): MindMapNode | null {
 	const node = getActiveNode(view.mindMap);
 	if (!node) {
 		new Notice(t(view.lang, 'common.selectNodeFirst'));
+	}
+	return node;
+}
+
+/** 给当前激活节点添加链接（无节点时提示） */
+export async function addLinkToActiveNode(view: MindMapViewContext): Promise<void> {
+	const node = requireActiveNode(view);
+	if (!node) {
 		return;
 	}
-	const current = (node.getData?.('hyperlink') as string) || '';
+	const current = getNodeDataString(node, 'hyperlink');
 	const result = await openLinkEditorModal(view.app, current, view.lang);
 	if (result === null) {
 		return;
@@ -53,7 +65,7 @@ export async function addLinkToActiveNode(view: MindMapViewContext): Promise<voi
 		// 保持「仅图标」：若节点文本仍是旧 URL 显示名（历史/旧行为残留），清空，
 		// 避免节点内残留一个过期的 URL 文本。
 		if (current) {
-			const text = (node.getData?.('text') as string | undefined) ?? '';
+			const text = getNodeDataString(node, 'text');
 			if (text.trim() !== '' && text.trim() === linkDisplayText(current)) {
 				applyNodeText(view, node, '');
 			}
@@ -66,7 +78,7 @@ export async function addLinkToActiveNode(view: MindMapViewContext): Promise<voi
 	// 保留用户已有正文（正文节点只附加链接）。
 	const newDisplay = result.label ?? linkDisplayText(result.link);
 	const oldDisplay = current ? linkDisplayText(current) : null;
-	const text = (node.getData?.('text') as string | undefined) ?? '';
+	const text = getNodeDataString(node, 'text');
 	if (newDisplay && (!text.trim() || text.trim() === oldDisplay)) {
 		applyNodeText(view, node, newDisplay);
 	}
@@ -94,7 +106,7 @@ export function clearNodeHyperlink(
 	view: MindMapViewContext,
 	node: MindMapNode,
 ): void {
-	const current = (node.getData?.('hyperlink') as string) || '';
+	const current = getNodeDataString(node, 'hyperlink');
 	if (!current) {
 		return;
 	}
@@ -104,12 +116,11 @@ export function clearNodeHyperlink(
 
 /** 插入图片（需求 1 + 2）：统一固定尺寸；支持本地文件/剪贴板/URL */
 export async function addImageToActiveNode(view: MindMapViewContext): Promise<void> {
-	const node = getActiveNode(view.mindMap);
+	const node = requireActiveNode(view);
 	if (!node) {
-		new Notice(t(view.lang, 'common.selectNodeFirst'));
 		return;
 	}
-	const current = (node.getData?.('image') as string) || '';
+	const current = getNodeDataString(node, 'image');
 	const result = await openImageEditorModal(
 		view.app,
 		current,
@@ -184,11 +195,14 @@ function normalizeImageReference(
 	if (isExternalImageRef(url)) {
 		return { display: url, mdTarget: null };
 	}
-	// 其余按库内路径：解析为资源地址显示，记录库内路径
-	const hit = app.vault.getAbstractFileByPath(url.trim());
+	// 其余按库内路径：统一入口解析（路径直查/basename/索引兜底，
+	// 与 AGENTS.md「解析只走 resolvePathToFile」一致，lint 已机械强制）。
+	// 命中→资源地址显示 + 规范路径记录；未命中→原样显示并保留输入为
+	// 回写目标（Obsidian 语义允许引用暂不存在的库内路径）。
+	const file = resolvePathToFile(url, app);
 	return {
-		display: hit instanceof TFile ? app.vault.getResourcePath(hit) : url,
-		mdTarget: url.trim(),
+		display: file ? app.vault.getResourcePath(file) : url,
+		mdTarget: file ? file.path : url.trim(),
 	};
 }
 
@@ -198,10 +212,9 @@ function normalizeImageReference(
  * 2. 兜底：若节点数据因 uid 异常未被清除，按对象身份强制移除，杜绝残留。
  */
 export function deleteActiveNode(view: MindMapViewContext): void {
+	const node = requireActiveNode(view);
 	const mindMap = view.mindMap;
-	const node = getActiveNode(mindMap);
-	if (!mindMap || !node) {
-		new Notice(t(view.lang, 'common.selectNodeFirst'));
+	if (!node || !mindMap) {
 		return;
 	}
 	if (node.isRoot) {

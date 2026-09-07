@@ -91,6 +91,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	viewEvents = new EventBinder();
 	private boundHandleCssChange: (() => void) | null = null;
 	/**
+	 * 视图装配完成信号：onOpen 进入时重建、DOM 装配完成后 resolve。
+	 * onLoadFile 与 onOpen 的调用时序 Obsidian 不保证，onLoadFile 据此
+	 * 等待装配完成（替代原 10ms setTimeout 轮询的 waitForReady）。
+	 */
+	private whenReady: Promise<void> = new Promise(() => {});
+	/**
 	 * 文件加载去重：onOpen 与 onLoadFile 都会为同一文件触发加载
 	 * （Obsidian 对 FileView 的调用时序不保证），记录进行中的加载路径，
 	 * 避免同一文件被重复读取、重复创建引擎实例。
@@ -201,6 +207,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	async onOpen(): Promise<void> {
+		// 重建装配信号（onClose→onOpen 周期中旧信号作废）
+		let resolveReady!: () => void;
+		this.whenReady = new Promise<void>((resolve) => {
+			resolveReady = resolve;
+		});
 		const { containerEl } = this;
 		containerEl.empty();
 		containerEl.addClass('mindmap-view-container');
@@ -252,15 +263,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		});
 
 		this.ready = true;
+		resolveReady();
 		if (this.file) {
 			await this.loadMindMapFromFile(this.file);
 		}
 	}
 
 	async onLoadFile(file: TFile): Promise<void> {
-		if (!this.ready) {
-			await this.waitForReady();
-		}
+		// 等待装配完成（onOpen 尚未执行时挂起，替代原 10ms 轮询）
+		await this.whenReady;
 		// onOpen 已为同一文件启动加载（读取中或已完成）时跳过，
 		// 避免同一文件被读取两次、引擎实例被创建两次。
 		if (this.loadingFilePath === file.path) {
@@ -280,19 +291,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 文件切换后允许再次加载同一路径（新会话）
 		this.loadingFilePath = null;
 		this.engine.destroyInstance();
-	}
-
-	private waitForReady(): Promise<void> {
-		return new Promise((resolve) => {
-			const check = (): void => {
-				if (this.ready) {
-					resolve();
-				} else {
-					window.setTimeout(check, 10);
-				}
-			};
-			check();
-		});
 	}
 
 	private async loadMindMapFromFile(file: TFile): Promise<void> {
@@ -396,6 +394,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		if (newPath === file.path) {
 			return;
 		}
+		// 存在性检查（非文件解析）：判断重命名目标是否已被占用，无需统一入口
+		// eslint-disable-next-line no-restricted-syntax -- 非解析用途，仅判断路径是否已存在
 		if (this.app.vault.getAbstractFileByPath(newPath)) {
 			new Notice(t(this.lang, 'rename.titleConflict'));
 			return;
@@ -547,6 +547,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.savePipeline.cancelTimer();
 		this.titleRenameDebouncer.cancel();
 		cancelStatusBarUpdate(this);
+		// 挂起装配信号：关闭后到达的 onLoadFile 等待下一次 onOpen（原轮询语义）
+		this.whenReady = new Promise(() => {});
 		this.engine.persistViewport();
 		await this.savePipeline.save();
 		// 清理视图生命周期作用域的事件（搜索输入框 input/keydown 等）

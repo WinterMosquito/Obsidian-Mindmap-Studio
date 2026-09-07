@@ -11,6 +11,7 @@ import { isImageExtension, MAX_IMAGE_SIZE_MB } from './constants';
 import { isAppResourceUrl, isExternalImageRef } from './domain/url';
 import { t, type Language } from './i18n';
 import { buildPastedImageName } from './images-save';
+import { resolvePathToFile } from './links-resolve';
 import { createButton, createModalSettle, VaultFileSuggest } from './modal-common';
 
 /** 输入是否为外链/数据地址（无需库内解析）：domain/url 单一权威 */
@@ -37,14 +38,16 @@ export function openImageEditorModal(
 		const statusEl = root.createDiv();
 		statusEl.addClass('mindmap-modal-muted-hint');
 
-		/** 由引用文本得到「预览 URL」（库内路径 → 资源地址） */
+		/** 由引用文本得到「预览 URL」：统一入口解析（库内路径/app:///file://
+		 *  等形态，与 AGENTS.md「解析只走 resolvePathToFile」一致）；
+		 *  命中→资源地址；未命中→空串（无预览）。首次未命中会触发全库
+		 *  索引构建（file-lookup 缓存），之后 O(1)。 */
 		const toPreviewUrl = (value: string): string => {
 			if (!value || isExternalImageUrl(value)) {
 				return value;
 			}
-			// 库内路径（联想/手动输入）：转可加载资源地址预览
-			const hit = app.vault.getAbstractFileByPath(value.trim());
-			return hit instanceof TFile ? app.vault.getResourcePath(hit) : '';
+			const file = resolvePathToFile(value, app);
+			return file ? app.vault.getResourcePath(file) : '';
 		};
 
 		const updateStatus = (url: string): void => {

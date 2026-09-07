@@ -62,7 +62,11 @@
    （`src/mindmap.ts`）命令名是否有效）；
 4. 用对应版本的 `dist/simpleMindMap.esm.css` 覆盖 `vendor/simple-mind-map.css`，运行
    `npm run sync-vendor-css` 重建 `styles.css` 标记段（许可证声明自动保留）；
-5. `npm run build && npm test && npm run lint` 全量验证；
+5. `npm run build && npm test && npm run lint` 全量验证；其中
+   `tests/vendor-contract.test.ts`（vendor 契约冒烟）自动执行——它锁定
+   「导出类 ↔ d.cts 双向一致 / d.cts 声明的方法 ↔ bundle 原型 / ENGINE_COMMANDS
+   全表命令名、防腐层触碰的内部字段、插件依赖的引擎事件名 ↔ bundle 令牌」三层
+   契约，任何断言失败即契约漂移：先对照更新 `d.cts` 与 `mindmap.ts` 防腐层，再继续；
 6. 更新 `AGENTS.md` 引擎行，并在下方历史登记追加记录。
 
 ## 插件侧的引擎接缝（升级时重点核对）
@@ -72,6 +76,14 @@
   全部防腐收口函数（renderer/view/search/doExport/opt 的内部访问只允许出现在这里）；
 - `src/services/engine-controller.ts`：初始化代际锁、视口存取、引用更新预检；
 - `vendor/simple-mind-map.d.cts`：手写类型的导出面。
+
+已核实的「非契约」事实（升级时勿按漂移处理）：
+
+- 引擎**不在节点 DOM 上写 `data-uid` 属性**（bundle 全文零处，`.smm-node` group
+  为 nodeDraw 层兄弟节点互不嵌套）——`findNodeByDom` 已改为「group 包含目标元素」
+  的对象身份匹配（2026-09-07），勿再依赖任何 DOM uid 属性；
+- bundle 顶层求值即触碰 `document.documentElement`（全屏 API 探测），纯 Node
+  环境加载 vendor 需先打最小 document 桩（见 tests/vendor-contract.test.ts 顶部）。
 
 ## 历史登记
 

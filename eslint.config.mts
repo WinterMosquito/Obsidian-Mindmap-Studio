@@ -59,6 +59,22 @@ export default defineConfig(
 		},
 	},
 	{
+		files: ['src/features/**/*.ts', 'src/modal-*.ts'],
+		rules: {
+			// 库内文件解析统一走 links-resolve.resolvePathToFile（形态路由与索引
+			// 兜底只在统一入口维护，散落直调会在新增解析规则时静默掉队）。
+			// 确需直调的场景（存在性检查等）用 eslint-disable 注明理由。
+			'no-restricted-syntax': [
+				'error',
+				{
+					selector: "MemberExpression[property.name='getAbstractFileByPath']",
+					message:
+						'库内文件解析请走 links-resolve.resolvePathToFile；存在性检查等特例需 eslint-disable 并注明理由',
+				},
+			],
+		},
+	},
+	{
 		files: ['src/system-open.ts'],
 		languageOptions: {
 			globals: {

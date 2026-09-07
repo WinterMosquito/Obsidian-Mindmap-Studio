@@ -10,13 +10,19 @@ import { countTreeNodes, getRenderRoot } from '../mindmap';
 import { createThrottler, type Throttler } from '../concurrency';
 import type { MindMapViewContext } from './view-context';
 
+/**
+ * 状态栏子系统所需的最窄访问面：引擎实例 + 插件服务（状态栏展示）。
+ * R4 上下文瘦身示范：不依赖整个装配面（MindMapView 结构化实现，传入即兼容）。
+ */
+type StatusViewContext = Pick<MindMapViewContext, 'mindMap' | 'plugin'>;
+
 /** 节点计数节流窗口（data_change 高频事件下避免每次全树遍历） */
 const STATUS_BAR_THROTTLE_MS = 300;
 
 /** 按视图持有的节流器（WeakMap：视图关闭后可回收） */
-const throttlers = new WeakMap<MindMapViewContext, Throttler>();
+const throttlers = new WeakMap<StatusViewContext, Throttler>();
 
-function throttlerOf(view: MindMapViewContext): Throttler {
+function throttlerOf(view: StatusViewContext): Throttler {
 	let throttler = throttlers.get(view);
 	if (!throttler) {
 		throttler = createThrottler(STATUS_BAR_THROTTLE_MS, {
@@ -28,7 +34,7 @@ function throttlerOf(view: MindMapViewContext): Throttler {
 }
 
 /** 更新状态栏节点计数（高频事件下节流，尾随刷新保证最终显示最新值） */
-export function updateStatusBar(view: MindMapViewContext): void {
+export function updateStatusBar(view: StatusViewContext): void {
 	// 无状态栏（插件设置关闭）时零开销：不节流、不遍历计数
 	if (!view.plugin.statusBar.available) {
 		return;
@@ -53,6 +59,6 @@ export function updateStatusBar(view: MindMapViewContext): void {
 }
 
 /** 取消未决的尾随刷新（视图关闭时调用） */
-export function cancelStatusBarUpdate(view: MindMapViewContext): void {
+export function cancelStatusBarUpdate(view: StatusViewContext): void {
 	throttlers.get(view)?.cancel();
 }

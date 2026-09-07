@@ -9,6 +9,9 @@ import type { MindMapViewContext } from './view-context';
 
 const FALLBACK_NAME = 'mindmap';
 
+/** 下载触发后延迟回收 blob URL 的间隔（等待浏览器开始读取，避免中断下载） */
+const DOWNLOAD_REVOKE_DELAY_MS = 1000;
+
 /** 导出为 PNG 文件（遵循导出倍率设置） */
 export async function exportPNG(view: MindMapViewContext): Promise<void> {
 	if (!view.mindMap) {
@@ -43,7 +46,7 @@ function downloadBlob(blob: Blob, fileName: string): void {
 	anchor.href = url;
 	anchor.download = fileName;
 	anchor.click();
-	window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+	window.setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_REVOKE_DELAY_MS);
 }
 
 /** 触发浏览器下载一个 data URL */

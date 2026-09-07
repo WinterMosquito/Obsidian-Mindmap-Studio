@@ -153,8 +153,3 @@ export class Search {
 export class Drag {
 	constructor(options?: AnyObject);
 }
-
-export const THEME: {
-	LIGHT: unknown;
-	DARK: unknown;
-};
