@@ -34,8 +34,8 @@ The plugin is a **rendering layer**, not a file-format converter. `.mindmap.md` 
 - **Markdown-native**: `.mindmap.md` is ordinary Markdown (headings + lists). No proprietary format.
 - **Round-trip fidelity**: unedited lines are written back verbatim (frontmatter preserved); headings `#`–`######` map to topic levels 1–6, nested lists to deeper levels.
 - **Obsidian-native wikilinks**: `[[note]]` shows as its link text, with hover preview and `Ctrl/Cmd+click` to open; insert-link searches notes and linkable attachments.
-- **Images**: vault image suggestions, uniform sizing, and `![[path]]` round-trip.
-- **Six layouts**, node search, drag-and-drop, auto-arrange, performance mode for large maps, PNG export.
+- **Images**: vault image suggestions, uniform sizing, `![[path]]` round-trip; drag the corner handle to resize a node image — the size is written back as Obsidian's official embed syntax (`![[img.png|300]]` width-only, `|300x150` explicit, `![alt|300](url)` for external images); clear a node's text and the node becomes image-exclusive.
+- **Six layouts**, node search, auto-arrange, performance mode for large maps, PNG export; **assisted drag reparenting** — drop near a node's center to nest as its child, or between two siblings to insert in between (with live highlight).
 - **Persistence**: layout, viewport and "open as" preference are kept per file (in plugin data), surviving reopen, rename, and view switching.
 - **Center-topic ↔ filename**: editing the central topic renames the `.mindmap.md` file (Obsidian updates links/backlinks).
 
@@ -57,7 +57,7 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 - 第 7 级列表项              ← 标题下的列表缩进 → 第 7 级
 ```
 
-> `#`–`######` → topic levels 1–6 · nested lists go deeper · `[[note]]` → clickable link · `![[img]]` → image · paragraphs & fenced code stay as text.
+> `#`–`######` → topic levels 1–6 · nested lists go deeper · `[[note]]` → clickable link · `![[img]]` → image (`|300` sets the size) · paragraphs & fenced code stay as text.
 
 ### 3) Everyday actions (in the mind-map view)
 | Want to | Do |
@@ -67,7 +67,9 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 | Delete a node | Right-click → **Delete** |
 | Add a link | Select a node → toolbar/menu **Insert link** (pick a vault note or paste a URL) |
 | Add an image | Select a node → **Insert image** (from vault, clipboard, or a file) |
-| Rearrange | Drag the node |
+| Rearrange | Drag near another node's center to nest as its child; drag between two siblings to insert in between (the drop target highlights) |
+| Resize a node image | Hover the image, drag its bottom-right handle (aspect ratio preserved) |
+| Make a node image-only | Clear the node's text: double-click → empty, or right-click → **Remove text** |
 | Clean the layout | Toolbar: **Auto arrange**, **Fit to canvas**, zoom |
 | Find a node | Toolbar search box |
 | Export | Toolbar **Export PNG** |
@@ -75,7 +77,7 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 
 ### 4) Saving & persistence
 - Unedited lines are written back **verbatim** (frontmatter preserved).
-- Layout, viewport and "open as" are kept per file in the plugin `data.json` — **never** in the file.
+- Layout, viewport and "open as" are kept per file in the plugin `data.json`; node image sizes go into the note itself as official embed syntax (`![[img|300]]`).
 - Editing the **center topic** renames the `.mindmap.md` (Obsidian updates links/backlinks).
 - Config is local; no telemetry.
 
@@ -95,6 +97,7 @@ The full Markdown ↔ mind-map mapping rules live in [`docs/markdown-mindmap-sta
 npm install
 npm run dev      # watch mode
 npm run build    # type-check + production bundle (main.js)
+npm test         # regression suite (vitest)
 npm run lint
 ```
 
