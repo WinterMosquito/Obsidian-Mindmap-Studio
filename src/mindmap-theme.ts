@@ -5,6 +5,8 @@
 import { IMAGE_HEIGHT, IMAGE_WIDTH } from './constants';
 
 const BORDER_RADIUS = 5;
+/** 节点水平内边距：略大于引擎默认值（15），仅作左右留白 */
+const NODE_PADDING_X = 16;
 
 interface ThemeColors {
 	primary: string;
@@ -22,12 +24,12 @@ const LIGHT_COLORS: ThemeColors = {
 	primary: '#4a90d9',
 	rootFill: '#4a90d9',
 	rootText: '#ffffff',
-	secondFill: '#e8f0fe',
-	secondText: '#333333',
-	nodeFill: '#ffffff',
-	nodeText: '#333333',
-	border: '#4a90d9',
-	line: '#4a90d9',
+	secondFill: '#f1f5f9',
+	secondText: '#1e293b',
+	nodeFill: '#f8fafc',
+	nodeText: '#64748b',
+	border: '#cbd5e1',
+	line: '#94a3b8',
 };
 
 const DARK_COLORS: ThemeColors = {
@@ -37,14 +39,22 @@ const DARK_COLORS: ThemeColors = {
 	secondFill: '#252525',
 	secondText: '#d0d0d0',
 	nodeFill: '#1e1e1e',
-	nodeText: '#c0c0c0',
-	border: '#555555',
-	line: '#555555',
+	nodeText: '#a0a0a0',
+	border: '#3f3f3f',
+	line: '#4a4a4a',
 };
 
 /** 判断指定主题偏好下是否使用暗色配色 */
 export function isDarkTheme(themePref: string, isDark: boolean): boolean {
 	return themePref === 'dark' || (themePref === 'default' && isDark);
+}
+
+/**
+ * 双链文档自绘图标（节点前缀内容）的描边色：与主题色板同源，
+ * 避免在 mindmap.ts 里手写色值。亮色用品牌主蓝，暗色用 nodeText 中性灰。
+ */
+export function getDocIconColor(isDark: boolean): string {
+	return isDark ? DARK_COLORS.nodeText : LIGHT_COLORS.primary;
 }
 
 /**
@@ -71,6 +81,7 @@ function buildThemeConfig(
 			borderColor: 'transparent',
 			borderWidth: 0,
 			borderRadius: BORDER_RADIUS,
+			paddingX: NODE_PADDING_X,
 		},
 		second: {
 			fillColor: colors.secondFill,
@@ -79,6 +90,7 @@ function buildThemeConfig(
 			borderColor: colors.border,
 			borderWidth: 1,
 			borderRadius: BORDER_RADIUS,
+			paddingX: NODE_PADDING_X,
 		},
 		node: {
 			fillColor: colors.nodeFill,
@@ -87,9 +99,16 @@ function buildThemeConfig(
 			borderColor: colors.border,
 			borderWidth: 1,
 			borderRadius: BORDER_RADIUS,
+			paddingX: NODE_PADDING_X,
 		},
 		lineColor: colors.line,
-		lineWidth: 2,
+		lineWidth: 1.5,
+		// 连线圆滑曲线 + 收紧间距：视觉重量随层级递减、提升一屏信息量。
+		// 引擎运行时支持（vendor bundle 已验证 marginX/marginY/lineStyle/curve），
+		// d.cts 未声明——与现有防腐口径一致，经 Record<string, unknown> 透传。
+		lineStyle: 'curve',
+		marginX: 60,
+		marginY: 24,
 		...(isDark
 			? {
 					expandBtnStyle: {

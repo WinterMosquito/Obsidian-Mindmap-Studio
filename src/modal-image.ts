@@ -52,7 +52,7 @@ export function openImageEditorModal(
 
 		const updateStatus = (url: string): void => {
 			if (url && isExternalImageUrl(url)) {
-				const shortened = url.length > 60 ? url.slice(0, 60) + '...' : url;
+				const shortened = url.length > 60 ? `${url.slice(0, 60)}…` : url;
 				statusEl.setText(`${t(lang, 'modal.image.address')}${shortened}`);
 			} else if (url) {
 				statusEl.setText(`${t(lang, 'modal.image.internalPath')}${url}`);
@@ -215,7 +215,7 @@ export function openImageEditorModal(
 			settle(null);
 			modal.close();
 		});
-		createButton(buttons, t(lang, 'modal.confirm'), 'primary', () => {
+		createButton(buttons, t(lang, 'modal.apply'), 'primary', () => {
 			settle(input.value.trim());
 			modal.close();
 		});

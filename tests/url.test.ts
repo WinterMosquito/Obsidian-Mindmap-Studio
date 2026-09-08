@@ -13,7 +13,25 @@ import {
 	isHyperlinkProtocolUrl,
 	isRemoteOrDataUrl,
 	isSchemeUrl,
+	isUrlLikeText,
 } from '../src/domain/url';
+
+describe('isUrlLikeText', () => {
+	it('http/https/ftp/obsidian 独立 URL 命中', () => {
+		expect(isUrlLikeText('https://example.com/a/very/long/path')).toBe(true);
+		expect(isUrlLikeText('http://example.com')).toBe(true);
+		expect(isUrlLikeText('ftp://files.example.com/a.zip')).toBe(true);
+		expect(isUrlLikeText('obsidian://open?vault=v&file=f')).toBe(true);
+	});
+
+	it('含空格的混合文本 / 普通词语 / 相对路径不命中', () => {
+		expect(isUrlLikeText('see https://example.com here')).toBe(false);
+		expect(isUrlLikeText('https:// example.com')).toBe(false);
+		expect(isUrlLikeText('普通文本')).toBe(false);
+		expect(isUrlLikeText('images/pic.png')).toBe(false);
+		expect(isUrlLikeText('')).toBe(false);
+	});
+});
 
 describe('isHttpUrl', () => {
 	it('只认 http:// 与 https://', () => {

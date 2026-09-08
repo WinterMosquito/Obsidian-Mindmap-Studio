@@ -40,6 +40,10 @@ function makeHarness(
 			modify,
 			getAbstractFileByPath: (path: string) =>
 				existing.has(path) ? { path } : null,
+			// 模块用官方推荐的类型化 getter（删除守卫）——测试桩同步提供
+			getFileByPath: (path: string) =>
+				existing.has(path) ? { path } : null,
+			getFolderByPath: () => null,
 		},
 	});
 	const file = Object.assign(new TFile(), {

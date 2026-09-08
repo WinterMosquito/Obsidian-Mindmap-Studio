@@ -100,18 +100,60 @@ const IMAGE_SIZE_CACHE = new Map<string, { width: number; height: number }>();
 /** 缓存上限（按插入序近似 LRU，超出时淘汰最早条目） */
 const IMAGE_SIZE_CACHE_MAX = 500;
 
+/**
+ * 图片探测失败缓存（url → 首次失败时间戳）。
+ * 同一坏图（CORS/网络/已删除）避免反复等待 2500ms 超时。
+ * 过期后允许重试（网络抖动/临时不可达的图片可能恢复）。
+ */
+const IMAGE_FAIL_CACHE = new Map<string, number>();
+const IMAGE_FAIL_CACHE_MAX = 200;
+/** 失败缓存过期时间（毫秒）：5 分钟后允许重新探测。export 为测试白盒钩子 */
+export const IMAGE_FAIL_TTL_MS = 5 * 60 * 1000;
+
 function cacheImageSize(
 	url: string,
 	size: { width: number; height: number },
 ): void {
 	IMAGE_SIZE_CACHE.set(url, size);
+	IMAGE_FAIL_CACHE.delete(url); // 成功后清除失败记录
 	if (IMAGE_SIZE_CACHE.size > IMAGE_SIZE_CACHE_MAX) {
-		// Map 保序：解构取最早插入的键删除；size > MAX 保证非空
 		const [oldest] = IMAGE_SIZE_CACHE.keys();
 		if (oldest !== undefined) {
 			IMAGE_SIZE_CACHE.delete(oldest);
 		}
 	}
+}
+
+/** 失败缓存：写入当前时间戳；超出上限时先清理过期条目再淘汰最早的。export 为测试白盒钩子 */
+export function cacheImageFail(url: string): void {
+	IMAGE_FAIL_CACHE.set(url, Date.now());
+	if (IMAGE_FAIL_CACHE.size > IMAGE_FAIL_CACHE_MAX) {
+		// 顺便清理过期条目——长时间没调用 probe 时 Map 可能积满过期项
+		const now = Date.now();
+		for (const [key, ts] of IMAGE_FAIL_CACHE) {
+			if (now - ts > IMAGE_FAIL_TTL_MS) {
+				IMAGE_FAIL_CACHE.delete(key);
+			}
+		}
+		// 清理后还超限 → LRU 淘汰最早
+		if (IMAGE_FAIL_CACHE.size > IMAGE_FAIL_CACHE_MAX) {
+			const [oldest] = IMAGE_FAIL_CACHE.keys();
+			if (oldest !== undefined) {
+				IMAGE_FAIL_CACHE.delete(oldest);
+			}
+		}
+	}
+}
+
+/** 失败缓存过期清理：移除超过 TTL 的条目（惰性，每次调用顺带清理）。export 为测试白盒钩子 */
+export function isImageFailFresh(url: string): boolean {
+	const failedAt = IMAGE_FAIL_CACHE.get(url);
+	if (failedAt === undefined) return false;
+	if (Date.now() - failedAt > IMAGE_FAIL_TTL_MS) {
+		IMAGE_FAIL_CACHE.delete(url);
+		return false;
+	}
+	return true;
 }
 
 /**
@@ -132,6 +174,11 @@ export function probeImageNaturalSize(
 			resolve({ ...cached });
 			return;
 		}
+		// 失败缓存命中：同 URL 近期探测过失败，直接返回 null 避免重复等待超时
+		if (isImageFailFresh(url)) {
+			resolve(null);
+			return;
+		}
 		const img = new Image();
 		let settled = false;
 		const timer = window.setTimeout(() => settle(null), IMAGE_PROBE_TIMEOUT_MS);
@@ -145,6 +192,9 @@ export function probeImageNaturalSize(
 			window.clearTimeout(timer);
 			img.onload = null;
 			img.onerror = null;
+			if (value === null) {
+				cacheImageFail(url);
+			}
 			resolve(value);
 		};
 		img.onload = () => {
@@ -221,6 +271,9 @@ export async function walkCorrectImageSizesByAspect(
 		}
 	});
 	let changed = false;
+	// 单节点探测失败不影响其它节点；只汇总记录一次（避免大图逐条刷屏）
+	let failedCount = 0;
+	let firstError: unknown = null;
 	await mapWithConcurrency(
 		nodes,
 		IMAGE_PROBE_CONCURRENCY,
@@ -264,10 +317,18 @@ export async function walkCorrectImageSizesByAspect(
 					node.data.imageSize = size;
 					changed = true;
 				}
-			} catch {
+			} catch (error) {
 				// 单节点探测异常：跳过该节点，保留现有尺寸，不中断整树校正
+				failedCount++;
+				firstError ??= error;
 			}
 		},
 	);
+	if (failedCount > 0) {
+		console.warn(
+			`图片尺寸校正：${failedCount} 个节点探测失败，已保留默认尺寸`,
+			firstError,
+		);
+	}
 	return changed;
 }

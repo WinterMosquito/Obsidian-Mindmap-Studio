@@ -243,6 +243,12 @@ export function setupImageResize(view: MindMapViewContext): void {
 		return;
 	}
 	const state = getState(view);
+	// 引擎重建可能发生在调宽会话进行中：先收尾旧会话、移除旧手柄，
+	// 避免残留的 window 监听与悬空手柄作用于新引擎实例。
+	endSession(view);
+	state.handleEl?.remove();
+	state.handleEl = null;
+	state.hoverNode = null;
 
 	// 手柄 DOM：画布容器内绝对定位（容器 position:relative）
 	const handle = view.canvasEl.createDiv('mindmap-img-resize-handle');
@@ -294,4 +300,20 @@ export function setupImageResize(view: MindMapViewContext): void {
 	view.engineEvents.onEngine(mindMap, 'node_dragging', () => {
 		hideHandle(view);
 	});
+}
+
+/**
+ * 视图关闭时的收尾：结束进行中的调宽会话并移除手柄 DOM。
+ *
+ * 会话的 window mousemove/mouseup（捕获阶段）为临时监听，不经
+ * engineEvents/viewEvents 记录——调宽中途关闭视图时收不到 mouseup，
+ * 必须由视图 onClose 显式清理，否则监听泄漏且继续作用于已销毁视图
+ * （endSession 同时把已应用的尺寸调度保存，避免尺寸改动丢失）。
+ */
+export function teardownImageResize(view: MindMapViewContext): void {
+	endSession(view);
+	const state = getState(view);
+	state.handleEl?.remove();
+	state.handleEl = null;
+	state.hoverNode = null;
 }

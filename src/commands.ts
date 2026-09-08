@@ -2,16 +2,36 @@
  * 用户入口注册：命令面板命令与丝带图标。
  * 生命周期（registerView、事件监听、设置面板）由 main.ts 负责。
  */
-import { MarkdownView } from 'obsidian';
+import { MarkdownView, Plugin } from 'obsidian';
 import { MindMapView } from './features/view';
 import { createNewMindMap } from './creation';
 import { fitMindMap } from './mindmap';
 import { isMindMapMarkdownFile, openAsMindMap } from './md-open';
-import { t } from './i18n';
-import type MindMapStudioPlugin from './main';
+import { Language, t } from './i18n';
 
-/** 注册全部命令面板命令与丝带图标（onload 时调用一次） */
-export function registerCommands(plugin: MindMapStudioPlugin): void {
+/**
+ * commands 模块对宿主插件的窄化契约。
+ * 仅用 addCommand/addRibbonIcon（Obsidian Plugin 基类）+ settings.language。
+ * 替代 MindMapStudioPlugin 具体类引用，打破 commands ↔ main 循环。
+ */
+interface IPluginCommandsHost extends Plugin {
+	settings: { language: Language };
+}
+
+/** 命令 id 表（语言变更时按 id 先移除再重注册；id 本身不随语言变化） */
+const COMMAND_IDS = [
+	'create-new-mindmap',
+	'create-mindmap-here',
+	'search-mindmap-nodes',
+	'mindmap-fit-view',
+	'mindmap-arrange',
+	'mindmap-export-png',
+	'mindmap-open-md-as-view',
+	'mindmap-back-to-markdown',
+] as const;
+
+/** 注册全部命令面板命令（onload 时调用一次；文案取注册时的语言） */
+export function registerCommands(plugin: IPluginCommandsHost): void {
 	plugin.addCommand({
 		id: 'create-new-mindmap',
 		name: t(plugin.settings.language, 'command.createMindMap'),
@@ -137,12 +157,39 @@ export function registerCommands(plugin: MindMapStudioPlugin): void {
 			return true;
 		},
 	});
+}
 
-	plugin.addRibbonIcon(
+/**
+ * 创建丝带图标（onload 时调用一次）。
+ * @returns 图标元素——官方无 removeRibbonIcon，语言变更时就地更新 aria-label
+ */
+export function addMindMapRibbonIcon(
+	plugin: IPluginCommandsHost,
+): HTMLElement {
+	return plugin.addRibbonIcon(
 		'network',
 		t(plugin.settings.language, 'command.createMindMap'),
 		() => {
 			void createNewMindMap(plugin.app, plugin.settings.language);
 		},
+	);
+}
+
+/**
+ * 语言变更后刷新用户入口文案：命令面板在注册时缓存 `name`，故按 id
+ * 先 `removeCommand` 再重注册（官方 1.7.2+ 提供 removeCommand）；
+ * 丝带图标无移除 API，就地更新提示文案。
+ */
+export function refreshCommandLabels(
+	plugin: IPluginCommandsHost,
+	ribbonEl: HTMLElement | null,
+): void {
+	for (const id of COMMAND_IDS) {
+		plugin.removeCommand(id);
+	}
+	registerCommands(plugin);
+	ribbonEl?.setAttribute(
+		'aria-label',
+		t(plugin.settings.language, 'command.createMindMap'),
 	);
 }

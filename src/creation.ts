@@ -68,10 +68,11 @@ async function ensureUniqueFileName(
 	const extension = compound?.[2] ?? simple?.[2] ?? '';
 	let candidate = fileName;
 	let index = 1;
-	// 性能：候选路径存在性检查代替全库路径 Set 构建（大库下每次创建 O(1)）
+	// 性能：候选路径存在性检查代替全库路径 Set 构建（大库下每次创建 O(1)）；
+	// 类型化 getter 成对使用（官方推荐，替代易混淆的 getAbstractFileByPath）
 	while (
-		// eslint-disable-next-line no-restricted-syntax -- 重名序号探测是存在性检查，非文件解析
-		app.vault.getAbstractFileByPath(normalizePath(`${folder}/${candidate}`))
+		app.vault.getFileByPath(normalizePath(`${folder}/${candidate}`)) ??
+		app.vault.getFolderByPath(normalizePath(`${folder}/${candidate}`))
 	) {
 		candidate = `${stem} ${index}${extension}`;
 		index++;

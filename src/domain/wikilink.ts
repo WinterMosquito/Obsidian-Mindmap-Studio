@@ -66,6 +66,23 @@ export function formatWikilink(linkpath: string, alias?: string): string {
 }
 
 /**
+ * wikilink 目标是否为「附件」（非 .md 笔记）。
+ * Obsidian 语义：target 末段含扩展名且非 .md → 附件（pdf/png/音频等）；
+ * 无扩展名或 .md → 文档。`#` 区块不影响判定（取 target 部分）。
+ * 用途：双链指向附件的节点走引擎 attachmentUrl 字段（回形针图标），
+ * 与指向文档的节点（链接图标）在视觉上区分。
+ */
+export function wikilinkTargetIsAttachment(linkpath: string): boolean {
+	const target = parseWikilink(`[[${linkpath}]]`)?.target ?? linkpath;
+	const name = target.split('/').pop() ?? '';
+	const dot = name.lastIndexOf('.');
+	if (dot <= 0) {
+		return false; // 无扩展名（或 .hidden 形态）→ 按 Obsidian 默认视为文档
+	}
+	return name.slice(dot + 1).toLowerCase() !== 'md';
+}
+
+/**
  * 链接的「可见文本」（Obsidian 双链语义）：
  * 别名优先；否则取 linkpath 末段并去 .md 扩展（笔记显示名）；
  * 非维基链接（URL / 库内路径）原样可见。

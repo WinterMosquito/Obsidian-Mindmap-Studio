@@ -140,8 +140,8 @@ function showNodeContextMenu(
 				void addLinkToActiveNode(view);
 			}),
 	);
-	// 节点已有链接时提供「清除链接」
-	if (node.getData('hyperlink')) {
+	// 节点已有链接时提供「清除链接」（文档双链存 mdWikiLinkpath 通道）
+	if (node.getData('hyperlink') || node.getData('mdWikiLinkpath')) {
 		menu.addItem((item) =>
 			item
 				.setTitle(t(view.lang, 'modal.link.clear'))

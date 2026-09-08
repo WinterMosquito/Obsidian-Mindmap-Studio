@@ -33,7 +33,7 @@ class NodeImageLightboxModal extends Modal {
 		super(app);
 	}
 
-	onOpen(): void {
+	override onOpen(): void {
 		const { contentEl, modalEl } = this;
 		contentEl.empty();
 		modalEl.addClass('mindmap-image-lightbox');
@@ -62,7 +62,7 @@ class NodeImageLightboxModal extends Modal {
 		};
 	}
 
-	onClose(): void {
+	override onClose(): void {
 		this.contentEl.empty();
 	}
 }

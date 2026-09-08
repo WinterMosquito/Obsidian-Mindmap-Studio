@@ -39,13 +39,15 @@ export function resolvePathToFile(
 			const fileParam = new URL(text).searchParams.get('file');
 			if (fileParam) {
 				const path = decodeURIComponent(fileParam);
-				let file = app.vault.getAbstractFileByPath(path);
-				if (file instanceof TFile) {
-					return file;
+				// 官方推荐的类型化取文件（@since 1.5.7；CHANGELOG v1.5.7 明示
+				// getAbstractFileByPath 易混淆，应改用 getFileByPath）
+				const direct = app.vault.getFileByPath(path);
+				if (direct) {
+					return direct;
 				}
-				file = app.vault.getAbstractFileByPath(path + '.md');
-				if (file instanceof TFile) {
-					return file;
+				const withMd = app.vault.getFileByPath(path + '.md');
+				if (withMd) {
+					return withMd;
 				}
 				// 官方链接解析器：basename → 文件（Obsidian 同款同名消歧）
 				return app.metadataCache.getFirstLinkpathDest(path, '');
@@ -61,8 +63,8 @@ export function resolvePathToFile(
 		return lookupIndexedFile(text, app, fileLookupIndex.get(app));
 	}
 
-	const file = app.vault.getAbstractFileByPath(normalizePath(text));
-	if (file instanceof TFile) {
+	const file = app.vault.getFileByPath(normalizePath(text));
+	if (file) {
 		return file;
 	}
 
@@ -78,8 +80,8 @@ export function resolvePathToFile(
 					adapter.getBasePath().replace(/\\/g, '/').replace(/\/+$/, ''),
 				);
 				if (rel) {
-					const hit = app.vault.getAbstractFileByPath(normalizePath(rel));
-					if (hit instanceof TFile) {
+					const hit = app.vault.getFileByPath(normalizePath(rel));
+					if (hit) {
 						return hit;
 					}
 				}

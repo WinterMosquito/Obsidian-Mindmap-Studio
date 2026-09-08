@@ -6,7 +6,7 @@
  * leaf 切到本插件的导图视图（编辑与阅读模式下入口均可用），并可随时切回。
  */
 import { MarkdownView, TFile, WorkspaceLeaf } from 'obsidian';
-import { hasMindMapMarker, VIEW_TYPE } from './constants';
+import { CORE_VIEW_TYPE, hasMindMapMarker, VIEW_TYPE } from './constants';
 
 /**
  * 「以思维导图打开」偏好写入钩子（由插件注册，经 view-state 记录
@@ -59,7 +59,7 @@ export async function openAsMarkdown(
 ): Promise<void> {
 	try {
 		await leaf.setViewState({
-			type: 'markdown',
+			type: CORE_VIEW_TYPE.MARKDOWN,
 			state: { file: file.path, mode },
 		});
 	} catch (error) {

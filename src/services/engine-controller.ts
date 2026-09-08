@@ -26,6 +26,7 @@ import {
 	isEditingText,
 } from '../mindmap';
 import { ensureUniqueUids } from '../markdown';
+import { hasNodeReference, nodeReferenceHaystack } from '../node-data';
 import {
 	removeReferencesOnDelete,
 	updateReferencesOnRename,
@@ -67,6 +68,8 @@ export interface EngineControllerDeps {
 	onRootDataChanged(): void;
 	/** 节点图片点击（拖拽抑制在本控制器内处理） */
 	onNodeImageClick(node: MindMapNode): void;
+	/** 附件图标点击（双链指向附件：引擎 node_attachmentClick 事件，打开目标） */
+	onNodeAttachmentClick(node: MindMapNode): void;
 	/** 引擎就绪后装配交互特性（拖拽/粘贴/右键/wikilink） */
 	setupFeatures(): void;
 	/** 引擎就绪后视图侧收尾（工具栏布局同步、md 模式工具栏重建） */
@@ -215,6 +218,20 @@ export class EngineController {
 			this.engineEvents.onEngine(this.mindMap, 'node_dragend', () => {
 				this.lastNodeDragEndAt = Date.now();
 			});
+			// 附件图标点击（双链指向附件）：引擎仅派发事件不自行打开，
+			// 由视图按 Obsidian 语义打开目标（ Obsidian 可渲染开标签页 /
+			// 系统媒体走系统应用，与 openHyperlink 同一路由）
+			this.engineEvents.onEngine(
+				this.mindMap,
+				'node_attachmentClick',
+				(...args: unknown[]) => {
+					const node = args[0] as MindMapNode | undefined;
+					if (!node) {
+						return;
+					}
+					this.deps.onNodeAttachmentClick(node);
+				},
+			);
 			this.mindMap.render();
 			this.deps.setupFeatures();
 			this.deps.onEngineReady(options.layout);
@@ -300,8 +317,10 @@ export class EngineController {
 					file.path,
 					this.mindMap.view.getTransformData(),
 				);
-			} catch {
-				// 引擎尚未就绪等场景忽略
+			} catch (error) {
+				// 引擎尚未就绪等场景：仅记录。视口丢失不影响文档内容，
+				// 不打扰用户（下次打开退回 fit 全图）。
+				console.warn('持久化视口失败:', error);
 			}
 		}
 	}
@@ -391,8 +410,8 @@ export class EngineController {
 		let found = false;
 		walkTree(root, (node) => {
 			const data = node.getData() as MindMapNodeData;
-			if (data?.image || data?.attachmentUrl || data?.hyperlink) {
-				const haystack = `${data.image ?? ''}|${data.attachmentUrl ?? ''}|${data.hyperlink ?? ''}`;
+			if (hasNodeReference(data)) {
+				const haystack = nodeReferenceHaystack(data);
 				if (needles.some((needle) => haystack.includes(needle))) {
 					found = true;
 					return false; // 命中即终止整树遍历

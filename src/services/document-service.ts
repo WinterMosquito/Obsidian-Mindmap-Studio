@@ -8,7 +8,7 @@
  *   引擎销毁后的兜底快照（pendingTree）由管线自身持有。
  */
 import { App, TFile } from 'obsidian';
-import { stripMindMapStem } from '../constants';
+import { stripMindMapStem, AUTO_SAVE_DEBOUNCE_MS } from '../constants';
 import { createDebouncer, createSerialQueue } from '../concurrency';
 import { parseMdOutline } from '../md-outline';
 import { serializeMdBody } from '../md-serialize';
@@ -70,7 +70,7 @@ export interface SavePipelineDeps {
 	onSaveError?(error: unknown): void;
 }
 
-const SAVE_DELAY_MS = 800;
+const SAVE_DELAY_MS = AUTO_SAVE_DEBOUNCE_MS;
 
 /**
  * 保存管线：防抖调度 + 串行写盘排空 + 卸载前快照兜底。
@@ -116,8 +116,8 @@ export class SavePipeline {
 		// 文件已被删除时不应重新保存：Obsidian 删除 .mindmap 会触发 onUnloadFile，
 		// 此时若继续 vault.modify，会重建已被删除的文件（表现为"要删两次"）。
 		if (
-			// eslint-disable-next-line no-restricted-syntax -- 删除守卫是存在性检查，非文件解析
-			!this.deps.app.vault.getAbstractFileByPath(current.path)
+			// 删除守卫是文件存在性检查（类型化 getter，官方推荐）
+			!this.deps.app.vault.getFileByPath(current.path)
 		) {
 			return;
 		}
@@ -137,8 +137,8 @@ export class SavePipeline {
 				let tree = this.deps.getSnapshot();
 				while (
 					tree &&
-					// eslint-disable-next-line no-restricted-syntax -- 排空循环删除守卫是存在性检查，非文件解析
-					this.deps.app.vault.getAbstractFileByPath(file.path)
+					// 排空循环删除守卫是文件存在性检查（类型化 getter）
+					this.deps.app.vault.getFileByPath(file.path)
 				) {
 					try {
 						await this.deps.app.vault.modify(
@@ -146,8 +146,14 @@ export class SavePipeline {
 							this.serialize(tree),
 						);
 					} catch (error) {
+						// 保存失败通常是磁盘满/权限，重试无意义；立即复位排空状态
+						// 让下一次 scheduleSave 从头再来，而不是沿着这条错误链继续。
 						console.error('保存思维导图失败', error);
 						this.deps.onSaveError?.(error);
+						this.savePending = false;
+						this.pendingTree = null;
+						tree = null;
+						break;
 					}
 					if (!this.savePending) {
 						tree = null;

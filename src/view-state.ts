@@ -10,6 +10,7 @@
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）
  */
 import { createDebouncer, type Debouncer } from './concurrency';
+import { VIEW_STATE_PERSIST_MS } from './constants';
 
 export type PathState = Record<string, unknown>;
 
@@ -27,28 +28,42 @@ export class ViewStateStore {
 	 */
 	constructor(
 		private persist: (state: Record<string, PathState>) => void | Promise<void>,
-		private debounceMs = 600,
+		private debounceMs = VIEW_STATE_PERSIST_MS,
 	) {
 		this.debouncer = createDebouncer(debounceMs);
 	}
 
-	/** 从插件 data.json 载入（顶层 viewState 键） */
+	/**
+	 * 从插件 data.json 载入视图状态。
+	 *
+	 * @param data 必须是**完整的 data.json 顶层对象**（{viewState, ...settings}），
+	 *   不是 viewState 子对象——hydrate 内部从 data[VIEW_STATE_KEY] 提取视图状态。
+	 *   误传子对象时函数静默不加载任何状态，这里加了类型提示和 console.warn 提醒。
+	 */
 	hydrate(data: unknown): void {
 		this.map.clear();
-		if (data && typeof data === 'object') {
-			const raw = (data as Record<string, unknown>)[VIEW_STATE_KEY];
-			if (raw && typeof raw === 'object') {
-				for (const [path, state] of Object.entries(
-					raw as Record<string, unknown>,
-				)) {
-					if (state && typeof state === 'object') {
-						const s = state as Record<string, unknown>;
-						// 形状校验：只接受含已知字段的视图状态，丢弃畸形/异常条目
-						// （防手改 data.json、引擎升级后 view 结构变化等导致的坏数据渗入）。
-						if ('layout' in s || 'view' in s || 'openAs' in s) {
-							this.map.set(path, s);
-						}
-					}
+		if (!data || typeof data !== 'object') {
+			return;
+		}
+		const raw = (data as Record<string, unknown>)[VIEW_STATE_KEY];
+		if (!raw || typeof raw !== 'object') {
+			// 误传 viewState 子对象而非 data.json 顶层的防御提示
+			if (typeof data === 'object' && 'layout' in (data as Record<string, unknown>)) {
+				console.warn(
+					'ViewStateStore.hydrate 期望完整 data.json 对象，疑似收到 viewState 子对象',
+				);
+			}
+			return;
+		}
+		for (const [path, state] of Object.entries(
+			raw as Record<string, unknown>,
+		)) {
+			if (state && typeof state === 'object') {
+				const s = state as Record<string, unknown>;
+				// 形状校验：只接受含已知字段的视图状态，丢弃畸形/异常条目
+				// （防手改 data.json、引擎升级后 view 结构变化等导致的坏数据渗入）。
+				if ('layout' in s || 'view' in s || 'openAs' in s) {
+					this.map.set(path, s);
 				}
 			}
 		}

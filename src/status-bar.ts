@@ -37,7 +37,9 @@ export class ElementStatusBarService implements StatusBarService {
 		if (!el) {
 			return;
 		}
-		el.setText(`${count} ${t(this.getLanguage(), 'common.nodes')}`);
+		// 单复数分键：英文 "1 node" / "3 nodes"（中文两键同文）
+		const key = count === 1 ? 'common.nodeOne' : 'common.nodeMany';
+		el.setText(`${count} ${t(this.getLanguage(), key)}`);
 	}
 
 	clear(): void {

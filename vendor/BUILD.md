@@ -9,7 +9,7 @@
 `vendor/simple-mind-map.cjs`（406,580 B）= **fix.3 包源码的按需 tree-shake 重打包**：
 
 - 入口仅导出 8 个符号：`MindMap, DoExport, Select, TouchEvent, AssociativeLine, KeyboardNavigation, Search, Drag`；
-- 打包命令：`esbuild entry.mjs --bundle --format=cjs --minify --target=es2021`（entry 从
+- 打包命令：`esbuild entry.mjs --bundle --format=cjs --minify --target=es2021 --legal-comments=inline`（entry 从
   `simple-mind-map` 与 `simple-mind-map/src/plugins/{Export,Select,TouchEvent,AssociativeLine,KeyboardNavigation,Search,Drag}` 具名导入）；
 - **已验证**：按此配方从 fix.3 重建的产物与 vendor 产物在「字符串字面量集合」与
   「数字字面量袋」双锚点校验下完全一致，仅剩三处打包痕迹差异：

@@ -2,11 +2,17 @@
  * 画布拖拽与文件输入：库内文件拖入（图片/笔记）、外部图片导入。从 view.ts 拆出。
  */
 import { Notice, type TFile } from 'obsidian';
-import { isImageExtension, MAX_IMAGE_SIZE_MB } from '../constants';
+import {
+	isImageExtension,
+	isLinkAttachmentExtension,
+	MAX_IMAGE_SIZE_MB,
+} from '../constants';
 import { saveImageToVault } from '../images-save';
+import { createAspectSetNodeImageOptions } from '../images-path';
+import { notifyError } from '../errors';
 import { extractDroppedFileNames, resolveDroppedFile } from '../links-resolve';
 import { ENGINE_COMMANDS, getActiveNode, getRenderRoot } from '../mindmap';
-import { applyNodeImage } from './view-node-actions';
+import { applyDocWikiLink, applyNodeAttachment, applyNodeImage } from './view-node-actions';
 import { t } from '../i18n';
 import { formatWikilink } from '../domain/wikilink';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
@@ -48,7 +54,9 @@ export function setupDragAndDrop(view: MindMapViewContext): void {
 		event.stopPropagation();
 		canvas.removeClass('mindmap-drag-over');
 		void handleFileDrop(view, event).catch((error) => {
+			// 用户可见失败（附件写入/图片导入等）：按仓库约定走 notifyError
 			console.error('处理拖入文件失败', error);
+			notifyError(view.lang, 'common.dropFailed', error);
 		});
 	});
 }
@@ -93,8 +101,43 @@ async function handleDroppedVaultFile(view: MindMapViewContext, file: TFile): Pr
 		return;
 	}
 
-	// 其余类型（含音视频/PDF 等附件）无法写回 Markdown，拒绝
+	if (isLinkAttachmentExtension(extension)) {
+		handleDroppedAttachment(view, file, selected);
+		return;
+	}
+
+	// 其余类型（无法写回 Markdown）拒绝
 	new Notice(t(view.lang, 'common.onlySupportedFiles'));
+}
+
+/**
+ * 拖入附件（PDF/音视频/压缩包等）：已选中主题 → 挂为节点附件；
+ * 未选中 → 挂到根节点下并携带附件数据（与文档拖入同款两分支）。
+ */
+function handleDroppedAttachment(
+	view: MindMapViewContext,
+	file: TFile,
+	selected: MindMapNode | null,
+): void {
+	if (selected) {
+		applyNodeAttachment(view, selected, file);
+		new Notice(`${t(view.lang, 'common.linkedTo')} [[${file.name}]]`);
+		return;
+	}
+	const root = getRenderRoot(view.mindMap);
+	if (root) {
+		view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [root], {
+			text: file.name,
+			attachmentUrl: view.app.vault.getResourcePath(file),
+			attachmentName: file.name,
+			mdAttachmentLinkpath: file.path,
+			mdLinkStyle: 'wiki',
+			isActive: false,
+		});
+		new Notice(
+			`${t(view.lang, 'common.nodeCreatedAndLinked')} [[${file.name}]]`,
+		);
+	}
 }
 
 /** 拖入文档：已选中主题 → 链接；未选中 → 挂到根节点下并链接 */
@@ -105,7 +148,8 @@ async function handleDroppedDocument(
 ): Promise<void> {
 	const link = formatWikilink(file.basename);
 	if (selected) {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, selected, link);
+		// 与解析侧同通道（mdWikiLinkpath）→ 显示自绘文档页图标
+		applyDocWikiLink(view, selected, link, file.basename, null);
 		new Notice(`${t(view.lang, 'common.linkedTo')} [[${file.basename}]]`);
 	} else {
 		// 原逻辑：挂到根节点下并链接（通过 appointNodes 指定父节点，
@@ -114,7 +158,10 @@ async function handleDroppedDocument(
 		if (root) {
 			view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [root], {
 				text: file.basename,
-				hyperlink: link,
+				// 文档双链走 mdWikiLinkpath 通道（自绘文档图标，不写 hyperlink）
+				mdWikiLinkpath: link,
+				mdLinkStyle: 'wiki',
+				mdLinkText: file.basename,
 				isActive: false,
 			});
 			new Notice(`${t(view.lang, 'common.nodeCreatedAndLinked')} [[${file.basename}]]`);
@@ -138,22 +185,22 @@ async function handleExternalFilesDrop(
 		new Notice(t(view.lang, 'common.onlyImagesSupported'));
 	}
 	if (images.length === 0) {
-		let details = '';
+		// 诊断信息只进控制台：面向用户的提示不应包含原始 MIME 类型与拖拽载荷
+		const details: string[] = [];
 		Array.from(dataTransfer.types).forEach((type) => {
 			try {
 				const value = dataTransfer.getData(type);
 				if (value) {
-					details += `${type}: ${value.slice(0, 100)} | `;
+					details.push(`${type}: ${value.slice(0, 100)}`);
 				}
 			} catch {
 				// 忽略
 			}
 		});
-		new Notice(
-			t(view.lang, 'common.noImagesDropped') +
-				(details ? `\n${t(view.lang, 'attachment.dragData')}${details}` : ''),
-			8000,
-		);
+		if (details.length > 0) {
+			console.debug('拖入未识别到图片，拖拽数据:', details.join(' | '));
+		}
+		new Notice(t(view.lang, 'common.noImagesDropped'), 8000);
 		return;
 	}
 
@@ -172,35 +219,89 @@ async function handleExternalFilesDrop(
 	const useRealNames = realNames.length === images.length;
 	const sourcePath = view.file?.path ?? '';
 	// 顺序保存：文件名保持原名，重名由 saveImageToVault 的序号兜底处理；
-	// 顺序写入避免同名文件并发保存时互相覆盖。
-	let importedCount = 0;
+	// 顺序写入避免同名文件并发保存时互相覆盖。逐张容错：单张失败不影响其余。
+	const saved: TFile[] = [];
+	let failedCount = 0;
+	let firstError: unknown = null;
 	for (let index = 0; index < images.length; index++) {
 		const file = images[index];
 		if (!file) {
 			continue;
 		}
-		const saved = await saveImageToVault({
-			app: view.app,
-			sourcePath,
-			file,
-			maxSizeMB: MAX_IMAGE_SIZE_MB,
-			preferredName: useRealNames ? realNames[index] : undefined,
-			lang: view.lang,
-		});
-		if (!saved) {
-			continue;
+		try {
+			const result = await saveImageToVault({
+				app: view.app,
+				sourcePath,
+				file,
+				maxSizeMB: MAX_IMAGE_SIZE_MB,
+				preferredName: useRealNames ? realNames[index] : undefined,
+				lang: view.lang,
+			});
+			if (result) {
+				saved.push(result);
+			} else {
+				failedCount++;
+			}
+		} catch (error) {
+			failedCount++;
+			firstError ??= error;
 		}
-		importedCount++;
-		await applyNodeImage(view, selected, view.app.vault.getResourcePath(saved));
-		new Notice(`${t(view.lang, 'common.imageSetOnNode')}${saved.name}`);
 	}
-	if (importedCount > 0) {
+	if (failedCount > 0) {
+		console.error('导入拖入的图片失败', firstError);
+		notifyError(view.lang, 'common.importImageFailed', firstError);
+	}
+	// 归属：首张挂到所选节点（保持单图拖入的原行为），其余各新建一个子节点承载。
+	// 此前循环对同一节点反复 applyNodeImage（SET_NODE_IMAGE 覆盖图片字段），
+	// 多图拖入只有最后一张存活——静默丢图。
+	const [first, ...rest] = saved;
+	if (first) {
+		await applyNodeImage(view, selected, view.app.vault.getResourcePath(first));
+	}
+	for (const extra of rest) {
+		await insertImageChildNode(view, selected, extra);
+	}
+	if (saved.length === 1) {
+		new Notice(`${t(view.lang, 'common.imageSetOnNode')}${first?.name ?? ''}`);
 		new Notice(
-			`${t(view.lang, 'common.imported')} ${importedCount} ${t(
+			`${t(view.lang, 'common.imported')} 1 ${t(view.lang, 'common.imagesStored')}`,
+			5000,
+		);
+	} else if (saved.length > 1) {
+		new Notice(
+			`${t(view.lang, 'common.imported')} ${saved.length} ${t(
 				view.lang,
 				'common.imagesStored',
-			)}`,
+			)}\n${t(view.lang, 'common.imagesPlaced')}`,
 			5000,
 		);
 	}
+}
+
+/**
+ * 在指定父节点下新建承载一张图片的子节点（图片独占节点语义：无文本）。
+ *
+ * 直接以 INSERT_CHILD_NODE 的初始数据携带引擎渲染所需的字段（与
+ * SET_NODE_IMAGE 写入的形态一致：image/imageTitle/imageSize），避免
+ * 「插入后再回找新节点」——引擎未提供按插入结果取回节点的公开途径。
+ */
+async function insertImageChildNode(
+	view: MindMapViewContext,
+	parent: MindMapNode,
+	file: TFile,
+): Promise<void> {
+	const url = view.app.vault.getResourcePath(file);
+	const options = await createAspectSetNodeImageOptions(url);
+	view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [parent], {
+		text: '',
+		image: options.url,
+		imageTitle: options.title,
+		imageSize: {
+			width: options.width,
+			height: options.height,
+			custom: options.custom,
+		},
+		mdImageTarget: file.path,
+		isActive: false,
+	});
 }

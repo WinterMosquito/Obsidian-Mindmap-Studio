@@ -11,6 +11,7 @@ import { fileLookupIndex } from './file-lookup';
 import { walkTree } from './domain/tree';
 import { formatWikilink, parseWikilink } from './domain/wikilink';
 import type { WikilinkParts } from './domain/wikilink';
+import { hasNodeReference } from './node-data';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 /** Obsidian 库内回收站目录（vault 根下的 .trash） */
@@ -61,17 +62,14 @@ function deleteTargets(file: TFile): ReferenceTargets {
 }
 
 /**
- * 判断导图树是否含任何图片、附件或超链接节点。
+ * 判断导图树是否含任何文件引用节点（图片/附件/超链接/文档双链）。
  * 引用更新前先短路：纯文本导图无需建索引、无需遍历整树。
+ * 字段清单与引用预检共用 `NODE_REFERENCE_FIELDS`（node-data.ts）。
  */
-function treeHasImageOrAttachmentOrLink(tree: MindMapTreeNode): boolean {
+function treeHasReferences(tree: MindMapTreeNode): boolean {
 	let found = false;
 	walkTree(tree, (node) => {
-		if (
-			node.data?.image ||
-			node.data?.attachmentUrl ||
-			node.data?.hyperlink
-		) {
+		if (hasNodeReference(node.data)) {
 			found = true;
 			return false; // 命中即终止整树遍历
 		}
@@ -163,7 +161,7 @@ function updateReferences(
 	oldPath?: string,
 ): boolean {
 	// 短路：纯文本导图（无图片/附件/链接）无需建索引、无需遍历整树
-	if (!treeHasImageOrAttachmentOrLink(tree)) {
+	if (!treeHasReferences(tree)) {
 		return false;
 	}
 	// 性能：复用全库共享缓存索引（文件重命名/删除事件高频触发，避免每次全库重建）
@@ -209,6 +207,20 @@ function updateReferences(
 			// 兼容 [[note]] 与全路径 [[folder/note]]（后者无 .md 扩展名）
 			if (parts && targets.linkTargets.includes(parts.target)) {
 				node.data.hyperlink =
+					mode === 'rename' && !trashed
+						? renamedWikilink(parts, file)
+						: '';
+				changed = true;
+			}
+		}
+		// 文档双链通道（非引擎字段，引擎类型未声明故为 any）：与 hyperlink
+		// 同语义更新，否则重命名后引用失联。typeof 收窄以通过 lint 严格类型
+		const docData = node.data;
+		const docWikiLink: unknown = docData?.mdWikiLinkpath;
+		if (docData && typeof docWikiLink === 'string' && docWikiLink) {
+			const parts = parseWikilink(docWikiLink);
+			if (parts && targets.linkTargets.includes(parts.target)) {
+				docData.mdWikiLinkpath =
 					mode === 'rename' && !trashed
 						? renamedWikilink(parts, file)
 						: '';

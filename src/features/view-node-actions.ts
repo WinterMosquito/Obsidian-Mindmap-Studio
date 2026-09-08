@@ -1,64 +1,204 @@
 /**
- * 节点操作：增删改节点（链接/图片）、复制粘贴、删除。
+ * 节点操作：增删改节点（链接/文本/剪贴板/删除）。
  * 被工具栏（view-toolbar.ts）与右键菜单（view-context-menu.ts）共用。
+ *
+ * 图片操作已拆至 view-image-actions.ts 并由本文件 re-export 保持调用稳定：
+ *   addImageToActiveNode / applyNodeImage / removeNodeImage / normalizeImageReference
  */
-import { App, Notice } from 'obsidian';
+import { Notice, TFile } from 'obsidian';
 import {
 	ENGINE_COMMANDS,
 	forceRemoveNodeData,
-	getActiveNode,
 	getNodeDataString,
 	getRenderRoot,
 	setNodeText,
 } from '../mindmap';
-import {
-	createAspectSetNodeImageOptions,
-	createSetNodeImageOptions,
-} from '../images-path';
-import { saveImageToVault } from '../images-save';
-import { resolvePathToFile } from '../links-resolve';
-import { openImageEditorModal } from '../modal-image';
 import { openLinkEditorModal } from '../modal-link';
+import { markNodeNeedLayout } from '../mindmap';
+import { notifyError } from '../errors';
+import { resolvePathToFile } from '../links-resolve';
 import { t } from '../i18n';
-import {
-	isAppResourceUrl,
-	isExternalImageRef,
-	isHyperlinkProtocolUrl,
-} from '../domain/url';
-import { linkDisplayText } from '../domain/wikilink';
+import { isHyperlinkProtocolUrl } from '../domain/url';
+import { linkDisplayText, parseWikilink, wikilinkTargetIsAttachment } from '../domain/wikilink';
+import { requireActiveNode } from './view-common';
 import type { MdNodeData } from '../node-data';
-import type {
-	MindMapNode,
-	MindMapNodeData,
-} from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
+
+/** 删除文档双链通道字段（不重绘；调用方按需 render） */
+function clearDocWikiLink(node: MindMapNode): void {
+	const data = node.getData() as MdNodeData;
+	delete data.mdWikiLinkpath;
+	delete data.mdLinkText;
+}
+
+/**
+ * 文档双链：写 mdWikiLinkpath 通道（**不写**引擎 hyperlink）——引擎会为任何
+ * hyperlink 渲染原生链接图标，而文档双链应显示自绘文档页图标（见 mindmap.ts）。
+ * 与解析侧（md-outline 的 wiki 分支）保持同一通道，避免"文件里的链接有文档图标、
+ * 拖入/弹窗新建的却是原生链条图标"的不一致。
+ *
+ * @param oldDisplay 旧链接的可见文本：节点文本仍等于它时同步为新显示名
+ */
+export function applyDocWikiLink(
+	view: MindMapViewContext,
+	node: MindMapNode,
+	link: string,
+	label: string | undefined,
+	oldDisplay: string | null,
+): void {
+	const data = node.getData() as MdNodeData;
+	delete data.hyperlink;
+	delete data.hyperlinkTitle;
+	data.mdWikiLinkpath = link;
+	data.mdLinkStyle = 'wiki';
+	const display = label ?? linkDisplayText(link);
+	data.mdLinkText = display;
+	markNodeNeedLayout(node);
+	// 与 Obsidian 双链对齐：可见文本同步到节点文本（仅空文本或仍是旧显示名时）
+	const text = getNodeDataString(node, 'text');
+	if (display && (!text.trim() || text.trim() === oldDisplay)) {
+		applyNodeText(view, node, display);
+	}
+	view.mindMap?.render();
+	view.scheduleSave();
+}
+
+/**
+ * 把库内附件挂到节点（拖入附件时调用）：走引擎 attachmentUrl 通道
+ * （原生回形针图标，点击经 node_attachmentClick 打开）+ mdAttachmentLinkpath
+ * 回写通道，与解析侧 `[[报告.pdf]]` 语义一致；同时清掉超链接字段，
+ * 避免回形针与链接图标双显。
+ */
+export function applyNodeAttachment(
+	view: MindMapViewContext,
+	node: MindMapNode,
+	file: TFile,
+): void {
+	const data = node.getData() as MdNodeData;
+	data.attachmentUrl = view.app.vault.getResourcePath(file);
+	data.attachmentName = file.name;
+	// 回写用完整库内路径（basename 会被 Obsidian 去掉扩展名，无法定位附件）
+	data.mdAttachmentLinkpath = file.path;
+	data.mdLinkStyle = 'wiki';
+	delete data.hyperlink;
+	delete data.hyperlinkTitle;
+	delete data.mdWikiLinkpath;
+	delete data.mdLinkText;
+	markNodeNeedLayout(node);
+	view.mindMap?.render();
+	view.scheduleSave();
+}
+
+/**
+ * 非 URL、非笔记的链接（附件双链 `[[报告.pdf]]` / 库内路径）→ 引擎 attachmentUrl
+ * 通道（原生回形针图标，点击经 node_attachmentClick 打开），与解析侧同通道。
+ *
+ * 可见名（attachmentName + 节点文本）与文档双链同口径：显式 label > 双链别名
+ * > 末段文件名——`[[报告.pdf|说明]]` 显示「说明」，与 Obsidian 别名语义一致。
+ *
+ * @param oldDisplay 旧链接的可见文本：节点文本仍等于它时同步为新显示名
+ */
+function applyAttachmentLink(
+	view: MindMapViewContext,
+	node: MindMapNode,
+	link: string,
+	label: string | undefined,
+	oldDisplay: string | null,
+): void {
+	const data = node.getData() as MdNodeData;
+	delete data.hyperlink;
+	delete data.hyperlinkTitle;
+	delete data.mdWikiLinkpath;
+	const parsed = parseWikilink(link);
+	const linkpath = parsed?.target ?? link;
+	// 可见名优先级：显式 label（联想选择）> 双链别名（手输 `[[路径|别名]]`）> 末段文件名
+	const fallbackName = linkpath.split('/').pop() ?? linkpath;
+	const name = label ?? ((parsed?.alias ?? '') || fallbackName);
+	data.attachmentUrl = linkpath;
+	data.attachmentName = name;
+	data.mdAttachmentLinkpath = linkpath;
+	data.mdLinkStyle = 'wiki';
+	markNodeNeedLayout(node);
+	const text = getNodeDataString(node, 'text');
+	if (name && (!text.trim() || text.trim() === oldDisplay)) {
+		applyNodeText(view, node, name);
+	}
+	view.mindMap?.render();
+	view.scheduleSave();
+}
+
+// 图片操作：从 view-image-actions 重新导出，保持既有调用方 import 路径不变
+export {
+	removeNodeImage,
+	addImageToActiveNode,
+	applyNodeImage,
+	normalizeImageReference,
+} from './view-image-actions';
 
 /** 视图剪贴板（WeakMap 按视图持有：视图关闭后可回收；状态不暴露到 context） */
 const clipboards = new WeakMap<MindMapViewContext, MindMapNodeData>();
 
 /**
- * 取当前激活节点；无则提示「请先选择一个节点」并返回 null。
- * 工具栏/右键各入口共用的前置守卫（此前 3 处逐字重复）。
+ * 给当前激活节点添加链接（无节点时提示）。
+ *
+ * 自兜错误：本函数由工具栏/右键菜单以 `void addLinkToActiveNode(view)` 调用，
+ * 失败在此转成用户可见提示（与 view-paste / view-export / creation 同一约定），
+ * 调用方无需再挂 .catch，也不会产生未处理拒绝。
  */
-export function requireActiveNode(view: MindMapViewContext): MindMapNode | null {
-	const node = getActiveNode(view.mindMap);
-	if (!node) {
-		new Notice(t(view.lang, 'common.selectNodeFirst'));
+export async function addLinkToActiveNode(
+	view: MindMapViewContext,
+): Promise<void> {
+	try {
+		await performAddLink(view);
+	} catch (error) {
+		console.error('插入链接失败', error);
+		notifyError(view.lang, 'common.insertLinkFailed', error);
 	}
-	return node;
 }
 
-/** 给当前激活节点添加链接（无节点时提示） */
-export async function addLinkToActiveNode(view: MindMapViewContext): Promise<void> {
+/** 插入链接主体（异常由 addLinkToActiveNode 统一兜住） */
+async function performAddLink(view: MindMapViewContext): Promise<void> {
 	const node = requireActiveNode(view);
 	if (!node) {
 		return;
 	}
-	const current = getNodeDataString(node, 'hyperlink');
+	const current =
+		getNodeDataString(node, 'mdWikiLinkpath') ||
+		getNodeDataString(node, 'hyperlink');
 	const result = await openLinkEditorModal(view.app, current, view.lang);
 	if (result === null) {
 		return;
 	}
+	// 清空输入 = 清除链接：两个通道一并清除（文档双链不经引擎 hyperlink 字段）
+	if (!result.link) {
+		clearNodeHyperlink(view, node);
+		return;
+	}
+	// 图标分流（与解析侧同口径）：
+	//   URL / 协议链接 → 引擎 hyperlink（原生链接图标）
+	//   双链指向 .md 笔记 → mdWikiLinkpath（自绘文档页图标）
+	//   其余（附件双链 / 库内路径）→ attachmentUrl（原生回形针）
+	const wiki = parseWikilink(result.link);
+	const oldDisplay = current ? linkDisplayText(current) : null;
+	if (!isHyperlinkProtocolUrl(result.link)) {
+		const target = wiki?.target ?? result.link;
+		// 已解析到库内文件 → 按真实扩展名；未解析（如指向尚不存在的笔记）→ 按
+		// 目标串的扩展名判断（无扩展名/.md 视为笔记）
+		const file = resolvePathToFile(target, view.app);
+		const isDoc = file
+			? file.extension === 'md'
+			: !wikilinkTargetIsAttachment(target);
+		if (isDoc) {
+			applyDocWikiLink(view, node, result.link, result.label, oldDisplay);
+		} else {
+			applyAttachmentLink(view, node, result.link, result.label, oldDisplay);
+		}
+		return;
+	}
+	// 设置新链接前清除可能残留的文档双链通道，避免图标/序列化歧义
+	clearDocWikiLink(node);
+	markNodeNeedLayout(node);
 	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, result.link);
 	// URL/协议链接：仅添加超链接图标——不把 <url> 当作节点文本（尖括号内链接不渲染）。
 	if (result.link && isHyperlinkProtocolUrl(result.link)) {
@@ -77,7 +217,6 @@ export async function addLinkToActiveNode(view: MindMapViewContext): Promise<voi
 	// 仅当节点文本为空、或文本仍是旧链接的可见名（改链场景）时更新，
 	// 保留用户已有正文（正文节点只附加链接）。
 	const newDisplay = result.label ?? linkDisplayText(result.link);
-	const oldDisplay = current ? linkDisplayText(current) : null;
 	const text = getNodeDataString(node, 'text');
 	if (newDisplay && (!text.trim() || text.trim() === oldDisplay)) {
 		applyNodeText(view, node, newDisplay);
@@ -90,15 +229,6 @@ function applyNodeText(view: MindMapViewContext, node: MindMapNode, text: string
 	if (view.mindMap) {
 		setNodeText(view.mindMap, node, text);
 	}
-}
-
-/** 单独移除节点图片（不影响节点与其他数据） */
-export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): void {
-	view.mindMap?.execCommand(
-		ENGINE_COMMANDS.SET_NODE_IMAGE,
-		node,
-		createSetNodeImageOptions(null),
-	);
 }
 
 /**
@@ -118,104 +248,18 @@ export function clearNodeHyperlink(
 	view: MindMapViewContext,
 	node: MindMapNode,
 ): void {
-	const current = getNodeDataString(node, 'hyperlink');
+	const current =
+		getNodeDataString(node, 'hyperlink') ||
+		getNodeDataString(node, 'mdWikiLinkpath');
 	if (!current) {
 		return;
 	}
+	// 文档双链通道非引擎字段，先删；引擎命令只清 hyperlink
+	clearDocWikiLink(node);
+	markNodeNeedLayout(node);
 	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, '');
+	view.mindMap?.render();
 	view.scheduleSave();
-}
-
-/** 插入图片（需求 1 + 2）：统一固定尺寸；支持本地文件/剪贴板/URL */
-export async function addImageToActiveNode(view: MindMapViewContext): Promise<void> {
-	const node = requireActiveNode(view);
-	if (!node) {
-		return;
-	}
-	const current = getNodeDataString(node, 'image');
-	const result = await openImageEditorModal(
-		view.app,
-		current,
-		(file, maxSizeMB, nameOverride) =>
-			saveImageToVault({
-				app: view.app,
-				sourcePath: view.file?.path ?? '',
-				file,
-				maxSizeMB,
-				// 弹窗内剪贴板粘贴按 Obsidian 核心约定命名
-				filename: nameOverride,
-				lang: view.lang,
-			}),
-		view.lang,
-	);
-	if (result === null) {
-		return;
-	}
-	await applyNodeImage(view, node, result);
-}
-
-/**
- * 以统一高度、按图片原始比例设置节点图片（需求 1）：
- * 先探测图片原始尺寸，再以 custom:true 精确指定展示尺寸，
- * 使节点外框比例跟随图片比例（所有图片高度统一，宽度按比例）。
- *
- * 引用归一（与 Obsidian 图片引用语义对齐）：
- * - 库内路径（联想/手动输入/选择本地保存后）→ 显示用资源地址（app://），
- *   同时记录 mdImageTarget=库内路径（保存回写 ![[路径]]）；
- * - 已是 app://（拖入/粘贴）→ 反查库内路径记录 mdImageTarget；
- * - 外链（http/data/blob/file）→ 原样显示，无 md 回写目标。
- */
-export async function applyNodeImage(
-	view: MindMapViewContext,
-	node: MindMapNode,
-	url: string,
-): Promise<void> {
-	const { display, mdTarget } = normalizeImageReference(url, view.app);
-	const options = await createAspectSetNodeImageOptions(display);
-	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_IMAGE, node, options);
-	// 记录/清除 md 回写目标（引擎不识别该字段，仅序列化用）
-	const data = node.getData() as MdNodeData;
-	const oldTarget = data.mdImageTarget ?? '';
-	const text = typeof data.text === 'string' ? data.text : '';
-	// 纯图节点的占位文本（旧图文件名）随换图同步，避免回写残留旧名
-	const oldName = oldTarget.split('/').pop() ?? '';
-	if (oldName && text === oldName) {
-		data.text = mdTarget ? (mdTarget.split('/').pop() ?? '') : '';
-		data.mdDerivedText = data.text;
-	}
-	if (mdTarget) {
-		data.mdImageTarget = mdTarget;
-	} else {
-		delete data.mdImageTarget;
-	}
-	view.scheduleSave();
-}
-
-/** 引用归一：显示地址 + md 回写目标 */
-function normalizeImageReference(
-	url: string,
-	app: App,
-): { display: string; mdTarget: string | null } {
-	if (!url) {
-		return { display: '', mdTarget: null };
-	}
-	if (isAppResourceUrl(url)) {
-		// 资源地址：反查库内路径（md 回写目标）
-		const file = resolvePathToFile(url, app);
-		return { display: url, mdTarget: file?.path ?? null };
-	}
-	if (isExternalImageRef(url)) {
-		return { display: url, mdTarget: null };
-	}
-	// 其余按库内路径：统一入口解析（路径直查/basename/索引兜底，
-	// 与 AGENTS.md「解析只走 resolvePathToFile」一致，lint 已机械强制）。
-	// 命中→资源地址显示 + 规范路径记录；未命中→原样显示并保留输入为
-	// 回写目标（Obsidian 语义允许引用暂不存在的库内路径）。
-	const file = resolvePathToFile(url, app);
-	return {
-		display: file ? app.vault.getResourcePath(file) : url,
-		mdTarget: file ? file.path : url.trim(),
-	};
 }
 
 /**

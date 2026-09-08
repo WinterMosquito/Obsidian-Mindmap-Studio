@@ -29,6 +29,8 @@ function fakeApp(files: TFile[], opts: FakeAppOptions = {}): App {
 		vault: {
 			getFiles: () => files,
 			getAbstractFileByPath: (p: string) => byPath.get(p) ?? null,
+			getFileByPath: (p: string) => byPath.get(p) ?? null,
+			getFolderByPath: () => null,
 			getResourcePath: (f: TFile) => `app://fake/${f.path}`,
 			adapter: opts.basePath ? new FakeAdapter(opts.basePath) : new FileSystemAdapter(),
 		},

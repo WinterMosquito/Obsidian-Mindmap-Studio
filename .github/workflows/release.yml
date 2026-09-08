@@ -38,13 +38,29 @@ jobs:
                       main.js
                       ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}
 
+            - name: Verify tag matches manifest version
+              run: |
+                  tag="${GITHUB_REF#refs/tags/}"
+                  version="$(node -p "require('./manifest.json').version")"
+                  if [ "$tag" != "$version" ]; then
+                    echo "::error::Tag '$tag' does not match manifest.json version '$version'. Obsidian resolves updates by tag; mismatched tags publish the wrong version."
+                    exit 1
+                  fi
+
             - name: Create release
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   tag="${GITHUB_REF#refs/tags/}"
+                  notes_file="docs/release-notes-${tag}.md"
+                  if [ -f "$notes_file" ]; then
+                    notes_args=(--notes-file "$notes_file")
+                  else
+                    notes_args=(--generate-notes)
+                  fi
 
                   gh release create "$tag" \
                     --title="$tag" \
                     --draft \
+                    "${notes_args[@]}" \
                     main.js manifest.json ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}

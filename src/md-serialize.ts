@@ -25,9 +25,35 @@ function needsDestBraces(dest: string): boolean {
 
 /** 行内 token 渲染：链接（仅合成路径使用） */
 function renderHyperlink(data: MdNodeData): string | null {
+	// 双链附件（attachmentUrl 通道）：重建 wikilink。优先取原始 linkpath
+	// （attachmentUrl 可能已被视图层重写为解析后的库内路径）；合成路径本就
+	// 是「文本被编辑后」的规范化回写，别名细节由 rawOk 逐字回写保真。
+	// mdEmbed：原文用的是嵌入语法 `![[附件]]`（非图片附件），补回 `!` 保持往返。
+	const attachUrl = data.attachmentUrl;
+	if (typeof attachUrl === 'string' && attachUrl) {
+		const linkpath =
+			typeof data.mdAttachmentLinkpath === 'string' && data.mdAttachmentLinkpath
+				? data.mdAttachmentLinkpath
+				: attachUrl;
+		// 别名（`[[报告.pdf|说明]]`）：解析侧存于 attachmentName；与默认显示名
+		// （末段文件名）不同才回写 `|别名`，无别名不凭空添加。
+		// 嵌入语法（`![[…]]`）的管道是尺寸参数位，不加别名。
+		const defaultName = linkpath.split('/').pop() ?? linkpath;
+		const rawName = data.attachmentName;
+		const alias =
+			!data.mdEmbed &&
+			typeof rawName === 'string' &&
+			rawName !== '' &&
+			rawName !== defaultName
+				? rawName
+				: undefined;
+		return `${data.mdEmbed ? '!' : ''}${formatWikilink(linkpath, alias)}`;
+	}
 	const hyperlink = data.hyperlink;
 	if (typeof hyperlink !== 'string' || !hyperlink) {
-		return null;
+		// 文档双链（mdWikiLinkpath 通道）：字段存的就是完整 wikilink，原样回写
+		const wikiLink = data.mdWikiLinkpath;
+		return typeof wikiLink === 'string' && wikiLink ? wikiLink : null;
 	}
 	// wiki 双链：原样保留
 	if (hyperlink.startsWith('[[')) {
@@ -43,6 +69,16 @@ function renderHyperlink(data: MdNodeData): string | null {
 	// URL / 协议链接 → 直接写为标准 autolink <url>（Obsidian 识别为可点链接，
 	// 含空格/括号的 URL 也安全；无需 [label](<url>)）
 	if (isSchemeUrl(hyperlink)) {
+		// 源行本就是 `[显示文本](url)`（mdLinkText 存了自定义文本且不等于 URL）
+		// → 保持 md 链接形态（官方 Internal links 语义：显示文本可自定义）；
+		// 否则写 autolink（`<url>`/裸 URL 的 icon-only 形态）。
+		const rawLinkLabel = data.mdLinkText;
+		const linkLabel =
+			typeof rawLinkLabel === 'string' && rawLinkLabel ? rawLinkLabel : '';
+		if (linkLabel && linkLabel !== hyperlink) {
+			const dest = needsDestBraces(hyperlink) ? `<${hyperlink}>` : hyperlink;
+			return `[${linkLabel}](${dest})`;
+		}
 		return `<${hyperlink}>`;
 	}
 	if (data.mdLinkStyle === 'md') {
@@ -55,18 +91,39 @@ function renderHyperlink(data: MdNodeData): string | null {
 	return formatWikilink(hyperlink);
 }
 
-/** 图片自定义尺寸的回写宽度（官方嵌入语法 `|宽度`；无自定义返回 null） */
-function customImageWidth(data: MdNodeData): number | null {
+/**
+ * 图片自定义尺寸的回写参数（官方嵌入语法 `|宽度` / `|宽x高`；无自定义返回 null）。
+ * 高度只在源行本就写了显式高度（`mdImageHeight`）时回写：拖拽调宽只写
+ * `|宽度`、等比缩放（保持既有行为），而 `|300x150` 这类显式双参数在编辑
+ * 节点后仍按当前尺寸写回 `|宽x高`，避免高度信息丢失。
+ */
+function customImageSize(
+	data: MdNodeData,
+): { width: number; height: number | null } | null {
 	const size = data.imageSize;
 	if (
-		size?.custom &&
-		typeof size.width === 'number' &&
-		Number.isFinite(size.width) &&
-		size.width > 0
+		!size?.custom ||
+		typeof size.width !== 'number' ||
+		!Number.isFinite(size.width) ||
+		size.width <= 0
 	) {
-		return Math.round(size.width);
+		return null;
 	}
-	return null;
+	const explicitHeight =
+		typeof data.mdImageHeight === 'number' && data.mdImageHeight > 0;
+	const height =
+		explicitHeight &&
+		typeof size.height === 'number' &&
+		Number.isFinite(size.height) &&
+		size.height > 0
+			? Math.round(size.height)
+			: null;
+	return { width: Math.round(size.width), height };
+}
+
+/** 图片自定义尺寸的回写宽度（`|宽度`；无自定义返回 null） */
+function customImageWidth(data: MdNodeData): number | null {
+	return customImageSize(data)?.width ?? null;
 }
 
 /** 行内 token 渲染：图片（仅合成路径使用） */
@@ -75,10 +132,14 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 	if (typeof image !== 'string' || !image) {
 		return null;
 	}
-	// 官方嵌入尺寸参数：`|宽度`（仅宽、等比缩放）。见官方帮助
-	// 「Embed files」![[图|300]] 与「Basic formatting syntax」![alt|300](url)。
-	const width = customImageWidth(data);
-	const sizeSuffix = width !== null ? `|${width}` : '';
+	// 官方嵌入尺寸参数：`|宽度`（仅宽、等比缩放）或 `|宽x高`（显式双参数，
+	// 见官方帮助「Embed files」`![[图|640x480]]` / `![alt|100x145](url)`）。
+	const size = customImageSize(data);
+	const sizeSuffix =
+		size === null ? '' : `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
+	// 外链 md 图片的 alt：官方语法 `![alt|宽x高](url)`，alt 与尺寸共存
+	const rawAlt = data.mdImageAlt;
+	const alt = typeof rawAlt === 'string' ? rawAlt : '';
 	const target = data.mdImageTarget;
 	if (target && image === target) {
 		return `![[${target}${sizeSuffix}]]`;
@@ -90,8 +151,8 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 		}
 	}
 	if (isRemoteOrDataUrl(image)) {
-		// 外链 md 图片：官方语法尺寸在标签尾部（空 alt 即 ![|300](url)）
-		return `![${sizeSuffix}](${image})`;
+		// 外链 md 图片：官方语法 alt 在前、尺寸在标签尾部（![alt|300](url)）
+		return `![${alt}${sizeSuffix}](${image})`;
 	}
 	return `![[${image}${sizeSuffix}]]`;
 }
@@ -121,7 +182,11 @@ function hyperlinkFeature(hyperlink: string): string | null {
 function nodeLinkDisplay(data: MdNodeData): string | null {
 	const hyperlink = data.hyperlink;
 	if (typeof hyperlink !== 'string' || !hyperlink) {
-		return null;
+		// 文档双链（mdWikiLinkpath 通道）：与 hyperlink 同语义取可见文本
+		const wikiLink = data.mdWikiLinkpath;
+		return typeof wikiLink === 'string' && wikiLink
+			? linkDisplayText(wikiLink)
+			: null;
 	}
 	if (data.mdLinkStyle === 'md') {
 		const rawLabel = data.mdLinkText;
@@ -186,10 +251,31 @@ function rawOk(
 			return false; // 图新增/更换，需合成
 		}
 	}
-	if (typeof data.hyperlink === 'string' && data.hyperlink) {
-		const feature = hyperlinkFeature(data.hyperlink);
+	const hyperlink = typeof data.hyperlink === 'string' ? data.hyperlink : '';
+	const attachUrl =
+		typeof data.attachmentUrl === 'string' ? data.attachmentUrl : '';
+	const wikiLink =
+		typeof data.mdWikiLinkpath === 'string' ? data.mdWikiLinkpath : '';
+	if (hyperlink) {
+		const feature = hyperlinkFeature(hyperlink);
 		if (feature && !raw.includes(feature)) {
 			return false; // 链接新增/更新，需合成
+		}
+	} else if (attachUrl) {
+		// 双链附件通道：attachmentUrl 可能被视图层重写为解析路径，
+		// 特征优先用原始 linkpath（与 mdRaw 中的引用一致）
+		const feature =
+			typeof data.mdAttachmentLinkpath === 'string' && data.mdAttachmentLinkpath
+				? data.mdAttachmentLinkpath
+				: attachUrl;
+		if (feature && !raw.includes(feature)) {
+			return false; // 附件链接新增/更新，需合成
+		}
+	} else if (wikiLink) {
+		// 文档双链通道：取目标特征串（去别名）与 mdRaw 比对，与 hyperlink 同口径
+		const feature = hyperlinkFeature(wikiLink);
+		if (feature && !raw.includes(feature)) {
+			return false; // 文档链接新增/更新，需合成
 		}
 	} else if (
 		// 段落（plain）节点解析时本就不携带 hyperlink（多行文本无引擎单链），

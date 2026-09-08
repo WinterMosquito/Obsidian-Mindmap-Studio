@@ -10,7 +10,7 @@
  * mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
  */
 import { Plugin, TFile, TFolder } from 'obsidian';
-import { VIEW_TYPE } from './constants';
+import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS } from './constants';
 import { createDebouncer } from './concurrency';
 import {
 	MindMapStudioSettings,
@@ -25,10 +25,15 @@ import {
 	openAsMindMap,
 	setOpenAsPreferenceHook,
 } from './md-open';
-import { registerCommands } from './commands';
+import {
+	addMindMapRibbonIcon,
+	refreshCommandLabels,
+	registerCommands,
+} from './commands';
 import { t } from './i18n';
 import { VaultSyncService } from './vault-sync';
 import { ViewStateStore } from './view-state';
+import { notifyError } from './errors';
 import { PluginDataWriter } from './persistence';
 import { ElementStatusBarService } from './status-bar';
 import type { StatusBarService } from './status-bar';
@@ -37,8 +42,10 @@ import { injectIntoFileCreator } from './features/file-creator';
 import { OpenAsPreferenceRestorer } from './open-as-restore';
 
 export default class MindMapStudioPlugin extends Plugin {
-	settings!: MindMapStudioSettings;
+	override settings!: MindMapStudioSettings;
 	statusBarEl: HTMLElement | null = null;
+	/** 丝带图标元素（官方无移除 API；语言变更时就地更新提示文案） */
+	ribbonEl: HTMLElement | null = null;
 	/**
 	 * 状态栏服务（节点计数展示/清空）：DOM 与 i18n 格式化归插件层，
 	 * 视图侧只广播计数；元素/语言经惰性取值器获取，onunload 后静默。
@@ -48,16 +55,20 @@ export default class MindMapStudioPlugin extends Plugin {
 		() => this.settings.language,
 	);
 	/**
-	 * data.json 写盘器（串行队列 + 写前重读合并 + 内部吞错）。
-	 * 先于 viewState 声明：字段按声明顺序初始化，viewState 的持久化回调依赖它。
+	 * data.json 写盘器（串行队列 + 写前重读合并 + 错误回调注入 NotifyError）。
+	 * onError 闭包在调用时读取当前 settings.language（构造时 settings 尚未加载）。
 	 */
-	private readonly dataWriter = new PluginDataWriter(this);
+	private readonly dataWriter = new PluginDataWriter(this, {
+		onError: (error) => {
+			notifyError(this.settings.language, 'save.pluginDataFailed', error);
+		},
+	});
 	/**
 	 * 设置落盘防抖：设置面板高频控件（滑块拖动每档都触发 setControlValue）
 	 * 若逐次写盘，会形成「整文件重读+重写」的突发串行队列。内存设置即时
 	 * 生效（sanitizeSettings 不经防抖），仅磁盘写入合并突发。
 	 */
-	private readonly settingsPersistDebouncer = createDebouncer(400);
+	private readonly settingsPersistDebouncer = createDebouncer(SETTINGS_PERSIST_DEBOUNCE_MS);
 	/**
 	 * 视图状态（布局/视口，按文件路径）——与设置合并写 data.json。
 	 * persist 回调返回写盘 Promise（write 内部吞错不会拒绝），
@@ -65,11 +76,11 @@ export default class MindMapStudioPlugin extends Plugin {
 	 */
 	viewState = new ViewStateStore((state) => {
 		return this.dataWriter.write({ viewState: state });
-	}, 600);
+	}, VIEW_STATE_PERSIST_MS);
 	/** Vault 文件事件同步服务（rename/delete/create） */
 	private vaultSync!: VaultSyncService;
 
-	async onload(): Promise<void> {
+	override async onload(): Promise<void> {
 		await this.loadSettings();
 
 		// 「以思维导图打开」→ 记录打开方式偏好（双向：最后一次主动选择决定下次）
@@ -88,6 +99,7 @@ export default class MindMapStudioPlugin extends Plugin {
 
 		// 命令面板命令与丝带图标（用户入口）
 		registerCommands(this);
+		this.ribbonEl = addMindMapRibbonIcon(this);
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.setText(t(this.settings.language, 'common.mindMap'));
@@ -193,7 +205,7 @@ export default class MindMapStudioPlugin extends Plugin {
 		this.addSettingTab(new MindMapStudioSettingTab(this.app, this));
 	}
 
-	onunload(): void {
+	override onunload(): void {
 		// 排空未落盘的视图状态（防抖定时器）：同步 onunload 无法 await 写盘，
 		// 尽力启动在途写盘（flushNow 返回 PluginDataWriter.write 的 Promise，
 		// write 内部吞错，无未处理拒绝风险）。
@@ -256,6 +268,22 @@ export default class MindMapStudioPlugin extends Plugin {
 			if (view instanceof MindMapView) {
 				view.refreshToolbar();
 				view.refreshMindMap();
+			}
+		});
+	}
+
+	/**
+	 * 语言变更后刷新用户入口文案：命令面板（注册时缓存 name）与丝带提示
+	 * 重注册/更新，状态栏与已打开视图的搜索栏就地刷新。
+	 * 视图工具栏已由 applySettingsToViews（language 属 LIVE_REFRESH 键）重建。
+	 */
+	refreshLanguageUi(): void {
+		refreshCommandLabels(this, this.ribbonEl);
+		this.statusBarEl?.setText(t(this.settings.language, 'common.mindMap'));
+		this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
+			const view = leaf.view;
+			if (view instanceof MindMapView) {
+				view.refreshSearchBarLabels();
 			}
 		});
 	}

@@ -1,6 +1,8 @@
 /**
  * 新建文件名称输入弹窗（需求 2）：
  * 创建时允许用户直接修改文件名（预填默认名，全选便于改写）。
+ * 空白名称无意义：确认按钮随输入实时置灰（Enter 路径由 confirm 内守卫兜住，
+ * 只重新聚焦、不关闭），避免「点击确定无反应」的死按钮。
  * @returns 输入的名称（已去除首尾空白）；取消返回 null
  * 从 modals.ts 拆出。
  */
@@ -36,6 +38,8 @@ export function openNameInputModal(
 		const confirm = (): void => {
 			const name = input.value.trim();
 			if (!name) {
+				// 空白名称无意义：确认按钮已随输入禁用（见下方 syncConfirmState），
+				// 此处兜住 Enter 路径——只重新聚焦、不关闭（不留下悬空的 Promise）。
 				input.focus();
 				return;
 			}
@@ -60,7 +64,19 @@ export function openNameInputModal(
 			settle(null);
 			modal.close();
 		});
-		createButton(buttons, t(lang, 'modal.confirm'), 'primary', confirm);
+		const confirmButton = createButton(
+			buttons,
+			t(lang, 'modal.create'),
+			'primary',
+			confirm,
+		);
+		// 空白名称时置灰确认按钮：否则点击「确定」既不关闭也无提示，用户会以为
+		// 按钮坏了（历史行为）。输入后即时恢复，Enter 路径由 confirm 内守卫兜住。
+		const syncConfirmState = (): void => {
+			confirmButton.setDisabled(input.value.trim() === '');
+		};
+		syncConfirmState();
+		input.addEventListener('input', syncConfirmState);
 		modal.open();
 	});
 }

@@ -37,11 +37,16 @@ export function createButton(
 
 /**
  * 弹窗 Promise settle 守卫（modal-image / modal-link / modal-name 样板收口）：
- * - settle 幂等：按钮先 settle 再 close 时，onClose 的兜底是 no-op；
- * - onClose 兜底：Esc / 点击遮罩等非按钮路径关闭时 Promise 必然 resolve，
+ * - settle 幂等：按钮先 settle 再 close 时，关闭回调的兜底是 no-op；
+ * - 关闭兜底：Esc / 点击遮罩等非按钮路径关闭时 Promise 必然 resolve，
  *   调用方 await 不会永久挂起。
+ *
+ * 兜底经官方 `Modal.setCloseCallback`（1.10+，本项目 minAppVersion 1.13.0）注册，
+ * **不覆写 `modal.onClose`**——覆写会盖掉调用方/子类已有的 onClose 实现
+ * （官方 setCloseCallback 与 onClose 并存，语义上就是「关闭时额外做的事」）。
+ *
  * 注意先 settle 再 modal.close() 的顺序约定由调用方保持
- * （close 同步触发 onClose，若先 close 会被兜底 settle(null) 抢先）。
+ * （close 同步触发关闭回调，若先 close 会被兜底 settle(null) 抢先）。
  */
 export function createModalSettle<T>(
 	modal: Modal,
@@ -55,7 +60,7 @@ export function createModalSettle<T>(
 		settled = true;
 		resolve(value);
 	};
-	modal.onClose = () => settle(null);
+	modal.setCloseCallback(() => settle(null));
 	return settle;
 }
 
@@ -115,7 +120,7 @@ export class VaultFileSuggest extends AbstractInputSuggest<TFile> {
 		path.addClass('mindmap-link-suggest-path');
 	}
 
-	selectSuggestion(file: TFile, _evt: MouseEvent | KeyboardEvent): void {
+	override selectSuggestion(file: TFile, _evt: MouseEvent | KeyboardEvent): void {
 		this.onChoose(file);
 	}
 }

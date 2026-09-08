@@ -63,10 +63,11 @@ export interface SaveImageOptions {
 }
 
 /**
- * Obsidian 核心的粘贴图片命名约定：`Pasted image YYYYMMDDHHMMSS`。
- * 见官方帮助「Editing and formatting/Attachments」——粘贴的附件由 Obsidian
- * 在默认附件位置创建文件；核心实际命名即此前缀 + 秒级时间戳（不本地化），
- * 用户的工作流（搜索、反链、笔记引用）依赖该约定，故对齐。
+ * 粘贴图片命名约定：`Pasted image YYYYMMDDHHMMSS`（与 Obsidian 核心粘贴
+ * 附件时的实际命名一致，不本地化）。官方帮助「Editing and formatting /
+ * Attachments」只规定「粘贴的附件存到默认附件位置」，未规定文件名格式；
+ * 此处对齐的是核心实际行为（社区惯例），便于用户既有工作流（搜索/引用）
+ * 保持一致。
  */
 export function buildPastedImageName(now = new Date()): string {
 	const pad = (n: number): string => String(n).padStart(2, '0');
@@ -145,8 +146,10 @@ async function saveImageToVaultInner({
 		// 也避免并发/历史同名文件被覆盖。
 		let retry = 0;
 		while (
-			// eslint-disable-next-line no-restricted-syntax -- 重名序号兜底是存在性检查，非文件解析
-			app.vault.getAbstractFileByPath(availablePath) &&
+			// 重名兜底是存在性检查（同名文件或目录都算占用），非文件解析：
+			// 类型化 getter 成对使用（官方推荐，替代易混淆的 getAbstractFileByPath）
+			(app.vault.getFileByPath(availablePath) ??
+				app.vault.getFolderByPath(availablePath)) &&
 			retry < 100
 		) {
 			retry++;
@@ -161,8 +164,8 @@ async function saveImageToVaultInner({
 		const folder = targetPath.substring(0, targetPath.lastIndexOf('/'));
 		if (
 			folder &&
-			// eslint-disable-next-line no-restricted-syntax -- 目录缺失判断是存在性检查，非文件解析
-			!app.vault.getAbstractFileByPath(folder)
+			// 目录缺失判断是存在性检查，非文件解析（类型化 getter，官方推荐）
+			!app.vault.getFolderByPath(folder)
 		) {
 			try {
 				await app.vault.createFolder(folder);

@@ -24,6 +24,7 @@
  * - engineEvents 随引擎实例销毁，无跨实例泄漏。
  */
 import { walkTree } from '../domain/tree';
+import { DRAG_TARGET_RADIUS_PX } from '../constants';
 import {
 	getDragDropState,
 	getDrawTransform,
@@ -39,10 +40,16 @@ import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 
 /**
- * 识别范围：以节点中心为圆心的均匀半径（画布视口 px，缩放一致）。
+ * 识别范围：以节点中心为圆心的均匀半径（画布视口 CSS 像素，缩放一致）。
  * 与节点大小无关——大小节点捕获域一致；半径覆盖典型兄弟间距 1~2 个节点。
+ *
+ * 为什么不乘 devicePixelRatio？整条坐标链都在 CSS 像素空间内：
+ *   event.clientX/Y → CSS px（浏览器已归一化）
+ *   mindMap.toPos() → 画布视口坐标（boundingRect 减 + scale 除）
+ *   nodeViewportCenter() → 同一视口空间（transform 同 scale/translate）
+ * 三者空间一致，120 CSS px 在任何屏幕上视觉大小相同。
+ * 常量值集中在 constants.ts（DRAG_TARGET_RADIUS_PX）。
  */
-export const TARGET_RADIUS_PX = 120;
 
 /** 画布视口空间坐标（toPos 空间，与缩放/平移后的节点位置同系） */
 interface ViewPoint {
@@ -230,7 +237,7 @@ function handleMove(view: MindMapViewContext, session: AssistSession, event: Mou
 			});
 		}
 	}
-	const nearest = pickNearestNode(anchors, point, TARGET_RADIUS_PX, (anchor) => anchor.point);
+	const nearest = pickNearestNode(anchors, point, DRAG_TARGET_RADIUS_PX, (anchor) => anchor.point);
 	if (!nearest) {
 		setHighlight(view, session, null);
 		return;
@@ -251,7 +258,9 @@ export function setupDragTargetAssist(view: MindMapViewContext): void {
 	if (!mindMap) {
 		return;
 	}
-	sessions.set(view, null);
+	// 引擎重建（refresh/切回 Markdown）可能发生在拖拽会话进行中：先收尾旧
+	// 会话，避免残留的 window 监听与旧节点引用作用于新引擎实例。
+	endSession(view);
 	view.engineEvents.onEngine(mindMap, 'node_dragging', (...args: unknown[]) => {
 		// 引擎在拖拽每次 mousemove 发出；首帧建立会话并挂临时监听
 		if (sessions.get(view)) {
@@ -295,4 +304,16 @@ export function setupDragTargetAssist(view: MindMapViewContext): void {
 	view.engineEvents.onEngine(mindMap, 'node_dragend', () => {
 		endSession(view);
 	});
+}
+
+/**
+ * 视图关闭时的收尾：撤销进行中的拖拽会话。
+ *
+ * 会话的 window mousemove/mouseup 是「拖拽期间动态注册、松手即移除」的临时
+ * 监听，不经 engineEvents/viewEvents 记录——拖拽中途关闭视图（快捷键关标签页、
+ * 切回 Markdown）时不会收到 mouseup，必须由视图 onClose 显式收尾，否则监听
+ * 泄漏且继续对已销毁视图求值。
+ */
+export function teardownDragTargetAssist(view: MindMapViewContext): void {
+	endSession(view);
 }

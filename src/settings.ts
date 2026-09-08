@@ -1,11 +1,26 @@
+import { App, Plugin, PluginSettingTab, type SettingDefinitionItem } from 'obsidian';
 import {
-	App,
-	PluginSettingTab,
-	type SettingDefinitionItem,
-} from 'obsidian';
-import type MindMapStudioPlugin from './main';
-import { LAYOUT_OPTIONS, THEME_OPTIONS } from './constants';
+	EXPORT_SCALE_MAX,
+	EXPORT_SCALE_MIN,
+	LAYOUT_OPTIONS,
+	PERFORMANCE_THRESHOLD_MAX,
+	PERFORMANCE_THRESHOLD_MIN,
+	THEME_OPTIONS,
+} from './constants';
 import { Language, LANGUAGE_OPTIONS, t } from './i18n';
+
+/**
+ * MindMapStudioSettingTab 对宿主插件的窄化契约。
+ * 仅包含设置面板实际使用的成员（读写设置 + 持久化 + 视图刷新）。
+ * 替代此前的 MindMapStudioPlugin 具体类引用，打破 main ↔ settings 循环依赖。
+ */
+interface IPluginSettingsHost {
+	settings: MindMapStudioSettings;
+	scheduleSettingsPersist(): void;
+	applySettingsToViews(): void;
+	/** 语言变更后刷新命令面板/丝带/状态栏/搜索栏文案 */
+	refreshLanguageUi(): void;
+}
 
 /** 插件设置 */
 export interface MindMapStudioSettings {
@@ -59,19 +74,48 @@ export function sanitizeSettings(
 		const value = raw[key];
 		return typeof value === 'boolean' ? value : undefined;
 	};
+	/** 白名单取值（布局/主题等枚举）：不在清单内即视为非法 → 回退默认 */
+	const pickFrom = (
+		key: keyof MindMapStudioSettings,
+		allowed: readonly { value: string }[],
+	): string | undefined => {
+		const value = pickString(key);
+		return value && allowed.some((option) => option.value === value)
+			? value
+			: undefined;
+	};
+	/** 数值钳制（含取整）：坏值不直达引擎/导出（如手改 data.json 的 99） */
+	const pickClampedInt = (
+		key: keyof MindMapStudioSettings,
+		min: number,
+		max: number,
+	): number | undefined => {
+		const value = pickNumber(key);
+		if (value === undefined) {
+			return undefined;
+		}
+		return Math.min(max, Math.max(min, Math.round(value)));
+	};
 	const language = pickString('language');
 	return {
 		defaultLayout:
-			pickString('defaultLayout') ?? DEFAULT_SETTINGS.defaultLayout,
-		defaultTheme: pickString('defaultTheme') ?? DEFAULT_SETTINGS.defaultTheme,
+			pickFrom('defaultLayout', LAYOUT_OPTIONS) ??
+			DEFAULT_SETTINGS.defaultLayout,
+		defaultTheme:
+			pickFrom('defaultTheme', THEME_OPTIONS) ?? DEFAULT_SETTINGS.defaultTheme,
 		autoSave: pickBool('autoSave') ?? DEFAULT_SETTINGS.autoSave,
-		exportScale: pickNumber('exportScale') ?? DEFAULT_SETTINGS.exportScale,
+		exportScale:
+			pickClampedInt('exportScale', EXPORT_SCALE_MIN, EXPORT_SCALE_MAX) ??
+			DEFAULT_SETTINGS.exportScale,
 		enableDrag: pickBool('enableDrag') ?? DEFAULT_SETTINGS.enableDrag,
 		performanceMode:
 			pickBool('performanceMode') ?? DEFAULT_SETTINGS.performanceMode,
 		performanceThreshold:
-			pickNumber('performanceThreshold') ??
-			DEFAULT_SETTINGS.performanceThreshold,
+			pickClampedInt(
+				'performanceThreshold',
+				PERFORMANCE_THRESHOLD_MIN,
+				PERFORMANCE_THRESHOLD_MAX,
+			) ?? DEFAULT_SETTINGS.performanceThreshold,
 		language:
 			language === 'zh' || language === 'en'
 				? language
@@ -91,11 +135,10 @@ const LIVE_REFRESH_SETTING_KEYS = new Set<string>([
 
 /** 设置面板 */
 export class MindMapStudioSettingTab extends PluginSettingTab {
-	plugin: MindMapStudioPlugin;
+	declare plugin: Plugin & IPluginSettingsHost;
 
-	constructor(app: App, plugin: MindMapStudioPlugin) {
+	constructor(app: App, plugin: Plugin & IPluginSettingsHost) {
 		super(app, plugin);
-		this.plugin = plugin;
 	}
 
 	/** 当前界面语言 */
@@ -108,7 +151,7 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 	 * 新版本用它渲染设置页并获得设置搜索支持；
 	 * 1.13 以下自动忽略本方法、回退到 display()。
 	 */
-	getSettingDefinitions(): SettingDefinitionItem[] {
+	override getSettingDefinitions(): SettingDefinitionItem[] {
 		const layoutOptions = Object.fromEntries(
 			LAYOUT_OPTIONS.map((option) => [
 				option.value,
@@ -178,8 +221,8 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 						control: {
 							type: 'slider',
 							key: 'performanceThreshold',
-							min: 100,
-							max: 2000,
+							min: PERFORMANCE_THRESHOLD_MIN,
+							max: PERFORMANCE_THRESHOLD_MAX,
 							step: 100,
 						},
 					},
@@ -189,8 +232,8 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 						control: {
 							type: 'slider',
 							key: 'exportScale',
-							min: 1,
-							max: 4,
+							min: EXPORT_SCALE_MIN,
+							max: EXPORT_SCALE_MAX,
 							step: 1,
 						},
 					},
@@ -217,11 +260,13 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 		if (LIVE_REFRESH_SETTING_KEYS.has(key)) {
 			this.plugin.applySettingsToViews();
 		}
-		// 语言切换后重渲染设置面板以刷新语言。
+		// 语言切换后：命令面板/丝带/状态栏/搜索栏文案随语言刷新，
+		// 并重渲染设置面板以刷新语言。
 		// Obsidian 1.13+ 由 getSettingDefinitions() 声明式渲染，display() 已被弃用；
 		// 直接调用 display() 会清空容器并叠加一套命令式控件，与声明式渲染冲突，
 		// 导致设置面板时而中文时而英文。改用 update() 重新求值并重渲染（仅 1.13+ 走这里）。
 		if (key === 'language') {
+			this.plugin.refreshLanguageUi();
 			this.update();
 		}
 	}

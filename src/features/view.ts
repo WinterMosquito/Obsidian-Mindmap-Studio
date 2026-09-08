@@ -1,71 +1,56 @@
 /**
- * 思维导图视图（Controller）：Obsidian 生命周期、DOM 装配、跳转与外观委托。
+ * 思维导图视图（Controller）：Obsidian 生命周期、DOM 装配与编排委托。
  *
- * 第 4 步拆分后的职责边界：
+ * 第 6 步拆分后的职责边界（view.ts 已是纯编排壳）：
  * - DocumentService / SavePipeline（services/document-service.ts）
  *   md 文档读取解析与保存管线（防抖 + 串行排空 + 卸载快照兜底）；
  * - EngineController（services/engine-controller.ts）
- *   引擎实例生命周期、初始化代际锁、主题/布局/视口、引用更新（防腐收口，
- *   renderer 内部状态不再被视图触碰）；
- * - 本类只做编排：生命周期事件 → 装配 services 与 view-* 交互特性，
- *   中心主题 ⇄ 文件名重命名调度，链接跳转。
- * 功能模块（从本文件拆出）：
- * - view-toolbar.ts      工具栏
- * - view-dnd.ts          拖拽/外部文件导入/附件悬浮
- * - view-context-menu.ts 右键菜单
- * - view-node-actions.ts 节点操作与附件
- * - view-paste.ts        粘贴处理
- * - view-status.ts       状态栏
- * - view-search.ts       搜索栏
- * - view-export.ts       导入导出
+ *   引擎实例生命周期、初始化代际锁、主题/布局/视口、引用更新（防腐收口）；
+ * - TitleRenamer（view-title-renamer.ts） 中心主题 ⇄ 文件名重命名防抖；
+ * - openHyperlink（view-link-navigator.ts） 节点超链接跳转路由；
+ * - 本类只做编排：生命周期事件 → 装配 services 与 view-* 交互特性。
  */
 import {
 	FileView,
 	Notice,
+	Platform,
 	TFile,
 	WorkspaceLeaf,
 } from 'obsidian';
-import type MindMapStudioPlugin from '../main';
 import { Language, t } from '../i18n';
-import {
-	canOpenInObsidian,
-	isSystemMediaExtension,
-	MD_FILE_SUFFIX,
-	stripMindMapStem,
-	VIEW_TYPE,
-} from '../constants';
+import { VIEW_TYPE } from '../constants';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
-import { isHttpUrl } from '../domain/url';
-import { createDebouncer } from '../concurrency';
 import { notifyError } from '../errors';
-import { resolvePathToFile } from '../links-resolve';
 import { walkCorrectImageSizesByAspect } from '../images-path';
-import { sanitizeFileName } from '../images-save';
-import { isMindMapMarkdownFile, openAsMarkdown } from '../md-open';
+import { openAsMarkdown } from '../md-open';
 import { registerWikilinkInteractions } from './view-wikilink';
-import type { MindMapViewContext } from './view-context';
-import { parseWikilink } from '../domain/wikilink';
+import type { MindMapViewContext, ViewPluginContext } from './view-context';
 import { ENGINE_COMMANDS } from '../mindmap';
 import { DocumentService, SavePipeline } from '../services/document-service';
 import { EngineController } from '../services/engine-controller';
 import {
 	buildSearchBar,
 	openSearchBar,
+	refreshSearchBarLabels,
 } from './view-search';
 import { exportPNG } from './view-export';
 import { arrangeMindMap, buildToolbar, refreshToolbar } from './view-toolbar';
 import { setupDragAndDrop } from './view-dnd';
 import { setupContextMenu } from './view-context-menu';
-import { openFileWithSystemApp } from '../system-open';
 import { handleWindowPaste, setupPasteHandler } from './view-paste';
 import {
 	cancelStatusBarUpdate,
 	updateStatusBar,
 } from './view-status';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
-import { setupImageResize } from './image-resize';
-import { setupDragTargetAssist } from './drag-target';
+import { setupImageResize, teardownImageResize } from './image-resize';
+import { setupDragTargetAssist, teardownDragTargetAssist } from './drag-target';
 import { EventBinder } from '../event-binder';
+import { TitleRenamer } from './view-title-renamer';
+import { openHyperlink as linkNavigatorOpen } from './view-link-navigator';
+
+/** 视图装配完成信号超时（毫秒）：正常 onOpen 会 resolve；超时表示装配未完成，降级继续加载 */
+const READY_TIMEOUT_MS = 10_000;
 
 /** 视图状态里 mdBackMode 的白名单取值（非法/缺失回退 source） */
 function readMdBackMode(value: unknown): 'source' | 'preview' {
@@ -73,7 +58,7 @@ function readMdBackMode(value: unknown): 'source' | 'preview' {
 }
 
 export class MindMapView extends FileView implements MindMapViewContext {
-	plugin: MindMapStudioPlugin;
+	plugin: ViewPluginContext;
 	canvasEl: HTMLElement | null = null;
 	toolbarEl: HTMLElement | null = null;
 	searchBarEl: HTMLElement | null = null;
@@ -89,6 +74,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	private savePipeline: SavePipeline;
 	/** 引擎实例生命周期（防腐收口，引擎内部访问不再出现在本类） */
 	private engine: EngineController;
+	/** 中心主题 ⇄ 文件名重命名（从 view.ts 拆出，见 view-title-renamer.ts） */
+	private readonly titleRenamer: TitleRenamer;
 
 	/**
 	 * 视图生命周期作用域的事件绑定器：
@@ -144,10 +131,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		return this.mdDocumentMode;
 	}
 
-	constructor(leaf: WorkspaceLeaf, plugin: MindMapStudioPlugin) {
+	constructor(leaf: WorkspaceLeaf, plugin: ViewPluginContext) {
 		super(leaf);
 		this.plugin = plugin;
-		this.isDark = document.body.hasClass('theme-dark');
+		// 官方 API：App.isDarkMode()（@since 1.10.0）；勿用未文档化的
+		// body.hasClass('theme-dark')（核心 CSS 类，官方 d.ts 中不存在）
+		this.isDark = this.app.isDarkMode();
 
 		this.documents = new DocumentService(this.app);
 		this.savePipeline = new SavePipeline({
@@ -156,10 +145,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			getSnapshot: () => this.engine.getDataSnapshot(),
 			getFrontmatter: () => this.mdFrontmatter,
 			isAutoSave: () => this.plugin.settings.autoSave,
-			// 写盘失败弹用户可见提示（管线内部已 console.error 记录详情）
 			onSaveError: (error) => {
 				notifyError(this.lang, 'save.failed', error);
 			},
+		});
+		this.titleRenamer = new TitleRenamer({
+			app: this.app,
+			getFile: () => this.file,
+			isEditingText: () => this.engine.isEditingText(),
+			getRootText: () => this.engine.getRootText(),
+			lang: this.lang,
 		});
 		this.engine = new EngineController({
 			app: this.app,
@@ -179,9 +174,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			onRootDataChanged: () => {
 				this.scheduleSave();
 				updateStatusBar(this);
-				this.scheduleTitleRename();
+				this.titleRenamer.schedule();
 			},
 			onNodeImageClick: (node) => openNodeImageFullscreen(this, node),
+			onNodeAttachmentClick: (node) => {
+				const data = node.getData() as { attachmentUrl?: unknown };
+				const url =
+					typeof data?.attachmentUrl === 'string' ? data.attachmentUrl : '';
+				if (url) {
+					this.openHyperlink(url);
+				}
+			},
 			setupFeatures: () => {
 				setupDragAndDrop(this);
 				setupPasteHandler(this);
@@ -206,16 +209,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		return VIEW_TYPE;
 	}
 
-	getDisplayText(): string {
+	override getDisplayText(): string {
 		// 中心主题 ⇄ 文件名同步（改中心即重命名）；标题显示即文件名
 		return this.file ? this.file.basename : t(this.lang, 'common.mindMap');
 	}
 
-	getIcon(): string {
+	override getIcon(): string {
 		return 'dot-network';
 	}
 
-	async onOpen(): Promise<void> {
+	override async onOpen(): Promise<void> {
 		// 重建装配信号（onClose→onOpen 周期中旧信号作废）
 		let resolveReady!: () => void;
 		this.whenReady = new Promise<void>((resolve) => {
@@ -231,7 +234,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.canvasEl = containerEl.createDiv('mindmap-canvas-container');
 
 		this.boundHandleCssChange = () => {
-			const dark = document.body.hasClass('theme-dark');
+			const dark = this.app.isDarkMode();
 			if (dark !== this.isDark) {
 				this.isDark = dark;
 				this.applyTheme();
@@ -245,9 +248,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			return false;
 		});
 		// 对齐 Obsidian 官方编辑约定（help: Editing shortcuts）：
-		// Undo = Mod+Z；Redo = Mod+Shift+Z 或 Mod+Y。属系统级编辑快捷键
-		// （非命令默认热键，不违反社区规范的 no-default-hotkeys），
-		// 引擎自身未绑定这两个键，此处接管并阻止冒泡。
+		// Undo = Mod+Z；Redo = Mod+Shift+Z（macOS 官方仅此一种）或 Mod+Y
+		// （Windows/Linux）。属系统级编辑快捷键（非命令默认热键，不违反社区
+		// 规范的 no-default-hotkeys），引擎自身未绑定，此处接管并阻止冒泡。
 		this.scope?.register(['Mod'], 'z', () => {
 			this.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
 			return false;
@@ -256,10 +259,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			this.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
 			return false;
 		});
-		this.scope?.register(['Mod'], 'y', () => {
-			this.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
-			return false;
-		});
+		if (!Platform.isMacOS) {
+			// macOS 官方未提供 Mod+Y 重做（Cmd+Y 是其他语义），不注册以免冲突
+			this.scope?.register(['Mod'], 'y', () => {
+				this.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+				return false;
+			});
+		}
 
 		// 窗口级粘贴兜底：只注册一次（随视图生命周期由 Component 自动清理），
 		// 不放在 setupPasteHandler 中，避免每次刷新引擎累积监听。
@@ -277,9 +283,23 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 	}
 
-	async onLoadFile(file: TFile): Promise<void> {
-		// 等待装配完成（onOpen 尚未执行时挂起，替代原 10ms 轮询）
-		await this.whenReady;
+	override async onLoadFile(file: TFile): Promise<void> {
+		// 等待装配完成（onOpen 尚未执行时挂起，替代原 10ms 轮询）。
+		// 10s 超时降级：正常装配毫秒级完成；超时表示 onOpen 未 resolveReady
+		// （异常路径/极端情形），继续加载但 DOM 可能不完整。
+		const readyTimeout = new Promise<'timeout'>((resolve) => {
+			window.setTimeout(() => resolve('timeout'), READY_TIMEOUT_MS);
+		});
+		const result = await Promise.race([
+			this.whenReady.then(() => 'ready' as const),
+			readyTimeout,
+		]);
+		if (result === 'timeout') {
+			console.warn(
+				'MindMapView: 等待视图装配超时，降级继续加载',
+				file.path,
+			);
+		}
 		// onOpen 已为同一文件启动加载（读取中或已完成）时跳过，
 		// 避免同一文件被读取两次、引擎实例被创建两次。
 		if (this.loadingFilePath === file.path) {
@@ -288,11 +308,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		await this.loadMindMapFromFile(file);
 	}
 
-	async onUnloadFile(): Promise<void> {
-		// 文件切换：作废本文件尚未执行的初始化重试，防止过期 tree 随后渲染
+	override async onUnloadFile(): Promise<void> {
 		this.engine.invalidateInit();
 		this.savePipeline.cancelTimer();
-		this.titleRenameDebouncer.cancel();
+		this.titleRenamer.cancel();
 		// 先保存当前视口，再写盘正文（引擎随后销毁）
 		this.engine.persistViewport();
 		await this.savePipeline.save();
@@ -367,57 +386,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 	}
 
-	/**
-	 * 中心主题 ⇄ 文件名同步：根节点文本编辑停止（防抖 + 非编辑态）后，
-	 * 把 .mindmap.md 文件重命名为该文本（Obsidian 原生更新链接/反链）。
-	 * 双向：外部改名后视图重载，中心随新文件名。md 正文不承载根行。
-	 */
-	/** 中心主题改名防抖（1.5s，连续编辑只取最后一次） */
-	private titleRenameDebouncer = createDebouncer(1500);
-
-	private scheduleTitleRename(): void {
-		if (!this.file) {
-			return;
-		}
-		this.titleRenameDebouncer.schedule(() => {
-			void this.performTitleRename();
-		});
-	}
-
-	private async performTitleRename(): Promise<void> {
-		const file = this.file;
-		if (!file || !this.engine.mindMap || !isMindMapMarkdownFile(file)) {
-			return;
-		}
-		// 仍在文本编辑框内（用户正打字）→ 等编辑结束后再触发
-		if (this.engine.isEditingText()) {
-			this.scheduleTitleRename();
-			return;
-		}
-		const title = (this.engine.getRootText() ?? '').trim();
-		const sanitized = sanitizeFileName(title).trim();
-		const base = stripMindMapStem(file.basename);
-		if (!sanitized || sanitized === base) {
-			return; // 未改名或非法名
-		}
-		const folder = file.parent ? `${file.parent.path}/` : '';
-		const newPath = `${folder}${sanitized}${MD_FILE_SUFFIX}`;
-		if (newPath === file.path) {
-			return;
-		}
-		// 存在性检查（非文件解析）：判断重命名目标是否已被占用，无需统一入口
-		// eslint-disable-next-line no-restricted-syntax -- 非解析用途，仅判断路径是否已存在
-		if (this.app.vault.getAbstractFileByPath(newPath)) {
-			new Notice(t(this.lang, 'rename.titleConflict'));
-			return;
-		}
-		try {
-			await this.app.vault.rename(file, newPath);
-		} catch (error) {
-			console.error('根据中心主题重命名文件失败', error);
-			new Notice(t(this.lang, 'rename.titleFailed'));
-		}
-	}
+	/** 标题重命名已委托 TitleRenamer（view-title-renamer.ts） */
 
 	/**
 	 * 切换布局（工具栏调用）：更新会话字段 + 立即写入视图状态存储
@@ -477,6 +446,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		openSearchBar(this);
 	}
 
+	/** 语言变更后刷新搜索栏文案（就地更新，不重建 DOM） */
+	refreshSearchBarLabels(): void {
+		refreshSearchBarLabels(this);
+	}
+
 	// ==================== 导出（委托 view-export.ts） ====================
 
 	async exportPNG(): Promise<void> {
@@ -486,58 +460,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	// ==================== 链接跳转 / 引用更新 / 清理 ====================
 
 	/**
-	 * 打开节点超链接（wiki 链接 / http / 库内路径）。
-	 * @param openNew true = 新标签页打开（Ctrl/Cmd+点击语义）
+	 * 打开节点超链接（wiki / http / 库内路径）—— 委托 view-link-navigator。
+	 * 保留 MindMapViewContext 接口契约（engine-controller / view-wikilink 依赖）。
 	 */
 	openHyperlink(link: string, openNew = false): void {
-		if (!link) {
-			return;
-		}
-		const sourcePath = this.file?.path ?? '';
-		const wiki = parseWikilink(link);
-		if (wiki) {
-			// 解析 [[目标]] 到具体库内文件
-			const dest = this.app.metadataCache.getFirstLinkpathDest(
-				wiki.target,
-				sourcePath,
-			);
-			this.openResolvedTarget(dest, wiki.inner, sourcePath, openNew);
-			return;
-		}
-		if (isHttpUrl(link)) {
-			window.open(link, '_blank');
-			return;
-		}
-		// 其余按库内路径处理
-		const file = resolvePathToFile(link, this.app);
-		this.openResolvedTarget(file, link, sourcePath, openNew);
-	}
-
-	/**
-	 * 打开已解析的库内目标（wiki 与库内路径两分支共用）：
-	 * Obsidian 可渲染才开标签页；系统媒体（音频/视频）走系统应用；
-	 * 其余类型不开空白页；目标未解析到时交给 openLinkText
-	 * （Obsidian 原生"未找到/新建笔记"行为）。
-	 */
-	private openResolvedTarget(
-		file: TFile | null,
-		linkText: string,
-		sourcePath: string,
-		openNew: boolean,
-	): void {
-		if (file && !canOpenInObsidian(file.extension)) {
-			if (isSystemMediaExtension(file.extension)) {
-				openFileWithSystemApp(this.app, file, this.lang);
-			} else {
-				new Notice(t(this.lang, 'common.cannotPreview'));
-			}
-			return;
-		}
-		void this.app.workspace.openLinkText(
-			linkText,
-			sourcePath,
-			openNew ? 'tab' : false,
-		);
+		linkNavigatorOpen(this, link, openNew);
 	}
 
 	updateReferencesOnRename(file: TFile, oldPath: string): void {
@@ -552,12 +479,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 	}
 
-	async onClose(): Promise<void> {
-		// 视图关闭：作废尚未执行的初始化重试（容器即将脱离 DOM）
+	override async onClose(): Promise<void> {
 		this.engine.invalidateInit();
 		this.savePipeline.cancelTimer();
-		this.titleRenameDebouncer.cancel();
+		this.titleRenamer.cancel();
 		cancelStatusBarUpdate(this);
+		// 交互会话收尾（拖拽换父 / 图片调宽）：会话期间的临时 window 监听
+		// 不经事件绑定器记录，中途关闭视图收不到 mouseup，须显式清理。
+		// 必须在 savePipeline.save() 之前——调宽会话收尾会调度一次保存。
+		teardownDragTargetAssist(this);
+		teardownImageResize(this);
 		// 挂起装配信号：关闭后到达的 onLoadFile 等待下一次 onOpen（原轮询语义）
 		this.whenReady = new Promise(() => {});
 		this.engine.persistViewport();
@@ -576,7 +507,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		});
 	}
 
-	onResize(): void {
+	override onResize(): void {
 		this.engine.resize();
 	}
 }

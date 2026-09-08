@@ -20,7 +20,9 @@
  */
 
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
-import { formatWikilink } from './domain/wikilink';
+import { formatWikilink, wikilinkTargetIsAttachment } from './domain/wikilink';
+import { isUrlLikeText } from './domain/url';
+import { isRenderableImageExtension } from './constants';
 import type { MdNodeData } from './node-data';
 
 export interface MdParseResult {
@@ -47,7 +49,13 @@ interface ParsedLine {
 // 行内 token（wikilink / markdown 链接 / 图片）
 // ---------------------------------------------------------------------------
 
-type InlineTokenKind = 'wikiImg' | 'wiki' | 'mdImg' | 'mdLink' | 'autolink';
+type InlineTokenKind =
+	| 'wikiImg'
+	| 'wiki'
+	| 'mdImg'
+	| 'mdLink'
+	| 'autolink'
+	| 'bareUrl';
 
 interface InlineToken {
 	start: number;
@@ -75,8 +83,7 @@ const IMG_SIZE_RE = /^(\d+)(?:x(\d+))?$/;
  *   —— 尺寸在标签尾部 `|` 之后（或整段标签即尺寸）。
  * 非数字标签不是尺寸（嵌入不支持别名文本），原样保留。
  */
-function parseImageLabel(label: string): {
-	alt: string;
+function parseImageLabel(label: string): {	alt: string;
 	sizeWidth?: number;
 	sizeHeight?: number;
 } {
@@ -100,9 +107,14 @@ function parseImageLabel(label: string): {
 }
 
 const INLINE_RE =
-	/(!?)\[\[([^\]|\n]+)(?:\|([^\]]*))?\]\]|(!?)\[([^\]]*)\]\((<[^>\n]*>|[^)\s\n]+)\)|(<((?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^>\s]+)>)/g;
+	/(!?)\[\[([^\]|\n]+)(?:\|([^\]]*))?\]\]|(!?)\[([^\]]*)\]\((<[^>\n]*>|[^)\s\n]+)\)|(<((?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^>\s]+)>)|((?:https?:\/\/|ftp:\/\/|obsidian:\/\/)[^\s<>()[\]{}"'`，、；：！？。「」（）【】]+)/g;
+/** 裸 URL 尾部不应携带的标点（句尾标点不属于 URL 的一部分） */
+const BARE_URL_TRAILING_RE = /[.,;:!?)\]}>'"]+$/;
 
-function tokenizeInline(raw: string): InlineToken[] {
+/** 裸 URL 分支的捕获组下标（INLINE_RE 第 9 组） */
+const BARE_URL_GROUP = 9;
+
+export function tokenizeInline(raw: string): InlineToken[] {
 	const out: InlineToken[] = [];
 	INLINE_RE.lastIndex = 0;
 	let m: RegExpExecArray | null;
@@ -139,6 +151,19 @@ function tokenizeInline(raw: string): InlineToken[] {
 				end: m.index + m[0].length,
 				kind: 'autolink',
 				target: m[8] ?? '',
+				label: '',
+			});
+		} else if (m[BARE_URL_GROUP] !== undefined) {
+			// 裸 URL（行内直接书写的 https:// 等）：与 autolink 同语义，
+			// URL 本体不渲染进节点文本（icon-only，见 buildInlineData）；
+			// 尾部句读标点不属于 URL（「详见 https://x.com/a。」→ 目标止于 a）
+			const matched = m[BARE_URL_GROUP] ?? '';
+			const trimmed = matched.replace(BARE_URL_TRAILING_RE, '');
+			out.push({
+				start: m.index,
+				end: m.index + m[0].length - (matched.length - trimmed.length),
+				kind: 'bareUrl',
+				target: trimmed,
 				label: '',
 			});
 		} else {
@@ -195,6 +220,20 @@ function tokenDisplay(tok: InlineToken): string {
 	return tok.kind === 'wiki' ? name.replace(/\.md$/, '') : name;
 }
 
+/**
+ * 嵌入目标是否为图片（按扩展名判定；无扩展名/未知扩展名视为非图片）。
+ * 用 Obsidian 可渲染图片清单（含 avif/apng/jxl/tif/tiff）——与 Obsidian 的嵌入
+ * 行为对齐；非图片嵌入（PDF/音视频等）不能作为节点图渲染，需改走附件通道。
+ */
+function isImageEmbedTarget(target: string): boolean {
+	const name = target.split('/').pop() ?? '';
+	const dot = name.lastIndexOf('.');
+	if (dot <= 0) {
+		return false;
+	}
+	return isRenderableImageExtension(name.slice(dot + 1));
+}
+
 /** buildInlineData 的稳定字段（text/mdRaw/mdDerivedText 恒为 string） */
 interface InlineData extends MdNodeData {
 	text: string;
@@ -222,10 +261,26 @@ function buildInlineData(raw: string): InlineData {
 		pieces.push(raw.slice(cursor, tok.start));
 		cursor = tok.end;
 		if (tok.kind === 'wikiImg' || tok.kind === 'mdImg') {
+			// 非图片附件的嵌入（`![[报告.pdf]]` / `![[录音.mp3]]`）：Obsidian 里是
+			// 富媒体嵌入，插件无法作为节点图渲染（会显示空白）。改走附件通道
+			// （回形针 + 点击打开），并记 mdEmbed 以便回写补回 `!`。
+			if (tok.kind === 'wikiImg' && !isImageEmbedTarget(tok.target)) {
+				data.attachmentUrl = tok.target;
+				data.attachmentName = tokenDisplay(tok);
+				data.mdAttachmentLinkpath = tok.target;
+				data.mdLinkStyle = 'wiki';
+				data.mdEmbed = true;
+				continue;
+			}
 			if (!firstImg) {
 				firstImg = true;
 				data.image = tok.target;
 				data.mdImageTarget = tok.target;
+				// 外链 md 图片的 alt（`![说明|300](url)`）：官方语法 alt 与尺寸共存，
+				// 节点编辑后合成回写需原样保留（否则 alt 丢失）
+				if (tok.kind === 'mdImg' && tok.label) {
+					data.mdImageAlt = tok.label;
+				}
 				// 官方嵌入尺寸参数（![[图|300]] / ![alt|300](url)）：仅首图生效，
 				// 高度缺省时由加载校正按原始宽高比补齐
 				if (tok.sizeWidth !== undefined) {
@@ -243,13 +298,30 @@ function buildInlineData(raw: string): InlineData {
 		if (tok.kind === 'wiki') {
 			if (!firstLink) {
 				firstLink = true;
-				data.hyperlink = formatWikilink(tok.target, tok.label || undefined);
-				data.mdLinkStyle = 'wiki';
-				// 引擎链接图标原生 title（悬停提示目标名，提示可点）
-				data.hyperlinkTitle = tokenDisplay(tok);
+				if (wikilinkTargetIsAttachment(tok.target)) {
+					// 双链指向附件：走引擎 attachmentUrl（回形针图标，点击经
+					// node_attachmentClick 事件接管），不写 hyperlink 以免
+					// 链接图标双显；原始 linkpath 存回写字段（合成时重建 wikilink）
+					data.attachmentUrl = tok.target;
+					data.attachmentName = tokenDisplay(tok);
+					data.mdAttachmentLinkpath = tok.target;
+					data.mdLinkStyle = 'wiki';
+				} else {
+					// 双链指向文档：不写 hyperlink——引擎会为任何 hyperlink 渲染
+					// 原生链接图标，与自绘文档页图标（mindmap.ts 前缀内容）双显。
+					// 链接本体存 mdWikiLinkpath，由文档图标承接点击
+					data.mdWikiLinkpath = formatWikilink(
+						tok.target,
+						tok.label || undefined,
+					);
+					data.mdLinkStyle = 'wiki';
+					// 图标/悬停提示的目标显示名
+					data.mdLinkText = tokenDisplay(tok);
+				}
 			}
-		} else if (tok.kind === 'autolink') {
-			// <url> 自动链接 → 与 md 链接同语义（回写为 <url>）
+		} else if (tok.kind === 'autolink' || tok.kind === 'bareUrl') {
+			// 自动链接（<url> 尖括号 / 裸 URL）→ 同语义：URL 本体不渲染进
+			// 节点文本（icon-only，节点仅显示超链接图标）；回写为 <url>
 			if (!firstLink) {
 				firstLink = true;
 				data.hyperlink = tok.target;
@@ -264,8 +336,14 @@ function buildInlineData(raw: string): InlineData {
 			data.mdLinkText = tok.label || tok.target;
 			data.hyperlinkTitle = tokenDisplay(tok);
 		}
-		// autolink <url> 不占节点文本：节点仅显示超链接图标（尖括号内链接不渲染）
-		if (tok.kind !== 'autolink') {
+		// URL token（autolink/bareUrl）与「label 本身是 URL」的 md 链接
+		// （[https://…](https://…)，复制粘贴常见形态）一律 icon-only：
+		// URL 本体不渲染进节点文本（避免长 URL 撑宽节点），节点仅显示图标
+		if (
+			tok.kind !== 'autolink' &&
+			tok.kind !== 'bareUrl' &&
+			!(tok.kind === 'mdLink' && isUrlLikeText(tok.label))
+		) {
 			pieces.push(tokenDisplay(tok));
 		}
 	}
@@ -274,7 +352,12 @@ function buildInlineData(raw: string): InlineData {
 	// 不再回退文件名占位文本（旧行为会把文件名当作节点文本，
 	// 使「删文字后图片独占节点」无法在往返中保持）。
 	// 代价：纯图节点不参与文本搜索（图片文件名仍可经引擎 hover 查看）。
-	const text = pieces.join('').trim();
+	// URL token（icon-only）剥离后相邻文本可能留下连续空格，折叠为单空格
+	//（HTML 渲染语义本就折叠空白；原文由 mdRaw 保真，不受影响）。
+	const text = pieces
+		.join('')
+		.replace(/[ \t]{2,}/g, ' ')
+		.trim();
 	data.text = text;
 	data.mdDerivedText = text;
 	return data;
@@ -284,7 +367,12 @@ function buildInlineData(raw: string): InlineData {
 // 正文解析
 // ---------------------------------------------------------------------------
 
-function splitFrontmatter(content: string): {
+/**
+ * 拆分 YAML frontmatter（含首尾 ---）与正文。
+ * 遇到 body 开头又有 ---（用户误加第二次 frontmatter）时只取第一个并 console.warn。
+ * export 为测试白盒钩子。
+ */
+export function splitFrontmatter(content: string): {
 	body: string;
 	frontmatter: string | null;
 } {
@@ -292,7 +380,14 @@ function splitFrontmatter(content: string): {
 	if (!m) {
 		return { body: content, frontmatter: null };
 	}
-	return { frontmatter: m[0], body: content.slice(m[0].length) };
+	const body = content.slice(m[0].length);
+	// 误加第二次 frontmatter：body 开头又是 ---
+	if (/^---[ \t]*(?:\r?\n|$)/.test(body)) {
+		console.warn(
+			'[Mindmap-Studio] 检测到重复 YAML frontmatter，仅第一个生效。',
+		);
+	}
+	return { frontmatter: m[0], body };
 }
 
 /** 逐行分类（围栏整体原样保留；围栏外空行与分隔线忽略） */

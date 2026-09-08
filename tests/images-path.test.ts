@@ -8,9 +8,13 @@ import { App, TFile } from 'obsidian';
 import { IMAGE_HEIGHT, IMAGE_WIDTH } from '../src/constants';
 import { fileLookupIndex } from '../src/file-lookup';
 import {
-	createSetNodeImageOptions,
+	cacheImageFail,
 	computeAspectImageSize,
+	createSetNodeImageOptions,
 	isExternalUrl,
+	isImageFailFresh,
+	IMAGE_FAIL_TTL_MS,
+	probeImageNaturalSize,
 	resolveImagePath,
 	walkCorrectImageSizesByAspect,
 	walkResolveImagePaths,
@@ -23,6 +27,8 @@ function fakeApp(files: TFile[]): App {
 		vault: {
 			getFiles: () => files,
 			getAbstractFileByPath: (p: string) => byPath.get(p) ?? null,
+			getFileByPath: (p: string) => byPath.get(p) ?? null,
+			getFolderByPath: () => null,
 			getResourcePath: (f: TFile) => `app://fake/${f.path}`,
 		},
 		// resolvePathToFile 兜底链路会调用官方链接解析器（未命中返回 null）
@@ -263,5 +269,90 @@ describe('walkCorrectImageSizesByAspect（官方嵌入尺寸参数）', () => {
 			height: 111,
 			custom: true,
 		});
+	});
+});
+
+describe('图片探测失败缓存 (白盒)', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(2025, 0, 1, 12, 0, 0)); // 固定时钟起点
+		FakeImage.instances = [];
+		vi.stubGlobal('Image', FakeImage);
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it('缓存失败后，probeImageNaturalSize 同 URL 直接返回 null（不 new Image）', async () => {
+		const url = 'probe://bad1.png';
+		cacheImageFail(url);
+		const before = FakeImage.instances.length;
+
+		const result = await probeImageNaturalSize(url);
+		expect(result).toBeNull();
+		// 失败缓存命中，没有发起新探测
+		expect(FakeImage.instances.length).toBe(before);
+	});
+
+	it('失败缓存超过 TTL 后失效，probe 重新发起探测', async () => {
+		const url = 'probe://expires.png';
+		cacheImageFail(url);
+		// 前进 TTL + 1 秒 → 过期
+		vi.advanceTimersByTime(IMAGE_FAIL_TTL_MS + 1000);
+		expect(isImageFailFresh(url)).toBe(false);
+
+		// 探测会重新 new Image
+		const before = FakeImage.instances.length;
+		const pending = probeImageNaturalSize(url);
+		expect(FakeImage.instances.length).toBe(before + 1);
+		FakeImage.instances.at(-1)!.emitLoad(100, 50);
+		await expect(pending).resolves.toEqual({ width: 100, height: 50 });
+	});
+
+	it('失败→成功 双向覆盖：probeImageNaturalSize 成功后清除失败记录', async () => {
+		const url = 'probe://recoverable.png';
+		cacheImageFail(url);
+		expect(isImageFailFresh(url)).toBe(true);
+
+		// 让失败缓存过期 → probe 会走真正的探测分支
+		vi.advanceTimersByTime(IMAGE_FAIL_TTL_MS + 1000);
+		expect(isImageFailFresh(url)).toBe(false);
+
+		const pending = probeImageNaturalSize(url);
+		FakeImage.instances.at(-1)!.emitLoad(200, 100);
+		await pending;
+
+		// 成功缓存写入时 cacheImageSize 内部会 IMAGE_FAIL_CACHE.delete
+		// 验证：isImageFailFresh 应该返回 false（已被清除）
+		expect(isImageFailFresh(url)).toBe(false);
+
+		// 后续再 probe 命中成功缓存，不再 new Image
+		const before = FakeImage.instances.length;
+		await probeImageNaturalSize(url);
+		expect(FakeImage.instances.length).toBe(before);
+	});
+
+	it('LRU 上限：超出 IMAGE_FAIL_CACHE_MAX 时淘汰最早条目', () => {
+		// cacheImageFail 内部 IMAGE_FAIL_CACHE_MAX = 200
+		// 写入 201 个 URL，第一个应该被淘汰
+		for (let i = 0; i < 201; i++) {
+			cacheImageFail(`probe://lru-${i}.png`);
+			// 每次间隔 1ms，保证 Map 插入序可区分
+			vi.advanceTimersByTime(1);
+		}
+		// 第 0 个应已被淘汰
+		expect(isImageFailFresh('probe://lru-0.png')).toBe(false);
+		// 最新的还在
+		expect(isImageFailFresh('probe://lru-200.png')).toBe(true);
+	});
+
+	it('isImageFailFresh 惰性清理过期条目：检查过期 URL 时顺带删除', () => {
+		cacheImageFail('probe://will-expire.png');
+		vi.advanceTimersByTime(IMAGE_FAIL_TTL_MS + 1000);
+		// 过期后首次检查 → 返回 false，并顺带从 Map 里删
+		expect(isImageFailFresh('probe://will-expire.png')).toBe(false);
+		// 再检查一次还是 false（已清理）
+		expect(isImageFailFresh('probe://will-expire.png')).toBe(false);
 	});
 });

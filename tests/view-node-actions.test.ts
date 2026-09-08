@@ -10,12 +10,13 @@ import type { App } from 'obsidian';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from '../src/features/view-context';
 import {
+	addImageToActiveNode,
 	addLinkToActiveNode,
 	copyNode,
 	deleteActiveNode,
 	pasteNodeAsChild,
-	requireActiveNode,
 } from '../src/features/view-node-actions';
+import { requireActiveNode } from '../src/features/view-common';
 
 const { noticeCalls, setNodeTextMock, forceRemoveMock, openLinkModal, openImageModal } =
 	vi.hoisted(() => ({
@@ -64,6 +65,7 @@ vi.mock('../src/mindmap', () => ({
 		forceRemoveMock(...args);
 	},
 	getRenderRoot: () => null,
+	markNodeNeedLayout: (): void => {},
 }));
 
 vi.mock('../src/modal-image', () => ({
@@ -74,6 +76,10 @@ vi.mock('../src/modal-link', () => ({
 	openLinkEditorModal: (...args: unknown[]): Promise<unknown> =>
 		openLinkModal(...args),
 }));
+// 图标分流依赖库内解析：测试里统一返回 null（未解析）→ 按目标串扩展名判定
+vi.mock('../src/links-resolve', () => ({
+	resolvePathToFile: (): null => null,
+}));
 
 /** 构造引擎/节点/视图桩 */
 function makeHarness(activeNode: MindMapNode | null) {
@@ -81,6 +87,7 @@ function makeHarness(activeNode: MindMapNode | null) {
 	const mindMap = {
 		renderer: { activeNodeList: activeNode ? [activeNode] : [], root: null },
 		execCommand,
+		render: vi.fn(),
 	} as unknown as MindMap;
 	const scheduleSave = vi.fn();
 	const view = {
@@ -143,16 +150,17 @@ describe('addLinkToActiveNode（链接插入编排）', () => {
 		expect(execCommand).not.toHaveBeenCalled();
 	});
 
-	it('确认后写入超链接并同步可见文本', async () => {
+	it('确认文档双链 → 写 mdWikiLinkpath 通道（自绘文档图标）并同步可见文本', async () => {
 		const node = fakeNode();
 		const { execCommand, scheduleSave, view } = makeHarness(node);
 		openLinkModal.mockResolvedValue({ link: '[[新笔记]]', label: null });
 		await addLinkToActiveNode(view);
-		expect(execCommand).toHaveBeenCalledWith(
-			'SET_NODE_HYPERLINK',
-			node,
-			'[[新笔记]]',
-		);
+		// 文档双链不走引擎 hyperlink——否则原生链接图标会与自绘文档图标双显
+		expect(execCommand).not.toHaveBeenCalled();
+		const data = node.getData() as Record<string, unknown>;
+		expect(data.mdWikiLinkpath).toBe('[[新笔记]]');
+		expect(data.mdLinkStyle).toBe('wiki');
+		expect(data.hyperlink).toBeUndefined();
 		// 节点文本为空 → 可见文本同步为链接显示名
 		expect(setNodeTextMock).toHaveBeenCalledWith(
 			view.mindMap,
@@ -160,6 +168,44 @@ describe('addLinkToActiveNode（链接插入编排）', () => {
 			'新笔记',
 		);
 		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('附件双链（[[报告.pdf]]）→ 走 attachmentUrl 通道（回形针）', async () => {
+		const node = fakeNode();
+		const { execCommand, view } = makeHarness(node);
+		openLinkModal.mockResolvedValue({ link: '[[报告.pdf]]', label: null });
+		await addLinkToActiveNode(view);
+		// 非 URL、非笔记 → 回形针通道（不写引擎 hyperlink）
+		expect(execCommand).not.toHaveBeenCalled();
+		const data = node.getData() as Record<string, unknown>;
+		expect(data.attachmentUrl).toBe('报告.pdf');
+		expect(data.mdAttachmentLinkpath).toBe('报告.pdf');
+		expect(data.hyperlink).toBeUndefined();
+	});
+
+	it('文档双链带别名（[[笔记|别名]]）→ 节点文本同步为别名', async () => {
+		const node = fakeNode();
+		const { view } = makeHarness(node);
+		openLinkModal.mockResolvedValue({ link: '[[笔记|别名]]', label: null });
+		await addLinkToActiveNode(view);
+		const data = node.getData() as Record<string, unknown>;
+		expect(data.mdWikiLinkpath).toBe('[[笔记|别名]]');
+		expect(data.mdLinkText).toBe('别名');
+		// 与 Obsidian 别名语义一致：节点显示别名而非目标名
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '别名');
+	});
+
+	it('附件双链带别名（[[报告.pdf|说明]]）→ 回形针标题与节点文本都用别名', async () => {
+		const node = fakeNode();
+		const { view } = makeHarness(node);
+		openLinkModal.mockResolvedValue({ link: '[[报告.pdf|说明]]', label: null });
+		await addLinkToActiveNode(view);
+		const data = node.getData() as Record<string, unknown>;
+		// 目标仍是附件路径（点击打开用），可见名取别名
+		expect(data.attachmentUrl).toBe('报告.pdf');
+		expect(data.mdAttachmentLinkpath).toBe('报告.pdf');
+		expect(data.attachmentName).toBe('说明');
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '说明');
 	});
 
 	it('协议链接（http）只挂超链接图标，不改节点文本', async () => {
@@ -173,6 +219,35 @@ describe('addLinkToActiveNode（链接插入编排）', () => {
 			'https://example.com',
 		);
 		expect(setNodeTextMock).not.toHaveBeenCalled();
+	});
+
+	it('内部异常不外抛：转成用户可见提示（工具栏 void 调用不产生未处理拒绝）', async () => {
+		const node = fakeNode();
+		const { view } = makeHarness(node);
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		openLinkModal.mockRejectedValue(new Error('boom'));
+		await expect(addLinkToActiveNode(view)).resolves.toBeUndefined();
+		expect(noticeCalls).toContain('添加链接失败：boom');
+		expect(errorSpy).toHaveBeenCalled();
+		errorSpy.mockRestore();
+	});
+});
+
+describe('addImageToActiveNode（图片插入自兜错误）', () => {
+	beforeEach(() => {
+		noticeCalls.length = 0;
+		openImageModal.mockReset();
+	});
+
+	it('内部异常不外抛：转成用户可见提示（工具栏 void 调用不产生未处理拒绝）', async () => {
+		const node = fakeNode();
+		const { view } = makeHarness(node);
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		openImageModal.mockRejectedValue(new Error('boom'));
+		await expect(addImageToActiveNode(view)).resolves.toBeUndefined();
+		expect(noticeCalls).toContain('添加图片失败：boom');
+		expect(errorSpy).toHaveBeenCalled();
+		errorSpy.mockRestore();
 	});
 });
 
@@ -195,7 +270,7 @@ describe('deleteActiveNode（删除编排与兜底）', () => {
 		const node = fakeNode({ isRoot: true });
 		const { execCommand, view } = makeHarness(node);
 		deleteActiveNode(view);
-		expect(noticeCalls).toContain('根节点不可删除');
+		expect(noticeCalls).toContain('中心节点不可删除');
 		expect(execCommand).not.toHaveBeenCalled();
 	});
 });

@@ -145,6 +145,20 @@ const OBSIDIAN_RENDER_IMAGE_EXTENSIONS = [
 	'tiff',
 ];
 
+/** 判断某扩展名是否属于 Obsidian 可渲染的图片（比拖拽图片清单宽：含 avif/apng/jxl/tif/tiff） */
+export function isRenderableImageExtension(extension: string): boolean {
+	return OBSIDIAN_RENDER_IMAGE_EXTENSIONS.includes(extension.toLowerCase());
+}
+
+/**
+ * 设置项取值域：设置面板滑块的 min/max 与 sanitizeSettings 的钳制共用同一来源，
+ * 避免「面板能选 1-4、data.json 手改成 99 却直达引擎」这类漂移。
+ */
+export const EXPORT_SCALE_MIN = 1;
+export const EXPORT_SCALE_MAX = 4;
+export const PERFORMANCE_THRESHOLD_MIN = 100;
+export const PERFORMANCE_THRESHOLD_MAX = 2000;
+
 /**
  * Obsidian 能在标签页中渲染、不会出现空白页的扩展名（md/canvas/PDF/图片/纯文本·代码）。
  * 用于点击导图内链接/附件时判断能否直接用 Obsidian 打开。
@@ -215,6 +229,45 @@ export function generateUid(): string {
 }
 
 /**
+ * 防抖/节流时间常量集中管理——所有模块必须引用此处而非手写数字。
+ * 此前设置持久化 400ms（main.ts）、自动保存 600ms（view.ts）散落两处，
+ * 维护者难以发现"为什么不一样、哪个改了不该改"。集中后：
+ * - SETTINGS_PERSIST_DEBOUNCE_MS ：设置面板控件（滑块等）高频写入 → 合并突发；
+ * - AUTO_SAVE_DEBOUNCE_MS       ：自动保存防抖（引擎修改触发保存）；
+ * - VIEW_STATE_PERSIST_MS       ：ViewStateStore 布局/视口防抖；
+ * - TITLE_RENAME_DEBOUNCE_MS    ：中心主题重命名防抖。
+ */
+export const SETTINGS_PERSIST_DEBOUNCE_MS = 400;
+/**
+ * 自动保存防抖（SavePipeline 引擎修改触发）。
+ * 设为 800ms——比视图状态持久化长（避免引擎高频数据变更时与磁盘 I/O 争抢），
+ * 但不超过用户感知阈值（秒级无响应会被认为卡死）。
+ */
+export const AUTO_SAVE_DEBOUNCE_MS = 800;
+export const VIEW_STATE_PERSIST_MS = 600;
+/**
+ * 标题重命名防抖（更长——涉及 Obsidian vault.rename 引发反链更新，
+ * 1.5s 等待用户停止打字 + isEditingText 守卫二次确认编辑结束）。
+ */
+export const TITLE_RENAME_DEBOUNCE_MS = 1500;
+
+/**
+ * RESET_LAYOUT 后 fit 的等待延迟（毫秒）。
+ * 引擎 resetLayout 内部同步 render → 浏览器 reflow 需要时间；
+ * 不用 requestAnimationFrame（只保证下帧前回调，不保证 reflow 已完成）。
+ * 80ms 在所有设备上远快于用户感知阈值，同时留出引擎内部处理余量；
+ * 若引擎升级提供「布局完成」回调，应优先替换此处。
+ */
+export const RESET_LAYOUT_FIT_DELAY_MS = 80;
+
+/**
+ * 拖拽落点辅助判定半径（像素，CSS 像素空间，无需 devicePixelRatio）。
+ * 引擎原生要求指针精确落在目标矩形内，此常量扩展为均匀圆形判定区。
+ * 经验值 120px 覆盖多数兄弟节点间距（150–200px），密集布局下不误命中。
+ */
+export const DRAG_TARGET_RADIUS_PX = 120;
+
+/**
  * 统一的节点图片显示尺寸。
  * 所有插入的图片都会以该固定高度显示，并完整呈现在子主题框架内；
  * SVG <image> 默认 preserveAspectRatio="xMidYMid meet"，图片会等比
@@ -222,3 +275,22 @@ export function generateUid(): string {
  */
 export const IMAGE_WIDTH = 200;
 export const IMAGE_HEIGHT = 120;
+
+/**
+ * Obsidian 核心视图类型标识（官方未公开常量；d.ts 的
+ * `getLeavesOfType(viewType: string)` 仅接受字符串，无类型校验）。
+ * 集中在常量表，核心改名/升级时一处核对，避免散落字符串漂移。
+ */
+export const CORE_VIEW_TYPE = {
+	/** 文件浏览器视图（file-creator.ts 注入「新建」菜单） */
+	FILE_EXPLORER: 'file-explorer',
+	/** Markdown 视图（切回编辑/阅读，md-open.ts / open-as-restore.ts） */
+	MARKDOWN: 'markdown',
+} as const;
+
+/**
+ * 悬停预览事件名（`workspace.trigger('hover-link', …)`）。
+ * 官方 `Workspace.on` 的类型化事件清单中不含该名（仅有 `registerHoverLinkSource`
+ * 声明数据源），故集中为常量，避免拼写漂移。
+ */
+export const HOVER_LINK_EVENT = 'hover-link';

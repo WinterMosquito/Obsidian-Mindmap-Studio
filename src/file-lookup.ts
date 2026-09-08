@@ -144,8 +144,8 @@ function lookupCandidates(
 	app: App,
 	index: Map<string, TFile>,
 ): TFile | null {
-	const byPath = app.vault.getAbstractFileByPath(normalizePath(url));
-	if (byPath instanceof TFile) {
+	const byPath = app.vault.getFileByPath(normalizePath(url));
+	if (byPath) {
 		return byPath;
 	}
 	for (const candidate of uniqueCandidates(url)) {

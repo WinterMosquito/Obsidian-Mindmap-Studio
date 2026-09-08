@@ -14,8 +14,8 @@ import {
 	gapCenter,
 	nodeViewportCenter,
 	pickNearestNode,
-	TARGET_RADIUS_PX,
 } from '../src/features/drag-target';
+import { DRAG_TARGET_RADIUS_PX as TARGET_RADIUS_PX } from '../src/constants';
 import { computeResizedSize } from '../src/features/image-resize';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
 

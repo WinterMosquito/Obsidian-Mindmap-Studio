@@ -19,6 +19,7 @@ import type {
 	WorkspaceLeaf,
 } from 'obsidian';
 import { MarkdownView } from 'obsidian';
+import { CORE_VIEW_TYPE } from './constants';
 import { isMindMapMarkdownFile, openAsMindMap } from './md-open';
 
 /** openAs 偏好查询契约（视图状态存储） */
@@ -27,6 +28,9 @@ export interface OpenAsLookup {
 }
 
 export class OpenAsPreferenceRestorer {
+	/** 宿主组件（register 时注入）：启动恢复定时器随其注销清理 */
+	private host: Component | null = null;
+
 	constructor(
 		private readonly app: App,
 		private readonly workspace: Workspace,
@@ -37,6 +41,7 @@ export class OpenAsPreferenceRestorer {
 
 	/** 注册运行期自动切换事件（插件 onload 调用；事件随 Component 清理） */
 	register(component: Component): void {
+		this.host = component;
 		// 运行期兜底：任何文件打开时，若它是偏好为思维导图的 .mindmap.md 且
 		// 当前在 markdown 视图，也切回导图视图（与 active-leaf-change 互补）。
 		component.registerEvent(
@@ -58,14 +63,18 @@ export class OpenAsPreferenceRestorer {
 	 * 恢复流程短暂覆盖。故多档延时扫描——早/中/晚各试一次。
 	 */
 	scheduleStartupRestore(delaysMs: readonly number[] = [400, 1500, 3500]): void {
-		delaysMs.forEach((ms) =>
-			window.setTimeout(() => this.restoreMarkdownLeaves(), ms),
-		);
+		delaysMs.forEach((ms) => {
+			const id = window.setTimeout(() => this.restoreMarkdownLeaves(), ms);
+			// 插件卸载后不得再扫描/切换视图：随宿主组件注销清理未触发的定时器
+			this.host?.register(() => window.clearTimeout(id));
+		});
 	}
 
 	/** 扫描全部 markdown 叶子，把偏好为 mindmap 的 .mindmap.md 切回导图视图 */
 	private restoreMarkdownLeaves(): void {
-		const markdownLeaves = this.workspace.getLeavesOfType('markdown');
+		const markdownLeaves = this.workspace.getLeavesOfType(
+			CORE_VIEW_TYPE.MARKDOWN,
+		);
 		for (const leaf of markdownLeaves) {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView)) {

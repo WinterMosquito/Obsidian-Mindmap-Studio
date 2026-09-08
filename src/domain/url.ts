@@ -42,3 +42,13 @@ export function isHyperlinkProtocolUrl(value: string): boolean {
 export function isSchemeUrl(value: string): boolean {
 	return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value);
 }
+
+/**
+ * 独立成串的 URL 文本（scheme:// + 非空白，整串即一个地址，无其他词语）。
+ * 语义与 md-outline INLINE_RE 的裸 URL 分支一致（scheme 白名单同步），
+ * 用于识别「label 本身是 URL」的 md 链接：节点显示遵循 icon-only 规范，
+ * URL 本体不进节点文本。
+ */
+export function isUrlLikeText(value: string): boolean {
+	return /^(?:https?:\/\/|ftp:\/\/|obsidian:\/\/)\S+$/.test(value);
+}

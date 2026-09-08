@@ -10,7 +10,7 @@ import { App, Modal } from 'obsidian';
 import { t, type Language } from './i18n';
 import { createButton, createModalSettle, VaultFileSuggest } from './modal-common';
 import { isLinkAttachmentExtension } from './constants';
-import { formatWikilink } from './domain/wikilink';
+import { formatWikilink, parseWikilink } from './domain/wikilink';
 
 export interface LinkPickResult {
 	/** 链接文本（写入 md：[[..]] 或 url/obsidian://） */
@@ -45,7 +45,11 @@ export function openLinkEditorModal(
 			(f) => f.extension !== 'md' && isLinkAttachmentExtension(f.extension),
 		);
 
-		/** 把输入原样作为结果（URL / obsidian:// / 自定义） */
+		/**
+		 * 把输入原样作为结果（URL / obsidian:// / 自定义）。
+		 * 手输的双链别名（`[[目标|别名]]`）解析为 label，与「联想选择」路径同一
+		 * 契约（label = 可见文本），使手输与点选对节点文本的影响一致。
+		 */
 		const commitRaw = (value: string): void => {
 			const v = value.trim();
 			if (!v) {
@@ -55,7 +59,8 @@ export function openLinkEditorModal(
 			}
 			// 保持裸文本：是否包裹为 [[..]] 由序列化的 renderHyperlink 统一决定，
 			// 避免此处与 md-serialize 的链接渲染规则产生第二套真相。
-			settle({ link: v });
+			const alias = parseWikilink(v)?.alias;
+			settle(alias ? { link: v, label: alias } : { link: v });
 			modal.close();
 		};
 
@@ -108,7 +113,7 @@ export function openLinkEditorModal(
 			settle(null);
 			modal.close();
 		});
-		createButton(buttons, t(lang, 'modal.confirm'), 'primary', () => {
+		createButton(buttons, t(lang, 'modal.apply'), 'primary', () => {
 			commitRaw(input.value);
 		});
 		modal.open();

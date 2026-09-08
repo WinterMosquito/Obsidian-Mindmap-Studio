@@ -116,16 +116,35 @@ src/
                     #   hasMindMapMarker/stripMindMapStem/withMindMapMarker（标记后缀唯一实现）
 tests/
   md-roundtrip.test.ts # md 往返回归（describe/it 场景矩阵：解析结构/深度/不动点/编辑合成/rawOk 分支矩阵/uid/视图状态）
+  md-inline.test.ts    # 行内 token 解析（链接/图片/embed/尖括号 URL 的边界形态）
   domain.test.ts       # domain 层单测（wikilink 契约 + walkTree 语义）
   concurrency.test.ts  # 并发原语回归（串行队列/防抖/节流：错误传播、尾随保证、重置、窗口重置）
   url.test.ts          # URL 谓词边界（各语义的协议形态与否决集）
   save-pipeline.test.ts# SavePipeline 竞态回归（写入中再触发排空、失败上报、防抖/守卫）
   view-state.test.ts   # ViewStateStore（hydrate 形状校验、防抖写盘、flushNow 排空与写盘 Promise 透传）
   settings.test.ts     # sanitizeSettings（类型/取值校验、坏值回退默认）
+  settings-persist.test.ts # 设置写回防抖（滑块突发合并、内存即时生效）
   engine-controller.test.ts # EngineController（初始化代际锁、ResizeObserver 零尺寸等待、装配/销毁、引用预检、拖拽抑制、refresh/视口）
   event-binder.test.ts # EventBinder（注册即记录/销毁即清理：参数透传、监听器身份、幂等、单点抛错不阻断）
   persistence.test.ts  # PluginDataWriter（写前重读合并不丢键、串行队列、内部吞错）
   feature-helpers.test.ts # 特性纯函数（drag-target 识别范围几何、image-resize 等比缩放钳制）
+  feature-teardown.test.ts # 交互会话收尾（拖拽换父/图片调宽的临时 window 监听随视图关闭清理）
+  images-path.test.ts  # 图片地址/尺寸（aspect 校正、官方尺寸语法、探测失败降级）
+  file-lookup.test.ts  # 全库文件索引原语（缓存/失效/多形态地址命中）
+  links-resolve.test.ts # 统一解析入口（按形态路由与兜底）
+  links-tree.test.ts   # 树内引用更新（重命名/清除两模式）
+  find-node-by-dom.test.ts # 引擎节点 DOM → 节点实例（右键命中）
+  open-as-restore.test.ts # 「以思维导图打开」偏好恢复（多档延时/代际）
+  pasted-name.test.ts  # 剪贴板图片命名（Pasted image YYYYMMDDHHMMSS）
+  vendor-contract.test.ts # 引擎 vendor 契约（导出面/命令名/事件名令牌）
+  view-node-actions.test.ts # 节点操作编排（链接通道分流/删除兜底/剪贴板/自兜错误）
+  view-context-menu.test.ts # 右键菜单条目分流（链接双通道/图片/文字，画布菜单）
+  view-dnd.test.ts     # 拖入分发（图片/笔记/附件/外部导入、两分支与提示）
+  view-search.test.ts  # 搜索栏（装配/防抖/回绕/零命中计数/防抖窗口内跳转）
+  view-status.test.ts  # 状态栏计数（节流与尾随、销毁/抛错降级、关闭清理）
+  view-wikilink.test.ts # 链接交互（点击分流/双通道取值/悬停预览去重）
+  modal-common.test.ts # 弹窗共享件（settle 守卫/按钮变体/库内文件联想）
+  modal-input.test.ts  # 命名/链接弹窗（预填与焦点、空白确认、settle 幂等、联想接线）
   setup.ts             # vitest 全局 setup：Node 环境 window 桩（fake timers 生效）
   mocks/obsidian.ts    # obsidian 最小 mock（vitest alias，包本身无运行时 JS）
 docs/
@@ -137,8 +156,15 @@ docs/
 ```bash
 npm test            # vitest run（CI 在 build 后、lint 前执行）
 npm run test:coverage  # vitest run --coverage（v8 provider，报告出 coverage/；CI 主矩阵版本执行并归档产物）
+npm run verify:visual  # 无头 Chrome 渲染契约验证（scripts/verify-visual.mjs）
 ```
 
+- `verify:visual`：把 `src/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
+  `styles.css` 在无头 Chrome 里渲染 5 个场景并断言 `--dump-dom`——三类链接图标分流与
+  图标尺寸（18×18）、回形针标题、画布铺满容器、节点测宽随文本（不被容器拉平）。
+  这类「引擎运行时 DOM 装配」行为单测覆盖不到（单测只能验证数据字段）。
+  无 Chrome 时跳过（`--require-chrome` 改为失败；`--keep` 保留临时目录；
+  `CHROME_PATH` 指定浏览器）。
 - vitest 配置 `vitest.config.ts`：`obsidian` → `tests/mocks/obsidian.ts` alias（包仅有类型声明，无运行时 JS）。
   coverage 含 `src/**`（排除 i18n/constants 纯文案与常量表），vendor 为预打包产物不纳入。
 - `tsconfig.json` 同时纳入 `src/` 与 `tests/`；`npm run build` 会先 `tsc -noEmit` 类型检查两者。
@@ -155,6 +181,10 @@ npm run test:coverage  # vitest run --coverage（v8 provider，报告出 coverag
 
 ## 关键约定
 
+- 链接/图片引用格式：新增链接与图片**恒写 wikilink**（`[[笔记]]` / `[[附件.pdf]]` / `![[图.png]]`），
+  不遵循 Obsidian 的 `Use [[Wikilinks]]` / `New link format` 设置——三类图标方案依赖文档双链走
+  `mdWikiLinkpath` 通道（自绘文档页图标）；若改为遵循偏好，md 形态笔记链接会落到引擎 hyperlink
+  通道并显示原生链接图标，与既定视觉冲突。属**有意偏离**（详见 `docs/external-audit-2026-09-08.md` §5.2/§7.4）。
 - 渲染层定位：正文保持纯 Markdown；布局/视口/打开偏好存 `data.json`（`viewState`，按文件路径），不写入文件。
 - 图片自定义尺寸（Obsidian 官方嵌入语法，不落 data.json）：`![[图.png|300]]`（仅宽、等比）/ `![[图.png|300x150]]`（宽高）/ `![alt|300](url)`（外链 md 图，尺寸在标签尾部）。解析进 `mdImageWidth/mdImageHeight`（domain/md-meta 契约）；`walkCorrectImageSizesByAspect` 对带参节点按参数定尺寸（仅宽时探测原始比例补高）；拖拽调宽改 engine `imageSize custom:true`，保存时 rawOk 尺寸特征（`目标|宽度`，终界 `]`/`x` 防前缀误匹配）不符 → 合成回写 `|宽度`。
 - 图片独占节点（渲染层语义）：纯图行（`- ![[x.png]]`）解析为**无文本节点**（不回退文件名占位），图片节点删除文字（右键「移除文字」/双击清空）后即被图片独占，往返保持；代价是纯图节点不参与文本搜索。图片嵌入语法（`![[..]]`/`![]()`）在 rawOk 的「链接已清除」检测中以负向断言排除（`(?<!!)\[\[`），图文混合行可逐字往返。
@@ -165,7 +195,7 @@ npm run test:coverage  # vitest run --coverage（v8 provider，报告出 coverag
 - URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；防抖/节流/串行队列/有界并发映射一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段；批量异步任务勿用无界 Promise.all，用 `mapWithConcurrency`）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
 - `.mindmap.md` 标记的判定/剥离/拼接一律用 `constants.ts` 的 `hasMindMapMarker` / `stripMindMapStem` / `withMindMapMarker`（勿手写同名正则或 replace）。
 - 引擎 `execCommand` 的命令名一律引用 `mindmap.ts` 的 `ENGINE_COMMANDS` 常量（勿写字符串字面量，拼错编译期即报错）。
-- 弹窗 Promise 的 settle 守卫与 onClose 兜底用 `modal-common.createModalSettle`；库内文件输入联想用 `modal-common.VaultFileSuggest`（勿再各写一份 AbstractInputSuggest 子类）。
+- 弹窗 Promise 的 settle 守卫用 `modal-common.createModalSettle`（关闭兜底经官方 `Modal.setCloseCallback` 注册，**勿覆写 `modal.onClose`**）；库内文件输入联想用 `modal-common.VaultFileSuggest`（勿再各写一份 AbstractInputSuggest 子类）。
 - i18n 含 `{name}` 占位符的文案用 `tf(lang, key, params)` 格式化（勿手写 .replace 链）。
 - vault rename/delete/create 事件只在 `VaultSyncService.attach` 注册一次，插件侧补充处理经 hooks 注入（勿再 registerEvent 第二份订阅）。
 - 命名对照：类名 `MindMapStudioPlugin/MindMapStudioSettings/MindMapStudioSettingTab`（历史上曾以插件旧名 TheMindMap 命名，已随品牌更名统一）。

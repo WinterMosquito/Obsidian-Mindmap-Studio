@@ -15,9 +15,10 @@ import {
 	Select,
 	TouchEvent,
 } from '../vendor/simple-mind-map.cjs';
-import { getThemeConfig, isDarkTheme } from './mindmap-theme';
+import { getThemeConfig, isDarkTheme, getDocIconColor } from './mindmap-theme';
 import { t, type Language } from './i18n';
 import { walkTree } from './domain/tree';
+import { RESET_LAYOUT_FIT_DELAY_MS } from './constants';
 
 export { getThemeConfig, isDarkTheme } from './mindmap-theme';
 
@@ -68,11 +69,70 @@ export interface CreateMindMapOptions {
 const HISTORY_LIMIT_NODE_COUNT = 2000;
 const HISTORY_LIMIT_MAX_COUNT = 100;
 
-/**
- * 重置布局（RESET_LAYOUT）后延迟适配画布的间隔：等待引擎完成重排
- * （引擎无「布局就绪」回调可用，定值延迟是当前唯一手段）。
- */
-const RESET_LAYOUT_FIT_DELAY_MS = 80;
+// ---------------------------------------------------------------------------
+// 双链文档节点：文字之前的文档页图标
+//
+// 链接三类图标策略：URL → 引擎原生链接图标；双链指向附件 → 引擎 attachmentUrl
+// （原生回形针）；双链指向文档 → 本前缀内容自绘文档页图标（三类两两可辨）。
+// 文档双链不写引擎 hyperlink（否则原生链接图标会与自绘图标双显，见 md-outline）。
+//
+// 契约（0.14.0-fix.3 bundle 实测，headless 验证）：
+// opt.createNodePrefixContent = (node) => { el, width, height } | null，
+// 内容排在节点文字**之前**并计入测宽（无需 padding 预留位）；el 被引擎放进
+// foreignObject（HTML 上下文），因此必须是 `<svg>` 根元素——裸 `<g>` 不渲染。
+// 未入 d.cts，经 Object.assign 注入（防腐透传，与 themeConfig 同口径）。
+// ---------------------------------------------------------------------------
+
+const WIKI_DOC_ICON_SIZE = 18;
+/** 图标 viewBox 边长（路径按 24 网格绘制，缩放到 WIKI_DOC_ICON_SIZE 显示） */
+const WIKI_DOC_ICON_VIEWBOX = 24;
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** 文档页图标（折角页 + 页脚线，feather file-text 风格） */
+const WIKI_DOC_ICON_PATH =
+	'M6 2h8l5 5v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm8 0v5h5M9 13h6M9 17h6';
+
+/** 构造文档页图标（`<svg>` 根元素，见上方契约说明） */
+function buildWikiDocIcon(
+	link: string,
+	title: string,
+	color: string,
+	onOpen: (link: string) => void,
+): SVGSVGElement {
+	const svg = document.createElementNS(SVG_NS, 'svg');
+	svg.setAttribute('xmlns', SVG_NS);
+	svg.setAttribute('width', String(WIKI_DOC_ICON_SIZE));
+	svg.setAttribute('height', String(WIKI_DOC_ICON_SIZE));
+	svg.setAttribute(
+		'viewBox',
+		`0 0 ${WIKI_DOC_ICON_VIEWBOX} ${WIKI_DOC_ICON_VIEWBOX}`,
+	);
+	svg.classList.add('mindmap-wiki-doc-icon');
+	const path = document.createElementNS(SVG_NS, 'path');
+	path.setAttribute('d', WIKI_DOC_ICON_PATH);
+	path.setAttribute('fill', 'none');
+	path.setAttribute('stroke', color);
+	path.setAttribute('stroke-width', '2');
+	path.setAttribute('stroke-linecap', 'round');
+	path.setAttribute('stroke-linejoin', 'round');
+	svg.appendChild(path);
+	// 透明命中区：扩大可点范围至整个图标方块（细线难点中）
+	const hit = document.createElementNS(SVG_NS, 'rect');
+	hit.setAttribute('width', String(WIKI_DOC_ICON_VIEWBOX));
+	hit.setAttribute('height', String(WIKI_DOC_ICON_VIEWBOX));
+	hit.setAttribute('fill', 'transparent');
+	svg.appendChild(hit);
+	const tip = document.createElementNS(SVG_NS, 'title');
+	tip.textContent = title || link;
+	svg.appendChild(tip);
+	svg.addEventListener('click', (event) => {
+		// 阻断节点选中语义：图标点击 = 打开目标
+		event.stopPropagation();
+		onOpen(link);
+	});
+	return svg;
+}
 
 /**
  * 创建思维导图实例并注册引擎插件。
@@ -89,24 +149,60 @@ export function createMindMap(
 	const performanceEnabled =
 		options.performanceMode && nodeCount >= options.performanceThreshold;
 
-	const mindMap = new MindMap({
-		el,
-		data,
-		layout: options.layout,
-		theme: 'default',
-		themeConfig: getThemeConfig(dark),
-		fit: true,
-		defaultInsertSecondLevelNodeText: t(options.lang, 'default.secondLevel'),
-		defaultInsertBelowSecondLevelNodeText: t(options.lang, 'default.belowSecondLevel'),
-		openPerformance: performanceEnabled,
-		performanceConfig: {
-			time: 200,
-			padding: 150,
-			removeNodeWhenOutCanvas: true,
-		},
-		enableFreeDrag: options.enableDrag,
-		customHyperlinkJump: options.onHyperlinkJump ?? null,
-	} satisfies MindMapOptions);
+	const mindMap = new MindMap(
+		Object.assign(
+			{
+				el,
+				data,
+				layout: options.layout,
+				theme: 'default',
+				themeConfig: getThemeConfig(dark),
+				fit: true,
+				defaultInsertSecondLevelNodeText: t(options.lang, 'default.secondLevel'),
+				defaultInsertBelowSecondLevelNodeText: t(
+					options.lang,
+					'default.belowSecondLevel',
+				),
+				openPerformance: performanceEnabled,
+				performanceConfig: {
+					time: 200,
+					padding: 150,
+					removeNodeWhenOutCanvas: true,
+				},
+				enableFreeDrag: options.enableDrag,
+				customHyperlinkJump: options.onHyperlinkJump ?? null,
+			} satisfies MindMapOptions,
+			{
+				// 双链文档图标（契约与防腐说明见上方常量区注释）；
+				// 字段未入 d.cts，经 Object.assign 注入避免类型断言
+				createNodePrefixContent: (node: MindMapNode) => {
+					const nodeData = node.getData() as {
+						mdWikiLinkpath?: unknown;
+						mdLinkText?: unknown;
+					} | null;
+					const wikiLink =
+						typeof nodeData?.mdWikiLinkpath === 'string'
+							? nodeData.mdWikiLinkpath
+							: '';
+					if (!wikiLink) {
+						return null;
+					}
+					const title =
+						typeof nodeData?.mdLinkText === 'string' ? nodeData.mdLinkText : '';
+					return {
+						el: buildWikiDocIcon(
+							wikiLink,
+							title,
+							getDocIconColor(dark),
+							(link) => options.onHyperlinkJump?.(link, node),
+						),
+						width: WIKI_DOC_ICON_SIZE,
+						height: WIKI_DOC_ICON_SIZE,
+					};
+				},
+			},
+		),
+	);
 
 	// 引擎 resize 在容器宽/高为 0 时直接抛错（Obsidian 布局切换、标签切换等
 	// 场景容器可能瞬时 0 尺寸，控制台报「容器元素el的宽高不能为0」）。
@@ -341,10 +437,20 @@ export function setNodeText(
 	node.nodeData.data.text = text;
 	try {
 		mindMap.execCommand(ENGINE_COMMANDS.SET_NODE_DATA, node, { text });
-	} catch {
-		// SET_NODE_DATA 不可用等情形：直接数据已改，交由重绘
+	} catch (error) {
+		// SET_NODE_DATA 不可用等情形：数据已直接写入 nodeData，交给随后的
+		// render 全量重绘兜底；仅记录，不打扰用户。
+		console.warn('SET_NODE_DATA 执行失败，已直接写入节点数据:', error);
 	}
 	mindMap.render();
+}
+
+/**
+ * 标记节点需要重建内容：引擎只在节点内部 `needLayout` 为真时重建该节点
+ * （前缀图标 / 文本等），仅改 data 不会刷新。影响渲染的数据变更后调用。
+ */
+export function markNodeNeedLayout(node: MindMapNode): void {
+	(node as unknown as { needLayout?: boolean }).needLayout = true;
 }
 
 /**

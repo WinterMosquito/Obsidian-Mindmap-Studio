@@ -31,6 +31,12 @@ type SearchViewContext = ViewDomContext &
 /** 搜索栏展开后延迟聚焦的间隔（等待隐藏 class 移除与布局生效后再聚焦） */
 const SEARCH_FOCUS_DELAY_MS = 50;
 
+/** 搜索栏按钮（按视图持有）：语言变更时就地更新 tooltip */
+const searchButtons = new WeakMap<
+	SearchViewContext,
+	{ prev: HTMLElement; next: HTMLElement; close: HTMLElement }
+>();
+
 /** 构建搜索栏（DOM 与事件监听） */
 export function buildSearchBar(view: SearchViewContext): void {
 	const searchBar = view.searchBarEl;
@@ -65,6 +71,12 @@ export function buildSearchBar(view: SearchViewContext): void {
 	});
 	setIcon(closeButton, 'x');
 	closeButton.onclick = () => closeSearchBar(view);
+	// 语言变更时就地更新 tooltip（不重建 DOM、不重复注册监听）
+	searchButtons.set(view, {
+		prev: prevButton,
+		next: nextButton,
+		close: closeButton,
+	});
 	view.viewEvents.onDom(view.searchInput, 'input', () => doSearch(view));
 	view.viewEvents.onDom(view.searchInput, 'keydown', (event) => {
 		if (event.key === 'Enter') {
@@ -87,6 +99,26 @@ export function openSearchBar(view: SearchViewContext): void {
 	}
 	view.searchBarEl.removeClass('mindmap-search-bar-hidden');
 	window.setTimeout(() => view.searchInput?.focus(), SEARCH_FOCUS_DELAY_MS);
+}
+
+/**
+ * 语言变更后刷新搜索栏文案（占位符与三个按钮 tooltip）：
+ * 就地更新，不重建 DOM、不重复注册监听。
+ */
+export function refreshSearchBarLabels(view: SearchViewContext): void {
+	if (view.searchInput) {
+		view.searchInput.setAttribute(
+			'placeholder',
+			t(view.lang, 'toolbar.searchPlaceholder'),
+		);
+	}
+	const buttons = searchButtons.get(view);
+	if (!buttons) {
+		return;
+	}
+	buttons.prev.setAttribute('title', t(view.lang, 'search.prev'));
+	buttons.next.setAttribute('title', t(view.lang, 'search.next'));
+	buttons.close.setAttribute('title', t(view.lang, 'search.close'));
 }
 
 /** 关闭搜索栏并结束引擎搜索 */
@@ -134,16 +166,42 @@ function runSearch(view: SearchViewContext): void {
 		return;
 	}
 	searchMindMap(view.mindMap, keyword, () => updateSearchCount(view));
+	// 引擎命中数为 0 时**不会回调**（Search.searchNext 在空 matchNodeList 上
+	// 提前 return），只靠回调会让「无匹配」提示不可达、计数残留上一次结果；
+	// 这里无条件刷新一次（引擎搜索为同步执行，此刻 matchNodeList/currentIndex
+	// 已就位），有命中的场景与回调重复刷新同值，无副作用。
+	updateSearchCount(view);
+}
+
+/**
+ * 落地未决的防抖搜索（Enter / 上下跳转前调用）。
+ * @returns true = 本次已执行搜索（调用方不应再跳转：引擎搜索本身已定位到
+ *          首个命中，再跳一次会越过它）
+ */
+function flushPendingSearch(view: SearchViewContext): boolean {
+	const debouncer = searchDebouncers.get(view);
+	if (!debouncer?.cancel()) {
+		return false;
+	}
+	runSearch(view);
+	return true;
 }
 
 /** 跳到下一个匹配 */
 export function searchNext(view: SearchViewContext): void {
+	// 防抖窗口内按 Enter：先让未决搜索落地，否则会作用于上一次关键词的陈旧结果集
+	if (flushPendingSearch(view)) {
+		return;
+	}
 	searchNextInMindMap(view.mindMap, () => updateSearchCount(view));
 }
 
 /** 跳到上一个匹配（循环） */
 export function searchPrev(view: SearchViewContext): void {
 	if (!view.mindMap) {
+		return;
+	}
+	if (flushPendingSearch(view)) {
 		return;
 	}
 	const matches = getSearchMatchCount(view.mindMap);

@@ -75,6 +75,33 @@ describe('sanitizeSettings', () => {
 		expect(sanitizeSettings({ language: 'en' }).language).toBe('en');
 	});
 
+	it('布局/主题白名单：非法值回退默认，合法值保留', () => {
+		const bad = sanitizeSettings({
+			defaultLayout: 'bogusLayout',
+			defaultTheme: 'bogusTheme',
+		});
+		expect(bad.defaultLayout).toBe(DEFAULT_SETTINGS.defaultLayout);
+		expect(bad.defaultTheme).toBe(DEFAULT_SETTINGS.defaultTheme);
+		expect(sanitizeSettings({ defaultLayout: 'fishbone' }).defaultLayout).toBe(
+			'fishbone',
+		);
+		expect(sanitizeSettings({ defaultTheme: 'light' }).defaultTheme).toBe(
+			'light',
+		);
+	});
+
+	it('数值钳制到面板取值域并取整（坏值不直达引擎/导出）', () => {
+		expect(sanitizeSettings({ exportScale: 99 }).exportScale).toBe(4);
+		expect(sanitizeSettings({ exportScale: 0 }).exportScale).toBe(1);
+		expect(sanitizeSettings({ exportScale: 2.6 }).exportScale).toBe(3);
+		expect(
+			sanitizeSettings({ performanceThreshold: 5 }).performanceThreshold,
+		).toBe(100);
+		expect(
+			sanitizeSettings({ performanceThreshold: 99999 }).performanceThreshold,
+		).toBe(2000);
+	});
+
 	it('未知键不混入结果', () => {
 		const out = sanitizeSettings({ evil: 'x', exportScale: 3 });
 		expect(Object.keys(out).sort()).toEqual(

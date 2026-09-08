@@ -31,7 +31,20 @@ export function normalizePath(p: unknown): string {
 
 export class TAbstractFile {}
 export class MarkdownRenderChild {}
-export class Modal {}
+/** Modal 桩：仅保证 createModalSettle 的 setCloseCallback 可链接（交互行为由各测试自建 mock） */
+export class Modal {
+	private closeCallback: (() => unknown) | null = null;
+
+	setCloseCallback(callback: () => unknown): this {
+		this.closeCallback = callback;
+		return this;
+	}
+
+	/** 供测试模拟关闭（真实实现由 Obsidian 提供） */
+	close(): void {
+		this.closeCallback?.();
+	}
+}
 export class Component {}
 export class FileView {
 	leaf: unknown;

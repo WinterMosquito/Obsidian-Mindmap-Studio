@@ -162,6 +162,18 @@ describe('解析结构', () => {
 		expect(out2, 'autolink 往返不动点').toBe(out);
 	});
 
+	it('label 本身是 URL 的 md 链接：节点文本不含 URL（icon-only），不动点', () => {
+		const url = 'https://example.com/a/very/long/path';
+		const md = `- [${url}](${url})`;
+		const r = parseMdOutline(md, '测试');
+		const li = r.tree.children[0]!;
+		expect(li.data?.hyperlink, '解析 URL-label 链接为超链接').toBe(url);
+		expect(li.data?.text, 'URL 本体不进节点文本（icon-only，不撑宽节点）').toBe('');
+		const { mdRaw, md2 } = roundTrip(md);
+		expect(mdRaw.includes(`[${url}](${url})`), '未编辑按原文回写').toBe(true);
+		expect(md2).toBe(mdRaw);
+	});
+
 	it('新插入 URL 链接（引擎节点，无 mdRaw）回写 <url>', () => {
 		const tree = parseMdOutline('# R\n', '根').tree;
 		tree.children[0]!.children.push({
@@ -541,11 +553,22 @@ describe('嵌入尺寸参数', () => {
 	it('宽度参数前缀不受 |30 vs |300 混淆（终界检查）', () => {
 		const tree = parseMdOutline('- ![[a.png|300x150]]\n', '根').tree;
 		const li = tree.children[0]!;
-		// 调到 30：特征 |30 不得误匹配 |300x 前缀而逐字回写旧尺寸
+		// 调到 30：特征 |30 不得误匹配 |300x 前缀而逐字回写旧尺寸。
+		// 源行有显式高度（300x150）→ 回写保留双参数形态 |30x15（高度不丢）
 		li.data.imageSize = { width: 30, height: 15, custom: true };
 		const out = serializeMdBody(tree, null);
-		expect(out.includes('- ![[a.png|30]]'), '新宽度正确合成').toBe(true);
+		expect(out.includes('- ![[a.png|30x15]]'), '新宽高正确合成').toBe(true);
 		expect(!out.includes('300'), '旧宽高参数不残留').toBe(true);
+	});
+
+	it('显式高度只随源行回写：仅宽参数源行不凭空补高度', () => {
+		const tree = parseMdOutline('- ![[a.png|300]]\n', '根').tree;
+		const li = tree.children[0]!;
+		expect(li.data?.mdImageHeight, '仅宽源行无显式高度').toBeUndefined();
+		li.data.imageSize = { width: 250, height: 125, custom: true };
+		const out = serializeMdBody(tree, null);
+		expect(out.includes('- ![[a.png|250]]'), '维持仅宽（等比）形态').toBe(true);
+		expect(!out.includes('x125'), '不凭空补高度').toBe(true);
 	});
 
 	it('图文混合节点调宽：文本与尺寸参数同时保留', () => {
@@ -568,7 +591,8 @@ describe('rawOk 未编辑检测分支矩阵', () => {
 		const tree = parseMdOutline('# [[旧目标]] 标题\n', '根').tree;
 		const h = tree.children[0]!;
 		expect(h.data?.text, '解析：wikilink 剥壳，显示名并入节点文本').toBe('旧目标 标题');
-		delete h.data.hyperlink; // 用户清除链接（clearNodeHyperlink 语义）
+		delete h.data.hyperlink; // 用户清除链接（clearNodeHyperlink 语义：两通道一并清除）
+		delete h.data.mdWikiLinkpath;
 		const out = serializeMdBody(tree, null);
 		expect(!out.includes('[['), '链接清除后 mdRaw 不原样回写（旧链接不复活）').toBe(true);
 		expect(out.includes('# 旧目标 标题'), '清除链接后保留纯文本标题').toBe(true);
@@ -606,4 +630,167 @@ describe('rawOk 未编辑检测分支矩阵', () => {
 	});
 	// （plain 段落的 rawOk 豁免——mdRaw 含 [[..]] 但 hyperlink 恒空 → 逐字回写——
 	//  已由「段落行内 [[]]/[](url)/轻标记 未编辑逐字回写」用例锁定。）
+});
+
+// ---------------------------------------------------------------------------
+// URL icon-only 与附件链接（双链指向附件走 attachmentUrl 通道）
+// ---------------------------------------------------------------------------
+
+describe('URL icon-only 与附件链接', () => {
+	it('裸 URL 行解析：URL 不进节点文本，hyperlink 指向 URL（icon-only）', () => {
+		const r = parseMdOutline('- API https://platform.example.com/usage', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		expect(node.data?.hyperlink).toBe('https://platform.example.com/usage');
+		expect(node.data?.text).toBe('API');
+		expect(node.data?.hyperlinkTitle).toBe(
+			'https://platform.example.com/usage',
+		);
+	});
+
+	it('裸 URL 行未编辑 → 逐字回写原文', () => {
+		const { mdRaw } = roundTrip('- API https://platform.example.com/usage');
+		expect(mdRaw).toBe('- API https://platform.example.com/usage');
+	});
+
+	it('<url> 尖括号形态与裸 URL 同语义（icon-only，回写 <url>）', () => {
+		const r = parseMdOutline('- <https://x.com/a>', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		expect(node.data?.hyperlink).toBe('https://x.com/a');
+		expect(node.data?.text).toBe('');
+		const { mdRaw } = roundTrip('- <https://x.com/a>');
+		expect(mdRaw).toBe('- <https://x.com/a>');
+	});
+
+	it('双链附件：走 attachmentUrl 通道（回形针），hyperlink 缺席，文本保留文件名', () => {
+		const r = parseMdOutline('- [[报告.pdf]]', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		expect(node.data?.attachmentUrl).toBe('报告.pdf');
+		expect(node.data?.attachmentName).toBe('报告.pdf');
+		expect(node.data?.mdAttachmentLinkpath).toBe('报告.pdf');
+		expect(node.data?.hyperlink).toBeUndefined();
+		expect(node.data?.text).toBe('报告.pdf');
+	});
+
+	it('双链附件别名：attachmentName 取别名', () => {
+		const r = parseMdOutline('- [[报告.pdf|资料]]', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		expect(node.data?.attachmentUrl).toBe('报告.pdf');
+		expect(node.data?.attachmentName).toBe('资料');
+	});
+
+	it('双链附件未编辑 → 逐字回写原文', () => {
+		const { mdRaw } = roundTrip('- [[报告.pdf|资料]]');
+		expect(mdRaw).toBe('- [[报告.pdf|资料]]');
+	});
+
+	it('双链附件编辑文本后合成：重建 wikilink 并保留别名', () => {
+		const first = parseMdOutline('- [[报告.pdf|资料]]', '根');
+		const node = collect(first.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		// 模拟用户编辑：文本改变 → rawOk 失败 → 合成路径
+		node.data!.text = '新标题';
+		const out = serializeMdBody(first.tree, null);
+		// 别名是链接自身语义（Obsidian `[[目标|别名]]`），编辑节点文本不应丢弃
+		expect(out).toBe('- 新标题 [[报告.pdf|资料]]');
+	});
+
+	it('双链附件无别名：合成不凭空补别名', () => {
+		const r = parseMdOutline('- [[报告.pdf]]', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		node.data!.text = '新标题';
+		expect(serializeMdBody(r.tree, null)).toBe('- 新标题 [[报告.pdf]]');
+	});
+
+	it('非图片嵌入 ![[报告.pdf]] → 走附件通道（不当作节点图，往返保留 !）', () => {
+		const r = parseMdOutline('- ![[报告.pdf]]', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		expect(node.data?.image, '不写 image（否则引擎按图片渲染 → 空白）').toBeUndefined();
+		expect(node.data?.attachmentUrl).toBe('报告.pdf');
+		expect(node.data?.mdEmbed).toBe(true);
+		// 未编辑 → 逐字回写；编辑 → 合成仍保留嵌入语法
+		expect(roundTrip('- ![[报告.pdf]]').mdRaw).toBe('- ![[报告.pdf]]');
+		node.data!.text = '新标题';
+		expect(serializeMdBody(r.tree, null)).toBe('- 新标题 ![[报告.pdf]]');
+	});
+
+	it('图片嵌入 ![[图.png]] 仍为节点图（不受附件分流影响）', () => {
+		const r = parseMdOutline('- ![[图.png]]', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		expect(node.data?.image).toBe('图.png');
+		expect(node.data?.attachmentUrl).toBeUndefined();
+		expect(node.data?.mdEmbed).toBeUndefined();
+	});
+
+	it('Obsidian 可渲染但不在拖拽清单的图片格式（avif）仍按节点图处理', () => {
+		const r = parseMdOutline('- ![[图.avif]]', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		expect(node.data?.image).toBe('图.avif');
+		expect(node.data?.attachmentUrl).toBeUndefined();
+	});
+
+	it('双链文档：走 mdWikiLinkpath 通道（自绘文档图标，不写 hyperlink）', () => {
+		const r = parseMdOutline('- [[笔记A]]', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		expect(node.data?.mdWikiLinkpath).toBe('[[笔记A]]');
+		expect(node.data?.hyperlink).toBeUndefined();
+		expect(node.data?.attachmentUrl).toBeUndefined();
+		expect(node.data?.text).toBe('笔记A');
+	});
+
+	it('双链文档别名：mdLinkText 取别名，文本剥壳为别名', () => {
+		const r = parseMdOutline('- [[笔记A|别名]]', '根');
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		expect(node.data?.mdWikiLinkpath).toBe('[[笔记A|别名]]');
+		expect(node.data?.mdLinkText).toBe('别名');
+		expect(node.data?.text).toBe('别名');
+	});
+
+	it('双链文档未编辑 → 逐字回写原文', () => {
+		const { mdRaw } = roundTrip('- [[笔记A|别名]]');
+		expect(mdRaw).toBe('- [[笔记A|别名]]');
+	});
+
+	it('双链文档编辑文本后合成：重建 wikilink（保留别名）', () => {
+		const first = parseMdOutline('- [[笔记A|别名]]', '根');
+		const node = collect(first.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		node.data!.text = '新标题';
+		const out = serializeMdBody(first.tree, null);
+		expect(out).toBe('- 新标题 [[笔记A|别名]]');
+	});
+
+	it('裸 URL 与双链混排行：首链占位，其余剥壳为文本', () => {
+		const r = parseMdOutline(
+			'- 对比 https://a.com 与 [[笔记B]]',
+			'根',
+		);
+		const node = collect(r.tree).find(
+			({ node }) => node.data?.mdType === 'list',
+		)!.node;
+		// 首个链接 token = 裸 URL（位置在前）→ hyperlink；双链剥壳为文本
+		expect(node.data?.hyperlink).toBe('https://a.com');
+		expect(node.data?.text).toBe('对比 与 笔记B');
+	});
 });
