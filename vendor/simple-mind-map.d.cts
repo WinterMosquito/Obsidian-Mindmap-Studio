@@ -116,6 +116,8 @@ export class MindMap {
 		setScale(scale: number, centerX?: number, centerY?: number): void;
 		/** 恢复保存的视口（缩放/平移）；入参为 getTransformData 的输出 */
 		setTransformData(data: unknown): void;
+		/** 相对平移画布（正数向右/下），立即重绘 */
+		translateXY(x: number, y: number): void;
 		/** 当前视口（缩放/平移），用于持久化 */
 		getTransformData(): { transform: AnyObject; state: AnyObject };
 	};

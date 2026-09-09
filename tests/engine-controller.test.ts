@@ -19,7 +19,7 @@ import { App, TFile } from 'obsidian';
 // —— hoisted 桩：vi.mock 工厂与测试体共享同一组 mock 函数 ——
 const mocks = vi.hoisted(() => {
 	return {
-		centerRootAtFullScale: vi.fn(),
+		centerContentAtFullScale: vi.fn(),
 		createMindMap: vi.fn(),
 		destroyMindMap: vi.fn(),
 		fitMindMap: vi.fn(),
@@ -554,9 +554,9 @@ describe('EngineController.refresh 与视口', () => {
 			h.canvas.width = 800;
 			h.canvas.height = 600;
 			h.controller.initMindMap(tree('Root'));
-			expect(mocks.centerRootAtFullScale).not.toHaveBeenCalled();
+			expect(mocks.centerContentAtFullScale).not.toHaveBeenCalled();
 			vi.advanceTimersByTime(150);
-			expect(mocks.centerRootAtFullScale).toHaveBeenCalledTimes(1);
+			expect(mocks.centerContentAtFullScale).toHaveBeenCalledTimes(1);
 			expect(mocks.fitMindMap).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
@@ -577,7 +577,7 @@ describe('EngineController.refresh 与视口', () => {
 				state: {},
 			});
 			expect(mocks.fitMindMap).not.toHaveBeenCalled();
-			expect(mocks.centerRootAtFullScale).not.toHaveBeenCalled();
+			expect(mocks.centerContentAtFullScale).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 		}

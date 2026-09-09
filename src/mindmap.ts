@@ -157,7 +157,7 @@ export function createMindMap(
 				layout: options.layout,
 				theme: 'default',
 				themeConfig: getThemeConfig(dark),
-				// 不在创建时 fit 全图：打开后的默认视口由 centerRootAtFullScale
+				// 不在创建时 fit 全图：打开后的默认视口由 centerContentAtFullScale
 				// 统一设置（100% + 根节点居中），大图不再被压到看不清文字
 				fit: false,
 				defaultInsertSecondLevelNodeText: t(options.lang, 'default.secondLevel'),
@@ -258,27 +258,72 @@ export function fitMindMap(mindMap: MindMap | null): void {
 }
 
 /**
- * 打开时的默认视口：100% 缩放 + 根（中心）节点居中。
+ * 打开时的默认视口：100% 缩放 + **整体内容居中**（按渲染内容包围盒居中，
+ * 不按根节点——根节点居中会让偏心的树偏向一侧）。
  *
- * 取代「fit 全图」——节点很多时 fit 会把比例压到文字不可读。顺序上先
- * `setScale(1)` 再居中：moveNodeToCenter 用当前 transform 计算偏移，
- * 若先居中后改比例，偏移会失配。
+ * 顺序：先 `setScale(1, 画布中心)` 固定比例（锚定画布中心，避免内容跳动），
+ * 再按当前包围盒平移，使包围盒中心落在画布中心。
  */
-export function centerRootAtFullScale(mindMap: MindMap | null): void {
+export function centerContentAtFullScale(mindMap: MindMap | null): void {
 	if (!mindMap) {
 		return;
 	}
 	try {
-		mindMap.view?.setScale(1);
-		const root = mindMap.renderer?.root;
-		if (root) {
-			mindMap.renderer.moveNodeToCenter(root);
+		// 性能模式下视口外节点被回收，包围盒会失真：先强制渲染全部节点
+		// （与 fitMindMap 同款做法；随后引擎按新视口重新回收）
+		if (mindMap.opt?.openPerformance) {
+			mindMap.renderer.forceLoadNode?.();
 		}
+		const centerX = mindMap.width / 2;
+		const centerY = mindMap.height / 2;
+		mindMap.view?.setScale(1, centerX, centerY);
+		const box = measureContentBox(mindMap);
+		if (!box) {
+			return;
+		}
+		mindMap.view?.translateXY(
+			(mindMap.width - box.width) / 2 - box.x,
+			(mindMap.height - box.height) / 2 - box.y,
+		);
 	} catch (error) {
 		// 引擎尚未就绪等边角情况：回退 fit（至少让内容可见）
 		console.error('设置默认视口失败', error);
 		fitMindMap(mindMap);
 	}
+}
+
+/**
+ * 渲染内容的包围盒（画布坐标系，左上为原点）。
+ * `draw.rbox()` 返回页面坐标，减去容器矩形得到画布内坐标（与引擎 fit 同口径）。
+ */
+function measureContentBox(
+	mindMap: MindMap,
+): { x: number; y: number; width: number; height: number } | null {
+	const draw = (
+		mindMap as unknown as {
+			draw?: {
+				rbox(): {
+					x: number;
+					y: number;
+					width: number;
+					height: number;
+				};
+			};
+		}
+	).draw;
+	const elRect = (
+		mindMap as unknown as { elRect?: { left: number; top: number } }
+	).elRect;
+	if (!draw?.rbox || !elRect) {
+		return null;
+	}
+	const box = draw.rbox();
+	return {
+		x: box.x - elRect.left,
+		y: box.y - elRect.top,
+		width: box.width,
+		height: box.height,
+	};
 }
 
 /**

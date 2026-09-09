@@ -16,7 +16,7 @@ import {
 	MindMapTreeNode,
 } from '../../vendor/simple-mind-map.cjs';
 import {
-	centerRootAtFullScale,
+	centerContentAtFullScale,
 	createMindMap,
 	destroyMindMap,
 	fitMindMap,
@@ -338,7 +338,7 @@ export class EngineController {
 			if (savedView) {
 				mindMap.view.setTransformData(savedView);
 			} else {
-				centerRootAtFullScale(mindMap);
+				centerContentAtFullScale(mindMap);
 			}
 		} catch (error) {
 			console.error('恢复视图状态失败', error);

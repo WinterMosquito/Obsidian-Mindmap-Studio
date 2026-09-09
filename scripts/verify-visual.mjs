@@ -120,7 +120,7 @@ function findChrome() {
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
 function buildEntrySource() {
 	const mindmapModule = join(ROOT, 'src', 'mindmap.ts').replaceAll('\\', '/');
-	return `import { centerRootAtFullScale, createMindMap, resetZoom } from ${JSON.stringify(mindmapModule)};
+	return `import { centerContentAtFullScale, createMindMap, resetZoom } from ${JSON.stringify(mindmapModule)};
 
 const scenarios = ${JSON.stringify(
 		SCENARIOS.map(({ name, data }) => ({ name, data })),
@@ -157,7 +157,7 @@ for (const { name, data } of scenarios) {
 	);
 }
 
-// —— 默认视口探针：打开时的默认视口应为 100% 缩放 + 根节点居中 ——
+// —— 默认视口探针：打开时应为 100% 缩放 + 整体内容居中 ——
 // 用「深链」大图复现用户场景：fit 全图会把比例压到文字不可读。
 const viewportHolder = document.createElement('div');
 viewportHolder.id = 'map-viewport';
@@ -175,11 +175,21 @@ window.setTimeout(() => {
 const probe = document.createElement('pre');
 probe.id = 'viewport-probe';
 try {
-	centerRootAtFullScale(viewportMap);
+	centerContentAtFullScale(viewportMap);
 	const state = viewportMap.view.getTransformData().state;
-	const rootEl = viewportMap.renderer.root.group.node;
-	const rootRect = rootEl.getBoundingClientRect();
 	const canvasRect = viewportHolder.getBoundingClientRect();
+	// 整体内容包围盒（所有已渲染节点矩形的并集，相对画布左上角）
+	const rects = [...viewportHolder.querySelectorAll('.smm-node')].map((el) =>
+		el.getBoundingClientRect(),
+	);
+	const minX = Math.min(...rects.map((r) => r.left));
+	const minY = Math.min(...rects.map((r) => r.top));
+	const maxX = Math.max(...rects.map((r) => r.right));
+	const maxY = Math.max(...rects.map((r) => r.bottom));
+	const contentCenter = [
+		Math.round((minX + maxX) / 2 - canvasRect.left),
+		Math.round((minY + maxY) / 2 - canvasRect.top),
+	];
 	// 重置缩放不漂移：先缩到 50%（以画布中心为锚点），记录中心处的内容坐标，
 	// 重置后再算该内容点落回屏幕的位置——位移应 ≤1px（否则表现为「视图乱飘」）
 	const cx = canvasRect.width / 2;
@@ -196,10 +206,7 @@ try {
 	);
 	probe.textContent = JSON.stringify({
 		scale: state.scale,
-		rootCenter: [
-			Math.round(rootRect.left + rootRect.width / 2 - canvasRect.left),
-			Math.round(rootRect.top + rootRect.height / 2 - canvasRect.top),
-		],
+		contentCenter,
 		canvas: [Math.round(canvasRect.width), Math.round(canvasRect.height)],
 		resetScale: reset.scale,
 		resetDrift: Math.round(drift * 100) / 100,
@@ -377,7 +384,7 @@ function checkViewport(dom) {
 	if (probe.scale !== 1) {
 		failures.push(`缩放 ${probe.scale} ≠ 1（应为 100%）`);
 	}
-	const [centerX, centerY] = probe.rootCenter ?? [];
+	const [centerX, centerY] = probe.contentCenter ?? [];
 	const [width, height] = probe.canvas ?? [];
 	if (
 		typeof centerX !== 'number' ||
@@ -391,7 +398,7 @@ function checkViewport(dom) {
 		Math.abs(centerY - height / 2) > 2
 	) {
 		failures.push(
-			`根节点中心 (${centerX},${centerY}) 未居中于画布 (${width},${height})`,
+			`内容包围盒中心 (${centerX},${centerY}) 未居中于画布 (${width},${height})`,
 		);
 	}
 	// 重置缩放：回到 100% 且画布中心处的内容不漂移（≤1px）
@@ -450,10 +457,10 @@ async function main() {
 			}
 			failed += failures.length;
 		}
-		// 默认视口契约：100% 缩放 + 根节点居中（打开大图时文字可读）
+		// 默认视口契约：100% 缩放 + 整体内容居中（打开大图时文字可读）
 		const viewportFailures = checkViewport(dom);
 		console.log(
-			`  ${viewportFailures.length === 0 ? '✓' : '✗'} viewport 默认视口 100% + 根节点居中`,
+			`  ${viewportFailures.length === 0 ? '✓' : '✗'} viewport 默认视口 100% + 整体内容居中`,
 		);
 		for (const failure of viewportFailures) {
 			console.log(`      - ${failure}`);
