@@ -547,7 +547,7 @@ describe('EngineController.refresh 与视口', () => {
 		expect(() => h.controller.persistViewport()).not.toThrow();
 	});
 
-	it('首帧延迟后：无保存视口则默认 100% + 根节点居中（不 fit）', () => {
+	it('首帧延迟后：无保存视口则默认 100% + 整体内容居中（不 fit）', () => {
 		vi.useFakeTimers();
 		try {
 			const h = makeHarness();

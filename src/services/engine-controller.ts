@@ -339,7 +339,7 @@ export class EngineController {
 		}
 	}
 
-	/** 打开后恢复保存的视口；无则默认 100% + 根节点居中（大图可读） */
+	/** 打开后恢复保存的视口；无则默认 100% + 整体内容包围盒居中（大图可读） */
 	private restoreOrFitViewport(): void {
 		const file = this.deps.getFile();
 		const mindMap = this.mindMap;

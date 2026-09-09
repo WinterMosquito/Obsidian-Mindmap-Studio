@@ -29,6 +29,11 @@ const { getNodeGroupElMock } = vi.hoisted(() => ({
 
 vi.mock('../src/mindmap', () => ({
 	getNodeGroupEl: getNodeGroupElMock,
+	// 与生产实现同语义（getData 取字符串，非字符串归一为空串）
+	getNodeDataString: (node: { getData?: (key: string) => unknown }, key: string) => {
+		const value = node.getData?.(key);
+		return typeof value === 'string' ? value : '';
+	},
 }));
 
 /** 最小元素桩：contains/closest/getBoundingClientRect 由用例决定 */

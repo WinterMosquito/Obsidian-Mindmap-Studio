@@ -1,12 +1,63 @@
 /**
- * 视图内快捷键处理器（scope 注册点仍在 view.ts 的 register 块）。
+ * 视图内快捷键注册与处理（scope 注册点在 view.ts 的 onOpen）。
  *
- * 目前只承载 F2「编辑当前节点」——它需要判定（输入中让位 / 已在编辑忽略 /
- * 无激活节点仍吞键）。`Mod+F`（搜索）与 `Mod+Z`/`Mod+Shift+Z`/`Mod+Y`
- * （引擎撤销/重做）在 view.ts 内联注册：单条命令转发，无分支。
+ * 承载两类快捷键：
+ * - `Mod+F`（搜索）、`Mod+Z`/`Mod+Shift+Z`/`Mod+Y`（引擎撤销/重做）——单条命令
+ *   转发，无判定分支；
+ * - `F2`（编辑当前节点）——需要判定（输入中让位 / 已在编辑忽略 / 无激活节点
+ *   仍吞键），见 handleEditNodeHotkey。
  */
-import { getActiveNode, isEditingText, startNodeTextEdit } from '../mindmap';
+import { Platform } from 'obsidian';
+import {
+	ENGINE_COMMANDS,
+	getActiveNode,
+	isEditingText,
+	startNodeTextEdit,
+} from '../mindmap';
+import type { Scope } from 'obsidian';
 import type { ViewEngineContext } from './view-context';
+
+/** 快捷键注册所需的最小视图面（引擎 + 搜索栏入口） */
+export interface ViewHotkeyHost extends ViewEngineContext {
+	/** 打开搜索栏（Mod+F） */
+	openSearchBar(): void;
+}
+
+/**
+ * 注册视图内快捷键（视图 onOpen 时调用一次）。
+ * 生命周期由视图 scope 承担：`ItemView.scope` 随视图实例创建/销毁，
+ * 核心经 workspace scope 链在「本视图为活动叶」时转发按键。
+ */
+export function registerViewHotkeys(
+	scope: Scope | null,
+	view: ViewHotkeyHost,
+): void {
+	scope?.register(['Mod'], 'f', () => {
+		view.openSearchBar();
+		return false;
+	});
+	// 对齐 Obsidian 官方编辑约定（help: Editing shortcuts）：
+	// Undo = Mod+Z；Redo = Mod+Shift+Z（macOS 官方仅此一种）或 Mod+Y
+	// （Windows/Linux）。属系统级编辑快捷键（非命令默认热键，不违反社区
+	// 规范的 no-default-hotkeys），引擎自身未绑定，此处接管并阻止冒泡。
+	scope?.register(['Mod'], 'z', () => {
+		view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
+		return false;
+	});
+	scope?.register(['Mod', 'Shift'], 'z', () => {
+		view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+		return false;
+	});
+	if (!Platform.isMacOS) {
+		// macOS 官方未提供 Mod+Y 重做（Cmd+Y 是其他语义），不注册以免冲突
+		scope?.register(['Mod'], 'y', () => {
+			view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+			return false;
+		});
+	}
+	// F2 = 编辑当前激活节点（引擎自带 F2 判定苛刻，见 handleEditNodeHotkey）
+	scope?.register([], 'F2', (evt) => handleEditNodeHotkey(view, evt));
+}
 
 /** 文本输入类目标（搜索框/弹窗输入/引擎文本编辑框）：F2 让位，不劫持 */
 function isTextEntryTarget(target: EventTarget | null): boolean {

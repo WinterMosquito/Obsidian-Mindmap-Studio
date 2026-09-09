@@ -10,13 +10,7 @@
  * - openHyperlink（view-link-navigator.ts） 节点超链接跳转路由；
  * - 本类只做编排：生命周期事件 → 装配 services 与 view-* 交互特性。
  */
-import {
-	FileView,
-	Notice,
-	Platform,
-	TFile,
-	WorkspaceLeaf,
-} from 'obsidian';
+import { FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import { Language, t } from '../i18n';
 import { VIEW_TYPE } from '../constants';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
@@ -25,7 +19,6 @@ import { walkCorrectImageSizesByAspect } from '../images-path';
 import { openAsMarkdown } from '../md-open';
 import { registerWikilinkInteractions } from './view-wikilink';
 import type { MindMapViewContext, ViewPluginContext } from './view-context';
-import { ENGINE_COMMANDS } from '../mindmap';
 import { DocumentService, SavePipeline } from '../services/document-service';
 import { EngineController } from '../services/engine-controller';
 import {
@@ -37,7 +30,7 @@ import { exportPNG } from './view-export';
 import { arrangeMindMap, buildToolbar, refreshToolbar } from './view-toolbar';
 import { setupDragAndDrop } from './view-dnd';
 import { setupContextMenu } from './view-context-menu';
-import { handleEditNodeHotkey } from './view-hotkeys';
+import { registerViewHotkeys } from './view-hotkeys';
 import { handleWindowPaste, setupPasteHandler } from './view-paste';
 import {
 	cancelStatusBarUpdate,
@@ -250,33 +243,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.registerEvent(
 			this.app.workspace.on('css-change', this.boundHandleCssChange),
 		);
-		this.scope?.register(['Mod'], 'f', () => {
-			this.openSearchBar();
-			return false;
-		});
-		// 对齐 Obsidian 官方编辑约定（help: Editing shortcuts）：
-		// Undo = Mod+Z；Redo = Mod+Shift+Z（macOS 官方仅此一种）或 Mod+Y
-		// （Windows/Linux）。属系统级编辑快捷键（非命令默认热键，不违反社区
-		// 规范的 no-default-hotkeys），引擎自身未绑定，此处接管并阻止冒泡。
-		this.scope?.register(['Mod'], 'z', () => {
-			this.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
-			return false;
-		});
-		this.scope?.register(['Mod', 'Shift'], 'z', () => {
-			this.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
-			return false;
-		});
-		if (!Platform.isMacOS) {
-			// macOS 官方未提供 Mod+Y 重做（Cmd+Y 是其他语义），不注册以免冲突
-			this.scope?.register(['Mod'], 'y', () => {
-				this.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
-				return false;
-			});
-		}
-		// F2 = 编辑当前激活节点（引擎自带 F2 判定苛刻，见 view-hotkeys 注释）
-		this.scope?.register([], 'F2', (evt) =>
-			handleEditNodeHotkey(this, evt),
-		);
+		// 视图内快捷键（搜索 / 撤销重做 / F2 编辑节点）统一在 view-hotkeys 注册
+		registerViewHotkeys(this.scope, this);
 
 		// 窗口级粘贴兜底：只注册一次（随视图生命周期由 Component 自动清理），
 		// 不放在 setupPasteHandler 中，避免每次刷新引擎累积监听。

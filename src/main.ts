@@ -32,6 +32,7 @@ import {
 } from './commands';
 import { t } from './i18n';
 import { VaultSyncService } from './vault-sync';
+import { fileLookupIndex } from './file-lookup';
 import { ViewStateStore } from './view-state';
 import { notifyError } from './errors';
 import { PluginDataWriter } from './persistence';
@@ -44,6 +45,11 @@ import { OpenAsPreferenceRestorer } from './open-as-restore';
 export default class MindMapStudioPlugin extends Plugin {
 	override settings!: MindMapStudioSettings;
 	statusBarEl: HTMLElement | null = null;
+	/**
+	 * 插件是否已卸载。`workspace.onLayoutReady` 回调不可注销（返回 void，
+	 * 非 EventRef），布局就绪前禁用插件时回调仍会执行——须自行判定。
+	 */
+	private unloaded = false;
 	/** 丝带图标元素（官方无移除 API；语言变更时就地更新提示文案） */
 	ribbonEl: HTMLElement | null = null;
 	/**
@@ -179,6 +185,9 @@ export default class MindMapStudioPlugin extends Plugin {
 			});
 		};
 		this.app.workspace.onLayoutReady(() => {
+			if (this.unloaded) {
+				return;
+			}
 			injectFileCreatorMenu();
 			restorer.scheduleStartupRestore();
 		});
@@ -206,6 +215,9 @@ export default class MindMapStudioPlugin extends Plugin {
 	}
 
 	override onunload(): void {
+		this.unloaded = true;
+		// 全库文件索引（模块级单例，缓存 path→TFile）：插件禁用后不该继续驻留
+		fileLookupIndex.invalidate();
 		// 排空未落盘的视图状态（防抖定时器）：同步 onunload 无法 await 写盘，
 		// 尽力启动在途写盘（flushNow 返回 PluginDataWriter.write 的 Promise，
 		// write 内部吞错，无未处理拒绝风险）。

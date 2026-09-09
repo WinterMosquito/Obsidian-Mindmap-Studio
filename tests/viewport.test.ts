@@ -6,7 +6,11 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import { arrangeMindMap, resetZoom } from '../src/mindmap';
+import {
+	arrangeMindMap,
+	centerContentAtFullScale,
+	resetZoom,
+} from '../src/mindmap';
 
 // mindmap.ts 经 import 链加载 vendor bundle（顶层求值触碰 document.documentElement）
 vi.hoisted(() => {
@@ -17,16 +21,31 @@ function makeMindMap() {
 	const setScale = vi.fn<(scale: number, cx?: number, cy?: number) => void>();
 	const fit = vi.fn();
 	const moveNodeToCenter = vi.fn();
+	const translateXY = vi.fn<(x: number, y: number) => void>();
+	const forceLoadNode = vi.fn();
 	const execCommand = vi.fn();
 	const root = { isRoot: true };
+	// 渲染内容包围盒（页面坐标）：rbox 减 elRect 得画布坐标
+	const rbox = vi.fn(() => ({ x: 110, y: 220, width: 200, height: 100 }));
 	const mindMap = {
 		width: 800,
 		height: 600,
 		execCommand,
-		view: { setScale, fit },
-		renderer: { root, moveNodeToCenter },
+		opt: { openPerformance: false },
+		view: { setScale, fit, translateXY },
+		renderer: { root, moveNodeToCenter, forceLoadNode },
+		draw: { rbox },
+		elRect: { left: 10, top: 20 },
 	} as unknown as MindMap;
-	return { mindMap, setScale, fit, moveNodeToCenter, execCommand };
+	return {
+		mindMap,
+		setScale,
+		fit,
+		moveNodeToCenter,
+		translateXY,
+		forceLoadNode,
+		execCommand,
+	};
 }
 
 describe('resetZoom（回到 100%，以画布中心为锚点）', () => {
@@ -44,8 +63,53 @@ describe('resetZoom（回到 100%，以画布中心为锚点）', () => {
 	});
 });
 
-describe('arrangeMindMap（整理后重置缩放，不再 fit 全图）', () => {
-	afterEach(() => {
+/**
+ * 打开时的默认视口几何（真实计算，非 mock 断言）：
+ * 100% 缩放 + 内容包围盒中心落在画布中心。
+ */
+describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
+	it('先以画布中心为锚点定 100%，再按包围盒平移到画布中心', () => {
+		const { mindMap, setScale, translateXY, fit } = makeMindMap();
+		centerContentAtFullScale(mindMap);
+
+		expect(setScale).toHaveBeenCalledWith(1, 400, 300);
+		// 包围盒（画布坐标）：x=110-10=100, y=220-20=200, 200×100
+		// 平移量 = ((800-200)/2-100, (600-100)/2-200) = (200, 50)
+		expect(translateXY).toHaveBeenCalledWith(200, 50);
+
+		// 不变量：平移后包围盒中心 = 画布中心（而非根节点居中）
+		const [dx, dy] = translateXY.mock.calls[0]!;
+		const boxCenterX = 100 + 200 / 2 + dx;
+		const boxCenterY = 200 + 100 / 2 + dy;
+		expect(boxCenterX).toBe(400);
+		expect(boxCenterY).toBe(300);
+		expect(fit).not.toHaveBeenCalled();
+	});
+
+	it('性能模式：先强制渲染全部节点，包围盒才可信', () => {
+		const { mindMap, forceLoadNode, translateXY } = makeMindMap();
+		(mindMap as unknown as { opt: { openPerformance: boolean } }).opt = {
+			openPerformance: true,
+		};
+		centerContentAtFullScale(mindMap);
+		expect(forceLoadNode).toHaveBeenCalledTimes(1);
+		expect(translateXY).toHaveBeenCalledTimes(1);
+	});
+
+	it('包围盒不可得（引擎中间态）：只设比例、不平移', () => {
+		const { mindMap, setScale, translateXY } = makeMindMap();
+		delete (mindMap as unknown as { draw?: unknown }).draw;
+		centerContentAtFullScale(mindMap);
+		expect(setScale).toHaveBeenCalledWith(1, 400, 300);
+		expect(translateXY).not.toHaveBeenCalled();
+	});
+
+	it('引擎缺失时静默', () => {
+		expect(() => centerContentAtFullScale(null)).not.toThrow();
+	});
+});
+
+describe('arrangeMindMap（整理后重置缩放，不再 fit 全图）', () => {	afterEach(() => {
 		vi.useRealTimers();
 	});
 

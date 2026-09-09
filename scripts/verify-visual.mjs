@@ -110,6 +110,8 @@ function findChrome() {
 	} else {
 		candidates.push(
 			'/usr/bin/google-chrome',
+			'/usr/bin/google-chrome-stable',
+			'/opt/google/chrome/chrome',
 			'/usr/bin/chromium',
 			'/usr/bin/chromium-browser',
 		);
@@ -387,7 +389,7 @@ function checkScenario(scenario, fragment) {
 
 /**
  * 校验默认视口探针（由入口脚本写入 `#viewport-probe`，见 buildEntrySource）：
- * 打开导图时应为 100% 缩放且根（中心）节点落在画布中心附近。
+ * 打开导图时应为 100% 缩放，且渲染内容包围盒中心落在画布中心附近。
  */
 function checkViewport(dom) {
 	const raw = dom

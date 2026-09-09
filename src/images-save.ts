@@ -15,15 +15,33 @@ import { t, tf, type Language } from './i18n';
  */
 const saveQueue = createSerialQueue();
 
-/** 清理文件名中的非法字符（含控制字符） */
+/**
+ * 清理文件名中的非法字符。
+ *
+ * 覆盖两类约束：
+ * - 文件系统/Obsidian 校验：控制字符与 `<>:"/\|?*`（`Vault.checkPath` 直接
+ *   抛错的字符集）；
+ * - Obsidian 额外禁止的 `# ^ [ ]`（核心 `msgUnsafeCharacters`，含这些字符的
+ *   文件名无法被双链正确引用）——不清理会写出「UI 拒绝改名、链接解析成
+ *   锚点/别名」的文件名；
+ * - 结尾的点/空格（Windows 与 Obsidian 均拒绝）与 CON/PRN/… 保留名。
+ *
+ * 全部字符都被清理时返回空串（调用方决定兜底名，如 `image`）。
+ */
 export function sanitizeFileName(name: string): string {
 	let result = '';
 	for (const char of name) {
 		const code = char.charCodeAt(0);
-		result += code < 32 || '<>:"/\\|?*'.includes(char) ? '_' : char;
+		result += code < 32 || INVALID_FILENAME_CHARS.includes(char) ? '_' : char;
 	}
-	return result;
+	result = result.replace(/[. ]+$/, '');
+	return WINDOWS_RESERVED_NAME.test(result) ? `${result}_` : result;
 }
+
+/** 文件系统/Obsidian 禁止的字符（含 Obsidian 额外的 `# ^ [ ]`） */
+const INVALID_FILENAME_CHARS = '<>:"/\\|?*#^[]';
+/** Windows 保留设备名（Obsidian 校验同样拒绝） */
+const WINDOWS_RESERVED_NAME = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 
 /**
  * 按 Unicode 码点截断文本。
@@ -124,14 +142,15 @@ async function saveImageToVaultInner({
 		const needsNameFix = file.name.includes('\uFFFD');
 		const rawName = needsNameFix && preferredName ? preferredName : file.name;
 		const safeName = rawName.includes('\uFFFD') ? '' : rawName;
-		const baseName = filename
-			? sanitizeFileName(truncateByCodePoint(filename, 50))
-			: sanitizeFileName(
-					truncateByCodePoint(
-						safeName.replace(/\.[^.]+$/, '') || 'image',
-						50,
-					),
-				);
+		const baseName =
+			(filename
+				? sanitizeFileName(truncateByCodePoint(filename, 50))
+				: sanitizeFileName(
+						truncateByCodePoint(
+							safeName.replace(/\.[^.]+$/, '') || 'image',
+							50,
+						),
+					)) || 'image';
 		// 文件名保持原名（不加时间戳/随机后缀）；
 		// 遵循系统「附件存放位置」设置：必须传入 sourcePath。
 		const fileName = `${baseName}.${ext}`;

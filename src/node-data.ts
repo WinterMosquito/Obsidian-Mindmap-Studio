@@ -21,6 +21,9 @@ export const NODE_REFERENCE_FIELDS = [
 	'attachmentUrl',
 	'hyperlink',
 	'mdWikiLinkpath',
+	// 双链附件的原始 linkpath：库内路径语义，且「移除引用」只清 attachmentUrl
+	// 时会留下它——漏在清单外会让仅剩 linkpath 的节点被预检短路跳过
+	'mdAttachmentLinkpath',
 ] as const;
 
 /** 节点 data 是否含任一引用字段（预检短路用） */

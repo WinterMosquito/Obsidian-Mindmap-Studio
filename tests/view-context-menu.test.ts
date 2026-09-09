@@ -235,7 +235,7 @@ function lastMenu(): InstanceType<typeof FakeMenu> {
 describe('setupContextMenu（注册）', () => {
 	beforeEach(() => {
 		FakeMenu.instances = [];
-		getNodeDataStringMock.mockReset().mockReturnValue('');
+		resetGetNodeDataString();
 	});
 
 	it('缺少画布元素或引擎实例：不注册监听', () => {
@@ -256,11 +256,25 @@ describe('setupContextMenu（注册）', () => {
 	});
 });
 
+/**
+ * getNodeDataString 桩复位：与生产实现同语义（读节点 getData 的字符串值，
+ * 非字符串归一为空串）。各 describe 共用——若统一 mockReturnValue('')，
+ * 「清除链接/图片」等按节点数据分流的分支会永远走空值路径。
+ */
+function resetGetNodeDataString(): void {
+	getNodeDataStringMock.mockReset().mockImplementation((node, key) => {
+		const value = (node as { getData?: (name: string) => unknown }).getData?.(
+			key,
+		);
+		return typeof value === 'string' ? value : '';
+	});
+}
+
 describe('节点右键菜单（条目随节点数据分流）', () => {
 	beforeEach(() => {
 		FakeMenu.instances = [];
-		getNodeDataStringMock.mockReset().mockReturnValue('');
 		vi.clearAllMocks();
+		resetGetNodeDataString();
 	});
 
 	/** 打开节点菜单并返回记录（node 数据由用例给定） */
@@ -376,8 +390,8 @@ describe('节点右键菜单（条目随节点数据分流）', () => {
 describe('画布空白右键菜单', () => {
 	beforeEach(() => {
 		FakeMenu.instances = [];
-		getNodeDataStringMock.mockReset().mockReturnValue('');
 		vi.clearAllMocks();
+		resetGetNodeDataString();
 	});
 
 	it('未命中节点：画布菜单（粘贴/整理/撤销/重做）并阻止默认菜单', () => {

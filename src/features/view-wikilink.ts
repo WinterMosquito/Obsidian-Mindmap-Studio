@@ -11,7 +11,7 @@
  */
 import { HOVER_LINK_EVENT, VIEW_TYPE } from '../constants';
 import { formatWikilink, wikilinkLinkpath } from '../domain/wikilink';
-import { getNodeGroupEl } from '../mindmap';
+import { getNodeDataString, getNodeGroupEl } from '../mindmap';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 
@@ -72,12 +72,11 @@ function resolveAnchorLink(anchor: HTMLAnchorElement): string {
  * 不写引擎 hyperlink），其余链接存 hyperlink。
  */
 function nodeLink(node: MindMapNode): string {
-	const wikiLink = node.getData('mdWikiLinkpath');
-	if (typeof wikiLink === 'string' && wikiLink) {
+	const wikiLink = getNodeDataString(node, 'mdWikiLinkpath');
+	if (wikiLink) {
 		return wikiLink;
 	}
-	const hyperlink = node.getData('hyperlink');
-	return typeof hyperlink === 'string' ? hyperlink : '';
+	return getNodeDataString(node, 'hyperlink');
 }
 
 /** 注册 wikilink 的悬停预览与点击跳转（initMindMap 内调用一次） */

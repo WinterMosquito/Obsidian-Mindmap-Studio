@@ -8,10 +8,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 import type { ViewEngineContext } from '../src/features/view-context';
-import { handleEditNodeHotkey } from '../src/features/view-hotkeys';
+import { handleEditNodeHotkey, registerViewHotkeys } from '../src/features/view-hotkeys';
 import { getActiveNode, isEditingText, startNodeTextEdit } from '../src/mindmap';
 
 vi.mock('../src/mindmap', () => ({
+	ENGINE_COMMANDS: { BACK: 'BACK', FORWARD: 'FORWARD' },
 	getActiveNode: vi.fn(),
 	isEditingText: vi.fn(),
 	startNodeTextEdit: vi.fn(),
@@ -93,5 +94,108 @@ describe('handleEditNodeHotkey（F2 编辑当前节点）', () => {
 			expect(stopPropagation).not.toHaveBeenCalled();
 			expect(startNodeTextEdit).not.toHaveBeenCalled();
 		}
+	});
+});
+
+describe('registerViewHotkeys（视图 scope 接线）', () => {
+	/** 记录式 scope 桩：捕获注册的 modifiers/key/handler */
+	function makeScope() {
+		const registrations: {
+			modifiers: string[] | null;
+			key: string | null;
+			handler: (evt: KeyboardEvent) => unknown;
+		}[] = [];
+		const scope = {
+			register(
+				modifiers: string[] | null,
+				key: string | null,
+				handler: (evt: KeyboardEvent) => unknown,
+			) {
+				registrations.push({ modifiers, key, handler });
+				return {} as unknown;
+			},
+		};
+		return {
+			scope: scope as unknown as import('obsidian').Scope,
+			registrations,
+			find: (key: string, modifiers: string[]) =>
+				registrations.find(
+					(entry) =>
+						entry.key === key &&
+						JSON.stringify(entry.modifiers) === JSON.stringify(modifiers),
+				),
+		};
+	}
+
+	beforeEach(() => {
+		vi.mocked(getActiveNode).mockReset().mockReturnValue(null);
+		vi.mocked(isEditingText).mockReset().mockReturnValue(false);
+		vi.mocked(startNodeTextEdit).mockReset();
+	});
+
+	it('注册 Mod+F / Mod+Z / Mod+Shift+Z / Mod+Y / F2 五个快捷键', () => {
+		const { scope, registrations, find } = makeScope();
+		registerViewHotkeys(scope, {
+			mindMap: {} as MindMap,
+			engineEvents: {},
+			viewEvents: {},
+			openSearchBar: vi.fn(),
+		} as unknown as Parameters<typeof registerViewHotkeys>[1]);
+
+		expect(find('f', ['Mod']), 'Mod+F 搜索').toBeDefined();
+		expect(find('z', ['Mod']), 'Mod+Z 撤销').toBeDefined();
+		expect(find('z', ['Mod', 'Shift']), 'Mod+Shift+Z 重做').toBeDefined();
+		// 非 macOS（测试环境 Platform.isMacOS 为 undefined）注册 Mod+Y
+		expect(find('y', ['Mod']), 'Mod+Y 重做').toBeDefined();
+		// F2 用空修饰键数组注册（无修饰键的精确匹配）
+		expect(find('F2', []), 'F2 编辑节点').toBeDefined();
+		expect(registrations).toHaveLength(5);
+	});
+
+	it('Mod+Z / Mod+Shift+Z / Mod+Y 转发到引擎撤销重做命令', () => {
+		const { scope, find } = makeScope();
+		const execCommand = vi.fn();
+		registerViewHotkeys(scope, {
+			mindMap: { execCommand } as unknown as MindMap,
+			engineEvents: {},
+			viewEvents: {},
+			openSearchBar: vi.fn(),
+		} as unknown as Parameters<typeof registerViewHotkeys>[1]);
+
+		expect(find('z', ['Mod'])!.handler(fakeKeyEvent().evt)).toBe(false);
+		expect(execCommand).toHaveBeenLastCalledWith('BACK');
+		find('z', ['Mod', 'Shift'])!.handler(fakeKeyEvent().evt);
+		expect(execCommand).toHaveBeenLastCalledWith('FORWARD');
+		find('y', ['Mod'])!.handler(fakeKeyEvent().evt);
+		expect(execCommand).toHaveBeenLastCalledWith('FORWARD');
+	});
+
+	it('Mod+F 打开搜索栏；F2 走编辑节点处理器', () => {
+		const { scope, find } = makeScope();
+		const openSearchBar = vi.fn();
+		vi.mocked(getActiveNode).mockReturnValue(node);
+		registerViewHotkeys(scope, {
+			mindMap: {} as MindMap,
+			engineEvents: {},
+			viewEvents: {},
+			openSearchBar,
+		} as unknown as Parameters<typeof registerViewHotkeys>[1]);
+
+		find('f', ['Mod'])!.handler(fakeKeyEvent().evt);
+		expect(openSearchBar).toHaveBeenCalledTimes(1);
+
+		find('F2', [])!.handler(fakeKeyEvent().evt);
+		expect(startNodeTextEdit).toHaveBeenCalledTimes(1);
+	});
+
+	it('scope 为 null（引擎/视图未就绪）：静默不抛异常', () => {
+		expect(() =>
+			registerViewHotkeys(null, {
+				mindMap: null,
+				engineEvents: {},
+				viewEvents: {},
+				openSearchBar: vi.fn(),
+			} as unknown as Parameters<typeof registerViewHotkeys>[1]),
+		).not.toThrow();
 	});
 });

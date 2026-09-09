@@ -141,7 +141,10 @@ function showNodeContextMenu(
 			}),
 	);
 	// 节点已有链接时提供「清除链接」（文档双链存 mdWikiLinkpath 通道）
-	if (node.getData('hyperlink') || node.getData('mdWikiLinkpath')) {
+	if (
+		getNodeDataString(node, 'hyperlink') ||
+		getNodeDataString(node, 'mdWikiLinkpath')
+	) {
 		menu.addItem((item) =>
 			item
 				.setTitle(t(view.lang, 'modal.link.clear'))
@@ -158,7 +161,7 @@ function showNodeContextMenu(
 			}),
 	);
 	menu.addSeparator();
-	if (node.getData('image')) {
+	if (getNodeDataString(node, 'image')) {
 		menu.addItem((item) =>
 			item
 				.setTitle(t(view.lang, 'menu.viewImageFullscreen'))

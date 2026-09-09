@@ -161,6 +161,9 @@ npm run test:coverage  # vitest run --coverage（v8 provider，报告出 coverag
 npm run verify:visual  # 无头 Chrome 渲染契约验证（scripts/verify-visual.mjs）
 ```
 
+CI（`.github/workflows/lint.yml`）执行顺序：build → test → coverage（主矩阵版本）→ lint →
+`verify:visual -- --require-chrome`（主矩阵版本；浏览器缺失即失败，不静默跳过）。
+
 - `verify:visual`：把 `src/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
   `styles.css` 在无头 Chrome 里渲染 5 个场景并断言 `--dump-dom`——三类链接图标分流与
   图标尺寸（18×18）、回形针标题、画布铺满容器、节点测宽随文本（不被容器拉平），
