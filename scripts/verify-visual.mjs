@@ -271,6 +271,7 @@ async function dumpDom(chromePath, pagePath, profileDir) {
 	const common = [
 		'--disable-gpu',
 		'--no-sandbox',
+		'--disable-dev-shm-usage',
 		'--disable-extensions',
 		'--hide-scrollbars',
 		'--allow-file-access-from-files',
@@ -547,6 +548,9 @@ async function main() {
 			failed += failures.length;
 		}
 		// 默认视口契约：100% 缩放 + 整体内容居中（打开大图时文字可读）
+		console.log(
+			`  · 场景检查完成（DOM ${dom.length} 字节），进入 viewport 探针`,
+		);
 		const viewportFailures = safe('viewport 探针', () => checkViewport(dom));
 		console.log(
 			`  ${viewportFailures.length === 0 ? '✓' : '✗'} viewport 默认视口 100% + 整体内容居中`,
@@ -556,6 +560,7 @@ async function main() {
 		}
 		failed += viewportFailures.length;
 		// 悬停预览锚定契约：SVG 节点补齐 offsetWidth/offsetHeight（弹窗可上下翻转）
+		console.log('  · viewport 探针完成，进入 anchor 探针');
 		const anchorFailures = safe('anchor 探针', () => checkAnchor(dom));
 		console.log(
 			`  ${anchorFailures.length === 0 ? '✓' : '✗'} anchor  SVG 节点盒模型尺寸补齐（弹窗可上下翻转）`,
