@@ -19,6 +19,7 @@ import { App, TFile } from 'obsidian';
 // —— hoisted 桩：vi.mock 工厂与测试体共享同一组 mock 函数 ——
 const mocks = vi.hoisted(() => {
 	return {
+		centerRootAtFullScale: vi.fn(),
 		createMindMap: vi.fn(),
 		destroyMindMap: vi.fn(),
 		fitMindMap: vi.fn(),
@@ -546,22 +547,23 @@ describe('EngineController.refresh 与视口', () => {
 		expect(() => h.controller.persistViewport()).not.toThrow();
 	});
 
-	it('首帧延迟后：无保存视口则 fit 全图', () => {
+	it('首帧延迟后：无保存视口则默认 100% + 根节点居中（不 fit）', () => {
 		vi.useFakeTimers();
 		try {
 			const h = makeHarness();
 			h.canvas.width = 800;
 			h.canvas.height = 600;
 			h.controller.initMindMap(tree('Root'));
-			expect(mocks.fitMindMap).not.toHaveBeenCalled();
+			expect(mocks.centerRootAtFullScale).not.toHaveBeenCalled();
 			vi.advanceTimersByTime(150);
-			expect(mocks.fitMindMap).toHaveBeenCalledTimes(1);
+			expect(mocks.centerRootAtFullScale).toHaveBeenCalledTimes(1);
+			expect(mocks.fitMindMap).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	it('首帧延迟后：有保存视口则恢复而不 fit', () => {
+	it('首帧延迟后：有保存视口则恢复而不重设默认视口', () => {
 		vi.useFakeTimers();
 		try {
 			const h = makeHarness();
@@ -575,6 +577,7 @@ describe('EngineController.refresh 与视口', () => {
 				state: {},
 			});
 			expect(mocks.fitMindMap).not.toHaveBeenCalled();
+			expect(mocks.centerRootAtFullScale).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 		}

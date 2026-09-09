@@ -157,7 +157,9 @@ export function createMindMap(
 				layout: options.layout,
 				theme: 'default',
 				themeConfig: getThemeConfig(dark),
-				fit: true,
+				// 不在创建时 fit 全图：打开后的默认视口由 centerRootAtFullScale
+				// 统一设置（100% + 根节点居中），大图不再被压到看不清文字
+				fit: false,
 				defaultInsertSecondLevelNodeText: t(options.lang, 'default.secondLevel'),
 				defaultInsertBelowSecondLevelNodeText: t(
 					options.lang,
@@ -255,8 +257,31 @@ export function fitMindMap(mindMap: MindMap | null): void {
 	}
 }
 
-/** 安全销毁思维导图实例 */
-export function destroyMindMap(mindMap: MindMap | null): void {
+/**
+ * 打开时的默认视口：100% 缩放 + 根（中心）节点居中。
+ *
+ * 取代「fit 全图」——节点很多时 fit 会把比例压到文字不可读。顺序上先
+ * `setScale(1)` 再居中：moveNodeToCenter 用当前 transform 计算偏移，
+ * 若先居中后改比例，偏移会失配。
+ */
+export function centerRootAtFullScale(mindMap: MindMap | null): void {
+	if (!mindMap) {
+		return;
+	}
+	try {
+		mindMap.view?.setScale(1);
+		const root = mindMap.renderer?.root;
+		if (root) {
+			mindMap.renderer.moveNodeToCenter(root);
+		}
+	} catch (error) {
+		// 引擎尚未就绪等边角情况：回退 fit（至少让内容可见）
+		console.error('设置默认视口失败', error);
+		fitMindMap(mindMap);
+	}
+}
+
+/** 安全销毁思维导图实例 */export function destroyMindMap(mindMap: MindMap | null): void {
 	if (!mindMap) {
 		return;
 	}
@@ -685,9 +710,31 @@ export function getRootText(mindMap: MindMap | null): string | null {
 }
 
 /**
- * 触发节点文本编辑：引擎无 ENTER_TEXT_EDIT 命令，
- * node_dblclick 事件是文本编辑的官方入口（右键菜单「编辑文本」用）。
+ * 触发节点文本编辑（右键菜单「编辑文本」）。
+ *
+ * 两个坑（0.14.0-fix.3 实测）：
+ * - 右键菜单项的 click 会继续冒泡到 `document.body`，引擎的 `body_click`
+ *   （`isEndNodeTextEditOnClickOuter` 默认 true）会立刻把刚打开的编辑框关掉
+ *   —— 故延后一个宏任务再触发；
+ * - `isInserting` 必须是 false：它表示「新建节点后的首次编辑」，传 true 会让
+ *   引擎按插入态处理（语义错误）。
+ *
+ * 引擎无 ENTER_TEXT_EDIT 命令，`node_dblclick` 事件是文本编辑的官方入口。
  */
 export function startNodeTextEdit(mindMap: MindMap, node: MindMapNode): void {
-	mindMap.emit('node_dblclick', node, null, true);
+	window.setTimeout(() => {
+		mindMap.emit('node_dblclick', node, null, false);
+		// 菜单关闭后浏览器可能把焦点还给画布：补一次焦点，保证可直接输入
+		focusNodeTextEdit(mindMap);
+	}, 0);
+}
+
+/** 聚焦节点文本编辑框（引擎内部 textEditNode；尚未创建时静默） */
+function focusNodeTextEdit(mindMap: MindMap | null): void {
+	const textEdit = (
+		mindMap?.renderer as
+			| { textEdit?: { textEditNode?: HTMLElement | null } }
+			| undefined
+	)?.textEdit;
+	textEdit?.textEditNode?.focus();
 }

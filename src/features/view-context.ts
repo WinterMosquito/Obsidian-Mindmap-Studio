@@ -8,7 +8,7 @@
  * - 访问面由本契约显式声明——view 之外的能力（未列成员）编译期即拒绝；
  * - MindMapView 结构化实现（implements），无运行时改动。
  */
-import type { App, TFile } from 'obsidian';
+import type { App, TFile, WorkspaceLeaf } from 'obsidian';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 import type { EventBinder } from '../event-binder';
 import type { Language } from '../i18n';
@@ -71,6 +71,12 @@ export interface MindMapViewContext extends ViewEngineContext, ViewDomContext {
 	readonly app: App;
 	readonly file: TFile | null;
 	readonly containerEl: HTMLElement;
+	/**
+	 * 本视图的叶子。悬停预览（hover-link）的 `hoverParent` 需官方
+	 * `HoverParent`（核心把弹窗实例挂在它上面做定位与生命周期管理），
+	 * `WorkspaceLeaf` 实现该接口——勿传裸 HTMLElement。
+	 */
+	readonly leaf: WorkspaceLeaf;
 
 	// ---- 语言 ----
 	readonly lang: Language;

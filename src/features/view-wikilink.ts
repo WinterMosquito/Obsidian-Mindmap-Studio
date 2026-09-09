@@ -153,14 +153,71 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 			}
 			state.el = targetEl;
 			state.at = now;
+			const rect = targetEl.getBoundingClientRect();
+			// 顶部越界保护：节点贴近视口顶部时上方没有空间放预览弹窗
+			// （表现是被裁切甚至完全看不到）。把上报给核心的指针坐标下移到
+			// 节点下方，让核心的弹窗翻到节点下方显示。
+			const pointer = resolvePointer(event, rect);
 			view.app.workspace.trigger(HOVER_LINK_EVENT, {
-				event,
+				event: pointer,
 				source: VIEW_TYPE,
-				hoverParent: view.containerEl,
+				// HoverParent（官方接口，见 view-context）：核心把弹窗实例挂在
+				// 它上面做定位与生命周期管理；传裸 HTMLElement 会失配。
+				hoverParent: view.leaf,
 				targetEl,
 				linktext,
 				sourcePath: view.file?.path ?? '',
 			});
 		},
 	);
+}
+
+/** 预览弹窗顶部翻转阈值：节点顶边距视口顶部小于该值时翻到下方 */
+const POPOVER_TOP_MARGIN_PX = 64;
+
+/**
+ * 计算上报给核心的指针事件：
+ * - 坐标缺失（非鼠标事件等）→ 用节点矩形中心兜底；
+ * - 节点贴近视口顶部 → 纵坐标下移到节点下方，触发弹窗翻转；
+ * - 其余情况原样返回（不引入任何包装）。
+ */
+function resolvePointer(event: MouseEvent, rect: DOMRect): MouseEvent {
+	const hasPointer =
+		Number.isFinite(event.clientX) && Number.isFinite(event.clientY);
+	const nearTop = rect.top < POPOVER_TOP_MARGIN_PX;
+	if (hasPointer && !nearTop) {
+		return event;
+	}
+	const clientX = hasPointer ? event.clientX : rect.left + rect.width / 2;
+	const clientY = nearTop
+		? rect.bottom + POPOVER_TOP_MARGIN_PX
+		: rect.top + rect.height / 2;
+	return withPointerPosition(event, clientX, clientY);
+}
+
+/**
+ * 覆盖事件坐标的轻量包装：坐标字段返回新值，其余属性/方法透传原始事件
+ * （函数绑定到原始事件，避免原生方法在代理上 Illegal invocation）。
+ */
+function withPointerPosition(
+	event: MouseEvent,
+	clientX: number,
+	clientY: number,
+): MouseEvent {
+	const deltaX = clientX - event.clientX;
+	const deltaY = clientY - event.clientY;
+	return new Proxy(event, {
+		get(target, prop) {
+			if (prop === 'clientX') return clientX;
+			if (prop === 'clientY') return clientY;
+			if (prop === 'pageX') return target.pageX + deltaX;
+			if (prop === 'pageY') return target.pageY + deltaY;
+			if (prop === 'screenX') return target.screenX + deltaX;
+			if (prop === 'screenY') return target.screenY + deltaY;
+			const value = Reflect.get(target, prop, target) as unknown;
+			return typeof value === 'function'
+				? (value as (...args: unknown[]) => unknown).bind(target)
+				: value;
+		},
+	});
 }

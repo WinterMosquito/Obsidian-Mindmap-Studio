@@ -104,6 +104,8 @@ export class MindMap {
 		fit(): void;
 		enlarge(): void;
 		narrow(): void;
+		/** 直接设置缩放比例（1 = 100%），不改变平移 */
+		setScale(scale: number): void;
 		/** 恢复保存的视口（缩放/平移）；入参为 getTransformData 的输出 */
 		setTransformData(data: unknown): void;
 		/** 当前视口（缩放/平移），用于持久化 */
@@ -114,6 +116,15 @@ export class MindMap {
 		activeNodeList: MindMapNode[];
 		/** 强制渲染全部节点（绕过性能模式的视口裁剪），导出/fit 前使用 */
 		forceLoadNode(node?: MindMapNode): void;
+		/**
+		 * 把指定节点移到画布视口中心（用当前 transform 计算偏移，
+		 * 故需先 setScale）。第二参 true 时同时把比例重置为 1。
+		 */
+		moveNodeToCenter(node: MindMapNode, resetScale?: boolean): void;
+		/** 把根（中心）节点移到视口中心 */
+		setRootNodeCenter(): void;
+		/** 引擎内部的文本编辑插件实例（textEditNode 为编辑框 DOM） */
+		textEdit?: { textEditNode?: HTMLElement | null };
 	};
 	search: {
 		search(text: string, callback?: () => void): void;

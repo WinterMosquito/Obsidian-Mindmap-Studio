@@ -120,13 +120,24 @@ function findChrome() {
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
 function buildEntrySource() {
 	const mindmapModule = join(ROOT, 'src', 'mindmap.ts').replaceAll('\\', '/');
-	return `import { createMindMap } from ${JSON.stringify(mindmapModule)};
+	return `import { centerRootAtFullScale, createMindMap } from ${JSON.stringify(mindmapModule)};
 
 const scenarios = ${JSON.stringify(
 		SCENARIOS.map(({ name, data }) => ({ name, data })),
 		null,
 		'\t',
 	)};
+
+const options = {
+	layout: 'logicalStructure',
+	themePref: 'default',
+	isDark: false,
+	enableDrag: true,
+	performanceMode: false,
+	performanceThreshold: 1000,
+	lang: 'zh',
+	onHyperlinkJump: null,
+};
 
 for (const { name, data } of scenarios) {
 	const holder = document.createElement('div');
@@ -142,18 +153,46 @@ for (const { name, data } of scenarios) {
 			data: { text: name, uid: 'root-' + name },
 			children: [{ data: { uid: 'child-' + name, ...data }, children: [] }],
 		},
-		{
-			layout: 'logicalStructure',
-			themePref: 'default',
-			isDark: false,
-			enableDrag: true,
-			performanceMode: false,
-			performanceThreshold: 1000,
-			lang: 'zh',
-			onHyperlinkJump: null,
-		},
+		options,
 	);
 }
+
+// —— 默认视口探针：打开时的默认视口应为 100% 缩放 + 根节点居中 ——
+// 用「深链」大图复现用户场景：fit 全图会把比例压到文字不可读。
+const viewportHolder = document.createElement('div');
+viewportHolder.id = 'map-viewport';
+viewportHolder.className = 'mindmap-canvas-container';
+viewportHolder.style.width = '1200px';
+viewportHolder.style.height = '400px';
+document.body.appendChild(viewportHolder);
+let chain = { data: { text: 'v20', uid: 'vp-20' }, children: [] };
+for (let i = 19; i >= 1; i--) {
+	chain = { data: { text: 'v' + i, uid: 'vp-' + i }, children: [chain] };
+}
+const viewportMap = createMindMap(viewportHolder, chain, options);
+// 与插件同款时序：引擎 render() 后首帧异步完成，视口设置在延时后执行
+window.setTimeout(() => {
+const probe = document.createElement('pre');
+probe.id = 'viewport-probe';
+try {
+	centerRootAtFullScale(viewportMap);
+	const state = viewportMap.view.getTransformData().state;
+	const rootEl = viewportMap.renderer.root.group.node;
+	const rootRect = rootEl.getBoundingClientRect();
+	const canvasRect = viewportHolder.getBoundingClientRect();
+	probe.textContent = JSON.stringify({
+		scale: state.scale,
+		rootCenter: [
+			Math.round(rootRect.left + rootRect.width / 2 - canvasRect.left),
+			Math.round(rootRect.top + rootRect.height / 2 - canvasRect.top),
+		],
+		canvas: [Math.round(canvasRect.width), Math.round(canvasRect.height)],
+	});
+} catch (error) {
+	probe.textContent = JSON.stringify({ error: String(error) });
+}
+document.body.appendChild(probe);
+}, 150);
 `;
 }
 
@@ -297,6 +336,51 @@ function checkScenario(scenario, fragment) {
 	return failures;
 }
 
+/**
+ * 校验默认视口探针（由入口脚本写入 `#viewport-probe`，见 buildEntrySource）：
+ * 打开导图时应为 100% 缩放且根（中心）节点落在画布中心附近。
+ */
+function checkViewport(dom) {
+	const raw = dom
+		.match(/<pre id="viewport-probe">([\s\S]*?)<\/pre>/)?.[1]
+		?.replaceAll('&quot;', '"')
+		.replaceAll('&amp;', '&');
+	if (!raw) {
+		return ['未找到视口探针（入口脚本未执行？）'];
+	}
+	let probe;
+	try {
+		probe = JSON.parse(raw);
+	} catch {
+		return [`视口探针 JSON 解析失败：${raw.slice(0, 120)}`];
+	}
+	const failures = [];
+	if (typeof probe.error === 'string') {
+		return [`入口脚本异常：${probe.error}`];
+	}
+	if (probe.scale !== 1) {
+		failures.push(`缩放 ${probe.scale} ≠ 1（应为 100%）`);
+	}
+	const [centerX, centerY] = probe.rootCenter ?? [];
+	const [width, height] = probe.canvas ?? [];
+	if (
+		typeof centerX !== 'number' ||
+		typeof centerY !== 'number' ||
+		typeof width !== 'number' ||
+		typeof height !== 'number'
+	) {
+		failures.push('视口探针字段缺失');
+	} else if (
+		Math.abs(centerX - width / 2) > 2 ||
+		Math.abs(centerY - height / 2) > 2
+	) {
+		failures.push(
+			`根节点中心 (${centerX},${centerY}) 未居中于画布 (${width},${height})`,
+		);
+	}
+	return failures;
+}
+
 async function main() {
 	const chromePath = findChrome();
 	if (!chromePath) {
@@ -341,13 +425,21 @@ async function main() {
 			}
 			failed += failures.length;
 		}
+		// 默认视口契约：100% 缩放 + 根节点居中（打开大图时文字可读）
+		const viewportFailures = checkViewport(dom);
+		console.log(
+			`  ${viewportFailures.length === 0 ? '✓' : '✗'} viewport 默认视口 100% + 根节点居中`,
+		);
+		for (const failure of viewportFailures) {
+			console.log(`      - ${failure}`);
+		}
+		failed += viewportFailures.length;
 		if (failed > 0) {
 			console.error(`\n✗ 视觉验证失败：${failed} 项断言未通过`);
 			process.exitCode = 1;
 			return;
 		}
-		console.log('\n✓ 视觉验证通过');
-	} finally {
+		console.log('\n✓ 视觉验证通过');	} finally {
 		if (ARGS.has('--keep')) {
 			console.log(`临时目录已保留：${workDir}`);
 		} else {

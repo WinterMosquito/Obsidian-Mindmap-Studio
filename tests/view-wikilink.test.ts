@@ -26,15 +26,20 @@ vi.mock('../src/mindmap', () => ({
 	getNodeGroupEl: getNodeGroupElMock,
 }));
 
-/** 最小元素桩：contains/closest 由用例决定 */
+/** 最小元素桩：contains/closest/getBoundingClientRect 由用例决定 */
 class FakeElement {
 	containsResult = true;
 	closestResult: unknown = null;
+	/** 视口矩形（默认远离屏幕顶部；用例可改 top 模拟贴顶） */
+	rect = { top: 400, bottom: 440, left: 100, right: 200, width: 100, height: 40 };
 	contains(_node: unknown): boolean {
 		return this.containsResult;
 	}
 	closest(_selector: string): unknown {
 		return this.closestResult;
+	}
+	getBoundingClientRect(): DOMRect {
+		return this.rect as unknown as DOMRect;
 	}
 }
 
@@ -81,7 +86,10 @@ function fakeNode(data: Record<string, unknown>): MindMapNode {
 function fakeMouseEvent(
 	target: unknown,
 	modifiers: Partial<
-		Pick<MouseEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>
+		Pick<
+			MouseEvent,
+			'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'clientX' | 'clientY'
+		>
 	> = {},
 ) {
 	return {
@@ -90,6 +98,9 @@ function fakeMouseEvent(
 		metaKey: false,
 		shiftKey: false,
 		altKey: false,
+		// 视口坐标（默认位于节点中部，远离顶部阈值 → 原样透传）
+		clientX: 150,
+		clientY: 420,
 		...modifiers,
 		preventDefault: vi.fn<() => void>(),
 		stopPropagation: vi.fn<() => void>(),
@@ -101,15 +112,18 @@ function makeView(mindMap: unknown = {}) {
 	const openHyperlink = vi.fn();
 	const trigger = vi.fn();
 	const containerEl = new FakeElement();
+	// 叶子桩：悬停预览的 hoverParent 应为官方 HoverParent（WorkspaceLeaf）
+	const leaf = { hoverPopover: null };
 	const view = {
 		mindMap,
 		engineEvents: binder,
 		openHyperlink,
 		containerEl,
+		leaf,
 		file: { path: 'notes/x.mindmap.md' },
 		app: { workspace: { trigger } },
 	} as unknown as MindMapViewContext;
-	return { view, binder, openHyperlink, trigger, containerEl };
+	return { view, binder, openHyperlink, trigger, containerEl, leaf };
 }
 
 describe('registerWikilinkInteractions（注册）', () => {
@@ -285,7 +299,7 @@ describe('node_mouseenter（悬停预览）', () => {
 	});
 
 	it('含文档双链的节点：触发 hover-link 且携带 linkpath', () => {
-		const { view, binder, trigger, containerEl } = makeView();
+		const { view, binder, trigger, leaf } = makeView();
 		const targetEl = new FakeElement();
 		getNodeGroupElMock.mockReturnValue(targetEl);
 		registerWikilinkInteractions(view);
@@ -298,11 +312,56 @@ describe('node_mouseenter（悬停预览）', () => {
 		expect(trigger).toHaveBeenCalledWith('hover-link', {
 			event,
 			source: VIEW_TYPE,
-			hoverParent: containerEl,
+			// hoverParent 必须是官方 HoverParent（叶子），不是裸 HTMLElement
+			hoverParent: leaf,
 			targetEl,
 			linktext: '目录/笔记',
 			sourcePath: 'notes/x.mindmap.md',
 		});
+	});
+
+	it('节点贴近视口顶部：上报坐标下移到节点下方（弹窗翻转）', () => {
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement();
+		// 顶边 10px（< 64px 阈值），底边 50px
+		targetEl.rect = {
+			top: 10,
+			bottom: 50,
+			left: 100,
+			right: 200,
+			width: 100,
+			height: 40,
+		};
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+		const event = fakeMouseEvent(targetEl, { clientX: 150, clientY: 12 });
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ mdWikiLinkpath: '[[笔记]]' }),
+			event,
+		);
+
+		const payload = trigger.mock.calls[0]?.[1] as { event: MouseEvent };
+		// 纵坐标下移到节点下方（50 + 64），横坐标保持不变
+		expect(payload.event.clientY).toBe(114);
+		expect(payload.event.clientX).toBe(150);
+		// 包装对象仍是 MouseEvent 语义：原生方法绑定原事件，可安全调用
+		expect(() => payload.event.preventDefault()).not.toThrow();
+	});
+
+	it('节点在视口中部：原样透传原始事件（不包装）', () => {
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement(); // 默认 rect top=400
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+		const event = fakeMouseEvent(targetEl, { clientX: 150, clientY: 420 });
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ mdWikiLinkpath: '[[笔记]]' }),
+			event,
+		);
+		const payload = trigger.mock.calls[0]?.[1] as { event: MouseEvent };
+		expect(payload.event).toBe(event);
 	});
 
 	it('非双链（URL）节点：不触发预览（linkpath 为空）', () => {
