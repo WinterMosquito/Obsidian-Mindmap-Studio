@@ -206,6 +206,33 @@ describe('SavePipeline 写入中再触发（排空语义）', () => {
 		expect(h.written).toHaveLength(1); // gate 首写不入 written
 		expect(h.written[0]).toContain('B');
 	});
+
+	it('写入中引擎已销毁（排空时快照为 null）：待写快照兜底补写，最后编辑不丢', async () => {
+		const h = makeHarness();
+		let resolveFirst!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			resolveFirst = resolve;
+		});
+		h.modify.mockImplementationOnce(() => gate);
+
+		const first = h.pipeline.save();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(h.modify).toHaveBeenCalledTimes(1);
+
+		// 写入期间产生新编辑（快照「最新」），随后引擎被销毁（getSnapshot 变 null）
+		h.setTree(node('Root', [node('最新')]));
+		void h.pipeline.save(); // 标记待写并立即快照
+		h.setTree(null);
+
+		resolveFirst();
+		await vi.advanceTimersByTimeAsync(0);
+		await first;
+
+		// 排空时快照已不可得，必须回落到 pendingTree（卸载兜底快照）
+		expect(h.modify).toHaveBeenCalledTimes(2);
+		expect(h.written).toHaveLength(1);
+		expect(h.written[0]).toContain('最新');
+	});
 });
 
 describe('SavePipeline 写盘失败（onSaveError）', () => {
