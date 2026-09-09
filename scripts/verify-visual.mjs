@@ -40,6 +40,29 @@ const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ARGS = new Set(process.argv.slice(2));
 
+/**
+ * 阶段 trace（诊断用）：stdout 为文件/管道时的写入顺序与进程异常都需要可见，
+ * 便于在 CI（无 Actions 日志权限）上定位「脚本无输出地退出」。
+ */
+function trace(message) {
+	process.stdout.write(`[trace] ${message}\n`);
+}
+process.on('exit', (code) => {
+	process.stdout.write(`[trace] 进程退出 code=${code}\n`);
+});
+process.on('uncaughtException', (error) => {
+	process.stdout.write(
+		`[trace] uncaughtException: ${error?.stack ?? String(error)}\n`,
+	);
+	process.exitCode = 1;
+});
+process.on('unhandledRejection', (reason) => {
+	process.stdout.write(
+		`[trace] unhandledRejection: ${reason?.stack ?? String(reason)}\n`,
+	);
+	process.exitCode = 1;
+});
+
 /** 每个场景渲染「根 + 一个子节点」，断言集中在子节点上（根节点作为无图标对照） */
 const SCENARIOS = [
 	{
@@ -520,6 +543,7 @@ async function main() {
 		});
 
 		const dom = await dumpDom(chromePath, pagePath, join(workDir, 'profile'));
+		trace(`dumpDom 完成 len=${dom.length} rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`);
 
 		let failed = 0;
 		console.log(`无头渲染契约验证（Chrome: ${chromePath}）`);
@@ -546,6 +570,7 @@ async function main() {
 				console.log(`      - ${failure}`);
 			}
 			failed += failures.length;
+			trace(`场景 ${scenario.name} 完成（failures=${failures.length}）`);
 		}
 		// 默认视口契约：100% 缩放 + 整体内容居中（打开大图时文字可读）
 		console.log(
