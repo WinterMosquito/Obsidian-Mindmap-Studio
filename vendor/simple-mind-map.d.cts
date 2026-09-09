@@ -98,6 +98,9 @@ export class MindMap {
 	getLayout(): string;
 	setThemeConfig(config: AnyObject): void;
 	updateConfig(config: AnyObject): void;
+	/** 画布尺寸（CSS 像素，随容器 resize 更新）：视口锚点计算用 */
+	width: number;
+	height: number;
 	/** 引擎运行时配置（活引用，updateConfig 后立即生效） */
 	opt: { openPerformance?: boolean; [key: string]: unknown };
 	view: {
@@ -105,7 +108,12 @@ export class MindMap {
 		enlarge(): void;
 		narrow(): void;
 		/** 直接设置缩放比例（1 = 100%），不改变平移 */
-		setScale(scale: number): void;
+		/**
+		 * 设置缩放比例。第二/三参给出锚点坐标时以该点为不动点缩放
+		 * （引擎 scaleInCenter：反推平移使锚点处画面保持原位）；
+		 * 省略锚点时仅改比例，画面会绕画布原点跳动。
+		 */
+		setScale(scale: number, centerX?: number, centerY?: number): void;
 		/** 恢复保存的视口（缩放/平移）；入参为 getTransformData 的输出 */
 		setTransformData(data: unknown): void;
 		/** 当前视口（缩放/平移），用于持久化 */

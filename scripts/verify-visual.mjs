@@ -120,7 +120,7 @@ function findChrome() {
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
 function buildEntrySource() {
 	const mindmapModule = join(ROOT, 'src', 'mindmap.ts').replaceAll('\\', '/');
-	return `import { centerRootAtFullScale, createMindMap } from ${JSON.stringify(mindmapModule)};
+	return `import { centerRootAtFullScale, createMindMap, resetZoom } from ${JSON.stringify(mindmapModule)};
 
 const scenarios = ${JSON.stringify(
 		SCENARIOS.map(({ name, data }) => ({ name, data })),
@@ -180,6 +180,20 @@ try {
 	const rootEl = viewportMap.renderer.root.group.node;
 	const rootRect = rootEl.getBoundingClientRect();
 	const canvasRect = viewportHolder.getBoundingClientRect();
+	// 重置缩放不漂移：先缩到 50%（以画布中心为锚点），记录中心处的内容坐标，
+	// 重置后再算该内容点落回屏幕的位置——位移应 ≤1px（否则表现为「视图乱飘」）
+	const cx = canvasRect.width / 2;
+	const cy = canvasRect.height / 2;
+	viewportMap.view.setScale(0.5, cx, cy);
+	const zoomed = viewportMap.view.getTransformData().state;
+	const contentX = (cx - zoomed.x) / zoomed.scale;
+	const contentY = (cy - zoomed.y) / zoomed.scale;
+	resetZoom(viewportMap);
+	const reset = viewportMap.view.getTransformData().state;
+	const drift = Math.hypot(
+		contentX * reset.scale + reset.x - cx,
+		contentY * reset.scale + reset.y - cy,
+	);
 	probe.textContent = JSON.stringify({
 		scale: state.scale,
 		rootCenter: [
@@ -187,6 +201,8 @@ try {
 			Math.round(rootRect.top + rootRect.height / 2 - canvasRect.top),
 		],
 		canvas: [Math.round(canvasRect.width), Math.round(canvasRect.height)],
+		resetScale: reset.scale,
+		resetDrift: Math.round(drift * 100) / 100,
 	});
 } catch (error) {
 	probe.textContent = JSON.stringify({ error: String(error) });
@@ -376,6 +392,15 @@ function checkViewport(dom) {
 	) {
 		failures.push(
 			`根节点中心 (${centerX},${centerY}) 未居中于画布 (${width},${height})`,
+		);
+	}
+	// 重置缩放：回到 100% 且画布中心处的内容不漂移（≤1px）
+	if (probe.resetScale !== 1) {
+		failures.push(`重置缩放后比例 ${probe.resetScale} ≠ 1`);
+	}
+	if (typeof probe.resetDrift !== 'number' || probe.resetDrift > 1) {
+		failures.push(
+			`重置缩放漂移 ${probe.resetDrift}px > 1px（应锁定屏幕可见内容）`,
 		);
 	}
 	return failures;

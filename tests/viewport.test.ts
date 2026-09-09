@@ -14,12 +14,14 @@ vi.hoisted(() => {
 });
 
 function makeMindMap() {
-	const setScale = vi.fn<(scale: number) => void>();
+	const setScale = vi.fn<(scale: number, cx?: number, cy?: number) => void>();
 	const fit = vi.fn();
 	const moveNodeToCenter = vi.fn();
 	const execCommand = vi.fn();
 	const root = { isRoot: true };
 	const mindMap = {
+		width: 800,
+		height: 600,
 		execCommand,
 		view: { setScale, fit },
 		renderer: { root, moveNodeToCenter },
@@ -27,12 +29,13 @@ function makeMindMap() {
 	return { mindMap, setScale, fit, moveNodeToCenter, execCommand };
 }
 
-describe('resetZoom（回到 100%，不改动视口位置）', () => {
-	it('只设置比例 1，不居中根节点（屏幕位置保持）', () => {
+describe('resetZoom（回到 100%，以画布中心为锚点）', () => {
+	it('以画布中心为锚点缩放：可见内容保持原位（不漂移、不居中节点）', () => {
 		const { mindMap, setScale, moveNodeToCenter } = makeMindMap();
 		resetZoom(mindMap);
-		expect(setScale).toHaveBeenCalledWith(1);
-		// 用户明确要求：重置缩放不得改变屏幕位置（不做任何居中/平移）
+		// 第二/三参即锚点：引擎按新比例反推平移，使该点画面不动
+		expect(setScale).toHaveBeenCalledWith(1, 400, 300);
+		// 不做任何节点居中（用户明确要求不改屏幕位置）
 		expect(moveNodeToCenter).not.toHaveBeenCalled();
 	});
 
@@ -54,7 +57,7 @@ describe('arrangeMindMap（整理后重置缩放，不再 fit 全图）', () => 
 		// 延时前不调整视口（等引擎 reflow）
 		expect(setScale).not.toHaveBeenCalled();
 		vi.advanceTimersByTime(80);
-		expect(setScale).toHaveBeenCalledWith(1);
+		expect(setScale).toHaveBeenCalledWith(1, 400, 300);
 		expect(fit).not.toHaveBeenCalled();
 	});
 

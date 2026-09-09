@@ -282,16 +282,21 @@ export function centerRootAtFullScale(mindMap: MindMap | null): void {
 }
 
 /**
- * 重置缩放：回到 100%，**不改变当前平移**（屏幕位置保持原样）。
- * 与 `centerRootAtFullScale` 区分：后者用于「打开时的默认视口」与自动整理
- * 之后的定位；本函数只改比例，不动视口位置。
+ * 重置缩放：回到 100%，**以画布中心为锚点**——屏幕上当前可见的导图内容
+ * 保持原位（不漂移、不居中、不改平移基准）。
+ *
+ * 为什么不能只 `setScale(1)`：引擎的平移量是相对画布原点的，只改比例会让
+ * 内容绕原点跳动（表现为「视图乱飘」）。引擎的 `scaleInCenter` 会按新比例
+ * 反推平移，使锚点处的画面不动；`setScale(scale, cx, cy)` 即该路径。
  */
 export function resetZoom(mindMap: MindMap | null): void {
 	if (!mindMap) {
 		return;
 	}
 	try {
-		mindMap.view?.setScale(1);
+		const centerX = mindMap.width / 2;
+		const centerY = mindMap.height / 2;
+		mindMap.view?.setScale(1, centerX, centerY);
 	} catch (error) {
 		console.error('重置缩放失败', error);
 	}
