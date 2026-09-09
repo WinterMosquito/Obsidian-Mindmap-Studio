@@ -16,7 +16,10 @@ import {
 	deleteActiveNode,
 	pasteNodeAsChild,
 } from '../src/features/view-node-actions';
-import { requireActiveNode } from '../src/features/view-common';
+import {
+	insertChildNodeWithData,
+	requireActiveNode,
+} from '../src/features/view-common';
 
 const { noticeCalls, setNodeTextMock, forceRemoveMock, openLinkModal, openImageModal } =
 	vi.hoisted(() => ({
@@ -115,6 +118,35 @@ function fakeNode(opts: { data?: Record<string, unknown>; isRoot?: boolean } = {
 		nodeData: { data },
 	} as unknown as MindMapNode;
 }
+
+describe('insertChildNodeWithData（插入子节点的唯一入口）', () => {
+	it('携带初始数据插入到指定父节点，并统一 isActive=false', () => {
+		const { execCommand, mindMap, view } = makeHarness(null);
+		const parent = fakeNode({ data: { text: '父' } });
+
+		expect(
+			insertChildNodeWithData(view, parent, { text: '子', image: 'a.png' }),
+		).toBe(true);
+		expect(execCommand).toHaveBeenCalledWith(
+			'INSERT_CHILD_NODE',
+			false,
+			[parent],
+			{ text: '子', image: 'a.png', isActive: false },
+		);
+		expect(mindMap).toBeDefined();
+	});
+
+	it('父节点缺失 / 引擎缺失：返回 false 且不调用引擎', () => {
+		const { execCommand, view } = makeHarness(null);
+		expect(insertChildNodeWithData(view, null, { text: 'x' })).toBe(false);
+		expect(execCommand).not.toHaveBeenCalled();
+
+		const detached = { mindMap: null, lang: 'zh' } as unknown as MindMapViewContext;
+		expect(
+			insertChildNodeWithData(detached, fakeNode(), { text: 'x' }),
+		).toBe(false);
+	});
+});
 
 describe('requireActiveNode（前置守卫）', () => {
 	beforeEach(() => {

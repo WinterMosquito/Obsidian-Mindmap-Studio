@@ -11,8 +11,9 @@ import { saveImageToVault } from '../images-save';
 import { createAspectSetNodeImageOptions } from '../images-path';
 import { notifyError } from '../errors';
 import { extractDroppedFileNames, resolveDroppedFile } from '../links-resolve';
-import { ENGINE_COMMANDS, getActiveNode, getRenderRoot } from '../mindmap';
+import { getActiveNode, getRenderRoot } from '../mindmap';
 import { applyDocWikiLink, applyNodeAttachment, applyNodeImage } from './view-node-actions';
+import { insertChildNodeWithData } from './view-common';
 import { t } from '../i18n';
 import { formatWikilink } from '../domain/wikilink';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
@@ -125,15 +126,15 @@ function handleDroppedAttachment(
 		return;
 	}
 	const root = getRenderRoot(view.mindMap);
-	if (root) {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [root], {
+	if (
+		insertChildNodeWithData(view, root, {
 			text: file.name,
 			attachmentUrl: view.app.vault.getResourcePath(file),
 			attachmentName: file.name,
 			mdAttachmentLinkpath: file.path,
 			mdLinkStyle: 'wiki',
-			isActive: false,
-		});
+		})
+	) {
 		new Notice(
 			`${t(view.lang, 'common.nodeCreatedAndLinked')} [[${file.name}]]`,
 		);
@@ -155,15 +156,15 @@ async function handleDroppedDocument(
 		// 原逻辑：挂到根节点下并链接（通过 appointNodes 指定父节点，
 		// 不依赖激活列表；初始数据直接携带文本与链接）
 		const root = getRenderRoot(view.mindMap);
-		if (root) {
-			view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [root], {
+		if (
+			insertChildNodeWithData(view, root, {
 				text: file.basename,
 				// 文档双链走 mdWikiLinkpath 通道（自绘文档图标，不写 hyperlink）
 				mdWikiLinkpath: link,
 				mdLinkStyle: 'wiki',
 				mdLinkText: file.basename,
-				isActive: false,
-			});
+			})
+		) {
 			new Notice(`${t(view.lang, 'common.nodeCreatedAndLinked')} [[${file.basename}]]`);
 		}
 	}
@@ -305,7 +306,7 @@ async function insertImageChildNode(
 	if (view.mindMap !== engine) {
 		return;
 	}
-	engine.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [parent], {
+	insertChildNodeWithData(view, parent, {
 		text: '',
 		image: options.url,
 		imageTitle: options.title,
@@ -315,6 +316,5 @@ async function insertImageChildNode(
 			custom: options.custom,
 		},
 		mdImageTarget: file.path,
-		isActive: false,
 	});
 }

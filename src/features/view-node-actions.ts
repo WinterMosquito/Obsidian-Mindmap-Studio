@@ -20,7 +20,7 @@ import { resolvePathToFile } from '../links-resolve';
 import { t } from '../i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
 import { linkDisplayText, parseWikilink, wikilinkTargetIsAttachment } from '../domain/wikilink';
-import { requireActiveNode } from './view-common';
+import { requireActiveNode, insertChildNodeWithData } from './view-common';
 import type { MdNodeData } from '../node-data';
 import type { MindMapNode, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
@@ -313,15 +313,7 @@ export function pasteNodeAsChild(
 	}
 	// 复制的是节点数据；剥离 uid 与激活状态后作为新节点的初始数据
 	const { uid: _uid, isActive: _isActive, ...clipboardData } = cached;
-	// 通过 appointNodes 指定父节点（引擎的 ACTIVE_NODE 命令不存在，
-	// 且渲染为异步，不能依赖激活列表）。
-	// 未选中节点时挂到根节点下：引擎在 appointNodes 与激活列表均为空时
-	// 直接 return，空数组粘贴会静默失效。
-	const parent = node ?? getRenderRoot(view.mindMap);
-	view.mindMap?.execCommand(
-		ENGINE_COMMANDS.INSERT_CHILD_NODE,
-		false,
-		parent ? [parent] : [],
-		{ ...clipboardData, isActive: false },
-	);
+	// 未选中节点时挂到根节点下（引擎在 appointNodes 与激活列表均为空时
+	// 直接 return，空数组粘贴会静默失效）
+	insertChildNodeWithData(view, node ?? getRenderRoot(view.mindMap), clipboardData);
 }
