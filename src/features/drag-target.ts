@@ -66,6 +66,8 @@ interface AssistSession {
 	/** 待判定指针事件（rAF 合帧期间被后续 move 覆盖，只保留最新） */
 	pendingEvent: MouseEvent | null;
 	rafId: number | null;
+	/** 画布所属窗口（popout 窗口里 mousemove/mouseup 不落在主窗口） */
+	win: Window;
 	moveListener: (event: MouseEvent) => void;
 	upListener: (event: MouseEvent) => void;
 }
@@ -144,13 +146,13 @@ function endSession(view: MindMapViewContext): void {
 	}
 	sessions.set(view, null);
 	if (session.rafId !== null) {
-		window.cancelAnimationFrame(session.rafId);
+		session.win.cancelAnimationFrame(session.rafId);
 		session.rafId = null;
 	}
 	session.pendingEvent = null;
 	setHighlight(view, session, null);
-	window.removeEventListener('mousemove', session.moveListener);
-	window.removeEventListener('mouseup', session.upListener);
+	session.win.removeEventListener('mousemove', session.moveListener);
+	session.win.removeEventListener('mouseup', session.upListener);
 }
 
 /**
@@ -276,13 +278,14 @@ export function setupDragTargetAssist(view: MindMapViewContext): void {
 			lentNode: null,
 			pendingEvent: null,
 			rafId: null,
+			win: view.containerEl.win,
 			moveListener: (event: MouseEvent) => {
 				// rAF 合帧：两次渲染帧之间的高频 move 只保留最新一次判定——
 				// 判定是全树锚点重建（O(n)），按帧率而非事件频率计价
 				//（大图 + 高回报率鼠标下事件频率可达帧率的数倍）
 				session.pendingEvent = event;
 				if (session.rafId === null) {
-					session.rafId = window.requestAnimationFrame(() => {
+					session.rafId = session.win.requestAnimationFrame(() => {
 						session.rafId = null;
 						const pending = session.pendingEvent;
 						session.pendingEvent = null;
@@ -297,8 +300,8 @@ export function setupDragTargetAssist(view: MindMapViewContext): void {
 			},
 		};
 		sessions.set(view, session);
-		window.addEventListener('mousemove', session.moveListener);
-		window.addEventListener('mouseup', session.upListener);
+		session.win.addEventListener('mousemove', session.moveListener);
+		session.win.addEventListener('mouseup', session.upListener);
 	});
 	// 引擎在 onMouseup 消费落点之后发出 node_dragend → 此处收尾安全
 	view.engineEvents.onEngine(mindMap, 'node_dragend', () => {

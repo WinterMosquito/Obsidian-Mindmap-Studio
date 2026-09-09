@@ -69,7 +69,8 @@ async function handlePasteEvent(
 		return;
 	}
 	event.preventDefault();
-	const node = getActiveNode(view.mindMap);
+	const engine = view.mindMap;
+	const node = getActiveNode(engine);
 	if (!node) {
 		new Notice(t(view.lang, 'common.selectNodeBeforePasteImage'));
 		return;
@@ -85,7 +86,8 @@ async function handlePasteEvent(
 			filename: buildPastedImageName(),
 			lang: view.lang,
 		});
-		if (saved) {
+		// 保存期间可能换文件/重建引擎：旧节点已不在新树上，写入会静默丢失
+		if (saved && view.mindMap === engine) {
 			await applyNodeImage(view, node, view.app.vault.getResourcePath(saved));
 			new Notice(`${t(view.lang, 'common.imageSavedTo')}${saved.path}`);
 		}

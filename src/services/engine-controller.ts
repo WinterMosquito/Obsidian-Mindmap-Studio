@@ -107,6 +107,8 @@ export class EngineController {
 	private initObserver: ResizeObserver | null = null;
 	/** 上次节点拖拽结束时间（拖拽后误触 click 的灯箱抑制） */
 	private lastNodeDragEndAt = 0;
+	/** 首帧后的视口恢复定时器（销毁/作废时取消，避免对已销毁引擎求值） */
+	private viewportTimer: number | null = null;
 
 	constructor(private readonly deps: EngineControllerDeps) {}
 
@@ -237,10 +239,11 @@ export class EngineController {
 			this.deps.setupFeatures();
 			this.deps.onEngineReady(options.layout);
 			// 首帧后：有保存的视口（缩放/平移）则恢复，否则适配全图
-			window.setTimeout(
-				() => this.restoreOrFitViewport(),
-				VIEWPORT_RESTORE_DELAY_MS,
-			);
+			this.cancelViewportTimer();
+			this.viewportTimer = window.setTimeout(() => {
+				this.viewportTimer = null;
+				this.restoreOrFitViewport();
+			}, VIEWPORT_RESTORE_DELAY_MS);
 		} catch (error) {
 			// 畸形树/引擎内部异常：记录并保持视图可用，避免异常逃逸出回调
 			console.error('渲染思维导图失败:', error);
@@ -264,6 +267,7 @@ export class EngineController {
 	/** 销毁引擎实例并清理其作用域的全部 DOM/引擎事件 */
 	destroyInstance(): void {
 		this.disconnectInitObserver();
+		this.cancelViewportTimer();
 		this.engineEvents.destroy();
 		destroyMindMap(this.mindMap);
 		this.mindMap = null;
@@ -274,6 +278,15 @@ export class EngineController {
 	invalidateInit(): void {
 		this.initSeq++;
 		this.disconnectInitObserver();
+		this.cancelViewportTimer();
+	}
+
+	/** 取消首帧后的视口恢复（幂等） */
+	private cancelViewportTimer(): void {
+		if (this.viewportTimer !== null) {
+			window.clearTimeout(this.viewportTimer);
+			this.viewportTimer = null;
+		}
 	}
 
 	/** 应用布局（仅引擎侧；会话字段与持久化由视图负责） */

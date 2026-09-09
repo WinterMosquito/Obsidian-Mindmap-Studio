@@ -98,6 +98,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	private loadingFilePath: string | null = null;
 	/**
+	 * 待执行的引擎初始化帧（loadMindMapFromFile 用 rAF 等首帧布局就绪）。
+	 * 必须可取消：视图关闭/文件切换后该回调仍会执行，届时容器可能仍在 DOM
+	 * 且尺寸非零，会在已关闭的视图上建出完整引擎实例（无人销毁）。
+	 */
+	private pendingInitRaf: number | null = null;
+	/**
 	 * 当前布局（持久化到文件的唯一来源；不依赖 getData() 返回活引用还是深拷贝）。
 	 * 由本类经 applyLayout/resolveLayout 维护（工具栏变更走 applyLayout 方法）。
 	 */
@@ -275,7 +281,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 窗口级粘贴兜底：只注册一次（随视图生命周期由 Component 自动清理），
 		// 不放在 setupPasteHandler 中，避免每次刷新引擎累积监听。
 		// 激活视图判定在此处做（需要 MindMapView 类引用），view-paste 保持无类依赖。
-		this.registerDomEvent(window, 'paste', (event) => {
+		// 挂在画布所属窗口（popout 窗口里主窗口收不到 paste）
+		this.registerDomEvent(this.containerEl.win, 'paste', (event) => {
 			if (this.app.workspace.getActiveViewOfType(MindMapView) !== this) {
 				return;
 			}
@@ -314,15 +321,29 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	override async onUnloadFile(): Promise<void> {
+		const unloadingPath = this.loadingFilePath;
 		this.engine.invalidateInit();
+		this.cancelPendingInit();
 		this.savePipeline.cancelTimer();
 		this.titleRenamer.cancel();
 		// 先保存当前视口，再写盘正文（引擎随后销毁）
 		this.engine.persistViewport();
 		await this.savePipeline.save();
-		// 文件切换后允许再次加载同一路径（新会话）
-		this.loadingFilePath = null;
+		// 文件切换后允许再次加载同一路径（新会话）。仅清理「仍属于本次卸载」的
+		// 标记：await 期间可能已开始加载新文件（onLoadFile），无条件置空会把
+		// 新加载的代际标记抹掉，其 rAF 守卫随即判为过期 → 导图不渲染。
+		if (this.loadingFilePath === unloadingPath) {
+			this.loadingFilePath = null;
+		}
 		this.engine.destroyInstance();
+	}
+
+	/** 取消尚未执行的引擎初始化帧（幂等） */
+	private cancelPendingInit(): void {
+		if (this.pendingInitRaf !== null) {
+			this.containerEl.win.cancelAnimationFrame(this.pendingInitRaf);
+			this.pendingInitRaf = null;
+		}
 	}
 
 	private async loadMindMapFromFile(file: TFile): Promise<void> {
@@ -355,12 +376,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			if (this.loadingFilePath !== file.path) {
 				return;
 			}
-			window.requestAnimationFrame(() => {
-				if (this.loadingFilePath !== file.path) {
-					return;
-				}
-				this.engine.initMindMap(tree);
-			});
+			// 上一帧若尚未执行（快速切换文件），先取消，避免旧树被渲染
+			this.cancelPendingInit();
+			this.pendingInitRaf = this.containerEl.win.requestAnimationFrame(
+				() => {
+					this.pendingInitRaf = null;
+					if (this.loadingFilePath !== file.path) {
+						return;
+					}
+					this.engine.initMindMap(tree);
+				},
+			);
 		} catch (error) {
 			// 文件可能已被删除/损坏：保持视图可用并提示，避免半加载状态
 			this.loadingFilePath = null;
@@ -486,6 +512,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	override async onClose(): Promise<void> {
 		this.engine.invalidateInit();
+		this.cancelPendingInit();
+		// 关闭后不再允许任何加载结果被应用（rAF 守卫依赖该字段）
+		this.loadingFilePath = null;
 		this.savePipeline.cancelTimer();
 		this.titleRenamer.cancel();
 		cancelStatusBarUpdate(this);

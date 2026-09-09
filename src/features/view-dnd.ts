@@ -205,7 +205,8 @@ async function handleExternalFilesDrop(
 	}
 
 	// 需要先选中一个主题作为归属
-	const selected = getActiveNode(view.mindMap);
+	const engine = view.mindMap;
+	const selected = getActiveNode(engine);
 	if (!selected) {
 		new Notice(t(view.lang, 'common.selectNodeBeforeDrop'));
 		return;
@@ -254,6 +255,10 @@ async function handleExternalFilesDrop(
 	// 归属：首张挂到所选节点（保持单图拖入的原行为），其余各新建一个子节点承载。
 	// 此前循环对同一节点反复 applyNodeImage（SET_NODE_IMAGE 覆盖图片字段），
 	// 多图拖入只有最后一张存活——静默丢图。
+	// 保存期间可能换文件/重建引擎：旧节点已不在新树上，直接放弃写入。
+	if (view.mindMap !== engine) {
+		return;
+	}
 	const [first, ...rest] = saved;
 	if (first) {
 		await applyNodeImage(view, selected, view.app.vault.getResourcePath(first));
@@ -291,8 +296,16 @@ async function insertImageChildNode(
 	file: TFile,
 ): Promise<void> {
 	const url = view.app.vault.getResourcePath(file);
+	const engine = view.mindMap;
+	if (!engine) {
+		return;
+	}
 	const options = await createAspectSetNodeImageOptions(url);
-	view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [parent], {
+	// 探测尺寸期间可能换文件/重建引擎：父节点已不在新树上
+	if (view.mindMap !== engine) {
+		return;
+	}
+	engine.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [parent], {
 		text: '',
 		image: options.url,
 		imageTitle: options.title,

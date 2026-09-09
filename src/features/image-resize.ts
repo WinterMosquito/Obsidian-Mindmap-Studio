@@ -44,6 +44,8 @@ interface ResizeSession {
 	/** 最近一次实际写入引擎的尺寸（相同则跳过重渲染） */
 	applied: { width: number; height: number } | null;
 	rafId: number | null;
+	/** 画布所属窗口（popout 窗口里 mousemove/mouseup 不落在主窗口） */
+	win: Window;
 	moveListener: (event: MouseEvent) => void;
 	upListener: (event: MouseEvent) => void;
 }
@@ -169,12 +171,12 @@ function endSession(view: MindMapViewContext): void {
 		return;
 	}
 	if (session.rafId !== null) {
-		cancelAnimationFrame(session.rafId);
+		session.win.cancelAnimationFrame(session.rafId);
 		session.rafId = null;
 	}
 	// 移除时带同款 capture 标志（与注册匹配）
-	window.removeEventListener('mousemove', session.moveListener, true);
-	window.removeEventListener('mouseup', session.upListener, true);
+	session.win.removeEventListener('mousemove', session.moveListener, true);
+	session.win.removeEventListener('mouseup', session.upListener, true);
 	// 官方嵌入语法持久化：engine data.imageSize 已随拖拽更新，
 	// scheduleSave → 序列化 rawOk 尺寸特征不符 → 合成回写 `|宽度`
 	view.scheduleSave();
@@ -209,6 +211,7 @@ function startSession(
 		pending: null,
 		applied: null,
 		rafId: null,
+		win: view.containerEl.win,
 		moveListener: (moveEvent: MouseEvent) => {
 			const current = getState(view).session;
 			if (!current) {
@@ -220,7 +223,7 @@ function startSession(
 			moveEvent.stopPropagation();
 			current.pending = computeResizedSize(current, moveEvent.clientX);
 			if (current.rafId === null) {
-				current.rafId = window.requestAnimationFrame(() =>
+				current.rafId = current.win.requestAnimationFrame(() =>
 					applyPending(view, current),
 				);
 			}
@@ -231,9 +234,10 @@ function startSession(
 	};
 	state.session = session;
 	// 捕获阶段注册（先于引擎容器级监听执行，配合上方 stopPropagation
-	// 形成手势独占；移除时须带同款 capture 标志）
-	window.addEventListener('mousemove', session.moveListener, true);
-	window.addEventListener('mouseup', session.upListener, true);
+	// 形成手势独占；移除时须带同款 capture 标志）。挂在画布所属窗口上：
+	// popout 窗口里鼠标事件不落在主窗口，用全局 window 会完全收不到。
+	session.win.addEventListener('mousemove', session.moveListener, true);
+	session.win.addEventListener('mouseup', session.upListener, true);
 }
 
 /** 注册图片拖拽调宽（引擎就绪后随 setupFeatures 调用；随 engineEvents 销毁清理） */

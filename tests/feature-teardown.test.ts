@@ -52,12 +52,17 @@ function fakeNode(): MindMapNode {
 	} as unknown as MindMapNode;
 }
 
-function makeView(engineEvents: unknown): MindMapViewContext {
+function makeView(
+	engineEvents: unknown,
+	win: unknown = window,
+): MindMapViewContext {
 	return {
 		mindMap: {} as MindMap,
 		engineEvents,
 		lang: 'zh',
 		canvasEl: null,
+		// 画布所属窗口：会话监听挂在它上面（popout 窗口里主 window 收不到事件）
+		containerEl: { win },
 		scheduleSave: vi.fn(),
 	} as unknown as MindMapViewContext;
 }
@@ -103,6 +108,34 @@ describe('drag-target 会话收尾（拖拽中途关闭视图）', () => {
 		expect(removeListener.mock.calls.map((call) => call[1])).toEqual(
 			addListener.mock.calls.map((call) => call[1]),
 		);
+	});
+
+	it('会话监听挂在画布所属窗口（popout 兼容）：不落到主窗口', () => {
+		const binder = makeEngineBinder();
+		const popoutAdd = vi.fn<(type: string, listener: unknown) => void>();
+		const popoutRemove = vi.fn<(type: string, listener: unknown) => void>();
+		const popoutWin = {
+			addEventListener: popoutAdd,
+			removeEventListener: popoutRemove,
+			requestAnimationFrame: vi.fn(() => 1),
+			cancelAnimationFrame: vi.fn(),
+		};
+		const view = makeView(binder, popoutWin);
+		setupDragTargetAssist(view);
+
+		binder.fire('node_dragging', fakeNode());
+		expect(popoutAdd.mock.calls.map((call) => call[0])).toEqual([
+			'mousemove',
+			'mouseup',
+		]);
+		// 主窗口一个监听都不该收到（popout 里鼠标事件不落在主窗口）
+		expect(addListener).not.toHaveBeenCalled();
+
+		teardownDragTargetAssist(view);
+		expect(popoutRemove.mock.calls.map((call) => call[0])).toEqual([
+			'mousemove',
+			'mouseup',
+		]);
 	});
 
 	it('收尾后会话已清空：可重新建立会话；无会话时收尾安全（幂等）', () => {

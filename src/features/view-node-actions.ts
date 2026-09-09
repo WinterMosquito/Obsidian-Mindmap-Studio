@@ -159,6 +159,7 @@ export async function addLinkToActiveNode(
 
 /** 插入链接主体（异常由 addLinkToActiveNode 统一兜住） */
 async function performAddLink(view: MindMapViewContext): Promise<void> {
+	const engine = view.mindMap;
 	const node = requireActiveNode(view);
 	if (!node) {
 		return;
@@ -168,6 +169,10 @@ async function performAddLink(view: MindMapViewContext): Promise<void> {
 		getNodeDataString(node, 'hyperlink');
 	const result = await openLinkEditorModal(view.app, current, view.lang);
 	if (result === null) {
+		return;
+	}
+	// 弹窗期间可能换文件/重建引擎：旧节点不在新树上，写入会静默丢失
+	if (view.mindMap !== engine) {
 		return;
 	}
 	// 清空输入 = 清除链接：两个通道一并清除（文档双链不经引擎 hyperlink 字段）
