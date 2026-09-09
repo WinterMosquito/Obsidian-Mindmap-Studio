@@ -153,13 +153,12 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 			}
 			state.el = targetEl;
 			state.at = now;
-			const rect = targetEl.getBoundingClientRect();
-			// 顶部越界保护：节点贴近视口顶部时上方没有空间放预览弹窗
-			// （表现是被裁切甚至完全看不到）。把上报给核心的指针坐标下移到
-			// 节点下方，让核心的弹窗翻到节点下方显示。
-			const pointer = resolvePointer(event, rect);
+			// 预览弹窗的上下翻转由核心按 targetEl 的矩形决定，而 SVG 节点
+			// 缺少 offsetWidth/offsetHeight（见 ensureOffsetSize），必须先补齐，
+			// 否则弹窗只会出现在节点上方、上方放不下时干脆不显示。
+			ensureOffsetSize(targetEl);
 			view.app.workspace.trigger(HOVER_LINK_EVENT, {
-				event: pointer,
+				event,
 				source: VIEW_TYPE,
 				// HoverParent（官方接口，见 view-context）：核心把弹窗实例挂在
 				// 它上面做定位与生命周期管理；传裸 HTMLElement 会失配。
@@ -172,52 +171,39 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 	);
 }
 
-/** 预览弹窗顶部翻转阈值：节点顶边距视口顶部小于该值时翻到下方 */
-const POPOVER_TOP_MARGIN_PX = 64;
-
 /**
- * 计算上报给核心的指针事件：
- * - 坐标缺失（非鼠标事件等）→ 用节点矩形中心兜底；
- * - 节点贴近视口顶部 → 纵坐标下移到节点下方，触发弹窗翻转；
- * - 其余情况原样返回（不引入任何包装）。
+ * 给节点渲染 group 补上 `offsetWidth` / `offsetHeight`（HTMLElement 专有属性，
+ * SVG 元素没有）。
+ *
+ * 官方 `HoverPopover.position()` 的锚定矩形是混合取值的——宽高走
+ * `targetEl.offsetWidth/offsetHeight`，位置走 `getBoundingClientRect()`：
+ *
+ * ```js
+ * e = { top: a.top, bottom: a.top + i.offsetHeight, left: a.left, right: a.left + i.offsetWidth }
+ * ```
+ *
+ * SVG 元素没有这两个属性（`undefined`），于是 `bottom`/`right` 变成 `NaN`，而官方
+ * 定位函数 `dm()` 判据是 `下方空间 M >= 弹窗高 + gap`（`NaN` 比较恒假）→「下方放得下
+ * 就放下方」的分支永不成立：**预览只会出现在上方**；节点贴近视口顶部时上方也放不下，
+ * 走到 `top = Math.max(NaN, …) + gap` 分支，被写成 `"NaNpx"`（无效值）→ 看起来完全
+ * 没有预览。补上按实时 `getBoundingClientRect()` 取值的只读几何后，核心恢复
+ * 「下方优先、下方不足才翻到上方、两侧都不足则限高滚动」的官方规则。
  */
-function resolvePointer(event: MouseEvent, rect: DOMRect): MouseEvent {
-	const hasPointer =
-		Number.isFinite(event.clientX) && Number.isFinite(event.clientY);
-	const nearTop = rect.top < POPOVER_TOP_MARGIN_PX;
-	if (hasPointer && !nearTop) {
-		return event;
+export function ensureOffsetSize(el: Element | null): void {
+	if (!el) {
+		return;
 	}
-	const clientX = hasPointer ? event.clientX : rect.left + rect.width / 2;
-	const clientY = nearTop
-		? rect.bottom + POPOVER_TOP_MARGIN_PX
-		: rect.top + rect.height / 2;
-	return withPointerPosition(event, clientX, clientY);
-}
-
-/**
- * 覆盖事件坐标的轻量包装：坐标字段返回新值，其余属性/方法透传原始事件
- * （函数绑定到原始事件，避免原生方法在代理上 Illegal invocation）。
- */
-function withPointerPosition(
-	event: MouseEvent,
-	clientX: number,
-	clientY: number,
-): MouseEvent {
-	const deltaX = clientX - event.clientX;
-	const deltaY = clientY - event.clientY;
-	return new Proxy(event, {
-		get(target, prop) {
-			if (prop === 'clientX') return clientX;
-			if (prop === 'clientY') return clientY;
-			if (prop === 'pageX') return target.pageX + deltaX;
-			if (prop === 'pageY') return target.pageY + deltaY;
-			if (prop === 'screenX') return target.screenX + deltaX;
-			if (prop === 'screenY') return target.screenY + deltaY;
-			const value = Reflect.get(target, prop, target) as unknown;
-			return typeof value === 'function'
-				? (value as (...args: unknown[]) => unknown).bind(target)
-				: value;
-		},
-	});
+	for (const prop of ['offsetWidth', 'offsetHeight'] as const) {
+		// `in` 走原型链：HTMLElement 自带这两个属性（勿覆盖），SVG 元素才需要补
+		if (prop in el) {
+			continue;
+		}
+		Object.defineProperty(el, prop, {
+			configurable: true,
+			get: () =>
+				prop === 'offsetWidth'
+					? el.getBoundingClientRect().width
+					: el.getBoundingClientRect().height,
+		});
+	}
 }

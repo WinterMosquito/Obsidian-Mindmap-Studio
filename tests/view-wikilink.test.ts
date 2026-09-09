@@ -7,7 +7,9 @@
  *   两条通道都要能被点击/预览取到；
  * - 锚点优先级：节点内渲染的 <a data-href>（Obsidian MarkdownRenderer 产物）
  *   优先于节点链接；
- * - 悬停预览去重：同一节点元素 400ms 内只触发一次 hover-link。
+ * - 悬停预览去重：同一节点元素 400ms 内只触发一次 hover-link；
+ * - 悬停预览定位：SVG 节点须补上 offsetWidth/offsetHeight，官方弹窗才可能
+ *   在下方放不下时翻到上方（否则锚定矩形 bottom 为 NaN，只会出现在上方）。
  *
  * getNodeGroupEl 经 mindmap.ts 防腐层提供，此处 stub 替换；DOM 判定所需的
  * Element/HTMLAnchorElement 以最小桩注入（Node 环境无 DOM）。
@@ -16,7 +18,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VIEW_TYPE } from '../src/constants';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from '../src/features/view-context';
-import { registerWikilinkInteractions } from '../src/features/view-wikilink';
+import {
+	ensureOffsetSize,
+	registerWikilinkInteractions,
+} from '../src/features/view-wikilink';
 
 const { getNodeGroupElMock } = vi.hoisted(() => ({
 	getNodeGroupElMock: vi.fn<(node: unknown) => unknown>(),
@@ -30,7 +35,7 @@ vi.mock('../src/mindmap', () => ({
 class FakeElement {
 	containsResult = true;
 	closestResult: unknown = null;
-	/** 视口矩形（默认远离屏幕顶部；用例可改 top 模拟贴顶） */
+	/** 视口矩形（用例可改尺寸，供 offsetWidth/offsetHeight 断言） */
 	rect = { top: 400, bottom: 440, left: 100, right: 200, width: 100, height: 40 };
 	contains(_node: unknown): boolean {
 		return this.containsResult;
@@ -98,7 +103,7 @@ function fakeMouseEvent(
 		metaKey: false,
 		shiftKey: false,
 		altKey: false,
-		// 视口坐标（默认位于节点中部，远离顶部阈值 → 原样透传）
+		// 视口坐标（弹窗定位已不依赖指针坐标，保留以覆盖事件透传）
 		clientX: 150,
 		clientY: 420,
 		...modifiers,
@@ -320,36 +325,38 @@ describe('node_mouseenter（悬停预览）', () => {
 		});
 	});
 
-	it('节点贴近视口顶部：上报坐标下移到节点下方（弹窗翻转）', () => {
+	it('触发预览前给节点元素补上 offsetWidth/offsetHeight（官方弹窗定位依赖它）', () => {
 		const { view, binder, trigger } = makeView();
 		const targetEl = new FakeElement();
-		// 顶边 10px（< 64px 阈值），底边 50px
 		targetEl.rect = {
-			top: 10,
-			bottom: 50,
+			top: 700,
+			bottom: 740,
 			left: 100,
-			right: 200,
-			width: 100,
+			right: 260,
+			width: 160,
 			height: 40,
 		};
 		getNodeGroupElMock.mockReturnValue(targetEl);
 		registerWikilinkInteractions(view);
-		const event = fakeMouseEvent(targetEl, { clientX: 150, clientY: 12 });
 		binder.fire(
 			'node_mouseenter',
 			fakeNode({ mdWikiLinkpath: '[[笔记]]' }),
-			event,
+			fakeMouseEvent(targetEl),
 		);
 
-		const payload = trigger.mock.calls[0]?.[1] as { event: MouseEvent };
-		// 纵坐标下移到节点下方（50 + 64），横坐标保持不变
-		expect(payload.event.clientY).toBe(114);
-		expect(payload.event.clientX).toBe(150);
-		// 包装对象仍是 MouseEvent 语义：原生方法绑定原事件，可安全调用
-		expect(() => payload.event.preventDefault()).not.toThrow();
+		// 官方 HoverPopover.position() 取 bottom = rect.top + targetEl.offsetHeight：
+		// SVG 节点缺这两个属性时该值为 NaN，「下方放得下就放下方」分支永不成立
+		const el = targetEl as unknown as {
+			offsetWidth: number;
+			offsetHeight: number;
+		};
+		expect(el.offsetWidth).toBe(160);
+		expect(el.offsetHeight).toBe(40);
+		expect(Number.isFinite(targetEl.rect.top + el.offsetHeight)).toBe(true);
+		expect(trigger).toHaveBeenCalledTimes(1);
 	});
 
-	it('节点在视口中部：原样透传原始事件（不包装）', () => {
+	it('原始事件原样透传（定位改由 targetEl 矩形决定，不再改写指针坐标）', () => {
 		const { view, binder, trigger } = makeView();
 		const targetEl = new FakeElement(); // 默认 rect top=400
 		getNodeGroupElMock.mockReturnValue(targetEl);
@@ -362,6 +369,19 @@ describe('node_mouseenter（悬停预览）', () => {
 		);
 		const payload = trigger.mock.calls[0]?.[1] as { event: MouseEvent };
 		expect(payload.event).toBe(event);
+	});
+
+	it('ensureOffsetSize：元素缺失静默；已具备几何属性的元素不覆盖', () => {
+		expect(() => ensureOffsetSize(null)).not.toThrow();
+		// 模拟 HTMLElement（原型链上已有 offsetWidth/offsetHeight）：保持原值
+		const native = {
+			offsetWidth: 7,
+			offsetHeight: 9,
+			getBoundingClientRect: () => ({ width: 100, height: 40 }),
+		};
+		ensureOffsetSize(native as unknown as Element);
+		expect(native.offsetWidth).toBe(7);
+		expect(native.offsetHeight).toBe(9);
 	});
 
 	it('非双链（URL）节点：不触发预览（linkpath 为空）', () => {

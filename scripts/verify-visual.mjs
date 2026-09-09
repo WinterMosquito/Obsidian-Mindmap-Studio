@@ -120,7 +120,9 @@ function findChrome() {
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
 function buildEntrySource() {
 	const mindmapModule = join(ROOT, 'src', 'mindmap.ts').replaceAll('\\', '/');
+	const wikilinkModule = join(ROOT, 'src', 'features', 'view-wikilink.ts').replaceAll('\\', '/');
 	return `import { centerContentAtFullScale, createMindMap, resetZoom } from ${JSON.stringify(mindmapModule)};
+import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
 
 const scenarios = ${JSON.stringify(
 		SCENARIOS.map(({ name, data }) => ({ name, data })),
@@ -215,6 +217,30 @@ try {
 	probe.textContent = JSON.stringify({ error: String(error) });
 }
 document.body.appendChild(probe);
+
+// —— 悬停预览锚定探针：SVG 节点须能提供有限的 offsetWidth/offsetHeight ——
+// 官方 HoverPopover.position() 取 bottom = rect.top + targetEl.offsetHeight；
+// SVG 元素没有这两个属性时该值为 NaN，弹窗「下方放得下就放下方」的分支永不成立。
+const anchorProbe = document.createElement('pre');
+anchorProbe.id = 'anchor-probe';
+try {
+	const nodeEl = viewportHolder.querySelector('.smm-node');
+	const beforeWidth = String(nodeEl.offsetWidth);
+	ensureOffsetSize(nodeEl);
+	const nodeRect = nodeEl.getBoundingClientRect();
+	anchorProbe.textContent = JSON.stringify({
+		beforeWidth,
+		offsetWidth: Math.round(nodeEl.offsetWidth),
+		offsetHeight: Math.round(nodeEl.offsetHeight),
+		rectWidth: Math.round(nodeRect.width),
+		rectHeight: Math.round(nodeRect.height),
+		bottom: Math.round(nodeRect.top + nodeEl.offsetHeight),
+		right: Math.round(nodeRect.left + nodeEl.offsetWidth),
+	});
+} catch (error) {
+	anchorProbe.textContent = JSON.stringify({ error: String(error) });
+}
+document.body.appendChild(anchorProbe);
 }, 150);
 `;
 }
@@ -413,6 +439,56 @@ function checkViewport(dom) {
 	return failures;
 }
 
+/**
+ * 校验悬停预览锚定探针（`#anchor-probe`）：SVG 节点元素必须能提供有限的
+ * offsetWidth/offsetHeight，否则官方弹窗的锚定矩形 bottom/right 为 NaN，
+ * 预览只会出现在节点上方、上方放不下时完全不显示。
+ */
+function checkAnchor(dom) {
+	const raw = dom
+		.match(/<pre id="anchor-probe">([\s\S]*?)<\/pre>/)?.[1]
+		?.replaceAll('&quot;', '"')
+		.replaceAll('&amp;', '&');
+	if (!raw) {
+		return ['未找到锚定探针（入口脚本未执行？）'];
+	}
+	let probe;
+	try {
+		probe = JSON.parse(raw);
+	} catch {
+		return [`锚定探针 JSON 解析失败：${raw.slice(0, 120)}`];
+	}
+	if (typeof probe.error === 'string') {
+		return [`入口脚本异常：${probe.error}`];
+	}
+	const failures = [];
+	// 前提：SVG 元素本身没有这两个属性（否则本探针失去意义）
+	if (probe.beforeWidth !== 'undefined') {
+		failures.push(
+			`SVG 节点已有 offsetWidth=${probe.beforeWidth}（探针前提不成立）`,
+		);
+	}
+	if (!Number.isFinite(probe.bottom) || !Number.isFinite(probe.right)) {
+		failures.push(
+			`锚定矩形 bottom/right 非有限数（bottom=${probe.bottom}, right=${probe.right}）`,
+		);
+	}
+	if (!(probe.offsetWidth > 0) || !(probe.offsetHeight > 0)) {
+		failures.push(
+			`补齐的尺寸非正（${probe.offsetWidth}×${probe.offsetHeight}）`,
+		);
+	}
+	if (
+		probe.offsetWidth !== probe.rectWidth ||
+		probe.offsetHeight !== probe.rectHeight
+	) {
+		failures.push(
+			`补齐尺寸 (${probe.offsetWidth}×${probe.offsetHeight}) 与实测矩形 (${probe.rectWidth}×${probe.rectHeight}) 不一致`,
+		);
+	}
+	return failures;
+}
+
 async function main() {
 	const chromePath = findChrome();
 	if (!chromePath) {
@@ -466,6 +542,15 @@ async function main() {
 			console.log(`      - ${failure}`);
 		}
 		failed += viewportFailures.length;
+		// 悬停预览锚定契约：SVG 节点补齐 offsetWidth/offsetHeight（弹窗可上下翻转）
+		const anchorFailures = checkAnchor(dom);
+		console.log(
+			`  ${anchorFailures.length === 0 ? '✓' : '✗'} anchor  SVG 节点盒模型尺寸补齐（弹窗可上下翻转）`,
+		);
+		for (const failure of anchorFailures) {
+			console.log(`      - ${failure}`);
+		}
+		failed += anchorFailures.length;
 		if (failed > 0) {
 			console.error(`\n✗ 视觉验证失败：${failed} 项断言未通过`);
 			process.exitCode = 1;

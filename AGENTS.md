@@ -143,7 +143,7 @@ tests/
   view-dnd.test.ts     # 拖入分发（图片/笔记/附件/外部导入、两分支与提示）
   view-search.test.ts  # 搜索栏（装配/防抖/回绕/零命中计数/防抖窗口内跳转）
   view-status.test.ts  # 状态栏计数（节流与尾随、销毁/抛错降级、关闭清理）
-  view-wikilink.test.ts # 链接交互（点击分流/双通道取值/悬停预览去重）
+  view-wikilink.test.ts # 链接交互（点击分流/双通道取值/悬停预览去重与弹窗锚定尺寸）
   view-hotkeys.test.ts  # 视图内快捷键（F2 编辑当前节点：吞键/让位/去重）
   modal-common.test.ts # 弹窗共享件（settle 守卫/按钮变体/库内文件联想）
   modal-input.test.ts  # 命名/链接弹窗（预填与焦点、空白确认、settle 幂等、联想接线）
@@ -164,7 +164,9 @@ npm run verify:visual  # 无头 Chrome 渲染契约验证（scripts/verify-visua
 - `verify:visual`：把 `src/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
   `styles.css` 在无头 Chrome 里渲染 5 个场景并断言 `--dump-dom`——三类链接图标分流与
   图标尺寸（18×18）、回形针标题、画布铺满容器、节点测宽随文本（不被容器拉平），
-  外加 viewport 探针（20 层深链大图必须 100% 缩放、整体内容居中，且重置缩放漂移 ≤1px）。
+  外加两个探针：viewport（20 层深链大图必须 100% 缩放、整体内容居中，且重置缩放漂移
+  ≤1px）与 anchor（SVG 节点补齐 `offsetWidth/offsetHeight`，弹窗锚定矩形
+  `bottom/right` 必须为有限数，否则预览只会出现在上方）。
   这类「引擎运行时 DOM 装配」行为单测覆盖不到（单测只能验证数据字段）。
   无 Chrome 时跳过（`--require-chrome` 改为失败；`--keep` 保留临时目录；
   `CHROME_PATH` 指定浏览器）。
@@ -190,7 +192,7 @@ npm run verify:visual  # 无头 Chrome 渲染契约验证（scripts/verify-visua
   通道并显示原生链接图标，与既定视觉冲突。属**有意偏离**（详见 `docs/external-audit-2026-09-08.md` §5.2/§7.4）。
 - 渲染层定位：正文保持纯 Markdown；布局/视口/打开偏好存 `data.json`（`viewState`，按文件路径），不写入文件。
 - 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动），**自动整理后也走 `resetZoom`**（`arrangeMindMap` 的 RESET_LAYOUT 延时回调，不再 fit 全图）。
-- 悬停预览（`hover-link`）：`hoverParent` 必须是官方 `HoverParent`——传本视图的 `leaf`（`WorkspaceLeaf` 实现该接口），**勿传裸 HTMLElement**；节点贴近视口顶部（< 64px）时把上报的指针纵坐标下移到节点下方，让核心把弹窗翻转到下方（`view-wikilink.ts resolvePointer`）。
+- 悬停预览（`hover-link`）：`hoverParent` 必须是官方 `HoverParent`——传本视图的 `leaf`（`WorkspaceLeaf` 实现该接口），**勿传裸 HTMLElement**。弹窗上下翻转由核心按 `targetEl` 的矩形决定，而官方 `HoverPopover.position()` 的锚定矩形是**混合取值**：宽高走 `targetEl.offsetWidth/offsetHeight`、位置走 `getBoundingClientRect()`；SVG 节点 group 没有前两个属性（HTMLElement 专有）→ `bottom/right` 为 `NaN` → 官方定位函数「下方放得下就放下方」的分支恒假（预览只出现在上方），上方也放不下时 `top` 被写成 `"NaNpx"`（等于不显示）。故触发前必须调 `view-wikilink.ts ensureOffsetSize(targetEl)` 补上按实时矩形取值的只读几何（`in` 判断，HTMLElement 不覆盖）；指针坐标不参与定位，勿再改写上报的鼠标事件。
 - 右键「编辑文本」：`mindmap.ts startNodeTextEdit` 必须**延后一个宏任务**再 emit `node_dblclick`——菜单项 click 会继续冒泡到 `document.body`，引擎 `body_click`（`isEndNodeTextEditOnClickOuter` 默认 true）会立刻关闭刚打开的编辑框；`isInserting` 传 false。
 - 图片自定义尺寸（Obsidian 官方嵌入语法，不落 data.json）：`![[图.png|300]]`（仅宽、等比）/ `![[图.png|300x150]]`（宽高）/ `![alt|300](url)`（外链 md 图，尺寸在标签尾部）。解析进 `mdImageWidth/mdImageHeight`（domain/md-meta 契约）；`walkCorrectImageSizesByAspect` 对带参节点按参数定尺寸（仅宽时探测原始比例补高）；拖拽调宽改 engine `imageSize custom:true`，保存时 rawOk 尺寸特征（`目标|宽度`，终界 `]`/`x` 防前缀误匹配）不符 → 合成回写 `|宽度`。
 - 图片独占节点（渲染层语义）：纯图行（`- ![[x.png]]`）解析为**无文本节点**（不回退文件名占位），图片节点删除文字（右键「移除文字」/双击清空）后即被图片独占，往返保持；代价是纯图节点不参与文本搜索。图片嵌入语法（`![[..]]`/`![]()`）在 rawOk 的「链接已清除」检测中以负向断言排除（`(?<!!)\[\[`），图文混合行可逐字往返。
