@@ -23,7 +23,7 @@
 
 ---
 
-![MindMap Studio](assets/mindmap.png)
+![A .mindmap.md note shown as a mind map in Obsidian](assets/mindmap.png)
 
 ## ✨ Why MindMap Studio
 

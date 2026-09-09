@@ -23,7 +23,7 @@
 
 ---
 
-![MindMap Studio](assets/mindmap-zh.png)
+![在 Obsidian 中以思维导图视图打开 .mindmap.md 笔记](assets/mindmap-zh.png)
 
 ## ✨ 为什么用 MindMap Studio
 
