@@ -522,8 +522,19 @@ async function main() {
 
 		let failed = 0;
 		console.log(`无头渲染契约验证（Chrome: ${chromePath}）`);
+		// 任何断言函数抛异常都转成一条失败项（而不是让整个脚本静默退出）——
+		// CI 上曾出现「场景全过后脚本无输出地退出」，此处保证异常可见。
+		const safe = (label, fn) => {
+			try {
+				return fn();
+			} catch (error) {
+				return [`${label} 检查异常：${error?.message ?? String(error)}`];
+			}
+		};
 		for (const scenario of SCENARIOS) {
-			const failures = checkScenario(scenario, containerOf(dom, scenario.name));
+			const failures = safe(`场景 ${scenario.name}`, () =>
+				checkScenario(scenario, containerOf(dom, scenario.name)),
+			);
 			const mark = failures.length === 0 ? '✓' : '✗';
 			const metrics = containerOf(dom, scenario.name);
 			const width = metrics ? measure(metrics).childWidth : null;
@@ -536,7 +547,7 @@ async function main() {
 			failed += failures.length;
 		}
 		// 默认视口契约：100% 缩放 + 整体内容居中（打开大图时文字可读）
-		const viewportFailures = checkViewport(dom);
+		const viewportFailures = safe('viewport 探针', () => checkViewport(dom));
 		console.log(
 			`  ${viewportFailures.length === 0 ? '✓' : '✗'} viewport 默认视口 100% + 整体内容居中`,
 		);
@@ -545,7 +556,7 @@ async function main() {
 		}
 		failed += viewportFailures.length;
 		// 悬停预览锚定契约：SVG 节点补齐 offsetWidth/offsetHeight（弹窗可上下翻转）
-		const anchorFailures = checkAnchor(dom);
+		const anchorFailures = safe('anchor 探针', () => checkAnchor(dom));
 		console.log(
 			`  ${anchorFailures.length === 0 ? '✓' : '✗'} anchor  SVG 节点盒模型尺寸补齐（弹窗可上下翻转）`,
 		);
@@ -567,4 +578,9 @@ async function main() {
 	}
 }
 
-await main();
+try {
+	await main();
+} catch (error) {
+	console.error(`✗ verify:visual 异常：${error?.stack ?? String(error)}`);
+	process.exitCode = 1;
+}
