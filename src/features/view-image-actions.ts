@@ -29,6 +29,15 @@ export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): vo
 		node,
 		createSetNodeImageOptions(null),
 	);
+	// 同步清掉 md 回写元数据：image 已空而 mdImageTarget/mdImageWidth 仍在时，
+	// 序列化的「图片已被移除」判定失效——mdRaw 会被逐字回写，旧图在下次保存
+	// 时复活（见 md-serialize.rawOk）
+	const data = node.getData() as MdNodeData;
+	delete data.mdImageTarget;
+	delete data.mdImageWidth;
+	delete data.mdImageHeight;
+	delete data.mdImageAlt;
+	view.scheduleSave();
 }
 
 /**
@@ -52,6 +61,7 @@ export async function addImageToActiveNode(
 async function performAddImage(view: MindMapViewContext): Promise<void> {
 	const node = requireActiveNode(view);
 	if (!node) return;
+	const engine = view.mindMap;
 	const current = getNodeDataString(node, 'image');
 	const result = await openImageEditorModal(
 		view.app,
@@ -68,6 +78,8 @@ async function performAddImage(view: MindMapViewContext): Promise<void> {
 		view.lang,
 	);
 	if (result === null) return;
+	// 弹窗期间可能换文件/重建引擎：旧节点不在新树上，继续写入会静默丢失
+	if (view.mindMap !== engine) return;
 	await applyNodeImage(view, node, result);
 }
 
@@ -87,8 +99,12 @@ export async function applyNodeImage(
 	url: string,
 ): Promise<void> {
 	const { display, mdTarget } = normalizeImageReference(url, view.app);
+	const engine = view.mindMap;
+	if (!engine) return;
 	const options = await createAspectSetNodeImageOptions(display);
-	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_IMAGE, node, options);
+	// 探测尺寸期间可能换文件/重建引擎：旧节点已不在新树上
+	if (view.mindMap !== engine) return;
+	engine.execCommand(ENGINE_COMMANDS.SET_NODE_IMAGE, node, options);
 	// 记录/清除 md 回写目标（引擎不识别该字段，仅序列化用）
 	const data = node.getData() as MdNodeData;
 	const oldTarget = data.mdImageTarget ?? '';

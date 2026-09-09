@@ -21,6 +21,7 @@ import { parseMdOutline } from '../src/md-outline';
 import { serializeMdBody } from '../src/md-serialize';
 import { ensureUniqueUids } from '../src/markdown';
 import { ViewStateStore } from '../src/view-state';
+import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 type MNode = { data?: Record<string, unknown>; children?: MNode[] };
 
@@ -792,5 +793,89 @@ describe('URL icon-only 与附件链接', () => {
 		// 首个链接 token = 裸 URL（位置在前）→ hyperlink；双链剥壳为文本
 		expect(node.data?.hyperlink).toBe('https://a.com');
 		expect(node.data?.text).toBe('对比 与 笔记B');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 六、图文/链接合成不丢 token（回归：图片引用曾被静默丢弃）
+// ---------------------------------------------------------------------------
+describe('图文/链接合成不丢 token', () => {
+	/** 取首个真实节点（跳过虚拟根） */
+	const firstChild = (
+		md: string,
+	): { tree: MindMapTreeNode; data: Record<string, unknown> } => {
+		const r = parseMdOutline(md, '根');
+		const node = collect(r.tree).find(({ depth }) => depth === 1)!.node;
+		return { tree: r.tree, data: node.data! };
+	};
+
+	it('图文 + 链接节点编辑文本：图片与链接都写回', () => {
+		const { tree, data } = firstChild('- ![[a.png]] 见 [[笔记]]\n');
+		data.text = '见图与笔记';
+		const out = serializeMdBody(tree, null);
+		// 此前只输出一枚 token（链接），图片引用永久丢失
+		expect(out, '图片引用保留').toContain('![[a.png]]');
+		expect(out, '链接保留').toContain('[[笔记]]');
+	});
+
+	it('已有链接的节点插入图片：图片写回且链接保留', () => {
+		const { tree, data } = firstChild('- 见 [[笔记]]\n');
+		Object.assign(data, { image: 'a.png', mdImageTarget: 'a.png' });
+		const out = serializeMdBody(tree, null);
+		expect(out).toContain('![[a.png]]');
+		expect(out).toContain('[[笔记]]');
+	});
+
+	it('已有图片的节点插入链接：图片保留', () => {
+		const { tree, data } = firstChild('- ![[a.png]]\n');
+		Object.assign(data, {
+			mdWikiLinkpath: '[[笔记]]',
+			mdLinkStyle: 'wiki',
+			mdLinkText: '笔记',
+		});
+		const out = serializeMdBody(tree, null);
+		expect(out).toContain('![[a.png]]');
+		expect(out).toContain('[[笔记]]');
+	});
+
+	it('移除图片（image 清空、md 元数据残留）：不逐字回写旧图', () => {
+		const { tree, data } = firstChild('- ![[a.png]]\n');
+		// 引擎 SET_NODE_IMAGE(null) 的真实效果：image 置空
+		data.image = null;
+		const out = serializeMdBody(tree, null);
+		expect(out, '旧图不得复活').not.toContain('![[a.png]]');
+	});
+
+	it('图文混合节点移除图片：文本与链接保留、图片剥离', () => {
+		const { tree, data } = firstChild('- 标题 ![[a.png]]\n');
+		data.image = null;
+		const out = serializeMdBody(tree, null);
+		expect(out).not.toContain('![[a.png]]');
+		expect(out).toContain('标题');
+	});
+
+	it('文本含同名串时插入图片：仍写入嵌入语法', () => {
+		const { tree, data } = firstChild('- 图 a.png\n');
+		Object.assign(data, { image: 'a.png', mdImageTarget: 'a.png' });
+		const out = serializeMdBody(tree, null);
+		expect(out, '特征按嵌入语法边界匹配').toContain('![[a.png]]');
+	});
+
+	it('文本含同名串时插入链接：仍写入双链', () => {
+		const { tree, data } = firstChild('- 参见 note.md\n');
+		Object.assign(data, {
+			mdWikiLinkpath: '[[note]]',
+			mdLinkStyle: 'wiki',
+			mdLinkText: 'note',
+		});
+		const out = serializeMdBody(tree, null);
+		expect(out, '特征按 [[ ]] 边界匹配').toContain('[[note]]');
+	});
+
+	it('wiki 嵌入的说明文本（![[a.png|说明]]）编辑后保留', () => {
+		const { tree, data } = firstChild('- ![[a.png|说明]]\n');
+		data.text = '改过';
+		const out = serializeMdBody(tree, null);
+		expect(out).toContain('![[a.png|说明]]');
 	});
 });

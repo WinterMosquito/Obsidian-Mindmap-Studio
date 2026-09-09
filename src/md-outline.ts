@@ -276,9 +276,10 @@ function buildInlineData(raw: string): InlineData {
 				firstImg = true;
 				data.image = tok.target;
 				data.mdImageTarget = tok.target;
-				// 外链 md 图片的 alt（`![说明|300](url)`）：官方语法 alt 与尺寸共存，
-				// 节点编辑后合成回写需原样保留（否则 alt 丢失）
-				if (tok.kind === 'mdImg' && tok.label) {
+				// 嵌入标签里的非尺寸文本（alt）：`![说明|300](url)` 与
+				// `![[图.png|说明]]` 都可能是用户写的说明，节点编辑后合成回写
+				// 需原样保留（此前只对 mdImg 存 alt，wiki 嵌入的说明会丢失）
+				if (tok.label) {
 					data.mdImageAlt = tok.label;
 				}
 				// 官方嵌入尺寸参数（![[图|300]] / ![alt|300](url)）：仅首图生效，

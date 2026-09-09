@@ -126,6 +126,108 @@ function customImageWidth(data: MdNodeData): number | null {
 	return customImageSize(data)?.width ?? null;
 }
 
+/**
+ * 嵌入标签后缀（wiki 语法）：尺寸优先，其次 alt。
+ * 官方语法不支持 alt 与尺寸共存（`![[图|说明|300]]` 无效），故二者择一。
+ */
+function embedLabelSuffix(data: MdNodeData): string {
+	const size = customImageSize(data);
+	if (size !== null) {
+		return `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
+	}
+	const rawAlt = data.mdImageAlt;
+	return typeof rawAlt === 'string' && rawAlt ? `|${rawAlt}` : '';
+}
+
+/** 节点是否残留图片元数据（image 已清空但 md 字段仍在 → 图片被移除） */
+function hasImageMeta(data: MdNodeData): boolean {
+	for (const key of [
+		'mdImageTarget',
+		'mdImageWidth',
+		'mdImageHeight',
+		'mdImageAlt',
+	] as const) {
+		const value = data[key];
+		if (value !== undefined && value !== null && value !== '') {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** mdRaw 中是否已含该图片引用（按嵌入语法边界匹配，避免文本同名串误命中） */
+function rawHasImageFeature(raw: string, feature: string): boolean {
+	return (
+		raw.includes(`![[${feature}]]`) ||
+		raw.includes(`![[${feature}|`) ||
+		raw.includes(`](${feature})`) ||
+		raw.includes(`](${feature} `)
+	);
+}
+
+/**
+ * mdRaw 中是否已含该链接引用。
+ * URL 类特征按原文出现判断（裸 URL / `<url>` / `[text](url)` 均合法）；
+ * 库内双链/附件按 `[[…]]` 边界匹配——此前用裸子串，节点文本恰好含同名串时
+ * 新插入的链接会被误判「未变」而丢弃。
+ */
+function rawHasLinkFeature(raw: string, feature: string): boolean {
+	if (isSchemeUrl(feature)) {
+		return raw.includes(feature);
+	}
+	return (
+		raw.includes(`[[${feature}]]`) ||
+		raw.includes(`[[${feature}|`) ||
+		raw.includes(`[[${feature}#`) ||
+		raw.includes(`[[${feature}^`) ||
+		raw.includes(`](${feature})`) ||
+		raw.includes(`](${feature} `)
+	);
+}
+
+/** 链接 token 的目标特征串（与 mdRaw 比对 / token 排序用） */
+function linkFeatureOf(data: MdNodeData): string | null {
+	const attachUrl = data.attachmentUrl;
+	if (typeof attachUrl === 'string' && attachUrl) {
+		const linkpath = data.mdAttachmentLinkpath;
+		return typeof linkpath === 'string' && linkpath ? linkpath : attachUrl;
+	}
+	const hyperlink = data.hyperlink;
+	if (typeof hyperlink === 'string' && hyperlink) {
+		return hyperlinkFeature(hyperlink);
+	}
+	const wikiLink = data.mdWikiLinkpath;
+	return typeof wikiLink === 'string' && wikiLink
+		? hyperlinkFeature(wikiLink)
+		: null;
+}
+
+/**
+ * 合成路径的行内 token 列表（图片 / 链接），顺序与 mdRaw 中一致。
+ *
+ * 此前合成只输出一枚 token（`renderHyperlink() ?? renderImage()`）——图文混合
+ * 或「图 + 链接」节点只要编辑过文本，图片引用就被静默丢弃（保存后文件里永久
+ * 消失）。两枚 token 都必须写出；顺序按 mdRaw 中出现位置决定，新建的 token 追加
+ * 在已有 token 之后，保证再次保存时行结构稳定（不再改动）。
+ */
+function inlineTokens(data: MdNodeData, app: App | null): string[] {
+	const image = renderImage(data, app);
+	const link = renderHyperlink(data);
+	if (!image) {
+		return link ? [link] : [];
+	}
+	if (!link) {
+		return [image];
+	}
+	const raw = typeof data.mdRaw === 'string' ? data.mdRaw : '';
+	const imageFeature = imageVaultPath(data, app);
+	const linkFeature = linkFeatureOf(data);
+	const imageAt = imageFeature ? raw.indexOf(imageFeature) : -1;
+	const linkAt = linkFeature ? raw.indexOf(linkFeature) : -1;
+	const linkFirst = linkAt >= 0 && imageAt >= 0 && linkAt < imageAt;
+	return linkFirst ? [link, image] : [image, link];
+}
+
 /** 行内 token 渲染：图片（仅合成路径使用） */
 function renderImage(data: MdNodeData, app: App | null): string | null {
 	const image = data.image;
@@ -134,9 +236,7 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 	}
 	// 官方嵌入尺寸参数：`|宽度`（仅宽、等比缩放）或 `|宽x高`（显式双参数，
 	// 见官方帮助「Embed files」`![[图|640x480]]` / `![alt|100x145](url)`）。
-	const size = customImageSize(data);
-	const sizeSuffix =
-		size === null ? '' : `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
+	const sizeSuffix = embedLabelSuffix(data);
 	// 外链 md 图片的 alt：官方语法 `![alt|宽x高](url)`，alt 与尺寸共存
 	const rawAlt = data.mdImageAlt;
 	const alt = typeof rawAlt === 'string' ? rawAlt : '';
@@ -151,8 +251,15 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 		}
 	}
 	if (isRemoteOrDataUrl(image)) {
-		// 外链 md 图片：官方语法 alt 在前、尺寸在标签尾部（![alt|300](url)）
-		return `![${alt}${sizeSuffix}](${image})`;
+		// 外链 md 图片：官方语法 alt 在前、尺寸在标签尾部（![alt|300](url)）。
+		// 此处 alt 与尺寸可共存，故用「仅尺寸」后缀，不能再套 embedLabelSuffix
+		// （无尺寸时它返回 `|alt`，会写出 `![alt|alt](url)`）。
+		const size = customImageSize(data);
+		const sizeOnly =
+			size === null
+				? ''
+				: `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
+		return `![${alt}${sizeOnly}](${image})`;
 	}
 	return `![[${image}${sizeSuffix}]]`;
 }
@@ -234,6 +341,13 @@ function rawOk(
 	if (data.text !== data.mdDerivedText) {
 		return false;
 	}
+	// 图片已被移除（右键「移除图片」/被引用文件被删除）：image 已清空但 md 图片
+	// 字段仍在 → mdRaw 里的嵌入必须被剥离。此前该情形跳过整段图片检查，而下方
+	// 「链接已清除」检测又以 `(?<!!)\[\[` 排除嵌入语法，于是被判定「未编辑」→
+	// 逐字回写 → 移除的图片在下次保存时复活。
+	if (!data.image && hasImageMeta(data)) {
+		return false;
+	}
 	if (data.image !== undefined && data.image !== null && data.image !== '') {
 		// 当前图片特征（库内路径或外链原文）须已存在于 mdRaw。
 		// 带自定义尺寸时特征含官方尺寸参数（`|宽度`）——尺寸被拖拽调整过
@@ -247,7 +361,7 @@ function rawOk(
 			if (!raw.includes(`${sized}]`) && !raw.includes(`${sized}x`)) {
 				return false; // 图新增/更换/调整尺寸，需合成
 			}
-		} else if (feature && !raw.includes(feature)) {
+		} else if (feature && !rawHasImageFeature(raw, feature)) {
 			return false; // 图新增/更换，需合成
 		}
 	}
@@ -258,7 +372,7 @@ function rawOk(
 		typeof data.mdWikiLinkpath === 'string' ? data.mdWikiLinkpath : '';
 	if (hyperlink) {
 		const feature = hyperlinkFeature(hyperlink);
-		if (feature && !raw.includes(feature)) {
+		if (feature && !rawHasLinkFeature(raw, feature)) {
 			return false; // 链接新增/更新，需合成
 		}
 	} else if (attachUrl) {
@@ -268,13 +382,17 @@ function rawOk(
 			typeof data.mdAttachmentLinkpath === 'string' && data.mdAttachmentLinkpath
 				? data.mdAttachmentLinkpath
 				: attachUrl;
-		if (feature && !raw.includes(feature)) {
+		if (
+			feature &&
+			!rawHasLinkFeature(raw, feature) &&
+			!rawHasImageFeature(raw, feature)
+		) {
 			return false; // 附件链接新增/更新，需合成
 		}
 	} else if (wikiLink) {
 		// 文档双链通道：取目标特征串（去别名）与 mdRaw 比对，与 hyperlink 同口径
 		const feature = hyperlinkFeature(wikiLink);
-		if (feature && !raw.includes(feature)) {
+		if (feature && !rawHasLinkFeature(raw, feature)) {
 			return false; // 文档链接新增/更新，需合成
 		}
 	} else if (
@@ -297,9 +415,10 @@ function rawOk(
 function composeFirstLine(data: MdNodeData, app: App | null): string {
 	const text = typeof data.text === 'string' ? data.text.split('\n')[0] ?? '' : '';
 	let line = text.trimEnd();
-	const token = renderHyperlink(data) ?? renderImage(data, app);
-	if (token) {
-		line = line ? `${line} ${token}` : token;
+	const tokens = inlineTokens(data, app);
+	if (tokens.length > 0) {
+		const tail = tokens.join(' ');
+		line = line ? `${line} ${tail}` : tail;
 	}
 	return line;
 }
@@ -351,9 +470,10 @@ export function serializeMdBody(
 			(nodeLinkDisplay(data) === text.trim() ||
 				imageSelfText(data) === text.trim())
 		) {
-			const token = renderHyperlink(data) ?? renderImage(data, app) ?? '';
-			if (token) {
-				return [prefix + token];
+			// 两枚 token 都要写出（图文/图+链接节点此前只写一枚 → 图片丢失）
+			const tokens = inlineTokens(data, app);
+			if (tokens.length > 0) {
+				return [prefix + tokens.join(' ')];
 			}
 		}
 		return [
