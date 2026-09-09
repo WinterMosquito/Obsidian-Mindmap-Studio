@@ -246,7 +246,7 @@ export const SETTINGS_PERSIST_DEBOUNCE_MS = 400;
 export const AUTO_SAVE_DEBOUNCE_MS = 800;
 export const VIEW_STATE_PERSIST_MS = 600;
 /**
- * 标题重命名防抖（更长——涉及 Obsidian vault.rename 引发反链更新，
+ * 标题重命名防抖（更长——涉及 FileManager.renameFile 引发全库链接/反链更新，
  * 1.5s 等待用户停止打字 + isEditingText 守卫二次确认编辑结束）。
  */
 export const TITLE_RENAME_DEBOUNCE_MS = 1500;

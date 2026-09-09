@@ -64,15 +64,15 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 ### 3) Everyday actions (in the mind-map view)
 | Want to | Do |
 |---|---|
-| Edit a node's text | Double-click the node (or press Enter) |
-| Add a child / sibling | Right-click the node → **Add child node** / **Add sibling node** |
+| Edit a node's text | Double-click the node (or press **F2**; text inputs keep F2) |
+| Add a child / sibling | Right-click the node → **Add child node** / **Add sibling node** (siblings also via Enter) |
 | Delete a node | Right-click → **Delete node** |
 | Add a link | Select a node → toolbar/menu **Add link** (pick a vault note or paste a URL) |
 | Add an image | Select a node → **Add image** (from vault, clipboard, or a file) |
 | Rearrange | Drag near another node's center to nest as its child; drag between two siblings to insert in between (the drop target highlights) |
 | Resize a node image | Hover the image, drag its bottom-right handle (aspect ratio preserved) |
 | Make a node image-only | Clear the node's text: double-click → empty, or right-click → **Remove text** |
-| Clean the layout | Toolbar: **Auto arrange**, **Fit to canvas**, zoom |
+| Clean the layout | Toolbar: **Auto arrange**, **Reset zoom (100%)**, **Fit to canvas**, zoom in/out |
 | Find a node | Toolbar search box |
 | Export | Toolbar **Export PNG** |
 | Back to Markdown | **Switch to Markdown** (restores source/preview mode) |

@@ -71,7 +71,11 @@ export class TitleRenamer {
 			return;
 		}
 		try {
-			await this.deps.app.vault.rename(file, newPath);
+			// 必须走 FileManager.renameFile（而非 vault.rename）：只有前者会
+			// 更新库内其他笔记中指向本文件的链接/反链（官方 d.ts 明确要求，
+			// 核心文件浏览器/内联标题/CLI 改名均走此入口）。vault.rename 只做
+			// 文件系统改名，会让指向本导图的链接变成断链。
+			await this.deps.app.fileManager.renameFile(file, newPath);
 		} catch (error) {
 			console.error('根据中心主题重命名文件失败', error);
 			new Notice(t(this.deps.lang, 'rename.titleFailed'));
