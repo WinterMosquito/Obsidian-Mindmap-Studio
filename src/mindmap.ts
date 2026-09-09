@@ -18,7 +18,7 @@ import {
 import { getThemeConfig, isDarkTheme, getDocIconColor } from './mindmap-theme';
 import { t, type Language } from './i18n';
 import { walkTree } from './domain/tree';
-import { RESET_LAYOUT_FIT_DELAY_MS } from './constants';
+import { RESET_LAYOUT_VIEWPORT_DELAY_MS } from './constants';
 
 export { getThemeConfig, isDarkTheme } from './mindmap-theme';
 
@@ -281,6 +281,11 @@ export function centerRootAtFullScale(mindMap: MindMap | null): void {
 	}
 }
 
+/** 重置缩放：回到 100% 并把根（中心）节点居中（工具栏按钮 / 自动整理后） */
+export function resetZoom(mindMap: MindMap | null): void {
+	centerRootAtFullScale(mindMap);
+}
+
 /** 安全销毁思维导图实例 */export function destroyMindMap(mindMap: MindMap | null): void {
 	if (!mindMap) {
 		return;
@@ -344,7 +349,7 @@ export function findNodeByDom(
 /**
  * 自动整理：清除所有节点被自由拖拽后的自定义位置，
  * 重新按当前布局算法计算位置，使各主题以合理间距对齐摆放，
- * 最后将画布适配到窗口。
+ * 最后重置视口（100% 缩放 + 根节点居中；不再 fit 全图——大图会被压到不可读）。
  *
  * 注意：使用引擎内置的「重置布局」（RESET_LAYOUT 命令）而非全量 setData。
  * 旧实现 getData()+delete+setData 会经 handleData / renderer.setData 重新初始化
@@ -361,7 +366,10 @@ export function arrangeMindMap(mindMap: MindMap | null): boolean {
 			return false;
 		}
 		mindMap.execCommand(ENGINE_COMMANDS.RESET_LAYOUT);
-		window.setTimeout(() => fitMindMap(mindMap), RESET_LAYOUT_FIT_DELAY_MS);
+		window.setTimeout(
+			() => resetZoom(mindMap),
+			RESET_LAYOUT_VIEWPORT_DELAY_MS,
+		);
 		return true;
 	} catch (error) {
 		console.error('自动整理失败', error);

@@ -252,13 +252,13 @@ export const VIEW_STATE_PERSIST_MS = 600;
 export const TITLE_RENAME_DEBOUNCE_MS = 1500;
 
 /**
- * RESET_LAYOUT 后 fit 的等待延迟（毫秒）。
+ * RESET_LAYOUT 后重置视口（100% + 根节点居中）的等待延迟（毫秒）。
  * 引擎 resetLayout 内部同步 render → 浏览器 reflow 需要时间；
  * 不用 requestAnimationFrame（只保证下帧前回调，不保证 reflow 已完成）。
  * 80ms 在所有设备上远快于用户感知阈值，同时留出引擎内部处理余量；
  * 若引擎升级提供「布局完成」回调，应优先替换此处。
  */
-export const RESET_LAYOUT_FIT_DELAY_MS = 80;
+export const RESET_LAYOUT_VIEWPORT_DELAY_MS = 80;
 
 /**
  * 拖拽落点辅助判定半径（像素，CSS 像素空间，无需 devicePixelRatio）。

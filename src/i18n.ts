@@ -50,6 +50,7 @@ const ZH = {
 	'toolbar.layout': '布局：',
 	'toolbar.zoomIn': '放大',
 	'toolbar.zoomOut': '缩小',
+	'toolbar.resetZoom': '重置缩放（100%）',
 	'toolbar.exportPng': '导出 PNG',
 
 	// ===== 右键菜单 =====
@@ -232,6 +233,7 @@ const EN: Record<TranslationKey, string> = {
 	'toolbar.layout': 'Layout: ',
 	'toolbar.zoomIn': 'Zoom in',
 	'toolbar.zoomOut': 'Zoom out',
+	'toolbar.resetZoom': 'Reset zoom (100%)',
 	'toolbar.exportPng': 'Export PNG',
 
 	// ===== 右键菜单 =====

@@ -8,6 +8,7 @@ import {
 	arrangeMindMap as arrangeMindMapEngine,
 	ENGINE_COMMANDS,
 	fitMindMap,
+	resetZoom,
 	zoomInMindMap,
 	zoomOutMindMap,
 } from '../mindmap';
@@ -103,6 +104,12 @@ export function buildToolbar(view: MindMapViewContext): void {
 	);
 	createToolButton(rightGroup, t(view.lang, 'toolbar.zoomOut'), 'zoom-out', () =>
 		zoomOutMindMap(view.mindMap),
+	);
+	createToolButton(
+		rightGroup,
+		t(view.lang, 'toolbar.resetZoom'),
+		'rotate-ccw',
+		() => resetZoom(view.mindMap),
 	);
 	rightGroup.createDiv('mindmap-toolbar-separator');
 	createToolButton(rightGroup, t(view.lang, 'toolbar.exportPng'), 'image', () => {
