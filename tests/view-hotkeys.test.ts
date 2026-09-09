@@ -6,6 +6,7 @@
  * 常失效；本处理器由视图 scope 接管，负责吞键、让位与去重。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Scope } from 'obsidian';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 import type { ViewEngineContext } from '../src/features/view-context';
 import { handleEditNodeHotkey, registerViewHotkeys } from '../src/features/view-hotkeys';
@@ -97,35 +98,46 @@ describe('handleEditNodeHotkey（F2 编辑当前节点）', () => {
 	});
 });
 
-describe('registerViewHotkeys（视图 scope 接线）', () => {
-	/** 记录式 scope 桩：捕获注册的 modifiers/key/handler */
-	function makeScope() {
-		const registrations: {
-			modifiers: string[] | null;
-			key: string | null;
-			handler: (evt: KeyboardEvent) => unknown;
-		}[] = [];
-		const scope = {
-			register(
-				modifiers: string[] | null,
-				key: string | null,
-				handler: (evt: KeyboardEvent) => unknown,
-			) {
-				registrations.push({ modifiers, key, handler });
-				return {} as unknown;
-			},
+describe('registerViewHotkeys（视图作用域接线）', () => {
+	/** mock 的 Scope 形状（真实 d.ts 只有 register/unregister） */
+	interface ScopeStub {
+		parent: unknown;
+		registered: { modifiers: unknown; key: unknown; handler: unknown }[];
+	}
+
+	/**
+	 * 视图桩：`scope` 默认 null——真实 Obsidian 的 `View.scope` 就是这样
+	 * （官方 1.5.7+ 文档：须由视图自行 `new Scope(app.scope)`）。
+	 */
+	function makeView(
+		overrides: {
+			mindMap?: unknown;
+			scope?: unknown;
+			openSearchBar?: () => void;
+		} = {},
+	) {
+		const parentScope = new Scope();
+		const view = {
+			mindMap: overrides.mindMap ?? {},
+			engineEvents: {},
+			viewEvents: {},
+			openSearchBar: overrides.openSearchBar ?? vi.fn(),
+			app: { scope: parentScope },
+			scope: overrides.scope ?? null,
 		};
 		return {
-			scope: scope as unknown as import('obsidian').Scope,
-			registrations,
-			find: (key: string, modifiers: string[]) =>
-				registrations.find(
-					(entry) =>
-						entry.key === key &&
-						JSON.stringify(entry.modifiers) === JSON.stringify(modifiers),
-				),
+			view,
+			parentScope,
+			host: view as unknown as Parameters<typeof registerViewHotkeys>[0],
 		};
 	}
+
+	const find = (scope: ScopeStub, key: string, modifiers: string[]) =>
+		scope.registered.find(
+			(entry) =>
+				entry.key === key &&
+				JSON.stringify(entry.modifiers) === JSON.stringify(modifiers),
+		);
 
 	beforeEach(() => {
 		vi.mocked(getActiveNode).mockReset().mockReturnValue(null);
@@ -133,69 +145,76 @@ describe('registerViewHotkeys（视图 scope 接线）', () => {
 		vi.mocked(startNodeTextEdit).mockReset();
 	});
 
-	it('注册 Mod+F / Mod+Z / Mod+Shift+Z / Mod+Y / F2 五个快捷键', () => {
-		const { scope, registrations, find } = makeScope();
-		registerViewHotkeys(scope, {
-			mindMap: {} as MindMap,
-			engineEvents: {},
-			viewEvents: {},
-			openSearchBar: vi.fn(),
-		} as unknown as Parameters<typeof registerViewHotkeys>[1]);
+	it('视图无作用域时按官方要求创建（父作用域 = app.scope），并注册 5 个快捷键', () => {
+		const { view, host, parentScope } = makeView();
+		expect(view.scope, '前置：Obsidian 里 View.scope 默认为 null').toBeNull();
 
-		expect(find('f', ['Mod']), 'Mod+F 搜索').toBeDefined();
-		expect(find('z', ['Mod']), 'Mod+Z 撤销').toBeDefined();
-		expect(find('z', ['Mod', 'Shift']), 'Mod+Shift+Z 重做').toBeDefined();
+		registerViewHotkeys(host);
+
+		// 根因回归：不创建 scope 时 `scope?.register` 静默失效，F2/Mod+F/撤销重做全部无效
+		expect(view.scope, '已创建视图作用域').toBeInstanceOf(Scope);
+		const scope = view.scope as unknown as ScopeStub;
+		expect(scope.parent, '父作用域为 app.scope').toBe(parentScope);
+
+		expect(find(scope, 'f', ['Mod']), 'Mod+F 搜索').toBeDefined();
+		expect(find(scope, 'z', ['Mod']), 'Mod+Z 撤销').toBeDefined();
+		expect(find(scope, 'z', ['Mod', 'Shift']), 'Mod+Shift+Z 重做').toBeDefined();
 		// 非 macOS（测试环境 Platform.isMacOS 为 undefined）注册 Mod+Y
-		expect(find('y', ['Mod']), 'Mod+Y 重做').toBeDefined();
+		expect(find(scope, 'y', ['Mod']), 'Mod+Y 重做').toBeDefined();
 		// F2 用空修饰键数组注册（无修饰键的精确匹配）
-		expect(find('F2', []), 'F2 编辑节点').toBeDefined();
-		expect(registrations).toHaveLength(5);
+		expect(find(scope, 'F2', []), 'F2 编辑节点').toBeDefined();
+		expect(scope.registered).toHaveLength(5);
+	});
+
+	it('已有作用域时复用（幂等：不重建、不丢已注册项）', () => {
+		const existing = new Scope();
+		const { host, view } = makeView({ scope: existing });
+		registerViewHotkeys(host);
+		expect(view.scope).toBe(existing);
+		expect((existing as unknown as ScopeStub).registered).toHaveLength(5);
 	});
 
 	it('Mod+Z / Mod+Shift+Z / Mod+Y 转发到引擎撤销重做命令', () => {
-		const { scope, find } = makeScope();
 		const execCommand = vi.fn();
-		registerViewHotkeys(scope, {
-			mindMap: { execCommand } as unknown as MindMap,
-			engineEvents: {},
-			viewEvents: {},
-			openSearchBar: vi.fn(),
-		} as unknown as Parameters<typeof registerViewHotkeys>[1]);
+		const { host, view } = makeView({ mindMap: { execCommand } });
+		registerViewHotkeys(host);
+		const scope = view.scope as unknown as ScopeStub;
 
-		expect(find('z', ['Mod'])!.handler(fakeKeyEvent().evt)).toBe(false);
+		expect(find(scope, 'z', ['Mod'])!.handler).toBeTypeOf('function');
+		(
+			find(scope, 'z', ['Mod'])!.handler as (e: KeyboardEvent) => unknown
+		)(fakeKeyEvent().evt);
 		expect(execCommand).toHaveBeenLastCalledWith('BACK');
-		find('z', ['Mod', 'Shift'])!.handler(fakeKeyEvent().evt);
+		(
+			find(scope, 'z', ['Mod', 'Shift'])!.handler as (e: KeyboardEvent) => unknown
+		)(fakeKeyEvent().evt);
 		expect(execCommand).toHaveBeenLastCalledWith('FORWARD');
-		find('y', ['Mod'])!.handler(fakeKeyEvent().evt);
+		(
+			find(scope, 'y', ['Mod'])!.handler as (e: KeyboardEvent) => unknown
+		)(fakeKeyEvent().evt);
 		expect(execCommand).toHaveBeenLastCalledWith('FORWARD');
 	});
 
 	it('Mod+F 打开搜索栏；F2 走编辑节点处理器', () => {
-		const { scope, find } = makeScope();
 		const openSearchBar = vi.fn();
+		const { host, view } = makeView({ openSearchBar });
 		vi.mocked(getActiveNode).mockReturnValue(node);
-		registerViewHotkeys(scope, {
-			mindMap: {} as MindMap,
-			engineEvents: {},
-			viewEvents: {},
-			openSearchBar,
-		} as unknown as Parameters<typeof registerViewHotkeys>[1]);
+		registerViewHotkeys(host);
+		const scope = view.scope as unknown as ScopeStub;
 
-		find('f', ['Mod'])!.handler(fakeKeyEvent().evt);
+		(
+			find(scope, 'f', ['Mod'])!.handler as (e: KeyboardEvent) => unknown
+		)(fakeKeyEvent().evt);
 		expect(openSearchBar).toHaveBeenCalledTimes(1);
 
-		find('F2', [])!.handler(fakeKeyEvent().evt);
+		(
+			find(scope, 'F2', [])!.handler as (e: KeyboardEvent) => unknown
+		)(fakeKeyEvent().evt);
 		expect(startNodeTextEdit).toHaveBeenCalledTimes(1);
 	});
 
-	it('scope 为 null（引擎/视图未就绪）：静默不抛异常', () => {
-		expect(() =>
-			registerViewHotkeys(null, {
-				mindMap: null,
-				engineEvents: {},
-				viewEvents: {},
-				openSearchBar: vi.fn(),
-			} as unknown as Parameters<typeof registerViewHotkeys>[1]),
-		).not.toThrow();
+	it('引擎缺失（mindMap 为 null）：不抛异常', () => {
+		const { host } = makeView({ mindMap: null });
+		expect(() => registerViewHotkeys(host)).not.toThrow();
 	});
 });

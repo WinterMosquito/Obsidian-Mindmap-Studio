@@ -7,32 +7,50 @@
  * - `F2`（编辑当前节点）——需要判定（输入中让位 / 已在编辑忽略 / 无激活节点
  *   仍吞键），见 handleEditNodeHotkey。
  */
-import { Platform } from 'obsidian';
+import { Platform, Scope } from 'obsidian';
 import {
 	ENGINE_COMMANDS,
 	getActiveNode,
 	isEditingText,
 	startNodeTextEdit,
 } from '../mindmap';
-import type { Scope } from 'obsidian';
+import type { App } from 'obsidian';
 import type { ViewEngineContext } from './view-context';
 
-/** 快捷键注册所需的最小视图面（引擎 + 搜索栏入口） */
+/**
+ * 快捷键注册所需的最小视图面：引擎 + 搜索栏入口 + 视图作用域宿主。
+ *
+ * `View.scope` 自 Obsidian 1.5.7 起**默认为 null**，官方要求视图自行赋值
+ * （`this.scope = new Scope(this.app.scope)`）——不赋值时 `scope?.register(...)`
+ * 静默失效，视图内所有快捷键（F2 / Mod+F / Mod+Z…）全部无效。
+ */
 export interface ViewHotkeyHost extends ViewEngineContext {
 	/** 打开搜索栏（Mod+F） */
 	openSearchBar(): void;
+	/** 视图作用域（可能为 null，见上方说明） */
+	scope: Scope | null;
+	readonly app: App;
+}
+
+/**
+ * 确保视图拥有作用域（幂等）：为空时按官方示例创建，父作用域取 `app.scope`。
+ * 注册快捷键前必须先过这一关，否则按键永远匹配不到。
+ */
+export function ensureViewScope(view: ViewHotkeyHost): Scope {
+	if (!view.scope) {
+		view.scope = new Scope(view.app.scope);
+	}
+	return view.scope;
 }
 
 /**
  * 注册视图内快捷键（视图 onOpen 时调用一次）。
- * 生命周期由视图 scope 承担：`ItemView.scope` 随视图实例创建/销毁，
- * 核心经 workspace scope 链在「本视图为活动叶」时转发按键。
+ * 生命周期由视图作用域承担：核心经 workspace 作用域链在「本视图为活动叶」时
+ * 转发按键（`workspace.scope` 链到 `activeLeaf.view.scope`）。
  */
-export function registerViewHotkeys(
-	scope: Scope | null,
-	view: ViewHotkeyHost,
-): void {
-	scope?.register(['Mod'], 'f', () => {
+export function registerViewHotkeys(view: ViewHotkeyHost): void {
+	const scope = ensureViewScope(view);
+	scope.register(['Mod'], 'f', () => {
 		view.openSearchBar();
 		return false;
 	});
@@ -40,23 +58,23 @@ export function registerViewHotkeys(
 	// Undo = Mod+Z；Redo = Mod+Shift+Z（macOS 官方仅此一种）或 Mod+Y
 	// （Windows/Linux）。属系统级编辑快捷键（非命令默认热键，不违反社区
 	// 规范的 no-default-hotkeys），引擎自身未绑定，此处接管并阻止冒泡。
-	scope?.register(['Mod'], 'z', () => {
+	scope.register(['Mod'], 'z', () => {
 		view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
 		return false;
 	});
-	scope?.register(['Mod', 'Shift'], 'z', () => {
+	scope.register(['Mod', 'Shift'], 'z', () => {
 		view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
 		return false;
 	});
 	if (!Platform.isMacOS) {
 		// macOS 官方未提供 Mod+Y 重做（Cmd+Y 是其他语义），不注册以免冲突
-		scope?.register(['Mod'], 'y', () => {
+		scope.register(['Mod'], 'y', () => {
 			view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
 			return false;
 		});
 	}
 	// F2 = 编辑当前激活节点（引擎自带 F2 判定苛刻，见 handleEditNodeHotkey）
-	scope?.register([], 'F2', (evt) => handleEditNodeHotkey(view, evt));
+	scope.register([], 'F2', (evt) => handleEditNodeHotkey(view, evt));
 }
 
 /** 文本输入类目标（搜索框/弹窗输入/引擎文本编辑框）：F2 让位，不劫持 */

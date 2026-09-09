@@ -243,8 +243,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.registerEvent(
 			this.app.workspace.on('css-change', this.boundHandleCssChange),
 		);
-		// 视图内快捷键（搜索 / 撤销重做 / F2 编辑节点）统一在 view-hotkeys 注册
-		registerViewHotkeys(this.scope, this);
+		// 视图内快捷键（搜索 / 撤销重做 / F2 编辑节点）：内部会按官方要求
+		// 确保 this.scope 已创建（View.scope 默认为 null，不创建则全部失效）
+		registerViewHotkeys(this);
 
 		// 窗口级粘贴兜底：只注册一次（随视图生命周期由 Component 自动清理），
 		// 不放在 setupPasteHandler 中，避免每次刷新引擎累积监听。

@@ -46,6 +46,28 @@ export class Modal {
 	}
 }
 export class Component {}
+/**
+ * 最小 Scope 桩：记录注册项，供快捷键接线断言。
+ * 真实语义见官方 obsidian.d.ts（`register(modifiers, key, func)`；`View.scope`
+ * 默认 null，须视图自行 `new Scope(app.scope)`）。
+ */
+export class Scope {
+	readonly parent: unknown;
+	readonly registered: {
+		modifiers: unknown;
+		key: unknown;
+		handler: unknown;
+	}[] = [];
+	constructor(parent?: unknown) {
+		this.parent = parent;
+	}
+	register(modifiers: unknown, key: unknown, handler: unknown): unknown {
+		const entry = { modifiers, key, handler };
+		this.registered.push(entry);
+		return entry;
+	}
+	unregister(_handler: unknown): void {}
+}
 export class FileView {
 	leaf: unknown;
 	constructor(leaf?: unknown) {

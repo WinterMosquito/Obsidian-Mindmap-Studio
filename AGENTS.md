@@ -225,6 +225,11 @@ CI（`.github/workflows/lint.yml`）执行顺序：build → test → coverage�
     点击节点后常不触发；处理器接管后即阻断冒泡（否则引擎的 window 级监听会再
     hide+show 一次，编辑框闪烁），并在输入框/编辑框内让位、正在编辑时忽略——
     本视图内核心 F2「重命名文件」因此不再触发（根节点文本仍同步文件名）；
+  - **视图作用域必须自行创建**：`View.scope` 在 Obsidian 1.5.7+ **默认为 null**
+    （核心 View 构造函数不赋值；官方文档要求 `this.scope = new Scope(this.app.scope)`，
+    核心文件浏览器亦如此），不创建时 `scope?.register(...)` 静默失效、视图内所有
+    快捷键全废。故快捷键注册统一走 `view-hotkeys.registerViewHotkeys(view)`——
+    它内部 `ensureViewScope` 保证作用域存在，调用方勿再自己传 scope；
   - 剪贴板粘贴图片按核心约定命名 `Pasted image YYYYMMDDHHMMSS`
     （`images-save.buildPastedImageName`；`SaveImageOptions.filename` 显式命名
     优先于 File.name 与 preferredName，仅粘贴路径使用）；
