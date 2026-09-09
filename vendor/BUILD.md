@@ -20,8 +20,19 @@
 | 文件 | 说明 |
 | --- | --- |
 | `vendor/simple-mind-map.cjs` | fix.3 重打包产物。**不可手工编辑**——一切修改必须从包源码重新打包。 |
-| `vendor/simple-mind-map.css` | 引擎样式（含 Quill）。内容与上游 0.14.0 的 dist css 等价（Quill 2.0.2 横幅；fix.3 dist css 仅横幅为 2.0.3，规则逐字相同）。经 `npm run sync-vendor-css` 合并进 `styles.css` 标记段。 |
 | `vendor/simple-mind-map.d.cts` | **手写**类型声明，只声明本插件用到的 API 面，引擎升级时人工审阅更新。 |
+
+> **不再 vendor 引擎 CSS**（2026-09 清理）：上游 `dist/simpleMindMap.esm.css` 的内容
+> **100% 是 Quill 富文本样式**（`.ql-*`，240 条选择器，无元素/全局选择器），而引擎本体
+> 样式由 bundle 在运行时注入——`Render.appendCss()` 把内置 CSS 文本
+> （`joinCss()` 的 `bo` 常量）写入 `document.head`。本插件从不注册 RichText 插件
+> （`mindmap.ts` 只注册 Select/TouchEvent/AssociativeLine/KeyboardNavigation/
+> DoExport/Search/Drag），bundle 中亦无 Quill 代码（`ql-` 仅出现在
+> `if (this.mindMap.richText)` 守卫的导出分支与富文本文本提取助手里），故该 CSS
+> 永不匹配任何元素。删除 `styles.css` 的 vendor 段后 `npm run verify:visual`
+> 七项断言与节点测宽逐字节不变（已实测）。
+> 升级引擎时若发现 `dist/*.css` 含非 `.ql-*` 规则（引擎把注入样式改回文件分发），
+> 再按下方流程重新 vendor 并恢复 `scripts/sync-vendor-css.mjs`（见 git 历史）。
 
 ## fix.3 相对上游 0.14.0 的修订清单（权威，源码 diff）
 
@@ -60,8 +71,9 @@
    `vendor/simple-mind-map.cjs`；
 3. 审阅并更新 `vendor/simple-mind-map.d.cts`（新 API / 删除的 API / `ENGINE_COMMANDS`
    （`src/mindmap.ts`）命令名是否有效）；
-4. 用对应版本的 `dist/simpleMindMap.esm.css` 覆盖 `vendor/simple-mind-map.css`，运行
-   `npm run sync-vendor-css` 重建 `styles.css` 标记段（许可证声明自动保留）；
+4. 核对目标版本的 `dist/*.css`：仍为纯 `.ql-*`（Quill）则**不 vendor**（引擎样式由 bundle
+   运行时注入，见上方说明）；若出现非 Quill 规则，则 vendor 该 CSS 并恢复
+   `scripts/sync-vendor-css.mjs` 与 `package.json` 的 `sync-vendor-css` 脚本；
 5. `npm run build && npm test && npm run lint` 全量验证；其中
    `tests/vendor-contract.test.ts`（vendor 契约冒烟）自动执行——它锁定
    「导出类 ↔ d.cts 双向一致 / d.cts 声明的方法 ↔ bundle 原型 / ENGINE_COMMANDS

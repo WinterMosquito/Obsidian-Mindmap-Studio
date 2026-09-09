@@ -1,7 +1,7 @@
 # 第三方组件与许可声明（vendor/）
 
-本目录的 `simple-mind-map.cjs` / `simple-mind-map.css` 是**预打包产物**（不可手工编辑，
-重建配方见 `BUILD.md`）。它们内含第三方代码，许可与归属如下。
+本目录的 `simple-mind-map.cjs` 是**预打包产物**（不可手工编辑，
+重建配方见 `BUILD.md`）。它内含第三方代码，许可与归属如下。
 
 ## 1. 引擎本体
 
@@ -38,4 +38,7 @@
   许可注释内联进产物，满足 MIT/BSD 的「保留版权与许可声明」要求。
 - 现有 `vendor/simple-mind-map.cjs`（406,580 B）为追加该参数**之前**的产物，故以本文件
   承担同样的声明作用。
-- `vendor/simple-mind-map.css` 含 Quill 样式，随上述 `quill`（BSD-3-Clause）声明。
+- 引擎自带的 `dist/simpleMindMap.esm.css`（纯 Quill 富文本样式）**不再随插件分发**
+  （本插件不注册 RichText 插件，样式由引擎运行时注入；详见 `BUILD.md`），故产物中
+  不含 Quill 的 CSS，也无需保留其样式横幅。上表 `quill` 一行仅说明引擎包声明了该
+  依赖。

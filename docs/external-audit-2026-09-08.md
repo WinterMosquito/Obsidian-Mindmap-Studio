@@ -1,5 +1,9 @@
 # 外部权威源严格检测报告
 
+> **时点快照（2026-09-08）**：本报告记录当时的检测结论与处置；部分条目已随后续提交
+> 失效（例如 `scripts/sync-vendor-css.mjs` 已随「不再 vendor 引擎 CSS」一并删除、
+> 版本号已升至 0.0.4、测试规模已变化）。现状以 `AGENTS.md` 与 `vendor/BUILD.md` 为准。
+
 > 检测对象：`D:\Obsidian\Mindmap-Studio`（唯一可修改目录）
 > 检测依据（只读参考）：
 > - `D:\Obsidian\obsidian-api-master`（官方 API 类型定义 1.13.2）
