@@ -281,9 +281,20 @@ export function centerRootAtFullScale(mindMap: MindMap | null): void {
 	}
 }
 
-/** 重置缩放：回到 100% 并把根（中心）节点居中（工具栏按钮 / 自动整理后） */
+/**
+ * 重置缩放：回到 100%，**不改变当前平移**（屏幕位置保持原样）。
+ * 与 `centerRootAtFullScale` 区分：后者用于「打开时的默认视口」与自动整理
+ * 之后的定位；本函数只改比例，不动视口位置。
+ */
 export function resetZoom(mindMap: MindMap | null): void {
-	centerRootAtFullScale(mindMap);
+	if (!mindMap) {
+		return;
+	}
+	try {
+		mindMap.view?.setScale(1);
+	} catch (error) {
+		console.error('重置缩放失败', error);
+	}
 }
 
 /** 安全销毁思维导图实例 */export function destroyMindMap(mindMap: MindMap | null): void {

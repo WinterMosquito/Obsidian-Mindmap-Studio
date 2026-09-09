@@ -1,6 +1,6 @@
 /**
  * 视口动作回归：
- * - `resetZoom`：100% 缩放 + 根节点居中（工具栏「重置缩放」按钮）；
+ * - `resetZoom`：回到 100%，**不改变平移**（屏幕位置保持；工具栏「重置缩放」按钮）；
  * - `arrangeMindMap`：执行 RESET_LAYOUT 后**重置缩放**（不再 fit 全图——
  *   大图 fit 会把比例压到文字不可读）。
  */
@@ -27,16 +27,13 @@ function makeMindMap() {
 	return { mindMap, setScale, fit, moveNodeToCenter, execCommand };
 }
 
-describe('resetZoom（重置缩放 100% + 根节点居中）', () => {
-	it('先设比例 1，再把根节点居中（顺序不可颠倒）', () => {
+describe('resetZoom（回到 100%，不改动视口位置）', () => {
+	it('只设置比例 1，不居中根节点（屏幕位置保持）', () => {
 		const { mindMap, setScale, moveNodeToCenter } = makeMindMap();
 		resetZoom(mindMap);
 		expect(setScale).toHaveBeenCalledWith(1);
-		expect(moveNodeToCenter).toHaveBeenCalledTimes(1);
-		// moveNodeToCenter 用当前 transform 计算偏移 → 必须先缩放
-		expect(setScale.mock.invocationCallOrder[0]).toBeLessThan(
-			moveNodeToCenter.mock.invocationCallOrder[0] ?? 0,
-		);
+		// 用户明确要求：重置缩放不得改变屏幕位置（不做任何居中/平移）
+		expect(moveNodeToCenter).not.toHaveBeenCalled();
 	});
 
 	it('引擎缺失时静默（工具栏在引擎未就绪时可点）', () => {
