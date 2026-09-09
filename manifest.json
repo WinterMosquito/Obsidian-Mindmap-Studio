@@ -1,7 +1,7 @@
 {
 	"id": "mindmap-studio",
 	"name": "MindMap Studio",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"minAppVersion": "1.13.0",
 	"description": "Mind map rendering for Markdown. Edit .mindmap.md as a mind map, with Markdown outline round-trip, native wikilinks and images, layouts, search, auto-arrange and PNG export.",
 	"author": "WinterMosquito",
