@@ -49,8 +49,12 @@ jobs:
               if: matrix.node-version == '24.x'
               run: |
                   set +e
-                  npm run verify:visual -- --require-chrome > /tmp/verify-visual.log 2>&1
-                  status=$?
+                  for attempt in 1 2; do
+                    npm run verify:visual -- --require-chrome > /tmp/verify-visual.log 2>&1
+                    status=$?
+                    [ $status -eq 0 ] && break
+                    echo "::warning::verify:visual 第 ${attempt} 次失败（重试）"
+                  done
                   cat /tmp/verify-visual.log
                   if [ $status -ne 0 ]; then
                     tail -n 40 /tmp/verify-visual.log | while IFS= read -r line; do
