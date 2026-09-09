@@ -19,10 +19,7 @@ export interface MindMapNodeData extends AnyObject {
 	hyperlink?: string;
 	hyperlinkTitle?: string;
 	note?: string;
-	expand?: boolean;
 	isActive?: boolean;
-	generalization?: unknown;
-	richText?: boolean;
 	uid?: string;
 	fillColor?: string;
 	color?: string;
@@ -30,7 +27,6 @@ export interface MindMapNodeData extends AnyObject {
 	fontWeight?: string;
 	customLeft?: number;
 	customTop?: number;
-	customTextWidth?: number;
 	attachmentUrl?: string;
 	attachmentName?: string;
 	lineColor?: string;
@@ -54,10 +50,6 @@ export interface MindMapOptions {
 	performanceConfig?: { time?: number; padding?: number; removeNodeWhenOutCanvas?: boolean };
 	enableFreeDrag?: boolean;
 	customHyperlinkJump?: ((link: string, node: MindMapNode) => void) | null;
-	customNoteContentShow?: {
-		show: (content: unknown, left: number, top: number, node: MindMapNode) => void;
-		hide: () => void;
-	};
 }
 
 export interface MindMapNode {
