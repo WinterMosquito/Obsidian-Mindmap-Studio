@@ -96,6 +96,13 @@ export function buildToolbar(view: MindMapViewContext): void {
 	const rightGroup = toolbar.createDiv(
 		'mindmap-toolbar-group mindmap-toolbar-right',
 	);
+	// 顺序（左→右）：重置缩放 → 适应画布 → 放大 → 缩小 → 导出
+	createToolButton(
+		rightGroup,
+		t(view.lang, 'toolbar.resetZoom'),
+		'rotate-ccw',
+		() => resetZoom(view.mindMap),
+	);
 	createToolButton(rightGroup, t(view.lang, 'command.fitCanvas'), 'maximize', () =>
 		fitMindMap(view.mindMap),
 	);
@@ -104,12 +111,6 @@ export function buildToolbar(view: MindMapViewContext): void {
 	);
 	createToolButton(rightGroup, t(view.lang, 'toolbar.zoomOut'), 'zoom-out', () =>
 		zoomOutMindMap(view.mindMap),
-	);
-	createToolButton(
-		rightGroup,
-		t(view.lang, 'toolbar.resetZoom'),
-		'rotate-ccw',
-		() => resetZoom(view.mindMap),
 	);
 	rightGroup.createDiv('mindmap-toolbar-separator');
 	createToolButton(rightGroup, t(view.lang, 'toolbar.exportPng'), 'image', () => {
