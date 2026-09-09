@@ -37,6 +37,7 @@ import { exportPNG } from './view-export';
 import { arrangeMindMap, buildToolbar, refreshToolbar } from './view-toolbar';
 import { setupDragAndDrop } from './view-dnd';
 import { setupContextMenu } from './view-context-menu';
+import { handleEditNodeHotkey } from './view-hotkeys';
 import { handleWindowPaste, setupPasteHandler } from './view-paste';
 import {
 	cancelStatusBarUpdate,
@@ -266,6 +267,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				return false;
 			});
 		}
+		// F2 = 编辑当前激活节点（引擎自带 F2 判定苛刻，见 view-hotkeys 注释）
+		this.scope?.register([], 'F2', (evt) =>
+			handleEditNodeHotkey(this, evt),
+		);
 
 		// 窗口级粘贴兜底：只注册一次（随视图生命周期由 Component 自动清理），
 		// 不放在 setupPasteHandler 中，避免每次刷新引擎累积监听。

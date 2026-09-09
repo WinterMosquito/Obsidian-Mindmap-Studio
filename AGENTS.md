@@ -66,7 +66,8 @@ src/
   features/
     view.ts         # Controller：Obsidian 生命周期编排、service 装配、链接跳转、标题重命名
     view-context.ts # MindMapViewContext：view-* 对视图的访问契约（结构化窄接口）
-    view-*.ts       # 工具栏/拖拽/右键/搜索/导出/状态栏/图片灯箱/wikilink 交互/粘贴/节点操作
+    view-*.ts       # 工具栏/拖拽/右键/搜索/导出/状态栏/图片灯箱/wikilink 交互/粘贴/节点操作/
+                    #   快捷键处理器（view-hotkeys：F2 编辑当前节点）
     image-resize.ts # 节点图片拖拽调宽：hover 手柄 + 等比缩放（SET_NODE_DATA imageSize
                     #   custom:true + render），持久化走 Obsidian 官方嵌入尺寸语法——
                     #   结束时 scheduleSave，序列化合成回写 `|宽度`（不落 data.json）
@@ -143,6 +144,7 @@ tests/
   view-search.test.ts  # 搜索栏（装配/防抖/回绕/零命中计数/防抖窗口内跳转）
   view-status.test.ts  # 状态栏计数（节流与尾随、销毁/抛错降级、关闭清理）
   view-wikilink.test.ts # 链接交互（点击分流/双通道取值/悬停预览去重）
+  view-hotkeys.test.ts  # 视图内快捷键（F2 编辑当前节点：吞键/让位/去重）
   modal-common.test.ts # 弹窗共享件（settle 守卫/按钮变体/库内文件联想）
   modal-input.test.ts  # 命名/链接弹窗（预填与焦点、空白确认、settle 幂等、联想接线）
   setup.ts             # vitest 全局 setup：Node 环境 window 桩（fake timers 生效）
@@ -211,6 +213,12 @@ npm run verify:visual  # 无头 Chrome 渲染契约验证（scripts/verify-visua
 - 交互对齐 Obsidian 官方帮助（`Editing shortcuts` / `Attachments` / `Drag and drop`）：
   - 视图内 `Mod+Z` / `Mod+Shift+Z` / `Mod+Y` = 引擎撤销/重做（属系统级编辑快捷键，
     非命令默认热键，不违反 no-default-hotkeys；引擎自身未绑定，由视图 scope 接管）；
+  - 视图内 `F2` = 编辑当前激活节点文本（`features/view-hotkeys.handleEditNodeHotkey`，
+    同由视图 scope 接管）：引擎自己也绑了 F2，但其 `onKeydown` 要求事件目标为
+    `document.body` 且指针在画布内（`enableShortcutOnlyWhenMouseInSvg` 默认 true），
+    点击节点后常不触发；处理器接管后即阻断冒泡（否则引擎的 window 级监听会再
+    hide+show 一次，编辑框闪烁），并在输入框/编辑框内让位、正在编辑时忽略——
+    本视图内核心 F2「重命名文件」因此不再触发（根节点文本仍同步文件名）；
   - 剪贴板粘贴图片按核心约定命名 `Pasted image YYYYMMDDHHMMSS`
     （`images-save.buildPastedImageName`；`SaveImageOptions.filename` 显式命名
     优先于 File.name 与 preferredName，仅粘贴路径使用）；
