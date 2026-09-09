@@ -57,7 +57,7 @@ jobs:
                   done
                   cat /tmp/verify-visual.log
                   if [ $status -ne 0 ]; then
-                    tail -n 40 /tmp/verify-visual.log | while IFS= read -r line; do
+                    tail -n 12 /tmp/verify-visual.log | while IFS= read -r line; do
                       echo "::error::visual: ${line}"
                     done
                     echo "::error::visual exit=${status}"
