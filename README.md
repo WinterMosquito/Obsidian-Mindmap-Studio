@@ -33,8 +33,8 @@ The plugin is a **rendering layer**, not a file-format converter. `.mindmap.md` 
 
 - **Markdown-native**: `.mindmap.md` is ordinary Markdown (headings + lists). No proprietary format.
 - **Round-trip fidelity**: unedited lines are written back verbatim (frontmatter preserved); headings `#`–`######` map to node levels 1–6, nested lists to deeper levels.
-- **Obsidian-native wikilinks**: `[[note]]` shows as its link text, with hover preview and `Ctrl+click` (Windows/Linux) or `Command+click` (macOS) to open; the add-link dialog searches notes and linkable attachments. New links are always written as `[[wikilinks]]`, regardless of Obsidian's link-format settings, so document links keep their dedicated icon.
-- **Images**: vault image suggestions, uniform sizing, `![[path]]` round-trip; drag the corner handle to resize a node image — the size is written back as Obsidian's official embed syntax (`![[img.png|300]]` width-only, `|300x150` explicit, `![alt|300](url)` for external images); clear a node's text and the node becomes image-exclusive.
+- **Obsidian-native wikilinks**: `[[note]]` shows as its link text, with hover preview and `Ctrl+click` (Windows/Linux) or `Command+click` (macOS) to open; the add-link dialog searches notes and linkable attachments. New links are always written as `[[wikilinks]]`, regardless of Obsidian's link-format settings, so document links keep their dedicated icon. **A node shows only the alias** (the note name when there is none); editing the text of a pure wikilink node edits that alias and writes back `[[note|new alias]]`.
+- **Images**: vault image suggestions, uniform sizing, `![[path]]` round-trip; drag the corner handle to resize a node image — the size is written back as Obsidian's official embed syntax (`![[img.png|300]]` width-only, `|300x150` explicit, `![alt|300](url)` for external images); clear a node's text and the node becomes image-exclusive — an image-exclusive node has no text, so node search never matches it.
 - **Opens at 100%** with the whole map centred; **Fit to canvas** zooms out for an overview and **Reset zoom** returns to 100% while keeping the visible content in place (auto-arrange does too); **six layouts**, node search, auto-arrange, performance mode for large maps, PNG export; **assisted drag reparenting** — drop near a node's center to nest as its child, or between two siblings to insert in between (with live highlight).
 - **Persistence**: layout, viewport and "open as" preference are kept per file (in plugin data), surviving reopen, rename, and view switching.
 - **Central node ↔ filename**: editing the central node renames the `.mindmap.md` file (Obsidian updates links/backlinks).
@@ -57,14 +57,14 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 - Seventh-level item        ← list nested under a heading → level 7
 ```
 
-> `#`–`######` → node levels 1–6 · nested lists go deeper · `[[note]]` → clickable link · `![[img]]` → image (`|300` sets the size) · paragraphs & fenced code stay as text.
+> `#`–`######` → node levels 1–6 · nested lists go deeper · `[[note]]` / `[[note|alias]]` → clickable link (the node shows only the alias) · `![[img]]` → image (`|300` sets the size) · paragraphs & fenced code stay as text.
 >
 > Non-image embeds such as `![[report.pdf]]` are shown as an **attachment icon** you can click to open (PDF, audio, video), not rendered inline — a mind-map node cannot host Obsidian's inline media view.
 
 ### 3) Everyday actions (in the mind-map view)
 | Want to | Do |
 |---|---|
-| Edit a node's text | Double-click the node (or press **F2**; text inputs keep F2) |
+| Edit a node's text | Double-click the node (or press **F2**; text inputs keep F2). For a **pure wikilink** node you are editing its **alias** — saving writes `[[note\|new alias]]` and the node still shows only the alias |
 | Add a child / sibling | Right-click the node → **Add child node** / **Add sibling node** (siblings also via Enter) |
 | Delete a node | Right-click → **Delete node** |
 | Add a link | Select a node → toolbar/menu **Add link** (pick a vault note or paste a URL) |
@@ -78,7 +78,7 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 | Back to Markdown | **Switch to Markdown** (restores source/preview mode) |
 
 ### 4) Saving & persistence
-- Unedited lines are written back **verbatim** (frontmatter preserved).
+- Unedited lines are written back **verbatim** (frontmatter preserved); editing a **pure wikilink** node (the whole line is one wikilink) edits its **alias**, written back as `[[note|new alias]]` (clearing the text drops the alias and keeps the link; nodes that mix text and a link still round-trip as "text + link").
 - Layout, viewport and "open as" are kept per file in the plugin `data.json`; node image sizes go into the note itself as official embed syntax (`![[img|300]]`).
 - Editing the **central node** renames the `.mindmap.md` (Obsidian updates links/backlinks).
 - Config is local; no telemetry.

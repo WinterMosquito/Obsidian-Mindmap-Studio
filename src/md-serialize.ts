@@ -6,6 +6,9 @@
  * - 行级「未编辑检测」：节点含 mdRaw 且 data.text === data.mdDerivedText（且图片
  *   未被换）→ 整行逐字回写 mdRaw（保留全部 [[]] / ![] 包裹与格式）；用户编辑过
  *   文本或换过图 → 走合成：文本 + 行尾单链接 token（hyperlink）／图片 token；
+ * - **纯双链节点（整行只有一个双链）的编辑语义 = 改别名**：节点内显示的就是该
+ *   链接的可见名（别名优先），故编辑后把新文本写成别名回写 `[[目标|新别名]]`，
+ *   而不是「新文本 + 行尾链接」；判定与边界见 editedWikilinkAlias。
  * - heading → `#×N 文本`；list → 缩进 + 标记 + 文本（ordered 重排编号 1..n）；
  *   plain → 原样多行文本；新用户节点（无 mdType/mdRaw）按 '-' 输出；
  * - 列表项多行文本（续行）非首行补 2 空格缩进，保证可再解析为续行。
@@ -14,13 +17,85 @@
 import { App } from 'obsidian';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 import { resolvePathToFile } from './links-resolve';
-import { formatWikilink, linkDisplayText, wikilinkLinkpath } from './domain/wikilink';
+import { formatWikilink, linkDisplayText, wikilinkLinkpath, withWikilinkAlias } from './domain/wikilink';
 import { isRemoteOrDataUrl, isSchemeUrl } from './domain/url';
 import type { MdNodeData } from './node-data';
 
 /** 链接目标是否需要尖括号包裹（含空格/括号/<>/\，否则会破坏 `(…)` 闭合） */
 function needsDestBraces(dest: string): boolean {
 	return /[\s()<>\\]/.test(dest);
+}
+
+/**
+ * 「纯双链节点被编辑」→ 新别名（回写 `[[目标|新别名]]` 的依据）。
+ *
+ * 语义：纯双链节点（整行只有一个双链，节点内显示的就是该链接的可见名＝别名
+ * 优先）里，节点内容**等价于**别名——因此编辑节点就是在改别名，而不是给节点
+ * 追加一段文本。非纯节点（`说明 [[链接]]`）仍走「文本 + 行尾链接」，否则把整段
+ * 文本当别名会静默吞掉 `说明`。
+ *
+ * 逐条闸门（全部满足才改写）：
+ * 1. wiki 双链（`mdLinkStyle === 'wiki'`，URL/md 链接无别名概念，不适用）；
+ * 2. 文本已被编辑（`text !== mdDerivedText`；未编辑整行逐字回写，本就不需要改写）；
+ * 3. 单行文本（多行没有「唯一别名」的语义，回落旧的合成行为，不丢数据）；
+ * 4. 纯双链：通道自带的可见名与 `mdDerivedText` 相等，即原文除该链接外别无内容
+ *    （文档双链看 `mdLinkText`，附件双链看 `attachmentName`）；
+ * 5. 排除嵌入语法 `![[附件]]`（`mdEmbed`）：其管道位是尺寸参数，不承载别名；
+ * 6. 别名不含 `[` / `]`：Obsidian 的 wikilink 不允许方括号出现在 `[[..]]` 内，
+ *    写进别名位会把链接写坏（`[[目标|[[新目标]]]]` 不再被识别为链接）——
+ *    用户手输 `[[新目标]]` 这类内容回落旧合成（语义上更接近「换链」而非「改别名」）。
+ *
+ * @returns 新别名（已 trim；`''` 表示清除别名段）；不适用时返回 null
+ */
+function editedWikilinkAlias(data: MdNodeData): string | null {
+	if (data.mdLinkStyle !== 'wiki') {
+		return null;
+	}
+	const text = data.text;
+	const derived = data.mdDerivedText;
+	if (typeof text !== 'string' || typeof derived !== 'string' || !derived) {
+		return null;
+	}
+	if (text === derived || text.includes('\n')) {
+		return null;
+	}
+	const alias = text.trim();
+	if (/[[\]]/.test(alias)) {
+		return null;
+	}
+	if (typeof data.mdWikiLinkpath === 'string' && data.mdWikiLinkpath) {
+		return typeof data.mdLinkText === 'string' && data.mdLinkText === derived
+			? alias
+			: null;
+	}
+	if (
+		data.mdEmbed !== true &&
+		typeof data.attachmentUrl === 'string' &&
+		data.attachmentUrl &&
+		typeof data.attachmentName === 'string' &&
+		data.attachmentName === derived
+	) {
+		return alias;
+	}
+	return null;
+}
+
+/**
+ * 生效的文档双链：纯双链节点被编辑 → 别名取自节点文本；否则原样返回
+ * `mdWikiLinkpath`。回写（renderHyperlink）与可见名（nodeLinkDisplay）必须
+ * 走同一入口——两条路径口径不一致时合成会写出「新文本 + 链接」重复一次。
+ *
+ * 新文本与「无别名时的默认显示名」相同（或清空）→ 不写别名段，避免产出
+ * `[[目标|目标]]` 这类冗余（与附件通道同口径）。
+ */
+function effectiveDocWikiLink(data: MdNodeData, wikiLink: string): string {
+	const alias = editedWikilinkAlias(data);
+	if (alias === null) {
+		return wikiLink;
+	}
+	const bare = withWikilinkAlias(wikiLink, '');
+	const redundant = alias === '' || alias === linkDisplayText(bare);
+	return withWikilinkAlias(wikiLink, redundant ? '' : alias);
 }
 
 /** 行内 token 渲染：链接（仅合成路径使用） */
@@ -40,20 +115,30 @@ function renderHyperlink(data: MdNodeData): string | null {
 		// 嵌入语法（`![[…]]`）的管道是尺寸参数位，不加别名。
 		const defaultName = linkpath.split('/').pop() ?? linkpath;
 		const rawName = data.attachmentName;
-		const alias =
+		// 纯双链附件节点被编辑 → 别名取节点文本（见 editedWikilinkAlias）；
+		// 新别名与默认名相同（或为空）时不写别名段
+		const editedAlias = editedWikilinkAlias(data);
+		let alias: string | undefined;
+		if (editedAlias !== null) {
+			alias = editedAlias && editedAlias !== defaultName ? editedAlias : undefined;
+		} else if (
 			!data.mdEmbed &&
 			typeof rawName === 'string' &&
 			rawName !== '' &&
 			rawName !== defaultName
-				? rawName
-				: undefined;
+		) {
+			alias = rawName;
+		}
 		return `${data.mdEmbed ? '!' : ''}${formatWikilink(linkpath, alias)}`;
 	}
 	const hyperlink = data.hyperlink;
 	if (typeof hyperlink !== 'string' || !hyperlink) {
 		// 文档双链（mdWikiLinkpath 通道）：字段存的就是完整 wikilink，原样回写
+		// （纯双链节点被编辑时别名改为节点文本，见 effectiveDocWikiLink）
 		const wikiLink = data.mdWikiLinkpath;
-		return typeof wikiLink === 'string' && wikiLink ? wikiLink : null;
+		return typeof wikiLink === 'string' && wikiLink
+			? effectiveDocWikiLink(data, wikiLink)
+			: null;
 	}
 	// wiki 双链：原样保留
 	if (hyperlink.startsWith('[[')) {
@@ -285,15 +370,33 @@ function hyperlinkFeature(hyperlink: string): string | null {
 	return wikilinkLinkpath(hyperlink) ?? hyperlink;
 }
 
-/** 链接的「可见文本」（Obsidian 语义：别名 → 去 .md 的目标名 / URL 原样） */
+/**
+ * 链接的「可见文本」（Obsidian 语义：别名 → 去 .md 的目标名 / URL 原样）。
+ *
+ * 与 renderHyperlink 必须**同口径**：两者都经 effectiveDocWikiLink 取「生效的
+ * 双链」，否则纯双链节点被编辑后「纯 token 节点」判定失配，合成会写出
+ * 「新文本 + 链接」重复一次。
+ */
 function nodeLinkDisplay(data: MdNodeData): string | null {
 	const hyperlink = data.hyperlink;
 	if (typeof hyperlink !== 'string' || !hyperlink) {
 		// 文档双链（mdWikiLinkpath 通道）：与 hyperlink 同语义取可见文本
 		const wikiLink = data.mdWikiLinkpath;
-		return typeof wikiLink === 'string' && wikiLink
-			? linkDisplayText(wikiLink)
-			: null;
+		if (typeof wikiLink === 'string' && wikiLink) {
+			return linkDisplayText(effectiveDocWikiLink(data, wikiLink));
+		}
+		// 双链附件（wiki 通道）：可见名 = attachmentName（别名优先，与解析侧
+		// tokenDisplay 同口径）；纯双链节点被编辑时别名已是节点文本，须同步
+		if (data.mdLinkStyle === 'wiki' && data.mdEmbed !== true) {
+			const editedAlias = editedWikilinkAlias(data);
+			if (editedAlias !== null) {
+				return editedAlias || null;
+			}
+			if (typeof data.attachmentName === 'string' && data.attachmentName) {
+				return data.attachmentName;
+			}
+		}
+		return null;
 	}
 	if (data.mdLinkStyle === 'md') {
 		const rawLabel = data.mdLinkText;

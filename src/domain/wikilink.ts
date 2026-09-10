@@ -11,6 +11,10 @@
  *
  * linkpath = `|` 之前整段；target = linkpath 中 `#` 之前；
  * block = `#` 之后、`|` 之前；alias = 第一个 `|` 之后。
+ *
+ * 另提供链接改写原语 withWikilinkAlias（保留目标/区块，只换别名），供
+ * 「纯双链节点编辑 = 改别名」的回写路径使用——链接文本的拼接一律走本模块，
+ * 勿在调用方手写 `[[…|…]]` 模板串。
  */
 
 /** 维基链接完整语法（整串匹配）：`[[inner]]`，inner 不含 `]]` */
@@ -63,6 +67,24 @@ export function wikilinkLinkpath(link: string): string | null {
 /** 构造维基链接文本（alias 为空时省略 `|` 段） */
 export function formatWikilink(linkpath: string, alias?: string): string {
 	return alias ? `[[${linkpath}|${alias}]]` : `[[${linkpath}]]`;
+}
+
+/**
+ * 改写维基链接的别名：目标与区块原样保留，只替换 `|` 之后整段。
+ *
+ * - `withWikilinkAlias('[[笔记]]', '别名')` → `[[笔记|别名]]`
+ * - `withWikilinkAlias('[[笔记#标题|旧]]', '新')` → `[[笔记#标题|新]]`
+ * - alias 为空/全空白 → 去掉别名段：`[[笔记#标题]]`
+ * - 非 `[[...]]` 完整形态、或 linkpath 为空（`[[|别名]]`）→ 原样返回
+ *
+ * 用途：纯双链节点的「编辑节点 = 改别名」回写（见 md-serialize）。
+ */
+export function withWikilinkAlias(link: string, alias: string): string {
+	const parts = parseWikilink(link);
+	if (!parts || !parts.linkpath) {
+		return link;
+	}
+	return formatWikilink(parts.linkpath, alias.trim() || undefined);
 }
 
 /**
