@@ -11,6 +11,9 @@ node_modules
 # vitest coverage report
 coverage/
 
+# verify:visual 的诊断日志（--log-dir 产物，仅 CI 归档用，不入库）
+verify-visual-logs/
+
 # Don't include the compiled main.js file in the repo.
 # They should be uploaded to GitHub releases instead.
 main.js

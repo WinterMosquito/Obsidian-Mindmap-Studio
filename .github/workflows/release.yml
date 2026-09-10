@@ -13,14 +13,16 @@ jobs:
             id-token: write
             attestations: write
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
 
             - name: Use Node.js
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@v7
               with:
                   node-version: 24
                   cache: 'npm'
 
+            # Obsidian 按 tag 解析更新，tag 与 manifest.json 版本不一致会发布出错误版本，
+            # 故在构建前硬失败（对齐官方模板之外的额外护栏）。
             - name: Verify tag matches manifest version
               run: |
                   tag="${GITHUB_REF#refs/tags/}"
@@ -35,6 +37,8 @@ jobs:
                   npm ci
                   npm run build
 
+            # styles.css 是可选的，用输出变量透传给后续步骤（避免把不存在的路径
+            # 传给 gh release create 或 attest 而报错）
             - name: Check for optional styles
               id: styles
               run: |
@@ -52,6 +56,7 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   tag="${GITHUB_REF#refs/tags/}"
+                  # 有对应版本的发布说明就用它，否则让 GitHub 依据提交生成
                   notes_file="docs/release-notes-${tag}.md"
                   if [ -f "$notes_file" ]; then
                     notes_args=(--notes-file "$notes_file")

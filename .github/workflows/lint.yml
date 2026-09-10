@@ -17,17 +17,18 @@ jobs:
                 # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
 
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
             - name: Use Node.js ${{ matrix.node-version }}
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@v7
               with:
                   node-version: ${{ matrix.node-version }}
                   cache: 'npm'
             - run: npm ci
             - run: npm run build --if-present
+            # --reporter=verbose 便于定位失败用例；--bail=1 首个失败即停（省矩阵时间）
             - run: npm test -- --reporter=verbose --bail=1
             # 覆盖率报告（html/lcov 产物随 workflow 归档，文本摘要进日志；
-            # 仅在主矩阵版本执行一次，避免三倍上传）
+            # 仅在主矩阵版本执行一次，避免多份重复上传）
             - name: Test coverage
               if: matrix.node-version == '24.x'
               run: npm run test:coverage
@@ -39,3 +40,34 @@ jobs:
                   path: coverage/
                   retention-days: 14
             - run: npm run lint
+
+            # 渲染契约验证（scripts/verify-visual.mjs）：把 src/mindmap.ts 打成浏览器
+            # IIFE，配真实 styles.css 在无头 Chrome 里渲染场景并断言 --dump-dom。
+            # 这些「引擎运行时 DOM 装配」行为单测覆盖不到（单测只能验证数据字段）。
+            #
+            # 曾因「ubuntu-latest 上脚本于场景检查后无输出退出、且无 Actions 日志读取权限
+            # 无法定位」被回退；该回退注释明确指出「若要重新接入 CI，需要能读到失败日志」。
+            # 故此处以非阻断方式重新接入：continue-on-error 保证不把 CI 变红，
+            # 同时脚本以 --log-dir 落盘逐场景 DOM / 诊断日志并归档为 artifact，
+            # 让下次失败有据可查。待 Linux 侧稳定后再去掉 continue-on-error。
+            - name: Verify visual rendering contract
+              if: matrix.node-version == '24.x'
+              continue-on-error: true
+              env:
+                  # 明确指向预装 Chrome，避免依赖 runner 上的默认探测顺序
+                  CHROME_PATH: /usr/bin/google-chrome-stable
+              run: |
+                  npm run verify:visual -- \
+                    --require-chrome \
+                    --keep \
+                    --log-dir verify-visual-logs
+
+            - name: Upload verify:visual diagnostics
+              # 仅主矩阵、且总在验证步骤之后（成败都归档，失败时才是最有价值的）
+              if: always() && matrix.node-version == '24.x'
+              uses: actions/upload-artifact@v7
+              with:
+                  name: verify-visual-logs
+                  path: verify-visual-logs/
+                  if-no-files-found: ignore
+                  retention-days: 14

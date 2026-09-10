@@ -19,28 +19,49 @@
  *
  * 做法：esbuild 把 `src/mindmap.ts`（纯模块，无 obsidian 依赖）打成浏览器
  * IIFE，配合**仓库真实 styles.css** 在无头 Chrome 里渲染若干场景，再解析
- * --dump-dom 输出逐场景断言。临时文件全部落在系统临时目录，验证后清理。
+ * --dump-dom 输出逐场景断言。临时文件默认落在系统临时目录并在验证后清理。
  *
  * 用法：
- *   npm run verify:visual                 # 无 Chrome 时跳过（退出码 0）
- *   npm run verify:visual -- --require-chrome   # 无 Chrome 时失败
- *   npm run verify:visual -- --keep        # 保留临时目录（排查用）
+ *   npm run verify:visual                        # 无 Chrome 时跳过（退出码 0）
+ *   npm run verify:visual -- --require-chrome    # 无 Chrome 时失败（CI 用）
+ *   npm run verify:visual -- --keep              # 保留临时目录（排查用）
+ *   npm run verify:visual -- --log-dir <dir>     # 落盘诊断日志（CI 归档用）
  *   CHROME_PATH=/path/to/chrome npm run verify:visual
+ *
+ * 退出码：0 = 通过或（未要求时）缺浏览器跳过；1 = 断言失败或缺浏览器但要求了。
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const ARGS = new Set(process.argv.slice(2));
+const ARGV = process.argv.slice(2);
+const ARGS = new Set(ARGV);
 
-/** 每个场景渲染「根 + 一个子节点」，断言集中在子节点上（根节点作为无图标对照） */
+/**
+ * 读取 `--name value` 或 `--name=value` 形式的参数值。
+ * 不带值时返回 null（避免把紧随其后的另一个开关误当成值）。
+ */
+function argValue(name) {
+	const eq = ARGV.find((arg) => arg.startsWith(`${name}=`));
+	if (eq !== undefined) return eq.slice(name.length + 1);
+	const index = ARGV.indexOf(name);
+	if (index === -1) return null;
+	const next = ARGV[index + 1];
+	if (next === undefined || next.startsWith('--')) return null;
+	return next;
+}
+
+/**
+ * 每个场景渲染「根 + 一个子节点」，断言集中在子节点上（根节点作为无图标对照）。
+ * 根节点自带文字，因此节点数恒为 2——这个前提本身也被断言，防止场景退化。
+ */
 const SCENARIOS = [
 	{
 		name: 'plain',
@@ -102,6 +123,7 @@ function findChrome() {
 				process.env.LOCALAPPDATA ?? '',
 				'Google\\Chrome\\Application\\chrome.exe',
 			),
+			'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
 		);
 	} else if (process.platform === 'darwin') {
 		candidates.push(
@@ -122,15 +144,19 @@ function findChrome() {
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
 function buildEntrySource() {
 	const mindmapModule = join(ROOT, 'src', 'mindmap.ts').replaceAll('\\', '/');
-	const wikilinkModule = join(ROOT, 'src', 'features', 'view-wikilink.ts').replaceAll('\\', '/');
-	return `import { centerContentAtFullScale, createMindMap, resetZoom } from ${JSON.stringify(mindmapModule)};
-import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
-
-const scenarios = ${JSON.stringify(
+	const wikilinkModule = join(ROOT, 'src', 'features', 'view-wikilink.ts').replaceAll(
+		'\\',
+		'/',
+	);
+	const serialized = JSON.stringify(
 		SCENARIOS.map(({ name, data }) => ({ name, data })),
 		null,
 		'\t',
-	)};
+	);
+	return `import { centerContentAtFullScale, createMindMap, resetZoom } from ${JSON.stringify(mindmapModule)};
+import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
+
+const scenarios = ${serialized};
 
 const options = {
 	layout: 'logicalStructure',
@@ -174,75 +200,77 @@ for (let i = 19; i >= 1; i--) {
 	chain = { data: { text: 'v' + i, uid: 'vp-' + i }, children: [chain] };
 }
 const viewportMap = createMindMap(viewportHolder, chain, options);
+
 // 与插件同款时序：引擎 render() 后首帧异步完成，视口设置在延时后执行
 window.setTimeout(() => {
-const probe = document.createElement('pre');
-probe.id = 'viewport-probe';
-try {
-	centerContentAtFullScale(viewportMap);
-	const state = viewportMap.view.getTransformData().state;
-	const canvasRect = viewportHolder.getBoundingClientRect();
-	// 整体内容包围盒（所有已渲染节点矩形的并集，相对画布左上角）
-	const rects = [...viewportHolder.querySelectorAll('.smm-node')].map((el) =>
-		el.getBoundingClientRect(),
-	);
-	const minX = Math.min(...rects.map((r) => r.left));
-	const minY = Math.min(...rects.map((r) => r.top));
-	const maxX = Math.max(...rects.map((r) => r.right));
-	const maxY = Math.max(...rects.map((r) => r.bottom));
-	const contentCenter = [
-		Math.round((minX + maxX) / 2 - canvasRect.left),
-		Math.round((minY + maxY) / 2 - canvasRect.top),
-	];
-	// 重置缩放不漂移：先缩到 50%（以画布中心为锚点），记录中心处的内容坐标，
-	// 重置后再算该内容点落回屏幕的位置——位移应 ≤1px（否则表现为「视图乱飘」）
-	const cx = canvasRect.width / 2;
-	const cy = canvasRect.height / 2;
-	viewportMap.view.setScale(0.5, cx, cy);
-	const zoomed = viewportMap.view.getTransformData().state;
-	const contentX = (cx - zoomed.x) / zoomed.scale;
-	const contentY = (cy - zoomed.y) / zoomed.scale;
-	resetZoom(viewportMap);
-	const reset = viewportMap.view.getTransformData().state;
-	const drift = Math.hypot(
-		contentX * reset.scale + reset.x - cx,
-		contentY * reset.scale + reset.y - cy,
-	);
-	probe.textContent = JSON.stringify({
-		scale: state.scale,
-		contentCenter,
-		canvas: [Math.round(canvasRect.width), Math.round(canvasRect.height)],
-		resetScale: reset.scale,
-		resetDrift: Math.round(drift * 100) / 100,
-	});
-} catch (error) {
-	probe.textContent = JSON.stringify({ error: String(error) });
-}
-document.body.appendChild(probe);
+	const probe = document.createElement('pre');
+	probe.id = 'viewport-probe';
+	try {
+		centerContentAtFullScale(viewportMap);
+		const state = viewportMap.view.getTransformData().state;
+		const canvasRect = viewportHolder.getBoundingClientRect();
+		// 整体内容包围盒（所有已渲染节点矩形的并集，相对画布左上角）
+		const rects = [...viewportHolder.querySelectorAll('.smm-node')].map((el) =>
+			el.getBoundingClientRect(),
+		);
+		const minX = Math.min(...rects.map((r) => r.left));
+		const minY = Math.min(...rects.map((r) => r.top));
+		const maxX = Math.max(...rects.map((r) => r.right));
+		const maxY = Math.max(...rects.map((r) => r.bottom));
+		const contentCenter = [
+			Math.round((minX + maxX) / 2 - canvasRect.left),
+			Math.round((minY + maxY) / 2 - canvasRect.top),
+		];
+		// 重置缩放不漂移：先缩到 50%（以画布中心为锚点），记录中心处的内容坐标，
+		// 重置后再算该内容点落回屏幕的位置——位移应 ≤1px（否则表现为「视图乱飘」）
+		const cx = canvasRect.width / 2;
+		const cy = canvasRect.height / 2;
+		viewportMap.view.setScale(0.5, cx, cy);
+		const zoomed = viewportMap.view.getTransformData().state;
+		const contentX = (cx - zoomed.x) / zoomed.scale;
+		const contentY = (cy - zoomed.y) / zoomed.scale;
+		resetZoom(viewportMap);
+		const reset = viewportMap.view.getTransformData().state;
+		const drift = Math.hypot(
+			contentX * reset.scale + reset.x - cx,
+			contentY * reset.scale + reset.y - cy,
+		);
+		probe.textContent = JSON.stringify({
+			scale: state.scale,
+			contentCenter,
+			canvas: [Math.round(canvasRect.width), Math.round(canvasRect.height)],
+			nodeCount: rects.length,
+			resetScale: reset.scale,
+			resetDrift: Math.round(drift * 100) / 100,
+		});
+	} catch (error) {
+		probe.textContent = JSON.stringify({ error: String(error) });
+	}
+	document.body.appendChild(probe);
 
-// —— 悬停预览锚定探针：SVG 节点须能提供有限的 offsetWidth/offsetHeight ——
-// 官方 HoverPopover.position() 取 bottom = rect.top + targetEl.offsetHeight；
-// SVG 元素没有这两个属性时该值为 NaN，弹窗「下方放得下就放下方」的分支永不成立。
-const anchorProbe = document.createElement('pre');
-anchorProbe.id = 'anchor-probe';
-try {
-	const nodeEl = viewportHolder.querySelector('.smm-node');
-	const beforeWidth = String(nodeEl.offsetWidth);
-	ensureOffsetSize(nodeEl);
-	const nodeRect = nodeEl.getBoundingClientRect();
-	anchorProbe.textContent = JSON.stringify({
-		beforeWidth,
-		offsetWidth: Math.round(nodeEl.offsetWidth),
-		offsetHeight: Math.round(nodeEl.offsetHeight),
-		rectWidth: Math.round(nodeRect.width),
-		rectHeight: Math.round(nodeRect.height),
-		bottom: Math.round(nodeRect.top + nodeEl.offsetHeight),
-		right: Math.round(nodeRect.left + nodeEl.offsetWidth),
-	});
-} catch (error) {
-	anchorProbe.textContent = JSON.stringify({ error: String(error) });
-}
-document.body.appendChild(anchorProbe);
+	// —— 悬停预览锚定探针：SVG 节点须能提供有限的 offsetWidth/offsetHeight ——
+	// 官方 HoverPopover.position() 取 bottom = rect.top + targetEl.offsetHeight；
+	// SVG 元素没有这两个属性时该值为 NaN，弹窗「下方放得下就放下方」的分支永不成立。
+	const anchorProbe = document.createElement('pre');
+	anchorProbe.id = 'anchor-probe';
+	try {
+		const nodeEl = viewportHolder.querySelector('.smm-node');
+		const beforeWidth = String(nodeEl.offsetWidth);
+		ensureOffsetSize(nodeEl);
+		const nodeRect = nodeEl.getBoundingClientRect();
+		anchorProbe.textContent = JSON.stringify({
+			beforeWidth,
+			offsetWidth: Math.round(nodeEl.offsetWidth),
+			offsetHeight: Math.round(nodeEl.offsetHeight),
+			rectWidth: Math.round(nodeRect.width),
+			rectHeight: Math.round(nodeRect.height),
+			bottom: Math.round(nodeRect.top + nodeEl.offsetHeight),
+			right: Math.round(nodeRect.left + nodeEl.offsetWidth),
+		});
+	} catch (error) {
+		anchorProbe.textContent = JSON.stringify({ error: String(error) });
+	}
+	document.body.appendChild(anchorProbe);
 }, 150);
 `;
 }
@@ -266,9 +294,50 @@ function buildPageSource() {
 `;
 }
 
-/** 用无头 Chrome 渲染并取回序列化 DOM（--headless=old 不可用时回退 new） */
-async function dumpDom(chromePath, pagePath, profileDir) {
-	const common = [
+/**
+ * 诊断日志收集器：把控制台输出镜像到 `--log-dir`，并落盘源文件与 DOM。
+ *
+ * 存在的理由：本步骤上次接入 CI 时在 ubuntu-latest 上「场景检查后无输出退出」，
+ * 而当时没有 Actions 日志读取权限，无法定位、只能回退。现在把可复现失败所需的
+ * 一切（环境、执行的 Chrome 命令、每次尝试的退出码与 stderr 尾部、完整 dump-dom、
+ * 逐场景片段）全部写进文件并归档，失败才有据可查。
+ */
+function createDiagnostics(logDir, chromePath) {
+	const lines = [];
+	return {
+		log(line = '') {
+			console.log(line);
+			lines.push(line);
+		},
+		async flush(extra = {}) {
+			if (!logDir) return;
+			const write = (name, content) =>
+				writeFile(join(logDir, name), content, 'utf8');
+			const header = [
+				`time: ${new Date().toISOString()}`,
+				`node: ${process.version}`,
+				`platform: ${process.platform} ${process.arch}`,
+				`chrome: ${chromePath ?? '(not found)'}`,
+				`argv: ${ARGV.join(' ') || '(none)'}`,
+				`cwd: ${process.cwd()}`,
+				`root: ${ROOT}`,
+			];
+			for (const [key, value] of Object.entries(extra)) {
+				header.push(`${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
+			}
+			await write('00-environment.txt', `${header.join('\n')}\n`);
+			await write('01-report.txt', `${lines.join('\n')}\n`);
+		},
+		file(name, content) {
+			if (!logDir) return Promise.resolve();
+			return writeFile(join(logDir, name), content, 'utf8');
+		},
+	};
+}
+
+/** 单次 Chrome 调用的参数（`--dump-dom` 之外的部分） */
+function chromeArgs(profileDir) {
+	return [
 		'--disable-gpu',
 		'--no-sandbox',
 		'--disable-dev-shm-usage',
@@ -280,24 +349,51 @@ async function dumpDom(chromePath, pagePath, profileDir) {
 		'--virtual-time-budget=8000',
 		`--user-data-dir=${profileDir}`,
 	];
-	const modes = ['--headless=old', '--headless=new'];
+}
+
+/**
+ * 用无头 Chrome 渲染并取回序列化 DOM。
+ *
+ * 依次尝试 `--headless=old` / `--headless=new`（老版本 Chrome 不支持 new），
+ * 每个模式再重试一次——无头渲染在 CI 上有偶发空白输出的历史。
+ * 每次尝试的退出码与 stderr 尾部都会进诊断日志。
+ */
+async function dumpDom(chromePath, pagePath, profileDir, diag) {
+	const args = chromeArgs(profileDir);
+	const attempts = [];
 	let lastError = null;
-	for (const mode of modes) {
-		try {
-			const { stdout } = await execFileAsync(
-				chromePath,
-				[mode, ...common, '--dump-dom', pagePath],
-				{ maxBuffer: 64 * 1024 * 1024, windowsHide: true },
-			);
-			if (stdout.includes('id="map-')) return stdout;
-			lastError = new Error(
-				`Chrome ${mode} 输出不含导图 DOM（长度 ${stdout.length}）`,
-			);
-		} catch (error) {
-			lastError = error;
+
+	for (const mode of ['--headless=old', '--headless=new']) {
+		for (let round = 1; round <= 2; round++) {
+			const label = `${mode} 第 ${round} 次`;
+			try {
+				const { stdout, stderr } = await execFileAsync(
+					chromePath,
+					[mode, ...args, '--dump-dom', pagePath],
+					{ maxBuffer: 96 * 1024 * 1024, windowsHide: true },
+				);
+				if (stdout.includes('id="map-')) {
+					attempts.push(`${label}: ok（DOM ${stdout.length} 字节）`);
+					diag.log(`    · Chrome ${label} 成功（DOM ${stdout.length} 字节）`);
+					diag.file('05-chrome-stderr.txt', String(stderr ?? ''));
+					return stdout;
+				}
+				attempts.push(`${label}: 输出不含导图 DOM（${stdout.length} 字节）`);
+				lastError = new Error(
+					`Chrome ${mode} 输出不含导图 DOM（长度 ${stdout.length}）`,
+				);
+			} catch (error) {
+				const stderrTail = String(error?.stderr ?? '').slice(-2000);
+				attempts.push(
+					`${label}: 退出码 ${error?.code ?? '?'}；stderr 尾部：${stderrTail || '(空)'}`,
+				);
+				lastError = error;
+			}
+			diag.log(`    · Chrome ${label} 未取到 DOM`);
 		}
 	}
-	throw lastError ?? new Error('Chrome 渲染失败');
+	const detail = attempts.map((line) => `  - ${line}`).join('\n');
+	throw new Error(`Chrome 渲染失败（已尝试 ${attempts.length} 次）：\n${detail}`);
 }
 
 /** 切出某个场景容器的 DOM 片段（容器按脚本内顺序追加，取到下一个容器为止） */
@@ -314,8 +410,11 @@ function measure(fragment) {
 	const widths = [...fragment.matchAll(/data-width="(\d+)"/g)].map((m) =>
 		Number(m[1]),
 	);
-	const docIconTag = fragment.match(/<svg[^>]*mindmap-wiki-doc-icon[^>]*>/)?.[0] ?? null;
-	const attachTitle = fragment.match(/<svg cursor="pointer"[^>]*><title>([^<]*)<\/title>/)?.[1] ?? null;
+	const docIconTag =
+		fragment.match(/<svg[^>]*mindmap-wiki-doc-icon[^>]*>/)?.[0] ?? null;
+	// 引擎回形针：`<svg cursor="pointer">` 且带 <title>（标题即附件名）
+	const attachTitle =
+		fragment.match(/<svg cursor="pointer"[^>]*><title>([^<]*)<\/title>/)?.[1] ?? null;
 	// 容器首个 svg 即引擎画布（尺寸须铺满容器，否则布局/命中全部失效）
 	const canvas = fragment.match(/<svg[^>]*\swidth="(\d+)"\s+height="(\d+)"/);
 	return {
@@ -388,28 +487,42 @@ function checkScenario(scenario, fragment) {
 	return failures;
 }
 
+/** 取回探针 `<pre>` 的文本（dump-dom 会转义引号与 &） */
+function probeText(dom, id) {
+	return dom
+		.match(new RegExp(`<pre id="${id}">([\\s\\S]*?)</pre>`))?.[1]
+		?.replaceAll('&quot;', '"')
+		.replaceAll('&amp;', '&');
+}
+
+/** 解析探针 JSON：返回 `{ probe }` 或 `{ failures }` */
+function readProbe(dom, id, label) {
+	const raw = probeText(dom, id);
+	if (!raw) return { failures: [`未找到${label}探针（入口脚本未执行？）`] };
+	let probe;
+	try {
+		probe = JSON.parse(raw);
+	} catch {
+		return { failures: [`${label}探针 JSON 解析失败：${raw.slice(0, 200)}`] };
+	}
+	if (typeof probe.error === 'string') {
+		return { failures: [`入口脚本异常（${label}）：${probe.error}`] };
+	}
+	return { probe };
+}
+
 /**
  * 校验默认视口探针（由入口脚本写入 `#viewport-probe`，见 buildEntrySource）：
  * 打开导图时应为 100% 缩放，且渲染内容包围盒中心落在画布中心附近。
  */
 function checkViewport(dom) {
-	const raw = dom
-		.match(/<pre id="viewport-probe">([\s\S]*?)<\/pre>/)?.[1]
-		?.replaceAll('&quot;', '"')
-		.replaceAll('&amp;', '&');
-	if (!raw) {
-		return ['未找到视口探针（入口脚本未执行？）'];
-	}
-	let probe;
-	try {
-		probe = JSON.parse(raw);
-	} catch {
-		return [`视口探针 JSON 解析失败：${raw.slice(0, 120)}`];
-	}
+	const { probe, failures: parseFailures } = readProbe(
+		dom,
+		'viewport-probe',
+		'视口',
+	);
+	if (parseFailures) return parseFailures;
 	const failures = [];
-	if (typeof probe.error === 'string') {
-		return [`入口脚本异常：${probe.error}`];
-	}
 	if (probe.scale !== 1) {
 		failures.push(`缩放 ${probe.scale} ≠ 1（应为 100%）`);
 	}
@@ -448,22 +561,8 @@ function checkViewport(dom) {
  * 预览只会出现在节点上方、上方放不下时完全不显示。
  */
 function checkAnchor(dom) {
-	const raw = dom
-		.match(/<pre id="anchor-probe">([\s\S]*?)<\/pre>/)?.[1]
-		?.replaceAll('&quot;', '"')
-		.replaceAll('&amp;', '&');
-	if (!raw) {
-		return ['未找到锚定探针（入口脚本未执行？）'];
-	}
-	let probe;
-	try {
-		probe = JSON.parse(raw);
-	} catch {
-		return [`锚定探针 JSON 解析失败：${raw.slice(0, 120)}`];
-	}
-	if (typeof probe.error === 'string') {
-		return [`入口脚本异常：${probe.error}`];
-	}
+	const { probe, failures: parseFailures } = readProbe(dom, 'anchor-probe', '锚定');
+	if (parseFailures) return parseFailures;
 	const failures = [];
 	// 前提：SVG 元素本身没有这两个属性（否则本探针失去意义）
 	if (probe.beforeWidth !== 'undefined') {
@@ -477,9 +576,7 @@ function checkAnchor(dom) {
 		);
 	}
 	if (!(probe.offsetWidth > 0) || !(probe.offsetHeight > 0)) {
-		failures.push(
-			`补齐的尺寸非正（${probe.offsetWidth}×${probe.offsetHeight}）`,
-		);
+		failures.push(`补齐的尺寸非正（${probe.offsetWidth}×${probe.offsetHeight}）`);
 	}
 	if (
 		probe.offsetWidth !== probe.rectWidth ||
@@ -492,24 +589,90 @@ function checkAnchor(dom) {
 	return failures;
 }
 
+/**
+ * 跑完所有检查：返回未通过项数量。
+ *
+ * 任何断言函数抛异常都转成一条失败项（而不是让整个脚本静默退出）——
+ * CI 上曾出现「场景全过后脚本无输出地退出」，此处保证异常可见且计入失败数。
+ */
+async function runChecks(dom, diag) {
+	let failed = 0;
+	const safe = (label, fn) => {
+		try {
+			return fn();
+		} catch (error) {
+			return [`${label} 检查异常：${error?.message ?? String(error)}`];
+		}
+	};
+
+	for (const scenario of SCENARIOS) {
+		const fragment = containerOf(dom, scenario.name);
+		const failures = safe(`场景 ${scenario.name}`, () =>
+			checkScenario(scenario, fragment),
+		);
+		const width = fragment ? measure(fragment).childWidth : null;
+		diag.log(
+			`  ${failures.length === 0 ? '✓' : '✗'} ${scenario.name.padEnd(7)} ${scenario.label}（子节点测宽 ${width}）`,
+		);
+		for (const failure of failures) diag.log(`      - ${failure}`);
+		if (failures.length > 0) {
+			await diag.file(
+				`20-fail-${scenario.name}.html`,
+				fragment ?? `(容器 #map-${scenario.name} 未渲染)`,
+			);
+		}
+		failed += failures.length;
+	}
+
+	// 默认视口契约：100% 缩放 + 整体内容居中（打开大图时文字可读）
+	diag.log(`  · 场景检查完成（DOM ${dom.length} 字节），进入 viewport 探针`);
+	const viewportFailures = safe('viewport 探针', () => checkViewport(dom));
+	diag.log(
+		`  ${viewportFailures.length === 0 ? '✓' : '✗'} viewport 默认视口 100% + 整体内容居中`,
+	);
+	for (const failure of viewportFailures) diag.log(`      - ${failure}`);
+	failed += viewportFailures.length;
+
+	// 悬停预览锚定契约：SVG 节点补齐 offsetWidth/offsetHeight（弹窗可上下翻转）
+	diag.log('  · viewport 探针完成，进入 anchor 探针');
+	const anchorFailures = safe('anchor 探针', () => checkAnchor(dom));
+	diag.log(
+		`  ${anchorFailures.length === 0 ? '✓' : '✗'} anchor  SVG 节点盒模型尺寸补齐（弹窗可上下翻转）`,
+	);
+	for (const failure of anchorFailures) diag.log(`      - ${failure}`);
+	failed += anchorFailures.length;
+
+	return failed;
+}
+
 async function main() {
 	const chromePath = findChrome();
+	const logDirArg = argValue('--log-dir');
+	const logDir = logDirArg ? resolve(ROOT, logDirArg) : null;
+	if (logDir) await mkdir(logDir, { recursive: true });
+	const diag = createDiagnostics(logDir, chromePath);
+
 	if (!chromePath) {
 		const message =
 			'未找到 Chrome：设 CHROME_PATH 或安装 Chrome 后重试（本项验证依赖真实浏览器渲染）';
 		if (ARGS.has('--require-chrome')) {
-			console.error(`✗ ${message}`);
-			process.exit(1);
+			diag.log(`✗ ${message}`);
+			await diag.flush({ result: 'failed: no chrome' });
+			process.exitCode = 1;
+			return;
 		}
-		console.log(`⚠ 跳过视觉验证：${message}`);
+		diag.log(`⚠ 跳过视觉验证：${message}`);
+		await diag.flush({ result: 'skipped: no chrome' });
 		return;
 	}
 
 	const workDir = await mkdtemp(join(tmpdir(), 'mindmap-verify-'));
-	const pagePath = join(workDir, 'page.html');
+	let failed = null;
+	let crash = null;
 	try {
+		diag.log(`无头渲染契约验证（Chrome: ${chromePath}）`);
 		await writeFile(join(workDir, 'entry.mjs'), buildEntrySource(), 'utf8');
-		await writeFile(pagePath, buildPageSource(), 'utf8');
+		await writeFile(join(workDir, 'page.html'), buildPageSource(), 'utf8');
 		await build({
 			entryPoints: [join(workDir, 'entry.mjs')],
 			outfile: join(workDir, 'bundle.js'),
@@ -518,74 +681,45 @@ async function main() {
 			platform: 'browser',
 			logLevel: 'warning',
 		});
+		diag.log('  · 浏览器入口已打包，启动无头 Chrome');
 
-		const dom = await dumpDom(chromePath, pagePath, join(workDir, 'profile'));
+		const dom = await dumpDom(
+			chromePath,
+			join(workDir, 'page.html'),
+			join(workDir, 'profile'),
+			diag,
+		);
+		// 完整 dump-dom 归档：失败时这是唯一能离线复现 DOM 现场的东西
+		await diag.file('10-dom.html', dom);
 
-		let failed = 0;
-		console.log(`无头渲染契约验证（Chrome: ${chromePath}）`);
-		// 任何断言函数抛异常都转成一条失败项（而不是让整个脚本静默退出）——
-		// CI 上曾出现「场景全过后脚本无输出地退出」，此处保证异常可见。
-		const safe = (label, fn) => {
-			try {
-				return fn();
-			} catch (error) {
-				return [`${label} 检查异常：${error?.message ?? String(error)}`];
-			}
-		};
-		for (const scenario of SCENARIOS) {
-			const failures = safe(`场景 ${scenario.name}`, () =>
-				checkScenario(scenario, containerOf(dom, scenario.name)),
-			);
-			const mark = failures.length === 0 ? '✓' : '✗';
-			const metrics = containerOf(dom, scenario.name);
-			const width = metrics ? measure(metrics).childWidth : null;
-			console.log(
-				`  ${mark} ${scenario.name.padEnd(7)} ${scenario.label}（子节点测宽 ${width}）`,
-			);
-			for (const failure of failures) {
-				console.log(`      - ${failure}`);
-			}
-			failed += failures.length;
-		}
-		// 默认视口契约：100% 缩放 + 整体内容居中（打开大图时文字可读）
-		console.log(
-			`  · 场景检查完成（DOM ${dom.length} 字节），进入 viewport 探针`,
-		);
-		const viewportFailures = safe('viewport 探针', () => checkViewport(dom));
-		console.log(
-			`  ${viewportFailures.length === 0 ? '✓' : '✗'} viewport 默认视口 100% + 整体内容居中`,
-		);
-		for (const failure of viewportFailures) {
-			console.log(`      - ${failure}`);
-		}
-		failed += viewportFailures.length;
-		// 悬停预览锚定契约：SVG 节点补齐 offsetWidth/offsetHeight（弹窗可上下翻转）
-		console.log('  · viewport 探针完成，进入 anchor 探针');
-		const anchorFailures = safe('anchor 探针', () => checkAnchor(dom));
-		console.log(
-			`  ${anchorFailures.length === 0 ? '✓' : '✗'} anchor  SVG 节点盒模型尺寸补齐（弹窗可上下翻转）`,
-		);
-		for (const failure of anchorFailures) {
-			console.log(`      - ${failure}`);
-		}
-		failed += anchorFailures.length;
-		if (failed > 0) {
-			console.error(`\n✗ 视觉验证失败：${failed} 项断言未通过`);
-			process.exitCode = 1;
-			return;
-		}
-		console.log('\n✓ 视觉验证通过');	} finally {
+		failed = await runChecks(dom, diag);
+	} catch (error) {
+		crash = error;
+		failed = null;
+	} finally {
+		await diag.flush({
+			result: crash ? 'crashed' : failed ? `failed: ${failed} assertions` : 'passed',
+			workDir,
+		});
 		if (ARGS.has('--keep')) {
 			console.log(`临时目录已保留：${workDir}`);
 		} else {
 			await rm(workDir, { recursive: true, force: true });
 		}
+		if (logDir) console.log(`诊断日志已写入：${logDir}`);
 	}
+
+	if (crash) {
+		console.error(`✗ verify:visual 异常：${crash?.stack ?? String(crash)}`);
+		process.exitCode = 1;
+		return;
+	}
+	if (failed > 0) {
+		console.error(`\n✗ 视觉验证失败：${failed} 项断言未通过`);
+		process.exitCode = 1;
+		return;
+	}
+	console.log('\n✓ 视觉验证通过');
 }
 
-try {
-	await main();
-} catch (error) {
-	console.error(`✗ verify:visual 异常：${error?.stack ?? String(error)}`);
-	process.exitCode = 1;
-}
+await main();
