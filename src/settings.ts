@@ -147,9 +147,12 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 	}
 
 	/**
-	 * 声明式设置定义（Obsidian 1.13+）：
-	 * 新版本用它渲染设置页并获得设置搜索支持；
-	 * 1.13 以下自动忽略本方法、回退到 display()。
+	 * 声明式设置定义（Obsidian 1.13+）：新版本用它渲染设置页并获得设置搜索支持。
+	 *
+	 * 本插件**不**实现命令式的 `display()` 回退：低于 1.13 的宿主基类根本不调用
+	 * 本方法（也不存在声明式渲染能力），设置页会空白——因此这类宿主由
+	 * `manifest.minAppVersion: 1.13.0` 拦截，不属支持范围。`override` 只是编译期
+	 * 契约（对齐宿主签名），不代表运行期存在旧版本分支。
 	 */
 	override getSettingDefinitions(): SettingDefinitionItem[] {
 		const layoutOptions = Object.fromEntries(

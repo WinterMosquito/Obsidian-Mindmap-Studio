@@ -222,6 +222,20 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
   plain-text parser，等价实现在 scripts/plain-text-parser.mjs——该实现的唯一有意差异是
   **剥离行尾 `\r`**：官方只按 `\n` 切分，CRLF 检出（`core.autocrlf=true`）下残留的 `\r`
   会让版权行正则 `(.+)$` 匹配失败、规则静默失效，故加固之，勿改回逐字一致）。
+- **lint 依赖 manifest 且是 cwd 相对的**：`eslint-plugin-obsidianmd` 的 `getManifest()`
+  用 `fs.readFileSync("manifest.json")`，**相对 `process.cwd()`**——故必须在**插件根**
+  跑 `npm run lint`。cwd 不对（如从仓库根/父目录跑）时 manifest 读成 `null`，会让
+  ① `no-nodejs-modules`（`isDesktopOnly` 为 true 时 `off`）、② `regex-lookbehind`
+  （仅 `isDesktopOnly !== true` 才 report）、③ `globals.node` 注入 三者**同时翻到
+  「非桌面」分支**，产生假告警与假 `no-undef`。即：上一节 `isDesktopOnly` 豁免的
+  「lint 通过」是 **cwd 相关**的结论，不是无条件事实。
+- **`no-unsupported-api` 的两条静默失效路径**（都不报错，而是规则整条 `return {}`）：
+  ① 阈值取 `options.minAppVersion ?? getManifest()?.minAppVersion`，manifest 读不到即关闭；
+  ② 版本信息取自**项目实际安装的 typings**（`findObsidianDtsPath(program)` 在 TS program
+  里找 `.../obsidian/obsidian.d.ts`，`@since` 映射缓存于
+  `node_modules/.cache/eslint-plugin-obsidianmd/since-map.json`，按 obsidian 包版本为 key）——
+  故**lint 的可见版本上沿＝安装的 typings 版本**，既不是插件自带的 obsidian 版本，也不是
+  官方最新发布版本。升级/降级 `obsidian` 依赖都会改变这条规则的判定基准（缓存自动重建）。
 
 ## 关键约定
 
@@ -273,7 +287,8 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
     优先于 File.name 与 preferredName，仅粘贴路径使用）；
   - 外部拖入图片=导入附件目录并挂到节点（与官方拖入行为一致，保留原文件名）；
   - 命令一律不定义默认热键（用户经 Hotkeys 设置自行分配）。
-- Obsidian API 合规（已对照官方 obsidian.d.ts 1.13.2 审计）：所用 API 全部为官方面
+- Obsidian API 合规（已对照官方 `obsidian.d.ts` **1.13.2** 与项目安装的 **1.13.1** 双层审计）：
+  所用 API 全部为官方面
   （含 `FileSystemAdapter.getBasePath`、`getAvailablePathForAttachment`、
   `getFirstLinkpathDest`、`registerHoverLinkSource`、`SettingDefinitionItem` 等），
   零废弃 API 使用。仅存三处**无官方等价**的私有触点，均防御式实现并文档化：
@@ -281,6 +296,19 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
   无 fileCreator 公共 API）；② `links-resolve.ts` 拖拽兜底 `dragManager`；
   ③ `system-open.ts` 桌面端 `require('electron').shell.openPath`（d.ts 无系统打开 API）。
   勿新增私有 API 触点；官方补齐后优先替换。
+  **版本基线**：`manifest.minAppVersion: 1.13.0`（比较基准）< 安装 typings `1.13.1`（`tsc`/lint
+  的真实类型来源）< 官方最新 `1.13.2`（仅参照物）三者自洽。声明式设置的锚点
+  （`PluginSettingTab.getSettingDefinitions`、`SettingTab.setControlValue`、
+  `SettingDefinitionItem`、`SettingDefinition`）**全部 `@since 1.13.0`**；全插件
+  `from 'obsidian'` 的导入面（22 个符号）**没有一处 `@since > 1.13.0`**。故 1.13.0 是
+  「恰好覆盖、零盈余」的最小值：**不可下调**（低于 1.13.0 无声明式设置 API），**也不必上调**。
+  **声明式设置的「键」是 lint 盲区（重要）**：`no-unsupported-api` 只访问
+  `MemberExpression` / `NewExpression` / 类 `superClass` / `CallExpression`，**对象字面量的键
+  永不检查**。若在 `getSettingDefinitions()` 返回的对象里写了比 `minAppVersion` 更新的字段
+  （1.13.1：`SettingDefinitionGroup.search`、`SettingDefinitionPage.displayValue` / `.status`、
+  `SettingSliderControl.displayFormat`；1.13.2：`SettingSecretControl.type:'secret'`），
+  **不会有任何 lint 或 `tsc` 报警**（该成员确实存在于已安装的 typings 里）。因此
+  **升 `minAppVersion`、或给声明式设置新增键时，必须人工核对对应 `@since`**，不能指望工具兜底。
 - 引擎 vendor 文件不可手工编辑；升级时用官方源码重新打包并替换（流程见 `vendor/BUILD.md`）；
   `styles.css` 只含本插件样式——**不再有 vendor 段**（引擎 dist CSS 全是 Quill 富文本样式，
   本插件不注册 RichText，样式由引擎运行时注入；详见 `vendor/BUILD.md`）。
