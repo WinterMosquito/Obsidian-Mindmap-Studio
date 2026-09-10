@@ -18,6 +18,7 @@ import {
 import { getThemeConfig, isDarkTheme, getDocIconColor } from './mindmap-theme';
 import { t, type Language } from './i18n';
 import { walkTree } from './domain/tree';
+import { docWikiLinkDisplay, type WikiAliasSource } from './domain/wiki-display';
 import { RESET_LAYOUT_VIEWPORT_DELAY_MS } from './constants';
 
 export { getThemeConfig, isDarkTheme } from './mindmap-theme';
@@ -187,19 +188,19 @@ export function createMindMap(
 				// 双链文档图标（契约与防腐说明见上方常量区注释）；
 				// 字段未入 d.cts，经 Object.assign 注入避免类型断言
 				createNodePrefixContent: (node: MindMapNode) => {
-					const nodeData = node.getData() as {
-						mdWikiLinkpath?: unknown;
-						mdLinkText?: unknown;
-					} | null;
+					const nodeData = node.getData() as WikiAliasSource | null;
 					const wikiLink =
 						typeof nodeData?.mdWikiLinkpath === 'string'
 							? nodeData.mdWikiLinkpath
 							: '';
-					if (!wikiLink) {
+					if (!nodeData || !wikiLink) {
 						return null;
 					}
-					const title =
-						typeof nodeData?.mdLinkText === 'string' ? nodeData.mdLinkText : '';
+					// tooltip 与节点可见名走**同一入口**（domain/wiki-display）：
+					// 未编辑＝原显示名，编辑改别名后＝新别名。图标 <title> 只在
+					// 节点前缀创建时写一次，若这里改读 mdLinkText（解析时快照），
+					// 编辑后的 tooltip 会停留在旧别名直到重载。
+					const title = docWikiLinkDisplay(nodeData) ?? '';
 					return {
 						el: buildWikiDocIcon(
 							el.ownerDocument,

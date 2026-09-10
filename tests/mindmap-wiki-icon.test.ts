@@ -195,4 +195,45 @@ describe('双链文档图标：由画布 document 构造（popout 兼容）', ()
 		expect(canvasLog).toEqual([]);
 		expect(globalLog).toEqual([]);
 	});
+
+	it('tooltip 走「生效显示名」：编辑纯双链节点改别名后不停留在旧别名', () => {
+		const prefix = buildPrefix(makeDocStub(CANVAS_LABEL, canvasLog));
+		const titleOf = (data: Record<string, unknown>): unknown =>
+			((prefix(fakeNode(data))?.el as FakeSvgEl).children[2] as FakeSvgEl)
+				.textContent;
+
+		// 纯双链节点被编辑：text 已改、mdDerivedText/mdLinkText 仍是解析时的旧显示名
+		expect(
+			titleOf({
+				mdWikiLinkpath: '[[笔记|旧别名]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '旧别名',
+				mdDerivedText: '旧别名',
+				text: '新别名',
+			}),
+		).toBe('新别名');
+
+		// 对照：未编辑 → tooltip ＝原显示名（行为与旧实现一致）
+		expect(
+			titleOf({
+				mdWikiLinkpath: '[[笔记|旧别名]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '旧别名',
+				mdDerivedText: '旧别名',
+				text: '旧别名',
+			}),
+		).toBe('旧别名');
+
+		// 边界：混合文本节点（`说明 [[笔记]]`）不是「纯双链」，编辑不改别名，
+		// tooltip 仍是链接自身的显示名（而非整段节点文本）
+		expect(
+			titleOf({
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '笔记',
+				mdDerivedText: '说明 笔记',
+				text: '说明 笔记改',
+			}),
+		).toBe('笔记');
+	});
 });
