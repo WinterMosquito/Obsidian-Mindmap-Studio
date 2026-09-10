@@ -1,10 +1,15 @@
 /**
- * SavePipeline 回归测试（document-service.ts）。
+ * SavePipeline 回归（src/services/document-service.ts）。
  *
- * 覆盖审查报告点名的 P0 竞态场景：
- * - 写入进行中再触发 → 待写标记 + 排空后补写最新快照（编辑不丢）；
- * - 写盘失败 → 错误经 onSaveError 上报、管线不复位卡死；
- * - 防抖调度 / 取消、autoSave 开关、文件已删除守卫、frontmatter 拼接。
+ * 覆盖保存管线的竞态与守卫（审查报告点名的 P0 场景）：
+ * - 写入进行中再次触发保存 → 标记待写 + 立即快照，排空后补写最新快照
+ *   （视图卸载时引擎可能随即销毁，晚快照就晚了）；
+ * - 排空循环中快照不可得（引擎已销毁）→ 回落到 pendingTree 兜底快照；
+ * - 写盘失败经 onSaveError 上报、不抛出、状态复位（不沿错误链继续排空）；
+ * - 防抖调度 / cancelTimer、autoSave 开关、无文件与文件已删除守卫、frontmatter 拼接。
+ *
+ * 桩：App.vault 只提供管线实际使用的两个方法（getFileByPath 存在性检查、
+ * modify 写盘）；App/TFile 取 tests/mocks/obsidian.ts 的类，保证 instanceof 成立。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, TFile } from 'obsidian';
@@ -12,46 +17,89 @@ import {
 	SavePipeline,
 	type SavePipelineDeps,
 } from '../src/services/document-service';
+import { AUTO_SAVE_DEBOUNCE_MS } from '../src/constants';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
+const FILE_PATH = 'notes/a.mindmap.md';
+
+/** 构造引擎树节点（无 mdRaw → 走合成序列化路径，正文即 "- 文本"） */
 function node(text: string, children: MindMapTreeNode[] = []): MindMapTreeNode {
 	return { data: { text }, children };
 }
 
+/** 手动 deferred：竞态用例要能精确卡住某一次写盘并决定其成败 */
+function deferred(): {
+	promise: Promise<void>;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+} {
+	let resolve!: () => void;
+	let reject!: (error: unknown) => void;
+	const promise = new Promise<void>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+	return { promise, resolve, reject };
+}
+
+async function flushMicrotasks(times = 6): Promise<void> {
+	for (let i = 0; i < times; i++) {
+		await Promise.resolve();
+	}
+}
+
 interface Harness {
 	pipeline: SavePipeline;
+	/** vault.modify 调用记录（入参含目标文件） */
 	modify: ReturnType<typeof vi.fn>;
+	/** 每次 modify 被调用当下记录的正文（按序） */
 	written: string[];
 	onSaveError: ReturnType<typeof vi.fn>;
+	file: TFile;
 	setTree(tree: MindMapTreeNode | null): void;
 	setFile(file: TFile | null): void;
+	/** 文件是否仍在库中（删除守卫用例） */
+	setExists(exists: boolean): void;
+	/** 让接下来 count 次写盘挂起（未决 Promise），由 release/fail 控制 */
+	gate(count: number): void;
+	release(index: number): void;
+	fail(index: number, error: unknown): void;
 }
 
 function makeHarness(
 	overrides: Partial<Pick<SavePipelineDeps, 'isAutoSave' | 'getFrontmatter'>> = {},
 ): Harness {
 	const written: string[] = [];
-	const modify = vi.fn(async (_file: TFile, content: string) => {
-		written.push(content);
-	});
-	const existing = new Set(['a.mindmap.md']);
-	const app = Object.assign(new App(), {
-		vault: {
-			modify,
-			getAbstractFileByPath: (path: string) =>
-				existing.has(path) ? { path } : null,
-			// 模块用官方推荐的类型化 getter（删除守卫）——测试桩同步提供
-			getFileByPath: (path: string) =>
-				existing.has(path) ? { path } : null,
-			getFolderByPath: () => null,
-		},
-	});
+	const gates: ReturnType<typeof deferred>[] = [];
+	let gatedCalls = 0;
+
 	const file = Object.assign(new TFile(), {
-		path: 'a.mindmap.md',
+		path: FILE_PATH,
 		basename: 'a.mindmap',
 	});
 	let currentFile: TFile | null = file;
 	let tree: MindMapTreeNode | null = node('Root', [node('A')]);
+	const existing = new Set([FILE_PATH]);
+
+	const modify = vi.fn((_file: TFile, content: string): Promise<void> => {
+		written.push(content);
+		if (gatedCalls <= 0) {
+			return Promise.resolve();
+		}
+		gatedCalls--;
+		const gate = deferred();
+		gates.push(gate);
+		return gate.promise;
+	});
+
+	const app = Object.assign(new App(), {
+		vault: {
+			modify,
+			// 模块用官方推荐的类型化 getter 做存在性守卫（删除后不重建文件）
+			getFileByPath: (path: string) => (existing.has(path) ? file : null),
+		},
+	});
+
 	const onSaveError = vi.fn();
 	const deps: SavePipelineDeps = {
 		app,
@@ -62,16 +110,34 @@ function makeHarness(
 		onSaveError,
 		...overrides,
 	};
+
 	return {
 		pipeline: new SavePipeline(deps),
 		modify,
 		written,
 		onSaveError,
+		file,
 		setTree: (t) => {
 			tree = t;
 		},
 		setFile: (f) => {
 			currentFile = f;
+		},
+		setExists: (exists) => {
+			if (exists) {
+				existing.add(FILE_PATH);
+			} else {
+				existing.clear();
+			}
+		},
+		gate: (count) => {
+			gatedCalls = count;
+		},
+		release: (index) => {
+			gates[index]?.resolve();
+		},
+		fail: (index, error) => {
+			gates[index]?.reject(error);
 		},
 	};
 }
@@ -84,169 +150,306 @@ describe('SavePipeline.schedule（防抖自动保存）', () => {
 		vi.useRealTimers();
 	});
 
-	it('800ms 防抖后自动保存', async () => {
+	it('防抖窗口（AUTO_SAVE_DEBOUNCE_MS）到期后自动写盘一次', async () => {
 		const h = makeHarness();
 		h.pipeline.schedule();
-		await vi.advanceTimersByTimeAsync(799);
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS - 1);
 		expect(h.modify).not.toHaveBeenCalled();
+
 		await vi.advanceTimersByTimeAsync(1);
 		expect(h.modify).toHaveBeenCalledTimes(1);
+		// 写盘目标是视图当前文件本身，内容是当前树的序列化结果
+		expect(h.modify.mock.calls[0]?.[0]).toBe(h.file);
+		expect(h.written[0]).toBe('- A\n');
 	});
 
-	it('窗口内重复 schedule 重置计时（不叠加保存）', async () => {
+	it('窗口内重复 schedule 重置计时，只落盘一次', async () => {
 		const h = makeHarness();
 		h.pipeline.schedule();
 		await vi.advanceTimersByTimeAsync(600);
-		h.pipeline.schedule();
+		h.pipeline.schedule(); // 重置窗口
 		await vi.advanceTimersByTimeAsync(600);
+		// 距首次已 1200ms，但窗口被重置 → 仍未写盘
 		expect(h.modify).not.toHaveBeenCalled();
-		await vi.advanceTimersByTimeAsync(200);
+
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS - 600);
+		expect(h.modify).toHaveBeenCalledTimes(1);
+		// 已排空：再推进时间不重复写盘
+		await vi.advanceTimersByTimeAsync(5000);
 		expect(h.modify).toHaveBeenCalledTimes(1);
 	});
 
-	it('cancelTimer 取消挂起的保存', async () => {
+	it('cancelTimer 取消挂起的自动保存（文件切换/视图关闭路径）', async () => {
 		const h = makeHarness();
 		h.pipeline.schedule();
 		h.pipeline.cancelTimer();
-		await vi.advanceTimersByTimeAsync(2000);
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 3);
 		expect(h.modify).not.toHaveBeenCalled();
+
+		// 取消后仍可重新调度（取消只丢弃未决任务，不废弃实例）
+		h.pipeline.schedule();
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS);
+		expect(h.modify).toHaveBeenCalledTimes(1);
 	});
 
 	it('autoSave 关闭时 schedule 不生效，显式 save 仍可用', async () => {
 		const h = makeHarness({ isAutoSave: () => false });
 		h.pipeline.schedule();
-		await vi.advanceTimersByTimeAsync(2000);
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 2);
 		expect(h.modify).not.toHaveBeenCalled();
+
 		await h.pipeline.save();
 		expect(h.modify).toHaveBeenCalledTimes(1);
 	});
 
-	it('视图无文件时 schedule 不保存', async () => {
+	it('视图无当前文件时 schedule 不保存', async () => {
 		const h = makeHarness();
 		h.setFile(null);
 		h.pipeline.schedule();
-		await vi.advanceTimersByTimeAsync(2000);
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 2);
 		expect(h.modify).not.toHaveBeenCalled();
 	});
 });
 
-describe('SavePipeline.save（写盘守卫与内容）', () => {
-	it('写入内容：frontmatter 拼回文件头 + 大纲 + 尾随换行', async () => {
+describe('SavePipeline.save（写盘内容与守卫）', () => {
+	it('正文 = frontmatter + 大纲 + 尾随换行；根文本（中心主题=文件名）不入正文', async () => {
 		const h = makeHarness({
 			getFrontmatter: () => '---\ntitle: demo\n---',
 		});
+		h.setTree(node('Root', [node('A', [node('A1')])]));
+
 		await h.pipeline.save();
-		const content = h.written[0];
-		expect(content?.startsWith('---\ntitle: demo\n---\n')).toBe(true);
-		expect(content?.endsWith('\n')).toBe(true);
-		// 渲染层语义：根（中心主题）= 文件名，不入正文；正文只含子级大纲
-		expect(content).toContain('A');
-		expect(content).not.toContain('Root');
+
+		expect(h.written).toEqual(['---\ntitle: demo\n---\n- A\n  - A1\n']);
+		expect(h.written[0]).not.toContain('Root');
 	});
 
-	it('frontmatter 已带尾换行时不重复补换行', async () => {
+	it('frontmatter 自带尾换行时不重复补换行', async () => {
 		const h = makeHarness({
 			getFrontmatter: () => '---\ntitle: demo\n---\n',
 		});
 		await h.pipeline.save();
-		expect(h.written[0]?.startsWith('---\ntitle: demo\n---\n')).toBe(true);
-		expect(h.written[0]?.includes('---\n\n')).toBe(false);
+		expect(h.written[0]).toBe('---\ntitle: demo\n---\n- A\n');
+		expect(h.written[0]).not.toContain('---\n\n');
 	});
 
-	it('文件已被删除时不重新保存（防"删两次"）', async () => {
+	it('无 frontmatter 时只写大纲', async () => {
 		const h = makeHarness();
-		h.setFile(Object.assign(new TFile(), { path: 'gone.mindmap.md' }));
+		await h.pipeline.save();
+		expect(h.written[0]).toBe('- A\n');
+	});
+
+	it('空树（根无子节点）写出的正文仅剩 frontmatter，仍保证尾随换行', async () => {
+		const h = makeHarness({ getFrontmatter: () => '---\nx: 1\n---' });
+		h.setTree(node('Root'));
+		await h.pipeline.save();
+		expect(h.written[0]).toBe('---\nx: 1\n---\n');
+	});
+
+	it('文件已被删除（getFileByPath 为 null）时不重新写盘，避免"删两次"', async () => {
+		const h = makeHarness();
+		h.setExists(false);
 		await h.pipeline.save();
 		expect(h.modify).not.toHaveBeenCalled();
 	});
 
-	it('引擎快照为 null 时跳过写盘', async () => {
+	it('视图无文件时 save 直接返回，不写盘', async () => {
+		const h = makeHarness();
+		h.setFile(null);
+		await expect(h.pipeline.save()).resolves.toBeUndefined();
+		expect(h.modify).not.toHaveBeenCalled();
+	});
+
+	it('引擎快照为 null 时跳过写盘，且管线状态复位（不卡死）', async () => {
 		const h = makeHarness();
 		h.setTree(null);
 		await h.pipeline.save();
 		expect(h.modify).not.toHaveBeenCalled();
+
+		// 快照恢复后仍能保存（saveInProgress 已在 finally 中复位）
+		h.setTree(node('Root', [node('B')]));
+		await h.pipeline.save();
+		expect(h.written).toEqual(['- B\n']);
 	});
 });
 
-describe('SavePipeline 写入中再触发（排空语义）', () => {
-	beforeEach(() => {
-		vi.useFakeTimers();
-	});
-	afterEach(() => {
-		vi.useRealTimers();
-	});
-
-	it('标记待写并快照最新数据，首次写完后补写最新快照', async () => {
+describe('SavePipeline 写入中再次触发（排空语义）', () => {
+	it('写入中再触发不重复入队，补写最新快照后两个调用一起完成', async () => {
 		const h = makeHarness();
-		let resolveFirst!: () => void;
-		const gate = new Promise<void>((resolve) => {
-			resolveFirst = resolve;
-		});
-		h.modify.mockImplementationOnce(() => gate);
-
+		h.gate(2);
 		const first = h.pipeline.save();
-		await vi.advanceTimersByTimeAsync(0); // 冲刷微任务：进入写入挂起
+		await flushMicrotasks();
 		expect(h.modify).toHaveBeenCalledTimes(1);
 
-		// 写入期间编辑树并再次 save → 等待同一排空链（async 包装 promise，
-		// 不比标识，比时序：second 在 first 完成后立即完成）
+		// 写入期间编辑树并再次触发
 		h.setTree(node('Root', [node('A'), node('B')]));
 		const second = h.pipeline.save();
+		await flushMicrotasks();
+		// 第二次调用不得立刻再写盘（尾部执行由排空循环负责）
+		expect(h.modify).toHaveBeenCalledTimes(1);
 
-		resolveFirst();
 		const order: string[] = [];
 		void first.then(() => order.push('first'));
 		void second.then(() => order.push('second'));
-		await vi.advanceTimersByTimeAsync(0);
-		await second;
 
-		expect(order).toEqual(['first', 'second']);
-		// 第一次写 + 排空补写，共 2 次；补写内容含最新节点
+		h.release(0);
+		await flushMicrotasks();
+		// 首写完成后立刻补写最新快照（新增的 B 已在正文里）
 		expect(h.modify).toHaveBeenCalledTimes(2);
-		expect(h.written).toHaveLength(1); // gate 首写不入 written
-		expect(h.written[0]).toContain('B');
+		expect(h.written).toEqual(['- A\n', '- A\n- B\n']);
+
+		h.release(1);
+		await Promise.all([first, second]);
+		// 两个 promise 都在排空结束后才完成（第二次调用不早退）
+		expect(order).toEqual(['first', 'second']);
 	});
 
-	it('写入中引擎已销毁（排空时快照为 null）：待写快照兜底补写，最后编辑不丢', async () => {
+	it('连续两轮排空：写入中再次编辑再触发，逐轮补写当时的最新快照', async () => {
 		const h = makeHarness();
-		let resolveFirst!: () => void;
-		const gate = new Promise<void>((resolve) => {
-			resolveFirst = resolve;
-		});
-		h.modify.mockImplementationOnce(() => gate);
-
+		h.gate(3);
 		const first = h.pipeline.save();
-		await vi.advanceTimersByTimeAsync(0);
+		await flushMicrotasks();
+		expect(h.written).toEqual(['- A\n']);
+
+		// 第一轮写入期间触发 → 待写快照 = B
+		h.setTree(node('Root', [node('B')]));
+		const second = h.pipeline.save();
+		await flushMicrotasks();
+
+		h.release(0);
+		await flushMicrotasks();
+		expect(h.written).toEqual(['- A\n', '- B\n']);
+
+		// 第二轮写入仍在途时再次编辑并触发 → 第三轮写最新快照 C
+		h.setTree(node('Root', [node('C')]));
+		const third = h.pipeline.save();
+		await flushMicrotasks();
+		expect(h.modify).toHaveBeenCalledTimes(2);
+
+		h.release(1);
+		await flushMicrotasks();
+		expect(h.written).toEqual(['- A\n', '- B\n', '- C\n']);
+
+		h.release(2);
+		await Promise.all([first, second, third]);
+		expect(h.modify).toHaveBeenCalledTimes(3);
+	});
+
+	it('排空时引擎已销毁（快照为 null）：回落到 pendingTree 兜底快照，最后编辑不丢', async () => {
+		const h = makeHarness();
+		h.gate(2);
+		const first = h.pipeline.save();
+		await flushMicrotasks();
 		expect(h.modify).toHaveBeenCalledTimes(1);
 
-		// 写入期间产生新编辑（快照「最新」），随后引擎被销毁（getSnapshot 变 null）
-		h.setTree(node('Root', [node('最新')]));
-		void h.pipeline.save(); // 标记待写并立即快照
+		// 写入期间产生新编辑（此刻快照可得 → 立即快照），随后引擎被销毁
+		h.setTree(node('Root', [node('最后编辑')]));
+		void h.pipeline.save();
+		await flushMicrotasks();
 		h.setTree(null);
 
-		resolveFirst();
-		await vi.advanceTimersByTimeAsync(0);
+		h.release(0);
+		await flushMicrotasks();
+
+		expect(h.modify).toHaveBeenCalledTimes(2);
+		expect(h.written[1]).toBe('- 最后编辑\n');
+
+		h.release(1);
+		await first;
+	});
+
+	it('写入完成时无待写标记 → 不产生多余的补写', async () => {
+		const h = makeHarness();
+		h.gate(1);
+		const first = h.pipeline.save();
+		await flushMicrotasks();
+		h.release(0);
 		await first;
 
-		// 排空时快照已不可得，必须回落到 pendingTree（卸载兜底快照）
+		expect(h.modify).toHaveBeenCalledTimes(1);
+		// 排空后 saveInProgress/待写标记均已复位：下一次 save 立即正常入队
+		await h.pipeline.save();
 		expect(h.modify).toHaveBeenCalledTimes(2);
-		expect(h.written).toHaveLength(1);
-		expect(h.written[0]).toContain('最新');
+		expect(h.written).toEqual(['- A\n', '- A\n']);
 	});
 });
 
 describe('SavePipeline 写盘失败（onSaveError）', () => {
-	it('错误上报但不抛出，管线复位后可再次保存', async () => {
+	beforeEach(() => {
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('失败经 onSaveError 上报且不抛出；状态复位后仍可再次保存', async () => {
 		const h = makeHarness();
-		h.modify.mockRejectedValueOnce(new Error('disk full'));
+		const boom = new Error('disk full');
+		h.modify.mockRejectedValueOnce(boom);
 
 		await expect(h.pipeline.save()).resolves.toBeUndefined();
 		expect(h.onSaveError).toHaveBeenCalledTimes(1);
-		expect(h.onSaveError.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+		expect(h.onSaveError).toHaveBeenCalledWith(boom);
+		// 管线自身仍打日志（通知之外留一条可排查的痕迹）
+		expect(console.error).toHaveBeenCalledWith('保存思维导图失败', boom);
 
-		// saveInProgress 已复位：后续保存正常
+		// saveInProgress 已复位 → 重试从头再来
 		await h.pipeline.save();
 		expect(h.modify).toHaveBeenCalledTimes(2);
-		expect(h.written).toHaveLength(1);
+		expect(h.written).toEqual(['- A\n']);
+	});
+
+	it('失败时清空待写状态：不沿错误链补写陈旧快照', async () => {
+		const h = makeHarness();
+		h.gate(1);
+		const first = h.pipeline.save();
+		await flushMicrotasks();
+
+		// 失败写入期间还发生了编辑（已标记待写并快照）→ 失败必须连待写标记一起复位
+		h.setTree(node('Root', [node('新编辑')]));
+		void h.pipeline.save();
+		await flushMicrotasks();
+
+		const boom = new Error('disk full');
+		h.fail(0, boom);
+		await first;
+
+		expect(h.onSaveError).toHaveBeenCalledTimes(1);
+		expect(h.modify).toHaveBeenCalledTimes(1); // 不重试、不补写
+
+		// 引擎随后销毁：若 pendingTree 未清空，这里会写出陈旧快照
+		h.setTree(null);
+		await h.pipeline.save();
+		expect(h.modify).toHaveBeenCalledTimes(1);
+	});
+
+	it('排空循环中途失败：上报一次并终止循环，之后可正常再保存', async () => {
+		const h = makeHarness();
+		h.gate(2);
+		const first = h.pipeline.save();
+		await flushMicrotasks();
+
+		h.setTree(node('Root', [node('B')]));
+		void h.pipeline.save();
+		await flushMicrotasks();
+
+		// 首写成功放行 → 循环补写第二次，第二次失败
+		h.release(0);
+		await flushMicrotasks();
+		expect(h.modify).toHaveBeenCalledTimes(2);
+
+		const boom = new Error('second write failed');
+		h.fail(1, boom);
+		await first;
+
+		expect(h.onSaveError).toHaveBeenCalledTimes(1);
+		expect(h.onSaveError).toHaveBeenCalledWith(boom);
+		expect(h.modify).toHaveBeenCalledTimes(2); // 失败即终止循环，不反复重试
+
+		// 管线未被错误链卡住：新的编辑照常落盘
+		h.setTree(node('Root', [node('恢复')]));
+		await h.pipeline.save();
+		expect(h.modify).toHaveBeenCalledTimes(3);
+		expect(h.written[2]).toBe('- 恢复\n');
 	});
 });

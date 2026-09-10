@@ -1,11 +1,15 @@
 /**
- * view-search 回归测试：搜索栏 DOM 装配、防抖搜索、上下跳转（含回绕）、
- * 计数显示与开关栏行为。
+ * view-search 回归测试：搜索栏装配、防抖搜索、上下跳转（含回绕）、
+ * 零命中计数与「防抖窗口内跳转」的收口。
  *
- * mindmap.ts 的搜索防腐收口函数以 stub 替换（本测试只验证 view-search
- * 自身的编排与 DOM 接线，不验证引擎封装）；obsidian 的 setIcon 换成 spy
- * 以断言按钮图标接线。Node 环境无 DOM，故用本地伪元素记录 addClass /
- * removeClass / setText / focus / 子元素，断言落在真实调用痕迹上。
+ * 覆盖策略：
+ * - 引擎面（mindmap.ts 的 search* 防腐收口函数）用 vi.mock 换成 spy：
+ *   本测试只验证 view-search 自身的编排与 DOM 接线，不验证引擎封装；
+ * - obsidian 的 setIcon 换成 spy，用来断言「图标接到哪个按钮上」；
+ * - Node 环境无 DOM，故用本地伪元素记录 addClass / removeClass / setText /
+ *   attr / focus / 子元素，断言全部落在真实调用痕迹上（而非 mock 行为）；
+ * - 定时语义用 fake timers 精确推进：防抖窗口 180ms（SEARCH_DEBOUNCE_MS）、
+ *   打开后聚焦延迟 50ms（SEARCH_FOCUS_DELAY_MS）都断言到毫秒边界。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
@@ -47,7 +51,7 @@ vi.mock('obsidian', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('obsidian')>();
 	return {
 		...actual,
-		// mock 中 setIcon 本是空实现：换成 spy 以断言按钮图标接线
+		// mock 里的 setIcon 本是空实现：换成 spy 才能断言按钮图标接线
 		setIcon: setIconMock,
 	};
 });
@@ -60,6 +64,11 @@ vi.mock('../src/mindmap', () => ({
 	searchMindMap: searchMocks.searchMindMap,
 	searchNextInMindMap: searchMocks.searchNextInMindMap,
 }));
+
+/** 防抖窗口（与 src/features/view-search.ts 的 SEARCH_DEBOUNCE_MS 一致） */
+const SEARCH_DEBOUNCE_MS = 180;
+/** 打开搜索栏后的聚焦延迟（SEARCH_FOCUS_DELAY_MS） */
+const SEARCH_FOCUS_DELAY_MS = 50;
 
 /** 伪键盘事件（keydown 分流所需最小面） */
 interface FakeKeyEvent {
@@ -81,9 +90,8 @@ interface FakeElInit {
 }
 
 /**
- * 伪 DOM 元素：只实现 view-search 用到的最小面（createEl/createSpan/
- * addClass/removeClass/setText/focus/value/onclick/addEventListener），
- * 并把每次调用记进数组，供断言「真实行为」而非 mock 行为。
+ * 伪 DOM 元素：只实现 view-search 用到的最小面，并把每次调用记进数组，
+ * 供断言「模块真的做了什么」而不是「mock 被调了几次」。
  */
 class FakeEl {
 	readonly tag: string;
@@ -94,7 +102,6 @@ class FakeEl {
 	readonly removedClasses: string[] = [];
 	/** setText 调用序列（末项即当前文本） */
 	readonly texts: string[] = [];
-	readonly domListeners: { type: string; listener: unknown }[] = [];
 	value = '';
 	onclick: (() => void) | null = null;
 	focusCount = 0;
@@ -102,7 +109,7 @@ class FakeEl {
 	constructor(tag: string, init: FakeElInit = {}) {
 		this.tag = tag;
 		this.cls = init.cls ?? '';
-		this.attr = init.attr ?? {};
+		this.attr = { ...(init.attr ?? {}) };
 	}
 
 	/** 当前文本（末次 setText） */
@@ -116,9 +123,9 @@ class FakeEl {
 		return child;
 	}
 
-	createSpan(cls: string): FakeEl {
-		// 模块按 Obsidian 真实签名调用 createSpan('mindmap-search-count')
-		const child = new FakeEl('span', { cls });
+	/** 模块按 Obsidian 真实签名调用 createSpan('mindmap-search-count') */
+	createSpan(cls?: string): FakeEl {
+		const child = new FakeEl('span', cls === undefined ? {} : { cls });
 		this.children.push(child);
 		return child;
 	}
@@ -142,10 +149,6 @@ class FakeEl {
 	focus(): void {
 		this.focusCount += 1;
 	}
-
-	addEventListener(type: string, listener: unknown): void {
-		this.domListeners.push({ type, listener });
-	}
 }
 
 interface Harness {
@@ -161,12 +164,12 @@ interface Harness {
 function nth<T>(items: readonly T[], index: number): T {
 	const value = items[index];
 	if (value === undefined) {
-		throw new Error(`伪 DOM 缺少下标 ${index} 的元素`);
+		throw new Error(`缺少下标 ${index} 的元素`);
 	}
 	return value;
 }
 
-/** 构造视图桩（viewEvents/engineEvents 用同一个记录型伪绑定器） */
+/** 构造视图桩（viewEvents/engineEvents 共用一个记录型伪绑定器） */
 function makeView(
 	options: { withBar?: boolean; withMindMap?: boolean } = {},
 ): Harness {
@@ -244,39 +247,62 @@ function fireKeydown(h: Harness, event: FakeKeyEvent): void {
 	).listener(event);
 }
 
+/** 取引擎搜索回调（第 3 个实参）；缺失即失败 */
+function searchCallback(): () => void {
+	const callback = nth(searchMocks.searchMindMap.mock.calls, 0)[2];
+	if (!callback) {
+		throw new Error('searchMindMap 未收到回调');
+	}
+	return callback;
+}
+
 beforeEach(() => {
 	vi.useFakeTimers();
-	vi.clearAllMocks();
+	// reset 而非 clear：清掉上一个用例遗留的 mockReturnValue(Once) 队列
+	vi.resetAllMocks();
+	// 默认无命中：单项用例按需覆写
 	searchMocks.getSearchMatchCount.mockReturnValue(0);
 	searchMocks.getSearchCurrentIndex.mockReturnValue(0);
 });
 
 afterEach(() => {
+	// 必须还原真实定时器：否则未决的防抖定时器会串到下一个用例
 	vi.useRealTimers();
 });
 
 describe('buildSearchBar（搜索栏装配）', () => {
-	it('searchBarEl 为 null：静默返回（不抛异常、不回填视图、不建图标）', () => {
+	it('searchBarEl 缺失：静默返回（不回填引用、不建图标）', () => {
 		const h = makeView({ withBar: false });
 		expect(() => buildSearchBar(h.view)).not.toThrow();
 		expect(h.view.searchInput).toBeNull();
 		expect(h.view.searchCountEl).toBeNull();
+		expect(h.bar.children).toEqual([]);
 		expect(setIconMock).not.toHaveBeenCalled();
 	});
 
-	it('装配输入框 + 计数 + 三个按钮（占位符/标题/图标/初始 hidden 类）', () => {
+	it('装配输入框与计数元素：类名 / 占位符 / 构建即隐藏', () => {
 		const h = makeView();
-		const { input, count, buttons } = buildBar(h);
+		const { input, count } = buildBar(h);
 
-		// 构建即隐藏
 		expect(h.bar.addedClasses).toEqual(['mindmap-search-bar-hidden']);
+		expect(input.tag).toBe('input');
 		expect(input.cls).toBe('mindmap-search-input');
 		expect(input.attr).toEqual({
 			type: 'text',
 			placeholder: '搜索节点…',
 			spellcheck: 'false',
 		});
+		expect(count.tag).toBe('span');
 		expect(count.cls).toBe('mindmap-search-count');
+		// 引用回填（搜索逻辑依赖这两个字段）
+		expect(h.view.searchInput).toBe(input as unknown as HTMLInputElement);
+		expect(h.view.searchCountEl).toBe(count as unknown as HTMLElement);
+	});
+
+	it('三个按钮：同一类名、tooltip 按 上一个/下一个/关闭 顺序、图标接各自按钮', () => {
+		const h = makeView();
+		const { buttons } = buildBar(h);
+
 		expect(buttons).toHaveLength(3);
 		expect(buttons.map((button) => button.cls)).toEqual([
 			'mindmap-search-btn',
@@ -288,7 +314,6 @@ describe('buildSearchBar（搜索栏装配）', () => {
 			'下一个 (Enter)',
 			'关闭 (Escape)',
 		]);
-		// 图标按按钮顺序接线
 		expect(setIconMock.mock.calls.map((call) => call[1])).toEqual([
 			'chevron-up',
 			'chevron-down',
@@ -299,9 +324,6 @@ describe('buildSearchBar（搜索栏装配）', () => {
 			nth(buttons, 1),
 			nth(buttons, 2),
 		]);
-		// 引用回填（搜索逻辑依赖这两个字段）
-		expect(h.view.searchInput).toBe(input as unknown as HTMLInputElement);
-		expect(h.view.searchCountEl).toBe(count as unknown as HTMLElement);
 	});
 
 	it('经 viewEvents.onDom 在输入框上注册 input 与 keydown 监听', () => {
@@ -321,48 +343,57 @@ describe('buildSearchBar（搜索栏装配）', () => {
 		).toBe(true);
 	});
 
-	it('三个按钮 onclick 分别触发 上一个 / 下一个 / 关闭', () => {
+	it('上一个 / 下一个按钮接线：跳转到 currentIndex-1 与委托引擎 searchNext', () => {
 		const h = makeView();
-		const { input, buttons } = buildBar(h);
+		const { buttons } = buildBar(h);
 		searchMocks.getSearchMatchCount.mockReturnValue(3);
 		searchMocks.getSearchCurrentIndex.mockReturnValue(2);
 
-		// 上一个：currentIndex 2 → 1
-		clickButton(nth(buttons, 0));
+		clickButton(nth(buttons, 0)); // 上一个：索引 2 → 1
 		expect(searchMocks.jumpToSearchIndex).toHaveBeenCalledWith(
 			h.mindMap,
 			1,
 			expect.any(Function),
 		);
 
-		// 下一个：委托引擎 searchNext
-		clickButton(nth(buttons, 1));
+		clickButton(nth(buttons, 1)); // 下一个：交给引擎自增
 		expect(searchMocks.searchNextInMindMap).toHaveBeenCalledWith(
 			h.mindMap,
 			expect.any(Function),
 		);
+	});
 
-		// 关闭：隐藏 + 清空输入 + 结束引擎搜索 + 聚焦画布
+	it('关闭按钮：隐藏搜索栏、清空输入与计数、结束引擎搜索、聚焦画布', () => {
+		const h = makeView();
+		const { input, count, buttons } = buildBar(h);
 		input.value = '关键字';
+		count.setText('1/2');
+
 		clickButton(nth(buttons, 2));
-		expect(searchMocks.endMindMapSearch).toHaveBeenCalledWith(h.mindMap);
-		expect(input.value).toBe('');
+
 		expect(h.bar.addedClasses).toEqual([
-			'mindmap-search-bar-hidden',
-			'mindmap-search-bar-hidden',
+			'mindmap-search-bar-hidden', // 构建时
+			'mindmap-search-bar-hidden', // 关闭时
 		]);
+		expect(input.value).toBe('');
+		expect(count.texts).toEqual(['1/2', '']);
+		expect(searchMocks.endMindMapSearch).toHaveBeenCalledWith(h.mindMap);
 		expect(h.canvas.focusCount).toBe(1);
 	});
 
-	it('keydown 的 Enter / Shift+Enter / Escape 分流', () => {
+	it('keydown 分流：Enter 阻止默认并跳下一个；Shift+Enter 跳上一个；Escape 关闭', () => {
 		const h = makeView();
 		const { input } = buildBar(h);
 		searchMocks.getSearchMatchCount.mockReturnValue(2);
 		searchMocks.getSearchCurrentIndex.mockReturnValue(1);
 
-		// Enter：阻止默认行为并跳下一个
+		// Enter：阻止默认行为（避免在输入框内换行/提交）并跳下一个
 		const enterDefault = vi.fn();
-		fireKeydown(h, { key: 'Enter', shiftKey: false, preventDefault: enterDefault });
+		fireKeydown(h, {
+			key: 'Enter',
+			shiftKey: false,
+			preventDefault: enterDefault,
+		});
 		expect(enterDefault).toHaveBeenCalledTimes(1);
 		expect(searchMocks.searchNextInMindMap).toHaveBeenCalledWith(
 			h.mindMap,
@@ -372,7 +403,11 @@ describe('buildSearchBar（搜索栏装配）', () => {
 
 		// Shift+Enter：跳上一个（currentIndex 1 → 0）
 		const shiftDefault = vi.fn();
-		fireKeydown(h, { key: 'Enter', shiftKey: true, preventDefault: shiftDefault });
+		fireKeydown(h, {
+			key: 'Enter',
+			shiftKey: true,
+			preventDefault: shiftDefault,
+		});
 		expect(shiftDefault).toHaveBeenCalledTimes(1);
 		expect(searchMocks.jumpToSearchIndex).toHaveBeenCalledWith(
 			h.mindMap,
@@ -380,30 +415,35 @@ describe('buildSearchBar（搜索栏装配）', () => {
 			expect.any(Function),
 		);
 
-		// Escape：关闭（不阻止默认行为）
+		// Escape：关闭（不阻止默认行为，交给 Obsidian 处理）
 		input.value = '残留';
 		const escapeDefault = vi.fn();
-		fireKeydown(h, { key: 'Escape', shiftKey: false, preventDefault: escapeDefault });
+		fireKeydown(h, {
+			key: 'Escape',
+			shiftKey: false,
+			preventDefault: escapeDefault,
+		});
 		expect(escapeDefault).not.toHaveBeenCalled();
 		expect(searchMocks.endMindMapSearch).toHaveBeenCalledWith(h.mindMap);
 		expect(input.value).toBe('');
 	});
 });
 
-describe('doSearch（防抖搜索）', () => {
-	it('连续调用只触发一次引擎搜索，关键词已 trim，完成后回调刷新计数', () => {
+describe('doSearch（180ms 防抖）', () => {
+	it('窗口内连打三次只搜一次：179ms 不触发、180ms 恰好触发一次（关键词已 trim）', () => {
 		const h = makeView();
-		const { input, count } = buildBar(h);
+		const { input } = buildBar(h);
 		input.value = '  目标  ';
 
 		doSearch(h.view);
 		doSearch(h.view);
 		doSearch(h.view);
+		// 防抖：每次输入都重置定时器，窗口内绝不触发
 		expect(searchMocks.searchMindMap).not.toHaveBeenCalled();
 
-		// 防抖窗口 180ms：未到期不搜
-		vi.advanceTimersByTime(179);
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS - 1);
 		expect(searchMocks.searchMindMap).not.toHaveBeenCalled();
+
 		vi.advanceTimersByTime(1);
 		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
 		expect(searchMocks.searchMindMap).toHaveBeenCalledWith(
@@ -412,77 +452,183 @@ describe('doSearch（防抖搜索）', () => {
 			expect.any(Function),
 		);
 
-		// 引擎搜索完成 → 计数刷新
+		// 已落地：继续推进不会有第二次（防抖器不自续）
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 3);
+		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
+	});
+
+	it('窗口内再次输入会重新计时（从最后一次输入算起）', () => {
+		const h = makeView();
+		const { input } = buildBar(h);
+		input.value = '关键字';
+
+		doSearch(h.view);
+		vi.advanceTimersByTime(100); // t=100，距首次输入 100ms
+		doSearch(h.view); // 重新计时 → 新窗口到 t=280
+
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS - 1); // t=279
+		expect(searchMocks.searchMindMap).not.toHaveBeenCalled();
+
+		vi.advanceTimersByTime(1); // t=280
+		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
+	});
+
+	it('引擎搜索完成后经回调刷新计数', () => {
+		const h = makeView();
+		const { input, count } = buildBar(h);
+		input.value = '目标';
+
+		doSearch(h.view);
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
+
+		// 引擎此刻已定位到第 2 个命中（currentIndex 1）共 5 个
 		searchMocks.getSearchMatchCount.mockReturnValue(5);
 		searchMocks.getSearchCurrentIndex.mockReturnValue(1);
-		const done = nth(searchMocks.searchMindMap.mock.calls, 0)[2];
-		expect(done).toBeTypeOf('function');
-		done?.();
+		searchCallback()();
+
 		expect(count.text).toBe('2/5');
 	});
 
-	it('空白关键词（防抖到期后）结束引擎搜索并清空计数', () => {
+	it('空白关键词：防抖落地后结束引擎搜索并清空计数（不调用引擎搜索）', () => {
 		const h = makeView();
 		const { input, count } = buildBar(h);
 		count.setText('1/2');
 		input.value = '   \t ';
 
 		doSearch(h.view);
-		vi.advanceTimersByTime(180);
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
 
 		expect(searchMocks.searchMindMap).not.toHaveBeenCalled();
 		expect(searchMocks.endMindMapSearch).toHaveBeenCalledWith(h.mindMap);
 		expect(count.texts).toEqual(['1/2', '']);
 	});
+
+	it('无引擎或无输入框时静默返回（不排防抖）', () => {
+		const bare = makeView({ withMindMap: false });
+		expect(() => doSearch(bare.view)).not.toThrow();
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2);
+		expect(searchMocks.searchMindMap).not.toHaveBeenCalled();
+	});
 });
 
-describe('searchPrev（回绕跳转）', () => {
-	it('无引擎直接返回；无匹配不跳转；首项回绕末项、末项回退一项', () => {
+describe('零命中计数（引擎不回调也要可见）', () => {
+	it('零命中：搜索落地即显示「没有匹配的节点」并加 no-result 类', () => {
 		const h = makeView();
-		const { count } = buildBar(h);
-
-		// mindMap 为 null：不查匹配数、不跳转
-		const bare = makeView({ withMindMap: false });
-		searchPrev(bare.view);
-		expect(searchMocks.getSearchMatchCount).not.toHaveBeenCalled();
-		expect(searchMocks.jumpToSearchIndex).not.toHaveBeenCalled();
-
-		// 0 匹配：不跳转
+		const { input, count } = buildBar(h);
 		searchMocks.getSearchMatchCount.mockReturnValue(0);
-		searchPrev(h.view);
-		expect(searchMocks.jumpToSearchIndex).not.toHaveBeenCalled();
-
-		// currentIndex 0 → 回绕到末项（matches - 1 = 2）
-		searchMocks.getSearchMatchCount.mockReturnValue(3);
 		searchMocks.getSearchCurrentIndex.mockReturnValue(0);
-		searchPrev(h.view);
-		expect(searchMocks.jumpToSearchIndex).toHaveBeenLastCalledWith(
+		input.value = '不存在的关键词';
+
+		doSearch(h.view);
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+
+		expect(searchMocks.searchMindMap).toHaveBeenCalledWith(
 			h.mindMap,
-			2,
+			'不存在的关键词',
 			expect.any(Function),
 		);
+		// 关键：引擎在空命中列表上不会回调（Search.searchNext 提前 return），
+		// 计数必须由 runSearch 无条件刷新一次才可见——此处回调从未被调用
+		expect(count.text).toBe('没有匹配的节点');
+		expect(count.addedClasses).toEqual(['mindmap-search-no-result']);
+	});
 
-		// currentIndex 2 → 1
+	it('从有命中切到零命中：计数不残留上一次结果', () => {
+		const h = makeView();
+		const { input, count } = buildBar(h);
+		searchMocks.getSearchMatchCount.mockReturnValue(3);
+		searchMocks.getSearchCurrentIndex.mockReturnValue(0);
+		input.value = '命中';
+		doSearch(h.view);
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+		expect(count.text).toBe('1/3');
+
+		searchMocks.getSearchMatchCount.mockReturnValue(0);
+		input.value = '换一个关键词';
+		doSearch(h.view);
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+
+		expect(count.text).toBe('没有匹配的节点');
+		expect(count.texts).toEqual(['1/3', '没有匹配的节点']);
+	});
+
+	it('有命中：显示 当前/总数 并移除 no-result 类', () => {
+		const h = makeView();
+		const { count } = buildBar(h);
+		searchMocks.getSearchMatchCount.mockReturnValue(5);
 		searchMocks.getSearchCurrentIndex.mockReturnValue(2);
+
+		updateSearchCount(h.view);
+
+		expect(count.texts).toEqual(['3/5']);
+		expect(count.removedClasses).toEqual(['mindmap-search-no-result']);
+		expect(count.addedClasses).toEqual([]);
+	});
+
+	it('计数元素未装配：静默返回（不查引擎）', () => {
+		const bare = makeView();
+		expect(() => updateSearchCount(bare.view)).not.toThrow();
+		expect(searchMocks.getSearchMatchCount).not.toHaveBeenCalled();
+		expect(searchMocks.getSearchCurrentIndex).not.toHaveBeenCalled();
+	});
+});
+
+describe('searchPrev / searchNext（回绕与委托）', () => {
+	it('searchPrev：首项回绕到末项（索引 0 → matches-1）', () => {
+		const h = makeView();
+		buildBar(h);
+		searchMocks.getSearchMatchCount.mockReturnValue(3);
+		searchMocks.getSearchCurrentIndex.mockReturnValue(0);
+
 		searchPrev(h.view);
-		expect(searchMocks.jumpToSearchIndex).toHaveBeenLastCalledWith(
+
+		expect(searchMocks.jumpToSearchIndex).toHaveBeenCalledTimes(1);
+		expect(searchMocks.jumpToSearchIndex).toHaveBeenCalledWith(
+			h.mindMap,
+			2, // 末项
+			expect.any(Function),
+		);
+	});
+
+	it('searchPrev：中间项回退一项（2 → 1），跳转回调刷新计数 2/3', () => {
+		const h = makeView();
+		const { count } = buildBar(h);
+		searchMocks.getSearchMatchCount.mockReturnValue(3);
+		searchMocks.getSearchCurrentIndex.mockReturnValue(2);
+
+		searchPrev(h.view);
+		expect(searchMocks.jumpToSearchIndex).toHaveBeenCalledWith(
 			h.mindMap,
 			1,
 			expect.any(Function),
 		);
-		expect(searchMocks.jumpToSearchIndex).toHaveBeenCalledTimes(2);
 
-		// 跳转完成回调 → 计数刷新
+		// 跳转完成：引擎把 currentIndex 挪到 1
 		searchMocks.getSearchCurrentIndex.mockReturnValue(1);
-		const done = nth(searchMocks.jumpToSearchIndex.mock.calls, 1)[2];
+		const done = nth(searchMocks.jumpToSearchIndex.mock.calls, 0)[2];
 		expect(done).toBeTypeOf('function');
 		done?.();
 		expect(count.text).toBe('2/3');
 	});
-});
 
-describe('searchNext（委托引擎）', () => {
-	it('委托 searchNextInMindMap 并透传计数回调', () => {
+	it('searchPrev：0 命中不跳转；无引擎时直接返回（连匹配数都不查）', () => {
+		const h = makeView();
+		buildBar(h);
+
+		searchMocks.getSearchMatchCount.mockReturnValue(0);
+		searchPrev(h.view);
+		expect(searchMocks.jumpToSearchIndex).not.toHaveBeenCalled();
+
+		// 换一个无引擎视图：早退发生在查匹配数之前
+		searchMocks.getSearchMatchCount.mockClear();
+		const bare = makeView({ withMindMap: false });
+		searchPrev(bare.view);
+		expect(searchMocks.getSearchMatchCount).not.toHaveBeenCalled();
+		expect(searchMocks.jumpToSearchIndex).not.toHaveBeenCalled();
+	});
+
+	it('searchNext：委托引擎并透传计数回调', () => {
 		const h = makeView();
 		const { count } = buildBar(h);
 		searchMocks.getSearchMatchCount.mockReturnValue(4);
@@ -501,188 +647,35 @@ describe('searchNext（委托引擎）', () => {
 	});
 });
 
-describe('updateSearchCount（计数显示）', () => {
-	it('0 匹配：显示「无匹配」并加 mindmap-search-no-result 类', () => {
-		const h = makeView();
-		const { count } = buildBar(h);
-		searchMocks.getSearchMatchCount.mockReturnValue(0);
-		searchMocks.getSearchCurrentIndex.mockReturnValue(0);
-
-		updateSearchCount(h.view);
-		expect(count.texts).toEqual(['没有匹配的节点']);
-		expect(count.addedClasses).toEqual(['mindmap-search-no-result']);
-		expect(count.removedClasses).toEqual([]);
-	});
-
-	it('有匹配：显示 当前/总数 并移除 mindmap-search-no-result 类', () => {
-		const h = makeView();
-		const { count } = buildBar(h);
-		searchMocks.getSearchMatchCount.mockReturnValue(5);
-		searchMocks.getSearchCurrentIndex.mockReturnValue(2);
-
-		updateSearchCount(h.view);
-		expect(count.texts).toEqual(['3/5']);
-		expect(count.removedClasses).toEqual(['mindmap-search-no-result']);
-		expect(count.addedClasses).toEqual([]);
-	});
-
-	it('无计数元素（未装配搜索栏）：静默返回', () => {
-		const bare = makeView();
-		expect(() => updateSearchCount(bare.view)).not.toThrow();
-		expect(searchMocks.getSearchMatchCount).not.toHaveBeenCalled();
-	});
-});
-
-describe('closeSearchBar（关闭搜索栏）', () => {
-	it('取消未决防抖、清空输入与计数、隐藏、结束搜索、聚焦画布', () => {
-		const h = makeView();
-		const { input, count } = buildBar(h);
-		input.value = '关键字';
-		count.setText('1/2');
-
-		doSearch(h.view);
-		closeSearchBar(h.view);
-		// 防抖已取消：到期不再触发引擎搜索
-		vi.advanceTimersByTime(1000);
-
-		expect(searchMocks.searchMindMap).not.toHaveBeenCalled();
-		expect(h.bar.addedClasses).toEqual([
-			'mindmap-search-bar-hidden',
-			'mindmap-search-bar-hidden',
-		]);
-		expect(input.value).toBe('');
-		expect(count.texts).toEqual(['1/2', '']);
-		expect(searchMocks.endMindMapSearch).toHaveBeenCalledWith(h.mindMap);
-		expect(h.canvas.focusCount).toBe(1);
-	});
-
-	it('searchBarEl 为 null：静默返回（不结束引擎搜索）', () => {
-		searchMocks.endMindMapSearch.mockClear();
-		expect(() => closeSearchBar(makeView({ withBar: false }).view)).not.toThrow();
-		expect(searchMocks.endMindMapSearch).not.toHaveBeenCalled();
-	});
-});
-
-describe('refreshSearchBarLabels（语言变更就地刷新）', () => {
-	it('更新占位符与三个按钮 tooltip，且不重建 DOM', () => {
-		const h = makeView();
-		const { input, buttons } = buildBar(h);
-		const childCount = h.bar.children.length;
-
-		(h.view as unknown as { lang: Language }).lang = 'en';
-		refreshSearchBarLabels(h.view);
-
-		expect(input.attr['placeholder']).toBe(
-			t('en', 'toolbar.searchPlaceholder'),
-		);
-		expect(buttons.map((button) => button.attr['title'])).toEqual([
-			t('en', 'search.prev'),
-			t('en', 'search.next'),
-			t('en', 'search.close'),
-		]);
-		// 就地更新：不新增子元素（避免重复注册监听）
-		expect(h.bar.children.length).toBe(childCount);
-	});
-
-	it('未构建搜索栏时静默返回', () => {
-		const bare = makeView();
-		expect(() => refreshSearchBarLabels(bare.view)).not.toThrow();
-	});
-});
-
-describe('openSearchBar（打开搜索栏）', () => {
-	it('无搜索栏/无引擎时静默；否则摘掉 hidden 类并延迟 50ms 聚焦输入框', () => {
-		// 无搜索栏：不抛异常
-		expect(() => openSearchBar(makeView({ withBar: false }).view)).not.toThrow();
-
-		// 无引擎：不摘 hidden 类、不聚焦
-		const noEngine = makeView({ withMindMap: false });
-		openSearchBar(noEngine.view);
-		expect(noEngine.bar.removedClasses).toEqual([]);
-		vi.advanceTimersByTime(1000);
-		expect(noEngine.bar.removedClasses).toEqual([]);
-
-		// 正常路径：立即摘 hidden，50ms 后聚焦
-		const h = makeView();
-		const { input } = buildBar(h);
-		openSearchBar(h.view);
-		expect(h.bar.removedClasses).toEqual(['mindmap-search-bar-hidden']);
-		expect(input.focusCount).toBe(0);
-
-		vi.advanceTimersByTime(49);
-		expect(input.focusCount).toBe(0);
-		vi.advanceTimersByTime(1);
-		expect(input.focusCount).toBe(1);
-	});
-});
-
-describe('零命中计数可见性（不依赖引擎回调）', () => {
-	it('引擎命中为 0：搜索落地后立即显示「无匹配」（引擎此时不会回调）', () => {
-		const h = makeView();
-		const { input, count } = buildBar(h);
-		searchMocks.getSearchMatchCount.mockReturnValue(0);
-		searchMocks.getSearchCurrentIndex.mockReturnValue(0);
-		input.value = '不存在的关键词';
-
-		doSearch(h.view);
-		vi.advanceTimersByTime(180);
-
-		expect(searchMocks.searchMindMap).toHaveBeenCalledWith(
-			h.mindMap,
-			'不存在的关键词',
-			expect.any(Function),
-		);
-		// 关键：**没有**调用引擎回调（Search.searchNext 在空列表上提前 return）
-		expect(count.text).toBe('没有匹配的节点');
-		expect(count.addedClasses).toEqual(['mindmap-search-no-result']);
-	});
-
-	it('从有命中切到零命中：计数不残留上一次结果', () => {
-		const h = makeView();
-		const { input, count } = buildBar(h);
-		searchMocks.getSearchMatchCount.mockReturnValue(3);
-		searchMocks.getSearchCurrentIndex.mockReturnValue(0);
-		input.value = '命中';
-		doSearch(h.view);
-		vi.advanceTimersByTime(180);
-		expect(count.text).toBe('1/3');
-
-		searchMocks.getSearchMatchCount.mockReturnValue(0);
-		input.value = '换一个关键词';
-		doSearch(h.view);
-		vi.advanceTimersByTime(180);
-		expect(count.text).toBe('没有匹配的节点');
-		expect(count.addedClasses).toEqual(['mindmap-search-no-result']);
-	});
-});
-
 describe('防抖窗口内的跳转（先落地搜索）', () => {
-	it('Enter 在防抖未到期时：先执行搜索、不额外跳转（避免作用于陈旧结果集）', () => {
+	it('Enter 在防抖未到期时：先执行搜索、不额外跳转，且原定时器不再重复触发', () => {
 		const h = makeView();
 		const { input } = buildBar(h);
 		input.value = '关键字';
 		doSearch(h.view);
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS - 1); // 仍差 1ms 到期
 
-		// 180ms 未到就按 Enter
 		fireKeydown(h, {
 			key: 'Enter',
 			shiftKey: false,
 			preventDefault: vi.fn(),
 		});
+
 		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
 		expect(searchMocks.searchMindMap).toHaveBeenCalledWith(
 			h.mindMap,
 			'关键字',
 			expect.any(Function),
 		);
-		// 引擎搜索本身已定位首个命中 → 不再跳一次（否则会越过它）
+		// 引擎搜索本身已定位首个命中 → 再跳一次会越过它
 		expect(searchMocks.searchNextInMindMap).not.toHaveBeenCalled();
-		// 未决防抖已被取消：到期不会重复搜索
-		vi.advanceTimersByTime(1000);
+
+		// 未决防抖已被 cancel：到期不会重复搜索同一关键词
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2);
 		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
 	});
 
-	it('Shift+Enter（上一个）在防抖未到期时：同样先落地搜索、不跳转', () => {
+	it('Shift+Enter 在防抖未到期时：同样只落地搜索、不跳转', () => {
 		const h = makeView();
 		const { input } = buildBar(h);
 		searchMocks.getSearchMatchCount.mockReturnValue(3);
@@ -695,16 +688,31 @@ describe('防抖窗口内的跳转（先落地搜索）', () => {
 			shiftKey: true,
 			preventDefault: vi.fn(),
 		});
+
 		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
 		expect(searchMocks.jumpToSearchIndex).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 2);
+		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
 	});
 
-	it('搜索已落地后再按 Enter：正常跳下一个（不再重复搜索）', () => {
+	it('「下一个」按钮在防抖未到期时：同样先落地搜索、不额外跳转', () => {
+		const h = makeView();
+		const { input, buttons } = buildBar(h);
+		input.value = '关键字';
+		doSearch(h.view);
+
+		clickButton(nth(buttons, 1));
+
+		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
+		expect(searchMocks.searchNextInMindMap).not.toHaveBeenCalled();
+	});
+
+	it('搜索已落地后再按 Enter：正常跳下一个，不重复搜索', () => {
 		const h = makeView();
 		const { input } = buildBar(h);
 		input.value = '关键字';
 		doSearch(h.view);
-		vi.advanceTimersByTime(180);
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
 		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
 
 		fireKeydown(h, {
@@ -712,10 +720,94 @@ describe('防抖窗口内的跳转（先落地搜索）', () => {
 			shiftKey: false,
 			preventDefault: vi.fn(),
 		});
+
 		expect(searchMocks.searchMindMap).toHaveBeenCalledTimes(1);
 		expect(searchMocks.searchNextInMindMap).toHaveBeenCalledWith(
 			h.mindMap,
 			expect.any(Function),
 		);
+	});
+});
+
+describe('closeSearchBar（关闭搜索栏）', () => {
+	it('取消未决防抖：关闭后到期不再触发引擎搜索', () => {
+		const h = makeView();
+		const { input, count } = buildBar(h);
+		input.value = '关键字';
+		count.setText('1/2');
+
+		doSearch(h.view); // 排下防抖
+		closeSearchBar(h.view);
+		vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS * 5);
+
+		expect(searchMocks.searchMindMap).not.toHaveBeenCalled();
+		expect(h.bar.addedClasses).toEqual([
+			'mindmap-search-bar-hidden',
+			'mindmap-search-bar-hidden',
+		]);
+		expect(input.value).toBe('');
+		expect(count.texts).toEqual(['1/2', '']);
+		expect(searchMocks.endMindMapSearch).toHaveBeenCalledWith(h.mindMap);
+		expect(h.canvas.focusCount).toBe(1);
+	});
+
+	it('searchBarEl 缺失：静默返回（不结束引擎搜索）', () => {
+		const bare = makeView({ withBar: false });
+		expect(() => closeSearchBar(bare.view)).not.toThrow();
+		expect(searchMocks.endMindMapSearch).not.toHaveBeenCalled();
+		expect(bare.canvas.focusCount).toBe(0);
+	});
+});
+
+describe('openSearchBar（打开搜索栏）', () => {
+	it('无搜索栏或无引擎：静默返回（不摘 hidden 类、不聚焦）', () => {
+		const noBar = makeView({ withBar: false });
+		expect(() => openSearchBar(noBar.view)).not.toThrow();
+
+		const noEngine = makeView({ withMindMap: false });
+		openSearchBar(noEngine.view);
+		vi.advanceTimersByTime(SEARCH_FOCUS_DELAY_MS * 4);
+		expect(noEngine.bar.removedClasses).toEqual([]);
+	});
+
+	it('正常路径：立即摘掉 hidden 类，49ms 不聚焦、50ms 聚焦输入框', () => {
+		const h = makeView();
+		const { input } = buildBar(h);
+
+		openSearchBar(h.view);
+		expect(h.bar.removedClasses).toEqual(['mindmap-search-bar-hidden']);
+		// 延迟聚焦：等隐藏 class 移除与布局生效后再 focus
+		expect(input.focusCount).toBe(0);
+
+		vi.advanceTimersByTime(SEARCH_FOCUS_DELAY_MS - 1);
+		expect(input.focusCount).toBe(0);
+
+		vi.advanceTimersByTime(1);
+		expect(input.focusCount).toBe(1);
+	});
+});
+
+describe('refreshSearchBarLabels（语言变更就地刷新）', () => {
+	it('更新占位符与三个按钮 tooltip，且不重建 DOM', () => {
+		const h = makeView();
+		const { input, buttons } = buildBar(h);
+		const childCount = h.bar.children.length;
+
+		(h.view as unknown as { lang: Language }).lang = 'en';
+		refreshSearchBarLabels(h.view);
+
+		expect(input.attr['placeholder']).toBe(t('en', 'toolbar.searchPlaceholder'));
+		expect(buttons.map((button) => button.attr['title'])).toEqual([
+			t('en', 'search.prev'),
+			t('en', 'search.next'),
+			t('en', 'search.close'),
+		]);
+		// 就地更新：子元素数量不变（避免重复注册监听）
+		expect(h.bar.children.length).toBe(childCount);
+	});
+
+	it('未构建搜索栏时静默返回（不抛异常）', () => {
+		const bare = makeView();
+		expect(() => refreshSearchBarLabels(bare.view)).not.toThrow();
 	});
 });
