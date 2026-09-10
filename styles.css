@@ -112,9 +112,11 @@
    历史：曾据此写过 `> div:not(.mindmap-img-resize-handle)` 满宽规则，并认为它是
    「节点等宽 500px」的成因——已证伪（无头实测：加上该规则节点测宽不变）。引擎的
    测宽元素是 position:fixed 的 shrink-to-fit 临时 div、文本编辑框也挂在 body
-   （customInnerElsAppendTo 默认 body），都不受容器子 div 宽度影响；真正的成因见
-   docs/visual-improvement-plan.md §2（URL 文本顶满换行上限 + 会话旧构建）。
-   容器内本插件唯一的子 div 是 .mindmap-img-resize-handle（绝对定位、自带尺寸）。 */
+   （customInnerElsAppendTo 默认 body），都不受容器子 div 宽度影响；
+   容器内本插件唯一的子 div 是 .mindmap-img-resize-handle（绝对定位、自带尺寸）。
+   真正的成因是「URL 文本顶满换行上限 + 会话旧构建」（依据：已移除的
+   docs/visual-improvement-plan.md §2，需要时用
+   `git log --diff-filter=D -- docs/visual-improvement-plan.md` 从历史取回）。 */
 
 /* ========== simple-mind-map 样式覆盖 ========== */
 

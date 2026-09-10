@@ -66,7 +66,8 @@ src/
   features/
     view.ts         # Controller：Obsidian 生命周期编排、service 装配、链接跳转、标题重命名
     view-context.ts # MindMapViewContext：view-* 对视图的访问契约（结构化窄接口）
-    view-*.ts       # 工具栏/拖拽/右键/搜索/导出/状态栏/图片灯箱/wikilink 交互/粘贴/节点操作/
+    view-*.ts       # 工具栏/拖拽/右键/搜索/导出/状态栏/图片灯箱/图片动作与全屏/wikilink 交互与
+                    #   链接跳转（view-link-navigator）/粘贴/节点操作/标题重命名（view-title-renamer）/
                     #   快捷键处理器（view-hotkeys：F2 编辑当前节点）
     image-resize.ts # 节点图片拖拽调宽：hover 手柄 + 等比缩放（SET_NODE_DATA imageSize
                     #   custom:true + render），持久化走 Obsidian 官方嵌入尺寸语法——
@@ -78,6 +79,7 @@ src/
                     #   经 setDragOverlapTarget 外借给引擎，引擎精确命中时让位；
                     #   松手走引擎原生 MOVE_NODE_TO
     file-creator.ts # 文件浏览器「新建」菜单注入（私有 API 防御式访问）
+  commands.ts       # 命令注册与命令面板入口（COMMAND_IDS 为命令 ID 唯一表，发布后永不变更）
   concurrency.ts    # 并发原语唯一实现：串行队列/防抖/节流（SavePipeline/ViewStateStore/
                     #   状态栏计数等共用；节流支持 trailingResetsWindow 选项）
   persistence.ts    # data.json 写盘器（PluginDataWriter：串行队列 + 写前重读合并 + 吞错）
@@ -135,6 +137,8 @@ tests/
   links-resolve.test.ts # 统一解析入口（按形态路由与兜底）
   links-tree.test.ts   # 树内引用更新（重命名/清除两模式）
   find-node-by-dom.test.ts # 引擎节点 DOM → 节点实例（右键命中）
+  node-text-edit.test.ts # 右键「编辑文本」入口（延后一宏任务 emit node_dblclick、isInserting=false）
+  viewport.test.ts     # 视口几何（resetZoom 画布中心锚点 / 内容包围盒居中 / 自动整理后重置缩放）
   open-as-restore.test.ts # 「以思维导图打开」偏好恢复（多档延时/代际）
   pasted-name.test.ts  # 剪贴板图片命名（Pasted image YYYYMMDDHHMMSS）
   vendor-contract.test.ts # 引擎 vendor 契约（导出面/命令名/事件名令牌）
@@ -143,6 +147,8 @@ tests/
   view-dnd.test.ts     # 拖入分发（图片/笔记/附件/外部导入、两分支与提示）
   view-search.test.ts  # 搜索栏（装配/防抖/回绕/零命中计数/防抖窗口内跳转）
   view-status.test.ts  # 状态栏计数（节流与尾随、销毁/抛错降级、关闭清理）
+  view-toolbar.test.ts # 工具栏装配（分组/图标/命令接线、布局选择器、自动整理分支、重建）
+  language-refresh.test.ts # 语言切换刷新（t/tf、语言下拉项、状态栏文案、命令标签刷新）
   view-wikilink.test.ts # 链接交互（点击分流/双通道取值/悬停预览去重与弹窗锚定尺寸）
   view-hotkeys.test.ts  # 视图内快捷键（F2 编辑当前节点：吞键/让位/去重）
   modal-common.test.ts # 弹窗共享件（settle 守卫/按钮变体/库内文件联想）
@@ -151,7 +157,26 @@ tests/
   mocks/obsidian.ts    # obsidian 最小 mock（vitest alias，包本身无运行时 JS）
 docs/
   markdown-mindmap-standard.md  # Markdown ↔ 思维导图映射规则（权威标准）
+  release-notes-0.0.*.md        # 各版本发布说明（中英双语；release.yml 作 Release 说明取用）
 ```
+
+### 文件规模与豁免（超限须登记）
+
+官方社区模板建议单文件控制在 200–300 行。本项目**不做机械拆分**——按「拆分会不会把已有收口职责摊开」判定，而不是按行数判定：行数是症状，收口点被拆散才是病。故引入一条硬规则：
+
+> **超过 300 行的源文件必须在下方表格登记豁免理由；未登记者一律视为待偿还债务。**
+
+（豁免是「已知并接受」，不是「没看见」。债务指标：**未登记的超限文件数，只允许递减**。）
+
+| 文件 | 行数 | 豁免理由 |
+|---|---|---|
+| `src/mindmap.ts` | 809 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。拆开等于把私有访问面摊到多个文件，耦合面反而变大——**这一条是必须豁免的，拆分即违约** |
+| `src/md-serialize.ts` | 668 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议 |
+| `src/md-outline.ts` | 644 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移 |
+| `src/i18n.ts` | 419 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
+| 其余超限文件（`features/view.ts` 516、`services/engine-controller.ts` 438、`src/images-path.ts` 334、`features/image-resize.ts` 323、`features/drag-target.ts` 322、`features/view-node-actions.ts` 319、`features/view-dnd.ts` 319、`src/main.ts` 302） | ≤516 | **理由待补**——当前按债务登记（`main.ts` 为生命周期入口，模板本身要求 <300，优先处理这几个） |
+
+行数为 2026-09-10 快照，仅供参考；判定以「是否已在表内登记理由」为准，不以数字为准。
 
 ## 测试与 CI
 
@@ -161,8 +186,15 @@ npm run test:coverage  # vitest run --coverage（v8 provider，报告出 coverag
 npm run verify:visual  # 无头 Chrome 渲染契约验证（scripts/verify-visual.mjs）
 ```
 
-CI（`.github/workflows/lint.yml`）执行顺序：build → test → coverage（主矩阵版本）→ lint →
-`verify:visual -- --require-chrome`（主矩阵版本；浏览器缺失即失败，不静默跳过）。
+CI（`.github/workflows/lint.yml`）执行顺序：build → `npm test -- --reporter=verbose --bail=1` →
+coverage（主矩阵版本，并上传 coverage 产物）→ lint →
+`verify:visual -- --require-chrome --keep --log-dir verify-visual-logs`（主矩阵版本）。
+
+`verify:visual` 这一步标了 `continue-on-error: true`（**非阻断**），因为它曾在 Linux 无头
+环境偶发失败，而当时既读不到失败日志、又无 token 调 API 定位，最终被回退（见 commit
+`7930d62`）。重新接入的前提就是「失败必须留下证据」，故同时加了 `--log-dir`：日志与
+`--dump-dom` 快照经 `if: always()` 步骤归档成 artifact，失败时可直接下载定位。
+浏览器缺失仍然直接失败（`--require-chrome`），不静默跳过。
 
 - `verify:visual`：把 `src/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
   `styles.css` 在无头 Chrome 里渲染 5 个场景并断言 `--dump-dom`——三类链接图标分流与
@@ -172,7 +204,9 @@ CI（`.github/workflows/lint.yml`）执行顺序：build → test → coverage�
   `bottom/right` 必须为有限数，否则预览只会出现在上方）。
   这类「引擎运行时 DOM 装配」行为单测覆盖不到（单测只能验证数据字段）。
   无 Chrome 时跳过（`--require-chrome` 改为失败；`--keep` 保留临时目录；
-  `CHROME_PATH` 指定浏览器）。
+  `--log-dir <dir>` 把环境信息、每次 Chrome 尝试的退出码与 stderr、完整 `--dump-dom`
+  以及逐场景失败片段写进该目录——CI 靠它归档失败证据；
+  `CHROME_PATH` 指定浏览器，路径不存在时自动回落到平台默认安装位置）。
 - vitest 配置 `vitest.config.ts`：`obsidian` → `tests/mocks/obsidian.ts` alias（包仅有类型声明，无运行时 JS）。
   coverage 含 `src/**`（排除 i18n/constants 纯文案与常量表），vendor 为预打包产物不纳入。
 - `tsconfig.json` 同时纳入 `src/` 与 `tests/`；`npm run build` 会先 `tsc -noEmit` 类型检查两者。
@@ -185,24 +219,28 @@ CI（`.github/workflows/lint.yml`）执行顺序：build → test → coverage�
   特例 eslint-disable 注明理由）、system-open 的 require 全局、modal/tests 豁免、
   manifest.json 与 LICENSE 显式纳入 lint（官方 recommended 不自动拾取两者：
   validate-manifest 自挂 files 块 + ts parser；validate-license 依赖官方内置未导出的
-  plain-text parser，等价实现在 scripts/plain-text-parser.mjs）。
+  plain-text parser，等价实现在 scripts/plain-text-parser.mjs——该实现的唯一有意差异是
+  **剥离行尾 `\r`**：官方只按 `\n` 切分，CRLF 检出（`core.autocrlf=true`）下残留的 `\r`
+  会让版权行正则 `(.+)$` 匹配失败、规则静默失效，故加固之，勿改回逐字一致）。
 
 ## 关键约定
 
 - 链接/图片引用格式：新增链接与图片**恒写 wikilink**（`[[笔记]]` / `[[附件.pdf]]` / `![[图.png]]`），
   不遵循 Obsidian 的 `Use [[Wikilinks]]` / `New link format` 设置——三类图标方案依赖文档双链走
   `mdWikiLinkpath` 通道（自绘文档页图标）；若改为遵循偏好，md 形态笔记链接会落到引擎 hyperlink
-  通道并显示原生链接图标，与既定视觉冲突。属**有意偏离**（详见 `docs/external-audit-2026-09-08.md` §5.2/§7.4）。
+  通道并显示原生链接图标，与既定视觉冲突。属**有意偏离**（依据：审计文档 `docs/external-audit-2026-09-08.md` §5.2/§7.4；该文档已从工作树移除，需要时用 `git log --diff-filter=D -- docs/external-audit-2026-09-08.md` 从历史取回）。
 - 渲染层定位：正文保持纯 Markdown；布局/视口/打开偏好存 `data.json`（`viewState`，按文件路径），不写入文件。
 - 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动），**自动整理后也走 `resetZoom`**（`arrangeMindMap` 的 RESET_LAYOUT 延时回调，不再 fit 全图）。
 - 悬停预览（`hover-link`）：`hoverParent` 必须是官方 `HoverParent`——传本视图的 `leaf`（`WorkspaceLeaf` 实现该接口），**勿传裸 HTMLElement**。弹窗上下翻转由核心按 `targetEl` 的矩形决定，而官方 `HoverPopover.position()` 的锚定矩形是**混合取值**：宽高走 `targetEl.offsetWidth/offsetHeight`、位置走 `getBoundingClientRect()`；SVG 节点 group 没有前两个属性（HTMLElement 专有）→ `bottom/right` 为 `NaN` → 官方定位函数「下方放得下就放下方」的分支恒假（预览只出现在上方），上方也放不下时 `top` 被写成 `"NaNpx"`（等于不显示）。故触发前必须调 `view-wikilink.ts ensureOffsetSize(targetEl)` 补上按实时矩形取值的只读几何（`in` 判断，HTMLElement 不覆盖）；指针坐标不参与定位，勿再改写上报的鼠标事件。
 - 右键「编辑文本」：`mindmap.ts startNodeTextEdit` 必须**延后一个宏任务**再 emit `node_dblclick`——菜单项 click 会继续冒泡到 `document.body`，引擎 `body_click`（`isEndNodeTextEditOnClickOuter` 默认 true）会立刻关闭刚打开的编辑框；`isInserting` 传 false。
 - 图片自定义尺寸（Obsidian 官方嵌入语法，不落 data.json）：`![[图.png|300]]`（仅宽、等比）/ `![[图.png|300x150]]`（宽高）/ `![alt|300](url)`（外链 md 图，尺寸在标签尾部）。解析进 `mdImageWidth/mdImageHeight`（domain/md-meta 契约）；`walkCorrectImageSizesByAspect` 对带参节点按参数定尺寸（仅宽时探测原始比例补高）；拖拽调宽改 engine `imageSize custom:true`，保存时 rawOk 尺寸特征（`目标|宽度`，终界 `]`/`x` 防前缀误匹配）不符 → 合成回写 `|宽度`。
 - 图片独占节点（渲染层语义）：纯图行（`- ![[x.png]]`）解析为**无文本节点**（不回退文件名占位），图片节点删除文字（右键「移除文字」/双击清空）后即被图片独占，往返保持；代价是纯图节点不参与文本搜索。图片嵌入语法（`![[..]]`/`![]()`）在 rawOk 的「链接已清除」检测中以负向断言排除（`(?<!!)\[\[`），图文混合行可逐字往返。
+- **`isDesktopOnly` 是承重配置，不是发布元数据**：上一行的负向断言 `(?<!!)\[\[` 属**正则后行断言**（lookbehind），而官方规则 `obsidianmd/regex-lookbehind` **仅在 `isDesktopOnly !== true` 时报告**——其实现为 `options.isDesktopOnly ?? getManifest()?.isDesktopOnly`（`eslint-plugin-obsidianmd/dist/lib/rules/regexLookbehind.js`），`true` 时整个 `Literal` 分支直接不报。即：**这行 lint 通过完全依赖 `manifest.json` 的 `isDesktopOnly: true`**，不是因为它本身合规。改 `isDesktopOnly`、或要加移动端支持之前，**必须先把该正则改写为不带 lookbehind 的等价式**（如 `(^|[^!])\[\[`），否则 ① `npm run lint --max-warnings 0` 立刻失败；② iOS < 16.4（Safari 16.4 才支持 lookbehind）会**真实抛异常**，`md-serialize` 整条保存管线随之失效。
 - 拖拽换父辅助：引擎落点判定（指针须精确落在目标矩形内）之外，拖拽期间由 `drag-target.ts` 以两类锚点统一按指针距离最近仲裁后外借（引擎每帧重置三态、精确命中时让位）：**节点中心**（均匀圆域 `TARGET_RADIUS_PX`，与节点大小无关）→ 外借 `overlapNode`（挂子，`MOVE_NODE_TO`）；**相邻兄弟间隙中点** → 外借 `prevNode`（插到该兄弟之后，`INSERT_AFTER`）。引擎拖拽内部形态（三态/命令）访问收口在 `mindmap.ts` 的 `getDragDropState`/`setDragOverlapTarget`/`setDragPrevTarget`/`getNodeLayoutRect`/`toCanvasPoint`。
 - 新建承载节点（拖入图片/笔记/附件、粘贴、图片子节点）一律走 `view-common.ts insertChildNodeWithData`：统一 `appointNodes=[parent]`（空数组会被引擎静默忽略）与 `isActive:false`，勿再各写一份 `execCommand(INSERT_CHILD_NODE, …)`。
 - 中心主题 ⇄ 文件名：编辑根节点文本会重命名 `.mindmap.md`（Obsidian 原生更新链接/反链）；外部改名后视图重载中心随新名。**重命名必须走 `FileManager.renameFile`**（`view-title-renamer.ts`），`Vault.rename` 只改文件系统、不更新库内其他笔记中指向本文件的链接/反链（官方 d.ts 明确要求用前者，核心文件浏览器/内联标题/CLI 均走前者）。
 - 图片/链接对齐 Obsidian：`![[路径]]`/`[[笔记]]` 往返；插入弹窗联想库内文件；悬停预览用 `registerHoverLinkSource` + `hover-link`。
+- 双链节点别名语义（**节点内只显示别名，编辑节点即改别名**）：纯双链节点（整行只有一个双链，节点内显示的就是该链接的可见名＝别名优先）里节点内容等价于别名，故编辑节点后把新文本写成别名回写 `[[目标|新别名]]`（`md-serialize.ts editedWikilinkAlias` + `effectiveDocWikiLink`，链接改写走 `domain/wikilink.ts withWikilinkAlias`），不再产出「新文本 + 行尾链接」。边界：① 混合文本节点（`说明 [[链接]]`）不适用——把整段文本当别名会静默吞掉说明文字；② 多行文本不适用（无唯一别名语义，回落旧合成）；③ 嵌入语法 `![[附件]]` 不适用（管道位是尺寸参数，不是别名）；④ URL / md 链接无别名概念，不适用；⑤ 新别名含 `[` / `]`（用户手输 `[[新目标]]`）→ 不写（Obsidian 不允许方括号出现在 `[[..]]` 内，写进别名位会把整条链接写坏），回落旧合成＝语义上更接近「换链」。新文本与「无别名时的默认显示名」相同（或清空）→ 不写 `|别名` 段（避免 `[[目标|目标]]`），清空文本 = 去别名、链接保留。回写（`renderHyperlink`）与可见名（`nodeLinkDisplay`）必须经同一入口 `effectiveDocWikiLink`，两处口径不一致会让「纯 token 节点」判定失配、合成写出「新文本 + 链接」重复一次。已知残留：文档页图标 tooltip（`mdLinkText`）在保存后仍显示旧别名，重载后同步。
 - 所有 DOM/事件/定时器监听使用 `this.register*` 助手注册，保证卸载清理；引擎实例事件经 `EventBinder` 记录统一销毁。
 - URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；防抖/节流/串行队列/有界并发映射一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段；批量异步任务勿用无界 Promise.all，用 `mapWithConcurrency`）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
 - `.mindmap.md` 标记的判定/剥离/拼接一律用 `constants.ts` 的 `hasMindMapMarker` / `stripMindMapStem` / `withMindMapMarker`（勿手写同名正则或 replace）。
@@ -255,8 +293,10 @@ CI（`.github/workflows/lint.yml`）执行顺序：build → test → coverage�
 1. 更新 `manifest.json` 版本号 → `npm version patch|minor|major`（同步 `versions.json`）。
 2. 创建与版本号完全一致的 GitHub Release tag（不带 `v` 前缀）。
 3. 附加 `main.js`、`manifest.json`、`styles.css`（`.github/workflows/release.yml` 自动构建并创建草稿 Release）。
+4. 新增版本补 `docs/release-notes-<tag>.md`（中英双语）——`release.yml` 取该文件作 Release 说明，缺失则回退自动生成。
 
 ## 安全与合规
 
 - 默认本地/离线运行；无遥测、不上传 vault 内容。
 - 遵循 Obsidian 开发者政策与插件指南（`isDesktopOnly: true`，minAppVersion 1.13.0）。
+  **该 `true` 是承重的**（豁免了 `md-serialize.ts` 的 lookbehind 正则），改动前先读「关键约定」中的对应条目。
