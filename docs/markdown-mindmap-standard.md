@@ -202,7 +202,7 @@ tags: [规划]
 
 | 项 | 状态 |
 |---|---|
-| 核对依据 | 当前工作区源码（`src/md-outline.ts` 708 行、`src/md-serialize.ts` 656 行、`src/links-tree.ts` 287 行、`src/features/view-wikilink.ts` 208 行、`src/features/view.ts` 529 行、`src/services/document-service.ts` 248 行、`src/mindmap.ts` 820 行）+ `manifest.json` 版本 **0.0.5** |
+| 核对依据 | 当前工作区源码（`src/md-outline.ts` 708 行、`src/md-serialize.ts` 656 行、`src/links-tree.ts` 287 行、`src/features/view-wikilink.ts` 208 行、`src/features/view.ts` 529 行、`src/services/document-service.ts` 248 行、`src/mindmap.ts` 820 行）+ `manifest.json` 版本 **0.1.0** |
 | 相对上一版本文档的**事实修正** | ① 文件头回归测试指向 `tests/md-roundtrip.test.ts` / `tests/md-inline.test.ts`（旧版指向已不存在的 `scratch/md-roundtrip/` 与 75 断言）；② §2 默认视口改为「100% + 内容包围盒居中」（旧版「回退设置默认布局并 fit 全图」错误，fit 仅异常兜底）；③ §2.3 删除 richText 节点形态（全仓库零注册）；④ 实现路径 `src/view-wikilink.ts` → `src/features/view-wikilink.ts`；⑤ §3.1/§3.2/§3.3 登记 2026-09-10 的 5 处缺陷修复（写盘归属、清除链接对嵌入生效、外链图片保持 md 形态、plain 行缩进/行尾空格保真、跨文件夹移动改写前缀）；⑥ §3.3 补写盘归属不变式与移动后引用改写规则；⑦ §2.1/§3.4 修订 `---` 的两种身份——**setext H2 下划线改为保留**（原「整行丢弃」会静默把标题降级为段落），空行之后的真分隔线仍按既定行为丢弃 |
 | 函数名核对 | `buildInlineData` / `tokenDisplay` / `tokenizeInline` / `parseMdOutline` / `splitFrontmatter` / `createNodePrefixContent` / `buildWikiDocIcon` / `measureContentBox` / `centerContentAtFullScale` / `fitMindMap` / `restoreOrFitViewport` **均存在**；旧版文档提到的 `stripUrlTokensForDisplay` / `stripMarkdownInline` **在当前源码中不存在**（URL icon-only 的剥离实际在 `buildInlineData` 内完成），已从本文档移除。2026-09-10 新增核对：`rawHasForeignEmbed`（md-serialize）、`renamedWikilink(parts, file, oldPath)`（links-tree）、`SavePipeline.getSnapshotFor/getFrontmatterFor`（document-service） |
 | 未复核项 | 参考式链接往返（§3.5 已标注）；hover 预览在 popout 窗口下的实测（`AGENTS.md` 已登记 `Node.instanceOf` 类问题） |
