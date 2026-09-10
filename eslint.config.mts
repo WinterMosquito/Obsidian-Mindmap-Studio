@@ -14,7 +14,9 @@ export default defineConfig(
 		'node_modules',
 		'coverage',
 		'dist',
-		'vendor/**',
+		// 只排除预打包的第三方产物；手写的类型声明 vendor/simple-mind-map.d.cts
+		// 是项目维护的公共契约面（见下方 vendor 块），不随之一并排除。
+		'vendor/*.cjs',
 		'scripts/**',
 		'esbuild.config.mjs',
 		'version-bump.mjs',
@@ -51,6 +53,19 @@ export default defineConfig(
 		},
 		rules: {
 			'obsidianmd/validate-license': 'warn',
+		},
+	},
+	{
+		// 手写类型声明 vendor/simple-mind-map.d.cts（项目维护，非第三方产物）
+		// 纳入 lint——由上方 globalIgnores 收窄为只排除 vendor/*.cjs 而来。
+		// 引擎节点数据面本质是任意 JSON，`AnyObject = Record<string, any>` 必须
+		// 用 any 表达，无法改成 unknown（带具名属性的对象不可赋给
+		// Record<string, unknown>，改动会波及全插件）。这里用**配置级 off**，
+		// 而非 eslint-disable 注释：recommended 的
+		// eslint-comments/no-restricted-disable 禁止 disable no-explicit-any。
+		files: ['vendor/**/*.d.cts', 'vendor/*.d.cts'],
+		rules: {
+			'@typescript-eslint/no-explicit-any': 'off',
 		},
 	},
 	{

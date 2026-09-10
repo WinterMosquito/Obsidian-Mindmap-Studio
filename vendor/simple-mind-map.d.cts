@@ -6,7 +6,6 @@
  * Only the API surface actually used by this plugin is declared.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AnyObject = Record<string, any>;
 
 export interface MindMapNodeData extends AnyObject {
@@ -58,7 +57,8 @@ export interface MindMapNode {
 	children: MindMapNode[];
 	nodeData: { data: MindMapNodeData; children: MindMapTreeNode[] };
 	isRoot: boolean;
-	getData(key?: string): MindMapNodeData | unknown;
+	/** 节点原始数据（引擎不保证形态，调用方按 MdNodeData 收窄） */
+	getData(key?: string): unknown;
 	setData(data: Partial<MindMapNodeData>): void;
 	active(): void;
 }
