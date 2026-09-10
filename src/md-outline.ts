@@ -518,7 +518,13 @@ function classifyLines(body: string): ParsedLine[] {
 		// 段落/标题/列表前的空行一律丢弃（维持既有规范化）——
 		// 不能留到后续围栏处再 flush，否则空行会累积、每次往返多一行
 		pendingBlank = 0;
-		if (/^\s*---+\s*$/.test(line)) {
+		// 纯短横线行（`---` / `-----`）的两种身份必须分开：
+		// - **空行之后** → 结构分隔信号（thematic break），按既定行为整行丢弃；
+		// - **紧跟非空行之后** → CommonMark 的 **setext H2 下划线**（`标题\n---` 是二级
+		//   标题），丢弃会静默把标题降级为段落 → 必须保留该行（见 docs/markdown-mindmap-standard §2.1）。
+		// 注：`=====`（setext H1）从不匹配本分支，一直保留；两条 setext 形态由此对齐。
+		const isDashLine = /^\s*---+\s*$/.test(line);
+		if (isDashLine && !(i > 0 && rawLines[i - 1]!.trim() !== '')) {
 			continue;
 		}
 		const h = line.match(HEADING_RE);
