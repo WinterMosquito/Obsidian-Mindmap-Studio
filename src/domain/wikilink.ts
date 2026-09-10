@@ -70,6 +70,17 @@ export function formatWikilink(linkpath: string, alias?: string): string {
 }
 
 /**
+ * 构造**嵌入**语法的 wikilink（可带管道参数）：`![[目标]]` / `![[目标|参数]]`。
+ *
+ * 管道参数只用于非图片附件的嵌入（`![[报告.pdf|300]]`）。官方**未定义**该位语义
+ * （PDF 官方用 `#height=`/`#page=`，只有图片的 `|宽`/`|宽x高` 有明文），故此处
+ * 不做解释、原样保留原文——编辑节点后不丢用户写下的参数（见 mdEmbedPipe）。
+ */
+export function formatEmbedWikilink(linkpath: string, pipe?: string): string {
+	return pipe ? `![[${linkpath}|${pipe}]]` : `![[${linkpath}]]`;
+}
+
+/**
  * 改写维基链接的别名：目标与区块原样保留，只替换 `|` 之后整段。
  *
  * - `withWikilinkAlias('[[笔记]]', '别名')` → `[[笔记|别名]]`
@@ -88,11 +99,36 @@ export function withWikilinkAlias(link: string, alias: string): string {
 }
 
 /**
- * wikilink 目标是否为「附件」（非 .md 笔记）。
- * Obsidian 语义：target 末段含扩展名且非 .md → 附件（pdf/png/音频等）；
- * 无扩展名或 .md → 文档。`#` 区块不影响判定（取 target 部分）。
+ * 官方「文档类」库内文件扩展名：`.md`（笔记）、`.canvas`（Canvas）、`.base`（Bases）。
+ *
+ * 依据官方帮助：Canvas / Bases 是可在标签页打开的一等文件，其嵌入
+ * （`![[My canvas.canvas]]`、`![[File.base#View]]`）属**文档嵌入**而非附件
+ * （`en/Plugins/Canvas.md`、`en/Bases/Views.md`）；且链接到非 Markdown 文件
+ * **必须带扩展名**（`en/Linking notes and files/Internal links.md`）。
+ *
+ * 清单就地定义而非从 `constants.ts` 引入：domain 层禁止反向依赖上层（eslint
+ * `no-restricted-imports`）。`constants.ts` 的 `OBSIDIAN_RENDER_EXTENSIONS` 是
+ * 「Obsidian 能否在标签页渲染」的**渲染能力**清单（含 pdf/图片/纯文本），与本处
+ * 「双链目标算文档还是附件」的**语法判定**是两个关注点，勿合并成一份。
+ */
+const DOCUMENT_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
+	'md',
+	'canvas',
+	'base',
+]);
+
+/** 扩展名是否为文档类（md / canvas / base；大小写不敏感） */
+export function isDocumentExtension(extension: string): boolean {
+	return DOCUMENT_FILE_EXTENSIONS.has(extension.toLowerCase());
+}
+
+/**
+ * wikilink 目标是否为「附件」（非文档类文件）。
+ * Obsidian 语义：target 末段含扩展名且非文档类（md/canvas/base）→ 附件
+ * （pdf/图片/音视频/压缩包等）；无扩展名或文档类扩展名 → 文档。
+ * `#` 区块与 `|` 管道不影响判定（取 target 部分）。
  * 用途：双链指向附件的节点走引擎 attachmentUrl 字段（回形针图标），
- * 与指向文档的节点（链接图标）在视觉上区分。
+ * 与指向文档的节点（自绘文档页图标）在视觉上区分。
  */
 export function wikilinkTargetIsAttachment(linkpath: string): boolean {
 	const target = parseWikilink(`[[${linkpath}]]`)?.target ?? linkpath;
@@ -101,7 +137,7 @@ export function wikilinkTargetIsAttachment(linkpath: string): boolean {
 	if (dot <= 0) {
 		return false; // 无扩展名（或 .hidden 形态）→ 按 Obsidian 默认视为文档
 	}
-	return name.slice(dot + 1).toLowerCase() !== 'md';
+	return !isDocumentExtension(name.slice(dot + 1));
 }
 
 /**

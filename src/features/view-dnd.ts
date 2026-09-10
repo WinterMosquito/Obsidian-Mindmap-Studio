@@ -15,7 +15,7 @@ import { getActiveNode, getRenderRoot } from '../mindmap';
 import { applyDocWikiLink, applyNodeAttachment, applyNodeImage } from './view-node-actions';
 import { insertChildNodeWithData } from './view-common';
 import { t } from '../i18n';
-import { formatWikilink } from '../domain/wikilink';
+import { formatWikilink, isDocumentExtension } from '../domain/wikilink';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 
@@ -97,7 +97,7 @@ async function handleDroppedVaultFile(view: MindMapViewContext, file: TFile): Pr
 		return;
 	}
 
-	if (extension === 'md') {
+	if (isDocumentExtension(extension)) {
 		await handleDroppedDocument(view, file, selected);
 		return;
 	}
@@ -147,25 +147,29 @@ async function handleDroppedDocument(
 	file: TFile,
 	selected: MindMapNode | null,
 ): Promise<void> {
-	const link = formatWikilink(file.basename);
+	// 官方链接语法：`.md` 可省略扩展名（`[[笔记]]` ≡ `[[笔记.md]]`），canvas/base
+	// 等非 Markdown 文件**必须带扩展名**（`[[画布.canvas]]`），否则 Obsidian 会
+	// 当作不存在的笔记 —— 故文档链接目标一律按扩展名取，勿统一用 basename。
+	const target = file.extension.toLowerCase() === 'md' ? file.basename : file.name;
+	const link = formatWikilink(target);
 	if (selected) {
 		// 与解析侧同通道（mdWikiLinkpath）→ 显示自绘文档页图标
-		applyDocWikiLink(view, selected, link, file.basename, null);
-		new Notice(`${t(view.lang, 'common.linkedTo')} [[${file.basename}]]`);
+		applyDocWikiLink(view, selected, link, target, null);
+		new Notice(`${t(view.lang, 'common.linkedTo')} [[${target}]]`);
 	} else {
 		// 原逻辑：挂到根节点下并链接（通过 appointNodes 指定父节点，
 		// 不依赖激活列表；初始数据直接携带文本与链接）
 		const root = getRenderRoot(view.mindMap);
 		if (
 			insertChildNodeWithData(view, root, {
-				text: file.basename,
+				text: target,
 				// 文档双链走 mdWikiLinkpath 通道（自绘文档图标，不写 hyperlink）
 				mdWikiLinkpath: link,
 				mdLinkStyle: 'wiki',
-				mdLinkText: file.basename,
+				mdLinkText: target,
 			})
 		) {
-			new Notice(`${t(view.lang, 'common.nodeCreatedAndLinked')} [[${file.basename}]]`);
+			new Notice(`${t(view.lang, 'common.nodeCreatedAndLinked')} [[${target}]]`);
 		}
 	}
 }

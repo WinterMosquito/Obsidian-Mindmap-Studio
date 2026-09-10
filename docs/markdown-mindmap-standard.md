@@ -56,11 +56,11 @@
 | Markdown 行内 | 节点行为 |
 |---|---|
 | `[[目标]]` / `[[目标\|别名]]` | 文本 = 别名‖目标名（`tokenDisplay` 剥壳，**无 `[[]]` 字面**）；首个文档双链写入 `mdWikiLinkpath`（`formatWikilink`，**不写引擎 hyperlink**——否则会与自绘文档页图标双显）；可点、可悬停预览。**节点内只显示别名**（无别名时为目标显示名）；纯双链节点（整行只有一个双链）编辑节点 = 改别名，见 §3.2 |
-| 同上且目标为**附件**（末段含非 `.md` 扩展名，`wikilinkTargetIsAttachment`） | 走引擎 `attachmentUrl` 通道 + `mdAttachmentLinkpath` / `mdLinkStyle: 'wiki'`：节点显示**回形针图标**（与文档链接图标区分）；文本 = 别名‖目标文件名；点击按 Obsidian 语义打开（可渲染开标签页 / 系统媒体走系统应用） |
+| 同上且目标为**附件**（`wikilinkTargetIsAttachment`：末段含扩展名且非文档类 `.md` / `.canvas` / `.base`——Canvas / Bases 属**文档**，走文档通道） | 走引擎 `attachmentUrl` 通道 + `mdAttachmentLinkpath` / `mdLinkStyle: 'wiki'`：节点显示**回形针图标**（与文档链接图标区分）；文本 = 别名‖目标文件名；点击按 Obsidian 语义打开（可渲染开标签页 / 系统媒体走系统应用） |
 | `[文本](url)` | 文本 = 链接文本；首个链接 → `hyperlink` + `mdLinkStyle: 'md'`。**label 本身是 URL**（`[https://…](https://…)`，复制粘贴常见，判定 `isUrlLikeText(tok.label)`）时与裸 URL 同语义：URL 本体不进节点文本（icon-only） |
 | `![[文件]]` / `![alt](url)` | 首个图片 → 节点图片（`image` / `mdImageTarget`），按比例统一尺寸；alt 存 `mdImageAlt`；嵌入标签里的尺寸参数存 `mdImageWidth` / `mdImageHeight`（`parseImageLabel`）。**纯图行的节点文本为空**（不回退文件名占位，见 §3.4） |
-| `![[笔记]]` / `![[笔记.md]]` / `![[笔记#标题\|别名]]` 等**文档嵌入**（目标末段为 `.md` 或无扩展名） | 与文档双链**同通道**：`mdWikiLinkpath`（完整 wikilink）+ `mdLinkStyle: 'wiki'` + `mdEmbed: true` → 显示**自绘文档页图标**；节点文本 = 别名‖去 `.md` 的目标名（与 `[[笔记]]` 同口径）；可悬停预览、点图标打开。**管道位是别名**（`![[笔记\|300]]` 的 `300` 是别名，**不是**图片尺寸）。回写时按 `mdEmbed` 补回 `!` 保往返 |
-| `![[报告.pdf]]` / `![[录音.mp3]]` 等**非图片、非文档嵌入**（末段含 `.md` 之外的扩展名） | 不作为节点图（会空白）：转走附件通道（回形针 + 点击打开），记 `mdEmbed: true` 以便回写补回 `!`；该形态管道位才是**尺寸参数** |
+| `![[笔记]]` / `![[笔记.md]]` / `![[笔记#标题\|别名]]` / `![[看板.base#View]]` 等**文档嵌入**（目标末段为文档类扩展名 `.md` / `.canvas` / `.base`，或无扩展名） | 与文档双链**同通道**：`mdWikiLinkpath`（完整 wikilink）+ `mdLinkStyle: 'wiki'` + `mdEmbed: true` → 显示**自绘文档页图标**；节点文本 = 别名‖去 `.md` 的目标名（与 `[[笔记]]` 同口径）；可悬停预览、点图标打开。**管道位是别名**（`![[笔记\|300]]` 的 `300` 是别名，**不是**图片尺寸）。回写时按 `mdEmbed` 补回 `!` 保往返 |
+| `![[报告.pdf]]` / `![[录音.mp3]]` 等**非图片、非文档嵌入**（末段含文档类之外的扩展名） | 不作为节点图（会空白）：转走附件通道（回形针 + 点击打开），记 `mdEmbed: true` 以便回写补回 `!`；该形态管道位官方**无明文**（PDF 官方用 `#height=` / `#page=`，音频无尺寸语法），故不解释、原文存 `mdEmbedPipe`，编辑节点后原样回写——不再丢用户写下的参数 |
 | **`<url>` 自动链接**（含 `://` scheme） | `hyperlink` = url；**节点文本为空——只显示超链接图标**；悬停 title = 完整地址；回写为 `<url>` |
 | **裸 URL**（行内直接书写 `https://…` / `ftp://` / `obsidian://`） | 与 `<url>` 同语义：目标尾部句读标点不属 URL（`BARE_URL_TRAILING_RE`）；**URL 本体不渲染进节点文本**；前后文本保留（结果连续空格折叠为单空格）；未编辑逐字回写原文，编辑后合成为 `<url>` |
 | 行内多个链接 / 图片 | 首个链接 → 节点链接、首个图片 → 节点图；**其余剥壳为显示文本**，原文由 `mdRaw` 保真 |
@@ -193,7 +193,7 @@ tags: [规划]
 
 | 项 | 状态 |
 |---|---|
-| 核对依据 | 当前工作区源码（`src/md-outline.ts` 644 行、`src/md-serialize.ts` 668 行、`src/features/view-wikilink.ts` 208 行、`src/services/engine-controller.ts` 438 行、`src/mindmap.ts` 809 行）+ `manifest.json` 版本 **0.0.5** |
+| 核对依据 | 当前工作区源码（`src/md-outline.ts` 686 行、`src/md-serialize.ts` 619 行、`src/features/view-wikilink.ts` 208 行、`src/services/engine-controller.ts` 438 行、`src/mindmap.ts` 820 行）+ `manifest.json` 版本 **0.0.5** |
 | 相对上一版本文档的**事实修正** | ① 文件头回归测试指向 `tests/md-roundtrip.test.ts` / `tests/md-inline.test.ts`（旧版指向已不存在的 `scratch/md-roundtrip/` 与 75 断言）；② §2 默认视口改为「100% + 内容包围盒居中」（旧版「回退设置默认布局并 fit 全图」错误，fit 仅异常兜底）；③ §2.3 删除 richText 节点形态（全仓库零注册）；④ 实现路径 `src/view-wikilink.ts` → `src/features/view-wikilink.ts` |
 | 函数名核对 | `buildInlineData` / `tokenDisplay` / `tokenizeInline` / `parseMdOutline` / `splitFrontmatter` / `createNodePrefixContent` / `buildWikiDocIcon` / `measureContentBox` / `centerContentAtFullScale` / `fitMindMap` / `restoreOrFitViewport` **均存在**；旧版文档提到的 `stripUrlTokensForDisplay` / `stripMarkdownInline` **在当前源码中不存在**（URL icon-only 的剥离实际在 `buildInlineData` 内完成），已从本文档移除 |
 | 未复核项 | 参考式链接往返（§3.5 已标注） |

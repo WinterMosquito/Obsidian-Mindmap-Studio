@@ -6,11 +6,24 @@
  * - 返回 { link, label }：link 为写入 md 的链接文本（[[..]] 或 url），
  *   label 为可见文本（笔记名/别名/文件名），供导图节点文本对齐。
  */
-import { App, Modal } from 'obsidian';
+import { App, Modal, type TFile } from 'obsidian';
 import { t, type Language } from './i18n';
 import { createButton, createModalSettle, VaultFileSuggest } from './modal-common';
 import { isLinkAttachmentExtension } from './constants';
-import { formatWikilink, parseWikilink } from './domain/wikilink';
+import {
+	formatWikilink,
+	isDocumentExtension,
+	parseWikilink,
+} from './domain/wikilink';
+
+/**
+ * 文档类文件作为双链目标时的写串与可见名：`.md` 省略扩展名（官方等价写法），
+ * canvas/base 等非 Markdown 文档**必须带扩展名**（`[[画布.canvas]]`），否则
+ * Obsidian 会当作不存在的笔记而不是打开该文件。
+ */
+function docTargetOf(file: TFile): string {
+	return file.extension.toLowerCase() === 'md' ? file.basename : file.name;
+}
 
 export interface LinkPickResult {
 	/** 链接文本（写入 md：[[..]] 或 url/obsidian://） */
@@ -41,8 +54,17 @@ export function openLinkEditorModal(
 
 		const markdownFiles = app.vault.getMarkdownFiles();
 		const allFiles = app.vault.getFiles();
+		// 非 md 的文档类文件（.canvas/.base）：官方同为文档（可在标签页打开），
+		// 链接必须带扩展名；附件只收非文档类的可链接扩展
+		const otherDocs = allFiles.filter(
+			(f) =>
+				f.extension.toLowerCase() !== 'md' &&
+				isDocumentExtension(f.extension),
+		);
 		const attachments = allFiles.filter(
-			(f) => f.extension !== 'md' && isLinkAttachmentExtension(f.extension),
+			(f) =>
+				!isDocumentExtension(f.extension) &&
+				isLinkAttachmentExtension(f.extension),
 		);
 
 		/**
@@ -64,27 +86,29 @@ export function openLinkEditorModal(
 			modal.close();
 		};
 
-		// 联想候选：md 笔记在前、附件在后（与原两段 push 的顺序一致）
+		// 联想候选：文档（md 笔记 + canvas/base）在前、附件在后
 		new VaultFileSuggest(
 			app,
 			input,
-			[...markdownFiles, ...attachments],
+			[...markdownFiles, ...otherDocs, ...attachments],
 			(file) =>
-				file.extension === 'md'
-					? { icon: 'file-text', label: file.basename }
+				isDocumentExtension(file.extension)
+					? { icon: 'file-text', label: docTargetOf(file) }
 					: { icon: 'file', label: file.name },
 			(file) => {
-				if (file.extension === 'md') {
+				if (isDocumentExtension(file.extension)) {
+					const isMd = file.extension.toLowerCase() === 'md';
+					const target = docTargetOf(file);
+					// 同名文档用路径消歧（Obsidian 双链 [[路径/名|名]] 语义）
+					const pool = isMd ? markdownFiles : otherDocs;
 					const unique =
-						markdownFiles.filter((f) => f.basename === file.basename)
-							.length === 1;
-					// 同名笔记用路径消歧（Obsidian 双链 [[路径/名|名]] 语义）
+						pool.filter((f) => f.basename === file.basename).length === 1;
 					settle(
 						unique
-							? { link: formatWikilink(file.basename), label: file.basename }
+							? { link: formatWikilink(target), label: target }
 							: {
-									link: formatWikilink(file.path, file.basename),
-									label: file.basename,
+									link: formatWikilink(file.path, target),
+									label: target,
 								},
 					);
 				} else {

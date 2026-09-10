@@ -1217,28 +1217,56 @@ describe('URL icon-only 与附件/文档双链', () => {
 		expect(firstChild('- ![[扫描.tiff]]\n').data.image).toBe('扫描.tiff');
 	});
 
-	it('已知降级：非图片嵌入的标签（![[报告.pdf|资料]] / |300）在编辑文本后丢失（记录现状）', () => {
-		// 附件通道在解析时 continue（不写 mdImageAlt/尺寸），合成侧因 mdEmbed 又不补别名 →
-		// 未编辑时靠 mdRaw 逐字回写保真（见上），一旦编辑文本即丢标签。
-		// 锁定现状：若附件通道改为保留标签，本用例应更新为「标签保留」。
+	it('非图片嵌入的管道位（![[报告.pdf|资料]] / |300）在编辑文本后原样保留', () => {
+		// 官方**未定义**非图片附件嵌入的管道位语义（PDF 用 #page=/#height=、音频无
+		// 尺寸语法；只有图片的 |宽 / |宽x高 有明文，走 mdImageWidth/Height），故插件
+		// 不解释、原文存 mdEmbedPipe：编辑节点后不再丢用户写下的参数。
 		const alias = firstChild('- ![[报告.pdf|资料]]\n');
 		expect(alias.data.mdEmbed).toBe(true);
+		expect(alias.data.mdEmbedPipe, '管道位原文入字段').toBe('资料');
 		expect(roundTrip('- ![[报告.pdf|资料]]').out1, '未编辑：逐字回写').toBe(
 			'- ![[报告.pdf|资料]]',
 		);
 		alias.data.text = '新标题';
-		expect(serializeMdBody(alias.tree, null), '编辑后标签丢失').toBe(
-			'- 新标题 ![[报告.pdf]]',
+		expect(serializeMdBody(alias.tree, null), '编辑后标签保留').toBe(
+			'- 新标题 ![[报告.pdf|资料]]',
 		);
 
 		const sized = firstChild('- ![[报告.pdf|300]]\n');
 		expect(sized.data.image).toBeUndefined();
+		expect(sized.data.mdEmbedPipe).toBe('300');
 		expect(roundTrip('- ![[报告.pdf|300]]').out1, '未编辑：逐字回写').toBe(
 			'- ![[报告.pdf|300]]',
 		);
 		sized.data.text = '新标题';
-		expect(serializeMdBody(sized.tree, null), '编辑后尺寸参数丢失').toBe(
-			'- 新标题 ![[报告.pdf]]',
+		expect(serializeMdBody(sized.tree, null), '编辑后尺寸参数保留').toBe(
+			'- 新标题 ![[报告.pdf|300]]',
+		);
+	});
+
+	it('Canvas / Bases 归为文档：链接与嵌入都走文档通道（扩展名与区块保真）', () => {
+		// 官方帮助：Canvas / Bases 是可在标签页打开的文档类文件，其嵌入属文档嵌入
+		// （en/Plugins/Canvas.md、en/Bases/Views.md）；链接非 Markdown 文件必须带扩展名。
+		const canvasLink = firstChild('- [[画布.canvas]]\n');
+		expect(canvasLink.data.attachmentUrl, 'Canvas 不得走附件通道（回形针）').toBeUndefined();
+		expect(canvasLink.data.mdWikiLinkpath).toBe('[[画布.canvas]]');
+		expect(canvasLink.data.text, '链接必须带扩展名（去扩展名会指向不存在的笔记）').toBe(
+			'画布.canvas',
+		);
+		expect(roundTrip('- [[画布.canvas]]').out1).toBe('- [[画布.canvas]]');
+
+		const baseEmbed = firstChild('- ![[看板.base#View]]\n');
+		expect(baseEmbed.data.attachmentUrl).toBeUndefined();
+		expect(baseEmbed.data.mdWikiLinkpath, '#View 是视图名，随链接一起保留').toBe(
+			'[[看板.base#View]]',
+		);
+		expect(baseEmbed.data.mdEmbed).toBe(true);
+		expect(baseEmbed.data.text).toBe('看板.base#View');
+		expect(roundTrip('- ![[看板.base#View]]').out1).toBe('- ![[看板.base#View]]');
+		// 编辑节点 = 改别名；扩展名与 #View 都不得丢，`!` 补回
+		baseEmbed.data.text = '看板视图';
+		expect(serializeMdBody(baseEmbed.tree, null)).toBe(
+			'- ![[看板.base#View|看板视图]]',
 		);
 	});
 

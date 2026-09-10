@@ -18,7 +18,12 @@
 import { App } from 'obsidian';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 import { resolvePathToFile } from './links-resolve';
-import { formatWikilink, linkDisplayText, wikilinkLinkpath } from './domain/wikilink';
+import {
+	formatEmbedWikilink,
+	formatWikilink,
+	linkDisplayText,
+	wikilinkLinkpath,
+} from './domain/wikilink';
 import { isRemoteOrDataUrl, isSchemeUrl } from './domain/url';
 import { docWikiLinkDisplay, editedWikilinkAlias, effectiveDocWikiLink } from './domain/wiki-display';
 import type { MdNodeData } from './node-data';
@@ -65,6 +70,11 @@ function renderHyperlink(data: MdNodeData): string | null {
 			rawName !== defaultName
 		) {
 			alias = rawName;
+		}
+		// 嵌入语法的管道位原文（非图片附件：官方未定义语义）→ 原样写回，
+		// 否则编辑节点后 `![[报告.pdf|300]]` 会退化成 `![[报告.pdf]]`（参数丢失）
+		if (data.mdEmbed && typeof data.mdEmbedPipe === 'string' && data.mdEmbedPipe) {
+			return formatEmbedWikilink(linkpath, data.mdEmbedPipe);
 		}
 		return `${data.mdEmbed ? '!' : ''}${formatWikilink(linkpath, alias)}`;
 	}

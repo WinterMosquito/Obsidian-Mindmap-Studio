@@ -167,7 +167,10 @@ export const PERFORMANCE_THRESHOLD_MAX = 2000;
  */
 const OBSIDIAN_RENDER_EXTENSIONS: ReadonlySet<string> = new Set([
 	'md',
+	// Canvas / Bases：官方一类可在标签页打开的库内文档（.canvas / .base），
+	// 缺 .base 会让指向 base 的链接被提示「无法预览」
 	'canvas',
+	'base',
 	'pdf',
 	// 思维导图（本插件注册了视图，可在 Obsidian 标签页中打开）
 	'mindmap',

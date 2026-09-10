@@ -449,7 +449,6 @@ const UNSUPPORTED_FILES: Array<{ extension: string; name: string }> = [
 	{ extension: 'docx', name: '合同.docx' },
 	{ extension: 'txt', name: '说明.txt' },
 	{ extension: 'csv', name: '表格.csv' },
-	{ extension: 'canvas', name: '画布.canvas' },
 	{ extension: 'exe', name: '工具.exe' },
 	// .mindmap 自身既非图片、非 md、也非可链接附件（走不到任何写回通道）
 	{ extension: 'mindmap', name: '另一张.mindmap' },
@@ -789,12 +788,17 @@ describe('库内文件拖入：分发分支', () => {
 			{ basename: '报告.v2', extension: 'md' },
 			// 扩展名大小写不敏感：.MD 仍走文档分支而非落进「不支持」拒绝
 			{ basename: '大小写', extension: 'MD' },
+			// 官方文档类文件（Canvas / Bases）：同走文档分支
+			{ basename: '画布', extension: 'canvas' },
+			{ basename: '看板', extension: 'base' },
 		];
 
 		for (const item of cases) {
 			resetHarnessMocks();
 			const { basename, extension } = item;
 			const name = `${basename}.${extension}`;
+			// 文档链接目标：md 省略扩展名（[[笔记]]），canvas/base 必须带扩展名
+			const target = extension.toLowerCase() === 'md' ? basename : name;
 
 			// 分支一：已选中主题 → applyDocWikiLink（自绘文档图标通道，不写 hyperlink）
 			const active = makeHarness();
@@ -817,12 +821,13 @@ describe('库内文件拖入：分发分支', () => {
 			expect(h.applyDocWikiLink, name).toHaveBeenCalledWith(
 				active.view,
 				node,
-				formatWikilink(basename),
-				basename,
+				formatWikilink(target),
+				target,
 				null,
 			);
-			// 文档分支用 basename（不含 .md）作可见名，与附件分支用全名相对
-			expect(h.noticeCalls, name).toEqual([linkedTo(ZH, basename)]);
+			// 文档分支用「链接目标」作可见名（md 去扩展名 / canvas·base 带扩展名），
+			// 与附件分支一律用全名相对
+			expect(h.noticeCalls, name).toEqual([linkedTo(ZH, target)]);
 			expect(active.execCommand, name).not.toHaveBeenCalled();
 			// 资源地址在分支判定之前无条件解析（md 分支不消费该结果）：
 			// 只写双链通道，不落图片/附件语义
@@ -848,15 +853,15 @@ describe('库内文件拖入：分发分支', () => {
 				false,
 				[rootNode],
 				{
-					text: basename,
-					mdWikiLinkpath: formatWikilink(basename),
+					text: target,
+					mdWikiLinkpath: formatWikilink(target),
 					mdLinkStyle: 'wiki',
-					mdLinkText: basename,
+					mdLinkText: target,
 					isActive: false,
 				},
 			);
 			expect(h.applyDocWikiLink, name).toHaveBeenCalledTimes(1);
-			expect(h.noticeCalls, name).toEqual([createdAndLinked(ZH, basename)]);
+			expect(h.noticeCalls, name).toEqual([createdAndLinked(ZH, target)]);
 		}
 	});
 

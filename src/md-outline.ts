@@ -293,6 +293,11 @@ function buildInlineData(raw: string): InlineData {
 					data.mdAttachmentLinkpath = tok.target;
 					data.mdLinkStyle = 'wiki';
 					data.mdEmbed = true;
+					// 管道位原文（`![[报告.pdf|300]]` 的 300）：官方未定义其语义，
+					// 原样保留以便编辑节点后回写不丢（见 md-meta.mdEmbedPipe）
+					if (wiki?.alias) {
+						data.mdEmbedPipe = wiki.alias;
+					}
 					continue;
 				}
 				const link = formatWikilink(linkpath, wiki?.alias || undefined);

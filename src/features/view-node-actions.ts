@@ -19,7 +19,12 @@ import { notifyError } from '../errors';
 import { resolvePathToFile } from '../links-resolve';
 import { t } from '../i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
-import { linkDisplayText, parseWikilink, wikilinkTargetIsAttachment } from '../domain/wikilink';
+import {
+	isDocumentExtension,
+	linkDisplayText,
+	parseWikilink,
+	wikilinkTargetIsAttachment,
+} from '../domain/wikilink';
 import { requireActiveNode, insertChildNodeWithData } from './view-common';
 import type { MdNodeData } from '../node-data';
 import type { MindMapNode, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
@@ -192,7 +197,7 @@ async function performAddLink(view: MindMapViewContext): Promise<void> {
 		// 目标串的扩展名判断（无扩展名/.md 视为笔记）
 		const file = resolvePathToFile(target, view.app);
 		const isDoc = file
-			? file.extension === 'md'
+			? isDocumentExtension(file.extension)
 			: !wikilinkTargetIsAttachment(target);
 		if (isDoc) {
 			applyDocWikiLink(view, node, result.link, result.label, oldDisplay);
