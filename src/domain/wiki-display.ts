@@ -46,7 +46,9 @@ export interface WikiAliasSource extends MdNodeMeta {
  * 3. 单行文本（多行没有「唯一别名」的语义，回落旧的合成行为，不丢数据）；
  * 4. 纯双链：通道自带的可见名与 `mdDerivedText` 相等，即原文除该链接外别无内容
  *    （文档双链看 `mdLinkText`，附件双链看 `attachmentName`）；
- * 5. 排除嵌入语法 `![[附件]]`（`mdEmbed`）：其管道位是尺寸参数，不承载别名；
+ * 5. 排除**附件**嵌入语法 `![[附件]]`（`mdEmbed` 且无 `mdWikiLinkpath`）：其管道位
+ *    是尺寸参数（`![[报告.pdf|300]]`），不承载别名。**文档**嵌入（`![[笔记]]`、
+ *    `mdEmbed && mdWikiLinkpath`）不排除——.md 目标的管道位就是别名（见内侧分支）。
  * 6. 别名不含 `[` / `]`：Obsidian 的 wikilink 不允许方括号出现在 `[[..]]` 内，
  *    写进别名位会把链接写坏（`[[目标|[[新目标]]]]` 不再被识别为链接）——
  *    用户手输 `[[新目标]]` 这类内容回落旧合成（语义上更接近「换链」而非「改别名」）。
@@ -69,6 +71,9 @@ export function editedWikilinkAlias(data: WikiAliasSource): string | null {
 	if (/[[\]]/.test(alias)) {
 		return null;
 	}
+	// 文档通道：文档双链 `[[笔记]]` 与**文档嵌入** `![[笔记]]` 同适用——
+	// 文档嵌入的管道位是别名（不是尺寸），故与文档双链同口径改别名。
+	// 回写补 `!` 由 md-serialize 依 mdEmbed 处理，不在此判定。
 	if (typeof data.mdWikiLinkpath === 'string' && data.mdWikiLinkpath) {
 		return typeof data.mdLinkText === 'string' && data.mdLinkText === derived
 			? alias

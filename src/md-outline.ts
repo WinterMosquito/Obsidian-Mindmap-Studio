@@ -20,7 +20,12 @@
  */
 
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
-import { formatWikilink, wikilinkTargetIsAttachment } from './domain/wikilink';
+import {
+	formatWikilink,
+	linkDisplayText,
+	parseWikilink,
+	wikilinkTargetIsAttachment,
+} from './domain/wikilink';
 import { isUrlLikeText } from './domain/url';
 import { isRenderableImageExtension } from './constants';
 import type { MdNodeData } from './node-data';
@@ -261,15 +266,47 @@ function buildInlineData(raw: string): InlineData {
 		pieces.push(raw.slice(cursor, tok.start));
 		cursor = tok.end;
 		if (tok.kind === 'wikiImg' || tok.kind === 'mdImg') {
-			// 非图片附件的嵌入（`![[报告.pdf]]` / `![[录音.mp3]]`）：Obsidian 里是
-			// 富媒体嵌入，插件无法作为节点图渲染（会显示空白）。改走附件通道
-			// （回形针 + 点击打开），并记 mdEmbed 以便回写补回 `!`。
+			// 非图片的嵌入 `![[X]]`，按**目标类型**分两路（Obsidian 语义：末段为
+			// `.md` 或无扩展名 = 文档；其余扩展名 = 附件，判据
+			// `domain/wikilink.wikilinkTargetIsAttachment`）：
+			//
+			// ① 文档嵌入 `![[笔记]]` / `![[笔记.md]]` / `![[笔记#标题|别名]]`
+			//    → 与文档双链**同通道**（`mdWikiLinkpath`，自绘文档页图标），
+			//    节点文本 = 别名‖去 `.md` 的目标名（与 `[[笔记]]` 同口径）。
+			//    **管道位是别名，不是尺寸**——故不能沿用 tokenizeInline 已按图片
+			//    尺寸剥过的 `tok.label`，必须从原始切片重解：
+			//    `![[笔记|300]]` 的 "300" 是别名，不是宽 300。
+			// ② 附件嵌入 `![[报告.pdf]]` / `![[录音.mp3]]`
+			//    → 非图片富媒体无法作为节点图渲染（会空白），走附件通道
+			//    （回形针 + 点击打开）；该形态管道位才是尺寸参数。
+			//
+			// 两路都记 `mdEmbed`，回写时补回 `!` 以保往返。
 			if (tok.kind === 'wikiImg' && !isImageEmbedTarget(tok.target)) {
-				data.attachmentUrl = tok.target;
-				data.attachmentName = tokenDisplay(tok);
-				data.mdAttachmentLinkpath = tok.target;
-				data.mdLinkStyle = 'wiki';
-				data.mdEmbed = true;
+				const rawSlice = raw.slice(tok.start, tok.end);
+				const wiki = parseWikilink(
+					rawSlice.startsWith('!') ? rawSlice.slice(1) : rawSlice,
+				);
+				const linkpath = wiki?.linkpath ?? tok.target;
+				if (wikilinkTargetIsAttachment(linkpath)) {
+					data.attachmentUrl = tok.target;
+					data.attachmentName = tokenDisplay(tok);
+					data.mdAttachmentLinkpath = tok.target;
+					data.mdLinkStyle = 'wiki';
+					data.mdEmbed = true;
+					continue;
+				}
+				const link = formatWikilink(linkpath, wiki?.alias || undefined);
+				if (!firstLink) {
+					firstLink = true;
+					data.mdWikiLinkpath = link;
+					data.mdLinkStyle = 'wiki';
+					data.mdEmbed = true;
+					data.mdLinkText = linkDisplayText(link);
+					// 与文档双链同口径：剥壳显示名进节点文本（去 `.md`）
+					pieces.push(data.mdLinkText);
+				} else {
+					pieces.push(linkDisplayText(link));
+				}
 				continue;
 			}
 			if (!firstImg) {

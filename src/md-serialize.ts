@@ -73,9 +73,13 @@ function renderHyperlink(data: MdNodeData): string | null {
 		// 文档双链（mdWikiLinkpath 通道）：字段存的就是完整 wikilink，原样回写
 		// （纯双链节点被编辑时别名改为节点文本，见 effectiveDocWikiLink）
 		const wikiLink = data.mdWikiLinkpath;
-		return typeof wikiLink === 'string' && wikiLink
-			? effectiveDocWikiLink(data, wikiLink)
-			: null;
+		if (typeof wikiLink !== 'string' || !wikiLink) {
+			return null;
+		}
+		// 文档**嵌入**（`![[笔记]]`）：与文档双链同通道，回写补回 `!` 保往返
+		//（与上方附件嵌入的 mdEmbed 处理同口径）。
+		const docLink = effectiveDocWikiLink(data, wikiLink);
+		return data.mdEmbed ? `!${docLink}` : docLink;
 	}
 	// wiki 双链：原样保留
 	if (hyperlink.startsWith('[[')) {

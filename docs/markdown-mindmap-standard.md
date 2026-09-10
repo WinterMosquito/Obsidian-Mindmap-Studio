@@ -59,13 +59,14 @@
 | 同上且目标为**附件**（末段含非 `.md` 扩展名，`wikilinkTargetIsAttachment`） | 走引擎 `attachmentUrl` 通道 + `mdAttachmentLinkpath` / `mdLinkStyle: 'wiki'`：节点显示**回形针图标**（与文档链接图标区分）；文本 = 别名‖目标文件名；点击按 Obsidian 语义打开（可渲染开标签页 / 系统媒体走系统应用） |
 | `[文本](url)` | 文本 = 链接文本；首个链接 → `hyperlink` + `mdLinkStyle: 'md'`。**label 本身是 URL**（`[https://…](https://…)`，复制粘贴常见，判定 `isUrlLikeText(tok.label)`）时与裸 URL 同语义：URL 本体不进节点文本（icon-only） |
 | `![[文件]]` / `![alt](url)` | 首个图片 → 节点图片（`image` / `mdImageTarget`），按比例统一尺寸；alt 存 `mdImageAlt`；嵌入标签里的尺寸参数存 `mdImageWidth` / `mdImageHeight`（`parseImageLabel`）。**纯图行的节点文本为空**（不回退文件名占位，见 §3.4） |
-| `![[报告.pdf]]` 等**非图片嵌入** | 不作为节点图（会空白）：转走附件通道（回形针 + 点击打开），记 `mdEmbed: true` 以便回写补回 `!` |
+| `![[笔记]]` / `![[笔记.md]]` / `![[笔记#标题\|别名]]` 等**文档嵌入**（目标末段为 `.md` 或无扩展名） | 与文档双链**同通道**：`mdWikiLinkpath`（完整 wikilink）+ `mdLinkStyle: 'wiki'` + `mdEmbed: true` → 显示**自绘文档页图标**；节点文本 = 别名‖去 `.md` 的目标名（与 `[[笔记]]` 同口径）；可悬停预览、点图标打开。**管道位是别名**（`![[笔记\|300]]` 的 `300` 是别名，**不是**图片尺寸）。回写时按 `mdEmbed` 补回 `!` 保往返 |
+| `![[报告.pdf]]` / `![[录音.mp3]]` 等**非图片、非文档嵌入**（末段含 `.md` 之外的扩展名） | 不作为节点图（会空白）：转走附件通道（回形针 + 点击打开），记 `mdEmbed: true` 以便回写补回 `!`；该形态管道位才是**尺寸参数** |
 | **`<url>` 自动链接**（含 `://` scheme） | `hyperlink` = url；**节点文本为空——只显示超链接图标**；悬停 title = 完整地址；回写为 `<url>` |
 | **裸 URL**（行内直接书写 `https://…` / `ftp://` / `obsidian://`） | 与 `<url>` 同语义：目标尾部句读标点不属 URL（`BARE_URL_TRAILING_RE`）；**URL 本体不渲染进节点文本**；前后文本保留（结果连续空格折叠为单空格）；未编辑逐字回写原文，编辑后合成为 `<url>` |
 | 行内多个链接 / 图片 | 首个链接 → 节点链接、首个图片 → 节点图；**其余剥壳为显示文本**，原文由 `mdRaw` 保真 |
 | `**粗体**` `*斜体*` `` `代码` `` `~~删除~~` 等轻标记 | **不剥离、原样保留**在文本（无损；不注册富文本渲染，见 §3.5 边界） |
 
-> **链接图标三类区分**（实现见 `src/mindmap.ts`）：外部 URL = 引擎原生链接图标（`hyperlink` 通道）；双链指向文档 = **自绘文档页图标**（`opt.createNodePrefixContent` 前缀内容 `buildWikiDocIcon`，尺寸 `WIKI_DOC_ICON_SIZE`，参与节点测宽；悬停 title = 目标名，点击 = Obsidian 打开）；双链指向附件 = 回形针图标（引擎 `attachmentUrl` 原生，`node_attachmentClick` 由视图接管）。URL 本体一律不进入节点文本（icon-only），避免长 URL 撑宽节点与双重表达。
+> **链接图标三类区分**（实现见 `src/mindmap.ts`）：外部 URL = 引擎原生链接图标（`hyperlink` 通道）；双链指向文档 = **自绘文档页图标**（`opt.createNodePrefixContent` 前缀内容 `buildWikiDocIcon`，尺寸 `WIKI_DOC_ICON_SIZE`，参与节点测宽；悬停 title = 目标名，点击 = Obsidian 打开）——`[[笔记]]` 文档双链与 `![[笔记]]` 文档嵌入**共用此图标**（二者仅回写时差一个 `!`）；双链指向附件 = 回形针图标（引擎 `attachmentUrl` 原生，`node_attachmentClick` 由视图接管）。URL 本体一律不进入节点文本（icon-only），避免长 URL 撑宽节点与双重表达。
 >
 > `createNodePrefixContent` 未收录于 `vendor/simple-mind-map.d.cts`，经 `Object.assign` 注入以避开类型断言（契约说明见 `src/mindmap.ts` 常量区注释）；历史上曾用 `addCustomContentToNode` 钩子，因其把元素放进 `foreignObject`、裸 `<g>` 实测 0×0 不可见且不参与测宽而被替换。
 >
@@ -111,7 +112,7 @@
 | plain | `text` 多行；未编辑检测通过 → 原文 |
 | list / 新节点 | `缩进 + 标记 + 文本`；有序列表按最终顺序重排 1..n；列表标记（`-`/`*`/`+`）保留；续行补 2 空格缩进；树的新增节点（无 md 元数据）按无序 `-` 输出 |
 | **链接 token** | wiki → `[[..]]` 原样；**URL → `<url>`**（标准 autolink）；非 URL md 链接 → `[label](url)`，**目标含空格/括号/`<>`/`\` 时用尖括号包裹** `[label](<dest>)` 以免破坏 `(…)` 闭合；其余裸目标 → `[[..]]` |
-| **纯双链节点**（整行只有一个双链：`mdLinkText`（文档）/ `attachmentName`（附件）== `mdDerivedText`，且文本已编辑、单行、非嵌入） | **编辑节点 = 改别名**：新文本写成 `[[目标\|新别名]]`（目标与 `#区块` 原样保留，改写走 `domain/wikilink.ts withWikilinkAlias`），不产出「新文本 + 行尾链接」；新文本 == 无别名时的默认显示名（或清空）→ 不写 `\|别名` 段（避免 `[[目标\|目标]]`）。判定 `md-serialize.ts editedWikilinkAlias`，回写与可见名同经 `effectiveDocWikiLink`。**不适用**：混合文本节点（`说明 [[链接]]`，会吞掉说明文字）、多行文本、嵌入语法 `![[附件]]`（管道位是尺寸参数）、URL / md 链接（无别名概念）、新文本含 `[`/`]`（手输 `[[新目标]]` 回落旧合成＝更接近「换链」） |
+| **纯双链节点**（整行只有一个双链：`mdLinkText`（文档）/ `attachmentName`（附件）== `mdDerivedText`，且文本已编辑、单行） | **编辑节点 = 改别名**：新文本写成 `[[目标\|新别名]]`（目标与 `#区块` 原样保留，改写走 `domain/wikilink.ts withWikilinkAlias`），不产出「新文本 + 行尾链接」；新文本 == 无别名时的默认显示名（或清空）→ 不写 `\|别名` 段（避免 `[[目标\|目标]]`）。判定 `md-serialize.ts editedWikilinkAlias`，回写与可见名同经 `effectiveDocWikiLink`。**文档嵌入 `![[笔记]]` 同样适用**（管道位是别名），回写时按 `mdEmbed` 补 `!` → `![[笔记\|新别名]]`。**不适用**：混合文本节点（`说明 [[链接]]`，会吞掉说明文字）、多行文本、**附件**嵌入 `![[报告.pdf]]`（管道位是尺寸参数）、URL / md 链接（无别名概念）、新文本含 `[`/`]`（手输 `[[新目标]]` 回落旧合成＝更接近「换链」） |
 | **纯 URL / icon-only 节点**（文本为空 + URL 链接） | 只写 `<url>`（不写 `[label](<url>)`）；若节点文本残留旧 URL 显示名则清空（保持仅图标） |
 | **图片 token** | 仓库路径 → `![[path]]`；外部 http/data/blob → `![alt](url)`；尺寸按 `目标\|宽度` 特征匹配判断是否需回写（终界 `]`/`x` 防前缀误匹配），未编辑则原文保真 |
 | **frontmatter** | 正文重写前原样回贴文件头；仅正文（body）被重写 |

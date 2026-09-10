@@ -1135,13 +1135,83 @@ describe('URL icon-only 与附件/文档双链', () => {
 		expect(serializeMdBody(tree, null)).toBe('- 新标题 ![[报告.pdf]]');
 	});
 
+	it('文档嵌入 ![[笔记.md]] 走**文档通道**（文档页图标），文本去 .md、管道位是别名', () => {
+		const md = '- ![[笔记.md]]';
+		const { tree, data } = firstChild(md + '\n');
+		expect(data.attachmentUrl, '不得再误入附件通道（回形针）').toBeUndefined();
+		expect(
+			data.mdWikiLinkpath,
+			'与文档双链同通道 → 显示自绘文档页图标',
+		).toBe('[[笔记.md]]');
+		expect(data.mdEmbed, '记录嵌入语法，回写时补回 !').toBe(true);
+		expect(
+			data.mdLinkText,
+			'显示名去 .md（此前回形针 tooltip 会显示 "笔记.md"）',
+		).toBe('笔记');
+		expect(data.text).toBe('笔记');
+		expect(roundTrip(md).out1, '未编辑：逐字回写').toBe(md);
+		expect(roundTrip(md).out2, '不动点').toBe(md);
+		// 纯文档嵌入节点被编辑 = 改别名，且 `!` 必须保留
+		data.text = '新别名';
+		expect(serializeMdBody(tree, null)).toBe('- ![[笔记.md|新别名]]');
+	});
+
+	it('文档嵌入 ![[笔记]]（无扩展名）同样走文档通道', () => {
+		const md = '- ![[笔记]]';
+		const { data } = firstChild(md + '\n');
+		expect(data.mdWikiLinkpath).toBe('[[笔记]]');
+		expect(data.mdEmbed).toBe(true);
+		expect(data.text).toBe('笔记');
+		expect(roundTrip(md).out1).toBe(md);
+	});
+
+	it('文档嵌入的管道位是**别名**，不得被当成图片尺寸（![[笔记|300]]）', () => {
+		const md = '- ![[笔记|300]]';
+		const { data } = firstChild(md + '\n');
+		expect(data.image, '不得当作图片').toBeUndefined();
+		expect(data.mdImageWidth, '不得被 parseImageLabel 吞成尺寸').toBeUndefined();
+		expect(data.mdWikiLinkpath).toBe('[[笔记|300]]');
+		expect(data.text, '"300" 是别名，不是宽 300').toBe('300');
+		expect(roundTrip(md).out1, '未编辑：逐字回写').toBe(md);
+	});
+
+	it('文档嵌入带子路径 ![[笔记#标题]] 保真', () => {
+		const md = '- ![[笔记#标题]]';
+		const { data } = firstChild(md + '\n');
+		expect(data.mdWikiLinkpath).toBe('[[笔记#标题]]');
+		expect(data.mdEmbed).toBe(true);
+		expect(roundTrip(md).out1).toBe(md);
+	});
+
+	it('混合行中的文档嵌入：编辑后保持「文本 + 嵌入 token」', () => {
+		const md = '- 说明 ![[笔记.md]]';
+		const { tree, data } = firstChild(md + '\n');
+		expect(data.mdWikiLinkpath).toBe('[[笔记.md]]');
+		expect(data.text).toBe('说明 笔记');
+		expect(roundTrip(md).out1, '未编辑：逐字回写').toBe(md);
+		data.text = '整段重写';
+		expect(serializeMdBody(tree, null)).toBe('- 整段重写 ![[笔记.md]]');
+	});
+
+	it('文档嵌入 + 图片混排：编辑节点 = 改嵌入别名，图片与 token 顺序都保留', () => {
+		const md = '- ![[笔记.md]] ![[图.png]]';
+		const { tree, data } = firstChild(md + '\n');
+		expect(data.mdWikiLinkpath).toBe('[[笔记.md]]');
+		expect(data.image).toBe('图.png');
+		// 该行文本 === 嵌入的显示名（图片不占文本）→ 命中「纯双链节点 = 改别名」
+		// （与既有 `![[a.png]] [[目标]]` 图文用例同口径）；图片 token 与顺序保留。
+		expect(data.text).toBe('笔记');
+		expect(roundTrip(md).out1, '未编辑：逐字回写').toBe(md);
+		data.text = '改过了';
+		expect(serializeMdBody(tree, null)).toBe('- ![[笔记.md|改过了]] ![[图.png]]');
+	});
+
 	it('图片嵌入 ![[图.png]] 仍为节点图（不受附件分流影响）', () => {
 		const { data } = firstChild('- ![[图.png]]\n');
 		expect(data.image).toBe('图.png');
 		expect(data.attachmentUrl).toBeUndefined();
 		expect(data.mdEmbed).toBeUndefined();
 	});
-
 	it('Obsidian 可渲染但不在拖拽清单的图片格式（avif/tiff）仍按节点图处理', () => {
 		expect(firstChild('- ![[图.avif]]\n').data.image).toBe('图.avif');
 		expect(firstChild('- ![[扫描.tiff]]\n').data.image).toBe('扫描.tiff');

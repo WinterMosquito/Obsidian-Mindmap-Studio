@@ -134,6 +134,18 @@ describe('tokenizeInline — 嵌入图片（wiki 语法 + 官方尺寸参数）'
 			label: '',
 		});
 	});
+
+	it('.md 嵌入亦为 wikiImg（文档/附件分流在消费方 buildInlineData）', () => {
+		// token 层只做词法：`![[…]]` 一律 wikiImg；是图片、文档还是附件由消费方
+		// 按目标扩展名判定（见 md-roundtrip「文档嵌入 … 走文档通道」用例）。
+		expect(tokenizeInline('![[笔记.md]]')[0]).toEqual({
+			start: 0,
+			end: 10,
+			kind: 'wikiImg',
+			target: '笔记.md',
+			label: '',
+		});
+	});
 });
 
 describe('tokenizeInline — md 链接', () => {
