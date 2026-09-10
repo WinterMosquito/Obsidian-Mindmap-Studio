@@ -54,10 +54,16 @@ interface Harness {
 	modify: ReturnType<typeof vi.fn>;
 	/** 每次 modify 被调用当下记录的正文（按序） */
 	written: string[];
+	/** 每次写盘的「目标文件 + 正文」（跨文件用例断言写盘归属） */
+	writes: { path: string; content: string }[];
 	onSaveError: ReturnType<typeof vi.fn>;
 	file: TFile;
 	setTree(tree: MindMapTreeNode | null): void;
 	setFile(file: TFile | null): void;
+	/** 按文件键设置 frontmatter（视图侧 frontmatterByPath 的等价物） */
+	setFrontmatter(path: string, value: string | null): void;
+	/** 注册第二个文件（文件切换用例） */
+	addFile(path: string): TFile;
 	/** 文件是否仍在库中（删除守卫用例） */
 	setExists(exists: boolean): void;
 	/** 让接下来 count 次写盘挂起（未决 Promise），由 release/fail 控制 */
@@ -67,9 +73,12 @@ interface Harness {
 }
 
 function makeHarness(
-	overrides: Partial<Pick<SavePipelineDeps, 'isAutoSave' | 'getFrontmatter'>> = {},
+	overrides: Partial<
+		Pick<SavePipelineDeps, 'isAutoSave' | 'getFrontmatterFor'>
+	> = {},
 ): Harness {
 	const written: string[] = [];
+	const writes: { path: string; content: string }[] = [];
 	const gates: ReturnType<typeof deferred>[] = [];
 	let gatedCalls = 0;
 
@@ -78,11 +87,17 @@ function makeHarness(
 		basename: 'a.mindmap',
 	});
 	let currentFile: TFile | null = file;
-	let tree: MindMapTreeNode | null = node('Root', [node('A')]);
-	const existing = new Set([FILE_PATH]);
+	/** 每个文件各自的树快照（引擎同一时刻只持有一份 → 非当前文件取到 null） */
+	const trees = new Map<string, MindMapTreeNode | null>([
+		[FILE_PATH, node('Root', [node('A')])],
+	]);
+	/** 每个文件各自的 frontmatter（视图侧 frontmatterByPath 的等价物） */
+	const frontmatters = new Map<string, string | null>();
+	const paths = new Map<string, TFile>([[FILE_PATH, file]]);
 
-	const modify = vi.fn((_file: TFile, content: string): Promise<void> => {
+	const modify = vi.fn((target: TFile, content: string): Promise<void> => {
 		written.push(content);
+		writes.push({ path: target.path, content });
 		if (gatedCalls <= 0) {
 			return Promise.resolve();
 		}
@@ -96,7 +111,7 @@ function makeHarness(
 		vault: {
 			modify,
 			// 模块用官方推荐的类型化 getter 做存在性守卫（删除后不重建文件）
-			getFileByPath: (path: string) => (existing.has(path) ? file : null),
+			getFileByPath: (path: string) => paths.get(path) ?? null,
 		},
 	});
 
@@ -104,8 +119,10 @@ function makeHarness(
 	const deps: SavePipelineDeps = {
 		app,
 		getFile: () => currentFile,
-		getSnapshot: () => tree,
-		getFrontmatter: () => null,
+		// 归属语义与 view.ts 一致：引擎只持有**当前文件**的树，别的文件取到 null
+		getSnapshotFor: (f) =>
+			currentFile?.path === f.path ? (trees.get(f.path) ?? null) : null,
+		getFrontmatterFor: (f) => frontmatters.get(f.path) ?? null,
 		isAutoSave: () => true,
 		onSaveError,
 		...overrides,
@@ -115,19 +132,30 @@ function makeHarness(
 		pipeline: new SavePipeline(deps),
 		modify,
 		written,
+		writes,
 		onSaveError,
 		file,
 		setTree: (t) => {
-			tree = t;
+			if (currentFile) {
+				trees.set(currentFile.path, t);
+			}
 		},
 		setFile: (f) => {
 			currentFile = f;
 		},
+		setFrontmatter: (path, value) => {
+			frontmatters.set(path, value);
+		},
+		addFile: (path) => {
+			const added = Object.assign(new TFile(), { path, basename: path });
+			paths.set(path, added);
+			return added;
+		},
 		setExists: (exists) => {
 			if (exists) {
-				existing.add(FILE_PATH);
+				paths.set(FILE_PATH, file);
 			} else {
-				existing.clear();
+				paths.delete(FILE_PATH);
 			}
 		},
 		gate: (count) => {
@@ -214,7 +242,7 @@ describe('SavePipeline.schedule（防抖自动保存）', () => {
 describe('SavePipeline.save（写盘内容与守卫）', () => {
 	it('正文 = frontmatter + 大纲 + 尾随换行；根文本（中心主题=文件名）不入正文', async () => {
 		const h = makeHarness({
-			getFrontmatter: () => '---\ntitle: demo\n---',
+			getFrontmatterFor: () => '---\ntitle: demo\n---',
 		});
 		h.setTree(node('Root', [node('A', [node('A1')])]));
 
@@ -226,7 +254,7 @@ describe('SavePipeline.save（写盘内容与守卫）', () => {
 
 	it('frontmatter 自带尾换行时不重复补换行', async () => {
 		const h = makeHarness({
-			getFrontmatter: () => '---\ntitle: demo\n---\n',
+			getFrontmatterFor: () => '---\ntitle: demo\n---\n',
 		});
 		await h.pipeline.save();
 		expect(h.written[0]).toBe('---\ntitle: demo\n---\n- A\n');
@@ -240,7 +268,7 @@ describe('SavePipeline.save（写盘内容与守卫）', () => {
 	});
 
 	it('空树（根无子节点）写出的正文仅剩 frontmatter，仍保证尾随换行', async () => {
-		const h = makeHarness({ getFrontmatter: () => '---\nx: 1\n---' });
+		const h = makeHarness({ getFrontmatterFor: () => '---\nx: 1\n---' });
 		h.setTree(node('Root'));
 		await h.pipeline.save();
 		expect(h.written[0]).toBe('---\nx: 1\n---\n');
@@ -451,5 +479,115 @@ describe('SavePipeline 写盘失败（onSaveError）', () => {
 		await h.pipeline.save();
 		expect(h.modify).toHaveBeenCalledTimes(3);
 		expect(h.written[2]).toBe('- 恢复\n');
+	});
+});
+
+/**
+ * 写盘归属（P0 回归）：core 切换 FileView 的文件时**不 await** onUnloadFile，
+ * 故 await 期间 `getFile()`/引擎都可能已交班给新文件。管线必须保证
+ * 「一次写盘的目标文件与其内容属于同一个文件」——否则新文档正文会被写进旧文件、
+ * 旧文件会丢掉自己的 frontmatter。桩里的 getSnapshotFor/getFrontmatterFor 与
+ * view.ts 同语义（引擎只持有当前文件的树；frontmatter 按文件键取）。
+ */
+describe('SavePipeline 写盘归属（换文件期间的排空）', () => {
+	const B_PATH = 'notes/b.mindmap.md';
+
+	it('排空期间卸载旧文件：只写旧文件自己的内容，绝不写入新文件的树', async () => {
+		const h = makeHarness();
+		h.gate(2);
+		const first = h.pipeline.save(); // A 首写（挂起）
+		await flushMicrotasks();
+		expect(h.written).toEqual(['- A\n']);
+
+		// 换文件：this.file 与引擎都已交班给 B（getSnapshotFor(A) 随即为 null）
+		const b = h.addFile(B_PATH);
+		h.setFile(b);
+		h.setTree(node('Root', [node('B-child')]));
+
+		// 卸载 A：显式传入 A 与**同步抓取**的 A 树快照
+		const unload = h.pipeline.save(h.file, node('Root', [node('A-child')]));
+		await flushMicrotasks();
+		// 同一文件的写入中再触发 → 并入本轮排空，不新增写盘
+		expect(h.modify).toHaveBeenCalledTimes(1);
+
+		h.release(0);
+		await flushMicrotasks();
+
+		// 两趟都落在 A：首写原文 + 兜底快照补写；B 的内容从未落到 A
+		expect(h.writes).toEqual([
+			{ path: FILE_PATH, content: '- A\n' },
+			{ path: FILE_PATH, content: '- A-child\n' },
+		]);
+		expect(h.written.some((content) => content.includes('B-child'))).toBe(
+			false,
+		);
+
+		h.release(1);
+		await Promise.all([first, unload]);
+	});
+
+	it('排空期间另存新文件：独立排队，各自只写自己的内容', async () => {
+		const h = makeHarness();
+		h.gate(2);
+		const first = h.pipeline.save(); // A 首写（挂起）
+		await flushMicrotasks();
+
+		const b = h.addFile(B_PATH);
+		h.setFile(b);
+		h.setTree(node('Root', [node('B-child')]));
+		const second = h.pipeline.save(); // 目标 = 当前文件 B
+		await flushMicrotasks();
+		// 不并入 A 那一轮：此刻仍只有 A 的首写
+		expect(h.modify).toHaveBeenCalledTimes(1);
+
+		h.release(0);
+		await flushMicrotasks();
+		// A 的一轮收尾后 B 才入队（B 取自己的当前快照）
+		expect(h.writes).toEqual([
+			{ path: FILE_PATH, content: '- A\n' },
+			{ path: B_PATH, content: '- B-child\n' },
+		]);
+
+		h.release(1);
+		await Promise.all([first, second]);
+		expect(h.modify).toHaveBeenCalledTimes(2);
+	});
+
+	it('卸载旧文件时引擎已交班且无兜底快照：宁可少写，也不写错文件', async () => {
+		const h = makeHarness();
+		const b = h.addFile(B_PATH);
+		h.setFile(b);
+		h.setTree(node('Root', [node('B-child')]));
+
+		await h.pipeline.save(h.file); // 目标 A，但引擎已无 A、也无兜底快照
+		expect(h.modify).not.toHaveBeenCalled();
+	});
+
+	it('frontmatter 按文件取：排空期换文件不会把新文件头拼进旧文件', async () => {
+		const h = makeHarness();
+		h.setFrontmatter(FILE_PATH, '---\ntitle: A\n---');
+		h.gate(2);
+		const first = h.pipeline.save(); // A 首写（已带 A 的文件头）
+		await flushMicrotasks();
+
+		const b = h.addFile(B_PATH);
+		h.setFrontmatter(B_PATH, '---\ntitle: B\n---');
+		h.setFile(b);
+		h.setTree(node('Root', [node('B-child')]));
+
+		const unload = h.pipeline.save(h.file, node('Root', [node('A-child')]));
+		h.release(0);
+		await flushMicrotasks();
+
+		expect(h.writes[1]).toEqual({
+			path: FILE_PATH,
+			content: '---\ntitle: A\n---\n- A-child\n',
+		});
+		expect(h.written.some((content) => content.includes('title: B'))).toBe(
+			false,
+		);
+
+		h.release(1);
+		await Promise.all([first, unload]);
 	});
 });

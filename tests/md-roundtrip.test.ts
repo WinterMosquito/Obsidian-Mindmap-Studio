@@ -197,8 +197,8 @@ describe('解析结构', () => {
 		const bare = parseMdOutline('- \n', '根').tree.children;
 		expect(bare).toHaveLength(1);
 		expect(bare[0]!.data.mdType).toBe('plain');
-		expect(bare[0]!.data.text).toBe('-');
-		expect(roundTrip('- \n').out1).toBe('-');
+		expect(bare[0]!.data.text, '节点显示文本 trim').toBe('-');
+		expect(roundTrip('- \n').out1, '原文（含行尾空格）逐字回写').toBe('- ');
 	});
 
 	it('`#标题`（无空格）不匹配标题行 → 落为 plain 段落节点（源码注释所述「宽容」未实现）', () => {
@@ -407,10 +407,13 @@ describe('往返不动点', () => {
 		expect(out2).toBe(out1);
 	});
 
-	it('规范化：无缩进的段落首尾空白与 tab 缩进被归一', () => {
+	it('保真：段落的行首缩进与行尾空格不再被 trim（原「归一」已修复）', () => {
 		const md = ['# H', '', '  缩进段落  ', ''].join('\n');
 		const { out1, out2 } = roundTrip(md);
-		expect(out1, 'plain 行按 trim 后文本回写').toBe(['# H', '', '缩进段落'].join('\n'));
+		expect(
+			out1,
+			'plain 行按原文回写（行首缩进是缩进代码块语义、行尾两空格是硬换行语义）',
+		).toBe(['# H', '', '  缩进段落  '].join('\n'));
 		expect(out2).toBe(out1);
 	});
 
@@ -960,26 +963,28 @@ describe('嵌入尺寸参数', () => {
 		expect(serializeMdBody(tree, null)).toBe('- 标注 ![[a.png|250]]');
 	});
 
-	it('已知降级：外链 md 图片（![alt|300](url)）一经编辑即被改写成 ![[https://…]]（记录现状）', () => {
-		// 成因：renderImage 首个分支 `if (target && image === target)` 直接输出 wiki 嵌入，
-		// 而解析侧把 mdImg 的 mdImageTarget 也设为同一 URL → 只要图片未被更换就命中该分支，
-		// alt 被当作嵌入标签（`|alt`）或尺寸参数写出。`![[https://…]]` 不是 Obsidian 合法
-		// 嵌入（wikilink 目标不能是 URL），也未走 renderImage 末尾的外链 md 图分支。
-		// 未编辑时由 mdRaw 逐字回写保真，故只在「文本被编辑 / 尺寸被调整」后暴露。
+	it('外链 md 图片（![alt|300](url)）编辑/调宽后仍是 md 图片形态（原「已知降级」已修复）', () => {
+		// 旧行为成因：renderImage 首分支 `if (target && image === target)` 直接输出
+		// wiki 嵌入，而解析侧把 mdImg 的 mdImageTarget 也设为同一 URL → 只要图片未被
+		// 更换就命中该分支，alt 被当作嵌入标签（`|alt`）或尺寸参数写出，得到
+		// `![[https://…]]`——wikilink 目标不能是 URL，图失效且 alt 丢失。
+		// 现改为：外链/协议地址判定排在 `image === target` 之前，始终写 md 图片形态。
 		const md = '- ![截图|300](https://x.com/a.png)';
 		expect(roundTrip(md).out1, '未编辑：逐字回写（含 ![] 语法与 alt）').toBe(md);
 
 		const edited = firstChild(md + '\n');
 		edited.data.text = '改过';
-		expect(serializeMdBody(edited.tree, null), '编辑后 alt 被当作嵌入标签').toBe(
-			'- 改过 ![[https://x.com/a.png|截图]]',
-		);
+		expect(
+			serializeMdBody(edited.tree, null),
+			'编辑后保持 md 图片形态（alt 不当作嵌入标签）',
+		).toBe('- 改过 ![截图](https://x.com/a.png)');
 
 		const resized = firstChild(md + '\n');
 		resized.data.imageSize = { width: 250, height: 125, custom: true };
-		expect(serializeMdBody(resized.tree, null), '调宽后尺寸写在 wiki 形态标签位').toBe(
-			'- ![[https://x.com/a.png|250]]',
-		);
+		expect(
+			serializeMdBody(resized.tree, null),
+			'调宽后尺寸写在 md 图片标签位',
+		).toBe('- ![截图|250](https://x.com/a.png)');
 	});
 
 	it('wiki 嵌入的说明文本（![[a.png|说明]]）编辑文本后仍保留', () => {
@@ -1204,6 +1209,70 @@ describe('URL icon-only 与附件/文档双链', () => {
 		expect(roundTrip(md).out1, '未编辑：逐字回写').toBe(md);
 		data.text = '改过了';
 		expect(serializeMdBody(tree, null)).toBe('- ![[笔记.md|改过了]] ![[图.png]]');
+	});
+
+	// —— 「清除链接」对嵌入必须同样生效 ——
+	// 回归：此前「链接已清除」检测用 `(?<!!)\[\[` 把**所有**嵌入排除，于是文档/附件
+	// 嵌入被清除后仍按 mdRaw 逐字回写，链接在下次保存时复活（图片嵌入则必须排除，
+	// 它不是链接）。判据改为「该嵌入 token 是否属于本节点的图片」。
+	it('清除链接对**文档嵌入**生效：剥离嵌入、保留显示文本', () => {
+		const md = '- ![[笔记]]';
+		const { tree, data } = firstChild(md + '\n');
+		// 与 clearNodeHyperlink 等价：删文档双链字段（mdEmbed/mdRaw 作为解析残留保留）
+		delete data.mdWikiLinkpath;
+		delete data.mdLinkText;
+		expect(serializeMdBody(tree, null)).toBe('- 笔记');
+	});
+
+	it('清除链接对**附件嵌入**生效（含管道位）', () => {
+		const md = '- ![[报告.pdf|300]]';
+		const { tree, data } = firstChild(md + '\n');
+		delete data.attachmentUrl;
+		delete data.attachmentName;
+		delete data.mdAttachmentLinkpath;
+		const out = serializeMdBody(tree, null);
+		expect(out, '嵌入不得复活').not.toContain('[[');
+		expect(out, '管道位随链接一并消失').not.toContain('报告.pdf');
+		// 附件嵌入节点本就没有文本（回形针通道，文本由图标 title 承载）
+		// → 剥离后只剩列表标记
+		expect(out.trimEnd()).toBe('-');
+	});
+
+	it('清除文档嵌入后图片仍逐字保留（图片不是链接，不得被剥离）', () => {
+		const md = '- ![[笔记]] ![[图.png]]';
+		const { tree, data } = firstChild(md + '\n');
+		delete data.mdWikiLinkpath;
+		delete data.mdLinkText;
+		expect(serializeMdBody(tree, null)).toBe('- 笔记 ![[图.png]]');
+	});
+
+	it('纯图片嵌入（无链接字段）不受「链接已清除」检测影响', () => {
+		const md = '- ![[图.png|300]]';
+		const { tree } = firstChild(md + '\n');
+		expect(serializeMdBody(tree, null)).toBe(md);
+	});
+
+	// —— 外链图片的合成形态 ——
+	// 回归：外链图片的 mdImageTarget 与 image 相等，原先「image === target → 写 ![[..]]」
+	// 分支排在远程地址判定之前，于是拖拽调宽（尺寸落成 custom:true，合成路径生效）后
+	// 外链被回写成 `![[https://…]]`——图失效且 alt 丢失。
+	it('外链 md 图片带尺寸：合成仍写 `![alt|宽](url)`，不得退化成 wikilink', () => {
+		const md = '- ![截图|300](https://x.com/a.png)';
+		const { tree, data } = firstChild(md + '\n');
+		// 加载期 walkCorrectImageSizesByAspect 对带参节点写入的等价状态
+		data.imageSize = { custom: true, width: 300, height: 200 };
+		const out = serializeMdBody(tree, null);
+		expect(out).toBe(md);
+		expect(out, '外链不是库内文件，不得写成 wikilink').not.toContain('![[');
+	});
+
+	it('外链图片拖拽改宽后同样保持 `![alt|宽](url)`', () => {
+		const md = '- ![截图|300](https://x.com/a.png)';
+		const { tree, data } = firstChild(md + '\n');
+		data.imageSize = { custom: true, width: 480, height: 270 };
+		expect(serializeMdBody(tree, null)).toBe(
+			'- ![截图|480](https://x.com/a.png)',
+		);
 	});
 
 	it('图片嵌入 ![[图.png]] 仍为节点图（不受附件分流影响）', () => {
@@ -1563,5 +1632,47 @@ describe('.mindmap.md 标记与新建正文', () => {
 		expect(file).toBe('思维导图2026-01-05.mindmap.md');
 		expect(hasMindMapMarker(file)).toBe(true);
 		expect(stripMindMapStem(file.replace(/\.md$/, ''))).toBe(name);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// plain 行保真：行首缩进与行尾空格都是 Markdown 语义
+//
+// 旧行为：`classifyLines` 把 plain 行 `trimEnd()` 后再 `trim()` 存入 mdRaw，
+// 于是「4 空格缩进代码块」退化成普通段落、「行尾两空格 = 硬换行」被抹掉——
+// 未编辑保存即改动文件内容。现 `mdRaw` 走未 trim 的原文，节点显示文本仍 trim。
+// ---------------------------------------------------------------------------
+describe('plain 行保真（缩进与行尾空格）', () => {
+	it('缩进代码块（4 空格）逐字往返，前导缩进不被吞', () => {
+		const md = '    代码行\n      更深一层';
+		expect(roundTrip(md).out1, '未编辑：逐字回写').toBe(md);
+		expect(roundTrip(md).out2, '不动点').toBe(md);
+	});
+
+	it('缩进块的节点显示文本仍 trim（缩进不进节点文本）', () => {
+		const { data } = firstChild('    代码行\n');
+		expect(data.text, '显示文本去掉行首缩进').toBe('代码行');
+		expect(data.mdRaw, 'mdRaw 保留原始缩进').toBe('    代码行');
+	});
+
+	it('行尾两个空格（硬换行）逐字往返', () => {
+		const md = '第一行  \n第二行';
+		expect(roundTrip(md).out1, '未编辑：逐字回写').toBe(md);
+		expect(roundTrip(md).out2, '不动点').toBe(md);
+	});
+
+	it('列表续行：行首缩进仍按既有规范归一（由序列化器补 2 空格），行尾空格保真', () => {
+		const md = '- a\n    续行  \n    再续';
+		expect(roundTrip(md).out1, '行首缩进归一、行尾两空格保留').toBe(
+			'- a\n  续行  \n  再续',
+		);
+	});
+
+	it('对照：列表自身的 Tab 缩进仍归一为 2 空格（列表缩进规范未被本修复改动）', () => {
+		expect(roundTrip('- a\n\t- b').out1).toBe('- a\n  - b');
+	});
+
+	it('对照：段落间空行仍按既有规范化吞掉（非本修复范围）', () => {
+		expect(roundTrip('第一段\n\n第二段').out1).toBe('第一段\n第二段');
 	});
 });

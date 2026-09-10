@@ -6,6 +6,14 @@
  * - 解析/序列化是纯 Markdown 往返（md-outline ⇄ md-serialize）；
  * - 保存管线的树快照经回调注入（引擎 getData 由调用方提供），
  *   引擎销毁后的兜底快照（pendingTree）由管线自身持有。
+ *
+ * 归属不变式（本模块唯一的硬约束）：
+ *   **一次写盘的目标文件与其内容必须属于同一个文件。**
+ * core 不 await `onUnloadFile`，视图切换期间 `getFile()`/引擎都可能已经指向新
+ * 文件，故内容一律经 `getSnapshotFor(file)`/`getFrontmatterFor(file)` 按文件取，
+ * 排空循环**不读**"最近加载"的活引用；卸载路径由调用方显式传入自己的文件与
+ * 树快照（`save(file, treeHint)`）。违反该不变式会把新文档正文写进旧文件、
+ * 或让旧文件丢掉 frontmatter。
  */
 import { App, TFile } from 'obsidian';
 import { stripMindMapStem, AUTO_SAVE_DEBOUNCE_MS } from '../constants';
@@ -55,15 +63,21 @@ export class DocumentService {
 	}
 }
 
-/** 保存管线依赖（全部窄化注入，不持有视图/引擎引用） */
+/** 保存管线依赖（全部窄化注入，不持有视图/引擎引用；内容 getter 一律按文件取） */
 export interface SavePipelineDeps {
 	app: App;
 	/** 视图当前文件（视图关闭/卸载中可能为 null） */
 	getFile(): TFile | null;
-	/** 引擎当前树快照（引擎已销毁时为 null，管线用兜底快照续写） */
-	getSnapshot(): MindMapTreeNode | null;
-	/** md frontmatter（保存时拼回文件头） */
-	getFrontmatter(): string | null;
+	/**
+	 * **指定文件**的树快照：引擎当前不持有该文件时为 null（引擎已销毁时同样为
+	 * null，此时管线用排空期提前抓的兜底快照续写）。
+	 */
+	getSnapshotFor(file: TFile): MindMapTreeNode | null;
+	/**
+	 * **指定文件**的 md frontmatter（保存时拼回文件头）。必须按文件键取，
+	 * 不能用"最近加载的那份"——换文件期间它会变成新文件的值。
+	 */
+	getFrontmatterFor(file: TFile): string | null;
 	/** 自动保存开关（关闭时 schedule 不生效，显式 save 仍可用） */
 	isAutoSave(): boolean;
 	/** 写盘失败回调（视图据此弹用户可见提示；缺省仅 console.error） */
@@ -78,7 +92,9 @@ const SAVE_DELAY_MS = AUTO_SAVE_DEBOUNCE_MS;
  * - 写入进行中再触发 → 标记待写并立即快照（视图卸载时引擎可能随即销毁，
  *   提前快照保证最后一批编辑不丢失）；
  * - 循环排空：写盘期间若又有编辑（savePending），继续写最新快照；
- * - 文件已删除时不重建（Obsidian 删除 .mindmap 会触发 onUnloadFile）。
+ * - 文件已删除时不重建（Obsidian 删除 .mindmap 会触发 onUnloadFile）；
+ * - **归属守卫**：排空期只接续同一文件的快照，不同文件的保存独立排队，
+ *   绝不并入别人那一轮（详见文件头不变式）。
  */
 export class SavePipeline {
 	private debouncer = createDebouncer(SAVE_DELAY_MS);
@@ -88,6 +104,10 @@ export class SavePipeline {
 	private savePending = false;
 	/** 待写快照：视图卸载时引擎已销毁，用它兜底最后一批编辑 */
 	private pendingTree: MindMapTreeNode | null = null;
+	/** pendingTree 所属文件（跨文件不可复用） */
+	private pendingFile: TFile | null = null;
+	/** 正在排空的文件：整轮排空的写盘归属不随视图当前文件漂移 */
+	private drainFile: TFile | null = null;
 	/** 最近一次写盘任务（写入中再触发时，await 它即等价于等排空） */
 	private activeSave: Promise<void> = Promise.resolve();
 
@@ -108,42 +128,64 @@ export class SavePipeline {
 		this.debouncer.cancel();
 	}
 
-	async save(): Promise<void> {
-		const current = this.deps.getFile();
-		if (!current) {
+	/**
+	 * 写盘。
+	 *
+	 * @param file    目标文件；缺省取视图当前文件。**卸载/关闭路径必须显式传入
+	 *                自己那份文件**——core 不 await onUnloadFile，隐式取值可能
+	 *                已是新文件（会把旧文档内容写进新文件）。
+	 * @param treeHint 调用方对**该文件**的树快照（卸载时同步抓取）。引擎已交班/
+	 *                销毁导致活快照取不到时用它兜底，保证最后一批编辑不丢。
+	 */
+	async save(file?: TFile, treeHint?: MindMapTreeNode | null): Promise<void> {
+		const target = file ?? this.deps.getFile();
+		if (!target) {
 			return;
 		}
 		// 文件已被删除时不应重新保存：Obsidian 删除 .mindmap 会触发 onUnloadFile，
 		// 此时若继续 vault.modify，会重建已被删除的文件（表现为"要删两次"）。
 		if (
 			// 删除守卫是文件存在性检查（类型化 getter，官方推荐）
-			!this.deps.app.vault.getFileByPath(current.path)
+			!this.deps.app.vault.getFileByPath(target.path)
 		) {
 			return;
 		}
 		if (this.saveInProgress) {
-			// 写入进行中：标记待写并立即快照最新数据。
-			// 视图卸载（onUnloadFile/onClose）时引擎可能随即被销毁，
-			// 提前快照保证最后一批编辑不丢失。
-			this.savePending = true;
-			this.pendingTree = this.deps.getSnapshot() ?? this.pendingTree;
-			return this.activeSave;
+			if (this.drainFile?.path === target.path) {
+				// 同一文件：标记待写并立即快照最新数据。
+				// 视图卸载（onUnloadFile/onClose）时引擎可能随即被销毁，
+				// 提前快照保证最后一批编辑不丢失。
+				this.savePending = true;
+				const snapshot = treeHint ?? this.deps.getSnapshotFor(target);
+				if (snapshot) {
+					this.pendingTree = snapshot;
+					this.pendingFile = target;
+				}
+				return this.activeSave;
+			}
+			// 不同文件：等在排空的那一轮收尾后独立入队，绝不并入别人的批次
+			//（并入会把本文件的内容写进正被排空的另一个文件）。
+			await this.activeSave;
+			return this.save(target, treeHint);
 		}
-		const file = current;
+		// frontmatter 在请求时刻按目标文件抓取：排空期间即使视图已切到别的文件，
+		// 本文件写出的仍是自己的文件头。
+		const frontmatter = this.deps.getFrontmatterFor(target);
 		this.saveInProgress = true;
+		this.drainFile = target;
 		this.activeSave = this.enqueue(async () => {
 			try {
 				// 循环排空：写盘期间若又有编辑（savePending），继续写最新快照
-				let tree = this.deps.getSnapshot();
+				let tree = this.takeTreeFor(target, treeHint);
 				while (
 					tree &&
 					// 排空循环删除守卫是文件存在性检查（类型化 getter）
-					this.deps.app.vault.getFileByPath(file.path)
+					this.deps.app.vault.getFileByPath(target.path)
 				) {
 					try {
 						await this.deps.app.vault.modify(
-							file,
-							this.serialize(tree),
+							target,
+							this.serialize(tree, frontmatter),
 						);
 					} catch (error) {
 						// 保存失败通常是磁盘满/权限，重试无意义；立即复位排空状态
@@ -152,6 +194,7 @@ export class SavePipeline {
 						this.deps.onSaveError?.(error);
 						this.savePending = false;
 						this.pendingTree = null;
+						this.pendingFile = null;
 						tree = null;
 						break;
 					}
@@ -160,20 +203,38 @@ export class SavePipeline {
 						break;
 					}
 					this.savePending = false;
-					tree = this.deps.getSnapshot() ?? this.pendingTree;
-					this.pendingTree = null;
+					// 续写**同一文件**的下一份快照（续写路径不再带 treeHint：
+					// 此刻引擎活快照若可得必然比请求时刻的兜底快照新）
+					tree = this.takeTreeFor(target);
 				}
 			} finally {
 				this.saveInProgress = false;
+				this.drainFile = null;
 			}
 		});
 		return this.activeSave;
 	}
 
+	/**
+	 * 取该文件的下一份待写快照：引擎活快照（同文件时最新）→ 调用方兜底快照
+	 * → 排空期提前抓的兜底快照。三者都按文件校验并与消费同步清空，
+	 * 保证不会把别的文件的内容写进本文件。
+	 */
+	private takeTreeFor(
+		file: TFile,
+		treeHint?: MindMapTreeNode | null,
+	): MindMapTreeNode | null {
+		const live = this.deps.getSnapshotFor(file);
+		const fallback =
+			this.pendingFile?.path === file.path ? this.pendingTree : null;
+		this.pendingTree = null;
+		this.pendingFile = null;
+		return live ?? treeHint ?? fallback;
+	}
+
 	/** 序列化为 md 大纲 + 原样 frontmatter（布局不入文件），保证尾随换行 */
-	private serialize(tree: MindMapTreeNode): string {
+	private serialize(tree: MindMapTreeNode, frontmatter: string | null): string {
 		const body = serializeMdBody(tree, this.deps.app);
-		const frontmatter = this.deps.getFrontmatter();
 		let content = frontmatter
 			? frontmatter.endsWith('\n')
 				? frontmatter + body

@@ -108,8 +108,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	/** 进入前 markdown 视图模式（返回「以 Markdown 编辑」时恢复） */
 	private mdBackMode: 'source' | 'preview' = 'source';
-	/** 原样保留的 frontmatter 块（保存时拼回文件头） */
-	private mdFrontmatter: string | null = null;
+	/**
+	 * 按文件键保留的 frontmatter 块（保存时拼回文件头；条目在 onUnloadFile
+	 * 写盘结束后清理）。**必须按文件取值**：core 切换 FileView 的文件时不 await
+	 * onUnloadFile，「最近加载的那一份」在换文件期间已属于新文件——若用单值字段，
+	 * 旧文件的写盘会拼上新文件的文件头、或丢掉旧文件的文件头。
+	 */
+	private readonly frontmatterByPath = new Map<string, string | null>();
 	/**
 	 * 文档模式标记：parseDocument 时按文件名锁定（保存/回写恒为 md 大纲；
 	 * 标记用于工具栏返回按钮与相关交互的显示判定）。外部读取走 isMdDocument()。
@@ -142,8 +147,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.savePipeline = new SavePipeline({
 			app: this.app,
 			getFile: () => this.file,
-			getSnapshot: () => this.engine.getDataSnapshot(),
-			getFrontmatter: () => this.mdFrontmatter,
+			// 内容一律按目标文件取：引擎已交班给别的文件时返回 null，管线改用
+			// 排空期提前抓的兜底快照——绝不把新文件的内容写进旧文件（归属不变式）。
+			getSnapshotFor: (file) =>
+				this.file?.path === file.path ? this.engine.getDataSnapshot() : null,
+			getFrontmatterFor: (file) =>
+				this.frontmatterByPath.get(file.path) ?? null,
 			isAutoSave: () => this.plugin.settings.autoSave,
 			onSaveError: (error) => {
 				notifyError(this.lang, 'save.failed', error);
@@ -289,7 +298,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		await this.loadMindMapFromFile(file);
 	}
 
-	override async onUnloadFile(): Promise<void> {
+	override async onUnloadFile(file: TFile): Promise<void> {
 		const unloadingPath = this.loadingFilePath;
 		this.engine.invalidateInit();
 		this.cancelPendingInit();
@@ -297,7 +306,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.titleRenamer.cancel();
 		// 先保存当前视口，再写盘正文（引擎随后销毁）
 		this.engine.persistViewport();
-		await this.savePipeline.save();
+		// 显式传入本文件与**本文件**的树快照（同步抓取，不受后续 await 影响）：
+		// core 不 await onUnloadFile，await 期间新文件可能已接管引擎与 this.file，
+		// 隐式取值会把新文件的内容写进本文件（见 SavePipeline 归属不变式）。
+		await this.savePipeline.save(file, this.engine.getDataSnapshot());
+		this.frontmatterByPath.delete(file.path);
 		// 文件切换后允许再次加载同一路径（新会话）。仅清理「仍属于本次卸载」的
 		// 标记：await 期间可能已开始加载新文件（onLoadFile），无条件置空会把
 		// 新加载的代际标记抹掉，其 rAF 守卫随即判为过期 → 导图不渲染。
@@ -327,7 +340,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			if (this.loadingFilePath !== file.path) {
 				return;
 			}
-			this.mdFrontmatter = doc.frontmatter;
+			this.frontmatterByPath.set(file.path, doc.frontmatter);
 			this.mdDocumentMode = doc.isMdDocument;
 			// 记录进入前 markdown 模式（「以 Markdown 编辑」返回时恢复）：
 			// 视图状态未经校验（用户手改 workspace.json 等可能产生任意值），

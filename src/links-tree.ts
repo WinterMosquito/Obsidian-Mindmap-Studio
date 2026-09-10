@@ -125,18 +125,45 @@ function urlMatchesTarget(
 	return false;
 }
 
+/** 库内路径的文件夹段（vault 路径恒用 `/`；库根为 ''） */
+function vaultFolder(path: string): string {
+	const at = path.lastIndexOf('/');
+	return at === -1 ? '' : path.slice(0, at);
+}
+
 /**
- * 重命名后的 [[链接]] 改写：仅替换链接目标，保留 #区块 / |别名 等尾巴；
- * 保留路径前缀（[[folder/新名]]），无前缀时用裸 basename。
+ * 重命名/移动后的 [[链接]] 改写：只替换链接目标，保留 #区块 / |别名 等尾巴。
+ *
+ * 目标**形态跟用户走**：原链接带路径前缀 → 继续写路径，且路径必须取**新位置**
+ * （文件可能被移到别的文件夹，只换 basename 会留下 `[[folder/新名]]` 悬空链接）；
+ * 原链接是裸名 → 保持裸名。未跨文件夹时保留用户原本的前缀写法（可能是
+ * `b/note` 这类仍可解析的短路径，不必擅自扩写）。
+ *
+ * 文件名：只有 `.md` 可省略扩展名（Obsidian 语义），canvas/base 必须带扩展名。
  */
-function renamedWikilink(parts: WikilinkParts, file: TFile): string {
+function renamedWikilink(
+	parts: WikilinkParts,
+	file: TFile,
+	oldPath: string,
+): string {
 	const tail = `${parts.block ? `#${parts.block}` : ''}${
 		parts.alias ? `|${parts.alias}` : ''
 	}`;
-	const prefix = parts.target.includes('/')
+	const userPrefix = parts.target.includes('/')
 		? parts.target.split('/').slice(0, -1).join('/')
 		: '';
-	const newTarget = prefix ? `${prefix}/${file.basename}` : file.basename;
+	const movedFolder = vaultFolder(file.path);
+	const prefix =
+		userPrefix === ''
+			? ''
+			: vaultFolder(oldPath) === movedFolder
+				? userPrefix
+				: movedFolder;
+	const dot = file.name.lastIndexOf('.');
+	const extension = dot > 0 ? file.name.slice(dot + 1).toLowerCase() : '';
+	const bare =
+		extension === '' || extension === 'md' ? file.basename : file.name;
+	const newTarget = prefix ? `${prefix}/${bare}` : bare;
 	return formatWikilink(`${newTarget}${tail}`);
 }
 
@@ -174,6 +201,9 @@ function updateReferences(
 		mode === 'rename' && oldPath !== undefined
 			? renameTargets(oldPath, file)
 			: deleteTargets(file);
+	// 改写 [[链接]] 需要判断"是否跨文件夹移动"：oldPath 缺失（仅 clear 模式可达，
+	// 那时不会调用改写）时按未移动处理
+	const previousPath = oldPath ?? file.path;
 	// clear 与回收站场景的替换值一律为空串（资源地址同理，不调用 getResourcePath）
 	let replacementUrl = '';
 	if (mode === 'rename' && !trashed) {
@@ -208,7 +238,7 @@ function updateReferences(
 			if (parts && targets.linkTargets.includes(parts.target)) {
 				node.data.hyperlink =
 					mode === 'rename' && !trashed
-						? renamedWikilink(parts, file)
+						? renamedWikilink(parts, file, previousPath)
 						: '';
 				changed = true;
 			}
@@ -222,7 +252,7 @@ function updateReferences(
 			if (parts && targets.linkTargets.includes(parts.target)) {
 				docData.mdWikiLinkpath =
 					mode === 'rename' && !trashed
-						? renamedWikilink(parts, file)
+						? renamedWikilink(parts, file, previousPath)
 						: '';
 				changed = true;
 			}

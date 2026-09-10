@@ -46,6 +46,12 @@ interface ParsedLine {
 	kind: 'heading' | 'list' | 'plain';
 	indent: number;
 	text: string;
+	/**
+	 * 原始行（未 trim）——**仅 plain 行需要**。缩进代码块的前导缩进、行尾两个
+	 * 空格的硬换行都是 Markdown 语义，`mdRaw` 必须逐字保存原文才能逐字回写；
+	 * `text` 仍是 trim 后的显示文本（行首缩进不该出现在节点文本里）。
+	 */
+	raw?: string;
 	level?: number;
 	marker?: string;
 }
@@ -457,7 +463,7 @@ function classifyLines(body: string): ParsedLine[] {
 	};
 
 	const pushRaw = (raw: string): void => {
-		out.push({ kind: 'plain', indent: leadingSpaces(raw), text: raw });
+		out.push({ kind: 'plain', indent: leadingSpaces(raw), text: raw, raw });
 	};
 
 	for (let i = 0; i < rawLines.length; i++) {
@@ -540,6 +546,9 @@ function classifyLines(body: string): ParsedLine[] {
 			kind: 'plain',
 			indent: leadingSpaces(line),
 			text: line.trim(),
+			// 原文（含前导缩进与行尾空格）供 mdRaw 逐字回写：缩进代码块的前导缩进、
+			// 「行尾两空格 = 硬换行」都是 Markdown 语义，trim 掉就等于改动文件
+			raw: rawLine,
 		});
 	}
 	return out;
@@ -579,18 +588,23 @@ export function parseMdOutline(
 	let contentParent: MindMapTreeNode = root;
 	/** list 缩进栈：仅跟踪同一内容区内的列表嵌套 */
 	let listStack: { node: MindMapTreeNode; indent: number }[] = [];
-	/** 等待合并的相邻 plain 文本行（存原始 trim 文本） */
-	let plainBuffer: string[] = [];
+	/**
+	 * 等待合并的相邻 plain 文本行：`raw` 是未 trim 的原文（写进 mdRaw，保逐字回写），
+	 * `text` 是 trim 后的显示文本（进节点文本、参与行内 token 解析）。
+	 */
+	let plainBuffer: { raw: string; text: string }[] = [];
 
 	const flushPlain = (): void => {
 		if (plainBuffer.length === 0) {
 			return;
 		}
-		const raw = plainBuffer.join('\n');
-		// 段落按行 token 化（保留行独立性），mdRaw 整块保留
+		// mdRaw 用**未 trim 的原文**整块保留（缩进/行尾空格是 Markdown 语义）；
+		// 显示文本仍走 trim 后的 text，行首缩进不进节点文本
+		const raw = plainBuffer.map((line) => line.raw).join('\n');
+		// 段落按行 token 化（保留行独立性）
 		const derived: string[] = [];
-		for (const lineRaw of plainBuffer) {
-			const d = buildInlineData(lineRaw);
+		for (const line of plainBuffer) {
+			const d = buildInlineData(line.text);
 			derived.push(d.text);
 		}
 		const node: MindMapTreeNode = {
@@ -671,11 +685,13 @@ export function parseMdOutline(
 				const prevRaw = topData.mdRaw ?? '';
 				topData.text = `${prevText}\n${inline.text}`;
 				topData.mdDerivedText = `${prevDerived}\n${inline.text}`;
-				topData.mdRaw = `${prevRaw}\n${line.text}`;
+				// 续行只保留**行尾**原文（行首缩进由序列化器按树深度补 restIndent，
+				// 两者都留会写出双份缩进）；text 仍用 trim 后的显示文本
+				topData.mdRaw = `${prevRaw}\n${(line.raw ?? line.text).trimStart()}`;
 				continue;
 			}
 			listStack = [];
-			plainBuffer.push(line.text);
+			plainBuffer.push({ raw: line.raw ?? line.text, text: line.text });
 			continue;
 		}
 		// list 行

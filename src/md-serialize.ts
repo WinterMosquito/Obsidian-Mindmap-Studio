@@ -24,7 +24,7 @@ import {
 	linkDisplayText,
 	wikilinkLinkpath,
 } from './domain/wikilink';
-import { isRemoteOrDataUrl, isSchemeUrl } from './domain/url';
+import { isExternalImageRef, isSchemeUrl } from './domain/url';
 import { docWikiLinkDisplay, editedWikilinkAlias, effectiveDocWikiLink } from './domain/wiki-display';
 import type { MdNodeData } from './node-data';
 
@@ -276,7 +276,25 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 	// 外链 md 图片的 alt：官方语法 `![alt|宽x高](url)`，alt 与尺寸共存
 	const rawAlt = data.mdImageAlt;
 	const alt = typeof rawAlt === 'string' ? rawAlt : '';
-	const target = data.mdImageTarget;
+	const target =
+		typeof data.mdImageTarget === 'string' ? data.mdImageTarget : '';
+	// 外链/协议地址（http/data/blob/file）不是库内文件：官方只有 `![alt|尺寸](url)`
+	// 一种形态；写成 `![[url]]` 会被 Obsidian 当成不存在的库内文件（图失效、alt 丢）。
+	// **该判定必须排在「image === target」之前**——外链图片的 target 与 image 相等，
+	// 否则拖拽调宽（尺寸落成 custom:true）后外链会被回写成 wikilink。
+	if (isExternalImageRef(image) || isExternalImageRef(target)) {
+		// alt 与尺寸可共存（`![alt|300](url)`），故用「仅尺寸」后缀，不能再套
+		// embedLabelSuffix（无尺寸时它返回 `|alt`，会写出 `![alt|alt](url)`）。
+		const size = customImageSize(data);
+		const sizeOnly =
+			size === null
+				? ''
+				: `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
+		// 回写地址：优先当前 image（它就是引擎里的那张图）；只有 image 已是资源
+		// 地址（app://）而原始引用才是外链时，才回落到 mdImageTarget（解析期快照
+		// 可能已过期——「换图」后它仍指向旧图）。
+		return `![${alt}${sizeOnly}](${isExternalImageRef(image) ? image : target})`;
+	}
 	if (target && image === target) {
 		return `![[${target}${sizeSuffix}]]`;
 	}
@@ -285,17 +303,6 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 		if (file) {
 			return `![[${file.path}${sizeSuffix}]]`;
 		}
-	}
-	if (isRemoteOrDataUrl(image)) {
-		// 外链 md 图片：官方语法 alt 在前、尺寸在标签尾部（![alt|300](url)）。
-		// 此处 alt 与尺寸可共存，故用「仅尺寸」后缀，不能再套 embedLabelSuffix
-		// （无尺寸时它返回 `|alt`，会写出 `![alt|alt](url)`）。
-		const size = customImageSize(data);
-		const sizeOnly =
-			size === null
-				? ''
-				: `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
-		return `![${alt}${sizeOnly}](${image})`;
 	}
 	return `![[${image}${sizeSuffix}]]`;
 }
@@ -449,20 +456,50 @@ function rawOk(
 		if (feature && !rawHasLinkFeature(raw, feature)) {
 			return false; // 文档链接新增/更新，需合成
 		}
-	} else if (
+	} else if (data.mdType !== 'plain') {
 		// 段落（plain）节点解析时本就不携带 hyperlink（多行文本无引擎单链），
 		// 其 mdRaw 里的 [[..]]/[](url) 是原文的一部分——必须逐字回写；
 		// 只有可携带链接的 heading/list 节点才可能是「用户清除了链接」。
-		// 图片嵌入语法（![[img]] / ![alt](url)）不是链接：负向先行断言排除，
-		// 否则图文混合行会被误判「链接已清除」而放弃逐字回写。
-		data.mdType !== 'plain' &&
-		/(?<!!)\[\[|(?<!!)\[[^\]]*\]\(/.test(raw)
-	) {
-		// 链接已被清除（hyperlink 为空）但 mdRaw 仍含链接语法：
-		// 需合成剥离为纯文本，否则旧 mdRaw 原样回写会让"清除链接"失效
-		return false;
+		//
+		// 嵌入语法按「是不是本节点的图片」区分：图片嵌入（`![[图.png]]`）不是链接，
+		// 必须排除（否则图文混合行会被误判「链接已清除」而放弃逐字回写）；而
+		// **文档/附件嵌入**（`![[笔记]]` / `![[报告.pdf|300]]`）与文档双链同属
+		// 链接通道，清除链接后同样要剥离——此前用 `(?<!!)\[\[` 把嵌入一律排除，
+		// 导致「清除链接」对嵌入无效：旧 mdRaw 原样回写、链接在下次保存时复活。
+		const ownImage = [
+			imageVaultPath(data, app),
+			typeof data.image === 'string' ? data.image : null,
+			typeof data.mdImageTarget === 'string' ? data.mdImageTarget : null,
+		].filter((value): value is string => typeof value === 'string' && !!value);
+		if (
+			/(?<!!)\[\[|(?<!!)\[[^\]]*\]\(/.test(raw) ||
+			rawHasForeignEmbed(raw, ownImage)
+		) {
+			// 链接已被清除（hyperlink/文档双链/附件字段全空）但 mdRaw 仍含链接语法：
+			// 需合成剥离为纯文本，否则旧 mdRaw 原样回写会让"清除链接"失效
+			return false;
+		}
 	}
 	return true;
+}
+
+/**
+ * raw 中是否含**不属于本节点图片**的嵌入 token（`![[…]]`）。
+ *
+ * 文档/附件嵌入与图片嵌入同语法，但前者是**链接**：清除链接后必须走合成剥离。
+ * 判据只能是「这枚 token 的目标串是不是本节点图片的引用（库内路径/资源地址/
+ * 原始目标三者之一）」——靠 `mdEmbed` 之类的残留字段不可靠（清除链接不会清它）。
+ */
+function rawHasForeignEmbed(raw: string, own: readonly string[]): boolean {
+	const embedRe = /!\[\[([^\]]*)\]\]/g;
+	let match: RegExpExecArray | null;
+	while ((match = embedRe.exec(raw)) !== null) {
+		const target = (match[1] ?? '').split('|')[0] ?? '';
+		if (!own.includes(target)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 /** 合成路径：节点文本首行（剥壳文本 + 行尾链接/图片 token） */

@@ -218,6 +218,54 @@ describe('updateReferencesOnRename：重命名后引用改指向新位置', () =
 		expect(dataOf(link).hyperlink).toBe('[[新名]]');
 	});
 
+	it('跨文件夹移动：前缀必须换成新位置（不得留下 [[folder/新名]] 悬空链接）', () => {
+		const moved = file('other/新名.md');
+		const { app } = fakeApp([moved]);
+		const link = node({ text: '链接', hyperlink: '[[folder/旧名]]' });
+		expect(
+			updateReferencesOnRename(tree(link), moved, 'folder/旧名.md', app),
+		).toBe(true);
+		expect(dataOf(link).hyperlink, '前缀换成移动后的文件夹').toBe(
+			'[[other/新名]]',
+		);
+	});
+
+	it('跨文件夹移动 + 裸链接：保持裸形态（不擅自补路径）', () => {
+		const moved = file('other/新名.md');
+		const { app } = fakeApp([moved]);
+		const link = node({ text: '链接', hyperlink: '[[旧名]]' });
+		expect(updateReferencesOnRename(tree(link), moved, 'folder/旧名.md', app)).toBe(
+			true,
+		);
+		expect(dataOf(link).hyperlink).toBe('[[新名]]');
+	});
+
+	it('Canvas 文档移动：文档链接仍带扩展名（前缀与裸形态都不丢 .canvas）', () => {
+		const moved = file('other/画板.canvas');
+		const { app } = fakeApp([moved]);
+		const withPrefix = node({
+			text: '画布',
+			mdWikiLinkpath: '[[folder/画布.canvas]]',
+		});
+		expect(
+			updateReferencesOnRename(
+				tree(withPrefix),
+				moved,
+				'folder/画布.canvas',
+				app,
+			),
+		).toBe(true);
+		expect(dataOf(withPrefix).mdWikiLinkpath).toBe('[[other/画板.canvas]]');
+
+		const bare = node({ text: '画布', mdWikiLinkpath: '[[画布.canvas]]' });
+		expect(
+			updateReferencesOnRename(tree(bare), moved, 'folder/画布.canvas', app),
+		).toBe(true);
+		expect(dataOf(bare).mdWikiLinkpath, '裸形态同样保留扩展名').toBe(
+			'[[画板.canvas]]',
+		);
+	});
+
 	it('文档双链 mdWikiLinkpath：与超链接同语义改写', () => {
 		const renamed = file('folder/新名.md');
 		const { app } = fakeApp([renamed]);
