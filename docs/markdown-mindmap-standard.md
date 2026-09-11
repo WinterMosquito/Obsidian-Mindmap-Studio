@@ -71,7 +71,7 @@
 >
 > `createNodePrefixContent` 未收录于 `vendor/simple-mind-map.d.cts`，经 `Object.assign` 注入以避开类型断言（契约说明见 `src/mindmap.ts` 常量区注释）；历史上曾用 `addCustomContentToNode` 钩子，因其把元素放进 `foreignObject`、裸 `<g>` 实测 0×0 不可见且不参与测宽而被替换。
 >
-> **引用格式恒为 wikilink（有意偏离）**：新增链接/图片一律写 `[[笔记]]` / `[[附件.pdf]]` / `![[图.png]]`（`src/features/view-dnd.ts`、`src/modal-link.ts`、`src/md-serialize.ts`），**不**遵循 Obsidian 的「使用 Wiki 链接」/「新链接格式」设置——三类图标方案依赖文档双链走 `mdWikiLinkpath` 通道；若改为遵循偏好生成 `[文本](路径.md)`，文档链接会落到引擎 hyperlink 通道并显示原生链接图标，与既定视觉冲突。既有文件里已存在的 `[文本](路径.md)` 形态仍按 md 链接解析与回写（决策依据：审计文档 `docs/external-audit-2026-09-08.md` §5.2 / §7.4；该文档已从工作树移除，需要时用 `git log --diff-filter=D -- docs/external-audit-2026-09-08.md` 从历史取回）。
+> **引用格式恒为 wikilink（有意偏离）**：新增链接/图片一律写 `[[笔记]]` / `[[附件.pdf]]` / `![[图.png]]`（`src/features/view-dnd.ts`、`src/modal-link.ts`、`src/md-serialize.ts`），**不**遵循 Obsidian 的「使用 Wiki 链接」/「新链接格式」设置——三类图标方案依赖文档双链走 `mdWikiLinkpath` 通道；若改为遵循偏好生成 `[文本](路径.md)`，文档链接会落到引擎 hyperlink 通道并显示原生链接图标，与既定视觉冲突。既有文件里已存在的 `[文本](路径.md)` 形态仍按 md 链接解析与回写。
 
 ### 2.3 交互标准
 
