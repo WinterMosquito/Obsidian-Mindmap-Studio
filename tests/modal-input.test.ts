@@ -77,6 +77,8 @@ interface StubElNode {
 	focusCount: number;
 	selectCount: number;
 	clickCount: number;
+	/** empty() 调用次数（预览去重断言：只有真正重建才会计数） */
+	emptyCalls: number;
 	createDiv(cls?: string): StubElNode;
 	createEl(tag: string, init?: StubElInit): StubElNode;
 	createSpan(init?: StubElInit | string): StubElNode;
@@ -178,6 +180,7 @@ const {
 		focusCount = 0;
 		selectCount = 0;
 		clickCount = 0;
+		emptyCalls = 0;
 
 		constructor(tagName: string) {
 			this.tagName = tagName;
@@ -234,6 +237,7 @@ const {
 		}
 
 		empty(): void {
+			this.emptyCalls += 1;
 			this.children.length = 0;
 			this.text = '';
 		}
@@ -1427,6 +1431,29 @@ describe('openImageEditorModal（节点图片编辑弹窗）', () => {
 		expect(harness.preview.text).toBe(t('zh', 'modal.image.none'));
 		expect(harness.preview.classes).toContain('is-empty');
 		expect(harness.preview.classes).not.toContain('is-error');
+
+		await finishAsClosed(harness);
+	});
+
+	it('相同解析结果不重复重建预览：连续输入中间态只渲染一次', async () => {
+		const png = fakeFile('照片', 'png', '附件');
+		const harness = openImage('', { files: [png] });
+		// 打开时已渲染首帧（空态），以下计数以它为基准
+		const baseline = harness.preview.emptyCalls;
+
+		// 三段中间态都解析不出图片（结果同为「无预览」）→ 不再重建 DOM
+		for (const partial of ['附', '附件/', '附件/幽灵']) {
+			harness.input.value = partial;
+			fireInput(harness.input);
+		}
+		expect(harness.preview.emptyCalls).toBe(baseline);
+		expect(harness.preview.text).toBe(t('zh', 'modal.image.none'));
+
+		// 解析结果变化（命中库内文件）→ 必须重建，预览与状态同步
+		harness.input.value = png.path;
+		fireInput(harness.input);
+		expect(harness.preview.emptyCalls).toBe(baseline + 1);
+		expect(childAt(harness.preview, 0).src).toBe(`app://local/${png.path}`);
 
 		await finishAsClosed(harness);
 	});

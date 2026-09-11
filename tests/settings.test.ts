@@ -36,6 +36,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLineStyle: 'direct',
 			defaultTheme: 'dark',
 			autoSave: false,
+			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
 			performanceMode: false,
@@ -47,6 +48,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLineStyle: 'direct',
 			defaultTheme: 'dark',
 			autoSave: false,
+			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
 			performanceMode: false,
@@ -223,6 +225,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			performanceThreshold: DEFAULT_SETTINGS.performanceThreshold,
 			language: 'en',
 			autoSave: DEFAULT_SETTINGS.autoSave,
+			autoSplitMixedLinks: DEFAULT_SETTINGS.autoSplitMixedLinks,
 			enableDrag: DEFAULT_SETTINGS.enableDrag,
 			performanceMode: DEFAULT_SETTINGS.performanceMode,
 		});

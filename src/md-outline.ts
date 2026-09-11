@@ -27,7 +27,7 @@ import {
 	wikilinkTargetIsAttachment,
 } from './domain/wikilink';
 import { isUrlLikeText } from './domain/url';
-import { isRenderableImageExtension } from './constants';
+import { isIndentedCodeLine, isRenderableImageExtension } from './constants';
 import type { MdNodeData } from './node-data';
 
 export interface MdParseResult {
@@ -60,7 +60,7 @@ interface ParsedLine {
 // 行内 token（wikilink / markdown 链接 / 图片）
 // ---------------------------------------------------------------------------
 
-type InlineTokenKind =
+export type InlineTokenKind =
 	| 'wikiImg'
 	| 'wiki'
 	| 'mdImg'
@@ -68,7 +68,7 @@ type InlineTokenKind =
 	| 'autolink'
 	| 'bareUrl';
 
-interface InlineToken {
+export interface InlineToken {
 	start: number;
 	end: number;
 	kind: InlineTokenKind;
@@ -245,8 +245,38 @@ function isImageEmbedTarget(target: string): boolean {
 	return isRenderableImageExtension(name.slice(dot + 1));
 }
 
+
+
+/**
+ * 段落（plain）首行采纳的**图片**字段（不含链接字段）。
+ *
+ * 段落此前完全不承载图片字段 → 行内 `![[图.png]]` 在地图上永远不渲染，
+ * 往段落插图后保存会被静默丢弃（回写分支只写文本）。现改为与 list/heading
+ * 同构地承载首行图片。**链接字段仍不采纳**：段落里的链接语法属原文，
+ * 未编辑时随 mdRaw 逐字回写（见 docs/markdown-mindmap-standard.md §3.1）。
+ */
+const PLAIN_IMAGE_FIELDS = [
+	'image',
+	'mdImageTarget',
+	'mdImageWidth',
+	'mdImageHeight',
+	'mdImageAlt',
+] as const;
+
+/** 从行内解析结果里挑出图片字段（无图片时返回空对象） */
+function pickImageMeta(inline: MdNodeData): MdNodeData {
+	const out: Record<string, unknown> = {};
+	for (const key of PLAIN_IMAGE_FIELDS) {
+		const value = inline[key];
+		if (value !== undefined) {
+			out[key] = value;
+		}
+	}
+	return out;
+}
+
 /** buildInlineData 的稳定字段（text/mdRaw/mdDerivedText 恒为 string） */
-interface InlineData extends MdNodeData {
+export interface InlineData extends MdNodeData {
 	text: string;
 	mdRaw: string;
 	mdDerivedText: string;
@@ -256,8 +286,12 @@ interface InlineData extends MdNodeData {
  * 单行行内处理（方案 A）：
  * @returns data 含 text（剥壳显示文本）、mdRaw（原文）、mdDerivedText（=text，
  *   供 serialize 判断文本是否被用户编辑），以及首链接/首图字段。
+ *
+ * export 供 links-split 复用：拆分后的父文本重建必须与解析侧**同一口径**
+ * （`[[ ]]` 剥壳为显示名、非首个链接降级为文本、URL icon-only 等），
+ * 在别处重写一遍必然漂移。
  */
-function buildInlineData(raw: string): InlineData {
+export function buildInlineData(raw: string): InlineData {
 	const data: InlineData = {
 		text: '',
 		mdRaw: raw,
@@ -613,12 +647,19 @@ export function parseMdOutline(
 			const d = buildInlineData(line.text);
 			derived.push(d.text);
 		}
+		// 首行图片进节点字段（缩进代码块的首行属代码内容，不采纳）；
+		// 其余行与链接语法仍靠 mdRaw 逐字保真
+		const first = plainBuffer[0]!;
+		const imageMeta = isIndentedCodeLine(first.raw)
+			? {}
+			: pickImageMeta(buildInlineData(first.text));
 		const node: MindMapTreeNode = {
 			data: {
 				text: derived.join('\n'),
 				mdRaw: raw,
 				mdDerivedText: derived.join('\n'),
 				mdType: 'plain',
+				...imageMeta,
 			},
 			children: [],
 		};

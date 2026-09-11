@@ -7,8 +7,8 @@
  *   （自绘文档页图标）；附件/库内路径 → attachmentUrl（原生回形针）。表驱动覆盖
  *   已解析库内文件 / 未解析（按目标串扩展名）两条判定路径与别名、显式 label 的
  *   可见名优先级；
- * - 纯双链化：写入文档/附件双链即无条件覆盖节点文字为显示名（拖入与弹窗同规则），
- *   用户手写正文被顶替（旧的「仅空/旧链名时改写」已废弃）；
+ * - 链接写入语义（决策 R4「新行为优先」）：空节点 / 纯双链节点（改链）→ 覆盖节点
+ *   文字为链接显示名（纯双链化）；**已有描述文字** → 保留正文，链接建成子节点；
  * - 防御：弹窗取消、弹窗期间引擎换代、无激活节点都不触碰引擎；
  * - 删除：根节点拒绝提示 + uid 异常时按对象身份兜底强制清除；
  * - 剪贴板：WeakMap 按视图隔离、深拷贝、粘贴剥离 uid/isActive、未指定父节点挂根；
@@ -540,18 +540,31 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 		expect(dataOf(node).mdWikiLinkpath).toBe('[[新笔记]]');
 	});
 
-	it('已有用户正文：也被覆盖为链接显示名（纯双链化，正文被顶替）', async () => {
+	it('已有用户正文：保留正文，链接建成子节点（决策 R4「新行为优先」）', async () => {
 		const node = fakeNode({
 			data: { text: '我的正文', mdWikiLinkpath: '[[旧笔记]]' },
 		});
-		const { view } = makeView({ activeNode: node });
+		const { view, execCommand } = makeView({ activeNode: node });
 		openLinkMock.mockResolvedValue({ link: '[[新笔记]]' });
 
 		await addLinkToActiveNode(view);
 
-		expect(setNodeTextMock).toHaveBeenCalledTimes(1);
-		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '新笔记');
-		expect(dataOf(node).mdWikiLinkpath).toBe('[[新笔记]]');
+		// 父节点：文字与既有链接字段都不动（不再被新链接顶替）
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).mdWikiLinkpath).toBe('[[旧笔记]]');
+		// 新链接作为子节点插入（纯双链节点改链仍走覆盖，见上例）
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '新笔记',
+				mdWikiLinkpath: '[[新笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '新笔记',
+				isActive: false,
+			},
+		]);
 	});
 
 	it('旧链接是 URL 且文本仍是旧 URL：改链时清空残留文本（保持「仅图标」）', async () => {
@@ -730,10 +743,11 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		expect(setNodeTextMock).not.toHaveBeenCalled();
 	});
 
-	it('applyNodeAttachment：走资源地址 + 回写库内完整路径 + 清链接通道', () => {
+	it('applyNodeAttachment（空节点）：走资源地址 + 回写库内完整路径 + 清链接通道', () => {
 		const node = fakeNode({
 			data: {
-				text: '正文',
+				// 空节点 → 覆盖路径；有正文时改为建子节点（见下一个用例）
+				text: '',
 				hyperlink: 'https://旧',
 				mdWikiLinkpath: '[[旧]]',
 				mdLinkText: '旧',
@@ -757,6 +771,32 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		// 纯双链化：拖入附件即覆盖节点文字为文件名（与文档双链同口径）
 		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '报告.pdf');
 		expect(render).toHaveBeenCalled();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyNodeAttachment：已有描述文字 → 保留正文，附件引用建成子节点（R4）', () => {
+		const node = fakeNode({ data: { text: '正文' } });
+		const file = fakeFile('附件/报告.pdf', 'pdf');
+		const { view, execCommand, scheduleSave } = makeView();
+
+		applyNodeAttachment(view, node, file);
+
+		// 父节点文字不被顶替；附件字段也不写到父节点上
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).attachmentUrl).toBeUndefined();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '报告.pdf',
+				attachmentUrl: 'app://local/附件/报告.pdf',
+				attachmentName: '报告.pdf',
+				mdAttachmentLinkpath: '附件/报告.pdf',
+				mdLinkStyle: 'wiki',
+				isActive: false,
+			},
+		]);
 		expect(scheduleSave).toHaveBeenCalled();
 	});
 });

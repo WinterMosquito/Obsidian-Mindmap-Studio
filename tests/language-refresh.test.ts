@@ -203,6 +203,8 @@ const COMMAND_IDS = [
 	'search-mindmap-nodes',
 	'mindmap-fit-view',
 	'mindmap-arrange',
+	'mindmap-split-links',
+	'mindmap-split-links-all',
 	'mindmap-export-png',
 	'mindmap-open-md-as-view',
 	'mindmap-back-to-markdown',
@@ -281,7 +283,7 @@ describe('commands.refreshCommandLabels（语言变更后的用户入口刷新�
 		);
 	});
 
-	it('刷新次序：8 条命令全部先移除，之后才重新注册', () => {
+	it('刷新次序：10 条命令全部先移除，之后才重新注册', () => {
 		const host = makeCommandHost('en');
 		registerCommands(host.plugin);
 		host.ops.length = 0;

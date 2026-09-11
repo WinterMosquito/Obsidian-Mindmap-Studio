@@ -18,6 +18,7 @@ import {
 	createAspectSetNodeImageOptions,
 	createSetNodeImageOptions,
 	IMAGE_FAIL_TTL_MS,
+	type ImageSizeCacheStore,
 	isExternalUrl,
 	isImageFailFresh,
 	probeImageNaturalSize,
@@ -336,6 +337,39 @@ describe('computeAspectImageSize（按原始比例，stub Image）', () => {
 		});
 	});
 
+	it('缓存命中即提升（LRU）：热点图不被大量冷图挤出后重复解码', async () => {
+		/** 探测并驱动 Image 装载；命中缓存时不新建 Image（此时无需装载） */
+		const load = async (url: string): Promise<void> => {
+			const before = FakeImage.instances.length;
+			const pending = probeImageNaturalSize(url);
+			if (FakeImage.instances.length > before) {
+				lastImage().emitLoad(100, 50);
+			}
+			await pending;
+		};
+
+		const hot = probeUrl('lru-hot.png');
+		await load(hot);
+		for (let i = 0; i < 400; i++) {
+			await load(probeUrl(`lru-cold-${i}.png`));
+		}
+		// 命中一次（提升到队尾）；若是插入序淘汰，它仍在队首、随后必被挤出
+		await load(hot);
+		for (let i = 0; i < 300; i++) {
+			await load(probeUrl(`lru-new-${i}.png`));
+		}
+
+		const created = FakeImage.instances.length;
+		await expect(probeImageNaturalSize(hot)).resolves.toEqual({
+			width: 100,
+			height: 50,
+		});
+		expect(
+			FakeImage.instances,
+			'热点图仍在缓存：不再新建 Image 解码',
+		).toHaveLength(created);
+	});
+
 	it('超时视为失败：到期即返回 null、记入失败缓存，迟到的 onload 不再改写结果', async () => {
 		vi.useFakeTimers();
 		try {
@@ -414,6 +448,9 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 			height: IMAGE_HEIGHT,
 			custom: true,
 		});
+		// 显示用尺寸：打自动校正标记，序列化据此**不**回写 `|宽度`
+		//（用户没动过的行不得凭空多出尺寸参数）
+		expect(dataOf(tree).mdImageAutoSize).toBe(true);
 	});
 
 	it('无参数但已有 custom 尺寸的节点：不覆盖也不探测（拖拽调宽的尺寸是用户意图）', async () => {
@@ -448,6 +485,8 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 		// 原始 300x100（3:1）→ 高 = 300 × 100/300 = 100
 		lastImage().emitLoad(300, 100);
 		await expect(pending).resolves.toBe(true);
+		// 源行本就有尺寸参数：属用户写下的语义，回写须保留（不标自动校正）
+		expect(dataOf(tree).mdImageAutoSize).toBeUndefined();
 		expect(tree.data.imageSize).toEqual({
 			width: 300,
 			height: 100,
@@ -640,5 +679,108 @@ describe('图片探测失败缓存（白盒，TTL 与容量）', () => {
 		expect(isImageFailFresh(url)).toBe(false);
 		// 再次查询仍为 false（条目已被清理，不会复活）
 		expect(isImageFailFresh(url)).toBe(false);
+	});
+});
+
+/**
+ * 跨会话尺寸缓存：重启 Obsidian 后内存缓存为空，靠官方按库隔离的
+ * `App#saveLocalStorage / loadLocalStorage`（经注入的窄化存储面）直接命中，
+ * 不再解码。内存缓存是模块级单例、跨用例不清空，故「新会话」一律用
+ * `vi.resetModules()` + 动态 import 取全新模块实例——这正是真实重启的等价形态。
+ */
+describe('跨会话尺寸缓存（注入式存储）', () => {
+	/** 最小存储桩：模块只需 load/save 两个方法（与 App 解耦，便于测试注入） */
+	function makeStore(): { map: Map<string, unknown>; store: ImageSizeCacheStore } {
+		const map = new Map<string, unknown>();
+		return {
+			map,
+			store: {
+				load: (key: string): unknown => map.get(key) ?? null,
+				save: (key: string, data: unknown): void => {
+					map.set(key, data);
+				},
+			},
+		};
+	}
+
+	beforeEach(() => {
+		stubImage();
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it('探测结果落盘后，新会话直接命中、不再解码', async () => {
+		const { map, store } = makeStore();
+		const url = `${RESOURCE_PREFIX}附件/缓存图.png?111`;
+
+		// 第一次会话：探测成功 → 防抖落盘
+		vi.resetModules();
+		const first = await import('../src/images-path');
+		first.setImageSizeCacheStore(store);
+		const pending = first.probeImageNaturalSize(url);
+		lastImage().emitLoad(300, 100);
+		await expect(pending).resolves.toEqual({ width: 300, height: 100 });
+		vi.advanceTimersByTime(2000);
+		expect(map.size, '探测结果已落盘').toBe(1);
+
+		// 第二次会话：内存缓存为空 → 必须靠持久化缓存命中
+		vi.resetModules();
+		const second = await import('../src/images-path');
+		second.setImageSizeCacheStore(store);
+		const created = FakeImage.instances.length;
+		await expect(second.probeImageNaturalSize(url)).resolves.toEqual({
+			width: 300,
+			height: 100,
+		});
+		expect(
+			FakeImage.instances,
+			'命中持久化缓存：不新建 Image 解码',
+		).toHaveLength(created);
+	});
+
+	it('外链地址不落盘：远程换图后不得沿用旧比例', async () => {
+		const { map, store } = makeStore();
+		vi.resetModules();
+		const mod = await import('../src/images-path');
+		mod.setImageSizeCacheStore(store);
+		const pending = mod.probeImageNaturalSize('https://x.com/a.png');
+		lastImage().emitLoad(300, 100);
+		await pending;
+		vi.advanceTimersByTime(2000);
+		expect(
+			map.size,
+			'只有库内资源地址带 `?修改时间` 缓存串，可安全持久化',
+		).toBe(0);
+	});
+
+	it('持久化数据损坏：忽略并按无缓存继续探测（不抛错）', async () => {
+		const { map, store } = makeStore();
+		const url = `${RESOURCE_PREFIX}附件/坏缓存.png?222`;
+		vi.resetModules();
+		const first = await import('../src/images-path');
+		first.setImageSizeCacheStore(store);
+		const pending = first.probeImageNaturalSize(url);
+		lastImage().emitLoad(10, 20);
+		await pending;
+		vi.advanceTimersByTime(2000);
+		// 落盘内容被外部改坏（键名不硬编码：直接改存储里的现有条目）
+		for (const key of [...map.keys()]) {
+			map.set(key, '{ 不是对象');
+		}
+
+		vi.resetModules();
+		const second = await import('../src/images-path');
+		second.setImageSizeCacheStore(store);
+		const created = FakeImage.instances.length;
+		const again = second.probeImageNaturalSize(url);
+		lastImage().emitLoad(10, 20);
+		await expect(again).resolves.toEqual({ width: 10, height: 20 });
+		expect(
+			FakeImage.instances,
+			'损坏数据被忽略：重新探测而不是抛错',
+		).toHaveLength(created + 1);
 	});
 });

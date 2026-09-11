@@ -25,6 +25,8 @@ const COMMAND_IDS = [
 	'search-mindmap-nodes',
 	'mindmap-fit-view',
 	'mindmap-arrange',
+	'mindmap-split-links',
+	'mindmap-split-links-all',
 	'mindmap-export-png',
 	'mindmap-open-md-as-view',
 	'mindmap-back-to-markdown',
@@ -102,6 +104,41 @@ export function registerCommands(plugin: IPluginCommandsHost): void {
 				return Boolean(view);
 			}
 			view?.arrangeMindMap();
+			return true;
+		},
+	});
+
+	// 混排双链拆分：把选中节点行内的文档/附件双链抽成子节点（见 links-split）
+	plugin.addCommand({
+		id: 'mindmap-split-links',
+		name: t(plugin.settings.language, 'command.splitLinks'),
+		checkCallback: (checking) => {
+			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
+			// 引擎未就绪时无可操作节点，视为不可用
+			if (!view?.mindMap) {
+				return false;
+			}
+			if (checking) {
+				return true;
+			}
+			view.splitActiveNodeLinks();
+			return true;
+		},
+	});
+
+	// 批量：扫描全文，把所有混排节点的双链一次拆完（含未编辑的存量节点）
+	plugin.addCommand({
+		id: 'mindmap-split-links-all',
+		name: t(plugin.settings.language, 'command.splitLinksAll'),
+		checkCallback: (checking) => {
+			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
+			if (!view?.mindMap) {
+				return false;
+			}
+			if (checking) {
+				return true;
+			}
+			view.splitAllLinksInDocument();
 			return true;
 		},
 	});

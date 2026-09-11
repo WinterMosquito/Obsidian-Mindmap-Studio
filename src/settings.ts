@@ -30,6 +30,8 @@ export interface MindMapStudioSettings {
 	defaultLineStyle: string;
 	defaultTheme: string;
 	autoSave: boolean;
+	/** 被编辑节点含「双链 + 描述文字」时自动拆分为子节点（见 links-split） */
+	autoSplitMixedLinks: boolean;
 	exportScale: number;
 	enableDrag: boolean;
 	performanceMode: boolean;
@@ -43,6 +45,8 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	defaultLineStyle: 'auto',
 	defaultTheme: 'default',
 	autoSave: true,
+	// 默认开启：仅在节点被编辑后生效，存量未编辑节点不会被改写
+	autoSplitMixedLinks: true,
 	exportScale: 2,
 	enableDrag: true,
 	// 默认开启性能模式：节点数超过阈值（performanceThreshold）时自动启用
@@ -112,6 +116,9 @@ export function sanitizeSettings(
 		defaultTheme:
 			pickFrom('defaultTheme', THEME_OPTIONS) ?? DEFAULT_SETTINGS.defaultTheme,
 		autoSave: pickBool('autoSave') ?? DEFAULT_SETTINGS.autoSave,
+		autoSplitMixedLinks:
+			pickBool('autoSplitMixedLinks') ??
+			DEFAULT_SETTINGS.autoSplitMixedLinks,
 		exportScale:
 			pickClampedInt('exportScale', EXPORT_SCALE_MIN, EXPORT_SCALE_MAX) ??
 			DEFAULT_SETTINGS.exportScale,
@@ -231,6 +238,11 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 						name: t(this.lang, 'settings.autoSave'),
 						desc: t(this.lang, 'settings.autoSaveDesc'),
 						control: { type: 'toggle', key: 'autoSave' },
+					},
+					{
+						name: t(this.lang, 'settings.autoSplitMixedLinks'),
+						desc: t(this.lang, 'settings.autoSplitMixedLinksDesc'),
+						control: { type: 'toggle', key: 'autoSplitMixedLinks' },
 					},
 					{
 						name: t(this.lang, 'settings.enableDrag'),

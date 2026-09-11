@@ -97,7 +97,11 @@ const IMAGE_PROBE_CONCURRENCY = 6;
  * 同一导图重复打开、同图多节点引用时避免重复 new Image() 解码探测。
  */
 const IMAGE_SIZE_CACHE = new Map<string, { width: number; height: number }>();
-/** 缓存上限（按插入序近似 LRU，超出时淘汰最早条目） */
+/**
+ * 缓存上限。淘汰必须是 **LRU**（命中/写入都把条目移到队尾），不能是插入序：
+ * 一个被大量节点引用的热点图（logo、常用配图）会被成百上千张一次性冷图挤出，
+ * 挤出后下次打开又要重新解码探测——正是「重复打开变慢」的来源。
+ */
 const IMAGE_SIZE_CACHE_MAX = 500;
 
 /**
@@ -114,8 +118,11 @@ function cacheImageSize(
 	url: string,
 	size: { width: number; height: number },
 ): void {
+	// 先删再插：Map 的插入序即 LRU 序，重复写入同样要移到队尾
+	IMAGE_SIZE_CACHE.delete(url);
 	IMAGE_SIZE_CACHE.set(url, size);
 	IMAGE_FAIL_CACHE.delete(url); // 成功后清除失败记录
+	schedulePersistSizeCache(); // 跨会话复用（防抖合并，见本节注释）
 	if (IMAGE_SIZE_CACHE.size > IMAGE_SIZE_CACHE_MAX) {
 		const [oldest] = IMAGE_SIZE_CACHE.keys();
 		if (oldest !== undefined) {
@@ -153,7 +160,117 @@ export function isImageFailFresh(url: string): boolean {
 		IMAGE_FAIL_CACHE.delete(url);
 		return false;
 	}
+	// LRU 提升：TTL 内被命中即续到队尾，避免热点坏图被挤出后重走一趟超时等待
+	IMAGE_FAIL_CACHE.delete(url);
+	IMAGE_FAIL_CACHE.set(url, failedAt);
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+// 跨会话尺寸缓存（官方 App#saveLocalStorage / loadLocalStorage）
+//
+// 内存缓存只在本次会话有效，重启 Obsidian 后首次打开含图导图仍要逐张解码探测
+// （并发 6，大图数百毫秒）。把探测结果持久化后，**第二次打开同一库零探测**。
+//
+// 键 = 图片显示地址。库内资源地址自带 `?文件修改时间` 缓存串（官方
+// getResourcePath 输出）→ 文件一改地址即变，天然失效，不需要额外校验；
+// 外链地址没有这个保证（远程换图后可能沿用旧比例），故**不持久化**。
+//
+// 失败结果同样不持久化：失败是时间相关的（网络抖动/临时不可达），
+// 记进磁盘会让一张图跨会话持续被判失败。
+//
+// 存储走官方 API（按**库**隔离）而非全局 `localStorage`：后者跨库串味，且被
+// 插件的 no-restricted-globals 规则禁止。App 只在 main.ts 可见，故由它注入
+// 下面这个窄化适配面（模块本身保持不依赖 App）。
+// ---------------------------------------------------------------------------
+
+/** 持久化键（带版本：结构变更时旧数据自然作废） */
+const SIZE_CACHE_STORAGE_KEY = 'mindmap-studio:image-size-cache:v1';
+/** 落盘条数上限（超出保留最近使用的那些；配合内存 LRU 序） */
+const SIZE_CACHE_STORAGE_MAX = 1000;
+/** 落盘防抖：一次加载几十张图只写一次 */
+const SIZE_CACHE_PERSIST_DELAY_MS = 1000;
+
+/** 跨会话尺寸缓存的存储面：`App#loadLocalStorage/saveLocalStorage` 的窄化 */
+export interface ImageSizeCacheStore {
+	load(key: string): unknown;
+	save(key: string, data: unknown): void;
+}
+
+let cacheStore: ImageSizeCacheStore | null = null;
+
+/** 注入存储（main.ts onload 调用；传 null 关闭持久化，未注入时整体降级） */
+export function setImageSizeCacheStore(store: ImageSizeCacheStore | null): void {
+	cacheStore = store;
+}
+
+/** 只接受正整数宽高（磁盘上的数据可能被外部改坏） */
+function toCachedSize(value: unknown): { width: number; height: number } | null {
+	if (!value || typeof value !== 'object') {
+		return null;
+	}
+	const { width, height } = value as { width?: unknown; height?: unknown };
+	const ok = (n: unknown): n is number =>
+		typeof n === 'number' && Number.isFinite(n) && n > 0;
+	return ok(width) && ok(height) ? { width, height } : null;
+}
+
+let sizeCacheHydrated = false;
+/** 惰性读取持久化缓存（首次使用时读一次，之后完全走内存 LRU） */
+function hydrateSizeCache(): void {
+	if (sizeCacheHydrated || !cacheStore) {
+		return;
+	}
+	sizeCacheHydrated = true;
+	let parsed: unknown = null;
+	try {
+		parsed = cacheStore.load(SIZE_CACHE_STORAGE_KEY);
+	} catch {
+		return; // 读失败：按无缓存继续
+	}
+	if (!parsed || typeof parsed !== 'object') {
+		return;
+	}
+	for (const [url, value] of Object.entries(parsed as Record<string, unknown>)) {
+		if (IMAGE_SIZE_CACHE.size >= IMAGE_SIZE_CACHE_MAX) {
+			break;
+		}
+		const size = toCachedSize(value);
+		if (size) {
+			IMAGE_SIZE_CACHE.set(url, size);
+		}
+	}
+}
+
+let persistTimer: number | null = null;
+/** 防抖落盘（写入失败/配额不足都不影响功能，静默降级） */
+function schedulePersistSizeCache(): void {
+	if (persistTimer !== null || !cacheStore) {
+		return;
+	}
+	persistTimer = window.setTimeout(() => {
+		persistTimer = null;
+		persistSizeCache();
+	}, SIZE_CACHE_PERSIST_DELAY_MS);
+}
+
+function persistSizeCache(): void {
+	const store = cacheStore;
+	if (!store) {
+		return;
+	}
+	// 只持久化库内资源地址（带修改时间缓存串 → 内容变了地址就变）
+	const entries = [...IMAGE_SIZE_CACHE]
+		.filter(([url]) => isAppResourceUrl(url))
+		.slice(-SIZE_CACHE_STORAGE_MAX);
+	if (entries.length === 0) {
+		return; // 本次会话只探测过外链：没有可持久化的内容，不写盘
+	}
+	try {
+		store.save(SIZE_CACHE_STORAGE_KEY, Object.fromEntries(entries));
+	} catch {
+		// 写失败（序列化/配额）：丢缓存即可，不影响渲染
+	}
 }
 
 /**
@@ -169,8 +286,13 @@ export function probeImageNaturalSize(
 			resolve(null);
 			return;
 		}
+		// 跨会话缓存：首次使用时并入内存缓存，命中即不再解码
+		hydrateSizeCache();
 		const cached = IMAGE_SIZE_CACHE.get(url);
 		if (cached) {
+			// LRU 提升：命中即移到队尾（否则热点图会被后写入的冷图挤出）
+			IMAGE_SIZE_CACHE.delete(url);
+			IMAGE_SIZE_CACHE.set(url, cached);
 			resolve({ ...cached });
 			return;
 		}
@@ -306,6 +428,12 @@ export async function walkCorrectImageSizesByAspect(
 					size = await computeAspectImageSize(
 						typeof data.image === 'string' ? data.image : '',
 					);
+					if (size.custom) {
+						// 显示尺寸而非用户意图：custom:true 才能让引擎按比例精确渲染
+						//（custom:false 会被引擎按 imgMax 重新适配），但必须打标记——
+						// 否则序列化会把 custom 尺寸当成拖拽结果回写成 `|宽度`
+						data.mdImageAutoSize = true;
+					}
 				}
 				const current = node.data?.imageSize;
 				if (

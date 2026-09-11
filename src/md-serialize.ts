@@ -17,6 +17,7 @@
 
 import { App } from 'obsidian';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
+import { isIndentedCodeLine, isRenderableImageExtension } from './constants';
 import { resolvePathToFile } from './links-resolve';
 import {
 	formatEmbedWikilink,
@@ -132,10 +133,17 @@ function renderHyperlink(data: MdNodeData): string | null {
  * 高度只在源行本就写了显式高度（`mdImageHeight`）时回写：拖拽调宽只写
  * `|宽度`、等比缩放（保持既有行为），而 `|300x150` 这类显式双参数在编辑
  * 节点后仍按当前尺寸写回 `|宽x高`，避免高度信息丢失。
+ *
+ * **加载期自动校正的尺寸不回写**（`mdImageAutoSize`）：它是显示用尺寸、非用户
+ * 意图，回写会让用户从未动过的行凭空多出 `|宽度`。本函数是尺寸后缀的唯一出口
+ * （wiki 嵌入 / md 图片 / rawOk 尺寸特征三处共用），故标记在此一处生效。
  */
 function customImageSize(
 	data: MdNodeData,
 ): { width: number; height: number | null } | null {
+	if (data.mdImageAutoSize === true) {
+		return null;
+	}
 	const size = data.imageSize;
 	if (
 		!size?.custom ||
@@ -479,8 +487,35 @@ function rawOk(
 			// 需合成剥离为纯文本，否则旧 mdRaw 原样回写会让"清除链接"失效
 			return false;
 		}
+	} else if (
+		!data.image &&
+		!isIndentedCodeLine(raw) &&
+		rawHasImageEmbedInFirstLine(raw)
+	) {
+		// 段落（plain）：图片字段已清空（用户「移除图片」，md 元数据同步清空），
+		// 但首行仍有图片嵌入 → 需合成剥离，否则旧 mdRaw 原样回写会让图片复活。
+		// 只查**首行**且排除缩进代码块（与解析侧同一判定）：段落字段只治理首行
+		// 图片，其余行（含围栏/缩进代码里的 `![[..]]`）属原文，必须逐字回写；
+		// 段落的链接语法同样属原文，不在此剥离。
+		return false;
 	}
 	return true;
+}
+
+/** mdRaw **首行**是否含图片嵌入（`![[x.png]]`，按扩展名判定；段落图片剥离用） */
+function rawHasImageEmbedInFirstLine(raw: string): boolean {
+	const first = raw.split('\n')[0] ?? '';
+	const embedRe = /!\[\[([^\]]*)\]\]/g;
+	let match: RegExpExecArray | null;
+	while ((match = embedRe.exec(first)) !== null) {
+		const target = (match[1] ?? '').split('|')[0] ?? '';
+		const name = target.split('/').pop() ?? '';
+		const dot = name.lastIndexOf('.');
+		if (dot > 0 && isRenderableImageExtension(name.slice(dot + 1))) {
+			return true;
+		}
+	}
+	return false;
 }
 
 /**
@@ -512,6 +547,40 @@ function composeFirstLine(data: MdNodeData, app: App | null): string {
 		line = line ? `${line} ${tail}` : tail;
 	}
 	return line;
+}
+
+/**
+ * 节点首行「内容」（不含 list 标记 / `#` 前缀，也不含续行）——
+ * 序列化输出与 links-split 的拆分分析共用同一入口。
+ *
+ * 三态与序列化完全一致（避免拆分分析与实际写出口径漂移）：
+ * 1. 未编辑（rawOk）→ 原文首行（含全部 `[[ ]]` 语法）；
+ * 2. 纯 token 节点（文本恰为链接/图片自身显示名）→ 只输出 token；
+ * 3. 其余（文本被编辑过）→ 文本 + 行尾 token（composeFirstLine）。
+ */
+export function composeNodeFirstLine(
+	data: MdNodeData,
+	app: App | null,
+): string {
+	if (rawOk(data, app)) {
+		return data.mdRaw.split('\n')[0]!;
+	}
+	const text = typeof data.text === 'string' ? data.text : '';
+	// 纯 token 节点（文本恰为链接/图片自身显示名，来自解析的单链/单图行，
+	// 或「插入链接」已同步文本）→ 换图/换链后只输出新 token，避免旧名冗余。
+	if (
+		!text.includes('\n') &&
+		text.trim() !== '' &&
+		(nodeLinkDisplay(data) === text.trim() ||
+			imageSelfText(data) === text.trim())
+	) {
+		// 两枚 token 都要写出（图文/图+链接节点此前只写一枚 → 图片丢失）
+		const tokens = inlineTokens(data, app);
+		if (tokens.length > 0) {
+			return tokens.join(' ');
+		}
+	}
+	return composeFirstLine(data, app);
 }
 
 /**
@@ -552,24 +621,10 @@ export function serializeMdBody(
 			];
 		}
 		const text = typeof data.text === 'string' ? data.text : '';
-		const lines = text.split('\n');
-		// 纯 token 节点（文本恰为链接/图片自身显示名，来自解析的单链/单图行，
-		// 或「插入链接」已同步文本）→ 换图/换链后只输出新 token，避免旧名冗余。
-		if (
-			lines.length === 1 &&
-			text.trim() !== '' &&
-			(nodeLinkDisplay(data) === text.trim() ||
-				imageSelfText(data) === text.trim())
-		) {
-			// 两枚 token 都要写出（图文/图+链接节点此前只写一枚 → 图片丢失）
-			const tokens = inlineTokens(data, app);
-			if (tokens.length > 0) {
-				return [prefix + tokens.join(' ')];
-			}
-		}
+		// 首行口径统一在 composeNodeFirstLine（拆分分析共用同一实现）
 		return [
-			prefix + composeFirstLine(data, app),
-			...lines.slice(1).map((l) => restIndent + l),
+			prefix + composeNodeFirstLine(data, app),
+			...text.split('\n').slice(1).map((l) => restIndent + l),
 		];
 	};
 
@@ -618,13 +673,10 @@ export function serializeMdBody(
 			}
 			if (type === 'plain') {
 				frame.orderedCount = 0;
-				if (rawOk(data, app)) {
-					pushBlock(data.mdRaw.split('\n'));
-				} else {
-					pushBlock(
-						(typeof data.text === 'string' ? data.text : '').split('\n'),
-					);
-				}
+				// 与 list/heading 同一出口：未编辑逐字回写；被编辑/插换图后首行写
+				// 「文本 + token」——段落自本版起承载首行图片字段，插图中/移除图
+				// 必须能写回/剥离（此前只写 text，插进段落的图片会被静默丢弃）
+				pushBlock(nodeLines(child, '', '', app));
 				stack.push({
 					children: child.children ?? [],
 					index: 0,

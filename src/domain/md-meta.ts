@@ -3,7 +3,8 @@
  *
  * 此前这些 key 散落在 `Record<string, unknown>` / AnyObject（any）上，
  * 读侧到处 typeof 收窄、写侧无约束；统一由本接口声明类型：
- * - 写入方：md-outline（解析时）、view-node-actions（换图时）；
+ * - 写入方：md-outline（解析时）、images-path（加载期尺寸校正）、
+ *   view-image-actions（插入/更换/移除图片）、image-resize（拖拽调宽）；
  * - 读取方：md-serialize（回写判定与合成）、视图模块。
  *
  * 元数据仅为本插件序列化层服务，引擎不识别（渲染无语义），
@@ -84,4 +85,16 @@ export interface MdNodeMeta {
 	 * 需原样保留，否则 alt 丢失。
 	 */
 	mdImageAlt?: string;
+	/**
+	 * 节点图尺寸来自**加载期自动校正**（按原始宽高比算出的显示尺寸，非用户意图）。
+	 *
+	 * 引擎侧仍需 `imageSize.custom = true` 才能精确渲染——`custom:false` 会被引擎按
+	 * `imgMaxWidth/imgMaxHeight` 重新适配（宽图丢掉「统一高度」语义，见 bundle 的
+	 * `getImgShowSize`）。但该尺寸**不得回写**：否则用户从未动过的行会在保存后凭空
+	 * 多出 `|宽度` 参数（2026-09-11 定为缺陷）。
+	 *
+	 * 清除时机：用户拖拽调宽（`setNodeImageSize` 前的提交）与「插入/更换图片」
+	 * ——那两种是用户意图，尺寸应照旧回写。
+	 */
+	mdImageAutoSize?: boolean;
 }

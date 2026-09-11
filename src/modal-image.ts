@@ -109,11 +109,25 @@ export function openImageEditorModal(
 		fileStatus.addClass('mindmap-modal-file-status');
 
 		const preview = root.createDiv('mindmap-modal-image-preview');
+		/**
+		 * 上次真正渲染的预览地址。输入过程中大量中间态（`附`、`附件/`、`附件/幽灵`…）
+		 * 解析结果其实相同（都未命中 → 空串），逐键 `empty()` + 重建 DOM 是白工；
+		 * 地址未变即跳过，省下的是 DOM 抖动与 style 重算。
+		 *
+		 * 去重键取**解析结果**而非输入原文：中间态各不相同的原文结果恒定，按原文
+		 * 比几乎不会命中。解析本身走统一入口、索引命中为 O(1)，故不做防抖——
+		 * 防抖只会给预览加上延迟，换不来更多收益。
+		 */
+		let renderedUrl: string | null = null;
 		const renderPreview = (ref: string): void => {
+			const url = toPreviewUrl(ref);
+			if (url === renderedUrl) {
+				return;
+			}
+			renderedUrl = url;
 			preview.empty();
 			preview.removeClass('is-error');
 			preview.removeClass('is-empty');
-			const url = toPreviewUrl(ref);
 			if (url) {
 				const img = preview.createEl('img');
 				img.src = url;

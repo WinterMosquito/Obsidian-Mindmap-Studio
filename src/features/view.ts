@@ -12,7 +12,7 @@
  */
 import { FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import { Language, t } from '../i18n';
-import { VIEW_TYPE } from '../constants';
+import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../constants';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 import { notifyError } from '../errors';
 import { walkCorrectImageSizesByAspect } from '../images-path';
@@ -47,6 +47,11 @@ import { setupDragTargetAssist, teardownDragTargetAssist } from './drag-target';
 import { EventBinder } from '../event-binder';
 import { TitleRenamer } from './view-title-renamer';
 import { openHyperlink as linkNavigatorOpen } from './view-link-navigator';
+import {
+	autoSplitActiveNode,
+	splitActiveNodeLinks,
+	splitAllLinksInDocument,
+} from './view-split-links';
 
 /** 视图装配完成信号超时（毫秒）：正常 onOpen 会 resolve；超时表示装配未完成，降级继续加载 */
 const READY_TIMEOUT_MS = 10_000;
@@ -113,6 +118,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * applyLineStyle/resolveLineStyle 维护。
 	 */
 	private currentLineStyle: string | null = null;
+	/**
+	 * 自动拆分混排双链的延后检查计时器（引擎 data_change 后触发）。
+	 * 视图关闭必须清理：回调会操作引擎与节点数据。
+	 */
+	private autoSplitTimer: number | null = null;
 
 	/**
 	 * .mindmap.md 文档模式（B3 显式切换）：文件本质是 Markdown，用导图视图
@@ -198,6 +208,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				updateStatusBar(this);
 				this.titleRenamer.schedule();
 			},
+			onDataChanged: () => this.scheduleAutoSplitCheck(),
 			onNodeImageClick: (node) => openNodeImageFullscreen(this, node),
 			onNodeAttachmentClick: (node) => {
 				const data = node.getData() as { attachmentUrl?: unknown };
@@ -474,6 +485,44 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.savePipeline.schedule();
 	}
 
+	/**
+	 * 拆分当前选中节点内的混排双链（命令入口；提示由 view-split-links 负责）。
+	 */
+	splitActiveNodeLinks(): void {
+		splitActiveNodeLinks(this);
+	}
+
+	/**
+	 * 拆分文档内全部混排双链（命令入口；提示由 view-split-links 负责）。
+	 * 与自动触发不同：这是显式批量动作，会处理未编辑的存量节点。
+	 */
+	splitAllLinksInDocument(): void {
+		splitAllLinksInDocument(this);
+		// 批量经 setData 全量替换（不保证派发 data_change）→ 手动刷新节点计数
+		updateStatusBar(this);
+	}
+
+	/**
+	 * 引擎数据变更后的自动拆分检查（延后一拍）：文本编辑提交与数据写入可能
+	 * 在同一轮事件里，立刻检查会读到编辑框尚未收起的中间态。
+	 * 仅对「被编辑过」的节点生效，判定见 view-split-links.autoSplitActiveNode。
+	 */
+	private scheduleAutoSplitCheck(): void {
+		this.cancelAutoSplitCheck();
+		this.autoSplitTimer = window.setTimeout(() => {
+			this.autoSplitTimer = null;
+			autoSplitActiveNode(this);
+		}, AUTO_SPLIT_CHECK_DELAY_MS);
+	}
+
+	/** 取消尚未执行的自动拆分检查（重复调度 / 视图关闭时） */
+	private cancelAutoSplitCheck(): void {
+		if (this.autoSplitTimer !== null) {
+			window.clearTimeout(this.autoSplitTimer);
+			this.autoSplitTimer = null;
+		}
+	}
+
 	// ==================== 工具栏（委托 view-toolbar.ts） ====================
 
 	/** 自动整理（需求 3）：重新按布局算法对齐摆放各主题并适配画布 */
@@ -545,6 +594,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 关闭后不再允许任何加载结果被应用（rAF 守卫依赖该字段）
 		this.loadingFilePath = null;
 		this.savePipeline.cancelTimer();
+		this.cancelAutoSplitCheck();
 		this.titleRenamer.cancel();
 		cancelStatusBarUpdate(this);
 		// 交互会话收尾（拖拽换父 / 图片调宽）：会话期间的临时 window 监听

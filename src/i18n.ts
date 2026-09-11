@@ -30,6 +30,8 @@ const ZH = {
 	'command.openAsMindMap': '以思维导图打开',
 	'command.openAsMarkdown': '以 Markdown 打开',
 	'command.backToMarkdown': '切换回 Markdown',
+	'command.splitLinks': '拆分节点内双链为子节点',
+	'command.splitLinksAll': '拆分文档内全部混排双链',
 	'rename.titleConflict': '已存在同名文件，无法按中心节点重命名',
 	'rename.titleFailed': '按中心节点重命名文件失败',
 
@@ -81,6 +83,9 @@ const ZH = {
 	'common.rootCannotDelete': '中心节点不可删除',
 	'common.clipboardEmpty': '剪贴板为空',
 	'common.nodeCopied': '节点已复制',
+	'common.splitLinksNone': '当前节点没有可拆分的混排双链',
+	'common.splitLinksDone': '已拆分 {count} 条链接为子节点',
+	'common.splitLinksAllDone': '已拆分 {nodes} 个节点、{links} 条链接',
 	'common.selectNodeBeforePasteImage': '请先选择一个节点再粘贴图片',
 	'common.savingClipboardImage': '正在保存剪贴板图片…',
 	'common.imageSavedTo': '图片已保存到：',
@@ -158,6 +163,9 @@ const ZH = {
 	'settings.exportScale': '导出图片倍率',
 	'settings.exportScaleDesc':
 		'导出 PNG 时的分辨率倍率（倍；越高越清晰，文件也越大）',
+	'settings.autoSplitMixedLinks': '自动拆分混排双链',
+	'settings.autoSplitMixedLinksDesc':
+		'被编辑的节点若含「双链 + 描述文字」，自动把文档/附件双链拆分为子节点（图片与外链不动）',
 	'settings.language': '语言',
 	'settings.languageDesc': '界面语言',
 
@@ -223,6 +231,8 @@ const EN: Record<TranslationKey, string> = {
 	'command.openAsMindMap': 'Open as mind map',
 	'command.openAsMarkdown': 'Open as Markdown',
 	'command.backToMarkdown': 'Switch to Markdown',
+	'command.splitLinks': 'Split links into child nodes',
+	'command.splitLinksAll': 'Split all mixed links in document',
 	'rename.titleConflict': 'A file with that name already exists; cannot rename by central node',
 	'rename.titleFailed': 'Failed to rename the file by its central node',
 
@@ -274,6 +284,9 @@ const EN: Record<TranslationKey, string> = {
 	'common.rootCannotDelete': 'The central node cannot be deleted',
 	'common.clipboardEmpty': 'Clipboard is empty',
 	'common.nodeCopied': 'Node copied',
+	'common.splitLinksNone': 'No mixed links to split in this node',
+	'common.splitLinksDone': 'Split {count} link(s) into child nodes',
+	'common.splitLinksAllDone': 'Split {links} link(s) in {nodes} node(s)',
 	'common.selectNodeBeforePasteImage': 'Please select a node before pasting an image',
 	'common.savingClipboardImage': 'Saving clipboard image…',
 	'common.imageSavedTo': 'Image saved to: ',
@@ -355,6 +368,9 @@ const EN: Record<TranslationKey, string> = {
 	'settings.exportScale': 'Export image scale',
 	'settings.exportScaleDesc':
 		'Resolution scale for PNG export (higher is sharper and the file is larger)',
+	'settings.autoSplitMixedLinks': 'Auto-split mixed links',
+	'settings.autoSplitMixedLinksDesc':
+		'When an edited node mixes links with description text, split document/attachment links into child nodes (images and external URLs are left untouched)',
 	'settings.language': 'Language',
 	'settings.languageDesc': 'UI language',
 

@@ -37,6 +37,8 @@ export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): vo
 	delete data.mdImageWidth;
 	delete data.mdImageHeight;
 	delete data.mdImageAlt;
+	// 同步清掉自动校正标记：留着会让「本节点后续新图」的尺寸也不回写
+	delete data.mdImageAutoSize;
 	view.scheduleSave();
 }
 
@@ -120,6 +122,8 @@ export async function applyNodeImage(
 	} else {
 		delete data.mdImageTarget;
 	}
+	// 插入/更换是用户意图：清除「加载期自动校正」标记，本次尺寸照旧回写
+	delete data.mdImageAutoSize;
 	view.scheduleSave();
 }
 

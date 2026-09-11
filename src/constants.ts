@@ -156,6 +156,17 @@ export function isImageExtension(extension: string): boolean {
 	return IMAGE_EXTENSIONS.includes(extension.toLowerCase());
 }
 
+/**
+ * 是否缩进代码块行（CommonMark：≥4 空格或制表符起首）。
+ *
+ * 这类行的内容是**代码**，其中的 `![[..]]` / `[..](..)` 不参与行内语义。
+ * 解析（段落首行不采纳图片字段）与回写（不据此剥离）必须共用本判定，
+ * 否则会把代码行当图片剥离后清空。
+ */
+export function isIndentedCodeLine(rawLine: string): boolean {
+	return /^(?: {4,}|\t)/.test(rawLine);
+}
+
 /** Obsidian 可渲染清单中的图片段：拖拽图片扩展 + Obsidian 额外支持的位图格式 */
 const OBSIDIAN_RENDER_IMAGE_EXTENSIONS = [
 	...IMAGE_EXTENSIONS,
@@ -268,6 +279,12 @@ export const SETTINGS_PERSIST_DEBOUNCE_MS = 400;
  * 但不超过用户感知阈值（秒级无响应会被认为卡死）。
  */
 export const AUTO_SAVE_DEBOUNCE_MS = 800;
+/**
+ * 引擎数据变更后「自动拆分混排双链」检查的延后一拍（毫秒）。
+ * 文本编辑提交与数据写入可能在同一轮事件里，立刻检查会读到编辑框尚未收起的
+ * 中间态（isEditingText 仍为真）；延后很短一瞬让引擎先完成收尾。
+ */
+export const AUTO_SPLIT_CHECK_DELAY_MS = 120;
 export const VIEW_STATE_PERSIST_MS = 600;
 /**
  * 标题重命名防抖（更长——涉及 FileManager.renameFile 引发全库链接/反链更新，

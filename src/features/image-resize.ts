@@ -14,14 +14,20 @@
  *   拖拽会话期间才挂 window mousemove/mouseup（捕获阶段、手势独占），
  *   结束即移除；
  * - 尺寸写入走 SET_NODE_DATA + render；渲染会重建图片元素，因此每帧
- *   重新查询当前 image 元素。
+ *   重新查询当前 image 元素；
+ * - **写入按最小步长合并**（`MIN_COMMIT_STEP_PX`）：每次写入都是引擎**整树**
+ *   重排，逐帧写入等于每帧全量重排（拖 100px = 几十次重排）；位移不足步长时
+ *   只跟随重定位手柄（廉价），松手时无条件补写最终尺寸（否则会停在上一个写入值）；
+ * - 会话记录**所属引擎**：引擎重建（再次 setup）或视图关闭时会话被强制收尾，
+ *   此时旧会话的节点已不属于当前引擎，陈旧帧回调与补写都必须据此短路。
  */
 import {
 	getDrawTransform,
 	getNodeGroupEl,
 	setNodeImageSize,
 } from '../mindmap';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MdNodeData } from '../node-data';
 import type { MindMapViewContext } from './view-context';
 
 /** 手柄像素尺寸（屏幕 px） */
@@ -30,10 +36,18 @@ const HANDLE_SIZE_PX = 12;
 const MIN_SIZE_PX = 24;
 /** 缩放上限（content px）：防止单图占满画布 */
 const MAX_SIZE_PX = 2000;
+/**
+ * 拖动中的最小写入步长（content px）。SET_NODE_DATA + render 是引擎**整树**
+ * 重排，逐帧写入等于每帧全量重排；位移不足该步长时只重定位手柄（廉价），
+ * 松手时补写最终尺寸。
+ */
+const MIN_COMMIT_STEP_PX = 8;
 
 /** 拖拽会话（悬停态 → mousedown 建立 → mouseup 结束并调度保存） */
 interface ResizeSession {
 	node: MindMapNode;
+	/** 会话所属引擎：引擎重建后旧会话不得再写入（节点不属于新引擎） */
+	engine: MindMap;
 	startClientX: number;
 	startWidth: number;
 	startHeight: number;
@@ -41,7 +55,9 @@ interface ResizeSession {
 	scale: number;
 	/** 待应用尺寸（rAF 合帧期间被后续 move 覆盖） */
 	pending: { width: number; height: number } | null;
-	/** 最近一次实际写入引擎的尺寸（相同则跳过重渲染） */
+	/** 最近一次算出的尺寸（不论是否已写入；松手时据此补写最终值） */
+	latest: { width: number; height: number } | null;
+	/** 最近一次实际写入引擎的尺寸（相同/不足步长则跳过重渲染） */
 	applied: { width: number; height: number } | null;
 	rafId: number | null;
 	/** 画布所属窗口（popout 窗口里 mousemove/mouseup 不落在主窗口） */
@@ -133,29 +149,69 @@ export function computeResizedSize(
 	return { width: Math.round(width), height: Math.round(width * ratio) };
 }
 
+/** 同一尺寸按值比较（applied / latest / pending 是不同对象，引用比较永远不等） */
+function sameSize(
+	a: { width: number; height: number } | null,
+	b: { width: number; height: number } | null,
+): boolean {
+	return (
+		a !== null && b !== null && a.width === b.width && a.height === b.height
+	);
+}
+
+/**
+ * 是否值得写入引擎：首次必写；其后位移不足 `MIN_COMMIT_STEP_PX` 则跳过
+ * （宽高比恒定，宽度即判据；上下限平台期宽度同样不变）。
+ */
+function shouldCommit(
+	applied: { width: number; height: number } | null,
+	next: { width: number; height: number },
+): boolean {
+	return (
+		applied === null ||
+		Math.abs(next.width - applied.width) >= MIN_COMMIT_STEP_PX
+	);
+}
+
+/**
+ * 提交尺寸到引擎（content px）。同时清除「加载期自动校正」标记：用户拖过即为
+ * 用户意图，序列化须把尺寸回写成 `|宽度`（否则拖拽结果不落盘）。
+ *
+ * 引擎取 `session.engine`：两处调用点都已校验它等于当前引擎，陈旧会话不会误写。
+ */
+function commitSize(
+	session: ResizeSession,
+	size: { width: number; height: number },
+): void {
+	// md 字段引擎不识别，仅序列化用：就地删标记即可（尺寸本身走引擎命令）。
+	// getData() 取不到时跳过——清标记是尽力而为，不能连累尺寸写入
+	const data = session.node.getData() as MdNodeData | undefined;
+	if (data) {
+		delete data.mdImageAutoSize;
+	}
+	session.applied = size;
+	setNodeImageSize(session.engine, session.node, size.width, size.height);
+}
+
 /** 应用待应用尺寸（rAF 回调）：写引擎数据并跟随重定位手柄 */
 function applyPending(view: MindMapViewContext, session: ResizeSession): void {
 	session.rafId = null;
 	const pending = session.pending;
 	session.pending = null;
-	if (!pending || !view.mindMap) {
+	const mindMap = view.mindMap;
+	// 陈旧帧（引擎已重建/会话已收尾）不得写入：节点不属于当前引擎
+	if (!pending || !mindMap || mindMap !== session.engine) {
 		return;
 	}
-	// 尺寸未变 → 跳过整树重渲染：SET_NODE_DATA + render 是引擎全量重排，
-	// 慢速拖动/钳制平台期时多数帧落在同一取整尺寸，白白重排
-	if (
-		session.applied &&
-		session.applied.width === pending.width &&
-		session.applied.height === pending.height
-	) {
+	if (!shouldCommit(session.applied, pending)) {
+		// 不足步长：不写引擎（每次写入都是整树重排），只把手柄跟到当前位置
 		const imageEl = currentNodeImageEl(session.node);
 		if (imageEl) {
 			positionHandle(view, imageEl);
 		}
 		return;
 	}
-	session.applied = pending;
-	setNodeImageSize(view.mindMap, session.node, pending.width, pending.height);
+	commitSize(session, pending);
 	const imageEl = currentNodeImageEl(session.node);
 	if (imageEl) {
 		positionHandle(view, imageEl);
@@ -177,6 +233,18 @@ function endSession(view: MindMapViewContext): void {
 	// 移除时带同款 capture 标志（与注册匹配）
 	session.win.removeEventListener('mousemove', session.moveListener, true);
 	session.win.removeEventListener('mouseup', session.upListener, true);
+	// 补写最终尺寸：拖动中的写入按步长合并，最后一次往往未达步长——
+	// 不补写就会停在上一个写入值（松手后图片「回弹」几像素）。
+	// 引擎已重建时跳过：旧会话的节点不属于新引擎。
+	const mindMap = view.mindMap;
+	if (
+		session.latest &&
+		mindMap &&
+		mindMap === session.engine &&
+		!sameSize(session.applied, session.latest)
+	) {
+		commitSize(session, session.latest);
+	}
 	// 官方嵌入语法持久化：engine data.imageSize 已随拖拽更新，
 	// scheduleSave → 序列化 rawOk 尺寸特征不符 → 合成回写 `|宽度`
 	view.scheduleSave();
@@ -204,11 +272,13 @@ function startSession(
 	}
 	const session: ResizeSession = {
 		node,
+		engine: view.mindMap,
 		startClientX: event.clientX,
 		startWidth: rect.width / scale,
 		startHeight: rect.height / scale,
 		scale,
 		pending: null,
+		latest: null,
 		applied: null,
 		rafId: null,
 		win: view.containerEl.win,
@@ -222,6 +292,7 @@ function startSession(
 			// 杜绝缩放拖拽被节点拖拽逻辑串扰
 			moveEvent.stopPropagation();
 			current.pending = computeResizedSize(current, moveEvent.clientX);
+			current.latest = current.pending;
 			if (current.rafId === null) {
 				current.rafId = current.win.requestAnimationFrame(() =>
 					applyPending(view, current),

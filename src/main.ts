@@ -33,6 +33,7 @@ import {
 import { t } from './i18n';
 import { VaultSyncService } from './vault-sync';
 import { fileLookupIndex } from './file-lookup';
+import { setImageSizeCacheStore } from './images-path';
 import { ViewStateStore } from './view-state';
 import { notifyError } from './errors';
 import { PluginDataWriter } from './persistence';
@@ -88,6 +89,19 @@ export default class MindMapStudioPlugin extends Plugin {
 
 	override async onload(): Promise<void> {
 		await this.loadSettings();
+
+		// 图片尺寸的跨会话缓存走官方**按库隔离**的存储：全局 localStorage 会跨库
+		// 串味且被 lint 规则禁止；images-path 本身不依赖 App，故注入窄化适配面。
+		setImageSizeCacheStore({
+			// 官方 API 返回 any：显式落到 unknown（不把 any 漏进 images-path）
+			load: (key) => {
+				const data: unknown = this.app.loadLocalStorage(key);
+				return data;
+			},
+			save: (key, data) => {
+				this.app.saveLocalStorage(key, data);
+			},
+		});
 
 		// 「以思维导图打开」→ 记录打开方式偏好（双向：最后一次主动选择决定下次）
 		setOpenAsPreferenceHook((path) => {

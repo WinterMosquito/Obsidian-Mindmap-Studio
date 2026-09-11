@@ -394,9 +394,11 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 				height: 600,
 			}),
 		};
+		/** 节点 data：调宽提交会就地清 `mdImageAutoSize`（加载期自动校正标记） */
+		const data: Record<string, unknown> = {};
 		const node = {
 			isRoot: false,
-			getData: () => undefined,
+			getData: () => data,
 			children: [],
 			group: {
 				node: { querySelector: (selector: string) => (selector === 'image' ? imageEl : null) },
@@ -433,6 +435,7 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 			canvasEl,
 			imageEl,
 			node,
+			data,
 			execCommand,
 			render,
 			/** 引擎图片 hover → 显示手柄（hoverNode 就位，为 mousedown 建立会话铺路） */
@@ -569,6 +572,59 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 			{ imageSize: { width: 300, height: 150, custom: true } },
 		);
 		expect(harness.render).toHaveBeenCalled();
+	});
+
+	it('拖动中的写入按步长合并：小位移不写引擎，松手补写最终尺寸', () => {
+		const harness = makeResizeView({ width: 200, height: 100 }, 1);
+		// 加载期自动校正留下的标记：用户拖过即为用户意图，提交时必须清除
+		harness.data.mdImageAutoSize = true;
+		setupImageResize(harness.view);
+		harness.hoverImage();
+		harness.pressHandle(500);
+		const move = canvasWindow.listenerOf('mousemove', true);
+		const fire = (clientX: number): void => {
+			move?.({ clientX, stopPropagation: vi.fn() });
+		};
+
+		// 首次移动立即写入（拖动无死区）：起点 200×100，+2px → 202×101
+		fire(502);
+		canvasWindow.runFrame(0);
+		expect(harness.execCommand).toHaveBeenCalledExactlyOnceWith(
+			ENGINE_COMMANDS.SET_NODE_DATA,
+			harness.node,
+			{ imageSize: { width: 202, height: 101, custom: true } },
+		);
+		expect(
+			harness.data.mdImageAutoSize,
+			'拖拽提交即用户意图：自动校正标记被清除（否则尺寸不会回写文件）',
+		).toBeUndefined();
+
+		// 距上次写入仅 6px（不足最小步长 8px）→ 不写引擎（每次写入都是整树重排）
+		fire(508);
+		canvasWindow.runFrame(1);
+		expect(harness.execCommand).toHaveBeenCalledTimes(1);
+
+		// 距上次写入 10px → 写入 212×106
+		fire(512);
+		canvasWindow.runFrame(2);
+		expect(harness.execCommand).toHaveBeenCalledTimes(2);
+		expect(harness.execCommand).toHaveBeenLastCalledWith(
+			ENGINE_COMMANDS.SET_NODE_DATA,
+			harness.node,
+			{ imageSize: { width: 212, height: 106, custom: true } },
+		);
+
+		// 松手：最终 214×107 距上次写入仅 2px（帧回调里被跳过）→ 收尾必须补写，
+		// 否则图片会回弹到上一个写入值 212×106
+		fire(514);
+		canvasWindow.runFrame(3);
+		expect(harness.execCommand).toHaveBeenCalledTimes(2);
+		canvasWindow.listenerOf('mouseup', true)?.({});
+		expect(harness.execCommand).toHaveBeenLastCalledWith(
+			ENGINE_COMMANDS.SET_NODE_DATA,
+			harness.node,
+			{ imageSize: { width: 214, height: 107, custom: true } },
+		);
 	});
 
 	it('画布缩放 2x：渲染尺寸与拖动位移都按缩放折回 content px', () => {

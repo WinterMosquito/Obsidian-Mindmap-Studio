@@ -929,6 +929,23 @@ describe('嵌入尺寸参数', () => {
 		expect(serializeMdBody(reparsed, null), '带参合成结果自往返不动点').toBe(out);
 	});
 
+	it('加载期自动校正的尺寸不回写：用户没动过的行不得凭空多出 |宽度', () => {
+		const md = '- ![[a.png]]';
+		const { tree, data } = firstChild(md + '\n');
+		// walkCorrectImageSizesByAspect 无参分支的效果：custom:true（精确渲染）+ 自动标记
+		data.imageSize = { width: 184, height: 120, custom: true };
+		data.mdImageAutoSize = true;
+		expect(serializeMdBody(tree, null), '逐字回写原文').toBe(md);
+	});
+
+	it('用户拖拽清除自动标记后，尺寸照旧回写 |宽度', () => {
+		const { tree, data } = firstChild('- ![[a.png]]\n');
+		// image-resize 提交时会置 false（用户意图）
+		data.imageSize = { width: 250, height: 125, custom: true };
+		data.mdImageAutoSize = false;
+		expect(serializeMdBody(tree, null)).toBe('- ![[a.png|250]]');
+	});
+
 	it('拖拽调宽后更新已有宽度参数（|300 → |250），旧参数不残留', () => {
 		const { tree, data } = firstChild('- ![[a.png|300]]\n');
 		data.imageSize = { width: 250, height: 125, custom: true };
@@ -992,6 +1009,75 @@ describe('嵌入尺寸参数', () => {
 		expect(data.mdImageAlt).toBe('说明');
 		data.text = '改过';
 		expect(serializeMdBody(tree, null)).toBe('- 改过 ![[a.png|说明]]');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 七之补、段落（plain）承载首行图片：内联图片渲染 + 插图 / 移除图回写
+// ---------------------------------------------------------------------------
+describe('段落节点的首行图片', () => {
+	it('解析：首行图片进 image 字段（渲染依据）、不占节点文本；未编辑逐字回写', () => {
+		const { data } = firstChild('说明 ![[图.png]] 文字\n');
+		expect(data.mdType).toBe('plain');
+		expect(data.image, '图片进字段 → 地图上渲染').toBe('图.png');
+		expect(data.mdImageTarget).toBe('图.png');
+		expect(data.text, '图片不占节点文本（与 list/heading 同口径）').toBe(
+			'说明 文字',
+		);
+		expect(roundTrip('说明 ![[图.png]] 文字\n').out1).toBe('说明 ![[图.png]] 文字');
+	});
+
+	it('解析：官方尺寸参数进 mdImageWidth；整段不动点', () => {
+		const { data } = firstChild('图 ![[图.png|300]] 说明\n');
+		expect(data.mdImageWidth).toBe(300);
+		expect(roundTrip('图 ![[图.png|300]] 说明\n').out1).toBe(
+			'图 ![[图.png|300]] 说明',
+		);
+	});
+
+	it('插入图片后保存：写出图片 token（此前只写文本 → 静默丢弃）', () => {
+		const { tree, data } = firstChild('说明文字\n');
+		// 模拟 applyNodeImage 写入的字段（显示地址与回写目标同串，便于无 app 断言）
+		data.image = 'pic.png';
+		data.mdImageTarget = 'pic.png';
+		data.imageSize = { width: 200, height: 120, custom: true };
+		expect(serializeMdBody(tree, null)).toBe('说明文字 ![[pic.png|200]]');
+	});
+
+	it('移除图片后保存：首行图片嵌入被剥离（旧图不复活）', () => {
+		const { tree, data } = firstChild('说明 ![[图.png]] 文字\n');
+		// removeNodeImage 的真实效果：image 与 md 图片元数据一并清空
+		data.image = null;
+		delete data.mdImageTarget;
+		delete data.mdImageWidth;
+		delete data.mdImageHeight;
+		delete data.mdImageAlt;
+		expect(serializeMdBody(tree, null)).toBe('说明 文字');
+	});
+
+	it('缩进代码块（≥4 空格 / 制表符）：不采纳图片，整行逐字回写', () => {
+		expect(
+			firstChild('    ![[图.png]]\n').data.image,
+			'缩进代码块里的 ![[..]] 是代码内容',
+		).toBeUndefined();
+		expect(roundTrip('    ![[图.png]]\n').out1).toBe('    ![[图.png]]');
+		expect(firstChild('\t![[图.png]]\n').data.image).toBeUndefined();
+		expect(roundTrip('\t![[图.png]]\n').out1).toBe('\t![[图.png]]');
+	});
+
+	it('多行段落：只采纳首行图片；第二行的图片不渲染但逐字保真', () => {
+		const md = '第一行 ![[图.png]]\n第二行 ![[另一个.png]]\n';
+		expect(firstChild(md).data.image, '只采纳首行图片').toBe('图.png');
+		expect(roundTrip(md).out1).toBe(md.trimEnd());
+	});
+
+	it('段落的链接仍不进字段（属原文）：逐字回写不受影响', () => {
+		const { data } = firstChild('参见 [[设计稿|设计]] 说明\n');
+		expect(data.image, '无图片时不产生图片字段').toBeUndefined();
+		expect(data.mdWikiLinkpath, '段落不采纳链接字段').toBeUndefined();
+		expect(roundTrip('参见 [[设计稿|设计]] 说明\n').out1).toBe(
+			'参见 [[设计稿|设计]] 说明',
+		);
 	});
 });
 

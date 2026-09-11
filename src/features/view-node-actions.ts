@@ -19,6 +19,7 @@ import { notifyError } from '../errors';
 import { resolvePathToFile } from '../links-resolve';
 import { t } from '../i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
+import { docWikiLinkDisplay } from '../domain/wiki-display';
 import {
 	isDocumentExtension,
 	linkDisplayText,
@@ -37,14 +38,61 @@ function clearDocWikiLink(node: MindMapNode): void {
 	delete data.mdLinkText;
 }
 
+/** 节点自身既有链接的可见名（无链接 / 无可见名时返回 null） */
+function ownLinkDisplay(data: MdNodeData): string | null {
+	const doc = docWikiLinkDisplay(data);
+	if (doc !== null) {
+		return doc;
+	}
+	const attachUrl = data.attachmentUrl;
+	if (typeof attachUrl === 'string' && attachUrl) {
+		const name = data.attachmentName;
+		return typeof name === 'string' && name ? name : null;
+	}
+	const hyperlink = data.hyperlink;
+	return typeof hyperlink === 'string' && hyperlink
+		? linkDisplayText(hyperlink)
+		: null;
+}
+
+/**
+ * 节点是否已有「描述文字」（决策 R4 的分流依据）：
+ * - 文本为空 → 否（空节点走旧的覆盖逻辑）；
+ * - 文本恰为既有链接的可见名 → 否（纯双链节点改链仍走覆盖，不产生子节点）；
+ * - 其余非空文本 → 是（保留原文，链接建成子节点）。
+ */
+function hasDescriptiveText(data: MdNodeData, newDisplay: string): boolean {
+	const text = typeof data.text === 'string' ? data.text.trim() : '';
+	if (!text) {
+		return false;
+	}
+	const own = ownLinkDisplay(data);
+	if (own !== null && text === own) {
+		return false;
+	}
+	return text !== newDisplay;
+}
+
+/** R4：把链接作为子节点挂到节点下（父节点保留描述文字） */
+function appendLinkChild(
+	view: MindMapViewContext,
+	node: MindMapNode,
+	data: Record<string, unknown>,
+): void {
+	insertChildNodeWithData(view, node, data);
+	view.scheduleSave();
+}
+
 /**
  * 文档双链：写 mdWikiLinkpath 通道（**不写**引擎 hyperlink）——引擎会为任何
  * hyperlink 渲染原生链接图标，而文档双链应显示自绘文档页图标（见 mindmap.ts）。
  * 与解析侧（md-outline 的 wiki 分支）保持同一通道，避免"文件里的链接有文档图标、
  * 拖入/弹窗新建的却是原生链条图标"的不一致。
  *
- * 写入即「纯双链化」：节点文字**无条件覆盖**为链接显示名（别名优先）——节点只剩
- * 该双链（编辑即改别名），底层 md 行也只剩 `[[目标|显示名]]`，用户手写正文被顶替。
+ * 写入语义（决策 R4「新行为优先」）：
+ * - **已有描述文字**（非空文本且不等于既有链接可见名）→ 保留原文，链接建成子节点；
+ * - 否则（空节点 / 纯双链节点改链）→ 「纯双链化」：节点文字无条件覆盖为链接
+ *   显示名（别名优先），底层 md 行只剩 `[[目标|显示名]]`。
  */
 export function applyDocWikiLink(
 	view: MindMapViewContext,
@@ -53,11 +101,20 @@ export function applyDocWikiLink(
 	label: string | undefined,
 ): void {
 	const data = node.getData() as MdNodeData;
+	const display = label ?? linkDisplayText(link);
+	if (display && hasDescriptiveText(data, display)) {
+		appendLinkChild(view, node, {
+			text: display,
+			mdWikiLinkpath: link,
+			mdLinkStyle: 'wiki',
+			mdLinkText: display,
+		});
+		return;
+	}
 	delete data.hyperlink;
 	delete data.hyperlinkTitle;
 	data.mdWikiLinkpath = link;
 	data.mdLinkStyle = 'wiki';
-	const display = label ?? linkDisplayText(link);
 	data.mdLinkText = display;
 	markNodeNeedLayout(node);
 	// 纯双链化：可见文本无条件覆盖节点文字（不再保留用户正文）
@@ -81,6 +138,17 @@ export function applyNodeAttachment(
 	file: TFile,
 ): void {
 	const data = node.getData() as MdNodeData;
+	// R4「新行为优先」：已有描述文字 → 保留原文，附件引用建成子节点
+	if (hasDescriptiveText(data, file.name)) {
+		appendLinkChild(view, node, {
+			text: file.name,
+			attachmentUrl: view.app.vault.getResourcePath(file),
+			attachmentName: file.name,
+			mdAttachmentLinkpath: file.path,
+			mdLinkStyle: 'wiki',
+		});
+		return;
+	}
 	data.attachmentUrl = view.app.vault.getResourcePath(file);
 	data.attachmentName = file.name;
 	// 回写用完整库内路径（basename 会被 Obsidian 去掉扩展名，无法定位附件）
@@ -113,14 +181,25 @@ function applyAttachmentLink(
 	label: string | undefined,
 ): void {
 	const data = node.getData() as MdNodeData;
-	delete data.hyperlink;
-	delete data.hyperlinkTitle;
-	delete data.mdWikiLinkpath;
 	const parsed = parseWikilink(link);
 	const linkpath = parsed?.target ?? link;
 	// 可见名优先级：显式 label（联想选择）> 双链别名（手输 `[[路径|别名]]`）> 末段文件名
 	const fallbackName = linkpath.split('/').pop() ?? linkpath;
 	const name = label ?? ((parsed?.alias ?? '') || fallbackName);
+	// R4「新行为优先」：已有描述文字 → 保留原文，附件引用建成子节点
+	if (name && hasDescriptiveText(data, name)) {
+		appendLinkChild(view, node, {
+			text: name,
+			attachmentUrl: linkpath,
+			attachmentName: name,
+			mdAttachmentLinkpath: linkpath,
+			mdLinkStyle: 'wiki',
+		});
+		return;
+	}
+	delete data.hyperlink;
+	delete data.hyperlinkTitle;
+	delete data.mdWikiLinkpath;
 	data.attachmentUrl = linkpath;
 	data.attachmentName = name;
 	data.mdAttachmentLinkpath = linkpath;

@@ -70,6 +70,11 @@ export interface EngineControllerDeps {
 	openHyperlink(link: string): void;
 	/** 根数据变更（→ 防抖保存 + 状态栏计数 + 标题重命名调度） */
 	onRootDataChanged(): void;
+	/**
+	 * 引擎数据变更后的附加通知（视图侧：混排双链自动拆分检查）。
+	 * 与 onRootDataChanged 同一事件源，但职责不同（后者是保存/状态，本项是内容变换）。
+	 */
+	onDataChanged(): void;
 	/** 节点图片点击（拖拽抑制在本控制器内处理） */
 	onNodeImageClick(node: MindMapNode): void;
 	/** 附件图标点击（双链指向附件：引擎 node_attachmentClick 事件，打开目标） */
@@ -201,6 +206,7 @@ export class EngineController {
 			});
 			this.engineEvents.onEngine(this.mindMap, 'data_change', () => {
 				this.deps.onRootDataChanged();
+				this.deps.onDataChanged();
 			});
 			// 点击节点图片 → 全屏查看（灯箱）
 			this.engineEvents.onEngine(
