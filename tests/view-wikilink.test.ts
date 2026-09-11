@@ -4,11 +4,16 @@
  * 覆盖模块自身的分支决策（不覆盖桩自身行为）：
  * - 点击分流：Ctrl/Cmd+点击（新标签）vs 普通点击（仅命中节点内 <a> 才打开）、
  *   Shift/Alt 让位（保留引擎多选语义）；
- * - 双通道取值：文档双链存 mdWikiLinkpath（自绘图标通道，不写引擎 hyperlink），
- *   其余链接存 hyperlink——两条通道都要能被点击/预览取到，且 mdWikiLinkpath 优先；
+ * - 三通道取值：文档双链存 mdWikiLinkpath（自绘图标通道，不写引擎 hyperlink）；
+ *   双链附件/嵌入附件/拖入附件存 attachmentUrl + mdAttachmentLinkpath（回形针
+ *   通道，同样不写 hyperlink）——attachmentUrl 是「引用仍在」的门控，linkpath
+ *   取原始入库文本；其余链接存 hyperlink。三条通道都要能被点击/预览取到，
+ *   且 mdWikiLinkpath > 附件通道 > hyperlink；
  * - 锚点优先级：节点内渲染的 <a data-href>（Obsidian MarkdownRenderer 产物）
  *   优先于节点 data 通道；
  * - 悬停预览去重：同一目标元素 400ms 内只触发一次 hover-link；
+ * - 悬停预览触发面：外链/协议地址不触发（核心只服务库内目标），
+ *   按住鼠标键（拖拽节点经过其它节点 / 框选扫过）不触发；
  * - 悬停预览锚定尺寸：SVG 节点缺 offsetWidth/offsetHeight（HTMLElement 专有），
  *   官方 HoverPopover.position() 的锚定矩形是混合取值（宽高走 offset*、位置走
  *   getBoundingClientRect()），不补齐时 bottom/right 为 NaN → 预览只会出现在
@@ -142,7 +147,13 @@ function fakeMouseEvent(
 	modifiers: Partial<
 		Pick<
 			MouseEvent,
-			'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'clientX' | 'clientY'
+			| 'ctrlKey'
+			| 'metaKey'
+			| 'shiftKey'
+			| 'altKey'
+			| 'clientX'
+			| 'clientY'
+			| 'buttons'
 		>
 	> = {},
 ) {
@@ -283,6 +294,38 @@ describe('node_click（点击分流）', () => {
 			fakeMouseEvent(new FakeElement(), { ctrlKey: true }),
 		);
 		expect(openHyperlink).toHaveBeenCalledWith('https://c.com', true);
+	});
+
+	it('Ctrl+点击附件节点：走回形针通道打开原始 linkpath（新标签）', () => {
+		const { view, binder, openHyperlink } = makeView();
+		getNodeGroupElMock.mockReturnValue(null);
+		registerWikilinkInteractions(view);
+		binder.fire(
+			'node_click',
+			// 双链附件 / 拖入附件：不写 hyperlink，只有 attachmentUrl + 原始 linkpath
+			fakeNode({
+				attachmentUrl: 'app://local/attachments/report.pdf',
+				mdAttachmentLinkpath: 'attachments/report.pdf',
+			}),
+			fakeMouseEvent(new FakeElement(), { ctrlKey: true }),
+		);
+		expect(openHyperlink).toHaveBeenCalledWith('attachments/report.pdf', true);
+	});
+
+	it('Ctrl+点击：附件通道优先于 hyperlink（双通道并存时的读取顺序）', () => {
+		const { view, binder, openHyperlink } = makeView();
+		getNodeGroupElMock.mockReturnValue(null);
+		registerWikilinkInteractions(view);
+		binder.fire(
+			'node_click',
+			fakeNode({
+				attachmentUrl: 'attachments/report.pdf',
+				mdAttachmentLinkpath: 'attachments/report.pdf',
+				hyperlink: 'https://stale.example.com',
+			}),
+			fakeMouseEvent(new FakeElement(), { ctrlKey: true }),
+		);
+		expect(openHyperlink).toHaveBeenCalledWith('attachments/report.pdf', true);
 	});
 
 	it('Ctrl+点击但节点无任何链接：不跳转、不阻断事件', () => {
@@ -683,6 +726,97 @@ describe('node_mouseenter（悬停预览）', () => {
 		);
 		const payload = trigger.mock.calls[0]?.[1] as { linktext: string };
 		expect(payload.linktext).toBe('附件.pdf');
+	});
+
+	it('附件通道（回形针）：裸 linkpath 直通触发预览（linktext = 原始入库路径）', () => {
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement();
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+		binder.fire(
+			'node_mouseenter',
+			// 双链附件 / 嵌入附件 / 拖入的库内附件：只写 attachmentUrl（资源地址，
+			// 可能已被视图层重写成解析后的路径）与原始 linkpath；核心要后者才能在
+			// 库内解析到目标（`wikilinkLinkpath` 只认 `[[…]]`，裸路径须直通）
+			fakeNode({
+				attachmentUrl: 'app://local/attachments/report.pdf',
+				mdAttachmentLinkpath: 'attachments/report.pdf',
+			}),
+			fakeMouseEvent(targetEl),
+		);
+		const payload = trigger.mock.calls[0]?.[1] as { linktext: string };
+		expect(payload.linktext).toBe('attachments/report.pdf');
+		expect(trigger).toHaveBeenCalledTimes(1);
+	});
+
+	it('附件通道：原始 linkpath 缺失时回退 attachmentUrl', () => {
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement();
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ attachmentUrl: 'attachments/report.pdf' }),
+			fakeMouseEvent(targetEl),
+		);
+		const payload = trigger.mock.calls[0]?.[1] as { linktext: string };
+		expect(payload.linktext).toBe('attachments/report.pdf');
+	});
+
+	it('引用已移除（仅残留 mdAttachmentLinkpath）：不触发预览', () => {
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement();
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+		binder.fire(
+			'node_mouseenter',
+			// 「移除引用」只清 attachmentUrl，linkpath 字段会残留（见 NODE_REFERENCE_FIELDS）
+			fakeNode({ mdAttachmentLinkpath: 'attachments/report.pdf' }),
+			fakeMouseEvent(targetEl),
+		);
+		expect(trigger).not.toHaveBeenCalled();
+	});
+
+	it('外链节点（hyperlink 为协议地址）：不触发预览（核心只服务库内目标）', () => {
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement();
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+		for (const hyperlink of ['https://example.com', 'obsidian://open?file=x']) {
+			binder.fire(
+				'node_mouseenter',
+				fakeNode({ hyperlink }),
+				fakeMouseEvent(targetEl),
+			);
+		}
+		expect(trigger).not.toHaveBeenCalled();
+	});
+
+	it('按住鼠标键（拖拽节点经过 / 框选扫过）：不触发预览', () => {
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement();
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ mdWikiLinkpath: '[[笔记]]' }),
+			fakeMouseEvent(targetEl, { buttons: 1 }),
+		);
+		expect(trigger).not.toHaveBeenCalled();
+	});
+
+	it('未按鼠标键（buttons = 0）：正常触发（拖拽守卫不误伤悬停）', () => {
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement();
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ mdWikiLinkpath: '[[笔记]]' }),
+			fakeMouseEvent(targetEl, { buttons: 0 }),
+		);
+		const payload = trigger.mock.calls[0]?.[1] as { linktext: string };
+		expect(payload.linktext).toBe('笔记');
 	});
 
 	it('sourcePath 取视图文件路径；文件缺失时为空串', () => {

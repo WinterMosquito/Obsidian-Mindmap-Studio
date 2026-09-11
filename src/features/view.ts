@@ -27,7 +27,12 @@ import {
 	refreshSearchBarLabels,
 } from './view-search';
 import { exportPNG } from './view-export';
-import { arrangeMindMap, buildToolbar, refreshToolbar } from './view-toolbar';
+import {
+	arrangeMindMap,
+	buildToolbar,
+	refreshToolbar,
+	syncLineStyleOptions,
+} from './view-toolbar';
 import { setupDragAndDrop } from './view-dnd';
 import { setupContextMenu } from './view-context-menu';
 import { registerViewHotkeys } from './view-hotkeys';
@@ -59,6 +64,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	searchInput: HTMLInputElement | null = null;
 	searchCountEl: HTMLElement | null = null;
 	layoutSelect: HTMLSelectElement | null = null;
+	lineStyleSelect: HTMLSelectElement | null = null;
 	/** 当前深色主题（css-change 时重算；仅本类与引擎控制器装配面使用） */
 	private isDark = false;
 
@@ -101,6 +107,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 由本类经 applyLayout/resolveLayout 维护（工具栏变更走 applyLayout 方法）。
 	 */
 	private currentLayout: string | null = null;
+	/**
+	 * 当前连线样式偏好（auto/curve/direct/straight，auto＝随布局）。
+	 * 与布局同口径：按文件路径持久化到视图状态存储，由本类经
+	 * applyLineStyle/resolveLineStyle 维护。
+	 */
+	private currentLineStyle: string | null = null;
 
 	/**
 	 * .mindmap.md 文档模式（B3 显式切换）：文件本质是 Markdown，用导图视图
@@ -173,6 +185,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			isDark: () => this.isDark,
 			getSetupOptions: () => ({
 				layout: this.resolveLayout(),
+				lineStyle: this.resolveLineStyle(),
 				themePref: this.plugin.settings.defaultTheme,
 				enableDrag: this.plugin.settings.enableDrag,
 				performanceMode: this.plugin.settings.performanceMode,
@@ -202,7 +215,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				setupImageResize(this);
 				setupDragTargetAssist(this);
 			},
-			onEngineReady: (layout) => this.onEngineReady(layout),
+			onEngineReady: (layout, lineStyle) =>
+				this.onEngineReady(layout, lineStyle),
 			onReferencesChanged: () => {
 				this.scheduleSave();
 			},
@@ -334,6 +348,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.currentLayout =
 			this.plugin.viewState.getLayout(file.path) ??
 			this.plugin.settings.defaultLayout;
+		// 连线样式偏好同口径按文件取（auto＝随布局）
+		this.currentLineStyle =
+			this.plugin.viewState.getLineStyle(file.path) ??
+			this.plugin.settings.defaultLineStyle;
 		try {
 			const doc = await this.documents.load(file);
 			// 加载期间文件已切换：丢弃过期结果
@@ -384,11 +402,20 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		return layout;
 	}
 
-	/** 引擎就绪收尾：同步布局选择器；md 模式重建工具栏补「以 Markdown 编辑」按钮 */
-	private onEngineReady(layout: string): void {
+	/** 本次引擎创建所用连线样式偏好（fallback 默认值并回写会话字段） */
+	private resolveLineStyle(): string {
+		const lineStyle =
+			this.currentLineStyle || this.plugin.settings.defaultLineStyle;
+		this.currentLineStyle = lineStyle;
+		return lineStyle;
+	}
+
+	/** 引擎就绪收尾：同步布局/连线样式选择器；md 模式重建工具栏补返回按钮 */
+	private onEngineReady(layout: string, lineStyle: string): void {
 		if (this.layoutSelect) {
 			this.layoutSelect.value = layout;
 		}
+		syncLineStyleOptions(this, layout, lineStyle);
 		// md 文档模式：onOpen 构建工具栏时文件尚未加载（mdDocumentMode=false），
 		// 加载完成后重建工具栏以补上「以 Markdown 编辑」返回按钮
 		if (this.mdDocumentMode) {
@@ -396,6 +423,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			if (this.layoutSelect && this.currentLayout) {
 				this.layoutSelect.value = this.currentLayout;
 			}
+			// 重建后选项面回到全局默认：按文件会话值重新校正
+			syncLineStyleOptions(
+				this,
+				this.currentLayout ?? layout,
+				this.currentLineStyle ?? lineStyle,
+			);
 		}
 	}
 
@@ -408,8 +441,22 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	applyLayout(value: string): void {
 		this.currentLayout = value;
 		this.engine.setLayout(value);
+		// 连线样式选项面随布局变化（固定直线布局收窄为「自动」单项）
+		syncLineStyleOptions(this, value, this.resolveLineStyle());
 		if (this.file) {
 			this.plugin.viewState.setLayout(this.file.path, value);
+		}
+	}
+
+	/**
+	 * 切换连线样式偏好（工具栏调用）：更新会话字段 + 立即写入视图状态存储
+	 * （auto＝随布局；不写入正文）。
+	 */
+	applyLineStyle(value: string): void {
+		this.currentLineStyle = value;
+		this.engine.setLineStyle(value);
+		if (this.file) {
+			this.plugin.viewState.setLineStyle(this.file.path, value);
 		}
 	}
 

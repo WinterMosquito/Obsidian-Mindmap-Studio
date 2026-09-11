@@ -76,6 +76,12 @@ function makeHarness(
 	overrides: Partial<
 		Pick<SavePipelineDeps, 'isAutoSave' | 'getFrontmatterFor'>
 	> = {},
+	/**
+	 * vault 上的可选追加成员：仅「无差异写盘跳过」用例需要 `cachedRead`。
+	 * 缺省不挂载——SavePipeline 读到 undefined 即退化为照常写盘，
+	 * 既有用例（断言每次 save 必写盘）语义不受影响。
+	 */
+	vaultExtras: { cachedRead?: (target: TFile) => Promise<string> } = {},
 ): Harness {
 	const written: string[] = [];
 	const writes: { path: string; content: string }[] = [];
@@ -112,6 +118,7 @@ function makeHarness(
 			modify,
 			// 模块用官方推荐的类型化 getter 做存在性守卫（删除后不重建文件）
 			getFileByPath: (path: string) => paths.get(path) ?? null,
+			...vaultExtras,
 		},
 	});
 
@@ -589,5 +596,63 @@ describe('SavePipeline 写盘归属（换文件期间的排空）', () => {
 
 		h.release(1);
 		await Promise.all([first, unload]);
+	});
+});
+
+describe('SavePipeline.save（无差异写盘跳过）', () => {
+	it('文件当前内容与将要写入的内容一致时不写盘（mtime/元数据缓存零惊动）', async () => {
+		// 典型场景：「自动整理」只清拖拽坐标，Markdown 文本一字未变
+		const cachedRead = vi.fn(async () => '- A\n');
+		const h = makeHarness({}, { cachedRead });
+
+		await h.pipeline.save();
+
+		expect(cachedRead).toHaveBeenCalledWith(h.file);
+		expect(h.modify).not.toHaveBeenCalled();
+		expect(h.onSaveError).not.toHaveBeenCalled();
+	});
+
+	it('文件当前内容不同（首次写入 / 外部改动）时照常写盘', async () => {
+		const cachedRead = vi.fn(async () => '- 旧内容\n');
+		const h = makeHarness({}, { cachedRead });
+
+		await h.pipeline.save();
+
+		expect(h.modify).toHaveBeenCalledTimes(1);
+		expect(h.written[0]).toBe('- A\n');
+	});
+
+	it('cachedRead 抛错时回退写盘（fail-open：绝不因读失败而丢写）', async () => {
+		const cachedRead = vi.fn(async () => {
+			throw new Error('读取失败');
+		});
+		const h = makeHarness({}, { cachedRead });
+
+		await h.pipeline.save();
+
+		expect(h.modify).toHaveBeenCalledTimes(1);
+		expect(h.onSaveError).not.toHaveBeenCalled();
+	});
+
+	it('无 cachedRead（老运行时/桩环境）时照常写盘', async () => {
+		const h = makeHarness();
+
+		await h.pipeline.save();
+
+		expect(h.modify).toHaveBeenCalledTimes(1);
+	});
+
+	it('跳过写盘后管线状态复位：内容随后变化仍能正常写盘', async () => {
+		let content = '- A\n';
+		const cachedRead = vi.fn(async () => content);
+		const h = makeHarness({}, { cachedRead });
+
+		await h.pipeline.save();
+		expect(h.modify).not.toHaveBeenCalled();
+
+		content = '- 旧版本\n';
+		await h.pipeline.save();
+		expect(h.modify).toHaveBeenCalledTimes(1);
+		expect(h.written[0]).toBe('- A\n');
 	});
 });

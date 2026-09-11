@@ -7,8 +7,8 @@
  *   （自绘文档页图标）；附件/库内路径 → attachmentUrl（原生回形针）。表驱动覆盖
  *   已解析库内文件 / 未解析（按目标串扩展名）两条判定路径与别名、显式 label 的
  *   可见名优先级；
- * - 可见文本同步规则：仅当节点文本为空、或仍是旧链接显示名时改写（改链场景），
- *   用户正文绝不被覆盖；
+ * - 纯双链化：写入文档/附件双链即无条件覆盖节点文字为显示名（拖入与弹窗同规则），
+ *   用户手写正文被顶替（旧的「仅空/旧链名时改写」已废弃）；
  * - 防御：弹窗取消、弹窗期间引擎换代、无激活节点都不触碰引擎；
  * - 删除：根节点拒绝提示 + uid 异常时按对象身份兜底强制清除；
  * - 剪贴板：WeakMap 按视图隔离、深拷贝、粘贴剥离 uid/isActive、未指定父节点挂根；
@@ -540,7 +540,7 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 		expect(dataOf(node).mdWikiLinkpath).toBe('[[新笔记]]');
 	});
 
-	it('已有用户正文：只附加链接，正文不被覆盖', async () => {
+	it('已有用户正文：也被覆盖为链接显示名（纯双链化，正文被顶替）', async () => {
 		const node = fakeNode({
 			data: { text: '我的正文', mdWikiLinkpath: '[[旧笔记]]' },
 		});
@@ -549,7 +549,8 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 
 		await addLinkToActiveNode(view);
 
-		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(setNodeTextMock).toHaveBeenCalledTimes(1);
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '新笔记');
 		expect(dataOf(node).mdWikiLinkpath).toBe('[[新笔记]]');
 	});
 
@@ -704,7 +705,7 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		const node = fakeNode({ data: { hyperlink: 'https://旧', hyperlinkTitle: '旧' } });
 		const { view, execCommand, render, scheduleSave } = makeView();
 
-		applyDocWikiLink(view, node, '[[笔记|别名]]', undefined, null);
+		applyDocWikiLink(view, node, '[[笔记|别名]]', undefined);
 
 		const data = dataOf(node);
 		expect(data.hyperlink).toBeUndefined();
@@ -723,7 +724,7 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		const node = fakeNode({ data: { text: '正文' } });
 		const { view } = makeView();
 
-		applyDocWikiLink(view, node, '[[笔记]]', '', null);
+		applyDocWikiLink(view, node, '[[笔记]]', '');
 
 		expect(dataOf(node).mdLinkText).toBe('');
 		expect(setNodeTextMock).not.toHaveBeenCalled();
@@ -753,8 +754,8 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		expect(data.hyperlink).toBeUndefined();
 		expect(data.mdWikiLinkpath).toBeUndefined();
 		expect(markNodeNeedLayoutMock).toHaveBeenCalledWith(node);
-		// 拖入附件不改写节点文本（只有链接弹窗路径才对齐可见文本）
-		expect(setNodeTextMock).not.toHaveBeenCalled();
+		// 纯双链化：拖入附件即覆盖节点文字为文件名（与文档双链同口径）
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '报告.pdf');
 		expect(render).toHaveBeenCalled();
 		expect(scheduleSave).toHaveBeenCalled();
 	});

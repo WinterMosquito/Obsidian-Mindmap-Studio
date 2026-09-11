@@ -48,6 +48,7 @@ const ZH = {
 	'toolbar.insertLink': '添加链接',
 	'toolbar.insertImage': '添加图片',
 	'toolbar.layout': '布局：',
+	'toolbar.lineStyle': '连线：',
 	'toolbar.zoomIn': '放大',
 	'toolbar.zoomOut': '缩小',
 	'toolbar.resetZoom': '重置缩放（100%）',
@@ -66,6 +67,7 @@ const ZH = {
 	'menu.removeText': '移除文本',
 	'menu.deleteNode': '删除节点',
 	'menu.pasteNode': '粘贴节点',
+	'menu.resetZoom': '重置缩放',
 
 	// ===== 通用提示/通知 =====
 	'common.mindMap': '思维导图',
@@ -140,6 +142,8 @@ const ZH = {
 	'settings.title': '设置',
 	'settings.defaultLayout': '默认布局',
 	'settings.defaultLayoutDesc': '新建思维导图时使用的默认布局',
+	'settings.defaultLineStyle': '默认连线样式',
+	'settings.defaultLineStyleDesc': '新建思维导图时使用的默认连线样式（自动＝随布局；仅逻辑结构图/思维导图/组织结构图支持三态切换）',
 	'settings.defaultTheme': '默认主题',
 	'settings.defaultThemeDesc': '新建思维导图时使用的默认主题',
 	'settings.autoSave': '自动保存',
@@ -164,6 +168,12 @@ const ZH = {
 	'layout.catalog': '目录组织图',
 	'layout.timeline': '时间轴',
 	'layout.fishbone': '鱼骨图',
+
+	// ===== 连线样式 =====
+	'lineStyle.auto': '自动',
+	'lineStyle.curve': '曲线',
+	'lineStyle.direct': '直连',
+	'lineStyle.straight': '折线',
 
 	// ===== 主题选项 =====
 	'theme.default': '默认（跟随 Obsidian 配色）',
@@ -231,6 +241,7 @@ const EN: Record<TranslationKey, string> = {
 	'toolbar.insertLink': 'Add link',
 	'toolbar.insertImage': 'Add image',
 	'toolbar.layout': 'Layout: ',
+	'toolbar.lineStyle': 'Line style: ',
 	'toolbar.zoomIn': 'Zoom in',
 	'toolbar.zoomOut': 'Zoom out',
 	'toolbar.resetZoom': 'Reset zoom (100%)',
@@ -249,6 +260,7 @@ const EN: Record<TranslationKey, string> = {
 	'menu.removeText': 'Remove text',
 	'menu.deleteNode': 'Delete node',
 	'menu.pasteNode': 'Paste node',
+	'menu.resetZoom': 'Reset zoom',
 
 	// ===== 通用提示/通知 =====
 	'common.mindMap': 'Mind map',
@@ -325,6 +337,8 @@ const EN: Record<TranslationKey, string> = {
 	'settings.title': 'Settings',
 	'settings.defaultLayout': 'Default layout',
 	'settings.defaultLayoutDesc': 'Default layout when creating a new mind map',
+	'settings.defaultLineStyle': 'Default line style',
+	'settings.defaultLineStyleDesc': 'Default connector style for new mind maps ("Auto" follows the layout; switchable only for Logical structure / Mind map / Organization chart)',
 	'settings.defaultTheme': 'Default theme',
 	'settings.defaultThemeDesc': 'Default theme when creating a new mind map',
 	'settings.autoSave': 'Auto-save',
@@ -351,6 +365,12 @@ const EN: Record<TranslationKey, string> = {
 	'layout.catalog': 'Catalog organization',
 	'layout.timeline': 'Timeline',
 	'layout.fishbone': 'Fishbone',
+
+	// ===== Line style =====
+	'lineStyle.auto': 'Auto',
+	'lineStyle.curve': 'Curve',
+	'lineStyle.direct': 'Direct',
+	'lineStyle.straight': 'Elbow',
 
 	// ===== 主题选项 =====
 	'theme.default': 'Default (use Obsidian color scheme)',

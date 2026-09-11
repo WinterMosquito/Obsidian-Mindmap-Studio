@@ -79,8 +79,9 @@
   display: block;
 }
 
-/* 布局选择器 */
-.mindmap-layout-select {
+/* 布局选择器 / 连线样式选择器 */
+.mindmap-layout-select,
+.mindmap-line-style-select {
   padding: 4px 8px;
   border-radius: 6px;
   border: 1px solid var(--background-modifier-border);
@@ -91,11 +92,13 @@
   outline: none;
 }
 
-.mindmap-layout-select:hover {
+.mindmap-layout-select:hover,
+.mindmap-line-style-select:hover {
   border-color: var(--text-accent);
 }
 
-.mindmap-layout-select:focus {
+.mindmap-layout-select:focus,
+.mindmap-line-style-select:focus {
   border-color: var(--text-accent);
   box-shadow: 0 0 0 2px var(--text-accent-hover);
 }

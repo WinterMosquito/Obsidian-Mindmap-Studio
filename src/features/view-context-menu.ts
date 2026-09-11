@@ -8,6 +8,7 @@ import {
 	findNodeByDom,
 	fitMindMap,
 	getNodeDataString,
+	resetZoom,
 	startNodeTextEdit,
 } from '../mindmap';
 import {
@@ -59,6 +60,12 @@ export function setupContextMenu(view: MindMapViewContext): void {
 				.onClick(() => pasteNodeAsChild(view, null)),
 		);
 		menu.addSeparator();
+		menu.addItem((item) =>
+			item
+				.setTitle(t(view.lang, 'menu.resetZoom'))
+				.setIcon('rotate-ccw')
+				.onClick(() => resetZoom(view.mindMap)),
+		);
 		menu.addItem((item) =>
 			item
 				.setTitle(t(view.lang, 'command.fitCanvas'))

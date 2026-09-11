@@ -12,7 +12,7 @@
  *   相对画布原点，只 `setScale(1)`（省略锚点）会让内容绕原点跳动（表现为「视图乱飘」）。
  *   故断言 setScale 收到第二/三参，且不做任何节点居中；
  * - `arrangeMindMap`（自动整理）：只走引擎 RESET_LAYOUT（清除自由拖拽位置，不触碰
- *   children 顺序），延时后走 `resetZoom` 而非 fit 全图。
+ *   children 顺序），延时后走 `fitMindMap` 适应画布（fit 全图，整理结果一览无余）。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
@@ -192,8 +192,8 @@ describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
 	});
 });
 
-describe('arrangeMindMap（执行 RESET_LAYOUT 后重置缩放，不再 fit 全图）', () => {
-	it('走引擎 RESET_LAYOUT 命令，延时后以画布中心回到 100%', () => {
+describe('arrangeMindMap（执行 RESET_LAYOUT 后适应画布）', () => {
+	it('走引擎 RESET_LAYOUT 命令，延时后 fit 全图', () => {
 		vi.useFakeTimers();
 		const { mindMap, execCommand, setScale, fit, translateXY } = makeMindMap();
 
@@ -201,33 +201,33 @@ describe('arrangeMindMap（执行 RESET_LAYOUT 后重置缩放，不再 fit 全�
 		// 断言字面量：常量表键名与引擎命令名必须一致（拼错时此处即刻失败）
 		expect(execCommand).toHaveBeenCalledExactlyOnceWith('RESET_LAYOUT');
 
-		// 延时结束前不调整视口：等引擎完成 reflow，否则按旧布局算锚点
-		expect(setScale).not.toHaveBeenCalled();
+		// 延时结束前不调整视口：等引擎完成 reflow，否则按旧布局算缩放
+		expect(fit).not.toHaveBeenCalled();
 
 		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS);
 
-		expect(setScale).toHaveBeenCalledExactlyOnceWith(1, 400, 300);
-		// 不再 fit 全图（大图会被压到文字不可读），也不平移（resetZoom 不改屏幕位置）
-		expect(fit).not.toHaveBeenCalled();
+		expect(fit).toHaveBeenCalledTimes(1);
+		// 适应画布即引擎 fit：不单独设比例、不平移
+		expect(setScale).not.toHaveBeenCalled();
 		expect(translateXY).not.toHaveBeenCalled();
 	});
 
 	it('延时边界：不足 RESET_LAYOUT_VIEWPORT_DELAY_MS 时不触发', () => {
 		vi.useFakeTimers();
-		const { mindMap, setScale } = makeMindMap();
+		const { mindMap, fit } = makeMindMap();
 
 		arrangeMindMap(mindMap);
 		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS - 1);
-		expect(setScale).not.toHaveBeenCalled();
+		expect(fit).not.toHaveBeenCalled();
 
 		vi.advanceTimersByTime(1);
-		expect(setScale).toHaveBeenCalledTimes(1);
+		expect(fit).toHaveBeenCalledTimes(1);
 	});
 
 	it('命令抛错时返回 false、不排定时器、不抛异常', () => {
 		vi.useFakeTimers();
 		const errorSpy = spyConsoleError();
-		const { mindMap, execCommand, setScale } = makeMindMap();
+		const { mindMap, execCommand, fit } = makeMindMap();
 		execCommand.mockImplementation(() => {
 			throw new Error('命令未注册');
 		});
@@ -237,7 +237,7 @@ describe('arrangeMindMap（执行 RESET_LAYOUT 后重置缩放，不再 fit 全�
 		expect(vi.getTimerCount()).toBe(0);
 
 		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS);
-		expect(setScale).not.toHaveBeenCalled();
+		expect(fit).not.toHaveBeenCalled();
 	});
 
 	it('引擎缺失 / 无 execCommand 时返回 false', () => {

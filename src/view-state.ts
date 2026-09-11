@@ -7,6 +7,7 @@
  *
  * 状态：
  * - layout: 布局类型（logicalStructure/mindMap/...）
+ * - lineStyle: 连线样式偏好（auto/curve/direct/straight；auto＝随布局）
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）
  */
 import { createDebouncer, type Debouncer } from './concurrency';
@@ -62,7 +63,7 @@ export class ViewStateStore {
 				const s = state as Record<string, unknown>;
 				// 形状校验：只接受含已知字段的视图状态，丢弃畸形/异常条目
 				// （防手改 data.json、引擎升级后 view 结构变化等导致的坏数据渗入）。
-				if ('layout' in s || 'view' in s || 'openAs' in s) {
+				if ('layout' in s || 'lineStyle' in s || 'view' in s || 'openAs' in s) {
 					this.map.set(path, s);
 				}
 			}
@@ -81,6 +82,16 @@ export class ViewStateStore {
 
 	setLayout(path: string, layout: string): void {
 		this.patch(path, { layout });
+	}
+
+	/** 连线样式偏好（auto/curve/direct/straight；非法值由解析层回落布局默认） */
+	getLineStyle(path: string): string | undefined {
+		const lineStyle = this.map.get(path)?.lineStyle;
+		return typeof lineStyle === 'string' ? lineStyle : undefined;
+	}
+
+	setLineStyle(path: string, lineStyle: string): void {
+		this.patch(path, { lineStyle });
 	}
 
 	/** 打开方式偏好：'mindmap' | 'markdown'（最后一次主动选择决定） */

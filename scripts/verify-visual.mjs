@@ -111,6 +111,51 @@ const SCENARIOS = [
 	},
 ];
 
+/**
+ * 布局探针的测试树（7 节点：根 + 3 子 + 2 孙 + 1 孙），
+ * 用于六种布局的渲染与连线样式分派核验。
+ */
+const LAYOUT_PROBE_TREE = {
+	data: { text: '中心主题', uid: 'lpr' },
+	children: [
+		{
+			data: { text: '分支 A', uid: 'lpa' },
+			children: [
+				{ data: { text: 'A-1', uid: 'lpa1' }, children: [] },
+				{ data: { text: 'A-2', uid: 'lpa2' }, children: [] },
+			],
+		},
+		{
+			data: { text: '分支 B', uid: 'lpb' },
+			children: [{ data: { text: 'B-1', uid: 'lpb1' }, children: [] }],
+		},
+		{ data: { text: '分支 C', uid: 'lpc' }, children: [] },
+	],
+};
+
+/** 布局探针覆盖的六种布局（与 constants.LAYOUT_OPTIONS 同集） */
+const LAYOUT_PROBE_LAYOUTS = [
+	'logicalStructure',
+	'mindMap',
+	'organizationStructure',
+	'catalogOrganization',
+	'timeline',
+	'fishbone',
+];
+
+/**
+ * 布局探针契约：曲线 = 支持三态分派的两种布局（auto 偏好下取 curve）；
+ * 其余四种为布局类固有直线（不接受 lineStyle）。
+ */
+const LAYOUT_PROBE_CONTRACTS = [
+	{ layout: 'logicalStructure', curves: true },
+	{ layout: 'mindMap', curves: true },
+	{ layout: 'organizationStructure', curves: false },
+	{ layout: 'catalogOrganization', curves: false },
+	{ layout: 'timeline', curves: false },
+	{ layout: 'fishbone', curves: false },
+];
+
 /** 定位无头 Chrome（环境变量优先，其次平台默认安装路径） */
 function findChrome() {
 	const candidates = [];
@@ -160,6 +205,7 @@ const scenarios = ${serialized};
 
 const options = {
 	layout: 'logicalStructure',
+	lineStyle: 'auto',
 	themePref: 'default',
 	isDark: false,
 	enableDrag: true,
@@ -272,6 +318,84 @@ window.setTimeout(() => {
 	}
 	document.body.appendChild(anchorProbe);
 }, 150);
+
+// —— 布局探针：六种布局渲染 × 连线样式分派 × 根节点连线起点 ——
+// 连线路径 = 容器内非节点形状的 path（节点形状带 class="smm-node-shape"，
+// 圆角以 C 命令实现，混入会把"直线布局"误判成含曲线）。
+const layoutProbe = document.createElement('pre');
+layoutProbe.id = 'layout-probe';
+document.body.appendChild(layoutProbe);
+const layoutMaps = {};
+window.setTimeout(() => {
+	for (const layout of ${JSON.stringify(LAYOUT_PROBE_LAYOUTS)}) {
+		const holder = document.createElement('div');
+		holder.className = 'mindmap-canvas-container';
+		holder.style.width = '1000px';
+		holder.style.height = '600px';
+		document.body.appendChild(holder);
+		try {
+			layoutMaps[layout] = { holder, map: createMindMap(holder, ${JSON.stringify(LAYOUT_PROBE_TREE)}, { ...options, layout }) };
+		} catch (error) {
+			layoutMaps[layout] = { holder, error: 'createMindMap 抛错: ' + String(error) };
+		}
+	}
+	// 引擎首帧渲染是异步的：createMindMap 返回时 renderer.root 仍为 null，
+	// 必须再等一轮才能读取渲染树（此前同步读取导致本探针全部误报）。
+	window.setTimeout(() => {
+		const report = {};
+		try {
+			for (const layout of ${JSON.stringify(LAYOUT_PROBE_LAYOUTS)}) {
+				const entry = layoutMaps[layout];
+				if (!entry || entry.error) {
+					report[layout] = { error: entry?.error || '未创建' };
+					continue;
+				}
+				const root = entry.map.renderer.root;
+				if (!root) {
+					report[layout] = { error: 'renderer.root 尚未就绪' };
+					continue;
+				}
+				const box = { left: root.left, top: root.top, width: root.width, height: root.height };
+				const paths = [...entry.holder.querySelectorAll('path')]
+					.filter((el) => !el.classList.contains('smm-node-shape'))
+					.map((el) => el.getAttribute('d') || '');
+				const starts = paths
+					.map((d) => {
+						const m = /^M\\s*(-?[\\d.]+)[ ,](-?[\\d.]+)/.exec(d.trim());
+						return m ? [Number(m[1]), Number(m[2])] : null;
+					})
+					.filter(Boolean);
+				report[layout] = {
+					nodes: entry.holder.querySelectorAll('.smm-node').length,
+					lines: paths.length,
+					curves: paths.filter((d) => /[CQ]/.test(d)).length,
+					root: box,
+					startsAtRootCenter: starts.filter(
+						([x, y]) =>
+							Math.abs(x - (box.left + box.width / 2)) <= 3 &&
+							Math.abs(y - (box.top + box.height / 2)) <= 3,
+					).length,
+					startsAtRootEdgeX: starts.filter(
+						([x]) =>
+							Math.abs(x - box.left) <= 3 ||
+							Math.abs(x - box.left - box.width) <= 3,
+					).length,
+				};
+			}
+			// 引擎快捷键表（KeyCommand 内部字段）：createMindMap 末段必须已移除
+			// 引擎自带的 Ctrl+L（= RESET_LAYOUT），自动整理统一走插件命令。
+			const first = layoutMaps[${JSON.stringify(LAYOUT_PROBE_LAYOUTS[0])}];
+			const shortcutMap =
+				first && first.map && first.map.keyCommand
+					? first.map.keyCommand.shortcutMap
+					: null;
+			report.engineShortcuts = shortcutMap ? Object.keys(shortcutMap) : [];
+			layoutProbe.textContent = JSON.stringify(report);
+		} catch (error) {
+			layoutProbe.textContent = JSON.stringify({ error: String(error) });
+		}
+	}, 400);
+}, 200);
 `;
 }
 
@@ -590,6 +714,75 @@ function checkAnchor(dom) {
 }
 
 /**
+ * 校验布局探针（`#layout-probe`）：六种布局均能渲染；连线样式分派正确
+ * （曲线布局的连线全含 C/Q，直线布局零曲线）；**根节点连线起点在节点边缘**
+ * ——引擎默认从节点中心起画，会在边缘斜穿而出（衔接"斜戳"回归），此项专门守它。
+ */
+function checkLayouts(dom) {
+	const { probe, failures: parseFailures } = readProbe(
+		dom,
+		'layout-probe',
+		'布局',
+	);
+	if (parseFailures) return parseFailures;
+	const failures = [];
+	for (const { layout, curves } of LAYOUT_PROBE_CONTRACTS) {
+		const entry = probe[layout];
+		if (!entry) {
+			failures.push(`布局 ${layout} 无探针记录（未渲染？）`);
+			continue;
+		}
+		if (entry.error) {
+			failures.push(`布局 ${layout} 探针异常：${entry.error}`);
+			continue;
+		}
+		const expectedNodes = LAYOUT_PROBE_TREE.children.reduce(
+			(sum, child) => sum + 1 + child.children.length,
+			1,
+		);
+		if (entry.nodes !== expectedNodes) {
+			failures.push(`布局 ${layout} 节点数 ${entry.nodes} ≠ ${expectedNodes}`);
+		}
+		if (!(entry.lines > 0)) {
+			failures.push(`布局 ${layout} 未渲染连线路径`);
+		}
+		if (curves && entry.curves !== entry.lines) {
+			failures.push(
+				`布局 ${layout} 应为全曲线（${entry.curves}/${entry.lines} 条含曲线）`,
+			);
+		}
+		if (!curves && entry.curves !== 0) {
+			failures.push(
+				`布局 ${layout} 应为直线连线，却出现 ${entry.curves} 条曲线路径`,
+			);
+		}
+		if (!(entry.startsAtRootCenter === 0)) {
+			failures.push(
+				`布局 ${layout} 有 ${entry.startsAtRootCenter} 条连线从根节点中心起画（衔接应始于节点边缘）`,
+			);
+		}
+	}
+	// 水平展开的曲线布局须存在"从根左右缘出发"的连线（衔接修复的直接证据）
+	for (const layout of ['logicalStructure', 'mindMap']) {
+		if (!((probe[layout]?.startsAtRootEdgeX ?? 0) > 0)) {
+			failures.push(`布局 ${layout} 未见从根节点边缘出发的连线`);
+		}
+	}
+	// 引擎自带 Ctrl+L（RESET_LAYOUT）必须已被移除：自动整理统一走插件命令，
+	// 本插件不定义默认热键（由用户在 Hotkeys 中自行分配）。
+	const shortcuts = probe.engineShortcuts;
+	if (!Array.isArray(shortcuts) || shortcuts.length === 0) {
+		// 前提断言：读不到快捷键表说明探针失效（不能"空表即通过"）
+		failures.push('未能读到引擎快捷键表（engineShortcuts 为空，探针失去意义）');
+	} else if (shortcuts.includes('Control+l')) {
+		failures.push(
+			'引擎自带 Ctrl+L 仍注册：自动整理应统一走插件命令，不得保留默认热键',
+		);
+	}
+	return failures;
+}
+
+/**
  * 跑完所有检查：返回未通过项数量。
  *
  * 任何断言函数抛异常都转成一条失败项（而不是让整个脚本静默退出）——
@@ -641,6 +834,15 @@ async function runChecks(dom, diag) {
 	);
 	for (const failure of anchorFailures) diag.log(`      - ${failure}`);
 	failed += anchorFailures.length;
+
+	// 布局契约：六种布局渲染 + 连线样式分派 + 根节点连线起点
+	diag.log('  · anchor 探针完成，进入 layout 探针');
+	const layoutFailures = safe('layout 探针', () => checkLayouts(dom));
+	diag.log(
+		`  ${layoutFailures.length === 0 ? '✓' : '✗'} layout 六布局渲染 × 连线分派（曲线/直线）× 根连线起点`,
+	);
+	for (const failure of layoutFailures) diag.log(`      - ${failure}`);
+	failed += layoutFailures.length;
 
 	return failed;
 }

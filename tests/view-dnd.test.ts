@@ -48,7 +48,6 @@ const h = vi.hoisted(() => ({
 			node: MindMapNode,
 			link: string,
 			label: string | undefined,
-			oldDisplay: string | null,
 		) => void
 	>(),
 	saveImageToVault: vi.fn<
@@ -120,9 +119,8 @@ vi.mock('../src/features/view-node-actions', () => ({
 		node: MindMapNode,
 		link: string,
 		label: string | undefined,
-		oldDisplay: string | null,
 	): void => {
-		h.applyDocWikiLink(view, node, link, label, oldDisplay);
+		h.applyDocWikiLink(view, node, link, label);
 	},
 }));
 
@@ -823,7 +821,6 @@ describe('库内文件拖入：分发分支', () => {
 				node,
 				formatWikilink(target),
 				target,
-				null,
 			);
 			// 文档分支用「链接目标」作可见名（md 去扩展名 / canvas·base 带扩展名），
 			// 与附件分支一律用全名相对

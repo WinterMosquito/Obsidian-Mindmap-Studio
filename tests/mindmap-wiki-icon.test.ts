@@ -128,6 +128,7 @@ function fakeNode(data: Record<string, unknown>): MindMapNode {
 
 const BASE_OPTIONS: CreateMindMapOptions = {
 	layout: 'logicalStructure',
+	lineStyle: 'auto',
 	themePref: 'default',
 	isDark: false,
 	enableDrag: false,

@@ -3,6 +3,7 @@ import {
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
 	LAYOUT_OPTIONS,
+	LINE_STYLE_OPTIONS,
 	PERFORMANCE_THRESHOLD_MAX,
 	PERFORMANCE_THRESHOLD_MIN,
 	THEME_OPTIONS,
@@ -25,6 +26,8 @@ interface IPluginSettingsHost {
 /** 插件设置 */
 export interface MindMapStudioSettings {
 	defaultLayout: string;
+	/** 默认连线样式（auto/curve/direct/straight；auto＝随布局） */
+	defaultLineStyle: string;
 	defaultTheme: string;
 	autoSave: boolean;
 	exportScale: number;
@@ -36,6 +39,8 @@ export interface MindMapStudioSettings {
 
 export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	defaultLayout: 'logicalStructure',
+	// auto：随布局（四种直线布局 straight、两种曲线布局 curve），保持既有观感
+	defaultLineStyle: 'auto',
 	defaultTheme: 'default',
 	autoSave: true,
 	exportScale: 2,
@@ -101,6 +106,9 @@ export function sanitizeSettings(
 		defaultLayout:
 			pickFrom('defaultLayout', LAYOUT_OPTIONS) ??
 			DEFAULT_SETTINGS.defaultLayout,
+		defaultLineStyle:
+			pickFrom('defaultLineStyle', LINE_STYLE_OPTIONS) ??
+			DEFAULT_SETTINGS.defaultLineStyle,
 		defaultTheme:
 			pickFrom('defaultTheme', THEME_OPTIONS) ?? DEFAULT_SETTINGS.defaultTheme,
 		autoSave: pickBool('autoSave') ?? DEFAULT_SETTINGS.autoSave,
@@ -126,6 +134,7 @@ export function sanitizeSettings(
 /** 变更后需要即时应用到已打开视图的设置项 */
 const LIVE_REFRESH_SETTING_KEYS = new Set<string>([
 	'defaultLayout',
+	'defaultLineStyle',
 	'defaultTheme',
 	'enableDrag',
 	'performanceMode',
@@ -161,6 +170,12 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 				t(this.lang, option.label),
 			]),
 		);
+		const lineStyleOptions = Object.fromEntries(
+			LINE_STYLE_OPTIONS.map((option) => [
+				option.value,
+				t(this.lang, option.label),
+			]),
+		);
 		const themeOptions = Object.fromEntries(
 			THEME_OPTIONS.map((option) => [
 				option.value,
@@ -192,6 +207,15 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 							type: 'dropdown',
 							key: 'defaultLayout',
 							options: layoutOptions,
+						},
+					},
+					{
+						name: t(this.lang, 'settings.defaultLineStyle'),
+						desc: t(this.lang, 'settings.defaultLineStyleDesc'),
+						control: {
+							type: 'dropdown',
+							key: 'defaultLineStyle',
+							options: lineStyleOptions,
 						},
 					},
 					{

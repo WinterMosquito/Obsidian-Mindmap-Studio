@@ -1,10 +1,13 @@
 /**
  * wikilink 交互（方案 A）：导图节点悬停预览 + 链接点击跳转，
  * 行为对齐 Obsidian 阅读视图：
- * - 悬停含 [[链接]] 的节点 → workspace 'hover-link'（Obsidian 原生页面预览）；
- *   挂在引擎 node_mouseenter 事件上（事件源在引擎层，不依赖 DOM 冒泡）；
- * - 普通左键点击节点内渲染的 <a> 链接文本（internal-link/external-link，
- *   MarkdownRenderer 产物）→ 当前标签页打开目标（与 Obsidian 点击链接一致）；
+ * - 悬停含**内部链接**的节点 → workspace 'hover-link'（Obsidian 原生页面预览 /
+ *   附件预览）。三类节点等价：文档双链与文档嵌入（mdWikiLinkpath）、双链附件 /
+ *   嵌入附件 / 拖入的库内附件（attachmentUrl 回形针通道）、外链节点不触发
+ *   （core 只服务库内目标）；挂在引擎 node_mouseenter 事件上（事件源在引擎层，
+ *   不依赖 DOM 冒泡），按住鼠标键（拖拽/框选）时不触发；
+ * - 普通左键点击节点内渲染的 <a> 链接文本（internal-link/external-link）→
+ *   当前标签页打开目标（与 Obsidian 点击链接一致）；
  * - Ctrl/Cmd+点击节点 → 新标签页打开（优先取被点击链接的目标，其次节点链接）。
  *
  * 前置：main.ts 已 registerHoverLinkSource(VIEW_TYPE)，否则 core 忽略 hover-link。
@@ -67,16 +70,46 @@ function resolveAnchorLink(anchor: HTMLAnchorElement): string {
 	return anchor.getAttribute('href') ?? '';
 }
 
+/** 节点链接（无锚点时用）的通道取值与核心要的 linktext */
+interface NodeLinkRef {
+	/** 通道取值：Ctrl/Cmd+点击原样交给 openHyperlink（wiki / 库内路径 / URL 均可） */
+	link: string;
+	/**
+	 * 核心做**库内目标解析**用的 linktext；null = 该值不是有效的库内链接。
+	 * - 文档通道：`[[linkpath|别名]]` 形态 → 剥壳取 linkpath；
+	 * - 附件通道：**裸 linkpath** → 直通（`wikilinkLinkpath` 只认 `[[…]]` 形态）；
+	 * - hyperlink 通道：仅双链形态有效——裸 URL / 协议地址 / 畸形串一律 null
+	 *   （核心的页面预览只服务库内目标，与阅读视图一致）。
+	 */
+	linktext: string | null;
+}
+
 /**
- * 节点承载的链接（无锚点时用）：文档双链存 mdWikiLinkpath（自绘文档图标通道，
- * 不写引擎 hyperlink），其余链接存 hyperlink。
+ * 节点承载的链接（悬停预览与 Ctrl/Cmd+点击共用），读取顺序与图标分流同源：
+ * 1. 文档双链 / 文档嵌入 → `mdWikiLinkpath`（自绘文档页图标通道，
+ *    不写引擎 hyperlink，否则与自绘图标双显）；
+ * 2. 双链附件 / 嵌入附件 / 拖入的库内附件 → `attachmentUrl`（回形针通道）。
+ *    `attachmentUrl` 是「引用仍在」的唯一凭据——「移除引用」只清它、
+ *    `mdAttachmentLinkpath` 会残留，故以它为门控（否则残留字段会让已移除的
+ *    附件继续可悬停/可打开）；取值优先原始 `mdAttachmentLinkpath`
+ *    （`attachmentUrl` 可能已被视图层重写成资源地址，交给核心解析不准）；
+ * 3. 其余（URL / 协议链接）→ 引擎 `hyperlink`。
  */
-function nodeLink(node: MindMapNode): string {
+function nodeLink(node: MindMapNode): NodeLinkRef | null {
 	const wikiLink = getNodeDataString(node, 'mdWikiLinkpath');
 	if (wikiLink) {
-		return wikiLink;
+		return { link: wikiLink, linktext: wikilinkLinkpath(wikiLink) };
 	}
-	return getNodeDataString(node, 'hyperlink');
+	if (getNodeDataString(node, 'attachmentUrl')) {
+		const linkpath =
+			getNodeDataString(node, 'mdAttachmentLinkpath') ||
+			getNodeDataString(node, 'attachmentUrl');
+		return { link: linkpath, linktext: linkpath };
+	}
+	const hyperlink = getNodeDataString(node, 'hyperlink');
+	return hyperlink
+		? { link: hyperlink, linktext: wikilinkLinkpath(hyperlink) }
+		: null;
 }
 
 /** 注册 wikilink 的悬停预览与点击跳转（initMindMap 内调用一次） */
@@ -96,7 +129,9 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 		// Ctrl/Cmd + 点击：节点任意位置 → 新标签打开（无锚点时退回节点链接）
 		if (event.ctrlKey || event.metaKey) {
 			const link =
-				anchor !== null ? resolveAnchorLink(anchor) : nodeLink(node);
+				anchor !== null
+					? resolveAnchorLink(anchor)
+					: (nodeLink(node)?.link ?? '');
 			if (!link) {
 				return;
 			}
@@ -129,11 +164,15 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 			if (!node || !event) {
 				return;
 			}
-			const link = nodeLink(node);
-			if (!link) {
+			// 按住鼠标键（拖拽节点 / 框选 / 平移）时不弹预览：此时被拖节点滑过的
+			// **其它**链接节点、框选矩形扫过的节点都会触发 node_mouseenter
+			// （引擎只在「被拖的那个节点」上抑制），弹预览是纯噪声。
+			if (event.buttons) {
 				return;
 			}
-			const linktext = wikilinkLinkpath(link);
+			// 三通道取值（文档双链/嵌入、附件、hyperlink）见 nodeLink；linktext
+			// 解析不出库内目标（裸 URL / 畸形串）时不预览。
+			const linktext = nodeLink(node)?.linktext;
 			if (!linktext) {
 				return;
 			}

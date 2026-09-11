@@ -3,12 +3,13 @@
  * 节点操作（链接/图片/删除）委托给 view-node-actions.ts。
  */
 import { Notice, setIcon } from 'obsidian';
-import { LAYOUT_OPTIONS } from '../constants';
+import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../constants';
 import {
 	arrangeMindMap as arrangeMindMapEngine,
 	ENGINE_COMMANDS,
 	fitMindMap,
 	resetZoom,
+	supportsLineStyleSwitch,
 	zoomInMindMap,
 	zoomOutMindMap,
 } from '../mindmap';
@@ -93,6 +94,26 @@ export function buildToolbar(view: MindMapViewContext): void {
 		}
 	};
 
+	centerGroup.createDiv('mindmap-toolbar-separator');
+	centerGroup.createSpan('mindmap-toolbar-label').setText(
+		t(view.lang, 'toolbar.lineStyle'),
+	);
+	view.lineStyleSelect = centerGroup.createEl('select', {
+		cls: 'mindmap-line-style-select',
+	});
+	// 初始按全局默认布局构建选项面；引擎就绪后由 onEngineReady 按文件实际布局校正
+	syncLineStyleOptions(
+		view,
+		view.plugin.settings.defaultLayout,
+		view.plugin.settings.defaultLineStyle,
+	);
+	view.lineStyleSelect.onchange = () => {
+		if (view.lineStyleSelect) {
+			// 连线样式偏好持久化到视图状态存储（auto＝随布局；正文不写入）
+			view.applyLineStyle(view.lineStyleSelect.value);
+		}
+	};
+
 	const rightGroup = toolbar.createDiv(
 		'mindmap-toolbar-group mindmap-toolbar-right',
 	);
@@ -116,6 +137,42 @@ export function buildToolbar(view: MindMapViewContext): void {
 	createToolButton(rightGroup, t(view.lang, 'toolbar.exportPng'), 'image', () => {
 		void exportPNG(view);
 	});
+}
+
+/**
+ * 按布局重建连线样式选项集（工具栏「连线」下拉）：
+ * - 支持三态切换的布局（逻辑结构图/思维导图/组织结构图）：完整四项，值＝当前偏好；
+ * - 固定直线布局（目录组织图/时间轴/鱼骨图）：仅一项「自动」——连线由布局类固定、
+ *   不可切换，控件只表达现状；文件里的偏好不受影响，切回支持三态的布局后恢复显示。
+ */
+export function syncLineStyleOptions(
+	view: MindMapViewContext,
+	layout: string,
+	preference: string,
+): void {
+	const select = view.lineStyleSelect;
+	if (!select) {
+		return;
+	}
+	select.empty();
+	if (supportsLineStyleSwitch(layout)) {
+		LINE_STYLE_OPTIONS.forEach((option) => {
+			const optionEl = select.createEl('option');
+			optionEl.value = option.value;
+			optionEl.setText(t(view.lang, option.label));
+		});
+		// 脏 data.json 的未知偏好不落到 select.value（会显示空白），回落 auto
+		select.value = LINE_STYLE_OPTIONS.some(
+			(option) => option.value === preference,
+		)
+			? preference
+			: 'auto';
+		return;
+	}
+	const optionEl = select.createEl('option');
+	optionEl.value = 'auto';
+	optionEl.setText(t(view.lang, 'lineStyle.auto'));
+	select.value = 'auto';
 }
 
 /** 创建工具栏按钮（标题/图标/点击回调） */

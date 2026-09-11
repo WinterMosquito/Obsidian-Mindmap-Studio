@@ -60,7 +60,8 @@ src/
     tree.ts         #   walkTree 先序遍历（显式栈防溢出，visit 返回 false 短路）
     md-meta.ts      #   MdNodeMeta：节点 data 上 md* 元数据的类型契约（纯契约，无引擎类型）
   services/
-    document-service.ts # md 文档读取解析 + 保存管线（防抖/串行排空/卸载快照兜底，onSaveError 上报）；
+    document-service.ts # md 文档读取解析 + 保存管线（防抖/串行排空/卸载快照兜底，onSaveError 上报；
+                        #   写盘前 cachedRead 比对，内容一致跳过 modify）；
                         #   解析只做图片地址解析，不做尺寸归一（视图走 aspect 校正）；写盘归属：树快照与 frontmatter 按**该次写盘的文件**取（getSnapshotFor/getFrontmatterFor），不同文件不并入同一批次——core 不 await onUnloadFile，换文件期间的排空必须同源
     engine-controller.ts# 引擎实例生命周期 + 防腐收口（renderer 内部不外泄）
   features/
@@ -93,7 +94,7 @@ src/
   md-serialize.ts   # 导图树 → Markdown（未编辑逐字回写/编辑合成；链接/图片新增检测）
   md-open.ts        # .mindmap.md 触发判定、视图切换、打开方式偏好钩子
   markdown.ts       # 新建文件默认内容/文件名、uid 修复（ensureUniqueUids）
-  view-state.ts     # 按文件路径持久化布局/视口/openAs 到插件 data.json（ViewStateStore）
+  view-state.ts     # 按文件路径持久化布局/连线样式/视口/openAs 到插件 data.json（ViewStateStore）
   images-path.ts    # 图片地址→资源地址（经统一解析入口）、外部地址判断、尺寸校正
   images-save.ts    # 图片入库（走 concurrency 串行队列）、文件名清理
   file-lookup.ts    # 全库文件查找索引原语（buildFileLookupIndex/FileLookupIndexService/
@@ -108,7 +109,8 @@ src/
                     #   exportMindMapPng/search* 系列/isEditingText/getRootText/startNodeTextEdit）
                     #   + ENGINE_COMMANDS：引擎命令名常量表（execCommand 勿再写魔法字符串）
                     #   —— 视图/特性层不直接触碰引擎 renderer/view/search/doExport 内部形态
-  mindmap-theme.ts  # 主题配置（buildThemeConfig 唯一实现，视图主题参数化差异）
+  mindmap-theme.ts  # 主题配置（buildThemeConfig 唯一实现，视图主题参数化差异：
+                    #   亮/暗 + 连线样式；lineStyleForLayout 布局默认、resolveLineStyle 偏好解析）
   event-binder.ts   # DOM/引擎事件绑定器（作用域化统一销毁）
   settings.ts       # 设置接口与设置面板（Obsidian 1.13+ 声明式）+ sanitizeSettings
                     #   （data.json 加载与设置面板写回共用同一校验）；写回经
@@ -123,14 +125,15 @@ tests/
   domain.test.ts       # domain 层单测（wikilink 契约 + walkTree 语义）
   concurrency.test.ts  # 并发原语回归（串行队列/防抖/节流：错误传播、尾随保证、重置、窗口重置）
   url.test.ts          # URL 谓词边界（各语义的协议形态与否决集）
-  save-pipeline.test.ts# SavePipeline 竞态回归（写入中再触发排空、失败上报、防抖/守卫）
-  view-state.test.ts   # ViewStateStore（hydrate 形状校验、防抖写盘、flushNow 排空与写盘 Promise 透传）
+  save-pipeline.test.ts# SavePipeline 竞态回归（写入中再触发排空、失败上报、防抖/守卫、无差异写盘跳过）
+  view-state.test.ts   # ViewStateStore（hydrate 形状校验、布局/连线样式/视口按文件存取、防抖写盘、flushNow）
   settings.test.ts     # sanitizeSettings（类型/取值校验、坏值回退默认）
   settings-persist.test.ts # 设置写回防抖（滑块突发合并、内存即时生效）
   engine-controller.test.ts # EngineController（初始化代际锁、ResizeObserver 零尺寸等待、装配/销毁、引用预检、拖拽抑制、refresh/视口）
   event-binder.test.ts # EventBinder（注册即记录/销毁即清理：参数透传、监听器身份、幂等、单点抛错不阻断）
   persistence.test.ts  # PluginDataWriter（写前重读合并不丢键、串行队列、内部吞错）
   feature-helpers.test.ts # 特性纯函数（drag-target 识别范围几何、image-resize 等比缩放钳制）
+  mindmap-theme.test.ts # 主题配置（布局→连线样式映射、切换判定 supportsLineStyleSwitch、偏好解析与透传）
   feature-teardown.test.ts # 交互会话收尾（拖拽换父/图片调宽的临时 window 监听随视图关闭清理）
   images-path.test.ts  # 图片地址/尺寸（aspect 校正、官方尺寸语法、探测失败降级）
   file-lookup.test.ts  # 全库文件索引原语（缓存/失效/多形态地址命中）
@@ -147,9 +150,9 @@ tests/
   view-dnd.test.ts     # 拖入分发（图片/笔记/附件/外部导入、两分支与提示）
   view-search.test.ts  # 搜索栏（装配/防抖/回绕/零命中计数/防抖窗口内跳转）
   view-status.test.ts  # 状态栏计数（节流与尾随、销毁/抛错降级、关闭清理）
-  view-toolbar.test.ts # 工具栏装配（分组/图标/命令接线、布局选择器、自动整理分支、重建）
+  view-toolbar.test.ts # 工具栏装配（分组/图标/命令接线、布局与连线样式选择器（固定布局收窄为单项）、自动整理分支、重建）
   language-refresh.test.ts # 语言切换刷新（t/tf、语言下拉项、状态栏文案、命令标签刷新）
-  view-wikilink.test.ts # 链接交互（点击分流/双通道取值/悬停预览去重与弹窗锚定尺寸）
+  view-wikilink.test.ts # 链接交互（点击分流/三通道取值（文档·附件·外链）/悬停预览去重、触发面与弹窗锚定尺寸）
   view-hotkeys.test.ts  # 视图内快捷键（F2 编辑当前节点：吞键/让位/去重）
   modal-common.test.ts # 弹窗共享件（settle 守卫/按钮变体/库内文件联想）
   modal-input.test.ts  # 命名/链接弹窗（预填与焦点、空白确认、settle 幂等、联想接线）
@@ -206,9 +209,15 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
 - `verify:visual`：把 `src/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
   `styles.css` 在无头 Chrome 里渲染 5 个场景并断言 `--dump-dom`——三类链接图标分流与
   图标尺寸（18×18）、回形针标题、画布铺满容器、节点测宽随文本（不被容器拉平），
-  外加两个探针：viewport（20 层深链大图必须 100% 缩放、整体内容居中，且重置缩放漂移
-  ≤1px）与 anchor（SVG 节点补齐 `offsetWidth/offsetHeight`，弹窗锚定矩形
-  `bottom/right` 必须为有限数，否则预览只会出现在上方）。
+  外加三个探针：viewport（20 层深链大图必须 100% 缩放、整体内容居中，且重置缩放漂移
+  ≤1px）、anchor（SVG 节点补齐 `offsetWidth/offsetHeight`，弹窗锚定矩形
+  `bottom/right` 必须为有限数，否则预览只会出现在上方）与 layout（六种布局各渲一遍：
+  节点数、连线样式分派——曲线布局的连线必须全含 C/Q、四种直线布局必须零曲线——
+  以及**根节点连线起点必须落在节点边缘**（从中心起画＝「斜戳」衔接回归）；
+  连线路径统计须排除 `class="smm-node-shape"` 的节点形状路径，否则圆角命令会被
+  误判成曲线；并断言引擎快捷键表非空且**不含 `Control+l`**——自动整理不得留默认热键）。
+  **负向自检已做**：`rootLineStartPositionKeepSameInCurve` 改回 false 报出 4 项失败；
+  临时停用 `removeEngineShortcut` 报出「Ctrl+L 仍注册」1 项失败。
   这类「引擎运行时 DOM 装配」行为单测覆盖不到（单测只能验证数据字段）。
   无 Chrome 时跳过（`--require-chrome` 改为失败；`--keep` 保留临时目录；
   `--log-dir <dir>` 把环境信息、每次 Chrome 尝试的退出码与 stderr、完整 `--dump-dom`
@@ -251,13 +260,46 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
   `mdWikiLinkpath` 通道（自绘文档页图标）；若改为遵循偏好，md 形态笔记链接会落到引擎 hyperlink
   通道并显示原生链接图标，与既定视觉冲突。属**有意偏离**（依据：审计文档 `docs/external-audit-2026-09-08.md` §5.2/§7.4；该文档已从工作树移除，需要时用 `git log --diff-filter=D -- docs/external-audit-2026-09-08.md` 从历史取回）。
 - 渲染层定位：正文保持纯 Markdown；布局/视口/打开偏好存 `data.json`（`viewState`，按文件路径），不写入文件。
-- 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动），**自动整理后也走 `resetZoom`**（`arrangeMindMap` 的 RESET_LAYOUT 延时回调，不再 fit 全图）。
-- 悬停预览（`hover-link`）：`hoverParent` 必须是官方 `HoverParent`——传本视图的 `leaf`（`WorkspaceLeaf` 实现该接口），**勿传裸 HTMLElement**。弹窗上下翻转由核心按 `targetEl` 的矩形决定，而官方 `HoverPopover.position()` 的锚定矩形是**混合取值**：宽高走 `targetEl.offsetWidth/offsetHeight`、位置走 `getBoundingClientRect()`；SVG 节点 group 没有前两个属性（HTMLElement 专有）→ `bottom/right` 为 `NaN` → 官方定位函数「下方放得下就放下方」的分支恒假（预览只出现在上方），上方也放不下时 `top` 被写成 `"NaNpx"`（等于不显示）。故触发前必须调 `view-wikilink.ts ensureOffsetSize(targetEl)` 补上按实时矩形取值的只读几何（`in` 判断，HTMLElement 不覆盖）；指针坐标不参与定位，勿再改写上报的鼠标事件。
+- 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动），**自动整理后走「适应画布」**（`arrangeMindMap` 的 RESET_LAYOUT 延时回调 → `fitMindMap`：性能模式下先 `forceLoadNode` 再 `fit`，按全图包围盒适配）。
+- **连线样式（偏好 + 布局联动）**：六种布局中**四种为直线**——组织结构图经 `lineStyle: 'straight'`
+  生效（引擎为该布局实现三态 `renderLine` 分派：curve 曲线 / direct 直连 / straight 正交折线，
+  三态仅对逻辑结构图/思维导图/组织结构图可见效果）；目录组织图/时间轴/鱼骨图**布局类本身即直线
+  绘制**（只输出 M/L 路径、不接受 `lineStyle`，登记在 `lineStyleForLayout` 清单里仅作如实声明，
+  **勿**误以为「只有组织结构图是直线」）；逻辑结构图/思维导图为圆滑曲线。
+  偏好在 `constants.LINE_STYLE_OPTIONS`（auto/curve/direct/straight），解析唯一实现在
+  `mindmap-theme.resolveLineStyle`（auto 与坏值回落布局默认）；生效链路＝设置 `defaultLineStyle`
+  → 按文件 `viewState.lineStyle` 覆盖 → 工具栏连线下拉 `view.applyLineStyle`
+  → `EngineController.setLineStyle` 重算主题配置（`setThemeConfig` 的「仅连线类属性」差异走
+  轻量重绘）。**工具栏选项面随布局收窄**：`supportsLineStyleSwitch` 为假的固定直线布局，
+  下拉只显示单项「自动」（`lineStyle.auto`，语义＝连线由布局决定）——这是**纯显示收窄**，
+  文件里的偏好既不写入也不丢失，切回支持三态的布局后恢复；选项面重建统一走
+  `view-toolbar.syncLineStyleOptions`（buildToolbar / applyLayout / onEngineReady 三处调用）。
+  **勿**在别处硬编码 `lineStyle` 或各自拼选项。
+- **根节点连线衔接**：主题配置设 `rootLineStartPositionKeepSameInCurve: true`——引擎**默认从节点
+  中心起画**，根节点→首层子节点的曲线在节点内部就已偏出、从上/下边缘**斜穿而出**（衔接呈
+  「斜戳」观感）；其余层级本就以边缘为起点。开启后根节点与其它层级一致：右缘水平出发再展开。
+  回归锁定在 `tests/mindmap-theme.test.ts`。
+- **切换布局后自动整理一次**：`EngineController.setLayout` 末尾调 `arrangeMindMap`（`RESET_LAYOUT`
+  清除自由拖拽坐标 + 延时 `fitMindMap`）——否则旧布局下手动拖过的节点会带着 `customLeft/customTop`
+  留在新布局里；且引擎 `setLayout` 内部会把视口变换归零，不 fit 画面会停在左上角。故**切换布局后
+  的视口恒为「适应画布」状态**（这也是布局切换与「打开时 100% + 内容居中」两套视口语义的分界）。
+  回归见 `tests/engine-controller.test.ts`。
+- **无差异写盘跳过**：`SavePipeline.save` 在 `vault.modify` 前用 `vault.cachedRead` 比对
+  **文件当前内容**，一致则跳过写盘（`vault.modify` 即使内容一字未变也会刷新 mtime、惊动元数据
+  缓存与同步；典型场景是「自动整理」——只清引擎内部拖拽坐标，Markdown 文本没变）。
+  只跳过「要写的正是文件里已有的内容」，绝不吞掉真实差异；`cachedRead` 缺失（测试桩/老运行时）
+  或读取抛错时回退为照常写盘（fail-open，绝不因读失败丢写）。回归见 `tests/save-pipeline.test.ts`。
+- **默认热键归零**：引擎 `KeyboardNavigation` 插件自带 **Ctrl+L = RESET_LAYOUT**（只重排、
+  不含「适应画布」），与「自动整理」命令口径冲突，已在 `createMindMap` 末段经
+  `keyCommand.removeShortcut` 移除——自动整理统一走 `mindmap-arrange` 命令（用户自行绑热键，
+  绑到 Ctrl+L 时同样以「适应画布」收尾）。回归由 `verify:visual` 的 layout 探针锁定
+  （`engineShortcuts` 不得含 `Control+l`，并带"快捷键表非空"前提断言）。
+- 悬停预览（`hover-link`）：`hoverParent` 必须是官方 `HoverParent`——传本视图的 `leaf`（`WorkspaceLeaf` 实现该接口），**勿传裸 HTMLElement**。弹窗上下翻转由核心按 `targetEl` 的矩形决定，而官方 `HoverPopover.position()` 的锚定矩形是**混合取值**：宽高走 `targetEl.offsetWidth/offsetHeight`、位置走 `getBoundingClientRect()`；SVG 节点 group 没有前两个属性（HTMLElement 专有）→ `bottom/right` 为 `NaN` → 官方定位函数「下方放得下就放下方」的分支恒假（预览只出现在上方），上方也放不下时 `top` 被写成 `"NaNpx"`（等于不显示）。故触发前必须调 `view-wikilink.ts ensureOffsetSize(targetEl)` 补上按实时矩形取值的只读几何（`in` 判断，HTMLElement 不覆盖）；指针坐标不参与定位，勿再改写上报的鼠标事件。**触发面**（`view-wikilink.nodeLink`）：只有库内链接触发，三类等价——文档双链/文档嵌入（`mdWikiLinkpath`）、双链附件/嵌入附件/拖入附件（**门控 `attachmentUrl`**：`mdAttachmentLinkpath` 在「移除引用」后会残留，光看它会留下"幽灵引用"；linktext 取原始 linkpath，`attachmentUrl` 可能已被视图层重写成资源地址）、URL 外链**不触发**（核心只服务库内目标，与阅读视图一致）；`event.buttons !== 0`（拖拽节点滑过其它节点 / 框选扫过）同样不触发——引擎只在"被拖的那个节点"上抑制 `node_mouseenter`。
 - 右键「编辑文本」：`mindmap.ts startNodeTextEdit` 必须**延后一个宏任务**再 emit `node_dblclick`——菜单项 click 会继续冒泡到 `document.body`，引擎 `body_click`（`isEndNodeTextEditOnClickOuter` 默认 true）会立刻关闭刚打开的编辑框；`isInserting` 传 false。
 - 图片自定义尺寸（Obsidian 官方嵌入语法，不落 data.json）：`![[图.png|300]]`（仅宽、等比）/ `![[图.png|300x150]]`（宽高）/ `![alt|300](url)`（外链 md 图，尺寸在标签尾部）。解析进 `mdImageWidth/mdImageHeight`（domain/md-meta 契约）；`walkCorrectImageSizesByAspect` 对带参节点按参数定尺寸（仅宽时探测原始比例补高）；拖拽调宽改 engine `imageSize custom:true`，保存时 rawOk 尺寸特征（`目标|宽度`，终界 `]`/`x` 防前缀误匹配）不符 → 合成回写 `|宽度`。
 - 图片独占节点（渲染层语义）：纯图行（`- ![[x.png]]`）解析为**无文本节点**（不回退文件名占位），图片节点删除文字（右键「移除文字」/双击清空）后即被图片独占，往返保持；代价是纯图节点不参与文本搜索。「链接已清除」检测**只排除指向本节点图片的嵌入**（非嵌入语法仍是负向断言 `(?<!!)\[\[`），图文混合行可逐字往返；**文档/附件嵌入按链接形态处理**——字段被清空后一并剥离（`rawHasForeignEmbed`），不再整行回写导致链接复活。
 - **行级保真与 `---` 的两种身份**：plain 行的 `mdRaw` 存**未 trim 原文**（`text` 才是 trim 后的显示文本）——缩进代码块（4 空格起）与「行尾两空格 = 硬换行」都是 Markdown 语义，trim 掉即等于改动文件；**列表续行**只保留行尾原文，行首缩进由序列化器按树深度补 `restIndent`（避免双份）。`---`/`-----` 纯短横线行**必须分两种身份**（`md-outline.ts` 的 `isDashLine` 判定）：**空行之后** = 结构分隔线 → 按既定行为整行丢弃；**紧跟非空行之后** = CommonMark 的 **setext H2 下划线 → 保留**（`标题\n---` 是二级标题，丢弃会把标题静默降级为段落）；列表/标题之后的短横线行同样保留为独立分隔线（由序列化器的块分隔补空行）。`=====`（setext H1）一直保留，两条 setext 形态已对齐。
-- 文档嵌入 `![[笔记]]` / `![[笔记.md]]`（目标末段为文档类扩展名 `.md` / `.canvas` / `.base`，或无扩展名）与文档双链**同通道**（`mdWikiLinkpath` + `mdLinkStyle: 'wiki'` + `mdEmbed: true`）：显示同一枚自绘文档页图标，节点文本 = 别名‖去 `.md` 的目标名，悬停/点图标行为与文档双链一致。**管道位是别名**（`![[笔记|300]]` 的 `300` 是别名，**不是**宽 300）——故解析侧**不得**沿用 `tokenizeInline` 已按图片尺寸剥过的 `tok.label`，必须从原始切片 `parseWikilink` 重解（见 `md-outline.ts` 非图片嵌入分支）。非文档类嵌入（`![[报告.pdf]]` / `![[录音.mp3]]`）才走附件通道（回形针）；其管道位官方**无明文**（PDF 用 `#height=` / `#page=`、音频无尺寸语法），故不解释、原文存 `mdEmbedPipe`，编辑节点后原样回写（不再丢参数）。两类都记 `mdEmbed`，`md-serialize.renderHyperlink` 据此补回 `!`（文档通道即 `effectiveDocWikiLink` 结果前加 `!`）。「是否文档」统一走 `domain/wikilink.isDocumentExtension`（md / canvas / base），「是否附件」统一走 `domain/wikilink.wikilinkTargetIsAttachment`——**勿**再手写 `extension === 'md'`（拖入、链接弹窗、插入链接三处曾各写一份，Canvas/Bases 被判成附件）；点击可打开性走 `constants.canOpenInObsidian`，其清单必须含 `base`（漏登记会把指向 base 的链接误判「无法预览」，回归 `tests/constants.test.ts`）。回归见 `tests/md-roundtrip.test.ts` 的「文档嵌入」6 例（已验证负向对照：把分流改回「非图片＝附件」即 6 例全红）。
+- 文档嵌入 `![[笔记]]` / `![[笔记.md]]`（目标末段为文档类扩展名 `.md` / `.canvas` / `.base`，或无扩展名）与文档双链**同通道**（`mdWikiLinkpath` + `mdLinkStyle: 'wiki'` + `mdEmbed: true`）：显示同一枚自绘文档页图标，节点文本 = 别名‖去 `.md` 的目标名，悬停/点图标行为与文档双链一致。**管道位是别名**（`![[笔记|300]]` 的 `300` 是别名，**不是**宽 300）——故解析侧**不得**沿用 `tokenizeInline` 已按图片尺寸剥过的 `tok.label`，必须从原始切片 `parseWikilink` 重解（见 `md-outline.ts` 非图片嵌入分支）。非文档类嵌入（`![[报告.pdf]]` / `![[录音.mp3]]`）才走附件通道（回形针）；其管道位官方**无明文**（PDF 用 `#height=` / `#page=`、音频无尺寸语法），故不解释、原文存 `mdEmbedPipe`，编辑节点后原样回写（不再丢参数）。两类都记 `mdEmbed`，`md-serialize.renderHyperlink` 据此补回 `!`（文档通道即 `effectiveDocWikiLink` 结果前加 `!`）。「是否文档」统一走 `domain/wikilink.isDocumentExtension`（md / canvas / base），「是否附件」统一走 `domain/wikilink.wikilinkTargetIsAttachment`——**勿**再手写 `extension === 'md'`（拖入、链接弹窗、插入链接三处曾各写一份，Canvas/Bases 被判成附件）；点击可打开性走 `constants.canOpenInObsidian`，其清单必须含 `base`（漏登记会把指向 base 的链接误判「无法预览」，回归 `tests/constants.test.ts`）。悬停预览与 `Ctrl/Cmd+点击`走**同一分流**（`view-wikilink.nodeLink`），故附件节点与文档节点等价可预览/可打开（此前只读 `mdWikiLinkpath`/`hyperlink`，附件节点两处都是静默无响应）。回归见 `tests/md-roundtrip.test.ts` 的「文档嵌入」6 例（已验证负向对照：把分流改回「非图片＝附件」即 6 例全红）。
 - **`[[]]` / `![[]]` 支持度审计结论（对照官方帮助 + `obsidian.d.ts`，四项决策均为「保持现状」）**：① 笔记嵌入的管道位按**别名**处理（`![[笔记|300]]` 的 `300` 是别名，节点文本即显示 `300`）——官方**无明文**，依据 API `Reference.displayText`（`[[page|display name]] → display name`）口径推断，属**有意取舍**；若官方日后改为尺寸/忽略，整改方向是「管道位原文保留」（同 `mdEmbedPipe`），届时再动。② 空 `[[]]` 保持字面文本（Obsidian 亦不视为链接，官方未记载）。③ 一行多链接只有首个可点/可悬停（引擎单链接槽位；官方阅读视图每枚均可点）——未编辑逐字保真、编辑后降级为单链接，已登记。④ **不采用**官方 `parseLinktext` / `getLinkpath` 替换自研 `parseWikilink`：官方那两个函数只给 `path` / `subpath`、**不给别名**，换过去不减代码且会破 domain 零依赖边界；导航已用官方 `getFirstLinkpathDest` + `openLinkText(inner)`，标题/块子路径交核心处理。
 - **`isDesktopOnly` 是承重配置，不是发布元数据**：上一行的负向断言 `(?<!!)\[\[` 属**正则后行断言**（lookbehind），而官方规则 `obsidianmd/regex-lookbehind` **仅在 `isDesktopOnly !== true` 时报告**——其实现为 `options.isDesktopOnly ?? getManifest()?.isDesktopOnly`（`eslint-plugin-obsidianmd/dist/lib/rules/regexLookbehind.js`），`true` 时整个 `Literal` 分支直接不报。即：**这行 lint 通过完全依赖 `manifest.json` 的 `isDesktopOnly: true`**，不是因为它本身合规。改 `isDesktopOnly`、或要加移动端支持之前，**必须先把该正则改写为不带 lookbehind 的等价式**（如 `(^|[^!])\[\[`），否则 ① `npm run lint --max-warnings 0` 立刻失败；② iOS < 16.4（Safari 16.4 才支持 lookbehind）会**真实抛异常**，`md-serialize` 整条保存管线随之失效。
 - 拖拽换父辅助：引擎落点判定（指针须精确落在目标矩形内）之外，拖拽期间由 `drag-target.ts` 以两类锚点统一按指针距离最近仲裁后外借（引擎每帧重置三态、精确命中时让位）：**节点中心**（均匀圆域 `TARGET_RADIUS_PX`，与节点大小无关）→ 外借 `overlapNode`（挂子，`MOVE_NODE_TO`）；**相邻兄弟间隙中点** → 外借 `prevNode`（插到该兄弟之后，`INSERT_AFTER`）。引擎拖拽内部形态（三态/命令）访问收口在 `mindmap.ts` 的 `getDragDropState`/`setDragOverlapTarget`/`setDragPrevTarget`/`getNodeLayoutRect`/`toCanvasPoint`。
@@ -298,7 +340,9 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
     （`images-save.buildPastedImageName`；`SaveImageOptions.filename` 显式命名
     优先于 File.name 与 preferredName，仅粘贴路径使用）；
   - 外部拖入图片=导入附件目录并挂到节点（与官方拖入行为一致，保留原文件名）；
-  - 命令一律不定义默认热键（用户经 Hotkeys 设置自行分配）。
+  - 命令一律不定义默认热键（用户经 Hotkeys 设置自行分配）；引擎插件自带的 Ctrl+L
+    （KeyboardNavigation 的 RESET_LAYOUT）已在 `createMindMap` 末段移除，自动整理统一走
+    `mindmap-arrange` 命令。
 - Obsidian API 合规（已对照官方 `obsidian.d.ts` **1.13.2** 与项目安装的 **1.13.1** 双层审计）：
   所用 API 全部为官方面
   （含 `FileSystemAdapter.getBasePath`、`getAvailablePathForAttachment`、

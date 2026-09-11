@@ -87,7 +87,9 @@ export default defineConfig(
 		rules: {
 			// domain 是纯领域逻辑层：零依赖（标准库除外），可在纯 Node 环境单测。
 			// 引擎类型黏合（MdNodeData）放 src/node-data.ts，不放 domain。
-			'no-restricted-imports': [
+			// 用 @typescript-eslint 变体：对 TS 解析更准确，且与 master 推荐的
+			// restrictedImportsOptions 同源（core 版不识别 allowTypeImports）。
+			'@typescript-eslint/no-restricted-imports': [
 				'error',
 				{
 					patterns: [
@@ -134,16 +136,6 @@ export default defineConfig(
 						'库内文件解析请走 links-resolve.resolvePathToFile；存在性检查等特例需 eslint-disable 并注明理由',
 				},
 			],
-		},
-	},
-	{
-		files: ['src/system-open.ts'],
-		languageOptions: {
-			globals: {
-				// require('electron') 是 Obsidian 桌面插件获取系统 API 的标准做法，
-				// 由 esbuild 按 CommonJS 解析，仅在 Platform.isDesktopApp 分支使用
-				require: 'readonly',
-			},
 		},
 	},
 	{

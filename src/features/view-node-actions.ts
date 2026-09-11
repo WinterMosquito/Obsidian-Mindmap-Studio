@@ -43,14 +43,14 @@ function clearDocWikiLink(node: MindMapNode): void {
  * 与解析侧（md-outline 的 wiki 分支）保持同一通道，避免"文件里的链接有文档图标、
  * 拖入/弹窗新建的却是原生链条图标"的不一致。
  *
- * @param oldDisplay 旧链接的可见文本：节点文本仍等于它时同步为新显示名
+ * 写入即「纯双链化」：节点文字**无条件覆盖**为链接显示名（别名优先）——节点只剩
+ * 该双链（编辑即改别名），底层 md 行也只剩 `[[目标|显示名]]`，用户手写正文被顶替。
  */
 export function applyDocWikiLink(
 	view: MindMapViewContext,
 	node: MindMapNode,
 	link: string,
 	label: string | undefined,
-	oldDisplay: string | null,
 ): void {
 	const data = node.getData() as MdNodeData;
 	delete data.hyperlink;
@@ -60,9 +60,8 @@ export function applyDocWikiLink(
 	const display = label ?? linkDisplayText(link);
 	data.mdLinkText = display;
 	markNodeNeedLayout(node);
-	// 与 Obsidian 双链对齐：可见文本同步到节点文本（仅空文本或仍是旧显示名时）
-	const text = getNodeDataString(node, 'text');
-	if (display && (!text.trim() || text.trim() === oldDisplay)) {
+	// 纯双链化：可见文本无条件覆盖节点文字（不再保留用户正文）
+	if (display) {
 		applyNodeText(view, node, display);
 	}
 	view.mindMap?.render();
@@ -73,7 +72,8 @@ export function applyDocWikiLink(
  * 把库内附件挂到节点（拖入附件时调用）：走引擎 attachmentUrl 通道
  * （原生回形针图标，点击经 node_attachmentClick 打开）+ mdAttachmentLinkpath
  * 回写通道，与解析侧 `[[报告.pdf]]` 语义一致；同时清掉超链接字段，
- * 避免回形针与链接图标双显。
+ * 避免回形针与链接图标双显。与文档双链同口径「纯双链化」：
+ * 节点文字无条件覆盖为附件显示名（文件名）。
  */
 export function applyNodeAttachment(
 	view: MindMapViewContext,
@@ -91,6 +91,8 @@ export function applyNodeAttachment(
 	delete data.mdWikiLinkpath;
 	delete data.mdLinkText;
 	markNodeNeedLayout(node);
+	// 纯双链化：拖入附件即覆盖节点文字为文件名（与根节点下新建分支同款 text）
+	applyNodeText(view, node, data.attachmentName);
 	view.mindMap?.render();
 	view.scheduleSave();
 }
@@ -102,14 +104,13 @@ export function applyNodeAttachment(
  * 可见名（attachmentName + 节点文本）与文档双链同口径：显式 label > 双链别名
  * > 末段文件名——`[[报告.pdf|说明]]` 显示「说明」，与 Obsidian 别名语义一致。
  *
- * @param oldDisplay 旧链接的可见文本：节点文本仍等于它时同步为新显示名
+ * 写入即「纯双链化」：节点文字无条件覆盖为可见名（与文档双链同口径）。
  */
 function applyAttachmentLink(
 	view: MindMapViewContext,
 	node: MindMapNode,
 	link: string,
 	label: string | undefined,
-	oldDisplay: string | null,
 ): void {
 	const data = node.getData() as MdNodeData;
 	delete data.hyperlink;
@@ -125,8 +126,8 @@ function applyAttachmentLink(
 	data.mdAttachmentLinkpath = linkpath;
 	data.mdLinkStyle = 'wiki';
 	markNodeNeedLayout(node);
-	const text = getNodeDataString(node, 'text');
-	if (name && (!text.trim() || text.trim() === oldDisplay)) {
+	// 纯双链化：可见名无条件覆盖节点文字（不再保留用户正文）
+	if (name) {
 		applyNodeText(view, node, name);
 	}
 	view.mindMap?.render();
@@ -190,7 +191,6 @@ async function performAddLink(view: MindMapViewContext): Promise<void> {
 	//   双链指向 .md 笔记 → mdWikiLinkpath（自绘文档页图标）
 	//   其余（附件双链 / 库内路径）→ attachmentUrl（原生回形针）
 	const wiki = parseWikilink(result.link);
-	const oldDisplay = current ? linkDisplayText(current) : null;
 	if (!isHyperlinkProtocolUrl(result.link)) {
 		const target = wiki?.target ?? result.link;
 		// 已解析到库内文件 → 按真实扩展名；未解析（如指向尚不存在的笔记）→ 按
@@ -200,9 +200,9 @@ async function performAddLink(view: MindMapViewContext): Promise<void> {
 			? isDocumentExtension(file.extension)
 			: !wikilinkTargetIsAttachment(target);
 		if (isDoc) {
-			applyDocWikiLink(view, node, result.link, result.label, oldDisplay);
+			applyDocWikiLink(view, node, result.link, result.label);
 		} else {
-			applyAttachmentLink(view, node, result.link, result.label, oldDisplay);
+			applyAttachmentLink(view, node, result.link, result.label);
 		}
 		return;
 	}
@@ -223,15 +223,6 @@ async function performAddLink(view: MindMapViewContext): Promise<void> {
 		view.scheduleSave();
 		return;
 	}
-	// 与 Obsidian 双链对齐：链接的「可见文本」同步到节点文本——
-	// 仅当节点文本为空、或文本仍是旧链接的可见名（改链场景）时更新，
-	// 保留用户已有正文（正文节点只附加链接）。
-	const newDisplay = result.label ?? linkDisplayText(result.link);
-	const text = getNodeDataString(node, 'text');
-	if (newDisplay && (!text.trim() || text.trim() === oldDisplay)) {
-		applyNodeText(view, node, newDisplay);
-	}
-	view.scheduleSave();
 }
 
 /** 更新节点文本并让引擎重绘该节点（不改写引擎其它状态） */

@@ -52,6 +52,27 @@ export const LAYOUT_OPTIONS: LayoutOption[] = [
 	{ value: 'fishbone', label: 'layout.fishbone' },
 ];
 
+/**
+ * 连线样式偏好：auto＝随布局（布局默认见 mindmap-theme.lineStyleForLayout：
+ * 四种直线布局取 straight、两种曲线布局取 curve）；其余三值强制指定。
+ * 引擎三态（curve 曲线 / direct 直连 / straight 正交折线）仅对逻辑结构图、
+ * 思维导图、组织结构图生效；目录组织图/时间轴/鱼骨图为布局类原生直线。
+ */
+export type LineStylePreference = 'auto' | 'curve' | 'direct' | 'straight';
+
+export interface LineStyleOption {
+	value: LineStylePreference;
+	label: TranslationKey;
+}
+
+/** 连线样式选项（工具栏选择器与设置面板共用） */
+export const LINE_STYLE_OPTIONS: LineStyleOption[] = [
+	{ value: 'auto', label: 'lineStyle.auto' },
+	{ value: 'curve', label: 'lineStyle.curve' },
+	{ value: 'direct', label: 'lineStyle.direct' },
+	{ value: 'straight', label: 'lineStyle.straight' },
+];
+
 export interface ThemeOption {
 	value: string;
 	label: TranslationKey;
@@ -255,7 +276,7 @@ export const VIEW_STATE_PERSIST_MS = 600;
 export const TITLE_RENAME_DEBOUNCE_MS = 1500;
 
 /**
- * RESET_LAYOUT 后重置视口（100% + 以画布中心为锚点）的等待延迟（毫秒）。
+ * RESET_LAYOUT 后适应画布（fit 全图）的等待延迟（毫秒）。
  * 引擎 resetLayout 内部同步 render → 浏览器 reflow 需要时间；
  * 不用 requestAnimationFrame（只保证下帧前回调，不保证 reflow 已完成）。
  * 80ms 在所有设备上远快于用户感知阈值，同时留出引擎内部处理余量；

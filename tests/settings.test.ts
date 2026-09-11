@@ -33,6 +33,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 	it('类型与取值全部合法的键原样保留', () => {
 		const out = sanitizeSettings({
 			defaultLayout: 'mindMap',
+			defaultLineStyle: 'direct',
 			defaultTheme: 'dark',
 			autoSave: false,
 			exportScale: 4,
@@ -43,6 +44,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		});
 		expect(out).toEqual({
 			defaultLayout: 'mindMap',
+			defaultLineStyle: 'direct',
 			defaultTheme: 'dark',
 			autoSave: false,
 			exportScale: 4,
@@ -51,6 +53,18 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			performanceThreshold: 100,
 			language: 'en',
 		});
+	});
+
+	it('defaultLineStyle 白名单校验：合法值保留、非法/坏类型回退 auto', () => {
+		expect(sanitizeSettings({ defaultLineStyle: 'direct' }).defaultLineStyle).toBe(
+			'direct',
+		);
+		expect(sanitizeSettings({ defaultLineStyle: 'zigzag' }).defaultLineStyle).toBe(
+			DEFAULT_SETTINGS.defaultLineStyle,
+		);
+		expect(sanitizeSettings({ defaultLineStyle: 42 }).defaultLineStyle).toBe(
+			DEFAULT_SETTINGS.defaultLineStyle,
+		);
 	});
 
 	it('结果键集恒等于设置键集：未知键不混入，缺键有默认值', () => {
@@ -203,6 +217,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		});
 		expect(out).toEqual({
 			defaultLayout: 'fishbone',
+			defaultLineStyle: DEFAULT_SETTINGS.defaultLineStyle,
 			defaultTheme: DEFAULT_SETTINGS.defaultTheme,
 			exportScale: 3,
 			performanceThreshold: DEFAULT_SETTINGS.performanceThreshold,

@@ -183,10 +183,15 @@ export class SavePipeline {
 					this.deps.app.vault.getFileByPath(target.path)
 				) {
 					try {
-						await this.deps.app.vault.modify(
-							target,
-							this.serialize(tree, frontmatter),
-						);
+						const content = this.serialize(tree, frontmatter);
+						// 无差异写盘跳过：vault.modify 即使内容一字未变也会刷新 mtime 并
+						// 惊动元数据缓存与同步，而「自动整理」这类操作只清拖拽坐标、
+						// Markdown 文本没变。比对以**文件当前内容**为准——只跳过
+						// 「要写的正是文件里已有的内容」，绝不吞掉真实差异；
+						// 读取失败一律照常写盘（fail-open）。
+						if ((await this.readCurrentContent(target)) !== content) {
+							await this.deps.app.vault.modify(target, content);
+						}
 					} catch (error) {
 						// 保存失败通常是磁盘满/权限，重试无意义；立即复位排空状态
 						// 让下一次 scheduleSave 从头再来，而不是沿着这条错误链继续。
@@ -213,6 +218,24 @@ export class SavePipeline {
 			}
 		});
 		return this.activeSave;
+	}
+
+	/**
+	 * 读目标文件当前内容（供「无差异写盘跳过」比对）。
+	 *
+	 * 走 `vault.cachedRead`（内存缓存，不产生磁盘 IO）；该 API 未入本项目
+	 * 测试桩与老版本运行时的最小面，缺失或读取抛错时返回 null——
+	 * 调用方必然判定为「内容不同」→ 照常写盘（fail-open，绝不因读失败丢写）。
+	 */
+	private async readCurrentContent(file: TFile): Promise<string | null> {
+		const vault = this.deps.app.vault as {
+			cachedRead?: (target: TFile) => Promise<string>;
+		};
+		try {
+			return vault.cachedRead ? await vault.cachedRead(file) : null;
+		} catch {
+			return null;
+		}
 	}
 
 	/**

@@ -26,6 +26,7 @@ import { App, TFile } from 'obsidian';
 // —— hoisted 桩：vi.mock 工厂与测试体共享同一组 mock 函数 ——
 const mocks = vi.hoisted(() => {
 	return {
+		arrangeMindMap: vi.fn(),
 		centerContentAtFullScale: vi.fn(),
 		createMindMap: vi.fn(),
 		destroyMindMap: vi.fn(),
@@ -198,6 +199,7 @@ function buildHarness(
 		),
 		getSetupOptions: vi.fn(() => ({
 			layout: 'logicalStructure',
+			lineStyle: 'auto',
 			themePref: 'default',
 			enableDrag: false,
 			performanceMode: false,
@@ -294,6 +296,7 @@ beforeEach(() => {
 	observers = [];
 	ResizeObserverStub.instances = observers;
 	vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+	mocks.arrangeMindMap.mockReset();
 	mocks.centerContentAtFullScale.mockReset();
 	mocks.destroyMindMap.mockReset();
 	mocks.fitMindMap.mockReset();
@@ -367,7 +370,10 @@ describe('EngineController.initMindMap（初始化入口与零尺寸等待）', 
 		// 尺寸就绪路径完全同步：不产生等待中的观察器
 		expect(observers).toHaveLength(0);
 		expect(h.controller.mindMap).toBe(h.engines[0]);
-		expect(h.deps.onEngineReady).toHaveBeenCalledWith('logicalStructure');
+		expect(h.deps.onEngineReady).toHaveBeenCalledWith(
+			'logicalStructure',
+			'auto',
+		);
 	});
 
 	it('超链接跳转回调转发给视图（onHyperlinkJump 闭包绑定 deps）', () => {
@@ -607,6 +613,7 @@ describe('EngineController 装配与销毁', () => {
 
 		h.deps.getSetupOptions.mockReturnValue({
 			layout: 'mindMap',
+			lineStyle: 'curve',
 			themePref: 'dark',
 			enableDrag: true,
 			performanceMode: true,
@@ -621,8 +628,8 @@ describe('EngineController 装配与销毁', () => {
 			performanceMode: true,
 			performanceThreshold: 100,
 		});
-		// 视图侧收尾按本次布局回调（工具栏同步依赖它）
-		expect(h.deps.onEngineReady).toHaveBeenLastCalledWith('mindMap');
+		// 视图侧收尾按本次布局/连线样式回调（工具栏同步依赖它）
+		expect(h.deps.onEngineReady).toHaveBeenLastCalledWith('mindMap', 'curve');
 	});
 
 	it('createMindMap 抛错：兜底销毁、清空容器、不外抛，视图保持可用', () => {
@@ -1205,9 +1212,31 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 
 		expect(h.engines[0]!.setLayout).toHaveBeenCalledWith('mindMap');
 		expect(h.engines[0]!.resize).toHaveBeenCalledTimes(1);
+		// 连线样式随布局联动：主题配置按本次布局（而非视图会话字段）重算并写入
+		expect(mocks.getThemeConfig).toHaveBeenCalledWith(false, 'mindMap', 'auto');
+		expect(h.engines[0]!.setThemeConfig).toHaveBeenCalledTimes(1);
+		// 切换布局后自动整理一次（无引擎的那次早退不算）
+		expect(mocks.arrangeMindMap).toHaveBeenCalledTimes(1);
+		expect(mocks.arrangeMindMap).toHaveBeenCalledWith(h.engines[0]);
 	});
 
-	it('applyTheme 按当前主题偏好重算深色判定并写入主题配置', () => {
+	it('setLineStyle 按当前会话布局重算主题配置（偏好即时生效、无引擎时静默）', () => {
+		const empty = buildHarness();
+		expect(() => empty.controller.setLineStyle('direct')).not.toThrow();
+		expect(mocks.getThemeConfig).not.toHaveBeenCalled();
+
+		const h = readyHarness();
+		h.controller.setLineStyle('direct');
+
+		expect(mocks.getThemeConfig).toHaveBeenCalledWith(
+			false,
+			'logicalStructure',
+			'direct',
+		);
+		expect(h.engines[0]!.setThemeConfig).toHaveBeenCalledTimes(1);
+	});
+
+	it('applyTheme 按当前主题偏好与布局重算深色判定并写入主题配置', () => {
 		const h = readyHarness();
 		const themeConfig = { theme: 'dark-stub' };
 		mocks.getThemeConfig.mockReturnValue(themeConfig);
@@ -1215,7 +1244,11 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 		h.controller.applyTheme();
 
 		expect(mocks.isDarkTheme).toHaveBeenCalledWith('default', false);
-		expect(mocks.getThemeConfig).toHaveBeenCalledWith(false);
+		expect(mocks.getThemeConfig).toHaveBeenCalledWith(
+			false,
+			'logicalStructure',
+			'auto',
+		);
 		expect(h.engines[0]!.setThemeConfig).toHaveBeenCalledWith(themeConfig);
 	});
 

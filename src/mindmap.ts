@@ -21,7 +21,11 @@ import { walkTree } from './domain/tree';
 import { docWikiLinkDisplay, type WikiAliasSource } from './domain/wiki-display';
 import { RESET_LAYOUT_VIEWPORT_DELAY_MS } from './constants';
 
-export { getThemeConfig, isDarkTheme } from './mindmap-theme';
+export {
+	getThemeConfig,
+	isDarkTheme,
+	supportsLineStyleSwitch,
+} from './mindmap-theme';
 
 /**
  * 引擎命令名常量：execCommand 的魔法字符串收口于此。
@@ -53,6 +57,8 @@ export const ENGINE_COMMANDS = {
 
 export interface CreateMindMapOptions {
 	layout: string;
+	/** 连线样式偏好（auto/curve/direct/straight；auto＝随布局） */
+	lineStyle: string;
 	themePref: string;
 	isDark: boolean;
 	enableDrag: boolean;
@@ -166,7 +172,7 @@ export function createMindMap(
 				data,
 				layout: options.layout,
 				theme: 'default',
-				themeConfig: getThemeConfig(dark),
+				themeConfig: getThemeConfig(dark, options.layout, options.lineStyle),
 				// 不在创建时 fit 全图：打开后的默认视口由 centerContentAtFullScale
 				// 统一设置（100% + 根节点居中），大图不再被压到看不清文字
 				fit: false,
@@ -242,7 +248,27 @@ export function createMindMap(
 	if (nodeCount >= HISTORY_LIMIT_NODE_COUNT) {
 		mindMap.updateConfig({ maxHistoryCount: HISTORY_LIMIT_MAX_COUNT });
 	}
+	// 引擎 KeyboardNavigation 插件自带 Ctrl+L = RESET_LAYOUT（只重排、不含
+	// 「适应画布」、也无提示），与插件「自动整理」命令口径不一；而本插件不定义
+	// 默认热键（命令一律由用户在 Hotkeys 中自行分配）。故移除它——自动整理统一
+	// 走 mindmap-arrange 命令，用户把它绑到 Ctrl+L 时同样以「适应画布」收尾。
+	removeEngineShortcut(mindMap, 'Control+l');
 	return mindMap;
+}
+
+/**
+ * 移除引擎自带的默认热键（本插件不定义默认热键）。
+ *
+ * `keyCommand` 未入 d.cts（引擎运行时字段）：经结构性类型访问，缺省或换版本时
+ * 静默跳过——与现有防腐口径一致，不做类型断言穿透声明面。
+ */
+function removeEngineShortcut(mindMap: MindMap, shortcut: string): void {
+	const keyCommand = (
+		mindMap as unknown as {
+			keyCommand?: { removeShortcut?: (key: string) => void };
+		}
+	).keyCommand;
+	keyCommand?.removeShortcut?.(shortcut);
 }
 
 /**
@@ -421,7 +447,7 @@ export function findNodeByDom(
 /**
  * 自动整理：清除所有节点被自由拖拽后的自定义位置，
  * 重新按当前布局算法计算位置，使各主题以合理间距对齐摆放，
- * 最后重置视口（100% 缩放 + 根节点居中；不再 fit 全图——大图会被压到不可读）。
+ * 最后适应画布（fit 全图：整体缩放居中，整理结果一览无余）。
  *
  * 注意：使用引擎内置的「重置布局」（RESET_LAYOUT 命令）而非全量 setData。
  * 旧实现 getData()+delete+setData 会经 handleData / renderer.setData 重新初始化
@@ -439,7 +465,7 @@ export function arrangeMindMap(mindMap: MindMap | null): boolean {
 		}
 		mindMap.execCommand(ENGINE_COMMANDS.RESET_LAYOUT);
 		window.setTimeout(
-			() => resetZoom(mindMap),
+			() => fitMindMap(mindMap),
 			RESET_LAYOUT_VIEWPORT_DELAY_MS,
 		);
 		return true;

@@ -8,7 +8,7 @@
  * - 表驱动覆盖节点形态矩阵（空白/纯文本/文档链接/外链/双通道/纯图/空白文字图片/
  *   图文混合/根节点），逐形态断言条目的**存在与缺失**以及**出现顺序**；
  * - 右键先激活节点（引擎无 ACTIVE_NODE 命令，节点 active() 是官方激活方式）；
- * - 画布空白菜单的粘贴/适应画布/整理/撤销/重做编排；
+ * - 画布空白菜单的粘贴/重置缩放/适应画布/整理/撤销/重做编排；
  * - 每条目点击后委托给哪个动作、携带什么入参（含引擎命令名）。
  *
  * 断言用 `t(lang, key)` 取真实文案：文案改动（如「移除文本」）必须让测试失败，
@@ -113,6 +113,7 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 const {
 	findNodeByDomMock,
 	fitMindMapMock,
+	resetZoomMock,
 	getNodeDataStringMock,
 	startNodeTextEditMock,
 	clearNodeHyperlinkMock,
@@ -128,6 +129,7 @@ const {
 } = vi.hoisted(() => ({
 	findNodeByDomMock: vi.fn<(mindMap: unknown, el: unknown) => unknown>(),
 	fitMindMapMock: vi.fn<(mindMap: unknown) => void>(),
+	resetZoomMock: vi.fn<(mindMap: unknown) => void>(),
 	getNodeDataStringMock: vi.fn<(node: unknown, key: string) => string>(),
 	startNodeTextEditMock: vi.fn<(mindMap: unknown, node: unknown) => void>(),
 	clearNodeHyperlinkMock: vi.fn<(view: unknown, node: unknown) => void>(),
@@ -151,6 +153,7 @@ vi.mock('../src/mindmap', () => ({
 	ENGINE_COMMANDS: ENGINE,
 	findNodeByDom: findNodeByDomMock,
 	fitMindMap: fitMindMapMock,
+	resetZoom: resetZoomMock,
 	getNodeDataString: getNodeDataStringMock,
 	startNodeTextEdit: startNodeTextEditMock,
 }));
@@ -640,12 +643,13 @@ describe('画布空白右键菜单', () => {
 		return { ...harness, event };
 	}
 
-	it('未命中节点：画布菜单条目与顺序（粘贴/适应画布/整理/撤销/重做）', () => {
+	it('未命中节点：画布菜单条目与顺序（粘贴/重置缩放/适应画布/整理/撤销/重做）', () => {
 		const { event } = fireCanvas(null);
 		const menu = lastMenu();
 		expect(event.preventDefault).toHaveBeenCalledTimes(1);
 		expect(menu.titles()).toEqual([
 			zh('menu.pasteNode'),
+			zh('menu.resetZoom'),
 			zh('command.fitCanvas'),
 			zh('toolbar.arrange'),
 			zh('toolbar.undoShort'),
@@ -654,18 +658,22 @@ describe('画布空白右键菜单', () => {
 		expect(menu.separators).toBe(1);
 		expect(menu.shownAt).toEqual({ x: 120, y: 240 });
 		expect(menu.item(zh('menu.pasteNode')).icon).toBe('clipboard');
+		expect(menu.item(zh('menu.resetZoom')).icon).toBe('rotate-ccw');
 		expect(menu.item(zh('command.fitCanvas')).icon).toBe('maximize');
 		expect(menu.item(zh('toolbar.arrange')).icon).toBe('sparkles');
 		expect(menu.item(zh('toolbar.undoShort')).icon).toBe('undo');
 		expect(menu.item(zh('toolbar.redoShort')).icon).toBe('redo');
 	});
 
-	it('画布菜单点击：粘贴挂到根（node=null）、适应画布/整理/撤销/重做各就各位', () => {
+	it('画布菜单点击：粘贴挂到根（node=null）、重置缩放/适应画布/整理/撤销/重做各就各位', () => {
 		const { view, execCommand } = fireCanvas(null);
 		const menu = lastMenu();
 
 		menu.click(zh('menu.pasteNode'));
 		expect(pasteNodeAsChildMock).toHaveBeenCalledWith(view, null);
+
+		menu.click(zh('menu.resetZoom'));
+		expect(resetZoomMock).toHaveBeenCalledWith(view.mindMap);
 
 		menu.click(zh('command.fitCanvas'));
 		expect(fitMindMapMock).toHaveBeenCalledWith(view.mindMap);

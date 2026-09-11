@@ -154,7 +154,7 @@ async function handleDroppedDocument(
 	const link = formatWikilink(target);
 	if (selected) {
 		// 与解析侧同通道（mdWikiLinkpath）→ 显示自绘文档页图标
-		applyDocWikiLink(view, selected, link, target, null);
+		applyDocWikiLink(view, selected, link, target);
 		new Notice(`${t(view.lang, 'common.linkedTo')} [[${target}]]`);
 	} else {
 		// 原逻辑：挂到根节点下并链接（通过 appointNodes 指定父节点，

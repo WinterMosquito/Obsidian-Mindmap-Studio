@@ -144,6 +144,55 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 		expect(store.getLayout(PATH_B)).toBe('y');
 		expect(store.serialize()).toEqual({ [PATH_B]: { layout: 'y' } });
 	});
+
+	it('lineStyle 是已知字段：条目被接受，getter 只返回字符串', () => {
+		const store = new ViewStateStore(() => {});
+		store.hydrate({
+			viewState: {
+				[PATH_A]: { lineStyle: 'direct' },
+				[PATH_B]: { lineStyle: 7 },
+			},
+		});
+		expect(store.getLineStyle(PATH_A)).toBe('direct');
+		// 条目本身有效（含 lineStyle 键）故被保留，坏值由 getter 兜底
+		expect(store.getLineStyle(PATH_B)).toBeUndefined();
+		expect(store.serialize()).toEqual({
+			[PATH_A]: { lineStyle: 'direct' },
+			[PATH_B]: { lineStyle: 7 },
+		});
+	});
+});
+
+describe('ViewStateStore 连线样式（按文件补丁式存取）', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('setLineStyle 与 setLayout 合并为同一条目，写盘载荷同时携带两者', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 100);
+		store.setLayout(PATH_A, 'mindMap');
+		store.setLineStyle(PATH_A, 'direct');
+
+		expect(store.getLayout(PATH_A)).toBe('mindMap');
+		expect(store.getLineStyle(PATH_A)).toBe('direct');
+
+		await vi.advanceTimersByTimeAsync(100);
+
+		expect(persist).toHaveBeenCalledTimes(1);
+		expect(persist).toHaveBeenCalledWith({
+			[PATH_A]: { layout: 'mindMap', lineStyle: 'direct' },
+		});
+	});
+
+	it('未设置过 lineStyle 的文件返回 undefined（调用方回落全局默认）', () => {
+		const store = new ViewStateStore(() => {});
+		store.setLayout(PATH_A, 'mindMap');
+		expect(store.getLineStyle(PATH_A)).toBeUndefined();
+	});
 });
 
 describe('ViewStateStore 变更与防抖写盘', () => {

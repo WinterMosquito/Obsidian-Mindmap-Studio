@@ -16,6 +16,7 @@ import {
 	MindMapTreeNode,
 } from '../../vendor/simple-mind-map.cjs';
 import {
+	arrangeMindMap,
 	centerContentAtFullScale,
 	createMindMap,
 	destroyMindMap,
@@ -43,6 +44,8 @@ import type { ViewStateStore } from '../view-state';
 /** 引擎创建选项（设置读取与布局 fallback 由视图负责） */
 export interface EngineSetupOptions {
 	layout: string;
+	/** 连线样式偏好（auto/curve/direct/straight；auto＝随布局） */
+	lineStyle: string;
 	themePref: string;
 	enableDrag: boolean;
 	performanceMode: boolean;
@@ -73,8 +76,8 @@ export interface EngineControllerDeps {
 	onNodeAttachmentClick(node: MindMapNode): void;
 	/** 引擎就绪后装配交互特性（拖拽/粘贴/右键/wikilink） */
 	setupFeatures(): void;
-	/** 引擎就绪后视图侧收尾（工具栏布局同步、md 模式工具栏重建） */
-	onEngineReady(layout: string): void;
+	/** 引擎就绪后视图侧收尾（工具栏布局/连线样式同步、md 模式工具栏重建） */
+	onEngineReady(layout: string, lineStyle: string): void;
 	/** 引用更新完成（→ 防抖保存） */
 	onReferencesChanged(): void;
 }
@@ -187,6 +190,7 @@ export class EngineController {
 			const options = this.deps.getSetupOptions();
 			this.mindMap = createMindMap(canvasEl, tree, {
 				layout: options.layout,
+				lineStyle: options.lineStyle,
 				themePref: options.themePref,
 				isDark: this.deps.isDark(),
 				enableDrag: options.enableDrag,
@@ -237,7 +241,7 @@ export class EngineController {
 			);
 			this.mindMap.render();
 			this.deps.setupFeatures();
-			this.deps.onEngineReady(options.layout);
+			this.deps.onEngineReady(options.layout, options.lineStyle);
 			// 首帧后：有保存的视口（缩放/平移）则恢复，否则适配全图
 			this.cancelViewportTimer();
 			this.viewportTimer = window.setTimeout(() => {
@@ -289,18 +293,57 @@ export class EngineController {
 		}
 	}
 
-	/** 应用布局（仅引擎侧；会话字段与持久化由视图负责） */
+	/**
+	 * 应用布局（仅引擎侧；会话字段与持久化由视图负责）。
+	 * 切换后同步重算主题配置：auto 偏好下连线样式随布局联动
+	 * （组织结构图走直线，见 mindmap-theme.resolveLineStyle）；布局名以本次
+	 * 入参为准，不依赖视图会话字段（切换瞬间两者可能尚未同步）。
+	 */
 	setLayout(value: string): void {
-		this.mindMap?.setLayout(value);
+		if (!this.mindMap) {
+			return;
+		}
+		this.mindMap.setLayout(value);
+		const setup = this.deps.getSetupOptions();
+		this.writeThemeConfig(value, setup.lineStyle, setup.themePref);
+		// 切换后自动整理一次：清掉自由拖拽留下的自定义坐标（否则旧布局下手动摆过的
+		// 节点会带着坐标留在新布局里），并以「适应画布」收尾（引擎 setLayout 内部
+		// 会把视口变换归零，不 fit 会让画面停在左上角）。
+		arrangeMindMap(this.mindMap);
 	}
 
-	/** 应用主题（深色判定按当前主题偏好重算） */
+	/**
+	 * 应用连线样式偏好（仅引擎侧；会话字段与持久化由视图负责）。
+	 * 布局取当前会话值（工具栏同一事件循环内不会并发切换布局与样式）。
+	 */
+	setLineStyle(value: string): void {
+		if (!this.mindMap) {
+			return;
+		}
+		const setup = this.deps.getSetupOptions();
+		this.writeThemeConfig(setup.layout, value, setup.themePref);
+	}
+
+	/** 应用主题（深色判定按当前主题偏好重算；连线样式随偏好与布局） */
 	applyTheme(): void {
 		if (!this.mindMap) {
 			return;
 		}
-		const dark = isDarkTheme(this.deps.getSetupOptions().themePref, this.deps.isDark());
-		this.mindMap.setThemeConfig(getThemeConfig(dark));
+		const setup = this.deps.getSetupOptions();
+		this.writeThemeConfig(setup.layout, setup.lineStyle, setup.themePref);
+	}
+
+	/** 按布局 + 连线样式偏好 + 主题偏好重算主题配置并写入引擎 */
+	private writeThemeConfig(
+		layout: string,
+		lineStyle: string,
+		themePref: string,
+	): void {
+		if (!this.mindMap) {
+			return;
+		}
+		const dark = isDarkTheme(themePref, this.deps.isDark());
+		this.mindMap.setThemeConfig(getThemeConfig(dark, layout, lineStyle));
 	}
 
 	resize(): void {

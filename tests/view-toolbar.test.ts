@@ -17,12 +17,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import { LAYOUT_OPTIONS } from '../src/constants';
+import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../src/constants';
 import { t } from '../src/i18n';
 import {
 	arrangeMindMap,
 	buildToolbar,
 	refreshToolbar,
+	syncLineStyleOptions,
 } from '../src/features/view-toolbar';
 import type { MindMapViewContext } from '../src/features/view-context';
 
@@ -32,6 +33,13 @@ const engineMocks = vi.hoisted(() => ({
 	resetZoom: vi.fn<(mindMap: unknown) => void>(),
 	zoomInMindMap: vi.fn<(mindMap: unknown) => void>(),
 	zoomOutMindMap: vi.fn<(mindMap: unknown) => void>(),
+	// 按真实语义桩化（真值由 mindmap-theme.test.ts 锁定）：三态布局为真、固定直线布局为假
+	supportsLineStyleSwitch: vi.fn<(layout: string) => boolean>(
+		(layout) =>
+			layout === 'logicalStructure' ||
+			layout === 'mindMap' ||
+			layout === 'organizationStructure',
+	),
 }));
 
 const siblingMocks = vi.hoisted(() => ({
@@ -79,6 +87,7 @@ vi.mock('../src/mindmap', () => ({
 	resetZoom: engineMocks.resetZoom,
 	zoomInMindMap: engineMocks.zoomInMindMap,
 	zoomOutMindMap: engineMocks.zoomOutMindMap,
+	supportsLineStyleSwitch: engineMocks.supportsLineStyleSwitch,
 }));
 
 vi.mock('../src/features/view-search', () => ({
@@ -164,6 +173,7 @@ interface Harness {
 	readonly mindMap: MindMap;
 	readonly execCommand: ExecCommandMock;
 	readonly applyLayout: ReturnType<typeof vi.fn>;
+	readonly applyLineStyle: ReturnType<typeof vi.fn>;
 	readonly backToMarkdown: ReturnType<typeof vi.fn>;
 }
 
@@ -174,6 +184,7 @@ function makeView(
 	const toolbarEl = new FakeEl('div');
 	const execCommand = vi.fn<(command: string, ...args: unknown[]) => void>();
 	const applyLayout = vi.fn();
+	const applyLineStyle = vi.fn();
 	const backToMarkdown = vi.fn();
 	const mindMap = { execCommand } as unknown as MindMap;
 	const view = {
@@ -184,9 +195,20 @@ function makeView(
 		isMdDocument: () => options.isMdDocument === true,
 		backToMarkdown,
 		applyLayout,
-		plugin: { settings: { defaultLayout: 'mindMap' } },
+		applyLineStyle,
+		plugin: {
+			settings: { defaultLayout: 'mindMap', defaultLineStyle: 'auto' },
+		},
 	} as unknown as MindMapViewContext;
-	return { view, toolbarEl, mindMap, execCommand, applyLayout, backToMarkdown };
+	return {
+		view,
+		toolbarEl,
+		mindMap,
+		execCommand,
+		applyLayout,
+		applyLineStyle,
+		backToMarkdown,
+	};
 }
 
 /** 按类名取分组（左 / 中 / 右） */
@@ -502,6 +524,95 @@ describe('buildToolbar（布局选择器）', () => {
 		select.onchange?.();
 		expect(h.applyLayout).toHaveBeenCalledWith('fishbone');
 		expect(h.applyLayout).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('buildToolbar（连线样式选择器）', () => {
+	it('居中分组：布局与连线两个标签 + 分隔符 + 四项样式（对应 LINE_STYLE_OPTIONS）', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const center = groupOf(h.toolbarEl, 'mindmap-toolbar-center');
+
+		const labels = center.children.filter((child) => child.tag === 'span');
+		expect(labels.map((label) => label.text)).toEqual([
+			t('zh', 'toolbar.layout'),
+			t('zh', 'toolbar.lineStyle'),
+		]);
+		expect(
+			center.children.some((child) =>
+				child.classes.includes('mindmap-toolbar-separator'),
+			),
+		).toBe(true);
+
+		const select = h.view.lineStyleSelect;
+		expect(select).not.toBeNull();
+		expect((select as unknown as FakeEl).classes).toEqual([
+			'mindmap-line-style-select',
+		]);
+
+		const options = (select as unknown as FakeEl).children.filter(
+			(child) => child.tag === 'option',
+		);
+		expect(options).toHaveLength(LINE_STYLE_OPTIONS.length);
+		expect(options.map((option) => option.value)).toEqual(
+			LINE_STYLE_OPTIONS.map((option) => option.value),
+		);
+		expect(options.map((option) => option.text)).toEqual(
+			LINE_STYLE_OPTIONS.map((option) => t('zh', option.label)),
+		);
+	});
+
+	it('初始值取插件设置 defaultLineStyle，变更时调 applyLineStyle(当前值)', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const select = h.view.lineStyleSelect as unknown as FakeEl;
+
+		expect(select.value).toBe('auto'); // plugin.settings.defaultLineStyle
+		expect(select.onchange).toBeTypeOf('function');
+
+		select.value = 'direct';
+		select.onchange?.();
+		expect(h.applyLineStyle).toHaveBeenCalledWith('direct');
+		expect(h.applyLineStyle).toHaveBeenCalledTimes(1);
+	});
+
+	it('固定直线布局（时间轴）：选项面收窄为单项「自动」', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+
+		syncLineStyleOptions(h.view, 'timeline', 'direct');
+
+		const select = h.view.lineStyleSelect as unknown as FakeEl;
+		const options = select.children.filter((child) => child.tag === 'option');
+		expect(options).toHaveLength(1);
+		expect(options[0]!.value).toBe('auto');
+		expect(options[0]!.text).toBe(t('zh', 'lineStyle.auto'));
+		expect(select.value).toBe('auto');
+	});
+
+	it('切回支持三态的布局：恢复四项并回填文件偏好（不因固定布局丢失）', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const select = h.view.lineStyleSelect as unknown as FakeEl;
+
+		syncLineStyleOptions(h.view, 'timeline', 'direct');
+		syncLineStyleOptions(h.view, 'organizationStructure', 'direct');
+
+		const options = select.children.filter((child) => child.tag === 'option');
+		expect(options.map((option) => option.value)).toEqual(
+			LINE_STYLE_OPTIONS.map((option) => option.value),
+		);
+		expect(select.value).toBe('direct');
+	});
+
+	it('脏偏好（不在选项表内）回落 auto，不产生空白选中态', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+
+		syncLineStyleOptions(h.view, 'mindMap', 'zigzag');
+
+		const select = h.view.lineStyleSelect as unknown as FakeEl;
+		expect(select.value).toBe('auto');
 	});
 });
 
