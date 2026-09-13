@@ -36,8 +36,14 @@ export interface MdParseResult {
 	frontmatter: string | null;
 }
 
-const FM_RE = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
-/** 标题行：#~######（宽容：#标题 无空格亦可） */
+/** UTF-8 BOM：Windows 编辑器/同步工具可能写在文件开头（Obsidian 自己不加） */
+export const UTF8_BOM = '\uFEFF';
+
+/** frontmatter 围栏行：`---` 独占一行（允许行尾空白） */
+const FM_FENCE_RE = /^---[ \t]*$/;
+/** 块标量起始行（`键: |` / `键: >-` / `键: |2`）：其后的 `---` 行属属性内容 */
+const FM_BLOCK_SCALAR_RE = /^([ \t]*)[^#\s][^:]*:[ \t]*[|>][-+]?[0-9]*[ \t]*$/;
+/** 标题行：#~###### + 空白 + 文本（`#标题` 无空白不算标题，与 CommonMark/Obsidian 一致；`#` 单独成行亦匹配） */
 const HEADING_RE = /^(#{1,6})(?:[ \t]+(.*))?$/;
 /** 列表项：缩进 + 标记（- * + 或 数字.） + 内容 */
 const LIST_RE = /^(\s*)([-*+]|\d+\.)[ \t]+(.*)$/;
@@ -301,6 +307,8 @@ export function buildInlineData(raw: string): InlineData {
 	let firstLink = false;
 	let firstImg = false;
 	const pieces: string[] = [];
+	/** 未被首图/首链字段承载的额外 token（原文切片）：保真回写数据 */
+	const extra: { raw: string; kind: 'image' | 'link' }[] = [];
 	let cursor = 0;
 	for (const tok of toks) {
 		pieces.push(raw.slice(cursor, tok.start));
@@ -351,6 +359,8 @@ export function buildInlineData(raw: string): InlineData {
 					pieces.push(data.mdLinkText);
 				} else {
 					pieces.push(linkDisplayText(link));
+					// 非首个文档/附件嵌入：剥壳为文本（上行），原文进额外 token
+					extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'link' });
 				}
 				continue;
 			}
@@ -375,6 +385,8 @@ export function buildInlineData(raw: string): InlineData {
 				// 首图以节点图呈现，不占文本
 			} else {
 				pieces.push(tokenDisplay(tok));
+				// 非首图（同行多余图片）：剥壳为文本（上行），原文进额外 token
+				extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'image' });
 			}
 			continue;
 		}
@@ -401,6 +413,9 @@ export function buildInlineData(raw: string): InlineData {
 					// 图标/悬停提示的目标显示名
 					data.mdLinkText = tokenDisplay(tok);
 				}
+			} else {
+				// 非首个双链：剥壳为文本（下方统一 push），原文进额外 token（保真）
+				extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'link' });
 			}
 		} else if (tok.kind === 'autolink' || tok.kind === 'bareUrl') {
 			// 自动链接（<url> 尖括号 / 裸 URL）→ 同语义：URL 本体不渲染进
@@ -411,6 +426,9 @@ export function buildInlineData(raw: string): InlineData {
 				data.mdLinkStyle = 'md';
 				data.mdLinkText = tok.target;
 				data.hyperlinkTitle = tok.target;
+			} else {
+				// 非首个 URL：不渲染进文本（icon-only 一贯性），原文进额外 token
+				extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'link' });
 			}
 		} else if (!firstLink) {
 			firstLink = true;
@@ -418,6 +436,9 @@ export function buildInlineData(raw: string): InlineData {
 			data.mdLinkStyle = 'md';
 			data.mdLinkText = tok.label || tok.target;
 			data.hyperlinkTitle = tokenDisplay(tok);
+		} else {
+			// 非首个 md 链接：剥壳文本由下方统一 push，原文进额外 token（保真）
+			extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'link' });
 		}
 		// URL token（autolink/bareUrl）与「label 本身是 URL」的 md 链接
 		// （[https://…](https://…)，复制粘贴常见形态）一律 icon-only：
@@ -429,6 +450,9 @@ export function buildInlineData(raw: string): InlineData {
 		) {
 			pieces.push(tokenDisplay(tok));
 		}
+	}
+	if (extra.length > 0) {
+		data.mdExtraTokens = extra;
 	}
 	pieces.push(raw.slice(cursor));
 	// 纯图行 → 图片独占节点（text 为空）：图片是节点的全部内容，
@@ -446,12 +470,74 @@ export function buildInlineData(raw: string): InlineData {
 	return data;
 }
 
+/**
+ * 链接引用定义行（参考式链接 `[label]: destination` / OFM 脚注 `[^id]: 内容`）。
+ *
+ * 这类行是**语法基础设施、不是链接**：本插件不渲染参考式链接的链接行为，
+ * 但行内 destination 若是裸 URL，会被 buildInlineData 误走「URL icon-only」
+ * 通道摘出文本——编辑节点时 URL 被挪到行尾（合成路径），`[label]` 引用全部
+ * 失效（2026-09-13 规划实测）。故命中本判定的行**整体按纯文本处理**：
+ * 不提取任何链接字段（URL 留在文本里，保真优先；节点会显示完整定义文本）。
+ *
+ * 判定口径：
+ * - 脚注 `[^id]:` 后内容任意（Basic formatting syntax 的脚注定义形态）；
+ * - 参考式 `[label]:` 后必须是合法 destination（`<…>` 或非空白串，与
+ *   CommonMark link reference definition 一致），可选尾部 title（"…"/'…'/(…)）。
+ *   `[X]:` 后无 destination 的普通叙述不算（不豁免）。
+ * export 为测试白盒钩子。
+ */
+const LINK_REF_DEF_RE = /^\[([^\]\n]+)\]:[ \t]*(.*)$/;
+
+export function isLinkReferenceDefinition(content: string): boolean {
+	const m = LINK_REF_DEF_RE.exec(content.trim());
+	if (!m) {
+		return false;
+	}
+	const label = m[1] ?? '';
+	if (label.startsWith('^')) {
+		return true; // 脚注定义：内容任意
+	}
+	const rest = (m[2] ?? '').trim();
+	if (!rest) {
+		return false;
+	}
+	// destination（`<…>` 或非空白串）+ 可选 title（三形态，尾随）
+	return /^(?:<[^>\n]+>|\S+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?$/.test(
+		rest,
+	);
+}
+
+/**
+ * 行级行内数据入口：`buildInlineData` + 「链接引用定义行整体按纯文本」守卫。
+ *
+ * 逐字回写（rawOk）不受影响；差异只发生在**编辑后合成**：
+ * 定义行的 URL 留在文本里（而非被摘成 icon-only token 挪到行尾）。
+ */
+function buildLineInlineData(raw: string): InlineData {
+	if (isLinkReferenceDefinition(raw)) {
+		const text = raw.trim();
+		return { text, mdRaw: raw, mdDerivedText: text };
+	}
+	return buildInlineData(raw);
+}
+
 // ---------------------------------------------------------------------------
 // 正文解析
 // ---------------------------------------------------------------------------
 
 /**
  * 拆分 YAML frontmatter（含首尾 ---）与正文。
+ *
+ * 三条口径（前两条为 2026-09-12 修复，均向 Obsidian 自身的属性解析对齐）：
+ * - **空属性块**（`---\n---`，属性被删光/模板产物）也是合法 frontmatter——
+ *   此前要求至少一行内容，于是它被并进正文、保存后整块消失；
+ * - 结束围栏取**第一个 `---` 行，但跳过 YAML 块标量（`|` / `>`）内部的 `---`**：
+ *   实测 Obsidian 在 `desc: |` 里写一行 `---` 时属性面板仍显示为含该行的多行值；
+ *   按"第一个 `---`"硬切会把属性截断、残余落进正文写回文件；
+ * - **开头 BOM** 计入 frontmatter（写入时原样带回），不留在正文里——否则首个
+ *   `# 标题` 匹配不到标题正则（降级为段落）、首个 `- 项` 会被算出一个假缩进。
+ *
+ * 逐字保留原始换行形态（CRLF 不归一：frontmatter 要原样回写）。
  * 遇到 body 开头又有 ---（用户误加第二次 frontmatter）时只取第一个并 console.warn。
  * export 为测试白盒钩子。
  */
@@ -459,18 +545,60 @@ export function splitFrontmatter(content: string): {
 	body: string;
 	frontmatter: string | null;
 } {
-	const m = content.match(FM_RE);
-	if (!m) {
-		return { body: content, frontmatter: null };
+	const bom = content.startsWith(UTF8_BOM) ? UTF8_BOM : '';
+	const rest = bom ? content.slice(bom.length) : content;
+	/** 结束围栏之后（含换行）在 rest 中的索引；-1 = 不是 frontmatter */
+	let frontmatterEnd = -1;
+	/** 当前块标量的起始缩进；null = 不在块标量内 */
+	let blockIndent: number | null = null;
+	let started = false;
+	let lineStart = 0;
+	while (lineStart <= rest.length) {
+		const nl = rest.indexOf('\n', lineStart);
+		const lineEnd = nl === -1 ? rest.length : nl;
+		const rawLine = rest.slice(lineStart, lineEnd);
+		const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+		const nextStart = nl === -1 ? rest.length + 1 : nl + 1;
+
+		if (!started) {
+			if (!FM_FENCE_RE.test(line)) {
+				break; // 首行不是 `---`：没有 frontmatter
+			}
+			started = true;
+			lineStart = nextStart;
+			continue;
+		}
+		if (blockIndent !== null) {
+			// 块标量内容：空行与更深缩进的行都算内容（含 `---` 行），
+			// 直到出现缩进 ≤ 起始缩进的非空行
+			if (line.trim() === '' || leadingSpaces(line) > blockIndent) {
+				lineStart = nextStart;
+				continue;
+			}
+			blockIndent = null;
+		}
+		const scalar = FM_BLOCK_SCALAR_RE.exec(line);
+		if (scalar) {
+			blockIndent = scalar[1]!.length;
+		} else if (FM_FENCE_RE.test(line)) {
+			frontmatterEnd = nextStart > rest.length ? rest.length : nextStart;
+			break;
+		}
+		lineStart = nextStart;
 	}
-	const body = content.slice(m[0].length);
+
+	if (frontmatterEnd === -1) {
+		return { body: rest, frontmatter: bom || null };
+	}
+	const frontmatter = bom + rest.slice(0, frontmatterEnd);
+	const body = rest.slice(frontmatterEnd);
 	// 误加第二次 frontmatter：body 开头又是 ---
-	if (/^---[ \t]*(?:\r?\n|$)/.test(body)) {
+	if (FM_FENCE_RE.test(body.split(/\r?\n/, 1)[0] ?? '')) {
 		console.warn(
 			'[Mindmap-Studio] 检测到重复 YAML frontmatter，仅第一个生效。',
 		);
 	}
-	return { frontmatter: m[0], body };
+	return { frontmatter, body };
 }
 
 /** 逐行分类（围栏整体原样保留；围栏外空行与分隔线忽略） */
@@ -644,7 +772,7 @@ export function parseMdOutline(
 		// 段落按行 token 化（保留行独立性）
 		const derived: string[] = [];
 		for (const line of plainBuffer) {
-			const d = buildInlineData(line.text);
+			const d = buildLineInlineData(line.text);
 			derived.push(d.text);
 		}
 		// 首行图片进节点字段（缩进代码块的首行属代码内容，不采纳）；
@@ -652,7 +780,7 @@ export function parseMdOutline(
 		const first = plainBuffer[0]!;
 		const imageMeta = isIndentedCodeLine(first.raw)
 			? {}
-			: pickImageMeta(buildInlineData(first.text));
+			: pickImageMeta(buildLineInlineData(first.text));
 		const node: MindMapTreeNode = {
 			data: {
 				text: derived.join('\n'),
@@ -682,7 +810,7 @@ export function parseMdOutline(
 				: contentParent;
 		const node: MindMapTreeNode = {
 			data: {
-				...buildInlineData(rawText),
+				...buildLineInlineData(rawText),
 				mdType: 'list',
 				mdMarker: marker,
 			},
@@ -706,7 +834,7 @@ export function parseMdOutline(
 			const parent = headingStack[headingStack.length - 1]!.node;
 			const node: MindMapTreeNode = {
 				data: {
-					...buildInlineData(line.text),
+					...buildLineInlineData(line.text),
 					mdType: 'heading',
 					mdLevel: level,
 				},

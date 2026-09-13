@@ -19,7 +19,7 @@ import { notifyError } from '../errors';
 import { resolvePathToFile } from '../links-resolve';
 import { t } from '../i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
-import { docWikiLinkDisplay } from '../domain/wiki-display';
+
 import {
 	isDocumentExtension,
 	linkDisplayText,
@@ -38,42 +38,39 @@ function clearDocWikiLink(node: MindMapNode): void {
 	delete data.mdLinkText;
 }
 
-/** 节点自身既有链接的可见名（无链接 / 无可见名时返回 null） */
-function ownLinkDisplay(data: MdNodeData): string | null {
-	const doc = docWikiLinkDisplay(data);
-	if (doc !== null) {
-		return doc;
-	}
-	const attachUrl = data.attachmentUrl;
-	if (typeof attachUrl === 'string' && attachUrl) {
-		const name = data.attachmentName;
-		return typeof name === 'string' && name ? name : null;
-	}
-	const hyperlink = data.hyperlink;
-	return typeof hyperlink === 'string' && hyperlink
-		? linkDisplayText(hyperlink)
-		: null;
-}
-
 /**
- * 节点是否已有「描述文字」（决策 R4 的分流依据）：
- * - 文本为空 → 否（空节点走旧的覆盖逻辑）；
- * - 文本恰为既有链接的可见名 → 否（纯双链节点改链仍走覆盖，不产生子节点）；
- * - 其余非空文本 → 是（保留原文，链接建成子节点）。
+ * 节点是否已有任何内容（决策 R4 修订的分流依据，2026-09-13）：
+ * 文字 / 链接三通道（文档双链、附件、超链接）/ 图片 / 行内额外 token
+ * （`mdExtraTokens`，见 K49）任一存在即为真。
+ *
+ * **完全空白**（全无）→ 覆盖（纯双链化）——"拖入即变链接节点"的便捷路径；
+ * **其余任何情况** → 链接建为子节点——行内多 token 尾插已保真（见
+ * md-meta.mdExtraTokens），拖入/添加链接只是「再挂一个链接」，不得覆盖
+ * 节点已有内容（文字 / 原链接 / 行内其它 token / 图片）。
  */
-function hasDescriptiveText(data: MdNodeData, newDisplay: string): boolean {
+function hasAnyContent(data: MdNodeData): boolean {
 	const text = typeof data.text === 'string' ? data.text.trim() : '';
-	if (!text) {
-		return false;
+	if (text) {
+		return true;
 	}
-	const own = ownLinkDisplay(data);
-	if (own !== null && text === own) {
-		return false;
+	if (data.image) {
+		return true;
 	}
-	return text !== newDisplay;
+	for (const key of ['mdWikiLinkpath', 'attachmentUrl', 'hyperlink'] as const) {
+		const value = data[key];
+		if (typeof value === 'string' && value) {
+			return true;
+		}
+	}
+	// 行内额外 token（多链接 / 多图等）：显示上可能不可见（如图片已移除、
+	// 行尾仍残留 `![[b.png]]`），但文件层面仍是内容——覆盖会改变该行
+	if (Array.isArray(data.mdExtraTokens) && data.mdExtraTokens.length > 0) {
+		return true;
+	}
+	return false;
 }
 
-/** R4：把链接作为子节点挂到节点下（父节点保留描述文字） */
+/** R4 修订：把链接作为子节点挂到节点下（父节点原样不动） */
 function appendLinkChild(
 	view: MindMapViewContext,
 	node: MindMapNode,
@@ -89,9 +86,9 @@ function appendLinkChild(
  * 与解析侧（md-outline 的 wiki 分支）保持同一通道，避免"文件里的链接有文档图标、
  * 拖入/弹窗新建的却是原生链条图标"的不一致。
  *
- * 写入语义（决策 R4「新行为优先」）：
- * - **已有描述文字**（非空文本且不等于既有链接可见名）→ 保留原文，链接建成子节点；
- * - 否则（空节点 / 纯双链节点改链）→ 「纯双链化」：节点文字无条件覆盖为链接
+ * 写入语义（决策 R4 修订，2026-09-13）：
+ * - **已有任何内容**（文字 / 原链接 / 图片）→ 链接建成子节点，节点原样不动；
+ * - **完全空白**（无文字、无链接、无图片）→ 「纯双链化」：节点文字覆盖为链接
  *   显示名（别名优先），底层 md 行只剩 `[[目标|显示名]]`。
  */
 export function applyDocWikiLink(
@@ -102,7 +99,7 @@ export function applyDocWikiLink(
 ): void {
 	const data = node.getData() as MdNodeData;
 	const display = label ?? linkDisplayText(link);
-	if (display && hasDescriptiveText(data, display)) {
+	if (hasAnyContent(data)) {
 		appendLinkChild(view, node, {
 			text: display,
 			mdWikiLinkpath: link,
@@ -117,7 +114,7 @@ export function applyDocWikiLink(
 	data.mdLinkStyle = 'wiki';
 	data.mdLinkText = display;
 	markNodeNeedLayout(node);
-	// 纯双链化：可见文本无条件覆盖节点文字（不再保留用户正文）
+	// 纯双链化：可见文本覆盖节点文字（本路径仅「完全空白」节点可达，见 hasAnyContent）
 	if (display) {
 		applyNodeText(view, node, display);
 	}
@@ -128,9 +125,8 @@ export function applyDocWikiLink(
 /**
  * 把库内附件挂到节点（拖入附件时调用）：走引擎 attachmentUrl 通道
  * （原生回形针图标，点击经 node_attachmentClick 打开）+ mdAttachmentLinkpath
- * 回写通道，与解析侧 `[[报告.pdf]]` 语义一致；同时清掉超链接字段，
- * 避免回形针与链接图标双显。与文档双链同口径「纯双链化」：
- * 节点文字无条件覆盖为附件显示名（文件名）。
+ * 回写通道，与解析侧 `[[报告.pdf]]` 语义一致。
+ * 写入语义（R4 修订）：已有内容 → 建为子节点；仅完全空白节点覆盖为文件名。
  */
 export function applyNodeAttachment(
 	view: MindMapViewContext,
@@ -138,8 +134,8 @@ export function applyNodeAttachment(
 	file: TFile,
 ): void {
 	const data = node.getData() as MdNodeData;
-	// R4「新行为优先」：已有描述文字 → 保留原文，附件引用建成子节点
-	if (hasDescriptiveText(data, file.name)) {
+	// R4 修订：已有内容 → 链接建为子节点（仅完全空白节点覆盖）
+	if (hasAnyContent(data)) {
 		appendLinkChild(view, node, {
 			text: file.name,
 			attachmentUrl: view.app.vault.getResourcePath(file),
@@ -159,7 +155,7 @@ export function applyNodeAttachment(
 	delete data.mdWikiLinkpath;
 	delete data.mdLinkText;
 	markNodeNeedLayout(node);
-	// 纯双链化：拖入附件即覆盖节点文字为文件名（与根节点下新建分支同款 text）
+	// 纯双链化：覆盖节点文字为文件名（仅「完全空白」节点可达；与根节点下新建分支同款 text）
 	applyNodeText(view, node, data.attachmentName);
 	view.mindMap?.render();
 	view.scheduleSave();
@@ -172,7 +168,7 @@ export function applyNodeAttachment(
  * 可见名（attachmentName + 节点文本）与文档双链同口径：显式 label > 双链别名
  * > 末段文件名——`[[报告.pdf|说明]]` 显示「说明」，与 Obsidian 别名语义一致。
  *
- * 写入即「纯双链化」：节点文字无条件覆盖为可见名（与文档双链同口径）。
+ * 写入语义（R4 修订）：已有内容 → 建为子节点；仅完全空白节点覆盖为可见名。
  */
 function applyAttachmentLink(
 	view: MindMapViewContext,
@@ -186,8 +182,8 @@ function applyAttachmentLink(
 	// 可见名优先级：显式 label（联想选择）> 双链别名（手输 `[[路径|别名]]`）> 末段文件名
 	const fallbackName = linkpath.split('/').pop() ?? linkpath;
 	const name = label ?? ((parsed?.alias ?? '') || fallbackName);
-	// R4「新行为优先」：已有描述文字 → 保留原文，附件引用建成子节点
-	if (name && hasDescriptiveText(data, name)) {
+	// R4 修订：已有内容 → 链接建为子节点（仅完全空白节点覆盖）
+	if (hasAnyContent(data)) {
 		appendLinkChild(view, node, {
 			text: name,
 			attachmentUrl: linkpath,
@@ -205,7 +201,7 @@ function applyAttachmentLink(
 	data.mdAttachmentLinkpath = linkpath;
 	data.mdLinkStyle = 'wiki';
 	markNodeNeedLayout(node);
-	// 纯双链化：可见名无条件覆盖节点文字（不再保留用户正文）
+	// 纯双链化：可见名覆盖节点文字（本路径仅「完全空白」节点可达，见 hasAnyContent）
 	if (name) {
 		applyNodeText(view, node, name);
 	}
@@ -285,23 +281,23 @@ async function performAddLink(view: MindMapViewContext): Promise<void> {
 		}
 		return;
 	}
-	// 设置新链接前清除可能残留的文档双链通道，避免图标/序列化歧义
-	clearDocWikiLink(node);
-	markNodeNeedLayout(node);
-	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, result.link);
-	// URL/协议链接：仅添加超链接图标——不把 <url> 当作节点文本（尖括号内链接不渲染）。
-	if (result.link && isHyperlinkProtocolUrl(result.link)) {
-		// 保持「仅图标」：若节点文本仍是旧 URL 显示名（历史/旧行为残留），清空，
-		// 避免节点内残留一个过期的 URL 文本。
-		if (current) {
-			const text = getNodeDataString(node, 'text');
-			if (text.trim() !== '' && text.trim() === linkDisplayText(current)) {
-				applyNodeText(view, node, '');
-			}
-		}
-		view.scheduleSave();
+	// R4 修订（2026-09-13）：节点已有内容 → 不覆盖，URL 链接建为子节点
+	//（仅图标：子节点文本为空、`<url>` 由 hyperlink 通道回写）
+	const data = node.getData() as MdNodeData;
+	if (hasAnyContent(data)) {
+		appendLinkChild(view, node, {
+			text: '',
+			hyperlink: result.link,
+			mdLinkStyle: 'md',
+			mdLinkText: result.link,
+			hyperlinkTitle: result.link,
+		});
 		return;
 	}
+	// 完全空白节点：覆盖为 URL 链接（仅图标——URL 本体不进节点文本）
+	markNodeNeedLayout(node);
+	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, result.link);
+	view.scheduleSave();
 }
 
 /** 更新节点文本并让引擎重绘该节点（不改写引擎其它状态） */
@@ -336,6 +332,17 @@ export function clearNodeHyperlink(
 	}
 	// 文档双链通道非引擎字段，先删；引擎命令只清 hyperlink
 	clearDocWikiLink(node);
+	// 「清除链接」= 清**全部**链接：额外 token 中的链接类一并移除
+	//（图片类保留——图片嵌入不是链接，见 md-meta.mdExtraTokens 契约）
+	const data = node.getData() as MdNodeData;
+	if (Array.isArray(data.mdExtraTokens)) {
+		const kept = data.mdExtraTokens.filter((token) => token.kind === 'image');
+		if (kept.length > 0) {
+			data.mdExtraTokens = kept;
+		} else {
+			delete data.mdExtraTokens;
+		}
+	}
 	markNodeNeedLayout(node);
 	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, '');
 	view.mindMap?.render();

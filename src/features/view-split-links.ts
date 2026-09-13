@@ -8,7 +8,7 @@
  *   路径，性能模式下也不会漏掉视口外节点。
  */
 import { Notice } from 'obsidian';
-import { getActiveNode, isEditingText, setNodeText } from '../mindmap';
+import { isEditingText, setNodeText } from '../mindmap';
 import {
 	planSplitLinks,
 	splitAllLinksInTree,
@@ -19,7 +19,7 @@ import {
 import { ensureUniqueUids } from '../markdown';
 import { insertChildNodeWithData, requireActiveNode } from './view-common';
 import { t, tf } from '../i18n';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MdNodeData } from '../node-data';
 import type { MindMapViewContext } from './view-context';
 
@@ -120,20 +120,20 @@ export function splitAllLinksInDocument(view: MindMapViewContext): void {
  * 节点——`text !== mdDerivedText` 是与解析期快照不同的持久信号，存量未编辑的
  * 混排节点绝不会被自动改写（决策 R3「仅被编辑节点」）。
  *
+ * 检查对象由视图侧捕获（`captureAutoSplitCandidate`：引擎 node_text_edit_change
+ * 携带节点、编辑期累积），**不是检查时刻的激活节点**——编辑提交后快速切换激活
+ * 也不漏拆（2026-09-13 严格化）；`text !== mdDerivedText` 仍是最终判据（双保险）。
+ *
  * 幂等：拆分后父节点不再含可抽链接、子节点是纯链接节点，再触发即 no-op。
  *
  * @returns 新增子节点数量（0 = 未拆分）
  */
-export function autoSplitActiveNode(view: MindMapViewContext): number {
+export function autoSplitNode(view: MindMapViewContext, node: MindMapNode): number {
 	if (!view.plugin.settings.autoSplitMixedLinks) {
 		return 0;
 	}
 	const mindMap = view.mindMap;
 	if (!mindMap || isEditingText(mindMap)) {
-		return 0;
-	}
-	const node = getActiveNode(mindMap);
-	if (!node) {
 		return 0;
 	}
 	const data = node.getData() as MdNodeData;
@@ -144,4 +144,61 @@ export function autoSplitActiveNode(view: MindMapViewContext): number {
 		return 0;
 	}
 	return splitNodeLinks(view, node);
+}
+
+/**
+ * 自动拆分的候选集（模块级 WeakMap 内聚视图态，随视图引用释放——同 K31 范式）。
+ *
+ * `engine` 记录候选集所属的引擎实例：120ms 检查窗口内换文件/重载会重建引擎，
+ * 旧引擎的节点不属于当前文档（对游离节点执行拆分会产生失义的引擎命令），
+ * 故换代时整体丢弃。
+ */
+const autoSplitCandidates = new WeakMap<
+	MindMapViewContext,
+	{ engine: MindMap; nodes: Set<MindMapNode> }
+>();
+
+/** 记录「被编辑过」的候选节点（引擎 node_text_edit_change 携带节点，编辑期累积） */
+export function captureAutoSplitCandidate(
+	view: MindMapViewContext,
+	node: MindMapNode,
+): void {
+	const engine = view.mindMap;
+	if (!engine) {
+		return;
+	}
+	let entry = autoSplitCandidates.get(view);
+	if (!entry || entry.engine !== engine) {
+		// 引擎换代（换文件/重载）：旧候选不属于当前文档，先整体丢弃
+		entry = { engine, nodes: new Set() };
+		autoSplitCandidates.set(view, entry);
+	}
+	entry.nodes.add(node);
+}
+
+/**
+ * 执行一次自动拆分检查（视图侧在 data_change 后延后一拍调用）：
+ * 对候选集逐个检查——编辑框仍开着（用户又在编辑）时**保留候选**等下一次，
+ * 不丢「已编辑但尚未拆分」的节点。
+ */
+export function runAutoSplitCheck(view: MindMapViewContext): void {
+	const engine = view.mindMap;
+	const entry = autoSplitCandidates.get(view);
+	if (!entry) {
+		return;
+	}
+	if (!engine || entry.engine !== engine) {
+		// 引擎换代：候选作废（旧节点不属于当前文档）
+		autoSplitCandidates.delete(view);
+		return;
+	}
+	const candidates = [...entry.nodes];
+	entry.nodes.clear();
+	for (const node of candidates) {
+		if (isEditingText(engine)) {
+			entry.nodes.add(node);
+			continue;
+		}
+		autoSplitNode(view, node);
+	}
 }

@@ -18,7 +18,7 @@
 import { App, TFile } from 'obsidian';
 import { stripMindMapStem, AUTO_SAVE_DEBOUNCE_MS } from '../constants';
 import { createDebouncer, createSerialQueue } from '../concurrency';
-import { parseMdOutline } from '../md-outline';
+import { parseMdOutline, splitFrontmatter, UTF8_BOM } from '../md-outline';
 import { serializeMdBody } from '../md-serialize';
 import { walkResolveImagePaths } from '../images-path';
 import { isMindMapMarkdownFile } from '../md-open';
@@ -76,6 +76,9 @@ export interface SavePipelineDeps {
 	/**
 	 * **指定文件**的 md frontmatter（保存时拼回文件头）。必须按文件键取，
 	 * 不能用"最近加载的那份"——换文件期间它会变成新文件的值。
+	 *
+	 * 注意：这只是**读取失败时的兜底**。正常写盘以磁盘当前内容为准（见 save
+	 * 内注释）：视图打开期间外部改动的属性不会被这份旧快照覆盖。
 	 */
 	getFrontmatterFor(file: TFile): string | null;
 	/** 自动保存开关（关闭时 schedule 不生效，显式 save 仍可用） */
@@ -183,13 +186,22 @@ export class SavePipeline {
 					this.deps.app.vault.getFileByPath(target.path)
 				) {
 					try {
-						const content = this.serialize(tree, frontmatter);
+						const current = await this.readCurrentContent(target);
+						// 文件头以**磁盘当前内容**为准：视图打开期间用户可在属性面板、
+						// 其它窗格甚至其它设备（同步）改属性，而插件只持有加载时的快照——
+						// 直接回贴会把那些改动抹掉（表现为「偶有笔记属性丢失」）。
+						// 读不到时才回落到按文件存的快照（不因读失败丢文件头）。
+						const header =
+							current === null
+								? frontmatter
+								: splitFrontmatter(current).frontmatter;
+						const content = this.serialize(tree, header);
 						// 无差异写盘跳过：vault.modify 即使内容一字未变也会刷新 mtime 并
 						// 惊动元数据缓存与同步，而「自动整理」这类操作只清拖拽坐标、
 						// Markdown 文本没变。比对以**文件当前内容**为准——只跳过
 						// 「要写的正是文件里已有的内容」，绝不吞掉真实差异；
 						// 读取失败一律照常写盘（fail-open）。
-						if ((await this.readCurrentContent(target)) !== content) {
+						if (current !== content) {
 							await this.deps.app.vault.modify(target, content);
 						}
 					} catch (error) {
@@ -255,14 +267,22 @@ export class SavePipeline {
 		return live ?? treeHint ?? fallback;
 	}
 
-	/** 序列化为 md 大纲 + 原样 frontmatter（布局不入文件），保证尾随换行 */
-	private serialize(tree: MindMapTreeNode, frontmatter: string | null): string {
+	/**
+	 * 序列化为 md 大纲 + 原样文件头（布局不入文件），保证尾随换行。
+	 *
+	 * 文件头**只有 BOM**（无属性块）时不能补换行——那会把 BOM 单独变成一行、
+	 * 改动文件结构；其余形态（`---…---`）需要一个换行与正文分隔。
+	 */
+	private serialize(tree: MindMapTreeNode, header: string | null): string {
 		const body = serializeMdBody(tree, this.deps.app);
-		let content = frontmatter
-			? frontmatter.endsWith('\n')
-				? frontmatter + body
-				: `${frontmatter}\n${body}`
-			: body;
+		let content: string;
+		if (!header) {
+			content = body;
+		} else if (header.endsWith('\n') || header === UTF8_BOM) {
+			content = header + body;
+		} else {
+			content = `${header}\n${body}`;
+		}
 		if (!content.endsWith('\n')) {
 			content += '\n';
 		}

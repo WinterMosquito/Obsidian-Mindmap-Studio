@@ -4,8 +4,8 @@
  * 断言策略：
  * - 输入走**真实解析**（parseMdOutline），产物走**真实序列化**（serializeMdBody）
  *   ——只断言「方案对象」会漏掉回写口径的漂移，而本功能的产物就是 Markdown 本身；
- * - 施加逻辑与 view-split-links.applySplitPlan 同一套字段规则（字段清单直接取
- *   links-split 的 PARENT_LINK_FIELDS），避免测试与实现两处漂移；
+ * - 施加逻辑的父节点部分直接走**生产入口** `writeSplitPlanToData`（链接字段清理/
+ *   回填、三个文本字段与 `mdExtraTokens` 重建唯一实现在生产侧），避免两处漂移；
  * - 「未编辑不动文件」单列一例：自动触发只作用于被编辑的节点，存量节点不得被改写。
  *
  * 覆盖：混排抽取 / 图片保留 / 外链与 md 链接保留 / 别名与 # 区块 / 附件与嵌入
@@ -17,9 +17,9 @@ import { fileLookupIndex } from '../src/file-lookup';
 import { parseMdOutline } from '../src/md-outline';
 import { serializeMdBody } from '../src/md-serialize';
 import {
-	PARENT_LINK_FIELDS,
 	planSplitLinks,
 	splitAllLinksInTree,
+	writeSplitPlanToData,
 } from '../src/links-split';
 import type { MdNodeData } from '../src/node-data';
 import type {
@@ -29,18 +29,14 @@ import type {
 type MdData = Record<string, unknown>;
 type Plan = NonNullable<ReturnType<typeof planSplitLinks>>;
 
-/** 施加方案（与 view-split-links.applySplitPlan 同规则） */
+/**
+ * 施加方案（与 view-split-links.applySplitPlan 同规则）。
+ *
+ * 父节点部分直接调生产入口 `writeSplitPlanToData`：链接字段清理/回填、三个文本
+ * 字段与 `mdExtraTokens` 重建（多 token 保真）都由它收口，手写副本会随实现漂移。
+ */
 function applyPlan(node: MindMapTreeNode, plan: Plan): void {
-	const data = node.data as MdData;
-	if (plan.clearParentLink) {
-		for (const key of PARENT_LINK_FIELDS) {
-			delete data[key];
-		}
-		Object.assign(data, plan.parentLinkFields);
-	}
-	data.text = plan.parentText;
-	data.mdRaw = plan.parentRaw;
-	data.mdDerivedText = plan.parentText;
+	writeSplitPlanToData(node.data, plan);
 	for (const child of plan.children) {
 		node.children.push({
 			data: { ...child.data },
@@ -244,6 +240,32 @@ describe('混排双链拆分 — 边界与幂等', () => {
 		expect(planOf('- [[冬天]]\n')).toBeNull();
 	});
 
+	it('链接引用定义行不拆（与解析侧同口径：整行是语法基础设施，不是混排）', () => {
+		// 抽走 destination 会让父行退化成 `[ref]:笔记`、`[ref]` 引用全部失效；
+		// 判定与解析侧**同一入口**（md-outline.isLinkReferenceDefinition）
+		expect(planOf('- [ref]: [[笔记]]\n')).toBeNull();
+		expect(planOf('- [ref]: <https://example.com>\n')).toBeNull();
+		expect(planOf('- [^1]: [[笔记]] 备注\n')).toBeNull();
+		// 已编辑但仍是合法定义行形态 → 同样不拆
+		const tree = parse('- [ref]: [[笔记]]\n');
+		const node = tree.children[0]!;
+		(node.data as MdData).text = '[ref]: <https://example.com>';
+		expect(planSplitLinks(node.data as MdNodeData, [], null)).toBeNull();
+		// 对照：编辑后不再是合法定义形态（destination 后跟非 title 文本，CommonMark
+		// 里该行已非定义）→ 与解析侧一致地按普通混排行处理（同一判定函数两处共用）
+		const loose = parse('- [ref]: [[笔记]]\n');
+		(loose.children[0]!.data as MdData).text = '[ref]: [[笔记]] 补充';
+		expect(
+			planSplitLinks(loose.children[0]!.data as MdNodeData, [], null),
+			'非定义形态放行（判定与解析侧同源，不会两处漂移）',
+		).not.toBeNull();
+		// 对照：`[X]:` 后无 destination 的普通叙述不豁免（与解析侧判定一致）
+		expect(
+			planOf('- [X]: 见 [[笔记]] 说明\n'),
+			'非定义形态的混排行照常拆分',
+		).not.toBeNull();
+	});
+
 	it('plain 段落跳过（无法承载子节点）', () => {
 		const tree = parse('# H\n\n参见 [[设计稿|设计]] 说明\n');
 		const paragraph = tree.children[0]!.children[0]!;
@@ -338,6 +360,51 @@ describe('混排双链拆分 — 边界与幂等', () => {
 		expect(serializeMdBody(parse(md), null)).toBe(
 			'- 关于 [[冬天]] 和 [[秋天]] 的相关问题',
 		);
+	});
+});
+
+/**
+ * 多 token 保真（2026-09-13）：父行含多枚链接时，非首个 token 记入 `mdExtraTokens`
+ * （编辑后合成按序尾插）。拆分重写父行时必须**按新行解析结果重建**该字段——
+ * 被抽走的 token 不残留（否则下次合成会重复追加），未抽出的多枚 token 不丢失。
+ */
+describe('混排双链拆分 — 多 token 保真（mdExtraTokens 重建）', () => {
+	it('两个双链全被抽走：额外 token 不残留（父行不再凭空多出 [[秋天]]）', () => {
+		const { tree, node } = splitOnce('- 关于 [[冬天]] 和 [[秋天]] 的相关问题\n');
+		expect(
+			(node.data as MdData).mdExtraTokens,
+			'新行无额外 token → 字段被删除',
+		).toBeUndefined();
+		expect(serializeMdBody(tree, null)).toBe(
+			['- 关于冬天和秋天的相关问题', '  - [[冬天]]', '  - [[秋天]]'].join('\n'),
+		);
+	});
+
+	it('部分抽取：未抽出的多枚 token 各得其位（首枚回填字段、其余进额外 token）', () => {
+		const { node, plan, after } = splitOnce(
+			'- 说明 [[A]] 与 [[B.png]] 和 [[C.png]]\n',
+		);
+		expect(plan?.children.map((child) => child.text)).toEqual(['A']);
+		expect(
+			plan?.parentExtraTokens,
+			'新行解析结果：C.png 是额外 token（B.png 回填附件字段）',
+		).toEqual([{ raw: '[[C.png]]', kind: 'link' }]);
+		expect((node.data as MdData).mdExtraTokens).toEqual([
+			{ raw: '[[C.png]]', kind: 'link' },
+		]);
+		expect(after).toBe('- 说明A与 [[B.png]] 和 [[C.png]]\n  - [[A]]');
+	});
+
+	it('被抽走的链接不重复追加：拆分结果二次往返为不动点', () => {
+		const { tree, after } = splitOnce(
+			'- 见 [[A]] 与 [[B]] 和 https://x.com 说明\n',
+		);
+		expect(serializeMdBody(tree, null)).toBe(after);
+		const re = parse(`${after}\n`);
+		expect(
+			serializeMdBody(re, null),
+			'重解析后不因残留额外 token 多出链接',
+		).toBe(after);
 	});
 });
 

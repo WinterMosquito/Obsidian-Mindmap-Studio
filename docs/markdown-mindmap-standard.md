@@ -13,7 +13,7 @@
 - 插件是 Markdown 的**渲染层**：`.mindmap.md` 是 100% 标准 Markdown（frontmatter + 标题 + 列表），无任何专有格式/标记。
 - **触发**：文件名以 `.mindmap.md` 结尾（大小写不敏感）→ 通过命令面板「以思维导图打开」或文件右键同名项，把当前标签切换到导图视图（编辑模式与阅读模式入口均可用）；「切换回 Markdown」随时返回，并恢复进入前的编辑/阅读模式。标记后缀的判定/剥离/拼接唯一实现在 `src/constants.ts` 的 `hasMindMapMarker` / `stripMindMapStem` / `withMindMapMarker`。
 - **打开方式记忆**：最后一次主动选择（「以思维导图打开」/「以 Markdown 打开（默认）」）记入插件状态；偏好为导图的文件在下一次以 markdown 视图打开时自动切入导图视图（双击/链接/恢复均生效）。恢复逻辑在 `src/open-as-restore.ts`（多档延时 + 代际防串扰；定时器经 `host: Component` 注册随组件注销清理）。
-- 其余 `.md` 文件不受影响。**专有格式（`.mindmap` JSON）支持已删除**，不再存在独立通道。
+- 其余 `.md` 文件不受影响。
 
 ---
 
@@ -35,7 +35,7 @@
 | 标题下的无序/有序列表（缩进嵌套） | 该标题的子节点树（节点 `mdType: 'list'`、`mdMarker` = 原始标记）；无缩进列表项 = 标题的下一级（层级延续） |
 | 6 级标题下的列表缩进（Tab/空格） | **第 7 级及以上**（列表缩进降级法：`###### A` 下缩进 1 层的 `- x` = 第 7 级，2 层 = 第 8 级…） |
 | 无标题的纯列表文档 | 列表项从第 1 级子节点起 |
-| YAML frontmatter | 不参与导图；原样保留在文件头（编辑只重写正文）。`splitFrontmatter` 已 export 为测试白盒钩子；正文开头再现 `---` 时只取第一个并 `console.warn` |
+| YAML frontmatter | 不参与导图；原样保留在文件头（编辑只重写正文）。**文件头取「写盘时磁盘上的内容」**——视图打开期间在属性面板/其它窗格/其它设备（同步）改的属性不会被加载时的旧快照覆盖（2026-09-12 修复，此前表现为「偶有笔记属性丢失」）；磁盘读不到时才回落到加载快照。**围栏扫描向 Obsidian 属性解析对齐**（2026-09-12 修复，均逐字保留换行形态）：① 空属性块 `---\n---` 同样识别（此前被并进正文、保存后整块消失）；② 结束围栏取第一个 `---` 行但**跳过 YAML 块标量（`\|` / `>`）内部的 `---`**（实测 Obsidian 显示为含该行的多行值，硬切会截断属性并把残余写进正文）；③ **开头 BOM 计入文件头**并原样带回（此前属性块不被识别、首个标题降级为段落、首个列表项多出假缩进）。**反向边界（既定设计，不检测不提示）**：外部对**正文**的改动会被导图的正文覆盖——导图视图拥有正文，只有 frontmatter 是"磁盘优先"。`splitFrontmatter` 已 export 为测试白盒钩子；正文开头再现 `---` 时只取第一个并 `console.warn` |
 | 段落 / 引用 `>` / 表格 | 合并为「多行文本节点」（`mdType: 'plain'`，多行以 `\n` 连接）：内容保留、段落间空行归一（见 §3.4 降级）。**首行图片进 `image` 字段**（内联图片在地图上渲染、可换图/移除；缩进代码块的首行除外），其余行的行内语法仍随 `mdRaw` 逐字保真 |
 | 代码围栏（三个反引号 / 三个波浪号起止） | 围栏整体 **opaque** 并入 plain 文本节点：起止标记与内容（内部空行、缩进、类标题/列表行）逐行原样保留；围栏相邻的空行分隔保留，往返可再次识别 |
 | 空行 | 忽略（结构分隔信号） |
@@ -65,7 +65,7 @@
 | **`<url>` 自动链接**（含 `://` scheme） | `hyperlink` = url；**节点文本为空——只显示超链接图标**；悬停 title = 完整地址；回写为 `<url>` |
 | **裸 URL**（行内直接书写 `https://…` / `ftp://` / `obsidian://`） | 与 `<url>` 同语义：目标尾部句读标点不属 URL（`BARE_URL_TRAILING_RE`）；**URL 本体不渲染进节点文本**；前后文本保留（结果连续空格折叠为单空格）；未编辑逐字回写原文，编辑后合成为 `<url>` |
 | 行内多个链接 / 图片 | 首个链接 → 节点链接、首个图片 → 节点图；**其余剥壳为显示文本**，原文由 `mdRaw` 保真（引擎单链接槽位所致，可经下方「拆分」恢复） |
-| **混排双链拆分**（`关于 [[冬天]] 和 [[秋天]] 的相关问题`） | 命令「拆分节点内双链为子节点」（`mindmap-split-links`）或**编辑该节点后自动**（设置项 `autoSplitMixedLinks`，默认开；仅作用于被编辑过的节点）把行内**非图片**的 `[[目标]]` / `![[目标]]` **抽为子节点**（每条链接一个，不限条数，挂在原节点下）：父节点保留描述文字（抽出链接替换为可见名、删除紧邻空白：`关于 [[冬天]] 和 [[秋天]] 的相关问题` → `关于冬天和秋天的相关问题`；该空白紧邻**未抽出的 token**（图片 / 外链 / 未被抽的链接）时保留一个空格，避免抽离后粘连：`![[图.png|164]] [[节点A]]和[[节点B]]` → `![[图.png|164]] 节点A和节点B`；未抽出的 token 保持原文语法，如 `[[秋天.JPEG]]` 仍是链接），子节点保留完整双链并显示可见名。图片（按扩展名，扩展名判定先去掉 `?`/`#` 后缀）、外链、纯描述文字不动。另有批量命令「拆分文档内全部混排双链」（`mindmap-split-links-all`）：扫描整篇、含未编辑的存量节点（显式动作，不受自动设置约束）。实现 `src/links-split.ts`；**plain 段落跳过**（无法承载子节点）、多行节点跳过、同目标去重、幂等。拆分分析与序列化**同一入口且必须带 `app`**：缺它则图片以运行期资源地址（`app://`）形态参与判定——`rawOk` 的「未编辑」检测随之失准，该地址还会被当成「非图片附件」抽成子节点、连同 URL 编码片段写进笔记（2026-09-11 修复）；兜底为**行内出现 `app://` 即整体放弃拆分**（宁可不动，也不把运行期地址写进用户文件） |
+| **混排双链拆分**（`关于 [[冬天]] 和 [[秋天]] 的相关问题`） | 命令「拆分节点内双链为子节点」（`mindmap-split-links`）或**编辑该节点后自动**（设置项 `autoSplitMixedLinks`，默认开；仅作用于被编辑过的节点）把行内**非图片**的 `[[目标]]` / `![[目标]]` **抽为子节点**（每条链接一个，不限条数，挂在原节点下）：父节点保留描述文字（抽出链接替换为可见名、删除紧邻空白：`关于 [[冬天]] 和 [[秋天]] 的相关问题` → `关于冬天和秋天的相关问题`；该空白紧邻**未抽出的 token**（图片 / 外链 / 未被抽的链接）时保留一个空格，避免抽离后粘连：`![[图.png|164]] [[节点A]]和[[节点B]]` → `![[图.png|164]] 节点A和节点B`；未抽出的 token 保持原文语法，如 `[[秋天.JPEG]]` 仍是链接），子节点保留完整双链并显示可见名。图片（按扩展名，扩展名判定先去掉 `?`/`#` 后缀）、外链、纯描述文字不动。另有批量命令「拆分文档内全部混排双链」（`mindmap-split-links-all`）：扫描整篇、含未编辑的存量节点（显式动作，不受自动设置约束）。实现 `src/links-split.ts`；**plain 段落跳过**（无法承载子节点）、多行节点跳过、**链接引用定义行跳过**（`[ref]: …` / `[^1]: …` 是语法基础设施，抽走 destination 会让定义失效；与 §3.5 同口径）、同目标去重、幂等。拆分分析与序列化**同一入口且必须带 `app`**：缺它则图片以运行期资源地址（`app://`）形态参与判定——`rawOk` 的「未编辑」检测随之失准，该地址还会被当成「非图片附件」抽成子节点、连同 URL 编码片段写进笔记（2026-09-11 修复）；兜底为**行内出现 `app://` 即整体放弃拆分**（宁可不动，也不把运行期地址写进用户文件） |
 | `**粗体**` `*斜体*` `` `代码` `` `~~删除~~` 等轻标记 | **不剥离、原样保留**在文本（无损；不注册富文本渲染，见 §3.5 边界） |
 
 > **链接图标三类区分**（实现见 `src/mindmap.ts`）：外部 URL = 引擎原生链接图标（`hyperlink` 通道）；双链指向文档 = **自绘文档页图标**（`opt.createNodePrefixContent` 前缀内容 `buildWikiDocIcon`，尺寸 `WIKI_DOC_ICON_SIZE`，参与节点测宽；悬停 title = 目标名，点击 = Obsidian 打开）——`[[笔记]]` 文档双链与 `![[笔记]]` 文档嵌入**共用此图标**（二者仅回写时差一个 `!`）；双链指向附件 = 回形针图标（引擎 `attachmentUrl` 原生，`node_attachmentClick` 由视图接管）。URL 本体一律不进入节点文本（icon-only），避免长 URL 撑宽节点与双重表达。
@@ -121,14 +121,14 @@
 | **纯双链节点**（整行只有一个双链：`mdLinkText`（文档）/ `attachmentName`（附件）== `mdDerivedText`，且文本已编辑、单行） | **编辑节点 = 改别名**：新文本写成 `[[目标\|新别名]]`（目标与 `#区块` 原样保留，改写走 `domain/wikilink.ts withWikilinkAlias`），不产出「新文本 + 行尾链接」；新文本 == 无别名时的默认显示名（或清空）→ 不写 `\|别名` 段（避免 `[[目标\|目标]]`）。判定 `md-serialize.ts editedWikilinkAlias`，回写与可见名同经 `effectiveDocWikiLink`。**文档嵌入 `![[笔记]]` 同样适用**（管道位是别名），回写时按 `mdEmbed` 补 `!` → `![[笔记\|新别名]]`。**不适用**：混合文本节点（`说明 [[链接]]`，会吞掉说明文字）、多行文本、**附件**嵌入 `![[报告.pdf]]`（管道位是尺寸参数）、URL / md 链接（无别名概念）、新文本含 `[`/`]`（手输 `[[新目标]]` 回落旧合成＝更接近「换链」） |
 | **纯 URL / icon-only 节点**（文本为空 + URL 链接） | 只写 `<url>`（不写 `[label](<url>)`）；若节点文本残留旧 URL 显示名则清空（保持仅图标） |
 | **图片 token** | 仓库路径 → `![[path]]`；外部 http/data/blob/**file** → `![alt](url)`（**合成路径同样如此**：外链判定先于「`image === mdImageTarget`」，地址取当前 `image`——`mdImageTarget` 只是解析期快照，换图后会过期）；尺寸按 `目标\|宽度` 特征匹配判断是否需回写（终界 `]`/`x` 防前缀误匹配），未编辑则原文保真 |
-| **frontmatter** | 正文重写前原样回贴文件头；仅正文（body）被重写 |
+| **frontmatter** | 正文重写前回贴**磁盘当前**的文件头（加载快照仅在读取失败时兜底），保证外部改动的属性不被覆盖；仅正文（body）被重写 |
 | **布局 / 视口 / 打开方式** | **不写入文件**：存 `data.json`（`viewState`，按文件路径 key） |
 
 ### 3.3 持久化边界
 
 - 正文保持纯 Markdown；布局、视口、打开偏好一律不进正文（`src/view-state.ts` + `src/persistence.ts` 的 `PluginDataWriter`：串行队列 + 写前重读合并）。
 - 中心节点 ⇄ 文件名：编辑中心节点文本会重命名 `.mindmap.md`——**必须走 `FileManager.renameFile`**（`src/features/view-title-renamer.ts`；`Vault.rename` 只改文件系统、不更新库内反链），Obsidian 原生更新链接/反链；外部改名后视图重载中心随新名。
-- 保存管线在 `src/services/document-service.ts`（防抖 / 串行排空 / 卸载快照兜底 / `onSaveError` 上报）。**写盘归属不变式**：一次写盘的目标文件与其内容必须同源——排空期间换文件（core **不 await** `onUnloadFile`）时，树快照与 frontmatter 一律按**该次写盘的那个文件**取（`getSnapshotFor(file)` / `getFrontmatterFor(file)`），不同文件不并入同一批次，避免「新文件的正文写进旧文件」或丢 frontmatter。
+- 保存管线在 `src/services/document-service.ts`（防抖 / 串行排空 / 卸载快照兜底 / `onSaveError` 上报）。**文件头新鲜度**：写盘前先读目标文件当前内容，frontmatter 取**磁盘现值**（读失败才用按文件存的加载快照）——插件不持有也不回写"自己记得的文件头"，外部（属性面板/其它窗格/同步）改动的属性因此不会被覆盖；**写盘归属不变式**：一次写盘的目标文件与其内容必须同源——排空期间换文件（core **不 await** `onUnloadFile`）时，树快照与 frontmatter 一律按**该次写盘的那个文件**取（`getSnapshotFor(file)` / `getFrontmatterFor(file)`），不同文件不并入同一批次，避免「新文件的正文写进旧文件」或丢 frontmatter。
 - 文件重命名/**移动**后的引用改写（`src/links-tree.ts`）：`[[链接]]` 的**形态跟用户走**（原链接带路径前缀 → 继续写路径），但路径取**新位置**——跨文件夹移动只换 basename 会留下 `[[folder/新名]]` 悬空链接；裸名链接保持裸名；`.md` 可省略扩展名，canvas/base 必须带。
 
 ### 3.4 已知降级（不静默丢失，但格式/粒度归一）
@@ -137,8 +137,9 @@
 |---|---|
 | 段落 / 引用 / 表格 | 并入多行文本节点，内容保留；**段落间空行**在往返中归一 |
 | 图片独占节点 | 纯图行（如 `- ![[x.png]]`）解析为**无文本节点**（不回退文件名占位）：图片节点删除文字（右键「移除文字」/双击清空）后即被图片独占，往返保持。代价：纯图节点不参与文本搜索 |
-| 编辑**含链接的句子**（非纯双链节点） | 非首个链接 token 归一为行尾单链；纯双链节点改走「编辑 = 改别名」（§3.2），不再产生「文本 + 链接」。**恢复手段**：对混排节点执行拆分命令（§2.2），把非图片链接抽为子节点——未编辑的存量节点不会自动改写（自动触发只作用于被编辑过的节点） |
-| **段落移除图片后合成** | 该段落被重构（首行 = 文本 + 图片 token，其余行按 `text`）：段落不承载链接字段，故**段落里的链接语法会降级为显示文本**（与「编辑含链接的句子」同口径）。这是让「移除图片」不复活所必需的代价 |
+| 编辑**含链接的句子**（非纯双链节点） | 非首个链接 token 归一为行尾单链；**多 token 保真**（2026-09-13 实施）：多链接 / 多 URL / 多图的非首个 token 编辑后**内容与语法不丢**（原文按序尾插行尾，位置不保真，见 §5.2）；纯双链节点改走「编辑 = 改别名」（§3.2），不再产生「文本 + 链接」。**恢复手段**：对混排节点执行拆分命令（§2.2），把非图片链接抽为子节点——未编辑的存量节点不会自动改写（自动触发只作用于被编辑过的节点） |
+| **段落移除图片后合成** | 该段落被重构（首行 = 文本 + 图片 token，其余行按 `text`）：段落不承载链接字段，故**段落里的链接与图片嵌入语法会降级为显示文本**（与「编辑含链接的句子」同口径）。这是让「移除图片」不复活所必需的代价 |
+| **list / heading 移除图片后合成** | 右键「移除图片」清空 `image` 与全部 md 图片字段：剥离判定**不依赖字段残留**（mdRaw 首行仍含图片语法即合成——`![[…]]` 按扩展名 / `![…](…)`）——此前在此类节点上保存后图片复活（2026-09-13 修复）。图文混合行保留文本；多图行移除首图时其余图以 token 保留 |
 | 纯双链节点的图标 tooltip | 保存后（未重载）文档页图标 tooltip 仍显示旧别名（`mdLinkText` 未随编辑刷新），重载/下次解析后同步；链接目标与点击行为不受影响 |
 | 编辑过文本的节点中的轻标记 | 标记文字随文本保存（用户可见），不再自动补 `**` 等 |
 | 导图内对节点做**备注 / 样式 / 附件**（md 模式） | 已阻止并提示（无 md 回写语法） |
@@ -150,7 +151,7 @@
 
 - 引擎节点文本为 SVG 文本（非 HTML）：无法实现「文中内联蓝色链接」字面效果；整链节点以「剥壳文本 + 链接图标」呈现（URL 链接为「仅图标」）。方案 B（`customCreateNodeContent` 自绘节点）可做到内联，见 §5 可选项。
 - `frontmatter` 触发（`type: mindmap`）为后续设置项。
-- 未复核：`md-serialize.ts` 中参考式链接 `[ref]` / `[ref]: url` 的往返行为未逐例实测（见 §5.2 登记项）。
+- 参考式链接 `[ref]` / `[ref]: url`：定义行整体按纯文本保真（2026-09-13 实施，见 §5.2）——URL 不再被摘为 icon-only、编辑后不挪位；`[text][ref]` 引用行本就整体进文本。
 
 ---
 
@@ -191,7 +192,7 @@ tags: [规划]
 > 以下为潜在增强，仅登记，**本版本不实现**；实施前需单独评审。
 
 1. **方案 B 渲染**：以 `customCreateNodeContent` 自绘节点，实现节点文本内的**内联链接 / 富文本**（取代当前「URL 仅图标」的折中）。
-2. **回写增强（分轮）**：已实现「链接目标转义/归一（含空格/括号目标用 `<...>` 包裹）」与「URL 显示名同步（仅图标，清空残留 URL 文本）」；**剩余**：参考式链接 `[ref]` / `[ref]: url` 的保留与归一；多链接句子按 `mdSegments` 分段保留（并入方案 B）。
+2. **回写增强（分轮）**：已实现「链接目标转义/归一（含空格/括号目标用 `<...>` 包裹）」「URL 显示名同步（仅图标，清空残留 URL 文本）」「**链接引用定义行保真**（参考式 `[ref]: dest` / 脚注 `[^id]:` 整行按纯文本处理、URL 不被摘为 icon-only——2026-09-13 实施）」与「**多 token 编辑后保真**（`mdExtraTokens`：多链接 / 多 URL / 多图的非首个 token 原文按序尾插——内容与语法不丢、位置不保真；2026-09-13 实施）」。**剩余**：多 token **原位保真**（`mdSegments` 分段保留，并入方案 B）与「同一节点内多链接内联可点」（第 7 项）。
 3. **结构化映射扩展**：表格 → 子节点表；任务 `- [ ]` / 标签 / 备注 → 节点属性；引擎 tag / note / attachment 与 md 的双向映射。
 4. **触发项**：`type: mindmap` frontmatter；带 `mindmap` 语言标记的代码块的独立布局/主题设置。
 5. **可持续性**：图片尺寸缓存与 `lookupIndexedFile` 索引按 vault 代际失效；大图/深树的加载与搜索防抖、取消。
@@ -206,8 +207,8 @@ tags: [规划]
 
 | 项 | 状态 |
 |---|---|
-| 核对依据 | 当前工作区源码（`src/md-outline.ts` 708 行、`src/md-serialize.ts` 656 行、`src/links-tree.ts` 287 行、`src/features/view-wikilink.ts` 208 行、`src/features/view.ts` 529 行、`src/services/document-service.ts` 248 行、`src/mindmap.ts` 820 行）+ `manifest.json` 版本 **0.1.0** |
-| 相对上一版本文档的**事实修正** | ① 文件头回归测试指向 `tests/md-roundtrip.test.ts` / `tests/md-inline.test.ts`（旧版指向已不存在的 `scratch/md-roundtrip/` 与 75 断言）；② §2 默认视口改为「100% + 内容包围盒居中」（旧版「回退设置默认布局并 fit 全图」错误，fit 仅异常兜底）；③ §2.3 删除 richText 节点形态（全仓库零注册）；④ 实现路径 `src/view-wikilink.ts` → `src/features/view-wikilink.ts`；⑤ §3.1/§3.2/§3.3 登记 2026-09-10 的 5 处缺陷修复（写盘归属、清除链接对嵌入生效、外链图片保持 md 形态、plain 行缩进/行尾空格保真、跨文件夹移动改写前缀）；⑥ §3.3 补写盘归属不变式与移动后引用改写规则；⑦ §2.1/§3.4 修订 `---` 的两种身份——**setext H2 下划线改为保留**（原「整行丢弃」会静默把标题降级为段落），空行之后的真分隔线仍按既定行为丢弃 |
-| 函数名核对 | `buildInlineData` / `tokenDisplay` / `tokenizeInline` / `parseMdOutline` / `splitFrontmatter` / `createNodePrefixContent` / `buildWikiDocIcon` / `measureContentBox` / `centerContentAtFullScale` / `fitMindMap` / `restoreOrFitViewport` **均存在**；旧版文档提到的 `stripUrlTokensForDisplay` / `stripMarkdownInline` **在当前源码中不存在**（URL icon-only 的剥离实际在 `buildInlineData` 内完成），已从本文档移除。2026-09-10 新增核对：`rawHasForeignEmbed`（md-serialize）、`renamedWikilink(parts, file, oldPath)`（links-tree）、`SavePipeline.getSnapshotFor/getFrontmatterFor`（document-service） |
+| 核对依据 | 2026-09-13 核对：当前工作区源码（`src/md-outline.ts` 808 行、`src/md-serialize.ts` 708 行、`src/links-tree.ts` 287 行、`src/features/view-wikilink.ts` 247 行、`src/features/view.ts` 626 行、`src/services/document-service.ts` 291 行、`src/mindmap.ts` 846 行）+ `manifest.json` 版本 **0.1.2** |
+| 相对上一版本文档的**事实修正** | ① 文件头回归测试指向 `tests/md-roundtrip.test.ts` / `tests/md-inline.test.ts`（旧版指向已不存在的 `scratch/md-roundtrip/` 与 75 断言）；② §2 默认视口改为「100% + 内容包围盒居中」（旧版「回退设置默认布局并 fit 全图」错误，fit 仅异常兜底）；③ §2.3 删除 richText 节点形态（全仓库零注册）；④ 实现路径 `src/view-wikilink.ts` → `src/features/view-wikilink.ts`；⑤ §3.1/§3.2/§3.3 登记 2026-09-10 的 5 处缺陷修复（写盘归属、清除链接对嵌入生效、外链图片保持 md 形态、plain 行缩进/行尾空格保真、跨文件夹移动改写前缀）；⑥ §3.3 补写盘归属不变式与移动后引用改写规则；⑦ §2.1/§3.4 修订 `---` 的两种身份——**setext H2 下划线改为保留**（原「整行丢弃」会静默把标题降级为段落），空行之后的真分隔线仍按既定行为丢弃；⑧ §2.1/§3.2/§3.3 登记 2026-09-12 的 frontmatter 修复（写盘取磁盘现值；空属性块 / 块标量内 `---` / BOM 三口径）与 2026-09-11 的图片自动尺寸不回写（`mdImageAutoSize`） |
+| 函数名核对 | `buildInlineData` / `tokenDisplay` / `tokenizeInline` / `parseMdOutline` / `splitFrontmatter` / `createNodePrefixContent` / `buildWikiDocIcon` / `measureContentBox` / `centerContentAtFullScale` / `fitMindMap` / `restoreOrFitViewport` **均存在**；旧版文档提到的 `stripUrlTokensForDisplay` / `stripMarkdownInline` **在当前源码中不存在**（URL icon-only 的剥离实际在 `buildInlineData` 内完成），已从本文档移除。2026-09-10 新增核对：`rawHasForeignEmbed`（md-serialize）、`renamedWikilink(parts, file, oldPath)`（links-tree）、`SavePipeline.getSnapshotFor/getFrontmatterFor`（document-service）；2026-09-13 复核：`UTF8_BOM`（md-outline 导出）、`mdImageAutoSize`（图片自动尺寸字段契约）、`applyDocWikiLink`（view-node-actions 链接写入唯一入口） |
 | 未复核项 | 参考式链接往返（§3.5 已标注）；hover 预览在 popout 窗口下的实测（`AGENTS.md` 已登记 `Node.instanceOf` 类问题） |
 | 回归文件口径 | `tests/md-roundtrip.test.ts` / `tests/md-inline.test.ts` 为 2026-09 批次重写产物；本文档**不引用任何断言/用例计数**（计数随重写变动，引用即会过时） |

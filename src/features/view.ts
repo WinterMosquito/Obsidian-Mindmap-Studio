@@ -48,7 +48,8 @@ import { EventBinder } from '../event-binder';
 import { TitleRenamer } from './view-title-renamer';
 import { openHyperlink as linkNavigatorOpen } from './view-link-navigator';
 import {
-	autoSplitActiveNode,
+	captureAutoSplitCandidate,
+	runAutoSplitCheck,
 	splitActiveNodeLinks,
 	splitAllLinksInDocument,
 } from './view-split-links';
@@ -209,6 +210,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				this.titleRenamer.schedule();
 			},
 			onDataChanged: () => this.scheduleAutoSplitCheck(),
+			onNodeTextEdited: (node) => captureAutoSplitCandidate(this, node),
 			onNodeImageClick: (node) => openNodeImageFullscreen(this, node),
 			onNodeAttachmentClick: (node) => {
 				const data = node.getData() as { attachmentUrl?: unknown };
@@ -505,13 +507,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/**
 	 * 引擎数据变更后的自动拆分检查（延后一拍）：文本编辑提交与数据写入可能
 	 * 在同一轮事件里，立刻检查会读到编辑框尚未收起的中间态。
-	 * 仅对「被编辑过」的节点生效，判定见 view-split-links.autoSplitActiveNode。
+	 * 检查对象是**编辑期捕获的候选集**（view-split-links.captureAutoSplitCandidate
+	 * 经引擎 node_text_edit_change 累积）——不再是检查时刻的激活节点：编辑提交后
+	 * 快速切换激活也不漏拆（2026-09-13 严格化）。
 	 */
 	private scheduleAutoSplitCheck(): void {
 		this.cancelAutoSplitCheck();
 		this.autoSplitTimer = window.setTimeout(() => {
 			this.autoSplitTimer = null;
-			autoSplitActiveNode(this);
+			runAutoSplitCheck(this);
 		}, AUTO_SPLIT_CHECK_DELAY_MS);
 	}
 

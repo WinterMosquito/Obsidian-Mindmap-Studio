@@ -222,6 +222,7 @@ describe('vendor 契约：插件依赖的引擎事件名', () => {
 		'node_img_mouseleave', // image-resize：调宽手柄显隐
 		'node_mouseenter', // view-wikilink：悬停预览
 		'node_attachmentClick', // engine-controller：附件双链打开（注意大写 C）
+		'node_text_edit_change', // engine-controller：自动拆分候选捕获（编辑期累积）
 	];
 
 	it('每个事件名都在 bundle 中以 emit() 形态派发', () => {

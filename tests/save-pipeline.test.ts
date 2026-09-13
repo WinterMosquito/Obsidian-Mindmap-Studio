@@ -18,6 +18,7 @@ import {
 	type SavePipelineDeps,
 } from '../src/services/document-service';
 import { AUTO_SAVE_DEBOUNCE_MS } from '../src/constants';
+import { UTF8_BOM } from '../src/md-outline';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 const FILE_PATH = 'notes/a.mindmap.md';
@@ -272,6 +273,40 @@ describe('SavePipeline.save（写盘内容与守卫）', () => {
 		const h = makeHarness();
 		await h.pipeline.save();
 		expect(h.written[0]).toBe('- A\n');
+	});
+
+	it('文件头只有 BOM 时不补换行（不把 BOM 单独变成一行）', async () => {
+		const h = makeHarness({ getFrontmatterFor: () => UTF8_BOM });
+		await h.pipeline.save();
+		expect(h.written).toEqual([`${UTF8_BOM}- A\n`]);
+	});
+
+	it('写盘时以磁盘当前 frontmatter 为准：视图打开期间的属性改动不被旧快照覆盖', async () => {
+		const h = makeHarness(
+			// 插件持有的旧快照（加载时抓取）
+			{ getFrontmatterFor: () => '---\nstatus: 旧\n---' },
+			{
+				// 视图打开期间用户在属性面板 / 其它窗格（含同步）改了属性
+				cachedRead: async () => '---\nstatus: 新\n---\n- 旧正文\n',
+			},
+		);
+
+		await h.pipeline.save();
+
+		expect(h.written, '文件头取磁盘当前值，正文仍取导图').toEqual([
+			'---\nstatus: 新\n---\n- A\n',
+		]);
+	});
+
+	it('磁盘上的属性被删光时同样以磁盘为准（不把旧文件头写回去）', async () => {
+		const h = makeHarness(
+			{ getFrontmatterFor: () => '---\nstatus: 旧\n---' },
+			{ cachedRead: async () => '- 旧正文\n' },
+		);
+
+		await h.pipeline.save();
+
+		expect(h.written).toEqual(['- A\n']);
 	});
 
 	it('空树（根无子节点）写出的正文仅剩 frontmatter，仍保证尾随换行', async () => {

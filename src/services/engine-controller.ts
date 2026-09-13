@@ -75,6 +75,12 @@ export interface EngineControllerDeps {
 	 * 与 onRootDataChanged 同一事件源，但职责不同（后者是保存/状态，本项是内容变换）。
 	 */
 	onDataChanged(): void;
+	/**
+	 * 节点文本被编辑（引擎 node_text_edit_change：编辑框 input/paste 时发出，
+	 * payload 含节点）。视图侧累积「自动拆分候选」——检查对象为编辑期捕获的
+	 * 节点集，而非检查时刻的激活节点（快速切换激活不漏拆）。
+	 */
+	onNodeTextEdited(node: MindMapNode): void;
 	/** 节点图片点击（拖拽抑制在本控制器内处理） */
 	onNodeImageClick(node: MindMapNode): void;
 	/** 附件图标点击（双链指向附件：引擎 node_attachmentClick 事件，打开目标） */
@@ -208,6 +214,18 @@ export class EngineController {
 				this.deps.onRootDataChanged();
 				this.deps.onDataChanged();
 			});
+			// 编辑框输入/粘贴：payload 含节点（data_change 不带节点，无法识别
+			// 「哪个节点被编辑」）——自动拆分的候选捕获源（防腐：此处取 payload 节点）
+			this.engineEvents.onEngine(
+				this.mindMap,
+				'node_text_edit_change',
+				(...args: unknown[]) => {
+					const node = (args[0] as { node?: unknown } | undefined)?.node;
+					if (node) {
+						this.deps.onNodeTextEdited(node as MindMapNode);
+					}
+				},
+			);
 			// 点击节点图片 → 全屏查看（灯箱）
 			this.engineEvents.onEngine(
 				this.mindMap,

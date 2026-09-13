@@ -183,6 +183,26 @@ export function isRenderableImageExtension(extension: string): boolean {
 }
 
 /**
+ * 目标串是否指向**可渲染图片**（末段扩展名判定；先剥 `?`/`#` 后缀再取扩展名）。
+ *
+ * 目标可携带查询串/锚点——资源地址 `图片.png?1789`（官方 getResourcePath 形态）
+ * 不剥会把扩展名读成 `png?1789` 而误判。调用方：回写侧「链接已清除」检测
+ * （图片类嵌入不是链接，`md-serialize.rawHasForeignEmbed`）与链接拆分
+ * （`links-split.isExtractableToken`）。与 `md-outline.isImageEmbedTarget` 的差异：
+ * 后者处理 wikilink **原文内层**（`#` 是块引用语义，不剥离），本函数面向可能
+ * 含缓存串的地址形态，故剥离 `?`/`#`。
+ */
+export function isRenderableImageTarget(target: string): boolean {
+	const path = target.split(/[?#]/)[0] ?? '';
+	const name = path.split('/').pop() ?? '';
+	const dot = name.lastIndexOf('.');
+	if (dot <= 0) {
+		return false;
+	}
+	return isRenderableImageExtension(name.slice(dot + 1));
+}
+
+/**
  * 设置项取值域：设置面板滑块的 min/max 与 sanitizeSettings 的钳制共用同一来源，
  * 避免「面板能选 1-4、data.json 手改成 99 却直达引擎」这类漂移。
  */

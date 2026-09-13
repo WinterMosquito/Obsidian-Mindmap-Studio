@@ -8,6 +8,10 @@
  * - **待抽链接**：`[[X]]` / `![[X]]` 且 X 末段扩展名按 `isRenderableImageExtension`
  *   判为**非图片**（文档类 .md/.canvas/.base 与其余非图片附件一律抽离）；
  *   图片、外链（`[t](url)` / `<url>` / 裸 URL）不动；
+ * - **定义行不拆**：链接引用定义行（`[label]: destination` / `[^id]: 内容`）整体
+ *   放弃拆分——判定与解析侧**同一入口** `md-outline.isLinkReferenceDefinition`
+ *   （定义行整体按纯文本，见该函数条目）：destination 是语法基础设施，抽成子
+ *   节点会让父行退化成 `[ref]:笔记`、`[ref]` 引用全部失效；
  * - **父节点**：抽出链接替换为**可见名**（别名优先；附件保留扩展名），并**删除
  *   紧邻链接的空白**（`关于 [[冬天]] 和 [[秋天]] 的相关问题` → `关于冬天和秋天的相关问题`）；
  *   该空白紧邻**未抽出的 token**（图片 / 外链 / 未被抽的链接）时保留一个空格，
@@ -27,8 +31,13 @@
  * 也不把运行期地址写进用户文件。
  */
 import { App } from 'obsidian';
-import { isRenderableImageExtension } from './constants';
-import { buildInlineData, tokenizeInline, type InlineToken } from './md-outline';
+import { isRenderableImageTarget } from './constants';
+import {
+	buildInlineData,
+	isLinkReferenceDefinition,
+	tokenizeInline,
+	type InlineToken,
+} from './md-outline';
 import { composeNodeFirstLine } from './md-serialize';
 import { walkTree } from './domain/tree';
 import { isAppResourceUrl } from './domain/url';
@@ -63,29 +72,12 @@ export const PARENT_LINK_FIELDS = [
 	'mdEmbedPipe',
 ] as const;
 
-/**
- * 目标是否按扩展名判为图片（与解析侧 isImageEmbedTarget 同口径：无扩展名/未知不算）。
- *
- * 查询串/锚点不参与扩展名判定：资源地址带 `?时间戳` 缓存串（官方 `getResourcePath`
- * 输出形态），不去掉会把 `图片.png?1789` 的扩展名读成 `png?1789` → 图片被误判为
- * 「非图片附件」而遭抽离、回写成 `![[app://…]]`（2026-09-11 修复）。
- */
-function isImageTarget(target: string): boolean {
-	const path = target.split(/[?#]/)[0] ?? '';
-	const name = path.split('/').pop() ?? '';
-	const dot = name.lastIndexOf('.');
-	if (dot <= 0) {
-		return false;
-	}
-	return isRenderableImageExtension(name.slice(dot + 1));
-}
-
 /** 待抽离 token：`[[X]]` / `![[X]]` 且目标不是图片（外链、图片一律不动） */
 function isExtractableToken(tok: InlineToken): boolean {
 	if (tok.kind !== 'wiki' && tok.kind !== 'wikiImg') {
 		return false;
 	}
-	return !isImageTarget(tok.target);
+	return !isRenderableImageTarget(tok.target);
 }
 
 /**
@@ -98,7 +90,7 @@ function isLinkFieldToken(tok: InlineToken): boolean {
 		return true;
 	}
 	if (tok.kind === 'wikiImg') {
-		return !isImageTarget(tok.target);
+		return !isRenderableImageTarget(tok.target);
 	}
 	if (tok.kind === 'mdImg') {
 		return false;
@@ -152,6 +144,12 @@ export interface SplitLinkPlan {
 	clearParentLink: boolean;
 	/** 新行的链接字段（仅清空后回填；无剩余链接时为空对象） */
 	parentLinkFields: Record<string, unknown>;
+	/**
+	 * 新行的额外 token（多 token 保真数据；新行无额外 token 时为 undefined）。
+	 * 施加方案时按此重建 `mdExtraTokens`——被抽走的 token 不残留
+	 * （否则下次合成会重复追加），未抽出的多枚 token 不丢失。
+	 */
+	parentExtraTokens?: { raw: string; kind: 'image' | 'link' }[];
 	/** 待追加的子节点（按原文出现顺序，已按目标去重） */
 	children: SplitLinkChild[];
 }
@@ -185,6 +183,13 @@ export function writeSplitPlanToData(
 	data.text = plan.parentText;
 	data.mdRaw = plan.parentRaw;
 	data.mdDerivedText = plan.parentText;
+	// 额外 token 以**新行解析结果**为准重建：被抽走/消失的 token 不残留
+	//（否则下次合成会把它们重复追加），未抽出的多枚 token 不丢失
+	if (plan.parentExtraTokens && plan.parentExtraTokens.length > 0) {
+		data.mdExtraTokens = plan.parentExtraTokens;
+	} else {
+		delete data.mdExtraTokens;
+	}
 }
 
 /**
@@ -389,6 +394,11 @@ export function planSplitLinks(
 	if (!content) {
 		return null;
 	}
+	// 链接引用定义行不拆（与解析侧同口径）：定义行是语法基础设施、不是混排——
+	// destination 若被抽成子节点，父行会退化成 `[ref]:笔记`、`[ref]` 引用全部失效
+	if (isLinkReferenceDefinition(content)) {
+		return null;
+	}
 	const tokens = tokenizeInline(content);
 	// 兜底：行内出现资源地址（app://）说明这一行不是可直接写回的形态
 	// （调用方未带 app，或图片已不在库中）——整体放弃，绝不把机器地址写进笔记
@@ -465,6 +475,9 @@ export function planSplitLinks(
 		clearParentLink:
 			firstFieldToken !== null && extractedSet.has(firstFieldToken),
 		parentLinkFields: pickLinkFields(reparsed),
+		...(reparsed.mdExtraTokens
+			? { parentExtraTokens: reparsed.mdExtraTokens }
+			: {}),
 		children,
 	};
 }

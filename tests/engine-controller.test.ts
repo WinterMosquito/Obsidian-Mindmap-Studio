@@ -175,6 +175,7 @@ interface Harness {
 		getCanvasEl: ReturnType<typeof vi.fn>;
 		openHyperlink: ReturnType<typeof vi.fn>;
 		onRootDataChanged: ReturnType<typeof vi.fn>;
+		onNodeTextEdited: ReturnType<typeof vi.fn>;
 		onNodeImageClick: ReturnType<typeof vi.fn>;
 		onNodeAttachmentClick: ReturnType<typeof vi.fn>;
 		setupFeatures: ReturnType<typeof vi.fn>;
@@ -208,6 +209,7 @@ function buildHarness(
 		openHyperlink: vi.fn(),
 		onRootDataChanged: vi.fn(),
 		onDataChanged: vi.fn(),
+		onNodeTextEdited: vi.fn(),
 		onNodeImageClick: vi.fn(),
 		onNodeAttachmentClick: vi.fn(),
 		setupFeatures: vi.fn(),
@@ -226,6 +228,7 @@ function buildHarness(
 		openHyperlink: deps.openHyperlink,
 		onRootDataChanged: deps.onRootDataChanged,
 		onDataChanged: deps.onDataChanged,
+		onNodeTextEdited: deps.onNodeTextEdited,
 		onNodeImageClick: deps.onNodeImageClick,
 		onNodeAttachmentClick: deps.onNodeAttachmentClick,
 		setupFeatures: deps.setupFeatures,
@@ -528,9 +531,9 @@ describe('EngineController 初始化代际锁（并发 init 只有一代胜出�
 		oldObserver.fire();
 		expect(mocks.createMindMap).toHaveBeenCalledTimes(1);
 
-		// 不残留监听：引擎作用域只有胜出那一代的 4 条，销毁时逐条 off
+		// 不残留监听：引擎作用域只有胜出那一代的 5 条，销毁时逐条 off
 		const engine = h.engines[0]!;
-		expect(registeredEvents(engine)).toHaveLength(4);
+		expect(registeredEvents(engine)).toHaveLength(5);
 		h.controller.destroyInstance();
 		expect(
 			callPairs(engine.off),
@@ -556,7 +559,7 @@ describe('EngineController 初始化代际锁（并发 init 只有一代胜出�
 
 		expect(destroyedEngines()).toEqual([oldEngine]);
 		// 旧引擎的 DOM/引擎事件一并清理，不跨实例残留
-		expect(oldEngine.off).toHaveBeenCalledTimes(4);
+		expect(oldEngine.off).toHaveBeenCalledTimes(5);
 		expect(h.engines).toHaveLength(2);
 		expect(h.controller.mindMap).toBe(h.engines[1]);
 	});
@@ -591,6 +594,7 @@ describe('EngineController 装配与销毁', () => {
 		// 事件名与顺序都是契约（顺序变化会让「先渲染再装配」的假设失效）
 		expect(registeredEvents(engine)).toEqual([
 			'data_change',
+			'node_text_edit_change',
 			'node_img_click',
 			'node_dragend',
 			'node_attachmentClick',
@@ -665,7 +669,7 @@ describe('EngineController 装配与销毁', () => {
 
 		const engine = h.engines[0]!;
 		expect(mocks.destroyMindMap).toHaveBeenCalledWith(engine);
-		expect(engine.off).toHaveBeenCalledTimes(4);
+		expect(engine.off).toHaveBeenCalledTimes(5);
 		expect(h.controller.mindMap).toBeNull();
 	});
 
@@ -692,7 +696,7 @@ describe('EngineController 装配与销毁', () => {
 
 		// 只有第一次销毁真的带实例（首帧前的那次防御性清理传的是 null）
 		expect(destroyedEngines()).toEqual([engine]);
-		expect(engine.off).toHaveBeenCalledTimes(4);
+		expect(engine.off).toHaveBeenCalledTimes(5);
 	});
 
 	it('destroyInstance 断开零尺寸等待中的观察器（不留跨生命周期的观察）', () => {
@@ -742,6 +746,23 @@ describe('EngineController 引擎事件转发', () => {
 		fireEngineEvent(engine, 'data_change');
 
 		expect(h.deps.onRootDataChanged).toHaveBeenCalledTimes(2);
+	});
+
+	it('node_text_edit_change 取 payload.node 转发；缺参/畸形 payload 静默忽略', () => {
+		const h = readyHarness();
+		const engine = h.engines[0]!;
+		const node = { getData: () => ({ text: 'x' }) };
+
+		fireEngineEvent(engine, 'node_text_edit_change', { node, text: 'x' });
+		expect(h.deps.onNodeTextEdited).toHaveBeenCalledWith(node);
+
+		fireEngineEvent(engine, 'node_text_edit_change');
+		fireEngineEvent(engine, 'node_text_edit_change', {});
+		fireEngineEvent(engine, 'node_text_edit_change', { node: null });
+		expect(
+			h.deps.onNodeTextEdited,
+			'缺参 / 无 node / null node 都不转发',
+		).toHaveBeenCalledTimes(1);
 	});
 
 	it('node_attachmentClick 带节点参数转发；缺参时静默忽略', () => {

@@ -528,16 +528,29 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 		);
 	});
 
-	it('改链场景：节点文本仍是旧链接显示名 → 同步为新显示名', async () => {
+	it('纯双链节点改链 → 链接建为子节点，节点原链接与文字不动（R4 修订）', async () => {
 		const node = fakeNode({ data: { text: '旧笔记', mdWikiLinkpath: '[[旧笔记]]' } });
-		const { view } = makeView({ activeNode: node });
+		const { view, execCommand } = makeView({ activeNode: node });
 		openLinkMock.mockResolvedValue({ link: '[[新笔记]]' });
 
 		await addLinkToActiveNode(view);
 
-		expect(setNodeTextMock).toHaveBeenCalledTimes(1);
-		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '新笔记');
-		expect(dataOf(node).mdWikiLinkpath).toBe('[[新笔记]]');
+		// R4 修订（2026-09-13）：节点已有内容 → 不覆盖；一键改链入口取消
+		//（改链 = 先「清除链接」再添加，或直接编辑节点文本）
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).mdWikiLinkpath, '原链接不动').toBe('[[旧笔记]]');
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '新笔记',
+				mdWikiLinkpath: '[[新笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '新笔记',
+				isActive: false,
+			},
+		]);
 	});
 
 	it('已有用户正文：保留正文，链接建成子节点（决策 R4「新行为优先」）', async () => {
@@ -567,7 +580,7 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 		]);
 	});
 
-	it('旧链接是 URL 且文本仍是旧 URL：改链时清空残留文本（保持「仅图标」）', async () => {
+	it('URL 改链（节点有内容）→ URL 链接建为子节点，原链接与文字不动（R4 修订）', async () => {
 		const node = fakeNode({
 			data: { text: 'https://old.example.com', hyperlink: 'https://old.example.com' },
 		});
@@ -576,28 +589,50 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 
 		await addLinkToActiveNode(view);
 
-		expect(setNodeTextMock).toHaveBeenCalledTimes(1);
-		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '');
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).hyperlink, '原链接不动').toBe('https://old.example.com');
 		expect(callArgs(execCommand)).toEqual([
-			ENGINE.SET_NODE_HYPERLINK,
-			node,
-			'https://new.example.com',
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '',
+				hyperlink: 'https://new.example.com',
+				mdLinkStyle: 'md',
+				mdLinkText: 'https://new.example.com',
+				hyperlinkTitle: 'https://new.example.com',
+				isActive: false,
+			},
 		]);
 	});
 
-	it('旧链接是 URL 但文本是用户正文：改链不动文本', async () => {
+	it('URL 改链（节点有用户正文）→ 不动文本、链接建为子节点（R4 修订）', async () => {
 		const node = fakeNode({
 			data: { text: '参考链接', hyperlink: 'https://old.example.com' },
 		});
-		const { view } = makeView({ activeNode: node });
+		const { view, execCommand } = makeView({ activeNode: node });
 		openLinkMock.mockResolvedValue({ link: 'https://new.example.com' });
 
 		await addLinkToActiveNode(view);
 
 		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).text, '原文字不动').toBe('参考链接');
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '',
+				hyperlink: 'https://new.example.com',
+				mdLinkStyle: 'md',
+				mdLinkText: 'https://new.example.com',
+				hyperlinkTitle: 'https://new.example.com',
+				isActive: false,
+			},
+		]);
 	});
 
-	it('设置 URL 链接时清掉残留的文档双链通道字段（图标不歧义）', async () => {
+	it('节点已有文档双链时设置 URL：原字段不动、URL 建为子节点（R4 修订）', async () => {
 		const node = fakeNode({
 			data: { mdWikiLinkpath: '[[旧笔记]]', mdLinkText: '旧笔记' },
 		});
@@ -606,12 +641,43 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 
 		await addLinkToActiveNode(view);
 
-		expect(dataOf(node).mdWikiLinkpath).toBeUndefined();
-		expect(dataOf(node).mdLinkText).toBeUndefined();
+		expect(dataOf(node).mdWikiLinkpath, '原文档双链字段不被覆盖').toBe('[[旧笔记]]');
+		expect(dataOf(node).mdLinkText).toBe('旧笔记');
 		expect(callArgs(execCommand)).toEqual([
-			ENGINE.SET_NODE_HYPERLINK,
-			node,
-			'https://example.com',
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '',
+				hyperlink: 'https://example.com',
+				mdLinkStyle: 'md',
+				mdLinkText: 'https://example.com',
+				hyperlinkTitle: 'https://example.com',
+				isActive: false,
+			},
+		]);
+	});
+
+	it('纯图节点（有图片即"有内容"）→ 链接建为子节点，不覆盖为文字+链接（R4 修订）', async () => {
+		const node = fakeNode({ data: { text: '', image: 'app://local/a.png' } });
+		const { view, execCommand } = makeView({ activeNode: node });
+		openLinkMock.mockResolvedValue({ link: '[[笔记]]' });
+
+		await addLinkToActiveNode(view);
+
+		expect(dataOf(node).image, '图片不动').toBe('app://local/a.png');
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '笔记',
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '笔记',
+				isActive: false,
+			},
 		]);
 	});
 });
@@ -714,39 +780,103 @@ describe('addLinkToActiveNode：守卫、取消与自兜错误', () => {
 });
 
 describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () => {
-	it('applyDocWikiLink：清引擎通道 + 写双链通道 + 同步可见文本 + 重绘保存', () => {
-		const node = fakeNode({ data: { hyperlink: 'https://旧', hyperlinkTitle: '旧' } });
-		const { view, execCommand, render, scheduleSave } = makeView();
+	it('applyDocWikiLink（完全空白节点）：覆盖为纯双链节点（便捷路径保留）', () => {
+		const node = fakeNode();
+		const { view, execCommand, scheduleSave } = makeView();
 
 		applyDocWikiLink(view, node, '[[笔记|别名]]', undefined);
 
 		const data = dataOf(node);
-		expect(data.hyperlink).toBeUndefined();
-		expect(data.hyperlinkTitle).toBeUndefined();
 		expect(data.mdWikiLinkpath).toBe('[[笔记|别名]]');
 		expect(data.mdLinkStyle).toBe('wiki');
 		expect(data.mdLinkText).toBe('别名');
-		expect(execCommand).not.toHaveBeenCalled();
-		expect(markNodeNeedLayoutMock).toHaveBeenCalledWith(node);
 		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '别名');
-		expect(render).toHaveBeenCalled();
+		expect(execCommand, '空白节点不建子节点').not.toHaveBeenCalled();
 		expect(scheduleSave).toHaveBeenCalled();
 	});
 
-	it('applyDocWikiLink：显式 label 为空串时不写可见文本、不走节点文本同步', () => {
+	it('applyDocWikiLink（节点有链接）：链接建为子节点，原字段与文字不动（R4 修订）', () => {
+		const node = fakeNode({ data: { hyperlink: 'https://旧', hyperlinkTitle: '旧' } });
+		const { view, execCommand, scheduleSave } = makeView();
+
+		applyDocWikiLink(view, node, '[[笔记|别名]]', undefined);
+
+		const data = dataOf(node);
+		expect(data.hyperlink, '原链接不动').toBe('https://旧');
+		expect(data.hyperlinkTitle).toBe('旧');
+		expect(data.mdWikiLinkpath).toBeUndefined();
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '别名',
+				mdWikiLinkpath: '[[笔记|别名]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '别名',
+				isActive: false,
+			},
+		]);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyDocWikiLink（仅 extra 孤存：移除首图后残留 ![[b.png]]）→ 建为子节点、extra 不动（R4 修订）', () => {
+		// 场景：多图行移除首图（removeNodeImage 不清 extra）→ 节点 text / image /
+		// 链接字段全空、仅 mdExtraTokens 有内容。此前该形态被判「完全空白」而覆盖
+		const node = fakeNode({
+			data: { text: '', mdExtraTokens: [{ raw: '![[b.png]]', kind: 'image' }] },
+		});
+		const { view, execCommand, scheduleSave } = makeView();
+
+		applyDocWikiLink(view, node, '[[笔记]]', undefined);
+
+		const data = dataOf(node);
+		expect(data.mdExtraTokens, '额外 token 原样保留').toEqual([
+			{ raw: '![[b.png]]', kind: 'image' },
+		]);
+		expect(data.mdWikiLinkpath, '父节点未被覆盖为纯双链').toBeUndefined();
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '笔记',
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '笔记',
+				isActive: false,
+			},
+		]);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyDocWikiLink：显式 label 为空串 → 子节点无显示文本、不写节点文字', () => {
 		const node = fakeNode({ data: { text: '正文' } });
-		const { view } = makeView();
+		const { view, execCommand } = makeView();
 
 		applyDocWikiLink(view, node, '[[笔记]]', '');
 
-		expect(dataOf(node).mdLinkText).toBe('');
+		expect(dataOf(node).mdLinkText, '父节点原样不动').toBeUndefined();
 		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '',
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '',
+				isActive: false,
+			},
+		]);
 	});
 
-	it('applyNodeAttachment（空节点）：走资源地址 + 回写库内完整路径 + 清链接通道', () => {
+	it('applyNodeAttachment（节点已有链接）：附件建为子节点，原字段与文字不动（R4 修订）', () => {
 		const node = fakeNode({
 			data: {
-				// 空节点 → 覆盖路径；有正文时改为建子节点（见下一个用例）
 				text: '',
 				hyperlink: 'https://旧',
 				mdWikiLinkpath: '[[旧]]',
@@ -754,7 +884,36 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 			},
 		});
 		const file = fakeFile('附件/报告.pdf', 'pdf');
-		const { view, render, scheduleSave, getResourcePath } = makeView();
+		const { view, execCommand, scheduleSave, getResourcePath } = makeView();
+
+		applyNodeAttachment(view, node, file);
+
+		const data = dataOf(node);
+		expect(getResourcePath, '子节点同样走资源地址').toHaveBeenCalledWith(file);
+		expect(data.hyperlink, '原链接字段不动').toBe('https://旧');
+		expect(data.mdWikiLinkpath).toBe('[[旧]]');
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '报告.pdf',
+				attachmentUrl: 'app://local/附件/报告.pdf',
+				attachmentName: '报告.pdf',
+				// basename 会被 Obsidian 去掉扩展名，回写必须用完整库内路径
+				mdAttachmentLinkpath: '附件/报告.pdf',
+				mdLinkStyle: 'wiki',
+				isActive: false,
+			},
+		]);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyNodeAttachment（完全空白节点）：覆盖为附件链接（便捷路径保留）', () => {
+		const node = fakeNode();
+		const file = fakeFile('附件/报告.pdf', 'pdf');
+		const { view, execCommand, scheduleSave, getResourcePath } = makeView();
 
 		applyNodeAttachment(view, node, file);
 
@@ -762,15 +921,9 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		expect(getResourcePath).toHaveBeenCalledWith(file);
 		expect(data.attachmentUrl).toBe('app://local/附件/报告.pdf');
 		expect(data.attachmentName).toBe('报告.pdf');
-		// basename 会被 Obsidian 去掉扩展名，回写必须用完整库内路径
 		expect(data.mdAttachmentLinkpath).toBe('附件/报告.pdf');
-		expect(data.mdLinkStyle).toBe('wiki');
-		expect(data.hyperlink).toBeUndefined();
-		expect(data.mdWikiLinkpath).toBeUndefined();
-		expect(markNodeNeedLayoutMock).toHaveBeenCalledWith(node);
-		// 纯双链化：拖入附件即覆盖节点文字为文件名（与文档双链同口径）
 		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '报告.pdf');
-		expect(render).toHaveBeenCalled();
+		expect(execCommand, '空白节点不建子节点').not.toHaveBeenCalled();
 		expect(scheduleSave).toHaveBeenCalled();
 	});
 
@@ -862,6 +1015,41 @@ describe('removeNodeText / clearNodeHyperlink', () => {
 			node,
 			'',
 		]);
+	});
+
+	it('清除链接：额外 token 中的链接类一并移除、图片类保留（图片嵌入不是链接）', () => {
+		const node = fakeNode({
+			data: {
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkText: '笔记',
+				mdExtraTokens: [
+					{ raw: '[[笔记B]]', kind: 'link' },
+					{ raw: '![[图.png]]', kind: 'image' },
+				],
+			},
+		});
+		const { view } = makeView();
+
+		clearNodeHyperlink(view, node);
+
+		expect(dataOf(node).mdExtraTokens, 'link 类被清、image 类保留').toEqual([
+			{ raw: '![[图.png]]', kind: 'image' },
+		]);
+	});
+
+	it('清除链接：额外 token 全为链接类时字段被删除（不留空数组）', () => {
+		const node = fakeNode({
+			data: {
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkText: '笔记',
+				mdExtraTokens: [{ raw: '[[笔记B]]', kind: 'link' }],
+			},
+		});
+		const { view } = makeView();
+
+		clearNodeHyperlink(view, node);
+
+		expect(dataOf(node).mdExtraTokens).toBeUndefined();
 	});
 });
 
@@ -1036,8 +1224,8 @@ describe('图片操作（re-export 契约与自兜错误）', () => {
 
 		removeNodeImage(view, node);
 
-		// 用 createSetNodeImageOptions(null) 清空：image 已空而 mdImageTarget 仍在
-		// 会让序列化的「图片已被移除」判定失效（旧图下次保存复活）
+		// 用 createSetNodeImageOptions(null) 清空；md 回写元数据随后全删（数据卫生，
+		// 防复活判定已两路覆盖、不依赖字段残留，见 md-serialize.rawOk）
 		expect(setImageOptionsMock).toHaveBeenCalledWith(null);
 		expect(callArgs(execCommand)).toEqual([
 			ENGINE.SET_NODE_IMAGE,

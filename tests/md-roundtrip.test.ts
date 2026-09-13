@@ -181,6 +181,73 @@ describe('解析结构', () => {
 		expect(textsOf(r.tree as MNode)).toEqual(['根', '正文']);
 	});
 
+	it('块标量内的 `---` 行不截断属性（与 Obsidian 属性解析同口径）', () => {
+		const content = [
+			'---',
+			'desc: |',
+			'  第一行',
+			'  ---',
+			'  第三行',
+			'title: t',
+			'---',
+			'# 正文',
+			'',
+		].join('\n');
+		const r = parseMdOutline(content, '根');
+		expect(r.frontmatter, '结束围栏越过块标量内部的 ---').toBe(
+			[
+				'---',
+				'desc: |',
+				'  第一行',
+				'  ---',
+				'  第三行',
+				'title: t',
+				'---',
+				'',
+			].join('\n'),
+		);
+		expect(textsOf(r.tree as MNode), '残余不得落进正文').toEqual([
+			'根',
+			'正文',
+		]);
+	});
+
+	it('开头 BOM：属性块仍识别，BOM 计入文件头原样保留', () => {
+		const r = parseMdOutline('\uFEFF---\ntitle: t\n---\n# 正文\n', '根');
+		expect(r.frontmatter, 'BOM 与属性块一并保留').toBe(
+			'\uFEFF---\ntitle: t\n---\n',
+		);
+		expect(textsOf(r.tree as MNode), '正文不含 BOM，标题正常成节点').toEqual([
+			'根',
+			'正文',
+		]);
+	});
+
+	it('开头 BOM 且无属性块：BOM 仍属文件头，首个标题不被降级为段落', () => {
+		const r = parseMdOutline('\uFEFF# 顶\n- 一\n', '根');
+		expect(r.frontmatter, '只有 BOM 时也由 frontmatter 承载').toBe('\uFEFF');
+		const top = r.tree.children[0]!;
+		expect(top.data.mdType, 'BOM 不得破坏标题识别').toBe('heading');
+		expect(top.children[0]!.data.mdType).toBe('list');
+	});
+
+	it('CRLF 换行形态：frontmatter 逐字保留，不做归一', () => {
+		const r = parseMdOutline('---\r\ntitle: t\r\n---\r\n# 正文\r\n', '根');
+		expect(r.frontmatter, 'CRLF 原样带回（写盘不改动换行形态）').toBe(
+			'---\r\ntitle: t\r\n---\r\n',
+		);
+		expect(textsOf(r.tree as MNode)).toEqual(['根', '正文']);
+	});
+
+	it('空属性块（---\\n---）也算 frontmatter：内容段可空，不得并进正文', () => {
+		const r = parseMdOutline('---\n---\n- 一\n', '根');
+		expect(r.frontmatter, '空属性块原样保留').toBe('---\n---\n');
+		expect(textsOf(r.tree as MNode), '不得产生 --- 或正文节点').toEqual([
+			'根',
+			'一',
+		]);
+	});
+
 	it('分隔线/空行忽略；纯列表文档直接挂虚拟根', () => {
 		const r = parseMdOutline('- 一\n\n---\n\n- 二\n', '根');
 		expect(textsOf(r.tree as MNode)).toEqual(['根', '一', '二']);
@@ -201,10 +268,10 @@ describe('解析结构', () => {
 		expect(roundTrip('- \n').out1, '原文（含行尾空格）逐字回写').toBe('- ');
 	});
 
-	it('`#标题`（无空格）不匹配标题行 → 落为 plain 段落节点（源码注释所述「宽容」未实现）', () => {
+	it('`#标题`（无空格）不匹配标题行 → 落为 plain 段落节点（与 CommonMark/Obsidian 一致）', () => {
 		// HEADING_RE = /^(#{1,6})(?:[ \t]+(.*))?$/ 要求 # 后有空白；
-		// md-outline.ts 顶部注释写「宽容：#标题 无空格亦可」，实际行为是无空格即普通段落。
-		// 断言真实现状（并锁定不动点），避免注释与实现继续漂移。
+		// 无空白即普通段落——与 CommonMark/Obsidian 一致（`#标题` 不是标题）。
+		// 断言真实行为（并锁定不动点），防止实现与注释漂移。
 		const r = parseMdOutline('#标题\n', '根');
 		expect(r.tree.children).toHaveLength(1);
 		expect(r.tree.children[0]!.data.mdType, '不识别为 heading').toBe('plain');
@@ -856,6 +923,34 @@ describe('图片独占节点', () => {
 		expect(data.image, '首个图片进 image').toBe('a.png');
 		expect(data.text, '多余图片按显示名剥壳为文本').toBe('b.png');
 	});
+
+	it('移除图片（md 字段全清）：list / heading / 多图 / 外链 md 图都不复活', () => {
+		// removeNodeImage 的真实效果：image 清空 + 全部 md 图片字段与自动标记删除。
+		// 此前「图片已被移除」判定依赖 md 字段残留，字段全清后被判「未编辑」→
+		// 逐字回写 → 图片在保存后复活（2026-09-13 修复：改为看 mdRaw 首行图片
+		// 语法——`![[…]]` 按扩展名 / `![…](…)`，与解析侧同口径）。
+		const cases: { md: string; out: string }[] = [
+			{ md: '- ![[a.png]]', out: '- ' },
+			{ md: '- 标题 ![[c.png]]', out: '- 标题' },
+			{ md: '# 标题 ![[c.png]]', out: '# 标题' },
+			{
+				md: '- ![[a.png]] 与 ![[b.png]]',
+				out: '- 与 b.png ![[b.png]]',
+			},
+			{ md: '- ![截图](https://x.com/a.png)', out: '- ' },
+			{ md: '- 图文 ![截图](https://x.com/a.png) 尾', out: '- 图文 尾' },
+		];
+		for (const scenario of cases) {
+			const { tree, data } = firstChild(`${scenario.md}\n`);
+			data.image = null;
+			delete data.mdImageTarget;
+			delete data.mdImageWidth;
+			delete data.mdImageHeight;
+			delete data.mdImageAlt;
+			delete data.mdImageAutoSize;
+			expect(serializeMdBody(tree, null), scenario.md).toBe(scenario.out);
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -1436,12 +1531,67 @@ describe('URL icon-only 与附件/文档双链', () => {
 		expect(data.hyperlink).toBe('https://x.com');
 		expect(data.text).toBe('a b c');
 	});
+
+	it('引用定义行（参考式·列表）：不进链接字段，URL 留在文本；编辑后不挪位', () => {
+		const { tree, data } = firstChild('- [ref]: https://example.com\n');
+		expect(data.hyperlink, '不提取链接字段').toBeUndefined();
+		expect(data.text).toBe('[ref]: https://example.com');
+		data.text = '[ref]: https://example.com（已核对）';
+		expect(serializeMdBody(tree, null)).toBe(
+			'- [ref]: https://example.com（已核对）',
+		);
+	});
+
+	it('引用定义行（plain）：URL 不被摘除；编辑后不丢失', () => {
+		const { tree, data } = firstChild('[ref]: https://example.com\n');
+		expect(data.hyperlink).toBeUndefined();
+		expect(data.text).toBe('[ref]: https://example.com');
+		data.text = '[ref]: https://example.com 备注';
+		expect(serializeMdBody(tree, null)).toBe('[ref]: https://example.com 备注');
+	});
+
+	it('引用定义行（尖括号形态）：同样豁免', () => {
+		const { data } = firstChild('- [ref]: <https://example.com>\n');
+		expect(data.hyperlink).toBeUndefined();
+		expect(data.text).toBe('[ref]: <https://example.com>');
+	});
+
+	it('脚注定义（列表）：内容整体保留、不提取链接', () => {
+		const { data } = firstChild('- [^1]: 见 https://example.com 说明\n');
+		expect(data.hyperlink).toBeUndefined();
+		expect(data.text).toBe('[^1]: 见 https://example.com 说明');
+	});
+
+	it('边界：`[ref]: 纯文字`（非空白串 destination）按 CommonMark 视为定义 → 豁免', () => {
+		const { data } = firstChild('- [ref]: 纯文字目标\n');
+		expect(data.hyperlink).toBeUndefined();
+		expect(data.text).toBe('[ref]: 纯文字目标');
+	});
+
+	it('不误伤：`[X]:` 后无 destination 的普通叙述仍走 URL icon-only', () => {
+		const { data } = firstChild('- [X]: 说明 https://example.com\n');
+		expect(data.hyperlink).toBe('https://example.com');
+	});
+
+	it('不误伤：普通 md 链接行不受影响', () => {
+		const { data } = firstChild('- 见 [文档](https://example.com)\n');
+		expect(data.hyperlink).toBe('https://example.com');
+	});
 });
 
 // ---------------------------------------------------------------------------
 // 九、图文/链接合成不丢 token（回归：图片引用曾被静默丢弃）
 // ---------------------------------------------------------------------------
 describe('图文/链接合成不丢 token', () => {
+	it('同行两张库内图片：未编辑保存逐字不变（非首图不再被误判「链接已清除」）', () => {
+		// b.png 是图片类嵌入（不是链接）：rawHasForeignEmbed 必须豁免它，
+		// 否则任何保存都会把 `![[b.png]]` 降级为剥壳文本（2026-09-13 修复）
+		const md = '- ![[a.png]] 与 ![[b.png]]\n';
+		expect(roundTrip(md).out1, '未编辑：两枚嵌入均逐字回写').toBe(
+			'- ![[a.png]] 与 ![[b.png]]',
+		);
+	});
+
 	it('图文 + 链接节点编辑文本：图片与链接都写回', () => {
 		const { tree, data } = firstChild('- ![[a.png]] 见 [[笔记]]\n');
 		data.text = '见图与笔记';
@@ -1489,6 +1639,124 @@ describe('图文/链接合成不丢 token', () => {
 			mdLinkText: 'note',
 		});
 		expect(serializeMdBody(tree, null)).toBe('- 参见 note.md [[note]]');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 九之补、多 token 编辑后保真（mdExtraTokens：额外 token 原文按序尾插行尾）
+//
+// 一行内多链接 / 多 URL / 多图的**非首个 token** 此前在编辑后合成时降级或丢失
+// （多 URL 连内容都丢）；现由解析侧收集原文切片（md-outline）、合成路径按序
+// 尾插（md-serialize.inlineTokens，2026-09-13）。**位置不保真**（与首 token
+// 同为行尾）——原位保真是标准文档 §5.2 的登记项。
+// ---------------------------------------------------------------------------
+describe('多 token 编辑后保真（mdExtraTokens）', () => {
+	it('多双链：额外双链原文尾插，链接语法不降级为文本', () => {
+		const { tree, data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
+		expect(data.mdExtraTokens, '解析：非首个双链原文入字段').toEqual([
+			{ raw: '[[B]]', kind: 'link' },
+		]);
+		data.text = '改过了';
+		expect(serializeMdBody(tree, null)).toBe('- 改过了 [[A]] [[B]]');
+	});
+
+	it('多裸 URL：第二个 URL 内容不丢（此前编辑后整体消失）', () => {
+		const { tree, data } = firstChild('- 参考 https://a.com 与 https://b.com\n');
+		expect(data.text, 'URL 本体不进文本（icon-only）').toBe('参考 与');
+		expect(data.mdExtraTokens).toEqual([
+			{ raw: 'https://b.com', kind: 'link' },
+		]);
+		data.text = '两个站点';
+		// 首 URL 由字段承载（回写为规范 <url> 形态）；额外 token 是原文切片（裸 URL）
+		expect(serializeMdBody(tree, null)).toBe(
+			'- 两个站点 <https://a.com> https://b.com',
+		);
+	});
+
+	it('多图：非首图嵌入语法保留（此前编辑后降级为文件名文本）', () => {
+		const { tree, data } = firstChild('- ![[a.png]] 与 ![[b.png]]\n');
+		expect(data.mdExtraTokens, '图片类额外 token 单独标记 kind').toEqual([
+			{ raw: '![[b.png]]', kind: 'image' },
+		]);
+		data.text = '两张图';
+		expect(serializeMdBody(tree, null)).toBe('- 两张图 ![[a.png]] ![[b.png]]');
+	});
+
+	it('URL + 双链混排：额外双链尾插在首链之后', () => {
+		const { tree, data } = firstChild('- 对比 https://a.com 与 [[笔记B]]\n');
+		expect(data.mdExtraTokens).toEqual([
+			{ raw: '[[笔记B]]', kind: 'link' },
+		]);
+		data.text = '对比结果';
+		expect(serializeMdBody(tree, null)).toBe(
+			'- 对比结果 <https://a.com> [[笔记B]]',
+		);
+	});
+
+	it('多枚额外 token 按出现顺序尾插', () => {
+		const { tree, data } = firstChild('- a https://x.com b https://y.com c\n');
+		expect(data.mdExtraTokens).toEqual([
+			{ raw: 'https://y.com', kind: 'link' },
+		]);
+		data.text = 'abc';
+		expect(serializeMdBody(tree, null)).toBe(
+			'- abc <https://x.com> https://y.com',
+		);
+	});
+
+	it('图 + 双链 + 额外双链：三枚 token 齐出（字段两枚 + 尾插一枚）', () => {
+		const { tree, data } = firstChild('- ![[a.png]] 见 [[笔记]] 与 [[笔记B]]\n');
+		expect(data.mdExtraTokens).toEqual([
+			{ raw: '[[笔记B]]', kind: 'link' },
+		]);
+		data.text = '混合';
+		expect(serializeMdBody(tree, null)).toBe(
+			'- 混合 ![[a.png]] [[笔记]] [[笔记B]]',
+		);
+	});
+
+	it('无额外 token 的节点行为不变（对照组）', () => {
+		const { tree, data } = firstChild('- 见 [[笔记]]\n');
+		expect(data.mdExtraTokens).toBeUndefined();
+		data.text = '改过了';
+		expect(serializeMdBody(tree, null)).toBe('- 改过了 [[笔记]]');
+	});
+
+	it('编辑后二次解析再序列化：不动点（尾插不重复累积）', () => {
+		const { tree, data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
+		data.text = '改过了';
+		const out = serializeMdBody(tree, null);
+		const re: MNode = parseMdOutline(out + '\n', '根').tree;
+		expect(
+			re.children[0]!.data.mdExtraTokens,
+			'重解析后 [[B]] 仍是额外 token',
+		).toEqual([{ raw: '[[B]]', kind: 'link' }]);
+		expect(serializeMdBody(re, null), '二次往返逐字相等').toBe(out);
+	});
+
+	it('未编辑的存量节点：mdExtraTokens 不参与（rawOk 逐字回写）', () => {
+		const md = '- a https://x.com b https://y.com c';
+		expect(roundTrip(md).out1).toBe(md);
+	});
+
+	it('尾插行可被整体剥为纯文本：清除链接后额外双链不残留语法', () => {
+		// 「尾插不影响后续整理」：多 token（含额外 token）的双链可经「清除链接」
+		// 降级为纯文本——额外 token 的 link 类一并清除（image 类保留，见 K9）。
+		const { tree, data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
+		// 与 clearNodeHyperlink 等价：清两通道字段 + 过滤额外 token 的 link 类
+		delete data.mdWikiLinkpath;
+		delete data.mdLinkText;
+		const kept = (
+			data.mdExtraTokens as { raw: string; kind: string }[]
+		).filter((token) => token.kind !== 'link');
+		if (kept.length > 0) {
+			data.mdExtraTokens = kept;
+		} else {
+			delete data.mdExtraTokens;
+		}
+		const out = serializeMdBody(tree, null);
+		expect(out, '显示名文本保留、链接语法全部消失').toBe('- 参见 A 与 B');
+		expect(out).not.toContain('[[');
 	});
 });
 

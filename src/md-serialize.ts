@@ -17,7 +17,11 @@
 
 import { App } from 'obsidian';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
-import { isIndentedCodeLine, isRenderableImageExtension } from './constants';
+import {
+	isIndentedCodeLine,
+	isRenderableImageExtension,
+	isRenderableImageTarget,
+} from './constants';
 import { resolvePathToFile } from './links-resolve';
 import {
 	formatEmbedWikilink,
@@ -247,29 +251,37 @@ function linkFeatureOf(data: MdNodeData): string | null {
 }
 
 /**
- * 合成路径的行内 token 列表（图片 / 链接），顺序与 mdRaw 中一致。
+ * 合成路径的行内 token 列表（图片 / 链接 / 额外 token），顺序与 mdRaw 中一致。
  *
  * 此前合成只输出一枚 token（`renderHyperlink() ?? renderImage()`）——图文混合
  * 或「图 + 链接」节点只要编辑过文本，图片引用就被静默丢弃（保存后文件里永久
  * 消失）。两枚 token 都必须写出；顺序按 mdRaw 中出现位置决定，新建的 token 追加
  * 在已有 token 之后，保证再次保存时行结构稳定（不再改动）。
+ *
+ * 两枚之外的**额外 token**（`mdExtraTokens`：多链接 / 多 URL / 多图）按记录
+ * 顺序追加在最后——此前它们在编辑后丢失（多 URL 连内容都丢，2026-09-13 修复）。
  */
 function inlineTokens(data: MdNodeData, app: App | null): string[] {
+	const out: string[] = [];
 	const image = renderImage(data, app);
 	const link = renderHyperlink(data);
-	if (!image) {
-		return link ? [link] : [];
+	if (image && link) {
+		const raw = typeof data.mdRaw === 'string' ? data.mdRaw : '';
+		const imageFeature = imageVaultPath(data, app);
+		const linkFeature = linkFeatureOf(data);
+		const imageAt = imageFeature ? raw.indexOf(imageFeature) : -1;
+		const linkAt = linkFeature ? raw.indexOf(linkFeature) : -1;
+		const linkFirst = linkAt >= 0 && imageAt >= 0 && linkAt < imageAt;
+		out.push(...(linkFirst ? [link, image] : [image, link]));
+	} else if (image) {
+		out.push(image);
+	} else if (link) {
+		out.push(link);
 	}
-	if (!link) {
-		return [image];
+	for (const extra of data.mdExtraTokens ?? []) {
+		out.push(extra.raw);
 	}
-	const raw = typeof data.mdRaw === 'string' ? data.mdRaw : '';
-	const imageFeature = imageVaultPath(data, app);
-	const linkFeature = linkFeatureOf(data);
-	const imageAt = imageFeature ? raw.indexOf(imageFeature) : -1;
-	const linkAt = linkFeature ? raw.indexOf(linkFeature) : -1;
-	const linkFirst = linkAt >= 0 && imageAt >= 0 && linkAt < imageAt;
-	return linkFirst ? [link, image] : [image, link];
+	return out;
 }
 
 /** 行内 token 渲染：图片（仅合成路径使用） */
@@ -410,11 +422,18 @@ function rawOk(
 	if (data.text !== data.mdDerivedText) {
 		return false;
 	}
-	// 图片已被移除（右键「移除图片」/被引用文件被删除）：image 已清空但 md 图片
-	// 字段仍在 → mdRaw 里的嵌入必须被剥离。此前该情形跳过整段图片检查，而下方
-	// 「链接已清除」检测又以 `(?<!!)\[\[` 排除嵌入语法，于是被判定「未编辑」→
-	// 逐字回写 → 移除的图片在下次保存时复活。
-	if (!data.image && hasImageMeta(data)) {
+	// 图片已被移除（右键「移除图片」/被引用文件被删除）：image 已清空，mdRaw 里的
+	// 图片语法必须剥离，否则逐字回写会让移除的图在下次保存时复活。两种形态都判：
+	// - md 字段残留（引擎清图等路径）：hasImageMeta 直接判定；
+	// - md 字段全清（removeNodeImage：image 与全部 md 图片字段一并清空）：
+	//   看 mdRaw **首行**是否仍有图片语法（`![[x.png]]` 按扩展名 / `![alt](url)`）。
+	//   只查首行且排除缩进代码块（与解析侧同一判定——节点字段只治理首行图片，
+	//   其余行含围栏/缩进代码里的图片语法属原文，必须逐字回写）。
+	if (
+		!data.image &&
+		(hasImageMeta(data) ||
+			(!isIndentedCodeLine(raw) && rawHasImageInFirstLine(raw)))
+	) {
 		return false;
 	}
 	if (data.image !== undefined && data.image !== null && data.image !== '') {
@@ -487,24 +506,19 @@ function rawOk(
 			// 需合成剥离为纯文本，否则旧 mdRaw 原样回写会让"清除链接"失效
 			return false;
 		}
-	} else if (
-		!data.image &&
-		!isIndentedCodeLine(raw) &&
-		rawHasImageEmbedInFirstLine(raw)
-	) {
-		// 段落（plain）：图片字段已清空（用户「移除图片」，md 元数据同步清空），
-		// 但首行仍有图片嵌入 → 需合成剥离，否则旧 mdRaw 原样回写会让图片复活。
-		// 只查**首行**且排除缩进代码块（与解析侧同一判定）：段落字段只治理首行
-		// 图片，其余行（含围栏/缩进代码里的 `![[..]]`）属原文，必须逐字回写；
-		// 段落的链接语法同样属原文，不在此剥离。
-		return false;
 	}
 	return true;
 }
 
-/** mdRaw **首行**是否含图片嵌入（`![[x.png]]`，按扩展名判定；段落图片剥离用） */
-function rawHasImageEmbedInFirstLine(raw: string): boolean {
+/**
+ * mdRaw **首行**是否含图片语法（图片剥离判定用）：`![[x.png]]`（按扩展名）或
+ * `![alt](url)`（md 图片——语法定性即图片，不查扩展名：外链地址常无图片后缀）。
+ */
+function rawHasImageInFirstLine(raw: string): boolean {
 	const first = raw.split('\n')[0] ?? '';
+	if (/!\[[^\]]*\]\(/.test(first)) {
+		return true;
+	}
 	const embedRe = /!\[\[([^\]]*)\]\]/g;
 	let match: RegExpExecArray | null;
 	while ((match = embedRe.exec(first)) !== null) {
@@ -519,20 +533,28 @@ function rawHasImageEmbedInFirstLine(raw: string): boolean {
 }
 
 /**
- * raw 中是否含**不属于本节点图片**的嵌入 token（`![[…]]`）。
+ * raw 中是否含**链接类（非图片）**的、不属于本节点图片的嵌入 token（`![[…]]`）。
  *
  * 文档/附件嵌入与图片嵌入同语法，但前者是**链接**：清除链接后必须走合成剥离。
  * 判据只能是「这枚 token 的目标串是不是本节点图片的引用（库内路径/资源地址/
  * 原始目标三者之一）」——靠 `mdEmbed` 之类的残留字段不可靠（清除链接不会清它）。
+ *
+ * **图片类嵌入不是链接**（按目标扩展名判定，与 K9 同口径）：同行多余的图片
+ * （如 `![[a.png]] 与 ![[b.png]]` 的第二张）不触发「链接已清除」——此前未做
+ * 该豁免，任何保存都会把非首图的嵌入语法降级为剥壳文本（2026-09-13 修复）。
  */
 function rawHasForeignEmbed(raw: string, own: readonly string[]): boolean {
 	const embedRe = /!\[\[([^\]]*)\]\]/g;
 	let match: RegExpExecArray | null;
 	while ((match = embedRe.exec(raw)) !== null) {
 		const target = (match[1] ?? '').split('|')[0] ?? '';
-		if (!own.includes(target)) {
-			return true;
+		if (own.includes(target)) {
+			continue;
 		}
+		if (isRenderableImageTarget(target)) {
+			continue; // 图片类嵌入不是链接：不参与「链接已清除」检测
+		}
+		return true;
 	}
 	return false;
 }

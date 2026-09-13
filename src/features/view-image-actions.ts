@@ -29,9 +29,9 @@ export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): vo
 		node,
 		createSetNodeImageOptions(null),
 	);
-	// 同步清掉 md 回写元数据：image 已空而 mdImageTarget/mdImageWidth 仍在时，
-	// 序列化的「图片已被移除」判定失效——mdRaw 会被逐字回写，旧图在下次保存
-	// 时复活（见 md-serialize.rawOk）
+	// 同步清掉 md 回写元数据（数据卫生：不让「该节点有过图」的残留字段误导
+	// 后续读取）。防复活判定已两路覆盖、不依赖这里——字段残留走 hasImageMeta、
+	// 全清走首行图片语法（见 md-serialize.rawOk）
 	const data = node.getData() as MdNodeData;
 	delete data.mdImageTarget;
 	delete data.mdImageWidth;

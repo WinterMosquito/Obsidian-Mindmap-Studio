@@ -86,6 +86,19 @@ export interface MdNodeMeta {
 	 */
 	mdImageAlt?: string;
 	/**
+	 * 未被「首图 / 首链」字段承载的**额外行内 token 原文**（按出现顺序）。
+	 *
+	 * 保真回写数据：一行内有多个链接 / 多个 URL / 多张图时，只有首个（图、链接
+	 * 各一枚）进 image / hyperlink / mdWikiLinkpath 等字段；其余此前在**编辑后
+	 * 合成**时丢失（多 URL 连内容都丢；多图 / 多链接丢语法）。本字段收集全部
+	 * 额外 token 的**原文切片**，合成时按序全部尾插——位置不保真（与首 token
+	 * 同为行尾），但内容与语法不丢。未编辑时仍走 mdRaw 逐字回写，本字段不参与。
+	 *
+	 * kind 用途：**图片类嵌入不是链接**（K9）——「清除链接」只清 link 类；
+	 * 图片类保留（拆分重写父行时，额外 token 以新行解析结果重建）。
+	 */
+	mdExtraTokens?: { raw: string; kind: 'image' | 'link' }[];
+	/**
 	 * 节点图尺寸来自**加载期自动校正**（按原始宽高比算出的显示尺寸，非用户意图）。
 	 *
 	 * 引擎侧仍需 `imageSize.custom = true` 才能精确渲染——`custom:false` 会被引擎按
