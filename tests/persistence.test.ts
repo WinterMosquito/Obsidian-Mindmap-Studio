@@ -1,5 +1,5 @@
 /**
- * PluginDataWriter 回归（src/persistence.ts）。
+ * PluginDataWriter 回归（src/core/persistence.ts）。
  *
  * data.json 写入器承载三条契约，缺一即出现"设置丢失/视图状态被覆盖/未处理拒绝"：
  * - 写前重读合并：每次写盘前重新读宿主最新内容再合并（{...current, ...data}），

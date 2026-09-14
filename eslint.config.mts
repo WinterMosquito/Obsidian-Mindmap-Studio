@@ -178,7 +178,7 @@ export default defineConfig(
 		files: ['src/domain/**/*.ts'],
 		rules: {
 			// domain 是纯领域逻辑层：零依赖（标准库除外），可在纯 Node 环境单测。
-			// 引擎类型黏合（MdNodeData）放 src/node-data.ts，不放 domain。
+			// 引擎类型黏合（MdNodeData）放 src/core/node-data.ts，不放 domain。
 			// 用 @typescript-eslint 变体：对 TS 解析更准确，且与 master 推荐的
 			// restrictedImportsOptions 同源（core 版不识别 allowTypeImports）。
 			'@typescript-eslint/no-restricted-imports': [

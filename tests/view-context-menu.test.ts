@@ -97,7 +97,7 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 			found.click();
 		}
 	}
-	// 命令名取值与 src/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的
+	// 命令名取值与 src/engine/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的
 	// token 契约由 vendor-contract 测试把关，这里只验证菜单传了哪一个命令。
 	return {
 		FakeMenu: FakeMenuClass,

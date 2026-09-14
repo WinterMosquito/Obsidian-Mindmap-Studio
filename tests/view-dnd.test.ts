@@ -71,7 +71,7 @@ const h = vi.hoisted(() => ({
 }));
 
 // Notice 桩：obsidian 包无运行时 JS（alias 到 tests/mocks），故在此替换以捕获文案。
-// 注意 notifyError（src/errors.ts）也 new Notice，故错误提示同样落在 noticeCalls。
+// 注意 notifyError（src/core/errors.ts）也 new Notice，故错误提示同样落在 noticeCalls。
 vi.mock('obsidian', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('obsidian')>();
 	return {
@@ -86,7 +86,7 @@ vi.mock('obsidian', async (importOriginal) => {
 });
 
 // 引擎模块整体以桩替换（真实模块会拉入 vendor 打包产物）。
-// ENGINE_COMMANDS 的取值与 src/mindmap.ts 一致——断言用它证明插入走的是
+// ENGINE_COMMANDS 的取值与 src/engine/mindmap.ts 一致——断言用它证明插入走的是
 // 「命令名常量表」而非散落的魔法字符串。
 vi.mock('../src/engine/mindmap', () => ({
 	ENGINE_COMMANDS: {

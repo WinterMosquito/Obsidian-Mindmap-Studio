@@ -203,7 +203,6 @@ const COMMAND_IDS = [
 	'search-mindmap-nodes',
 	'mindmap-fit-view',
 	'mindmap-arrange',
-	'mindmap-split-links',
 	'mindmap-split-links-all',
 	'mindmap-export-png',
 	'mindmap-open-md-as-view',

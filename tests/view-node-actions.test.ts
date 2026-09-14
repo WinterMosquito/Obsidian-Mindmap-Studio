@@ -54,7 +54,7 @@ const {
 	aspectImageOptionsMock,
 } = vi.hoisted(() => ({
 	noticeCalls: [] as string[],
-	// 命令名取值与 src/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的 token
+	// 命令名取值与 src/engine/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的 token
 	// 契约由 vendor-contract 测试把关，这里只验证编排传了哪一个命令。
 	ENGINE: {
 		BACK: 'BACK',
@@ -101,7 +101,7 @@ vi.mock('../src/engine/mindmap', () => ({
 		forceRemoveMock(...args);
 	},
 	// 以下三个保持生产语义：桩成常量会让「按节点数据分流」的分支永远走同一路，
-	// 断言全部失真（renderer 缺失 ⇒ 无激活节点/无根，与 src/mindmap.ts 一致）。
+	// 断言全部失真（renderer 缺失 ⇒ 无激活节点/无根，与 src/engine/mindmap.ts 一致）。
 	getActiveNode: (mindMap: unknown): unknown => {
 		const renderer = (
 			mindMap as { renderer?: { activeNodeList?: unknown[] } } | null

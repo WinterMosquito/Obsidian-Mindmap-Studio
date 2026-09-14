@@ -1,5 +1,5 @@
 /**
- * 混排双链拆分（src/links-split.ts）回归。
+ * 混排双链拆分（src/markdown/links-split.ts）回归。
  *
  * 断言策略：
  * - 输入走**真实解析**（parseMdOutline），产物走**真实序列化**（serializeMdBody）

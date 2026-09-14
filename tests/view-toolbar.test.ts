@@ -11,7 +11,7 @@
  * - arrangeMindMap 的三种分支（未加载 / 整理成功 / 整理失败）提示文案；
  * - refreshToolbar 清空后重建。
  *
- * 隔离策略：引擎面（../src/mindmap）、同级特性模块（view-search / view-export /
+ * 隔离策略：引擎面（../src/engine/mindmap）、同级特性模块（view-search / view-export /
  * view-node-actions）与 obsidian 的 setIcon、Notice 全部用 vi.mock 替换——
  * 本测试只验证工具栏自身的装配与接线，不触碰 vendor bundle（避免加载引擎）。
  */

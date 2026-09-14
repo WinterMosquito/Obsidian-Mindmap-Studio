@@ -32,7 +32,7 @@ vi.hoisted(() => {
 
 /**
  * 节点布局矩形桩：`getNodeLayoutRect` 只按字段名读取 left/top/width/height
- * （见 src/mindmap.ts），故结构化桩即可驱动真实几何计算。
+ * （见 src/engine/mindmap.ts），故结构化桩即可驱动真实几何计算。
  */
 interface RectNode {
 	id: string;

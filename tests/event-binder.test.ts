@@ -1,5 +1,5 @@
 /**
- * EventBinder 回归测试（src/event-binder.ts）。
+ * EventBinder 回归测试（src/core/event-binder.ts）。
  *
  * 该模块存在的唯一理由是「注册即记录、销毁即清理」——它替掉了视图里
  * 10+ 个 boundHandle* 字段的手工配对维护。所以本套用例只围绕这条契约取证：

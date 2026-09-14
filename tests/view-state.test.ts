@@ -1,5 +1,5 @@
 /**
- * ViewStateStore 回归（src/view-state.ts）。
+ * ViewStateStore 回归（src/services/view-state.ts）。
  *
  * 布局/视口按文件路径存插件 data.json 的顶层 `viewState` 键（正文字节保持纯
  * Markdown）。这里锁定三条易回退的契约：

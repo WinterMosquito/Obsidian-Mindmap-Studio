@@ -1,5 +1,5 @@
 /**
- * 视口收口回归（src/mindmap.ts 的三个防腐函数）。
+ * 视口收口回归（src/engine/mindmap.ts 的三个防腐函数）。
  *
  * 为什么这样断言：
  * - `centerContentAtFullScale`（打开时的默认视口）：需求是「100% 缩放 + **整体内容

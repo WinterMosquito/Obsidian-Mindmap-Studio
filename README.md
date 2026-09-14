@@ -75,7 +75,7 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 | Make a node image-only | Clear the node's text: double-click → empty, or right-click → **Remove text** |
 | Clean the layout | Toolbar: **Auto arrange**, **Reset zoom (100%)**, **Fit to canvas**, zoom in/out |
 | Find a node | Toolbar search box |
-| Split a node's links | Select a node → command **Split links into child nodes**: document/attachment links mixed with text move into child nodes (the node keeps its text; images and external URLs stay). Editing such a node also triggers it — turn it off in settings. Command **Split all mixed links in document** batch-processes the whole file, including untouched notes |
+| Split a node's links | Editing such a node **splits automatically**: document/attachment links mixed with text move into child nodes (the node keeps its text; images and external URLs stay) — turn it off in settings. Command **Split all mixed links in document** batch-processes the whole file, including untouched notes |
 | Export | Toolbar **Export PNG** |
 | Back to Markdown | **Switch to Markdown** (restores source/preview mode) |
 

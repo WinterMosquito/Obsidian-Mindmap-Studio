@@ -63,7 +63,7 @@ function fakeApp(files: TFile[]) {
  *
  * 本模块在非清除路径上会取一次 `app.vault.getResourcePath(file)` 作为新引用值，
  * 但 `buildFileLookupIndex` 为了建「资源地址 → TFile」表，**也会对库内每个文件
- * 各调一次 `getResourcePath`**（见 src/file-lookup.ts:50）。于是整段调用里前
+ * 各调一次 `getResourcePath`**（见 src/links/file-lookup.ts:50）。于是整段调用里前
  * `vaultFileCount` 次是建索引的副产物，只有其后的才是本模块真正为替换取的值。
  * 不切开两者，「清除/回收站不得取新地址」这类断言就分不清是哪个调用者，
  * 也解释不了「明明只替换一次却看到两次」。

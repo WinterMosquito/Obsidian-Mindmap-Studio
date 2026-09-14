@@ -95,8 +95,8 @@ describe('vendor 契约：MindMap 原型面（d.cts 声明 ↔ bundle 运行时�
 		}
 	});
 
-	it('src/mindmap.ts 直接调用的引擎入口都在原型上', () => {
-		// 与 src/mindmap.ts 的调用点一一对应：execCommand/emit/render/updateConfig/
+	it('src/engine/mindmap.ts 直接调用的引擎入口都在原型上', () => {
+		// 与 src/engine/mindmap.ts 的调用点一一对应：execCommand/emit/render/updateConfig/
 		// addPlugin…；引擎改这些入口名时此处比运行期报错更早失败。
 		const usedBySrc = [
 			'execCommand',
@@ -151,7 +151,7 @@ describe('vendor 契约：ENGINE_COMMANDS 命令名全表', () => {
 });
 
 describe('vendor 契约：防腐层触碰的引擎内部字段', () => {
-	// 与 src/mindmap.ts / src/services/engine-controller.ts 的收口函数一一对应；
+	// 与 src/engine/mindmap.ts / src/services/engine-controller.ts 的收口函数一一对应；
 	// 过于泛化的短名（root / fit / jump / search / draw 等）不作令牌，避免裸匹配误报。
 	const internalTokens = [
 		// renderer：激活节点（getActiveNode）、强制全渲染（fit/centerContent 性能模式）、

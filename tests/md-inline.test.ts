@@ -1,5 +1,5 @@
 /**
- * 行内 token 解析（src/md-outline.ts 的 tokenizeInline / splitFrontmatter）边界形态回归。
+ * 行内 token 解析（src/markdown/md-outline.ts 的 tokenizeInline / splitFrontmatter）边界形态回归。
  *
  * 为什么用「整对象精确比对」而不是逐个字段断言：
  * InlineToken 的 start/end 是**切片语义**（end 排他），调用方（buildInlineData）

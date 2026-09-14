@@ -26,7 +26,7 @@ const { execCommandMock, setNodeTextMock, isEditingTextMock, ENGINE } = vi.hoist
 		execCommandMock: vi.fn<(...args: unknown[]) => void>(),
 		setNodeTextMock: vi.fn<(...args: unknown[]) => void>(),
 		isEditingTextMock: vi.fn<() => boolean>(() => false),
-		// 命令名取值与 src/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的
+		// 命令名取值与 src/engine/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的
 		// token 契约由 vendor-contract 测试把关，这里只验证编排传了哪一个命令。
 		ENGINE: {
 			INSERT_CHILD_NODE: 'INSERT_CHILD_NODE',

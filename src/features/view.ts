@@ -50,7 +50,6 @@ import { openHyperlink as linkNavigatorOpen } from './view-link-navigator';
 import {
 	captureAutoSplitCandidate,
 	runAutoSplitCheck,
-	splitActiveNodeLinks,
 	splitAllLinksInDocument,
 } from './view-split-links';
 
@@ -485,13 +484,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/** 安排一次防抖自动保存（view-toolbar.ts / view-node-actions.ts 等外部模块调用） */
 	scheduleSave(): void {
 		this.savePipeline.schedule();
-	}
-
-	/**
-	 * 拆分当前选中节点内的混排双链（命令入口；提示由 view-split-links 负责）。
-	 */
-	splitActiveNodeLinks(): void {
-		splitActiveNodeLinks(this);
 	}
 
 	/**

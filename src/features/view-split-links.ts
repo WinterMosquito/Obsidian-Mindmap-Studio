@@ -1,7 +1,7 @@
 /**
- * 节点内混排双链拆分（手动命令 + 自动触发 + 全文批量）的视图侧执行。
+ * 节点内混排双链拆分（自动触发 + 全文批量命令）的视图侧执行。
  *
- * 判定与方案在 `src/links-split.ts`（纯逻辑，零引擎依赖）；本模块只负责
+ * 判定与方案在 `src/markdown/links-split.ts`（纯逻辑，零引擎依赖）；本模块只负责
  * 把方案施加到引擎并给用户反馈：
  * - 单节点：走引擎命令逐条插入（可控，与其它编辑同一条通道）；
  * - 全文批量：改写数据树后一次性 `setData`——与引用更新（`links-tree`）同一
@@ -17,7 +17,7 @@ import {
 	type SplitLinkPlan,
 } from '../markdown/links-split';
 import { ensureUniqueUids } from '../markdown/markdown';
-import { insertChildNodeWithData, requireActiveNode } from './view-common';
+import { insertChildNodeWithData } from './view-common';
 import { t, tf } from '../core/i18n';
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MdNodeData } from '../core/node-data';
@@ -52,7 +52,7 @@ export function applySplitPlan(
 	return plan.children.length;
 }
 
-/** 对指定节点执行拆分（无可拆内容返回 0；不提示，由调用方决定反馈方式） */
+/** 对指定节点执行拆分（无可拆内容返回 0；自动路径不提示） */
 export function splitNodeLinks(
 	view: MindMapViewContext,
 	node: MindMapNode,
@@ -64,20 +64,6 @@ export function splitNodeLinks(
 		view.app,
 	);
 	return plan ? applySplitPlan(view, node, plan) : 0;
-}
-
-/** 命令入口：对当前选中节点执行拆分并反馈（无选中节点时 requireActiveNode 已提示） */
-export function splitActiveNodeLinks(view: MindMapViewContext): void {
-	const node = requireActiveNode(view);
-	if (!node) {
-		return;
-	}
-	const count = splitNodeLinks(view, node);
-	if (count === 0) {
-		new Notice(t(view.lang, 'common.splitLinksNone'));
-		return;
-	}
-	new Notice(tf(view.lang, 'common.splitLinksDone', { count }));
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * concurrency 原语回归（src/concurrency.ts）。
+ * concurrency 原语回归（src/core/concurrency.ts）。
  *
  * 串行队列 / 有界并发映射 / 防抖 / 节流是 SavePipeline、ViewStateStore、
  * 搜索防抖、标题重命名防抖、状态栏节流的共同依赖——并发语义

@@ -1,5 +1,5 @@
 /**
- * modal-common 回归测试：弹窗共享件的当前实现契约（src/modal-common.ts）。
+ * modal-common 回归测试：弹窗共享件的当前实现契约（src/ui/modal-common.ts）。
  *
  * 覆盖三件事：
  * - createModalSettle：settle 幂等（首值胜出、后到者被忽略）、关闭兜底经官方

@@ -70,7 +70,7 @@
 2. `npm install <目标版本> --no-save`，用上方 entry + esbuild 命令重打包
    `vendor/simple-mind-map.cjs`；
 3. 审阅并更新 `vendor/simple-mind-map.d.cts`（新 API / 删除的 API / `ENGINE_COMMANDS`
-   （`src/mindmap.ts`）命令名是否有效）；
+   （`src/engine/mindmap.ts`）命令名是否有效）；
 4. 核对目标版本的 `dist/*.css`：仍为纯 `.ql-*`（Quill）则**不 vendor**（引擎样式由 bundle
    运行时注入，见上方说明）；若出现非 Quill 规则，则 vendor 该 CSS 并恢复
    `scripts/sync-vendor-css.mjs` 与 `package.json` 的 `sync-vendor-css` 脚本；
@@ -83,7 +83,7 @@
 
 ## 插件侧的引擎接缝（升级时重点核对）
 
-- `src/mindmap.ts`：创建参数、插件注册（Select/TouchEvent/AssociativeLine/
+- `src/engine/mindmap.ts`：创建参数、插件注册（Select/TouchEvent/AssociativeLine/
   KeyboardNavigation/DoExport/Search/Drag）、`ENGINE_COMMANDS` 常量表、
   全部防腐收口函数（renderer/view/search/doExport/opt 的内部访问只允许出现在这里）；
 - `src/services/engine-controller.ts`：初始化代际锁、视口存取、引用更新预检；

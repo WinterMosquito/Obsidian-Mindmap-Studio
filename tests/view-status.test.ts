@@ -13,7 +13,7 @@
  * 计数与渲染根都来自 mindmap.ts 防腐层（本测试不验证引擎封装），
  * 故用 vi.mock 提供假引擎面：countTreeNodes / getRenderRoot。
  *
- * 末段另直接单测插件层实现 src/status-bar.ts（ElementStatusBarService）：
+ * 末段另直接单测插件层实现 src/services/status-bar.ts（ElementStatusBarService）：
  * 计数文案（中文「N 个节点」/英文单复数分键）与元素生命周期（惰性取值、
  * onunload 置空后静默跳过），这一层被上面的用例以桩服务替代。
  */
