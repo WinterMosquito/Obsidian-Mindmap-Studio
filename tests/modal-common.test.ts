@@ -22,12 +22,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, ButtonComponent, Modal, TFile, TFolder } from 'obsidian';
-import type { FileSuggestAppearance } from '../src/modal-common';
+import type { FileSuggestAppearance } from '../src/ui/modal-common';
 import {
 	createButton,
 	createModalSettle,
 	VaultFileSuggest,
-} from '../src/modal-common';
+} from '../src/ui/modal-common';
 
 /* ===== 最小 DOM 桩（node 环境没有 document；afterEach 还原） ===== */
 

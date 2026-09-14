@@ -16,8 +16,8 @@
  * view.ts（其运行时 import main.ts）形成循环依赖。
  */
 import { App, Plugin, TAbstractFile, TFile } from 'obsidian';
-import { VIEW_TYPE } from './constants';
-import { fileLookupIndex } from './file-lookup';
+import { VIEW_TYPE } from '../core/constants';
+import { fileLookupIndex } from '../links/file-lookup';
 
 /** MindMapView 的最小结构接口：仅暴露本服务需要的成员 */
 interface MindMapViewLike {

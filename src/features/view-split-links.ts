@@ -8,19 +8,19 @@
  *   路径，性能模式下也不会漏掉视口外节点。
  */
 import { Notice } from 'obsidian';
-import { isEditingText, setNodeText } from '../mindmap';
+import { isEditingText, setNodeText } from '../engine/mindmap';
 import {
 	planSplitLinks,
 	splitAllLinksInTree,
 	writeSplitPlanToData,
 	type SplitAllResult,
 	type SplitLinkPlan,
-} from '../links-split';
-import { ensureUniqueUids } from '../markdown';
+} from '../markdown/links-split';
+import { ensureUniqueUids } from '../markdown/markdown';
 import { insertChildNodeWithData, requireActiveNode } from './view-common';
-import { t, tf } from '../i18n';
+import { t, tf } from '../core/i18n';
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
-import type { MdNodeData } from '../node-data';
+import type { MdNodeData } from '../core/node-data';
 import type { MindMapViewContext } from './view-context';
 
 /**

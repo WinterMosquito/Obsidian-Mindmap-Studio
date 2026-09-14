@@ -5,7 +5,7 @@
  * 基于 Obsidian Modal 实现：组件生命周期（打开/关闭/清理）由 Obsidian 管理。
  */
 import { App, Modal } from 'obsidian';
-import { t, type Language } from '../i18n';
+import { t, type Language } from '../core/i18n';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 

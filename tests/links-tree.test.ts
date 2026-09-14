@@ -10,11 +10,11 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, TFile } from 'obsidian';
-import { fileLookupIndex } from '../src/file-lookup';
+import { fileLookupIndex } from '../src/links/file-lookup';
 import {
 	removeReferencesOnDelete,
 	updateReferencesOnRename,
-} from '../src/links-tree';
+} from '../src/links/links-tree';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 /** 资源地址前缀：fake vault 的 getResourcePath 输出形态 */

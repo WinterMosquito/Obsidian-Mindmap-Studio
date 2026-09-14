@@ -10,8 +10,8 @@
  * mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
  */
 import { Plugin, TFile, TFolder } from 'obsidian';
-import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS } from './constants';
-import { createDebouncer } from './concurrency';
+import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS } from './core/constants';
+import { createDebouncer } from './core/concurrency';
 import {
 	MindMapStudioSettings,
 	MindMapStudioSettingTab,
@@ -24,24 +24,24 @@ import {
 	openAsMarkdown,
 	openAsMindMap,
 	setOpenAsPreferenceHook,
-} from './md-open';
+} from './markdown/md-open';
 import {
 	addMindMapRibbonIcon,
 	refreshCommandLabels,
 	registerCommands,
 } from './commands';
-import { t } from './i18n';
-import { VaultSyncService } from './vault-sync';
-import { fileLookupIndex } from './file-lookup';
-import { setImageSizeCacheStore } from './images-path';
-import { ViewStateStore } from './view-state';
-import { notifyError } from './errors';
-import { PluginDataWriter } from './persistence';
-import { ElementStatusBarService } from './status-bar';
-import type { StatusBarService } from './status-bar';
+import { t } from './core/i18n';
+import { VaultSyncService } from './platform/vault-sync';
+import { fileLookupIndex } from './links/file-lookup';
+import { setImageSizeCacheStore } from './media/images-path';
+import { ViewStateStore } from './services/view-state';
+import { notifyError } from './core/errors';
+import { PluginDataWriter } from './core/persistence';
+import { ElementStatusBarService } from './services/status-bar';
+import type { StatusBarService } from './services/status-bar';
 import { updateStatusBar } from './features/view-status';
 import { injectIntoFileCreator } from './features/file-creator';
-import { OpenAsPreferenceRestorer } from './open-as-restore';
+import { OpenAsPreferenceRestorer } from './platform/open-as-restore';
 
 export default class MindMapStudioPlugin extends Plugin {
 	override settings!: MindMapStudioSettings;

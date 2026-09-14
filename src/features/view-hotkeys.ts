@@ -13,7 +13,7 @@ import {
 	getActiveNode,
 	isEditingText,
 	startNodeTextEdit,
-} from '../mindmap';
+} from '../engine/mindmap';
 import type { App } from 'obsidian';
 import type { ViewEngineContext } from './view-context';
 

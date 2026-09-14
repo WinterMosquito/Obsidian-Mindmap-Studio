@@ -14,7 +14,7 @@
  * 因此「恰好等于半径」命中，且**并列时后出现者覆盖先出现者**（见下文用例）。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { DRAG_TARGET_RADIUS_PX } from '../src/constants';
+import { DRAG_TARGET_RADIUS_PX } from '../src/core/constants';
 import {
 	gapCenter,
 	nodeViewportCenter,

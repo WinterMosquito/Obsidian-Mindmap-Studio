@@ -5,8 +5,8 @@
  * 契约，属于"黏合类型"——domain 保持纯领域逻辑（零引擎/Obsidian/上层
  * 依赖），由 eslint 的 no-restricted-imports 边界规则强制。
  */
-import type { MindMapNodeData } from '../vendor/simple-mind-map.cjs';
-import type { MdNodeMeta } from './domain/md-meta';
+import type { MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
+import type { MdNodeMeta } from '../domain/md-meta';
 
 /** 引擎节点 data + md 元数据的合并视图 */
 export type MdNodeData = MindMapNodeData & MdNodeMeta;

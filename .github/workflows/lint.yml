@@ -41,7 +41,7 @@ jobs:
                   retention-days: 14
             - run: npm run lint
 
-            # 渲染契约验证（scripts/verify-visual.mjs）：把 src/mindmap.ts 打成浏览器
+            # 渲染契约验证（scripts/verify-visual.mjs）：把 src/engine/mindmap.ts 打成浏览器
             # IIFE，配真实 styles.css 在无头 Chrome 里渲染场景并断言 --dump-dom。
             # 这些「引擎运行时 DOM 装配」行为单测覆盖不到（单测只能验证数据字段）。
             #

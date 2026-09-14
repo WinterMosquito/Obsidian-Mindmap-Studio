@@ -8,11 +8,11 @@
  */
 import { App, TFile } from 'obsidian';
 import { fileLookupIndex } from './file-lookup';
-import { walkTree } from './domain/tree';
-import { formatWikilink, parseWikilink } from './domain/wikilink';
-import type { WikilinkParts } from './domain/wikilink';
-import { hasNodeReference } from './node-data';
-import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
+import { walkTree } from '../domain/tree';
+import { formatWikilink, parseWikilink } from '../domain/wikilink';
+import type { WikilinkParts } from '../domain/wikilink';
+import { hasNodeReference } from '../core/node-data';
+import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
 
 /** Obsidian 库内回收站目录（vault 根下的 .trash） */
 const TRASH_DIR = '.trash';

@@ -2,7 +2,7 @@
  * simple-mind-map 引擎主题配置：亮/暗色配色、视图主题。
  * 从 mindmap.ts 拆出。
  */
-import { IMAGE_HEIGHT, IMAGE_WIDTH } from './constants';
+import { IMAGE_HEIGHT, IMAGE_WIDTH } from '../core/constants';
 
 const BORDER_RADIUS = 5;
 /** 节点水平内边距：略大于引擎默认值（15），仅作左右留白 */

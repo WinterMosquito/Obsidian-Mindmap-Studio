@@ -31,7 +31,7 @@
  * 也不把运行期地址写进用户文件。
  */
 import { App } from 'obsidian';
-import { isRenderableImageTarget } from './constants';
+import { isRenderableImageTarget } from '../core/constants';
 import {
 	buildInlineData,
 	isLinkReferenceDefinition,
@@ -39,15 +39,15 @@ import {
 	type InlineToken,
 } from './md-outline';
 import { composeNodeFirstLine } from './md-serialize';
-import { walkTree } from './domain/tree';
-import { isAppResourceUrl } from './domain/url';
+import { walkTree } from '../domain/tree';
+import { isAppResourceUrl } from '../domain/url';
 import {
 	formatWikilink,
 	parseWikilink,
 	wikilinkTargetIsAttachment,
-} from './domain/wikilink';
-import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
-import type { MdNodeData } from './node-data';
+} from '../domain/wikilink';
+import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MdNodeData } from '../core/node-data';
 
 /** 可承载子节点的行类型（plain 段落跳过，见文件头） */
 const SPLITTABLE_LINE_TYPES: ReadonlySet<string> = new Set([

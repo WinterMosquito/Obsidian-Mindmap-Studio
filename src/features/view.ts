@@ -11,12 +11,12 @@
  * - 本类只做编排：生命周期事件 → 装配 services 与 view-* 交互特性。
  */
 import { FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
-import { Language, t } from '../i18n';
-import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../constants';
+import { Language, t } from '../core/i18n';
+import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
-import { notifyError } from '../errors';
-import { walkCorrectImageSizesByAspect } from '../images-path';
-import { openAsMarkdown } from '../md-open';
+import { notifyError } from '../core/errors';
+import { walkCorrectImageSizesByAspect } from '../media/images-path';
+import { openAsMarkdown } from '../markdown/md-open';
 import { registerWikilinkInteractions } from './view-wikilink';
 import type { MindMapViewContext, ViewPluginContext } from './view-context';
 import { DocumentService, SavePipeline } from '../services/document-service';
@@ -44,7 +44,7 @@ import {
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { setupImageResize, teardownImageResize } from './image-resize';
 import { setupDragTargetAssist, teardownDragTargetAssist } from './drag-target';
-import { EventBinder } from '../event-binder';
+import { EventBinder } from '../core/event-binder';
 import { TitleRenamer } from './view-title-renamer';
 import { openHyperlink as linkNavigatorOpen } from './view-link-navigator';
 import {

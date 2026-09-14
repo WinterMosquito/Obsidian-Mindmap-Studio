@@ -26,20 +26,20 @@ import {
 	getThemeConfig,
 	isDarkTheme,
 	isEditingText,
-} from '../mindmap';
-import { ensureUniqueUids } from '../markdown';
-import { hasNodeReference, nodeReferenceHaystack } from '../node-data';
+} from '../engine/mindmap';
+import { ensureUniqueUids } from '../markdown/markdown';
+import { hasNodeReference, nodeReferenceHaystack } from '../core/node-data';
 import {
 	removeReferencesOnDelete,
 	updateReferencesOnRename,
-} from '../links-tree';
+} from '../links/links-tree';
 import { walkTree } from '../domain/tree';
-import { EventBinder } from '../event-binder';
-import { t } from '../i18n';
+import { EventBinder } from '../core/event-binder';
+import { t } from '../core/i18n';
 import type { App, TFile } from 'obsidian';
-import type { Language } from '../i18n';
+import type { Language } from '../core/i18n';
 import type { MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
-import type { ViewStateStore } from '../view-state';
+import type { ViewStateStore } from './view-state';
 
 /** 引擎创建选项（设置读取与布局 fallback 由视图负责） */
 export interface EngineSetupOptions {

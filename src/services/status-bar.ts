@@ -5,7 +5,7 @@
  * 的读写散落在视图侧多处；收敛为服务后视图只广播计数/清空请求，
  * 文本格式化（i18n）与元素生命周期（onunload 置空）都由插件层负责。
  */
-import { t, type Language } from './i18n';
+import { t, type Language } from '../core/i18n';
 
 /** 状态栏服务契约：节点计数展示与清空 */
 export interface StatusBarService {

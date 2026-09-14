@@ -7,8 +7,8 @@ import {
 	PERFORMANCE_THRESHOLD_MAX,
 	PERFORMANCE_THRESHOLD_MIN,
 	THEME_OPTIONS,
-} from './constants';
-import { Language, LANGUAGE_OPTIONS, t } from './i18n';
+} from './core/constants';
+import { Language, LANGUAGE_OPTIONS, t } from './core/i18n';
 
 /**
  * MindMapStudioSettingTab 对宿主插件的窄化契约。

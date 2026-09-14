@@ -18,19 +18,19 @@
  * src/view-state.ts、src/domain/{md-meta,wikilink}.ts、src/constants.ts。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { parseMdOutline } from '../src/md-outline';
-import { serializeMdBody } from '../src/md-serialize';
+import { parseMdOutline } from '../src/markdown/md-outline';
+import { serializeMdBody } from '../src/markdown/md-serialize';
 import {
 	buildDefaultMindMapName,
 	createDefaultMarkdownContent,
 	ensureUniqueUids,
-} from '../src/markdown';
-import { ViewStateStore } from '../src/view-state';
+} from '../src/markdown/markdown';
+import { ViewStateStore } from '../src/services/view-state';
 import {
 	hasMindMapMarker,
 	stripMindMapStem,
 	withMindMapMarker,
-} from '../src/constants';
+} from '../src/core/constants';
 
 // ---------------------------------------------------------------------------
 // 辅助

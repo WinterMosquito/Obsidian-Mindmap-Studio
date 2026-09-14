@@ -6,8 +6,8 @@
  * 迁出后两侧都依赖本文件，消除循环。
  */
 import { Notice } from 'obsidian';
-import { ENGINE_COMMANDS, getActiveNode } from '../mindmap';
-import { t } from '../i18n';
+import { ENGINE_COMMANDS, getActiveNode } from '../engine/mindmap';
+import { t } from '../core/i18n';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 

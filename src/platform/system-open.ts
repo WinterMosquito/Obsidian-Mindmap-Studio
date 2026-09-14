@@ -3,7 +3,7 @@
  * 从 view-attachments.ts 拆出（该文件其余能力已并入 view-node-actions.ts）。
  */
 import { App, FileSystemAdapter, Notice, Platform, TFile } from 'obsidian';
-import { t, type Language } from './i18n';
+import { t, type Language } from '../core/i18n';
 
 /**
  * 用系统默认应用打开库内文件（仅桌面端；移动端无系统应用入口，仅提示）。

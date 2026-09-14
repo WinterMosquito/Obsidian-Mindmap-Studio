@@ -17,7 +17,7 @@
  *   渲染路径下放大测宽，该路径已随节点内 Markdown 渲染一并删除，当前架构下
  *   已无法复现（测量元素挂在 body 下，不经容器子 div）。
  *
- * 做法：esbuild 把 `src/mindmap.ts`（纯模块，无 obsidian 依赖）打成浏览器
+ * 做法：esbuild 把 `src/engine/mindmap.ts`（纯模块，无 obsidian 依赖）打成浏览器
  * IIFE，配合**仓库真实 styles.css** 在无头 Chrome 里渲染若干场景，再解析
  * --dump-dom 输出逐场景断言。临时文件默认落在系统临时目录并在验证后清理。
  *
@@ -188,7 +188,7 @@ function findChrome() {
 
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
 function buildEntrySource() {
-	const mindmapModule = join(ROOT, 'src', 'mindmap.ts').replaceAll('\\', '/');
+	const mindmapModule = join(ROOT, 'src', 'engine', 'mindmap.ts').replaceAll('\\', '/');
 	const wikilinkModule = join(ROOT, 'src', 'features', 'view-wikilink.ts').replaceAll(
 		'\\',
 		'/',

@@ -12,7 +12,7 @@
  *   输入框/编辑框内让位（返回 true = 未接管）、正在编辑时忽略、无激活节点仍吞键。
  *
  * 引擎侧判定（getActiveNode / isEditingText / startNodeTextEdit）经
- * `vi.mock('../src/mindmap', …)` 替换为 spy：本文件只验证「何时调用、传什么参数」，
+ * `vi.mock('../src/engine/mindmap', …)` 替换为 spy：本文件只验证「何时调用、传什么参数」，
  * 引擎内部行为由 mindmap 自身的回归覆盖。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,9 +25,9 @@ import {
 	registerViewHotkeys,
 	type ViewHotkeyHost,
 } from '../src/features/view-hotkeys';
-import { getActiveNode, isEditingText, startNodeTextEdit } from '../src/mindmap';
+import { getActiveNode, isEditingText, startNodeTextEdit } from '../src/engine/mindmap';
 
-vi.mock('../src/mindmap', () => ({
+vi.mock('../src/engine/mindmap', () => ({
 	// 与生产常量表同名同值（断言处用字面量核对转发目标）
 	ENGINE_COMMANDS: { BACK: 'BACK', FORWARD: 'FORWARD' },
 	getActiveNode: vi.fn(),

@@ -19,7 +19,7 @@ import {
 	buildPastedImageName,
 	sanitizeFileName,
 	saveImageToVault,
-} from '../src/images-save';
+} from '../src/media/images-save';
 
 describe('buildPastedImageName（Obsidian 粘贴命名约定）', () => {
 	afterEach(() => {

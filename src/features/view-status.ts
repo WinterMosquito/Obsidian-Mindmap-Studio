@@ -6,8 +6,8 @@
  * 节流器按视图 WeakMap 持有，视图关闭时调用 cancelStatusBarUpdate 取消尾随刷新。
  * 状态栏 DOM 归插件层 StatusBarService 所有，本模块只广播计数/清空。
  */
-import { countTreeNodes, getRenderRoot } from '../mindmap';
-import { createThrottler, type Throttler } from '../concurrency';
+import { countTreeNodes, getRenderRoot } from '../engine/mindmap';
+import { createThrottler, type Throttler } from '../core/concurrency';
 import type { MindMapViewContext } from './view-context';
 
 /**

@@ -10,7 +10,7 @@ import {
 	getNodeDataString,
 	resetZoom,
 	startNodeTextEdit,
-} from '../mindmap';
+} from '../engine/mindmap';
 import {
 	addImageToActiveNode,
 	addLinkToActiveNode,
@@ -23,7 +23,7 @@ import {
 } from './view-node-actions';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { arrangeMindMap } from './view-toolbar';
-import { t } from '../i18n';
+import { t } from '../core/i18n';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 

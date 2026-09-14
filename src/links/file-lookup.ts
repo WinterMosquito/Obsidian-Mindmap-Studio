@@ -18,7 +18,7 @@
  * 失效后下一次查询（含失效事件的同批处理）会重建，时序上无竞态。
  */
 import { App, TFile, normalizePath } from 'obsidian';
-import { isRemoteOrDataUrl } from './domain/url';
+import { isRemoteOrDataUrl } from '../domain/url';
 
 /**
  * 构建「多种地址形态 → TFile」的查找索引：

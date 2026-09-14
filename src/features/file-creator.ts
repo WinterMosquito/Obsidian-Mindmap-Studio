@@ -12,8 +12,8 @@
  * 若未来 Obsidian 提供公共 API，应优先替换为公共实现。
  */
 import { App, Menu, TFolder } from 'obsidian';
-import { CORE_VIEW_TYPE } from '../constants';
-import { t, type Language } from '../i18n';
+import { CORE_VIEW_TYPE } from '../core/constants';
+import { t, type Language } from '../core/i18n';
 
 /**
  * 已注入的菜单对象引用（按核心视图实例记录）。

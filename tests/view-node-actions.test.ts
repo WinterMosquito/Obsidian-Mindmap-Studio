@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import type { App } from 'obsidian';
 import { TFile } from 'obsidian';
-import { t, type Language, type TranslationKey } from '../src/i18n';
+import { t, type Language, type TranslationKey } from '../src/core/i18n';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from '../src/features/view-context';
 import {
@@ -89,7 +89,7 @@ vi.mock('obsidian', async (importOriginal) => {
 	};
 });
 
-vi.mock('../src/mindmap', () => ({
+vi.mock('../src/engine/mindmap', () => ({
 	ENGINE_COMMANDS: ENGINE,
 	setNodeText: (...args: unknown[]): void => {
 		setNodeTextMock(...args);
@@ -118,26 +118,26 @@ vi.mock('../src/mindmap', () => ({
 	},
 }));
 
-vi.mock('../src/modal-link', () => ({
+vi.mock('../src/ui/modal-link', () => ({
 	openLinkEditorModal: (...args: unknown[]): Promise<unknown> =>
 		openLinkMock(...args),
 }));
 
-vi.mock('../src/modal-image', () => ({
+vi.mock('../src/ui/modal-image', () => ({
 	openImageEditorModal: (...args: unknown[]): Promise<unknown> =>
 		openImageMock(...args),
 }));
 
 // 库内解析结果由用例决定：未解析（null）= 按目标串扩展名判定；
 // 返回 TFile 形态对象 = 按真实扩展名判定。真实现依赖全库索引，与编排无关。
-vi.mock('../src/links-resolve', () => ({
+vi.mock('../src/links/links-resolve', () => ({
 	resolvePathToFile: (...args: unknown[]): unknown => resolveMock(...args),
 }));
 
 // 尺寸探测要读 DOM 图片原始尺寸（node 环境无 Image）：桩掉选项构造器，
 // 只验证编排把「显示地址」交给了 SET_NODE_IMAGE。
-vi.mock('../src/images-path', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('../src/images-path')>();
+vi.mock('../src/media/images-path', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../src/media/images-path')>();
 	return {
 		...actual,
 		createSetNodeImageOptions: (...args: unknown[]): unknown =>

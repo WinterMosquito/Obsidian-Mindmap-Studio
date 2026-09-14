@@ -5,9 +5,9 @@
 import { MarkdownView, Plugin } from 'obsidian';
 import { MindMapView } from './features/view';
 import { createNewMindMap } from './creation';
-import { fitMindMap } from './mindmap';
-import { isMindMapMarkdownFile, openAsMindMap } from './md-open';
-import { Language, t } from './i18n';
+import { fitMindMap } from './engine/mindmap';
+import { isMindMapMarkdownFile, openAsMindMap } from './markdown/md-open';
+import { Language, t } from './core/i18n';
 
 /**
  * commands 模块对宿主插件的窄化契约。

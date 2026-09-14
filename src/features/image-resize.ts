@@ -25,9 +25,9 @@ import {
 	getDrawTransform,
 	getNodeGroupEl,
 	setNodeImageSize,
-} from '../mindmap';
+} from '../engine/mindmap';
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
-import type { MdNodeData } from '../node-data';
+import type { MdNodeData } from '../core/node-data';
 import type { MindMapViewContext } from './view-context';
 
 /** 手柄像素尺寸（屏幕 px） */

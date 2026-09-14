@@ -24,7 +24,7 @@
  * - engineEvents 随引擎实例销毁，无跨实例泄漏。
  */
 import { walkTree } from '../domain/tree';
-import { DRAG_TARGET_RADIUS_PX } from '../constants';
+import { DRAG_TARGET_RADIUS_PX } from '../core/constants';
 import {
 	getDragDropState,
 	getDrawTransform,
@@ -35,7 +35,7 @@ import {
 	setDragOverlapTarget,
 	setDragPrevTarget,
 	toCanvasPoint,
-} from '../mindmap';
+} from '../engine/mindmap';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 

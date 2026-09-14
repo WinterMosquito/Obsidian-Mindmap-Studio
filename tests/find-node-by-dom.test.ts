@@ -12,7 +12,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
-import { findNodeByDom } from '../src/mindmap';
+import { findNodeByDom } from '../src/engine/mindmap';
 
 vi.mock('../vendor/simple-mind-map.cjs', () => ({
 	MindMap: class {},

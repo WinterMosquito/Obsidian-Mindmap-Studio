@@ -3,7 +3,7 @@
  * 节点操作（链接/图片/删除）委托给 view-node-actions.ts。
  */
 import { Notice, setIcon } from 'obsidian';
-import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../constants';
+import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../core/constants';
 import {
 	arrangeMindMap as arrangeMindMapEngine,
 	ENGINE_COMMANDS,
@@ -12,7 +12,7 @@ import {
 	supportsLineStyleSwitch,
 	zoomInMindMap,
 	zoomOutMindMap,
-} from '../mindmap';
+} from '../engine/mindmap';
 import { openSearchBar } from './view-search';
 import { exportPNG } from './view-export';
 import {
@@ -20,7 +20,7 @@ import {
 	addLinkToActiveNode,
 	deleteActiveNode,
 } from './view-node-actions';
-import { t } from '../i18n';
+import { t } from '../core/i18n';
 import type { MindMapViewContext } from './view-context';
 
 /** 构建工具栏（左：编辑/插入；中：布局；右：画布/导入导出） */

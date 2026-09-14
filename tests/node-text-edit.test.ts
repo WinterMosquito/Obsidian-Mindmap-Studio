@@ -15,7 +15,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
-import { startNodeTextEdit } from '../src/mindmap';
+import { startNodeTextEdit } from '../src/engine/mindmap';
 
 // mindmap.ts 经 import 链加载真实 vendor bundle（顶层求值触碰 document.documentElement）；
 // 静态 import 先于模块体执行，故桩必须放进 vi.hoisted 才会先落地。

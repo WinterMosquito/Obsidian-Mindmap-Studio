@@ -4,16 +4,16 @@
  * Obsidian 原生更新链接/反链；外部改名后视图重载，中心随新文件名。
  */
 import { App, Notice, TFile } from 'obsidian';
-import { createDebouncer } from '../concurrency';
-import { isMindMapMarkdownFile } from '../md-open';
-import { sanitizeFileName } from '../images-save';
+import { createDebouncer } from '../core/concurrency';
+import { isMindMapMarkdownFile } from '../markdown/md-open';
+import { sanitizeFileName } from '../media/images-save';
 import {
 	MD_FILE_SUFFIX,
 	stripMindMapStem,
 	TITLE_RENAME_DEBOUNCE_MS,
-} from '../constants';
-import { t } from '../i18n';
-import type { Language } from '../i18n';
+} from '../core/constants';
+import { t } from '../core/i18n';
+import type { Language } from '../core/i18n';
 
 interface TitleRenamerDeps {
 	app: App;

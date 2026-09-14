@@ -13,7 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import { t, type Language } from '../src/i18n';
+import { t, type Language } from '../src/core/i18n';
 import {
 	buildSearchBar,
 	closeSearchBar,
@@ -56,7 +56,7 @@ vi.mock('obsidian', async (importOriginal) => {
 	};
 });
 
-vi.mock('../src/mindmap', () => ({
+vi.mock('../src/engine/mindmap', () => ({
 	endMindMapSearch: searchMocks.endMindMapSearch,
 	getSearchCurrentIndex: searchMocks.getSearchCurrentIndex,
 	getSearchMatchCount: searchMocks.getSearchMatchCount,

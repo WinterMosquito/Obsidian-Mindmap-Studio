@@ -19,7 +19,7 @@ import {
 	lineStyleForLayout,
 	resolveLineStyle,
 	supportsLineStyleSwitch,
-} from '../src/mindmap-theme';
+} from '../src/engine/mindmap-theme';
 
 describe('lineStyleForLayout（布局 → 布局默认连线样式）', () => {
 	it('组织结构图经 lineStyle 得直线（引擎该布局支持 curve/direct/straight 三态）', () => {

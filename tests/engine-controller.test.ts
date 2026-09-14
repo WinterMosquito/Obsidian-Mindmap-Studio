@@ -15,7 +15,7 @@
  * - refresh 的深拷贝重建、persistViewport 的按路径写入，以及
  *   restoreOrFitViewport「有保存视口优先恢复，否则默认 100% + 内容包围盒居中」。
  *
- * 引擎本体（vendor bundle）不在 Node 下加载，故 vi.mock('../src/mindmap')
+ * 引擎本体（vendor bundle）不在 Node 下加载，故 vi.mock('../src/engine/mindmap')
  * 桩掉防腐封装面；引用更新真实实现涉及 Obsidian 库 API，同样桩掉 links-tree，
  * 以便精确控制「有无变更」这一分支。真实 needle 匹配（node-data）不复刻，
  * 用真实模块，避免断言与被测逻辑同源失真。
@@ -41,14 +41,14 @@ const mocks = vi.hoisted(() => {
 	};
 });
 
-vi.mock('../src/mindmap', () => mocks);
-vi.mock('../src/links-tree', () => ({
+vi.mock('../src/engine/mindmap', () => mocks);
+vi.mock('../src/links/links-tree', () => ({
 	updateReferencesOnRename: mocks.updateReferencesOnRename,
 	removeReferencesOnDelete: mocks.removeReferencesOnDelete,
 }));
 
 import { EngineController } from '../src/services/engine-controller';
-import { ViewStateStore } from '../src/view-state';
+import { ViewStateStore } from '../src/services/view-state';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 // ---------------------------------------------------------------------------

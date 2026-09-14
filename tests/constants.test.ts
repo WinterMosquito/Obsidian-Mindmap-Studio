@@ -16,7 +16,7 @@ import {
 	canOpenInObsidian,
 	isLinkAttachmentExtension,
 	isSystemMediaExtension,
-} from '../src/constants';
+} from '../src/core/constants';
 import { isDocumentExtension, wikilinkTargetIsAttachment } from '../src/domain/wikilink';
 
 describe('isDocumentExtension / wikilinkTargetIsAttachment — 文档 vs 附件', () => {

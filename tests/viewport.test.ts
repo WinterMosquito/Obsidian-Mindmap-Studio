@@ -16,12 +16,12 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import { RESET_LAYOUT_VIEWPORT_DELAY_MS } from '../src/constants';
+import { RESET_LAYOUT_VIEWPORT_DELAY_MS } from '../src/core/constants';
 import {
 	arrangeMindMap,
 	centerContentAtFullScale,
 	resetZoom,
-} from '../src/mindmap';
+} from '../src/engine/mindmap';
 
 // mindmap.ts 经 import 链加载真实 vendor bundle（顶层求值触碰 document.documentElement）；
 // 静态 import 先于模块体执行，故桩必须放进 vi.hoisted 才会先落地。

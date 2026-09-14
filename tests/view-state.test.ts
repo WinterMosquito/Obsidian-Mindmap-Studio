@@ -11,8 +11,8 @@
  *   （卸载路径靠它持有在途写盘），无未决变更时返回 undefined。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ViewStateStore } from '../src/view-state';
-import { VIEW_STATE_PERSIST_MS } from '../src/constants';
+import { ViewStateStore } from '../src/services/view-state';
+import { VIEW_STATE_PERSIST_MS } from '../src/core/constants';
 
 const PATH_A = 'notes/a.mindmap.md';
 const PATH_B = 'notes/b.mindmap.md';

@@ -13,7 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
-import { ENGINE_COMMANDS } from '../src/mindmap';
+import { ENGINE_COMMANDS } from '../src/engine/mindmap';
 import type { MindMapViewContext } from '../src/features/view-context';
 import {
 	setupDragTargetAssist,

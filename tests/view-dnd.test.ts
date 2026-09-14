@@ -22,10 +22,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { App, TFile } from 'obsidian';
 import { TFile as TFileClass } from 'obsidian';
-import type { EventBinder } from '../src/event-binder';
-import type { SaveImageOptions } from '../src/images-save';
-import type { Language, TranslationKey } from '../src/i18n';
-import { t } from '../src/i18n';
+import type { EventBinder } from '../src/core/event-binder';
+import type { SaveImageOptions } from '../src/media/images-save';
+import type { Language, TranslationKey } from '../src/core/i18n';
+import { t } from '../src/core/i18n';
 import { formatWikilink } from '../src/domain/wikilink';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from '../src/features/view-context';
@@ -88,7 +88,7 @@ vi.mock('obsidian', async (importOriginal) => {
 // 引擎模块整体以桩替换（真实模块会拉入 vendor 打包产物）。
 // ENGINE_COMMANDS 的取值与 src/mindmap.ts 一致——断言用它证明插入走的是
 // 「命令名常量表」而非散落的魔法字符串。
-vi.mock('../src/mindmap', () => ({
+vi.mock('../src/engine/mindmap', () => ({
 	ENGINE_COMMANDS: {
 		INSERT_CHILD_NODE: 'INSERT_CHILD_NODE',
 		SET_NODE_IMAGE: 'SET_NODE_IMAGE',
@@ -126,12 +126,12 @@ vi.mock('../src/features/view-node-actions', () => ({
 
 // 图片入库以桩替换：断言入参（sourcePath / preferredName / lang / 上限）与
 // 「是否发生写入」这一分流判据；真实入库链（串行队列、重名兜底）另有用例。
-vi.mock('../src/images-save', () => ({
+vi.mock('../src/media/images-save', () => ({
 	saveImageToVault: (options: SaveImageOptions): Promise<TFile | null> =>
 		h.saveImageToVault(options),
 }));
 
-vi.mock('../src/links-resolve', () => ({
+vi.mock('../src/links/links-resolve', () => ({
 	resolveDroppedFile: (
 		dataTransfer: DataTransfer,
 		app: App,
@@ -142,7 +142,7 @@ vi.mock('../src/links-resolve', () => ({
 
 // 图片尺寸探测要真实解码（Node 下 Image 不可用）：以固定尺寸桩替换，
 // 用来断言 imageSize 三个字段确实来自探测结果而非写死。
-vi.mock('../src/images-path', () => ({
+vi.mock('../src/media/images-path', () => ({
 	createAspectSetNodeImageOptions: (url: string | null) =>
 		h.createAspectSetNodeImageOptions(url),
 }));

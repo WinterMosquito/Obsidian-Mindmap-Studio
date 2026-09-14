@@ -10,8 +10,8 @@
  * - lineStyle: 连线样式偏好（auto/curve/direct/straight；auto＝随布局）
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）
  */
-import { createDebouncer, type Debouncer } from './concurrency';
-import { VIEW_STATE_PERSIST_MS } from './constants';
+import { createDebouncer, type Debouncer } from '../core/concurrency';
+import { VIEW_STATE_PERSIST_MS } from '../core/constants';
 
 export type PathState = Record<string, unknown>;
 

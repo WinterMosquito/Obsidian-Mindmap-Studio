@@ -34,12 +34,12 @@ import {
 	type Mock,
 } from 'vitest';
 import { App, TFile, TFolder } from 'obsidian';
-import { MAX_IMAGE_SIZE_MB } from '../src/constants';
-import { t, type Language } from '../src/i18n';
-import { fileLookupIndex } from '../src/file-lookup';
-import { openImageEditorModal } from '../src/modal-image';
-import { openLinkEditorModal, type LinkPickResult } from '../src/modal-link';
-import { openNameInputModal } from '../src/modal-name';
+import { MAX_IMAGE_SIZE_MB } from '../src/core/constants';
+import { t, type Language } from '../src/core/i18n';
+import { fileLookupIndex } from '../src/links/file-lookup';
+import { openImageEditorModal } from '../src/ui/modal-image';
+import { openLinkEditorModal, type LinkPickResult } from '../src/ui/modal-link';
+import { openNameInputModal } from '../src/ui/modal-name';
 
 /* ===== 伪 DOM（node 环境无 document；afterEach 还原） ===== */
 

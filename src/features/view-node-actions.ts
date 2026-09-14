@@ -12,12 +12,12 @@ import {
 	getNodeDataString,
 	getRenderRoot,
 	setNodeText,
-} from '../mindmap';
-import { openLinkEditorModal } from '../modal-link';
-import { markNodeNeedLayout } from '../mindmap';
-import { notifyError } from '../errors';
-import { resolvePathToFile } from '../links-resolve';
-import { t } from '../i18n';
+} from '../engine/mindmap';
+import { openLinkEditorModal } from '../ui/modal-link';
+import { markNodeNeedLayout } from '../engine/mindmap';
+import { notifyError } from '../core/errors';
+import { resolvePathToFile } from '../links/links-resolve';
+import { t } from '../core/i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
 
 import {
@@ -27,7 +27,7 @@ import {
 	wikilinkTargetIsAttachment,
 } from '../domain/wikilink';
 import { requireActiveNode, insertChildNodeWithData } from './view-common';
-import type { MdNodeData } from '../node-data';
+import type { MdNodeData } from '../core/node-data';
 import type { MindMapNode, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 

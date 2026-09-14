@@ -4,10 +4,10 @@
  * 解析（正文 → 导图树）与序列化（树 → md）见 md-outline.ts / md-serialize.ts；
  * 行内 wikilink 交互见 view-wikilink.ts。本文件不含任何专有格式逻辑。
  */
-import { generateUid } from './constants';
-import { t, type Language } from './i18n';
-import { walkTree } from './domain/tree';
-import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
+import { generateUid } from '../core/constants';
+import { t, type Language } from '../core/i18n';
+import { walkTree } from '../domain/tree';
+import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
 
 /**
  * 新建「Markdown 思维导图」(.mindmap.md) 的默认正文：

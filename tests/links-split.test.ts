@@ -13,15 +13,15 @@
  */
 import { App, TFile } from 'obsidian';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { fileLookupIndex } from '../src/file-lookup';
-import { parseMdOutline } from '../src/md-outline';
-import { serializeMdBody } from '../src/md-serialize';
+import { fileLookupIndex } from '../src/links/file-lookup';
+import { parseMdOutline } from '../src/markdown/md-outline';
+import { serializeMdBody } from '../src/markdown/md-serialize';
 import {
 	planSplitLinks,
 	splitAllLinksInTree,
 	writeSplitPlanToData,
-} from '../src/links-split';
-import type { MdNodeData } from '../src/node-data';
+} from '../src/markdown/links-split';
+import type { MdNodeData } from '../src/core/node-data';
 import type {
 	MindMapTreeNode,
 } from '../vendor/simple-mind-map.cjs';

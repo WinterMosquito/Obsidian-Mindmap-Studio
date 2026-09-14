@@ -7,11 +7,11 @@
  * （view.ts，持有类引用）完成后才调用 handleWindowPaste。
  */
 import { Notice } from 'obsidian';
-import { getActiveNode } from '../mindmap';
-import { buildPastedImageName, saveImageToVault } from '../images-save';
-import { notifyError } from '../errors';
+import { getActiveNode } from '../engine/mindmap';
+import { buildPastedImageName, saveImageToVault } from '../media/images-save';
+import { notifyError } from '../core/errors';
 import { applyNodeImage } from './view-node-actions';
-import { t } from '../i18n';
+import { t } from '../core/i18n';
 import type { MindMapViewContext } from './view-context';
 
 /** 注册画布容器粘贴监听（引擎重建时随 initMindMap 调用） */

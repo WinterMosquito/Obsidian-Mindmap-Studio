@@ -15,7 +15,7 @@ import {
 	createSerialQueue,
 	createThrottler,
 	mapWithConcurrency,
-} from '../src/concurrency';
+} from '../src/core/concurrency';
 
 /**
  * 手动 deferred：竞态用例需要「先断言在途、后放行」，不能靠计时猜时序。

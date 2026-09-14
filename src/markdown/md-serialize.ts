@@ -16,22 +16,22 @@
  */
 
 import { App } from 'obsidian';
-import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
 import {
 	isIndentedCodeLine,
 	isRenderableImageExtension,
 	isRenderableImageTarget,
-} from './constants';
-import { resolvePathToFile } from './links-resolve';
+} from '../core/constants';
+import { resolvePathToFile } from '../links/links-resolve';
 import {
 	formatEmbedWikilink,
 	formatWikilink,
 	linkDisplayText,
 	wikilinkLinkpath,
-} from './domain/wikilink';
-import { isExternalImageRef, isSchemeUrl } from './domain/url';
-import { docWikiLinkDisplay, editedWikilinkAlias, effectiveDocWikiLink } from './domain/wiki-display';
-import type { MdNodeData } from './node-data';
+} from '../domain/wikilink';
+import { isExternalImageRef, isSchemeUrl } from '../domain/url';
+import { docWikiLinkDisplay, editedWikilinkAlias, effectiveDocWikiLink } from '../domain/wiki-display';
+import type { MdNodeData } from '../core/node-data';
 
 /** 链接目标是否需要尖括号包裹（含空格/括号/<>/\，否则会破坏 `(…)` 闭合） */
 function needsDestBraces(dest: string): boolean {

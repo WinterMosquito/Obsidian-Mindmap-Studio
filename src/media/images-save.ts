@@ -3,10 +3,10 @@
  * 从 images.ts 拆出；地址解析回库内文件统一走 links-resolve.resolvePathToFile。
  */
 import { App, Notice, TFile, normalizePath } from 'obsidian';
-import { isImageExtension } from './constants';
-import { createSerialQueue } from './concurrency';
-import { notifyError } from './errors';
-import { t, tf, type Language } from './i18n';
+import { isImageExtension } from '../core/constants';
+import { createSerialQueue } from '../core/concurrency';
+import { notifyError } from '../core/errors';
+import { t, tf, type Language } from '../core/i18n';
 
 /**
  * 图片保存走全局串行队列原语：「文件名选择 + vault 写入」非原子，

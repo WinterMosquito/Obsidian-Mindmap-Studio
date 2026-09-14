@@ -4,20 +4,20 @@
  * 被 view-toolbar.ts / view-context-menu.ts / view-dnd.ts / view-paste.ts 共用。
  */
 import { App } from 'obsidian';
-import { ENGINE_COMMANDS, getNodeDataString } from '../mindmap';
+import { ENGINE_COMMANDS, getNodeDataString } from '../engine/mindmap';
 import {
 	createAspectSetNodeImageOptions,
 	createSetNodeImageOptions,
-} from '../images-path';
-import { resolvePathToFile } from '../links-resolve';
-import { openImageEditorModal } from '../modal-image';
-import { saveImageToVault } from '../images-save';
-import { notifyError } from '../errors';
+} from '../media/images-path';
+import { resolvePathToFile } from '../links/links-resolve';
+import { openImageEditorModal } from '../ui/modal-image';
+import { saveImageToVault } from '../media/images-save';
+import { notifyError } from '../core/errors';
 import {
 	isAppResourceUrl,
 	isExternalImageRef,
 } from '../domain/url';
-import type { MdNodeData } from '../node-data';
+import type { MdNodeData } from '../core/node-data';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 import { requireActiveNode } from './view-common';

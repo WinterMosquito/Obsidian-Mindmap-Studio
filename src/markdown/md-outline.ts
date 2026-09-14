@@ -19,16 +19,16 @@
  * 3) 行内轻标记（** * ` ~~ HTML）不剥离，原样保留（无损往返）。
  */
 
-import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
 import {
 	formatWikilink,
 	linkDisplayText,
 	parseWikilink,
 	wikilinkTargetIsAttachment,
-} from './domain/wikilink';
-import { isUrlLikeText } from './domain/url';
-import { isIndentedCodeLine, isRenderableImageExtension } from './constants';
-import type { MdNodeData } from './node-data';
+} from '../domain/wikilink';
+import { isUrlLikeText } from '../domain/url';
+import { isIndentedCodeLine, isRenderableImageExtension } from '../core/constants';
+import type { MdNodeData } from '../core/node-data';
 
 export interface MdParseResult {
 	tree: MindMapTreeNode;

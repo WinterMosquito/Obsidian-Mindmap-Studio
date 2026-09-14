@@ -17,8 +17,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../src/constants';
-import { t } from '../src/i18n';
+import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../src/core/constants';
+import { t } from '../src/core/i18n';
 import {
 	arrangeMindMap,
 	buildToolbar,
@@ -69,7 +69,7 @@ vi.mock('obsidian', async (importOriginal) => {
 	};
 });
 
-vi.mock('../src/mindmap', () => ({
+vi.mock('../src/engine/mindmap', () => ({
 	// ENGINE_COMMANDS 是常量表：保留真实值才能断言「命令名真的用对了」
 	ENGINE_COMMANDS: {
 		BACK: 'BACK',

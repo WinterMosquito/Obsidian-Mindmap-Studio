@@ -20,16 +20,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, MarkdownView, TFile } from 'obsidian';
-import { CORE_VIEW_TYPE, VIEW_TYPE } from '../src/constants';
-import { OpenAsPreferenceRestorer } from '../src/open-as-restore';
+import { CORE_VIEW_TYPE, VIEW_TYPE } from '../src/core/constants';
+import { OpenAsPreferenceRestorer } from '../src/platform/open-as-restore';
 
 /** openAsMindMap 的 spy（vi.hoisted 保证先于 mock 工厂可用） */
 const openAsMindMapMock = vi.hoisted(() =>
 	vi.fn<(...args: unknown[]) => Promise<void>>(),
 );
 
-vi.mock('../src/md-open', async (importOriginal) => {
-	const mod = await importOriginal<typeof import('../src/md-open')>();
+vi.mock('../src/markdown/md-open', async (importOriginal) => {
+	const mod = await importOriginal<typeof import('../src/markdown/md-open')>();
 	// 仅替换视图切换（副作用单测目标）；isMindMapMarkdownFile 用真实实现，
 	// 保证「.mindmap.md 判定」这条分支与插件运行时同源。
 	return { ...mod, openAsMindMap: openAsMindMapMock };

@@ -18,7 +18,7 @@ import {
 	PERFORMANCE_THRESHOLD_MAX,
 	PERFORMANCE_THRESHOLD_MIN,
 	THEME_OPTIONS,
-} from '../src/constants';
+} from '../src/core/constants';
 
 describe('sanitizeSettings（类型与取值校验）', () => {
 	it('空对象返回默认设置，且是全新对象（不得复用 DEFAULT_SETTINGS 引用）', () => {

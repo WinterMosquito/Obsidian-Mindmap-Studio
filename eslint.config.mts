@@ -9,6 +9,98 @@ import { parser } from 'typescript-eslint';
 import { plainTextParser } from './scripts/plain-text-parser.mjs';
 import { globalIgnores, defineConfig } from 'eslint/config';
 
+/* —— 模块依赖矩阵（K51）机械强制 ——
+   L1/L2 各模块组只允许依赖矩阵许可集（见 AGENTS.md K51）；组内相对引用
+   （./x）不受影响。组合根（main/commands/settings/creation）只能被组合根
+   引用，下层引入口在此拦下。 */
+type ModuleGroup =
+	| 'core'
+	| 'links'
+	| 'markdown'
+	| 'media'
+	| 'engine'
+	| 'platform'
+	| 'ui'
+	| 'services'
+	| 'features';
+
+const ALL_GROUPS: ModuleGroup[] = [
+	'core',
+	'links',
+	'markdown',
+	'media',
+	'engine',
+	'platform',
+	'ui',
+	'services',
+	'features',
+];
+
+const COMBO_ROOT_PATTERNS = ['../main', '../commands', '../settings', '../creation'];
+
+/** 生成一个模块组的边界块：allowed 之外的同层组与组合根一律禁止 */
+function boundary(group: ModuleGroup, allowed: ModuleGroup[]) {
+	const forbidden = ALL_GROUPS.filter((g) => g !== group && !allowed.includes(g));
+	const patterns = [
+		...(forbidden.length > 0
+			? [
+					{
+						group: forbidden.flatMap((g) => [
+							`../${g}`,
+							`../${g}/*`,
+							`../${g}/**`,
+						]),
+						message: `src/${group}/ 只允许依赖 ${['domain', ...allowed].join(' / ')}（依赖矩阵见 AGENTS.md K51）`,
+					},
+				]
+			: []),
+		{
+			group: COMBO_ROOT_PATTERNS,
+			// 类型引用豁免：视图上下文契约需要 settings 的类型（编译期擦除、
+			// 无运行时耦合）；值导入仍一律禁止。
+			allowTypeImports: true,
+			message:
+				'组合根（main/commands/settings/creation）只能被组合根本身引用（见 K51）',
+		},
+	];
+	return {
+		files: [`src/${group}/**/*.ts`],
+		rules: {
+			'@typescript-eslint/no-restricted-imports': ['error', { patterns }],
+		},
+	};
+}
+
+const moduleBoundaryBlocks = [
+	boundary('core', ['domain']),
+	boundary('links', ['core', 'domain']),
+	boundary('markdown', ['core', 'links', 'domain']),
+	boundary('media', ['core', 'links', 'domain']),
+	boundary('engine', ['core', 'domain']),
+	boundary('platform', ['core', 'links', 'markdown', 'domain']),
+	boundary('ui', ['core', 'links', 'media', 'domain']),
+	boundary('services', [
+		'core',
+		'links',
+		'markdown',
+		'media',
+		'engine',
+		'platform',
+		'domain',
+	]),
+	boundary('features', [
+		'core',
+		'links',
+		'markdown',
+		'media',
+		'engine',
+		'platform',
+		'ui',
+		'services',
+		'domain',
+	]),
+];
+
 export default defineConfig(
 	globalIgnores([
 		'node_modules',
@@ -106,27 +198,14 @@ export default defineConfig(
 			],
 		},
 	},
+	...moduleBoundaryBlocks,
 	{
-		files: ['src/features/**/*.ts', 'src/modal-*.ts', 'src/services/**/*.ts'],
-		rules: {
-			// 库内文件解析统一走 links-resolve.resolvePathToFile（形态路由与索引
-			// 兜底只在统一入口维护，散落直调会在新增解析规则时静默掉队）。
-			// 确需直调的场景（存在性检查等）用 eslint-disable 注明理由。
-			'no-restricted-syntax': [
-				'error',
-				{
-					selector: "MemberExpression[property.name='getAbstractFileByPath']",
-					message:
-						'库内文件解析请走 links-resolve.resolvePathToFile；存在性检查等特例需 eslint-disable 并注明理由',
-				},
-			],
-		},
-	},
-	{
-		// src 根层：与 features/modal/services 同规（统一入口 links-resolve.ts
-		// 与其索引原语 file-lookup.ts 豁免——它们就是收口点本体）。
-		files: ['src/*.ts'],
-		ignores: ['src/links-resolve.ts', 'src/file-lookup.ts'],
+		// 库内文件解析统一走 links-resolve.resolvePathToFile（形态路由与索引
+		// 兜底只在统一入口维护，散落直调会在新增解析规则时静默掉队）。
+		// 确需直调的场景（存在性检查等）用 eslint-disable 注明理由。
+		// 覆盖全部插件代码；收口点本体 links-resolve / file-lookup 豁免。
+		files: ['src/**/*.ts'],
+		ignores: ['src/links/links-resolve.ts', 'src/links/file-lookup.ts'],
 		rules: {
 			'no-restricted-syntax': [
 				'error',

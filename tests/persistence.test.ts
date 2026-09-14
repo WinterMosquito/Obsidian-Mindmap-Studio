@@ -10,8 +10,8 @@
  *   write 自身不拒绝——调用方普遍 `void writer.write(...)`，拒绝会变成未处理拒绝。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginDataWriter } from '../src/persistence';
-import type { PluginDataHost } from '../src/persistence';
+import { PluginDataWriter } from '../src/core/persistence';
+import type { PluginDataHost } from '../src/core/persistence';
 
 interface HostHarness {
 	host: PluginDataHost;

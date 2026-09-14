@@ -19,7 +19,7 @@ export default defineConfig({
 			// vendor 为预打包产物不测；i18n/constants 为纯文案/常量表
 			// （文案键覆盖率无意义），一并排除。
 			include: ['src/**/*.ts'],
-			exclude: ['src/i18n.ts', 'src/constants.ts'],
+			exclude: ['src/core/i18n.ts', 'src/core/constants.ts'],
 			reporter: ['text', 'html', 'lcov'],
 			reportsDirectory: 'coverage',
 		},

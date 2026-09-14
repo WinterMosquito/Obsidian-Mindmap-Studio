@@ -19,7 +19,7 @@ import {
 	captureAutoSplitCandidate,
 	runAutoSplitCheck,
 } from '../src/features/view-split-links';
-import { parseMdOutline } from '../src/md-outline';
+import { parseMdOutline } from '../src/markdown/md-outline';
 
 const { execCommandMock, setNodeTextMock, isEditingTextMock, ENGINE } = vi.hoisted(
 	() => ({
@@ -34,7 +34,7 @@ const { execCommandMock, setNodeTextMock, isEditingTextMock, ENGINE } = vi.hoist
 	}),
 );
 
-vi.mock('../src/mindmap', () => ({
+vi.mock('../src/engine/mindmap', () => ({
 	ENGINE_COMMANDS: ENGINE,
 	setNodeText: (...args: unknown[]): void => {
 		setNodeTextMock(...args);

@@ -12,7 +12,7 @@
  * 历史形态。
  */
 import { App, FileSystemAdapter, TFile, normalizePath } from 'obsidian';
-import { isAppResourceUrl, isRemoteOrDataUrl } from './domain/url';
+import { isAppResourceUrl, isRemoteOrDataUrl } from '../domain/url';
 import { fileLookupIndex, lookupIndexedFile } from './file-lookup';
 
 /**

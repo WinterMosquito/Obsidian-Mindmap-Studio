@@ -13,7 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMapNode, MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
-import { createMindMap, type CreateMindMapOptions } from '../src/mindmap';
+import { createMindMap, type CreateMindMapOptions } from '../src/engine/mindmap';
 
 /** 图标构造签名（引擎 createNodePrefixContent 的最小契约面） */
 type PrefixFn = (

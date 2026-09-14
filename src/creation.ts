@@ -6,12 +6,12 @@
  * 并在创建后自动把当前标签切换到导图视图（openAsMindMap）。
  */
 import { App, Notice, normalizePath } from 'obsidian';
-import { withMindMapMarker } from './constants';
-import { notifyError } from './errors';
-import { t, type Language } from './i18n';
-import { buildDefaultMindMapName, createDefaultMarkdownContent } from './markdown';
-import { openAsMindMap } from './md-open';
-import { openNameInputModal } from './modal-name';
+import { withMindMapMarker } from './core/constants';
+import { notifyError } from './core/errors';
+import { t, type Language } from './core/i18n';
+import { buildDefaultMindMapName, createDefaultMarkdownContent } from './markdown/markdown';
+import { openAsMindMap } from './markdown/md-open';
+import { openNameInputModal } from './ui/modal-name';
 
 /**
  * 新建思维导图（需求：新建应为 Markdown 文件而非专有格式）：

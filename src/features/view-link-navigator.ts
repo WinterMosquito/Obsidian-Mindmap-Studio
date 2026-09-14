@@ -7,13 +7,13 @@ import { Notice, TFile } from 'obsidian';
 import {
 	canOpenInObsidian,
 	isSystemMediaExtension,
-} from '../constants';
+} from '../core/constants';
 import { isHttpUrl } from '../domain/url';
 import { parseWikilink } from '../domain/wikilink';
-import { resolvePathToFile } from '../links-resolve';
-import { openFileWithSystemApp } from '../system-open';
-import { t } from '../i18n';
-import type { Language } from '../i18n';
+import { resolvePathToFile } from '../links/links-resolve';
+import { openFileWithSystemApp } from '../platform/system-open';
+import { t } from '../core/i18n';
+import type { Language } from '../core/i18n';
 import type { MindMapViewContext } from './view-context';
 
 /**

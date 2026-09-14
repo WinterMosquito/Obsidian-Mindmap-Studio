@@ -14,12 +14,12 @@ import {
 	Search,
 	Select,
 	TouchEvent,
-} from '../vendor/simple-mind-map.cjs';
+} from '../../vendor/simple-mind-map.cjs';
 import { getThemeConfig, isDarkTheme, getDocIconColor } from './mindmap-theme';
-import { t, type Language } from './i18n';
-import { walkTree } from './domain/tree';
-import { docWikiLinkDisplay, type WikiAliasSource } from './domain/wiki-display';
-import { RESET_LAYOUT_VIEWPORT_DELAY_MS } from './constants';
+import { t, type Language } from '../core/i18n';
+import { walkTree } from '../domain/tree';
+import { docWikiLinkDisplay, type WikiAliasSource } from '../domain/wiki-display';
+import { RESET_LAYOUT_VIEWPORT_DELAY_MS } from '../core/constants';
 
 export {
 	getThemeConfig,

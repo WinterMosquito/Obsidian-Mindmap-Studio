@@ -19,8 +19,8 @@ import type {
 	WorkspaceLeaf,
 } from 'obsidian';
 import { MarkdownView } from 'obsidian';
-import { CORE_VIEW_TYPE } from './constants';
-import { isMindMapMarkdownFile, openAsMindMap } from './md-open';
+import { CORE_VIEW_TYPE } from '../core/constants';
+import { isMindMapMarkdownFile, openAsMindMap } from '../markdown/md-open';
 
 /** openAs 偏好查询契约（视图状态存储） */
 export interface OpenAsLookup {

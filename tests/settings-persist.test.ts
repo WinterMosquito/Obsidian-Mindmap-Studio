@@ -18,7 +18,7 @@ import { DEFAULT_SETTINGS } from '../src/settings';
 import {
 	SETTINGS_PERSIST_DEBOUNCE_MS,
 	VIEW_STATE_PERSIST_MS,
-} from '../src/constants';
+} from '../src/core/constants';
 
 // main 的导入链（features/view → mindmap）在模块顶层触碰 document，
 // Node 环境需最小桩；vi.hoisted 保证桩早于 import 求值建立。

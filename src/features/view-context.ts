@@ -10,11 +10,11 @@
  */
 import type { App, TFile, WorkspaceLeaf } from 'obsidian';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
-import type { EventBinder } from '../event-binder';
-import type { Language } from '../i18n';
-import type { StatusBarService } from '../status-bar';
+import type { EventBinder } from '../core/event-binder';
+import type { Language } from '../core/i18n';
+import type { StatusBarService } from '../services/status-bar';
 import type { MindMapStudioSettings } from '../settings';
-import type { ViewStateStore } from '../view-state';
+import type { ViewStateStore } from '../services/view-state';
 
 /**
  * view-* 模块所需的插件能力窄化视图（结构化匹配，不依赖 main.ts 插件类）。

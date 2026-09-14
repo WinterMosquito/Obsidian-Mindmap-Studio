@@ -12,7 +12,7 @@
  * 重复调用的状态无关性 / frontmatter 切分（含 CRLF 与重复块）。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { splitFrontmatter, tokenizeInline } from '../src/md-outline';
+import { splitFrontmatter, tokenizeInline } from '../src/markdown/md-outline';
 
 describe('tokenizeInline — wikilink', () => {
 	it('[[笔记]] → 完整 token（label 空串，位置为切片语义）', () => {

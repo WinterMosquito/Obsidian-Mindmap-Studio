@@ -17,7 +17,7 @@
  * Menu 以记录型桩替换（官方 Menu 在 tests/mocks/obsidian.ts 中为空壳，不记录条目）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { t, type TranslationKey } from '../src/i18n';
+import { t, type TranslationKey } from '../src/core/i18n';
 import type { MindMapViewContext } from '../src/features/view-context';
 import { setupContextMenu } from '../src/features/view-context-menu';
 
@@ -149,7 +149,7 @@ vi.mock('obsidian', async (importOriginal) => {
 	return { ...actual, Menu: FakeMenu };
 });
 
-vi.mock('../src/mindmap', () => ({
+vi.mock('../src/engine/mindmap', () => ({
 	ENGINE_COMMANDS: ENGINE,
 	findNodeByDom: findNodeByDomMock,
 	fitMindMap: fitMindMapMock,

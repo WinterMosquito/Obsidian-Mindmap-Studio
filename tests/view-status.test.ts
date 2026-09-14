@@ -19,8 +19,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import type { Language } from '../src/i18n';
-import { ElementStatusBarService } from '../src/status-bar';
+import type { Language } from '../src/core/i18n';
+import { ElementStatusBarService } from '../src/services/status-bar';
 import type { MindMapViewContext } from '../src/features/view-context';
 import {
 	cancelStatusBarUpdate,
@@ -32,7 +32,7 @@ const { countTreeNodesMock, getRenderRootMock } = vi.hoisted(() => ({
 	getRenderRootMock: vi.fn<(mindMap: unknown) => unknown>(),
 }));
 
-vi.mock('../src/mindmap', () => ({
+vi.mock('../src/engine/mindmap', () => ({
 	countTreeNodes: countTreeNodesMock,
 	getRenderRoot: getRenderRootMock,
 }));

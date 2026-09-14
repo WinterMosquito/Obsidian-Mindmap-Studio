@@ -18,8 +18,8 @@ import {
 	t,
 	tf,
 	type Language,
-} from '../src/i18n';
-import { ElementStatusBarService } from '../src/status-bar';
+} from '../src/core/i18n';
+import { ElementStatusBarService } from '../src/services/status-bar';
 import {
 	addMindMapRibbonIcon,
 	refreshCommandLabels,

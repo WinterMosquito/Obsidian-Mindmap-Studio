@@ -6,15 +6,15 @@ import {
 	isImageExtension,
 	isLinkAttachmentExtension,
 	MAX_IMAGE_SIZE_MB,
-} from '../constants';
-import { saveImageToVault } from '../images-save';
-import { createAspectSetNodeImageOptions } from '../images-path';
-import { notifyError } from '../errors';
-import { extractDroppedFileNames, resolveDroppedFile } from '../links-resolve';
-import { getActiveNode, getRenderRoot } from '../mindmap';
+} from '../core/constants';
+import { saveImageToVault } from '../media/images-save';
+import { createAspectSetNodeImageOptions } from '../media/images-path';
+import { notifyError } from '../core/errors';
+import { extractDroppedFileNames, resolveDroppedFile } from '../links/links-resolve';
+import { getActiveNode, getRenderRoot } from '../engine/mindmap';
 import { applyDocWikiLink, applyNodeAttachment, applyNodeImage } from './view-node-actions';
 import { insertChildNodeWithData } from './view-common';
-import { t } from '../i18n';
+import { t } from '../core/i18n';
 import { formatWikilink, isDocumentExtension } from '../domain/wikilink';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';

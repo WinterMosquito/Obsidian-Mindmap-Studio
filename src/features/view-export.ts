@@ -3,8 +3,8 @@
  * （导出 JSON / 导入 JSON 已随专有格式支持删除）
  * DoExport 插件访问与导出倍率切换收口在 mindmap.exportMindMapPng。
  */
-import { notifyError } from '../errors';
-import { exportMindMapPng } from '../mindmap';
+import { notifyError } from '../core/errors';
+import { exportMindMapPng } from '../engine/mindmap';
 import type { MindMapViewContext } from './view-context';
 
 const FALLBACK_NAME = 'mindmap';

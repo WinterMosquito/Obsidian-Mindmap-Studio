@@ -17,8 +17,8 @@ import {
 	SavePipeline,
 	type SavePipelineDeps,
 } from '../src/services/document-service';
-import { AUTO_SAVE_DEBOUNCE_MS } from '../src/constants';
-import { UTF8_BOM } from '../src/md-outline';
+import { AUTO_SAVE_DEBOUNCE_MS } from '../src/core/constants';
+import { UTF8_BOM } from '../src/markdown/md-outline';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 const FILE_PATH = 'notes/a.mindmap.md';

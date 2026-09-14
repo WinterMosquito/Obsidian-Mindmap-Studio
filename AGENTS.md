@@ -46,9 +46,17 @@ npm run build
 
 ## 代码结构
 
-四层：`domain/`（纯领域逻辑）→ `services/`（视图服务）→ `features/`（UI 特性与视图控制器）→ 根（基础设施：markdown 渲染层、引擎封装、弹窗、插件核心）。
+**分组与分层（依赖单向；许可集与 lint 机械强制见 K51）**：
 
-> **模块化是硬约束**：单一职责 / 分层单向 / 收口唯一 / 窄接口四条边界见 K50；文件规模与拆分判定见「文件规模与豁免」。
+| 层 | 组 | 定位 |
+|---|---|---|
+| L0 | `domain/` | 纯领域逻辑（零依赖，lint 强制） |
+| L1 | `core/` `links/` `markdown/` `media/` `engine/` `platform/` | 基础模块组（组间许可：`links→core`；`markdown→links/core`；`media→links/core`；`engine→core`；`platform→links/markdown/core`） |
+| L2 | `ui/` `services/` | 弹窗与视图服务 |
+| L3 | `features/` | UI 特性与视图控制器 |
+| 根 | `main.ts` `commands.ts` `settings.ts` `creation.ts` | 组合根（唯一可依赖全图） |
+
+> **模块化是硬约束**：单一职责 / 分层单向 / 收口唯一 / 窄接口四条边界见 K50；依赖矩阵与机械强制见 K51；文件规模与拆分判定见「文件规模与豁免」。
 
 ```
 src/
@@ -56,17 +64,70 @@ src/
                     #   状态栏服务装配、视图切换后状态栏跟随
                     #   （vault rename/delete/create 经 VaultSyncService.attach
                     #   hooks 单入口分发，不再重复注册事件）
-  domain/           # 纯领域逻辑（零依赖：lint no-restricted-imports 强制禁 obsidian/上层/vendor）
+  commands.ts       # 命令注册与命令面板入口（COMMAND_IDS 为命令 ID 唯一表，发布后永不变更）
+  settings.ts       # 设置接口与设置面板（Obsidian 1.13+ 声明式）+ sanitizeSettings
+                    #   （data.json 加载与设置面板写回共用同一校验）；写回经
+                    #   main.scheduleSettingsPersist 防抖（滑块突发合并，内存即时生效）
+  creation.ts       # 新建文件默认内容/文件名与命名弹窗衔接（创建流程编排）
+  domain/           # L0 纯领域逻辑（零依赖：lint no-restricted-imports 强制禁 obsidian/上层/vendor）
     wikilink.ts     #   双链解析/构造唯一权威（parse/format/display）
+    wiki-display.ts #   链接「生效显示名」纯判定（editedWikilinkAlias/effectiveDocWikiLink/docWikiLinkDisplay）
     url.ts          #   URL/地址形态谓词唯一权威（isHttpUrl/isExternalImageRef/isSchemeUrl 等）
     tree.ts         #   walkTree 先序遍历（显式栈防溢出，visit 返回 false 短路）
     md-meta.ts      #   MdNodeMeta：节点 data 上 md* 元数据的类型契约（纯契约，无引擎类型）
-  services/
+  core/             # L1 基座：通用机制与共享词汇
+    constants.ts    #   全局常量：MD_FILE_SUFFIX、扩展名分流清单、布局/连线/主题选项、
+                    #   hasMindMapMarker/stripMindMapStem/withMindMapMarker（标记后缀唯一实现）
+    i18n.ts         #   t() 取文案、tf() 占位符格式化
+    errors.ts       #   errorMessage(error)：面向用户的错误消息格式化唯一实现
+    concurrency.ts  #   并发原语唯一实现：串行队列/防抖/节流（SavePipeline/ViewStateStore/
+                    #   状态栏计数等共用；节流支持 trailingResetsWindow 选项）
+    event-binder.ts #   DOM/引擎事件绑定器（作用域化统一销毁）
+    persistence.ts  #   data.json 写盘器（PluginDataWriter：串行队列 + 写前重读合并 + 吞错）
+    node-data.ts    #   MdNodeData 黏合类型（引擎 MindMapNodeData + domain MdNodeMeta；
+                    #   放 core 保持 domain 零依赖）
+  links/            # L1 链接与文件解析
+    links-resolve.ts #   统一解析入口 resolvePathToFile：按形态路由（远程拒绝/obsidian:///
+                    #   资源地址→索引/路径直查/file://→官方 getFirstLinkpathDest→索引兜底）
+    file-lookup.ts  #   全库文件查找索引原语（buildFileLookupIndex/FileLookupIndexService/
+                    #   lookupIndexedFile；多种地址形态→TFile 的 O(1) 缓存查询）
+    links-tree.ts   #   树内引用更新（重命名/清除共用同一遍历实现，mode 参数区分）；改写形态跟用户走（有前缀继续写路径）但路径取**新位置**（跨文件夹移动只换 basename 会悬空）；非 .md 文档（canvas/base）必须带扩展名
+  markdown/         # L1 Markdown 语义（解析/序列化/打开路由/拆分）
+    md-outline.ts   #   Markdown 大纲 → 导图树（frontmatter 跳过、标题/列表、行内 token；mdRaw 保真）
+    md-serialize.ts #   导图树 → Markdown（未编辑逐字回写/编辑合成；链接/图片新增检测）
+    markdown.ts     #   新建文件默认内容/文件名、uid 修复（ensureUniqueUids）
+    md-open.ts      #   .mindmap.md 触发判定、视图切换、打开方式偏好钩子
+    links-split.ts  #   混排双链拆分纯逻辑（方案生成/批量改写/写回字段）；规则与产品决策
+                    #   见文件头契约；视图侧执行在 features/view-split-links.ts
+  media/            # L1 图片与附件
+    images-path.ts  #   图片地址→资源地址（经统一解析入口）、外部地址判断、尺寸校正
+    images-save.ts  #   图片入库（走 concurrency 串行队列）、文件名清理
+  engine/           # L1 引擎封装（纯模块，无 obsidian 依赖）
+    mindmap.ts      #   引擎封装（创建/销毁/节点工具）+ 防腐收口（缩放/getRenderRoot/setNodeText/
+                    #   forceRemoveNodeData/getNodeGroupEl/runWithExportScale/countTreeNodes/
+                    #   exportMindMapPng/搜索 6 函数（searchMindMap/searchNextInMindMap/endMindMapSearch/
+                    #   getSearchMatchCount/getSearchCurrentIndex/jumpToSearchIndex）/
+                    #   isEditingText/getRootText/startNodeTextEdit）
+                    #   + ENGINE_COMMANDS：引擎命令名常量表（execCommand 勿再写魔法字符串）
+                    #   —— 视图/特性层不直接触碰引擎 renderer/view/search/doExport 内部形态
+    mindmap-theme.ts #  主题配置（buildThemeConfig 唯一实现，视图主题参数化差异：
+                    #   亮/暗 + 连线样式；lineStyleForLayout 布局默认、resolveLineStyle 偏好解析）
+  platform/         # L1 Obsidian 平台集成
+    vault-sync.ts   #   库事件同步单一入口（引用更新、索引失效；插件侧补充处理经 hooks 注入）
+    open-as-restore.ts # 「以思维导图打开」偏好恢复（active-leaf-change/file-open/启动多档延时）
+    system-open.ts  #   系统默认应用打开库内文件（桌面端 shell.openPath）
+  ui/               # L2 弹窗
+    modal-common.ts / modal-image.ts / modal-link.ts / modal-name.ts
+                    # 链接/图片/命名弹窗（官方 AbstractInputSuggest 联想；settle 守卫与
+                    #   VaultFileSuggest 联想类收口在 modal-common.ts）
+  services/         # L2 视图服务
     document-service.ts # md 文档读取解析 + 保存管线（防抖/串行排空/卸载快照兜底，onSaveError 上报；
                         #   写盘前 cachedRead 比对，内容一致跳过 modify）；
                         #   解析只做图片地址解析，不做尺寸归一（视图走 aspect 校正）；写盘归属：树快照与 frontmatter 按**该次写盘的文件**取（getSnapshotFor/getFrontmatterFor），不同文件不并入同一批次——core 不 await onUnloadFile，换文件期间的排空必须同源
     engine-controller.ts# 引擎实例生命周期 + 防腐收口（renderer 内部不外泄）
-  features/
+    view-state.ts   #   按文件路径持久化布局/连线样式/视口/openAs 到插件 data.json（ViewStateStore）
+    status-bar.ts   #   StatusBarService 契约 + 插件层实现（节点计数展示/清空，DOM 归插件层）
+  features/         # L3 UI 特性与视图控制器
     view.ts         # Controller：Obsidian 生命周期编排、service 装配、链接跳转、标题重命名
     view-context.ts # MindMapViewContext：view-* 对视图的访问契约（结构化窄接口）
     view-*.ts       # 16 个交互特性各自一文件：工具栏（view-toolbar.ts）/ 拖拽（view-dnd.ts）/
@@ -87,50 +148,6 @@ src/
                     #   经 setDragOverlapTarget 外借给引擎，引擎精确命中时让位；
                     #   松手走引擎原生 MOVE_NODE_TO
     file-creator.ts # 文件浏览器「新建」菜单注入（私有 API 防御式访问）
-  commands.ts       # 命令注册与命令面板入口（COMMAND_IDS 为命令 ID 唯一表，发布后永不变更）
-  concurrency.ts    # 并发原语唯一实现：串行队列/防抖/节流（SavePipeline/ViewStateStore/
-                    #   状态栏计数等共用；节流支持 trailingResetsWindow 选项）
-  persistence.ts    # data.json 写盘器（PluginDataWriter：串行队列 + 写前重读合并 + 吞错）
-  open-as-restore.ts# 「以思维导图打开」偏好恢复（active-leaf-change/file-open/启动多档延时）
-  system-open.ts    # 系统默认应用打开库内文件（桌面端 shell.openPath）
-  errors.ts         # errorMessage(error)：面向用户的错误消息格式化唯一实现
-  node-data.ts      # MdNodeData 黏合类型（引擎 MindMapNodeData + domain MdNodeMeta；
-                     #   放 src 根层保持 domain 零依赖）
-  status-bar.ts     # StatusBarService 契约 + 插件层实现（节点计数展示/清空，DOM 归插件层）
-  md-outline.ts     # Markdown 大纲 → 导图树（frontmatter 跳过、标题/列表、行内 token；mdRaw 保真）
-  md-serialize.ts   # 导图树 → Markdown（未编辑逐字回写/编辑合成；链接/图片新增检测）
-  md-open.ts        # .mindmap.md 触发判定、视图切换、打开方式偏好钩子
-  markdown.ts       # 新建文件默认内容/文件名、uid 修复（ensureUniqueUids）
-  view-state.ts     # 按文件路径持久化布局/连线样式/视口/openAs 到插件 data.json（ViewStateStore）
-  images-path.ts    # 图片地址→资源地址（经统一解析入口）、外部地址判断、尺寸校正
-  images-save.ts    # 图片入库（走 concurrency 串行队列）、文件名清理
-  file-lookup.ts    # 全库文件查找索引原语（buildFileLookupIndex/FileLookupIndexService/
-                    #   lookupIndexedFile；多种地址形态→TFile 的 O(1) 缓存查询）
-  links-resolve.ts  # 统一解析入口 resolvePathToFile：按形态路由（远程拒绝/obsidian:///
-                    #   资源地址→索引/路径直查/file://→官方 getFirstLinkpathDest→索引兜底）
-  links-split.ts    # 混排双链拆分纯逻辑（方案生成/批量改写/写回字段）；规则与产品决策
-                    #   见文件头契约；视图侧执行在 features/view-split-links.ts
-  links-tree.ts     # 树内引用更新（重命名/清除共用同一遍历实现，mode 参数区分）；改写形态跟用户走（有前缀继续写路径）但路径取**新位置**（跨文件夹移动只换 basename 会悬空）；非 .md 文档（canvas/base）必须带扩展名
-  modal-common.ts / modal-image.ts / modal-link.ts / modal-name.ts
-                    # 链接/图片/命名弹窗（官方 AbstractInputSuggest 联想；settle 守卫与
-                    #   VaultFileSuggest 联想类收口在 modal-common.ts）
-  mindmap.ts        # 引擎封装（创建/销毁/节点工具）+ 防腐收口（缩放/getRenderRoot/setNodeText/
-                    #   forceRemoveNodeData/getNodeGroupEl/runWithExportScale/countTreeNodes/
-                    #   exportMindMapPng/搜索 6 函数（searchMindMap/searchNextInMindMap/endMindMapSearch/
-                    #   getSearchMatchCount/getSearchCurrentIndex/jumpToSearchIndex）/
-                    #   isEditingText/getRootText/startNodeTextEdit）
-                    #   + ENGINE_COMMANDS：引擎命令名常量表（execCommand 勿再写魔法字符串）
-                    #   —— 视图/特性层不直接触碰引擎 renderer/view/search/doExport 内部形态
-  mindmap-theme.ts  # 主题配置（buildThemeConfig 唯一实现，视图主题参数化差异：
-                    #   亮/暗 + 连线样式；lineStyleForLayout 布局默认、resolveLineStyle 偏好解析）
-  event-binder.ts   # DOM/引擎事件绑定器（作用域化统一销毁）
-  settings.ts       # 设置接口与设置面板（Obsidian 1.13+ 声明式）+ sanitizeSettings
-                    #   （data.json 加载与设置面板写回共用同一校验）；写回经
-                    #   main.scheduleSettingsPersist 防抖（滑块突发合并，内存即时生效）
-  vault-sync.ts     # 库事件同步单一入口（引用更新、索引失效；插件侧补充处理经 hooks 注入）
-  i18n.ts / constants.ts / creation.ts
-                    # i18n：t() 取文案、tf() 占位符格式化；constants：MD_FILE_SUFFIX、
-                    #   hasMindMapMarker/stripMindMapStem/withMindMapMarker（标记后缀唯一实现）
 tests/
   md-roundtrip.test.ts # md 往返回归（describe/it 场景矩阵：解析结构/深度/不动点/编辑合成/rawOk 分支矩阵/uid/视图状态）
   md-inline.test.ts    # 行内 token 解析（链接/图片/embed/尖括号 URL 的边界形态）
@@ -191,20 +208,20 @@ docs/
 
 | 文件 | 行数 | 豁免理由 |
 |---|---|---|
-| `src/mindmap.ts` | 846 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。拆开等于把私有访问面摊到多个文件，耦合面反而变大——**这一条是必须豁免的，拆分即违约** |
-| `src/md-serialize.ts` | 730 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆） |
-| `src/md-outline.ts` | 877 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移 |
-| `src/i18n.ts` | 455 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
+| `src/engine/mindmap.ts` | 846 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。拆开等于把私有访问面摊到多个文件，耦合面反而变大——**这一条是必须豁免的，拆分即违约** |
+| `src/markdown/md-serialize.ts` | 730 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆） |
+| `src/markdown/md-outline.ts` | 877 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移 |
+| `src/core/i18n.ts` | 455 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
 | `src/features/view.ts` | 630 | 视图 Controller：**第 6 步拆分后的纯编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；业务已全部外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。再拆会把「生命周期编排顺序集中可见」这一收口点摊到多文件 |
 | `src/services/engine-controller.ts` | 505 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法。与 `mindmap.ts` **同性质**——拆开即把私有访问面摊开，故同样必须豁免 |
-| `src/images-path.ts` | 462 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一），**从 images.ts 拆出**的产物；导出函数共享同一套路径与尺寸不变式，再拆会摊成跨文件的隐式协议 |
+| `src/media/images-path.ts` | 462 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一），**从 images.ts 拆出**的产物；导出函数共享同一套路径与尺寸不变式，再拆会摊成跨文件的隐式协议 |
 | `src/features/image-resize.ts` | 394 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链（无常驻监听、按帧重建元素、手势独占），拆开会让状态机与 DOM 手柄跨文件失配 |
 | `src/features/drag-target.ts` | 322 | 单一算法收口（拖拽落点仲裁）：两类锚点（节点中心／兄弟间隙中点）必须共用同一套「按指针距离最近仲裁 + 引擎三态让位」规则，拆开会让锚点判定与视觉高亮口径漂移 |
 | `src/features/view-node-actions.ts` | 401 | 节点操作（链接/文本/剪贴板/删除）的**共用入口**——工具栏与右键菜单同调；图片操作已拆至 `view-image-actions.ts` 并由本文件 re-export，此处是剩余语义相关操作集，再拆会让两个菜单的调用面分叉 |
 | `src/features/view-dnd.ts` | 324 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配 |
 | `src/main.ts` | 316 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。业务逻辑已全部外置（见文件头），拆开 onload 会破坏「装配顺序集中可见」的可读性收益；当前仅超线 16 行 |
-| `src/links-split.ts` | 483 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。与 `md-outline` / `md-serialize` 同性质 |
-| `src/constants.ts` | 357 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + 四份扩展名分流清单（渲染/音视频/可链接附件/系统媒体，互有基表派生）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音 |
+| `src/markdown/links-split.ts` | 483 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。与 `md-outline` / `md-serialize` 同性质 |
+| `src/core/constants.ts` | 357 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + 四份扩展名分流清单（渲染/音视频/可链接附件/系统媒体，互有基表派生）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音 |
 | `src/settings.ts` | 313 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。`sanitizeSettings` 被 data.json 加载与面板写回共用（已在「代码结构」清单登记） |
 
 行数为 2026-09-14 快照（2026-09-14 复核：全部 15 个超限文件均已登记理由），仅供参考；判定以「是否已在表内登记理由」为准，不以数字为准。
@@ -227,7 +244,7 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
 `--dump-dom` 快照经 `if: always()` 步骤归档成 artifact，失败时可直接下载定位。
 浏览器缺失仍然直接失败（`--require-chrome`），不静默跳过。
 
-- `verify:visual`：把 `src/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
+- `verify:visual`：把 `src/engine/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
   `styles.css` 在无头 Chrome 里渲染 5 个场景并断言 `--dump-dom`——三类链接图标分流与
   图标尺寸（18×18）、回形针标题、画布铺满容器、节点测宽随文本（不被容器拉平），
   外加三个探针：viewport（20 层深链大图必须 100% 缩放、整体内容居中，且重置缩放漂移
@@ -245,15 +262,16 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
   以及逐场景失败片段写进该目录——CI 靠它归档失败证据；
   `CHROME_PATH` 指定浏览器，路径不存在时自动回落到平台默认安装位置）。
 - vitest 配置 `vitest.config.ts`：`obsidian` → `tests/mocks/obsidian.ts` alias（包仅有类型声明，无运行时 JS）。
-  coverage 含 `src/**`（排除 i18n/constants 纯文案与常量表），vendor 为预打包产物不纳入。
+  coverage 含 `src/**`（排除 `core/i18n`、`core/constants` 纯文案与常量表），vendor 为预打包产物不纳入。
 - `tsconfig.json` 同时纳入 `src/` 与 `tests/`；`npm run build` 会先 `tsc -noEmit` 类型检查两者。
 - Lint 基线：`eslint-plugin-obsidianmd ^0.4.2`（与官方 eslint-plugin 仓库同版）。其
   `configs.recommended` 自包含（ESLint core + tseslint recommendedTypeChecked +
   全部 obsidianmd 规则 + sdl/import/depend/no-unsanitized 等三方插件 + package.json
   检查），**勿再展开 `tseslint.configs.recommended`**（plugin 重定义冲突）。
-  项目自有覆盖：domain 零依赖边界、统一解析入口强制（features/modal/services/src 根层
-  直调 getAbstractFileByPath 拦截，links-resolve/file-lookup 收口点豁免，存在性检查
-  特例 eslint-disable 注明理由）、system-open 的 require 全局、modal/tests 豁免、
+  项目自有覆盖：domain 零依赖边界、统一解析入口强制（全部插件代码直调
+  getAbstractFileByPath 拦截，links/links-resolve.ts、links/file-lookup.ts 收口点豁免，
+  存在性检查特例 eslint-disable 注明理由）、模块依赖矩阵 zone（K51）、system-open 的
+  require 全局、modal/tests 豁免、
   manifest.json 与 LICENSE 显式纳入 lint（官方 recommended 不自动拾取两者：
   validate-manifest 自挂 files 块 + ts parser；validate-license 依赖官方内置未导出的
   plain-text parser，等价实现在 scripts/plain-text-parser.mjs——该实现的唯一有意差异是
@@ -277,7 +295,7 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
 - [K4] 文档嵌入 `![[笔记]]` / `![[笔记.md]]`（目标末段为文档类扩展名 `.md` / `.canvas` / `.base`，或无扩展名）与文档双链**同通道**（`mdWikiLinkpath` + `mdLinkStyle: 'wiki'` + `mdEmbed: true`）：显示同一枚自绘文档页图标，节点文本 = 别名‖去 `.md` 的目标名，悬停/点图标行为与文档双链一致。**管道位是别名**（`![[笔记|300]]` 的 `300` 是别名，**不是**宽 300）——故解析侧**不得**沿用 `tokenizeInline` 已按图片尺寸剥过的 `tok.label`，必须从原始切片 `parseWikilink` 重解（见 `md-outline.ts` 非图片嵌入分支）。非文档类嵌入（`![[报告.pdf]]` / `![[录音.mp3]]`）才走附件通道（回形针）；其管道位官方**无明文**（PDF 用 `#height=` / `#page=`、音频无尺寸语法），故不解释、原文存 `mdEmbedPipe`，编辑节点后原样回写（不再丢参数）。两类都记 `mdEmbed`，`md-serialize.renderHyperlink` 据此补回 `!`（文档通道即 `effectiveDocWikiLink` 结果前加 `!`）。「是否文档」统一走 `domain/wikilink.isDocumentExtension`（md / canvas / base），「是否附件」统一走 `domain/wikilink.wikilinkTargetIsAttachment`——**勿**再手写 `extension === 'md'`（拖入、链接弹窗、插入链接三处曾各写一份，Canvas/Bases 被判成附件）；点击可打开性走 `constants.canOpenInObsidian`，其清单必须含 `base`（漏登记会把指向 base 的链接误判「无法预览」，回归 `tests/constants.test.ts`）。悬停预览与 `Ctrl/Cmd+点击`走**同一分流**（`view-wikilink.nodeLink`），故附件节点与文档节点等价可预览/可打开（此前只读 `mdWikiLinkpath`/`hyperlink`，附件节点两处都是静默无响应）。回归见 `tests/md-roundtrip.test.ts` 的「文档嵌入」6 例（已验证负向对照：把分流改回「非图片＝附件」即 6 例全红）。
 - [K5] **`[[]]` / `![[]]` 支持度审计结论（对照官方帮助 + `obsidian.d.ts`，四项决策均为「保持现状」）**：① 笔记嵌入的管道位按**别名**处理（`![[笔记|300]]` 的 `300` 是别名，节点文本即显示 `300`）——官方**无明文**，依据 API `Reference.displayText`（`[[page|display name]] → display name`）口径推断，属**有意取舍**；若官方日后改为尺寸/忽略，整改方向是「管道位原文保留」（同 `mdEmbedPipe`），届时再动。② 空 `[[]]` 保持字面文本（Obsidian 亦不视为链接，官方未记载）。③ 一行多链接只有首个可点/可悬停（引擎单链接槽位；官方阅读视图每枚均可点）——未编辑逐字保真、编辑后降级为单链接，已登记。④ **不采用**官方 `parseLinktext` / `getLinkpath` 替换自研 `parseWikilink`：官方那两个函数只给 `path` / `subpath`、**不给别名**，换过去不减代码且会破 domain 零依赖边界；导航已用官方 `getFirstLinkpathDest` + `openLinkText(inner)`，标题/块子路径交核心处理。
 - [K6] 双链节点别名语义（**节点内只显示别名，编辑节点即改别名**）：纯双链节点（整行只有一个双链，节点内显示的就是该链接的可见名＝别名优先）里节点内容等价于别名，故编辑节点后把新文本写成别名回写 `[[目标|新别名]]`（纯判定在 `domain/wiki-display.ts`：`editedWikilinkAlias` + `effectiveDocWikiLink` + `docWikiLinkDisplay`；链接改写走 `domain/wikilink.ts withWikilinkAlias`），不再产出「新文本 + 行尾链接」。边界：① 混合文本节点（`说明 [[链接]]`）不适用——把整段文本当别名会静默吞掉说明文字；② 多行文本不适用（无唯一别名语义，回落旧合成）；③ **附件**嵌入 `![[报告.pdf]]` 不适用（管道位是尺寸参数，不是别名）——但**文档嵌入** `![[笔记]]` 适用（管道位是别名，见 K4）；④ URL / md 链接无别名概念，不适用；⑤ 新别名含 `[` / `]`（用户手输 `[[新目标]]`）→ 不写（Obsidian 不允许方括号出现在 `[[..]]` 内，写进别名位会把整条链接写坏），回落旧合成＝语义上更接近「换链」。新文本与「无别名时的默认显示名」相同（或清空）→ 不写 `|别名` 段（避免 `[[目标|目标]]`），清空文本 = 去别名、链接保留。回写（`renderHyperlink`）与可见名（`nodeLinkDisplay`）必须经同一入口 `effectiveDocWikiLink`，两处口径不一致会让「纯 token 节点」判定失配、合成写出「新文本 + 链接」重复一次。**文档页图标的 tooltip 也走同一入口**（`mindmap.ts` 经 `docWikiLinkDisplay`）——图标 `<title>` 只在节点前缀创建时写一次，若改读解析快照 `mdLinkText`，编辑改别名后 tooltip 会停留在旧别名直到重载；契约已由 `tests/mindmap-wiki-icon.test.ts` 锁定（含负向自检）。注意：`mdLinkText` 存的是**解析时的原显示名**，是「该节点是否被编辑」的判据之一（见 `editedWikilinkAlias` 闸门 4），**不可**在编辑后把它同步成新别名——那会让判据失效、别名回写整条失效。
-- [K7] 混排双链拆分（links-split）：节点行内与描述文字混排的双链可抽离为**子节点**（父节点保留描述文字、链接处替换为可见名）。全部规则与产品决策（适用节点/待抽链接/空白处理/幂等/资源地址兜底）定义在 `src/links-split.ts` 文件头契约，本文件不复述；视图侧执行在 `features/view-split-links.ts`：命令 `mindmap-split-links`（当前节点）/ `mindmap-split-links-all`（全文批量，含未编辑存量），自动触发受设置 `autoSplitMixedLinks` 约束且只处理**被编辑过**的节点（判据 `text !== mdDerivedText`）。自动检查的对象是**编辑期捕获的候选集**（引擎 `node_text_edit_change` 带节点、经 `captureAutoSplitCandidate` 累积）——**不是检查时刻的激活节点**：编辑提交后快速切换激活不漏拆；编辑中被检查则保留候选等下次；引擎换代（换文件/重载）整体丢弃。回归见 `tests/view-split-links.test.ts`。
+- [K7] 混排双链拆分（links-split）：节点行内与描述文字混排的双链可抽离为**子节点**（父节点保留描述文字、链接处替换为可见名）。全部规则与产品决策（适用节点/待抽链接/空白处理/幂等/资源地址兜底）定义在 `src/markdown/links-split.ts` 文件头契约，本文件不复述；视图侧执行在 `features/view-split-links.ts`：命令 `mindmap-split-links`（当前节点）/ `mindmap-split-links-all`（全文批量，含未编辑存量），自动触发受设置 `autoSplitMixedLinks` 约束且只处理**被编辑过**的节点（判据 `text !== mdDerivedText`）。自动检查的对象是**编辑期捕获的候选集**（引擎 `node_text_edit_change` 带节点、经 `captureAutoSplitCandidate` 累积）——**不是检查时刻的激活节点**：编辑提交后快速切换激活不漏拆；编辑中被检查则保留候选等下次；引擎换代（换文件/重载）整体丢弃。回归见 `tests/view-split-links.test.ts`。
 - [K8] 图片自定义尺寸（Obsidian 官方嵌入语法，不落 data.json）：`![[图.png|300]]`（仅宽、等比）/ `![[图.png|300x150]]`（宽高）/ `![alt|300](url)`（外链 md 图，尺寸在标签尾部）。解析进 `mdImageWidth/mdImageHeight`（domain/md-meta 契约）；`walkCorrectImageSizesByAspect` 对带参节点按参数定尺寸（仅宽时探测原始比例补高）；拖拽调宽改 engine `imageSize custom:true`，保存时 rawOk 尺寸特征（`目标|宽度`，终界 `]`/`x` 防前缀误匹配）不符 → 合成回写 `|宽度`。**加载期自动校正的尺寸绝不回写**（`mdImageAutoSize` 标记；`md-serialize.ts customImageSize` 是取尺寸后缀的唯一出口）：它只是显示用尺寸（`imageSize custom:true`），回写会让用户从未动过的行凭空多出 `|宽度`；标记在**用户拖拽调宽 / 插入或更换图片 / 移除图片**三处清除（前两者属用户意图、尺寸照旧回写；移除图片时清标记同时防止「该节点后续新图也不回写」）。
 - [K9] 图片独占节点（渲染层语义）：纯图行（`- ![[x.png]]`）解析为**无文本节点**（不回退文件名占位），图片节点删除文字（右键「移除文字」/双击清空）后即被图片独占，往返保持；代价是纯图节点不参与文本搜索。「链接已清除」检测**只排除指向本节点图片的嵌入**（非嵌入语法仍是负向断言 `(?<!!)\[\[`），图文混合行可逐字往返；**文档/附件嵌入按链接形态处理**——字段被清空后一并剥离（`rawHasForeignEmbed`），不再整行回写导致链接复活；但**图片类嵌入不是链接**（按目标扩展名判定，收口在 `constants.isRenderableImageTarget`）：同行多余图片（如 `![[a.png]] 与 ![[b.png]]`）不触发该检测——否则**任何保存**都会把非首图的嵌入语法降级为剥壳文本（2026-09-13 修复，回归见 `tests/md-roundtrip.test.ts` 的「同行两张库内图片」）。**「移除图片」的防复活判定不依赖 md 字段残留**：`removeNodeImage` 会清空 `image` 与全部 md 图片字段，故 `rawOk` 以「`image` 为空 + mdRaw 首行仍含图片语法（`![[…]]` 按扩展名 / `![…](…)`，排除缩进代码块）」剥离——只靠 `hasImageMeta` 会因字段全清而失效、图片在保存后复活（2026-09-13 修复，回归见 `tests/md-roundtrip.test.ts` 的「移除图片」用例组）。
 - [K10] 图片/链接对齐 Obsidian：`![[路径]]`/`[[笔记]]` 往返；插入弹窗联想库内文件；悬停预览用 `registerHoverLinkSource` + `hover-link`。合成路径下**外链图片恒写 `![alt|尺寸](url)`**（外链判定先于 `image === mdImageTarget`；`mdImageTarget` 是解析期快照、换图后会过期，地址取当前 `image`）。
@@ -342,7 +360,7 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
 ### 架构边界与单一来源
 
 - [K28] URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；防抖/节流/串行队列/有界并发映射一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段；批量异步任务勿用无界 Promise.all，用 `mapWithConcurrency`）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
-- [K29] 库内文件解析只走 `links-resolve.resolvePathToFile` 统一入口（勿自建 getAbstractFileByPath/索引/线性扫描组合）；索引原语在 `file-lookup.ts`。features/ 与 modal-*.ts 由 eslint `no-restricted-syntax` 机械强制（存在性检查等特例须 disable 并注明理由）。
+- [K29] 库内文件解析只走 `links-resolve.resolvePathToFile` 统一入口（勿自建 getAbstractFileByPath/索引/线性扫描组合）；索引原语在 `links/file-lookup.ts`。全部插件代码由 eslint `no-restricted-syntax` 机械强制（收口点 `links/links-resolve.ts`、`links/file-lookup.ts` 豁免；存在性检查等特例须 disable 并注明理由）；模块依赖矩阵另由 zone 规则强制（见 K51）。
 - [K30] vault rename/delete/create 事件只在 `VaultSyncService.attach` 注册一次，插件侧补充处理经 hooks 注入（勿再 registerEvent 第二份订阅）。
 - [K31] view-* 模块经 `ViewPluginContext` 访问插件能力（settings 活引用/viewState/statusBar 服务），不接触插件实例与状态栏 DOM；节点/悬停等视图态用模块级 WeakMap 内聚，不加到 `MindMapViewContext`。
 - [K32] view-* 模块按需依赖子上下文（R4 上下文瘦身）：只碰 UI 元素的拿 `ViewDomContext`，只碰引擎的拿 `ViewEngineContext`，再与 `Pick<MindMapViewContext, 'lang' | …>` 组合成模块内最窄面（示范：view-search/view-status）；勿默认依赖整个 `MindMapViewContext` 装配面，新成员先落到对应子面。
@@ -353,6 +371,7 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
 - [K36] 所有 DOM/事件/定时器监听使用 `this.register*` 助手注册，保证卸载清理；引擎实例事件经 `EventBinder` 记录统一销毁。
 - [K37] 命名对照：类名 `MindMapStudioPlugin/MindMapStudioSettings/MindMapStudioSettingTab`（历史上曾以插件旧名 TheMindMap 命名，已随品牌更名统一）。
 - [K50] **模块化设计是硬约束（不是可选项）**：写新逻辑前先回答「它属于哪个已有模块」——答不上来才允许新建文件，且新文件必须只承载一个可命名的关注点。四条强制边界：① **单一职责**——禁止把新职责「顺带」追加进已承担职责的文件，新职责要么进对应模块、要么成独立文件；② **分层单向**——依赖方向恒为 `domain → services → features → 根基础设施`（后者可依赖前者，反向禁止；domain 零依赖由 lint 机械强制，见 K28）；③ **收口唯一**——跨模块能力只允许一份实现（收口点清单见 K25 / K28 / K29），复用优先，严禁造第二份；④ **窄接口**——模块间以最窄契约交互（K31 / K32 的 `ViewDomContext` / `ViewEngineContext` 为示范），不得把整块装配面传给只需要一角的模块。超限文件的拆分判定见「文件规模与豁免」，新增特性落层自检见「新增功能检查清单」第 1 步。
+- [K51] **模块组与依赖矩阵（机械强制）**：src 按模块组组织（组成员见「代码结构」），依赖只能是矩阵许可集的子集——`domain`（L0 零依赖）← `core`（仅 domain）← `links`（core/domain）← `markdown`（core/links/domain）、`media`（core/links/domain）、`engine`（core/domain）、`platform`（core/links/markdown/domain）、`ui`（core/links/media/domain）、`services`（全部 L1 + domain）、`features`（全部下层）。**组合根（`main.ts`/`commands.ts`/`settings.ts`/`creation.ts`）只能被组合根本身引用**——下层引入口即违约；唯一豁免是**类型引用**（视图上下文契约需要 settings 的类型，编译期擦除无运行时耦合）。强制手段：`eslint.config.mts` 为每组生成 zone 块（`@typescript-eslint/no-restricted-imports` + `allowTypeImports`），违规即 lint 红灯（编辑器即时可见）。组内相对引用（`./x`）不受矩阵限制，但组内不得成环；新增文件先定组再导入，依赖矩阵由 lint 自动校验。
 
 ### 交互对齐 Obsidian 官方
 
@@ -386,7 +405,7 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
   `getFirstLinkpathDest`、`registerHoverLinkSource`、`SettingDefinitionItem` 等），
   零废弃 API 使用。仅存三处**无官方等价**的私有触点，均防御式实现并文档化：
   ① `features/file-creator.ts` file-explorer「新建」菜单注入（官方仅有 file-menu，
-  无 fileCreator 公共 API）；② `links-resolve.ts` 拖拽兜底 `dragManager`；
+  无 fileCreator 公共 API）；② `links/links-resolve.ts` 拖拽兜底 `dragManager`；
   ③ `system-open.ts` 桌面端 `require('electron').shell.openPath`（d.ts 无系统打开 API）。
   勿新增私有 API 触点；官方补齐后优先替换。
 - [K40] **版本基线**：`manifest.minAppVersion: 1.13.0`（比较基准）< 安装 typings `1.13.1`（`tsc`/lint
@@ -422,7 +441,7 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
 
 按以下顺序自检（先官方 API，再自研；先收口，再实现）：
 
-1. **落层与模块粒度**：纯逻辑（无 obsidian / 引擎依赖）→ `domain/`；视图服务 → `services/`；UI 特性与视图控制器 → `features/`；基础设施（解析/序列化/持久化等）→ `src` 根层。新逻辑优先并入最贴近的已有模块；跨层复用先查已有收口点，勿造第二份；确需新建文件时按模块化四边界自检（单一职责 / 分层单向 / 收口唯一 / 窄接口，见 K50）。
+1. **落层与模块粒度**：纯逻辑（无 obsidian / 引擎依赖）→ `domain/`；通用机制与共享词汇（常量/文案/错误/并发/事件/持久化/黏合类型）→ `core/`；链接与文件解析 → `links/`；Markdown 解析/序列化/打开/拆分 → `markdown/`；图片与附件 → `media/`；引擎封装与主题 → `engine/`；Obsidian 平台集成 → `platform/`；弹窗 → `ui/`；视图服务 → `services/`；UI 特性与视图控制器 → `features/`；入口与装配 → 组合根（`main.ts`/`commands.ts`/`settings.ts`/`creation.ts`）。新逻辑优先并入最贴近的已有模块；跨组复用先查许可集与已有收口点，勿造第二份；确需新建文件时按模块化四边界自检（单一职责 / 分层单向 / 收口唯一 / 窄接口，见 K50），依赖矩阵由 eslint zone 强制（见 K51）。
 2. **收口**：是否触碰引擎内部形态？只允许经 `mindmap.ts` / `services/engine-controller.ts` 具名函数；库内文件解析走 `links-resolve.resolvePathToFile`；并发原语走 `concurrency.ts`；DOM/事件监听走 `this.register*` / `EventBinder`；URL 形态判断走 `domain/url.ts`（背景见 K25 / K28 / K29）。
 3. **官方优先**：面向 Obsidian 的能力先对照官方 `obsidian.d.ts` 与帮助文档；官方缺口才允许私有触点，且必须防御式实现并在本文件登记（见 K39）。
 4. **测试**：新增 `tests/*.test.ts`（纯逻辑直测；引擎运行时 DOM 装配类行为交 `verify:visual`）；同步本文件「代码结构」两份清单——`agents-md-sync` 测试会强制。
@@ -434,7 +453,7 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint →
 
 - **同步义务**：新增/删除/重命名 `src/**/*.ts`、`tests/**/*.ts` 文件时，必须同步「代码结构」两份清单——`tests/agents-md-sync.test.ts` 会强制（漏登记即红灯）。
 - **编号规则**：K 编号一经分配**永不复用、不重编号**（删除条目时编号留空；新增条目追加到所属组末尾）；交叉引用一律写「见 K n」，勿用「见下条」这类相对指代。
-- **写法约定**：条目结论先行（一句可独立理解的话打头），再展开依据与边界；跨文件规则留在本文件，**文件级实现细节写进源码文件头契约**（范例：`src/links-split.ts`），本文件只留指针。
+- **写法约定**：条目结论先行（一句可独立理解的话打头），再展开依据与边界；跨文件规则留在本文件，**文件级实现细节写进源码文件头契约**（范例：`src/markdown/links-split.ts`），本文件只留指针。
 - **去重**：同一事实只在最权威的一处展开，其余位置改为「见 K n」引用（反面教材：`isDesktopOnly` 的复述曾散落两处）。
 - **事实陈述**：涉及官方行为 / 工具链行为的断言写明依据（官方 d.ts 版本、帮助文档路径、规则实现文件、负向自检结果），便于日后复核与失效检测。
 

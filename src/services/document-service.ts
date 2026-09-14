@@ -16,12 +16,12 @@
  * 或让旧文件丢掉 frontmatter。
  */
 import { App, TFile } from 'obsidian';
-import { stripMindMapStem, AUTO_SAVE_DEBOUNCE_MS } from '../constants';
-import { createDebouncer, createSerialQueue } from '../concurrency';
-import { parseMdOutline, splitFrontmatter, UTF8_BOM } from '../md-outline';
-import { serializeMdBody } from '../md-serialize';
-import { walkResolveImagePaths } from '../images-path';
-import { isMindMapMarkdownFile } from '../md-open';
+import { stripMindMapStem, AUTO_SAVE_DEBOUNCE_MS } from '../core/constants';
+import { createDebouncer, createSerialQueue } from '../core/concurrency';
+import { parseMdOutline, splitFrontmatter, UTF8_BOM } from '../markdown/md-outline';
+import { serializeMdBody } from '../markdown/md-serialize';
+import { walkResolveImagePaths } from '../media/images-path';
+import { isMindMapMarkdownFile } from '../markdown/md-open';
 import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
 
 /** 单次文档加载结果（视图据此前导引擎并更新自身文档状态） */

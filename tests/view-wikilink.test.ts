@@ -26,7 +26,7 @@
  * 并在 afterEach 还原（不要堆进 tests/mocks/obsidian.ts）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { VIEW_TYPE } from '../src/constants';
+import { VIEW_TYPE } from '../src/core/constants';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from '../src/features/view-context';
 import {
@@ -39,7 +39,7 @@ const { getNodeGroupElMock } = vi.hoisted(() => ({
 	getNodeGroupElMock: vi.fn<(node: unknown) => unknown>(),
 }));
 
-vi.mock('../src/mindmap', () => ({
+vi.mock('../src/engine/mindmap', () => ({
 	getNodeGroupEl: getNodeGroupElMock,
 	// 与生产实现同语义：getData 取字符串，非字符串（含 undefined）归一为空串
 	getNodeDataString: (

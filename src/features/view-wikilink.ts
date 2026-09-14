@@ -12,9 +12,9 @@
  *
  * 前置：main.ts 已 registerHoverLinkSource(VIEW_TYPE)，否则 core 忽略 hover-link。
  */
-import { HOVER_LINK_EVENT, VIEW_TYPE } from '../constants';
+import { HOVER_LINK_EVENT, VIEW_TYPE } from '../core/constants';
 import { formatWikilink, wikilinkLinkpath } from '../domain/wikilink';
-import { getNodeDataString, getNodeGroupEl } from '../mindmap';
+import { getNodeDataString, getNodeGroupEl } from '../engine/mindmap';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 

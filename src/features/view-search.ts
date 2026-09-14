@@ -7,8 +7,8 @@
  * 防腐收口函数进行，本模块不触碰引擎内部状态。
  */
 import { setIcon } from 'obsidian';
-import { createDebouncer, type Debouncer } from '../concurrency';
-import { t } from '../i18n';
+import { createDebouncer, type Debouncer } from '../core/concurrency';
+import { t } from '../core/i18n';
 import {
 	endMindMapSearch,
 	getSearchCurrentIndex,
@@ -16,7 +16,7 @@ import {
 	jumpToSearchIndex,
 	searchMindMap,
 	searchNextInMindMap,
-} from '../mindmap';
+} from '../engine/mindmap';
 import type { MindMapViewContext, ViewDomContext, ViewEngineContext } from './view-context';
 
 /**
