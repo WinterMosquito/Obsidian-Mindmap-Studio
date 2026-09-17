@@ -110,10 +110,10 @@
 ## 📦 安装
 
 - **社区插件**（上架后）：**设置 → 第三方插件** → 搜索 *MindMap Studio*。
-- **从 GitHub Release 安装（推荐）**：从仓库 [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) 页面下载最新版本的附件（`main.js`、`manifest.json`、`styles.css`；Release 另附 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`，用于覆盖内置引擎的第三方许可），把这三个插件文件复制到 `<仓库>/.obsidian/plugins/mindmap-studio/`，重启 Obsidian 后在 **设置 → 第三方插件** 启用。
+- **从 GitHub Release 安装（推荐）**：从仓库 [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) 页面下载最新版本的附件（`main.js`、`manifest.json`、`styles.css`），复制到 `<仓库>/.obsidian/plugins/mindmap-studio/`，重启 Obsidian 后在 **设置 → 第三方插件** 启用。
 - **从源码构建**：`npm install && npm run build` 生成 `main.js`，与 `manifest.json`、`styles.css` 一起放入插件目录。
 
-> 需要 Obsidian 1.13.0 或更高版本，仅支持桌面端（Windows / macOS / Linux）。配置仅存本地（插件 `data.json`），无遥测、不发起网络请求。`main.js` 由 CI 构建并随每个 GitHub Release 发布（不提交进仓库）；每个 Release 另附 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`——内置引擎是第三方 MIT / BSD-3-Clause 代码，而压缩后的 bundle 自身无法携带这些声明。
+> 需要 Obsidian 1.13.0 或更高版本，仅支持桌面端（Windows / macOS / Linux）。配置仅存本地（插件 `data.json`），无遥测、不发起网络请求。`main.js` 由 CI 构建并随每个 GitHub Release 发布（不提交进仓库）。
 
 ## 🛠 开发
 
@@ -128,8 +128,8 @@ npm run check:release   # 发布元数据护栏（versions.json / manifest / REA
 npm run verify:visual   # 无头 Chrome 渲染契约校验（加 `-- --perf` 取真实耗时基线）
 ```
 
-引擎（`vendor/simple-mind-map.cjs`）为 vendor 产物，请勿手工编辑；升级时从上游源码重新打包替换。打包内含的第三方许可见 [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md)——该文件随每个 Release 一并发布，因为压缩后的 `main.js` 自身无法携带这些声明。
+引擎（`vendor/simple-mind-map.cjs`）为 vendor 产物，请勿手工编辑；升级时从上游源码重新打包替换。打包内含的第三方许可见 [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md)。
 
 ## ⚖️ 许可证
 
-MIT —— 见仓库根目录 `LICENSE` 文件。插件内置 [simple-mind-map](https://github.com/wanglin2/mind-map) 引擎及其依赖，各自遵循其原始许可（MIT / BSD-3-Clause），声明见 [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md)。这两个文件随每个 Release 一并发布。
+MIT —— 见仓库根目录 `LICENSE` 文件。插件内置 [simple-mind-map](https://github.com/wanglin2/mind-map) 引擎及其依赖，各自遵循其原始许可（MIT / BSD-3-Clause），声明见 [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md)。

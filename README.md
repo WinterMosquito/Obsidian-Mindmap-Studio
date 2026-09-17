@@ -110,10 +110,10 @@ The full Markdown ↔ mind-map mapping rules live in [`docs/markdown-mindmap-sta
 ## 📦 Install
 
 - **Community plugins** (once listed): **Settings → Community plugins** → search *MindMap Studio*.
-- **From GitHub releases (recommended)**: download the latest release assets (`main.js`, `manifest.json`, `styles.css`) from the repo [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) page (releases also carry `LICENSE` and `vendor/THIRD-PARTY-NOTICES.md`, which cover the bundled engine), copy the three plugin files into `<vault>/.obsidian/plugins/mindmap-studio/`, reload Obsidian, then enable the plugin in **Settings → Community plugins**.
+- **From GitHub releases (recommended)**: download the latest release assets (`main.js`, `manifest.json`, `styles.css`) from the repo [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) page, copy them into `<vault>/.obsidian/plugins/mindmap-studio/`, reload Obsidian, then enable the plugin in **Settings → Community plugins**.
 - **Build from source**: `npm install && npm run build` produces `main.js`; copy it together with `manifest.json` and `styles.css` into the plugin folder.
 
-> Requires Obsidian 1.13.0 or later. Desktop only (Windows, macOS, Linux). Config is stored locally (plugin `data.json`); no telemetry and no network requests. `main.js` is built in CI and attached to each GitHub Release (it is not committed to the repo); each release also attaches `LICENSE` and `vendor/THIRD-PARTY-NOTICES.md`, because the bundled engine is third-party MIT / BSD-3-Clause code and the minified bundle cannot carry those notices itself.
+> Requires Obsidian 1.13.0 or later. Desktop only (Windows, macOS, Linux). Config is stored locally (plugin `data.json`); no telemetry and no network requests. `main.js` is built in CI and attached to each GitHub Release (it is not committed to the repo).
 
 ## 🛠 Development
 
@@ -128,8 +128,8 @@ npm run check:release   # release metadata guard (versions.json / manifest / REA
 npm run verify:visual   # headless-Chrome render & contract checks (add `-- --perf` for a real-clock baseline)
 ```
 
-The engine (`vendor/simple-mind-map.cjs`) is vendored and must not be hand-edited; rebuild from upstream source when upgrading. Bundled third-party licences are listed in [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md) — attached to every release, since a minified `main.js` cannot carry those notices itself.
+The engine (`vendor/simple-mind-map.cjs`) is vendored and must not be hand-edited; rebuild from upstream source when upgrading. Bundled third-party licences are listed in [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md).
 
 ## ⚖️ License
 
-MIT — see the `LICENSE` file in the repository root. The plugin bundles the [simple-mind-map](https://github.com/wanglin2/mind-map) engine and its dependencies under their own licences (MIT / BSD-3-Clause); those notices live in [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md). Both files are attached to every release.
+MIT — see the `LICENSE` file in the repository root. The plugin bundles the [simple-mind-map](https://github.com/wanglin2/mind-map) engine and its dependencies under their own licences (MIT / BSD-3-Clause); those notices live in [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md).
