@@ -10,7 +10,7 @@
  * 避免测试里另抄一份魔法数字而与面板定义脱节。
  */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, sanitizeSettings } from '../src/settings';
+import { DEFAULT_SETTINGS, diffLiveRefreshKeys, sanitizeSettings } from '../src/settings';
 import {
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
@@ -37,6 +37,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultTheme: 'dark',
 			autoSave: false,
 			autoSplitMixedLinks: false,
+			autoUpdateLinks: false,
 			exportScale: 4,
 			enableDrag: false,
 			performanceMode: false,
@@ -49,6 +50,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultTheme: 'dark',
 			autoSave: false,
 			autoSplitMixedLinks: false,
+			autoUpdateLinks: false,
 			exportScale: 4,
 			enableDrag: false,
 			performanceMode: false,
@@ -226,8 +228,80 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			language: 'en',
 			autoSave: DEFAULT_SETTINGS.autoSave,
 			autoSplitMixedLinks: DEFAULT_SETTINGS.autoSplitMixedLinks,
+			autoUpdateLinks: DEFAULT_SETTINGS.autoUpdateLinks,
 			enableDrag: DEFAULT_SETTINGS.enableDrag,
 			performanceMode: DEFAULT_SETTINGS.performanceMode,
 		});
+	});
+});
+
+describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
+	/**
+	 * 即时刷新键的完整清单（settings.ts 内部常量）：这里按**字面量**钉住契约——
+	 * 增删即时刷新键必须同步改这份清单，避免差集悄悄漏键（视图侧就不再收到刷新）。
+	 */
+	const LIVE_REFRESH_KEYS = [
+		'defaultLayout',
+		'defaultLineStyle',
+		'defaultTheme',
+		'enableDrag',
+		'performanceMode',
+		'performanceThreshold',
+		'language',
+	];
+
+	it('首次应用（无快照）返回全部即时刷新键：视图走最完整路径', () => {
+		const changed = diffLiveRefreshKeys(null, DEFAULT_SETTINGS);
+		expect([...changed].sort()).toEqual([...LIVE_REFRESH_KEYS].sort());
+	});
+
+	it('无变化返回空集：视图不做任何刷新（不重建引擎）', () => {
+		const changed = diffLiveRefreshKeys(
+			{ ...DEFAULT_SETTINGS },
+			{ ...DEFAULT_SETTINGS },
+		);
+		expect(changed.size).toBe(0);
+	});
+
+	it('只反映真变化的键（含「与新默认值同形」的 falsy 边界）', () => {
+		expect([
+			...diffLiveRefreshKeys(
+				{ ...DEFAULT_SETTINGS },
+				{ ...DEFAULT_SETTINGS, defaultTheme: 'dark' },
+			),
+		]).toEqual(['defaultTheme']);
+
+		// enableDrag 默认 true → 置 false 必须算作变化（falsy 不等于「没变」）
+		expect([
+			...diffLiveRefreshKeys(
+				{ ...DEFAULT_SETTINGS },
+				{ ...DEFAULT_SETTINGS, enableDrag: false },
+			),
+		]).toEqual(['enableDrag']);
+
+		// 非即时刷新键（导出倍率 / 自动保存）变化不触发任何视图刷新
+		expect(
+			diffLiveRefreshKeys(
+				{ ...DEFAULT_SETTINGS },
+				{ ...DEFAULT_SETTINGS, exportScale: 4, autoSave: false },
+			).size,
+		).toBe(0);
+	});
+
+	it('多键同时变化返回并集（滑块连拖与主题同改落在同一防抖窗口）', () => {
+		const changed = diffLiveRefreshKeys(
+			{ ...DEFAULT_SETTINGS },
+			{
+				...DEFAULT_SETTINGS,
+				performanceThreshold: 1000,
+				defaultTheme: 'light',
+				language: 'en',
+			},
+		);
+		expect([...changed].sort()).toEqual([
+			'defaultTheme',
+			'language',
+			'performanceThreshold',
+		]);
 	});
 });

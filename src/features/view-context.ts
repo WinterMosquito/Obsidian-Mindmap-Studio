@@ -32,6 +32,16 @@ export interface ViewPluginContext {
 }
 
 /**
+ * 打开库内链接的**落点**（对齐 Obsidian 官方帮助「User interface / Tabs」的
+ * 修饰键表：无修饰＝当前标签、`Ctrl/Cmd`＝新标签、`Ctrl/Cmd+Alt`＝新标签组、
+ * `Ctrl/Cmd+Alt+Shift`＝新窗口）。
+ *
+ * 直接沿用官方 `Workspace.openLinkText` 的 `PaneType` 取值（`current` 是本插件
+ * 对「false = 当前标签」的命名），不另造一套动词。
+ */
+export type HyperlinkOpenMode = 'current' | 'tab' | 'split' | 'window';
+
+/**
  * 引擎面：view-* 对导图实例与事件绑定的窄化访问面。
  * 引擎实例与两类事件绑定器总是一起装配、一起重建，聚合为单一子面。
  */
@@ -39,6 +49,25 @@ export interface ViewEngineContext {
 	readonly mindMap: MindMap | null;
 	readonly engineEvents: EventBinder;
 	readonly viewEvents: EventBinder;
+}
+
+/**
+ * 节点文本编辑面（窄接口，K32）：编辑入口（右键「编辑文本」/ 双击 / F2）只需
+ * 引擎实例 + 弹窗所需的应用与语言 + 保存调度——勿把整个装配面传进来。
+ *
+ * 存在理由：**自绘（富）节点**不能走引擎编辑框（见 `engine/mindmap.ts`
+ * isCustomNodeContent），需插件侧弹窗兜底；编辑提交与引擎编辑走同一条写回路径
+ * （`setNodeText` → data_change → scheduleSave）。
+ */
+export interface ViewNodeEditContext extends ViewEngineContext {
+	readonly app: App;
+	readonly lang: Language;
+	/**
+	 * 调度防抖保存（编辑提交后触发）。
+	 * 声明为**函数属性**而非方法语法：调用方会把引用透传/断言，方法语法会触发
+	 * unbound-method（视图侧实现为方法，方法对函数属性可赋值）。
+	 */
+	scheduleSave: () => void;
 }
 
 /**
@@ -86,8 +115,8 @@ export interface MindMapViewContext extends ViewEngineContext, ViewDomContext {
 	// ---- 行为 ----
 	/** 调度防抖保存（data 变更后调用） */
 	scheduleSave(): void;
-	/** 打开节点超链接（wiki / http / 库内路径） */
-	openHyperlink(link: string, openNew?: boolean): void;
+	/** 打开节点超链接（wiki / http / 库内路径 / 库外 file:// 绝对路径） */
+	openHyperlink(link: string, mode?: HyperlinkOpenMode): void;
 	/** 当前文件是否为 .mindmap.md（渲染层模式） */
 	isMdDocument(): boolean;
 	/** 切回 Markdown 编辑（工具栏/命令入口） */

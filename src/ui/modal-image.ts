@@ -101,7 +101,8 @@ export function openImageEditorModal(
 			'secondary',
 			() => fileInput.click(),
 		);
-		chooseButton.buttonEl.title = t(lang, 'modal.image.localHint');
+		// 官方组件级 tooltip（不再直接改 buttonEl.title）
+		chooseButton.setTooltip(t(lang, 'modal.image.localHint'));
 		createButton(actions, t(lang, 'modal.image.paste'), 'secondary', () => {
 			void pasteFromClipboard();
 		});

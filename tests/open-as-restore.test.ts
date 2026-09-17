@@ -19,7 +19,7 @@
  * 故用例按「后档重读最新状态、重复调度会叠加不取代」这一真实行为断言（见文末）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { App, MarkdownView, TFile } from 'obsidian';
+import { MarkdownView, TFile } from 'obsidian';
 import { CORE_VIEW_TYPE, VIEW_TYPE } from '../src/core/constants';
 import { OpenAsPreferenceRestorer } from '../src/platform/open-as-restore';
 
@@ -111,7 +111,6 @@ function setupHarness(
 		},
 	};
 	const restorer = new OpenAsPreferenceRestorer(
-		new App(),
 		workspace as never,
 		{ getOpenAs: (path: string) => openAsMap[path] },
 		// 本插件视图判定（main.ts 注入 `view instanceof MindMapView`）；桩用 own 标记

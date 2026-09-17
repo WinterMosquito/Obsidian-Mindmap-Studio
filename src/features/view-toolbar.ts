@@ -2,7 +2,7 @@
  * 工具栏逻辑：构建/重建工具栏、工具按钮、自动整理。从 view.ts 拆出。
  * 节点操作（链接/图片/删除）委托给 view-node-actions.ts。
  */
-import { Notice, setIcon } from 'obsidian';
+import { Notice, setIcon, setTooltip } from 'obsidian';
 import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../core/constants';
 import {
 	arrangeMindMap as arrangeMindMapEngine,
@@ -175,18 +175,17 @@ export function syncLineStyleOptions(
 	select.value = 'auto';
 }
 
-/** 创建工具栏按钮（标题/图标/点击回调） */
+/** 创建工具栏按钮（提示/图标/点击回调） */
 function createToolButton(
 	container: HTMLElement,
-	title: string,
+	tooltip: string,
 	icon: string,
 	onClick: () => void,
 ): HTMLButtonElement {
-	const button = container.createEl('button', {
-		cls: 'mindmap-tool-btn',
-		attr: { title, 'aria-label': title },
-	});
+	const button = container.createEl('button', { cls: 'mindmap-tool-btn' });
 	setIcon(button, icon);
+	// 官方 tooltip（原生样式/定位；aria-label 由核心写入，不再手写 title）
+	setTooltip(button, tooltip);
 	button.onclick = onClick;
 	return button;
 }

@@ -1,5 +1,11 @@
 /**
  * 全局常量定义。
+ *
+ * 扩展名分流的**权威口径**（2026-09-15 收敛）：文档 = `domain/wikilink.isDocumentExtension`
+ * （md / canvas / base），其余带扩展名者 = 附件（`wikilinkTargetIsAttachment`）——
+ * 拖入、联想、点击三条路径共用它。本文件只保留「可渲染清单」这类**渲染能力**判定
+ * （`canOpenInObsidian` / `isRenderableImageExtension` / `isEmbeddableAttachmentExtension`），
+ * 不再维护「可链接附件」白名单（比解析侧窄，会造成「拖入被拒、手写却行」）。
  */
 import type { TranslationKey } from './i18n';
 
@@ -58,7 +64,7 @@ export const LAYOUT_OPTIONS: LayoutOption[] = [
  * 引擎三态（curve 曲线 / direct 直连 / straight 正交折线）仅对逻辑结构图、
  * 思维导图、组织结构图生效；目录组织图/时间轴/鱼骨图为布局类原生直线。
  */
-export type LineStylePreference = 'auto' | 'curve' | 'direct' | 'straight';
+type LineStylePreference = 'auto' | 'curve' | 'direct' | 'straight';
 
 export interface LineStyleOption {
 	value: LineStylePreference;
@@ -131,21 +137,20 @@ const AUDIO_VIDEO_EXTENSIONS = [
 ];
 
 /**
- * 可链接的附件扩展（音/视/PDF 等库内文件）：
- * 在导图中以 [[库内路径]] 链接形式引用（Obsidian 打开/系统应用）。
- * 图片不在此列——图片走 image 语义（![[...]] 渲染）。
+ * 可在 Obsidian 中**嵌入渲染**的附件扩展（官方帮助「Embed files / Accepted file
+ * formats」：音频、视频、PDF 都能 `![[…]]` 直接嵌进笔记；图片另有 image 语义）。
+ *
+ * 拖入这类文件时默认写**嵌入**语法（`![[报告.pdf]]`），与 Obsidian 拖放一致；
+ * 其余附件（zip/epub 等不可嵌入）写普通链接 `[[文件.zip]]`。
  */
-const LINK_ATTACHMENT_EXTENSIONS = [
+const EMBEDDABLE_ATTACHMENT_EXTENSIONS = [
 	...AUDIO_VIDEO_EXTENSIONS,
-	// 文档
 	'pdf',
-	'epub',
-	'zip',
 ];
 
-/** 判断扩展名是否为可链接附件 */
-export function isLinkAttachmentExtension(extension: string): boolean {
-	return LINK_ATTACHMENT_EXTENSIONS.includes(extension.toLowerCase());
+/** 判断扩展名是否为可嵌入渲染的附件（拖入默认写 `![[…]]`，见上） */
+export function isEmbeddableAttachmentExtension(extension: string): boolean {
+	return EMBEDDABLE_ATTACHMENT_EXTENSIONS.includes(extension.toLowerCase());
 }
 
 /** 粘贴/拖入图片大小上限（MB） */
@@ -212,6 +217,22 @@ export const PERFORMANCE_THRESHOLD_MIN = 100;
 export const PERFORMANCE_THRESHOLD_MAX = 2000;
 
 /**
+ * 是否启用性能模式（虚拟渲染）：插件设置（开关 + 节点数阈值）的**唯一判据**。
+ *
+ * 创建（`engine/mindmap.createMindMap`，按数据树）与运行时切换
+ * （`services/engine-controller.applyPerformance`，按渲染树）共用——两处节点数
+ * 口径同构（count 探针已钉住「性能模式下渲染树结构仍完整」），故阈值语义在
+ * 创建期与运行期完全一致；改判据只需改这一处。
+ */
+export function shouldEnablePerformanceMode(
+	nodeCount: number,
+	performanceMode: boolean,
+	performanceThreshold: number,
+): boolean {
+	return performanceMode && nodeCount >= performanceThreshold;
+}
+
+/**
  * Obsidian 能在标签页中渲染、不会出现空白页的扩展名（md/canvas/PDF/图片/纯文本·代码）。
  * 用于点击导图内链接/附件时判断能否直接用 Obsidian 打开。
  * 音频/视频不在其中：Obsidian 桌面端没有音频/视频的标签页视图，
@@ -264,18 +285,13 @@ const OBSIDIAN_RENDER_EXTENSIONS: ReadonlySet<string> = new Set([
  * 系统媒体（音频/视频）：Obsidian 无标签页视图，点击后应改由系统默认应用打开
  * （桌面端 shell.openPath），而不是在 Obsidian 中新建空白标签页。
  */
-const SYSTEM_MEDIA_EXTENSIONS: ReadonlySet<string> = new Set(
-	AUDIO_VIDEO_EXTENSIONS,
-);
-
-/** 判断某扩展名能否在 Obsidian 标签页中直接打开（可渲染、不出现空白标签页） */
+/**
+ * 判断某扩展名能否在 Obsidian 标签页中直接打开（可渲染、不出现空白标签页）。
+ * 其余一律交系统默认应用（音视频如此，zip/docx 等也如此——2026-09-15 统一，
+ * 见 `platform/system-open` 与 `view-link-navigator.openResolvedTarget`）。
+ */
 export function canOpenInObsidian(extension: string): boolean {
 	return OBSIDIAN_RENDER_EXTENSIONS.has(extension.toLowerCase());
-}
-
-/** 判断某扩展名是否为系统默认应用打开的音频/视频（Obsidian 无标签页视图） */
-export function isSystemMediaExtension(extension: string): boolean {
-	return SYSTEM_MEDIA_EXTENSIONS.has(extension.toLowerCase());
 }
 
 /** 生成全局唯一的节点 uid（引擎对 uid 格式无要求，仅需全局唯一） */
@@ -288,11 +304,26 @@ export function generateUid(): string {
  * 此前设置持久化 400ms（main.ts）、自动保存 600ms（view.ts）散落两处，
  * 维护者难以发现"为什么不一样、哪个改了不该改"。集中后：
  * - SETTINGS_PERSIST_DEBOUNCE_MS ：设置面板控件（滑块等）高频写入 → 合并突发；
+ * - SETTINGS_APPLY_DEBOUNCE_MS   ：设置变更**应用到视图**的防抖（重建引擎很贵）；
  * - AUTO_SAVE_DEBOUNCE_MS       ：自动保存防抖（引擎修改触发保存）；
  * - VIEW_STATE_PERSIST_MS       ：ViewStateStore 布局/视口防抖；
  * - TITLE_RENAME_DEBOUNCE_MS    ：中心主题重命名防抖。
  */
 export const SETTINGS_PERSIST_DEBOUNCE_MS = 400;
+/**
+ * 设置变更应用到已打开视图的防抖（`applySettingsToViews`）。
+ *
+ * 比落盘防抖短：应用是**用户可见**的（布局/主题/性能开关），要让「松手即生效」
+ * 的感觉成立；但必须防抖——LIVE_REFRESH 键里含滑块（如 performanceThreshold，
+ * step 100），而仍走重建的键（拖拽开关、语言）一轮 = 每个打开的视图**销毁并重建
+ * 引擎 + 全量重渲染**，拖一次滑块就是几十轮。
+ *
+ * 2026-09-17 起按键差集分流：主题原地生效（`setThemeConfig`，K59）、性能模式与
+ * 阈值原地切换（`updateConfig`，K60）、默认布局/默认连线样式对已打开的图本就不
+ * 生效故直接跳过；目前只剩拖拽开关与语言仍重建。防抖仍保留——滑块档位本身仍会
+ * 反复触发应用。
+ */
+export const SETTINGS_APPLY_DEBOUNCE_MS = 250;
 /**
  * 自动保存防抖（SavePipeline 引擎修改触发）。
  * 设为 800ms——比视图状态持久化长（避免引擎高频数据变更时与磁盘 I/O 争抢），
@@ -320,6 +351,19 @@ export const TITLE_RENAME_DEBOUNCE_MS = 1500;
  * 若引擎升级提供「布局完成」回调，应优先替换此处。
  */
 export const RESET_LAYOUT_VIEWPORT_DELAY_MS = 80;
+
+/**
+ * RESET_LAYOUT 前的「渲染窗口」等待参数（毫秒，K67）。
+ *
+ * 引擎 `Renderer._render` 先把 `renderer.root` 置 null，再由布局回填；而布局
+ * `doLayout` 经分片执行器逐步跑（每步之间 `setTimeout(0)`，见 vendor 的 It），
+ * 故 root 缺失会**跨越多个宏任务**。窗口期内执行 RESET_LAYOUT 会遍历 null 根，
+ * 在回调首行抛 `TypeError: Cannot set properties of null (setting 'customLeft')`
+ * （用户实测，见 K67）。故 `arrangeMindMap` 在 root 缺失时按此间隔轮询等回填，
+ * 超过上限则放弃（只记日志）。
+ */
+export const RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS = 50;
+export const RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS = 2000;
 
 /**
  * 拖拽落点辅助判定半径（像素，CSS 像素空间，无需 devicePixelRatio）。

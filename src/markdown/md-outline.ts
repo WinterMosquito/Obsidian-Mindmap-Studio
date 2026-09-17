@@ -15,7 +15,9 @@
  *      多余图片剥壳为文本占位）；
  *    - 首个链接 token → hyperlink 字段（引擎单链：可点跳转），首个图片 → image；
  *    - 原文存 data.mdRaw、剥壳结果存 data.mdDerivedText：serialize 时若用户未
- *      编辑文本（text === mdDerivedText）整行逐字回写（mdRaw），编辑后走合成。
+ *      编辑文本（text === mdDerivedText）整行逐字回写（mdRaw），编辑后走合成；
+ *      合成按 data.mdSegments（显示文本 ↔ 原文对齐表）把有显示名的 token 写回
+ *      **原位**，对不上/无对齐信息者才尾插（见 domain/md-meta.MdTokenSegment）。
  * 3) 行内轻标记（** * ` ~~ HTML）不剥离，原样保留（无损往返）。
  */
 
@@ -28,6 +30,7 @@ import {
 } from '../domain/wikilink';
 import { isUrlLikeText } from '../domain/url';
 import { isIndentedCodeLine, isRenderableImageExtension } from '../core/constants';
+import type { MdTokenSegment } from '../domain/md-meta';
 import type { MdNodeData } from '../core/node-data';
 
 export interface MdParseResult {
@@ -66,7 +69,7 @@ interface ParsedLine {
 // 行内 token（wikilink / markdown 链接 / 图片）
 // ---------------------------------------------------------------------------
 
-export type InlineTokenKind =
+type InlineTokenKind =
 	| 'wikiImg'
 	| 'wiki'
 	| 'mdImg'
@@ -219,8 +222,12 @@ export function tokenizeInline(raw: string): InlineToken[] {
 	return out;
 }
 
-/** token 的剥壳显示文本（节点文本中替换 [[]] 包裹后的样子） */
-function tokenDisplay(tok: InlineToken): string {
+/**
+ * token 的剥壳显示文本（节点文本中替换 [[]] 包裹后的样子）。
+ * export 供节点内联内容渲染（`features/node-inline-content.ts`，方案 B 原型）复用
+ * ——「链接该显示成什么」必须与解析侧同一口径，在别处重写一遍必然漂移。
+ */
+export function tokenDisplay(tok: InlineToken): string {
 	if (tok.kind === 'wikiImg' || tok.kind === 'mdImg') {
 		// 图片显示名恒为目标文件名（含扩展）：标签可能是尺寸参数（已剥离）
 		// 或空，不作为显示文本
@@ -254,6 +261,27 @@ function isImageEmbedTarget(target: string): boolean {
 
 
 /**
+ * 解析可写的**链接通道**字段（三通道 + 嵌入标记）。
+ *
+ * 用途：需要「整体重建节点行内字段」时按它清空旧值再按新解析回填——解析侧是
+ * 这些字段的**唯一作者**，清单也只在这里定义一次（links-split 的
+ * `PARENT_LINK_FIELDS`、md-line-write 的原文编辑清除清单都引用本常量，勿再抄一份）。
+ * 图片字段另见 `PLAIN_IMAGE_FIELDS`（拆分不清图片，原文编辑两者都清）。
+ */
+export const INLINE_LINK_FIELDS = [
+	'hyperlink',
+	'hyperlinkTitle',
+	'mdLinkStyle',
+	'mdLinkText',
+	'mdWikiLinkpath',
+	'attachmentUrl',
+	'attachmentName',
+	'mdAttachmentLinkpath',
+	'mdEmbed',
+	'mdEmbedPipe',
+] as const;
+
+/**
  * 段落（plain）首行采纳的**图片**字段（不含链接字段）。
  *
  * 段落此前完全不承载图片字段 → 行内 `![[图.png]]` 在地图上永远不渲染，
@@ -261,12 +289,15 @@ function isImageEmbedTarget(target: string): boolean {
  * 同构地承载首行图片。**链接字段仍不采纳**：段落里的链接语法属原文，
  * 未编辑时随 mdRaw 逐字回写（见 docs/markdown-mindmap-standard.md §3.1）。
  */
-const PLAIN_IMAGE_FIELDS = [
+export const PLAIN_IMAGE_FIELDS = [
 	'image',
 	'mdImageTarget',
 	'mdImageWidth',
 	'mdImageHeight',
 	'mdImageAlt',
+	// 语法形态（wiki `![[图]]` / md `![alt](图)`）：解析期记录，编辑后合成回写
+	// 须保持用户原本的写法，故必须随图片字段一起被采纳/重建
+	'mdImageStyle',
 ] as const;
 
 /** 从行内解析结果里挑出图片字段（无图片时返回空对象） */
@@ -307,10 +338,16 @@ export function buildInlineData(raw: string): InlineData {
 	let firstLink = false;
 	let firstImg = false;
 	const pieces: string[] = [];
-	/** 未被首图/首链字段承载的额外 token（原文切片）：保真回写数据 */
-	const extra: { raw: string; kind: 'image' | 'link' }[] = [];
+	/**
+	 * 行内 token 台账（显示文本 ↔ 原文对齐表，见 domain/md-meta.MdTokenSegment）：
+	 * 首 token 记实时形态（`first: true`），额外 token 记**原文切片**（`first: false`
+	 * ——多链接 / 多 URL / 多图的保真回写数据，此前单存 mdExtraTokens，已并入本表）。
+	 */
+	const segments: MdTokenSegment[] = [];
 	let cursor = 0;
 	for (const tok of toks) {
+		/** 本 token 是否被「首链 / 首图」字段承载（合成时取实时形态还是原文） */
+		let firstForThisToken = false;
 		pieces.push(raw.slice(cursor, tok.start));
 		cursor = tok.end;
 		if (tok.kind === 'wikiImg' || tok.kind === 'mdImg') {
@@ -349,18 +386,27 @@ export function buildInlineData(raw: string): InlineData {
 					continue;
 				}
 				const link = formatWikilink(linkpath, wiki?.alias || undefined);
+				const embedSlice = raw.slice(tok.start, tok.end);
 				if (!firstLink) {
 					firstLink = true;
+					firstForThisToken = true;
 					data.mdWikiLinkpath = link;
 					data.mdLinkStyle = 'wiki';
 					data.mdEmbed = true;
 					data.mdLinkText = linkDisplayText(link);
 					// 与文档双链同口径：剥壳显示名进节点文本（去 `.md`）
 					pieces.push(data.mdLinkText);
+					segments.push({
+						kind: 'link',
+						text: data.mdLinkText,
+						raw: embedSlice,
+						first: true,
+					});
 				} else {
-					pieces.push(linkDisplayText(link));
-					// 非首个文档/附件嵌入：剥壳为文本（上行），原文进额外 token
-					extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'link' });
+					const display = linkDisplayText(link);
+					pieces.push(display);
+					// 非首个文档/附件嵌入：剥壳为文本（上行）+ 原文进台账
+					segments.push({ kind: 'link', text: display, raw: embedSlice, first: false });
 				}
 				continue;
 			}
@@ -368,6 +414,9 @@ export function buildInlineData(raw: string): InlineData {
 				firstImg = true;
 				data.image = tok.target;
 				data.mdImageTarget = tok.target;
+				// 语法形态：原文是 `![alt](图.png)` 记 md、`![[图.png]]` 记 wiki
+				// ——编辑节点后合成回写要沿用同一形态（见 domain/md-meta.MdImageStyle）
+				data.mdImageStyle = tok.kind === 'mdImg' ? 'md' : 'wiki';
 				// 嵌入标签里的非尺寸文本（alt）：`![说明|300](url)` 与
 				// `![[图.png|说明]]` 都可能是用户写的说明，节点编辑后合成回写
 				// 需原样保留（此前只对 mdImg 存 alt，wiki 嵌入的说明会丢失）
@@ -384,15 +433,22 @@ export function buildInlineData(raw: string): InlineData {
 				}
 				// 首图以节点图呈现，不占文本
 			} else {
-				pieces.push(tokenDisplay(tok));
-				// 非首图（同行多余图片）：剥壳为文本（上行），原文进额外 token
-				extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'image' });
+				const display = tokenDisplay(tok);
+				pieces.push(display);
+				// 非首图（同行多余图片）：剥壳为文本（上行）+ 原文进台账
+				segments.push({
+					kind: 'image',
+					text: display,
+					raw: raw.slice(tok.start, tok.end),
+					first: false,
+				});
 			}
 			continue;
 		}
 		if (tok.kind === 'wiki') {
 			if (!firstLink) {
 				firstLink = true;
+				firstForThisToken = true;
 				if (wikilinkTargetIsAttachment(tok.target)) {
 					// 双链指向附件：走引擎 attachmentUrl（回形针图标，点击经
 					// node_attachmentClick 事件接管），不写 hyperlink 以免
@@ -413,33 +469,31 @@ export function buildInlineData(raw: string): InlineData {
 					// 图标/悬停提示的目标显示名
 					data.mdLinkText = tokenDisplay(tok);
 				}
-			} else {
-				// 非首个双链：剥壳为文本（下方统一 push），原文进额外 token（保真）
-				extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'link' });
 			}
+			// 非首个双链：剥壳为文本 + 原文入台账，均由下方统一处理（不另 push）
 		} else if (tok.kind === 'autolink' || tok.kind === 'bareUrl') {
 			// 自动链接（<url> 尖括号 / 裸 URL）→ 同语义：URL 本体不渲染进
 			// 节点文本（icon-only，节点仅显示超链接图标）；回写为 <url>
 			if (!firstLink) {
 				firstLink = true;
+				firstForThisToken = true;
 				data.hyperlink = tok.target;
 				data.mdLinkStyle = 'md';
 				data.mdLinkText = tok.target;
 				data.hyperlinkTitle = tok.target;
-			} else {
-				// 非首个 URL：不渲染进文本（icon-only 一贯性），原文进额外 token
-				extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'link' });
 			}
+			// 非首个 URL：不渲染进文本（icon-only 一贯性）→ 只由下方「无显示名
+			// 额外 token」分支登记原文（不入文本，故不参与原位定位）
 		} else if (!firstLink) {
 			firstLink = true;
+			firstForThisToken = true;
 			data.hyperlink = tok.target;
 			data.mdLinkStyle = 'md';
 			data.mdLinkText = tok.label || tok.target;
 			data.hyperlinkTitle = tokenDisplay(tok);
-		} else {
-			// 非首个 md 链接：剥壳文本由下方统一 push，原文进额外 token（保真）
-			extra.push({ raw: raw.slice(tok.start, tok.end), kind: 'link' });
 		}
+		// 非首个 md 链接：剥壳文本与原文切片均由下方统一处理（有显示名 → 入文本 +
+		// 台账；label 本身是 URL → 只入台账的「无显示名」分支）
 		// URL token（autolink/bareUrl）与「label 本身是 URL」的 md 链接
 		// （[https://…](https://…)，复制粘贴常见形态）一律 icon-only：
 		// URL 本体不渲染进节点文本（避免长 URL 撑宽节点），节点仅显示图标
@@ -448,11 +502,29 @@ export function buildInlineData(raw: string): InlineData {
 			tok.kind !== 'bareUrl' &&
 			!(tok.kind === 'mdLink' && isUrlLikeText(tok.label))
 		) {
-			pieces.push(tokenDisplay(tok));
+			const display = tokenDisplay(tok);
+			pieces.push(display);
+			// 有显示名的 token：编辑后按显示名在新文本里原位恢复（K52）
+			segments.push({
+				kind: 'link',
+				text: display,
+				raw: raw.slice(tok.start, tok.end),
+				first: firstForThisToken,
+			});
+		} else if (!firstForThisToken) {
+			// **额外**的无显示名 token（第 2+ 枚 URL / url-like md 链接）：位置不在
+			// 显示文本中，只保原文——合成时按切片尾插（与首 token 同位）。
+			// 首 token 无显示名（URL icon-only）不入表：它由 hyperlink 字段实时渲染。
+			segments.push({
+				kind: 'link',
+				text: '',
+				raw: raw.slice(tok.start, tok.end),
+				first: false,
+			});
 		}
 	}
-	if (extra.length > 0) {
-		data.mdExtraTokens = extra;
+	if (segments.length > 0) {
+		data.mdSegments = segments;
 	}
 	pieces.push(raw.slice(cursor));
 	// 纯图行 → 图片独占节点（text 为空）：图片是节点的全部内容，
@@ -769,18 +841,22 @@ export function parseMdOutline(
 		// mdRaw 用**未 trim 的原文**整块保留（缩进/行尾空格是 Markdown 语义）；
 		// 显示文本仍走 trim 后的 text，行首缩进不进节点文本
 		const raw = plainBuffer.map((line) => line.raw).join('\n');
-		// 段落按行 token 化（保留行独立性）
+		// 段落按行 token 化（保留行独立性）：**每行只解析一次**，首行的完整结果
+		// 复用给下面的图片字段提取（此前首行会再解析一遍）
 		const derived: string[] = [];
+		let firstLineData: ReturnType<typeof buildLineInlineData> | null = null;
 		for (const line of plainBuffer) {
 			const d = buildLineInlineData(line.text);
+			firstLineData ??= d;
 			derived.push(d.text);
 		}
 		// 首行图片进节点字段（缩进代码块的首行属代码内容，不采纳）；
 		// 其余行与链接语法仍靠 mdRaw 逐字保真
 		const first = plainBuffer[0]!;
-		const imageMeta = isIndentedCodeLine(first.raw)
-			? {}
-			: pickImageMeta(buildLineInlineData(first.text));
+		const imageMeta =
+			isIndentedCodeLine(first.raw) || !firstLineData
+				? {}
+				: pickImageMeta(firstLineData);
 		const node: MindMapTreeNode = {
 			data: {
 				text: derived.join('\n'),

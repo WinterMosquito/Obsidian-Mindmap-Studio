@@ -16,19 +16,26 @@ import {
 	MindMapTreeNode,
 } from '../../vendor/simple-mind-map.cjs';
 import {
+	applyPerformanceMode,
 	arrangeMindMap,
+	cancelEngineTimers,
 	centerContentAtFullScale,
+	countTreeNodes,
 	createMindMap,
 	destroyMindMap,
 	fitMindMap,
 	getRenderRoot,
 	getRootText,
 	getThemeConfig,
+	isContentVisibleInCanvas,
 	isDarkTheme,
 	isEditingText,
+	replaceMindMapData,
 } from '../engine/mindmap';
+import { shouldEnablePerformanceMode } from '../core/constants';
+import type { NodeContentStyle } from '../engine/mindmap';
 import { ensureUniqueUids } from '../markdown/markdown';
-import { hasNodeReference, nodeReferenceHaystack } from '../core/node-data';
+import { nodeReferenceHaystack } from '../core/node-data';
 import {
 	removeReferencesOnDelete,
 	updateReferencesOnRename,
@@ -42,7 +49,7 @@ import type { MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
 import type { ViewStateStore } from './view-state';
 
 /** 引擎创建选项（设置读取与布局 fallback 由视图负责） */
-export interface EngineSetupOptions {
+interface EngineSetupOptions {
 	layout: string;
 	/** 连线样式偏好（auto/curve/direct/straight；auto＝随布局） */
 	lineStyle: string;
@@ -68,6 +75,22 @@ export interface EngineControllerDeps {
 	viewState: ViewStateStore;
 	/** 引擎超链接点击跳转（onHyperlinkJump 回调） */
 	openHyperlink(link: string): void;
+	/**
+	 * 节点内联内容渲染（方案 B 原型）：返回元素则**完全接管**该节点内容
+	 * （引擎跳过默认文本/图标渲染，元素包进 foreignObject 并按离屏克隆测宽）；
+	 * 返回 null 的节点走引擎默认 SVG 文本。缺省 = 全部节点走默认渲染。
+	 *
+	 * 声明为**函数属性**（而非方法语法）：该回调没有 `this` 语义，方法语法在
+	 * 透传给引擎时会触发 unbound-method。
+	 */
+	createNodeContent?:
+		| ((
+				node: MindMapNode,
+				doc: Document,
+				style: NodeContentStyle,
+				lang: Language,
+		  ) => HTMLElement | null)
+		| null;
 	/** 根数据变更（→ 防抖保存 + 状态栏计数 + 标题重命名调度） */
 	onRootDataChanged(): void;
 	/**
@@ -97,6 +120,11 @@ export interface EngineControllerDeps {
 const IMAGE_CLICK_DRAG_SUPPRESS_MS = 300;
 /** 首帧后恢复视口的延迟（等待引擎完成首次布局） */
 const VIEWPORT_RESTORE_DELAY_MS = 150;
+/**
+ * 首帧几何晚到变化（图片尺寸回灌等）后的补居中延迟。
+ * 必须大于 VIEWPORT_RESTORE_DELAY_MS：补居中要在默认视口设置之后才判定签名。
+ */
+const VIEWPORT_RECENTER_DELAY_MS = 200;
 
 export class EngineController {
 	/** 引擎实例作用域的事件绑定器（initMindMap 时注册，destroy 一次性清理） */
@@ -123,6 +151,28 @@ export class EngineController {
 	private lastNodeDragEndAt = 0;
 	/** 首帧后的视口恢复定时器（销毁/作废时取消，避免对已销毁引擎求值） */
 	private viewportTimer: number | null = null;
+	/**
+	 * 补居中定时器（图片尺寸回灌等首帧后才落定的几何变化）。
+	 * 仅当打开时设置的是默认视口（未恢复保存视口、用户未移动）时才生效。
+	 */
+	private recenterTimer: number | null = null;
+	/**
+	 * 默认视口签名（scale|x|y；null＝无默认视口：已恢复保存视口、用户已移动
+	 * 或读取失败）。补居中据此判定「当前视口是否仍是打开时自动设置的那个」。
+	 */
+	private defaultViewSignature: string | null = null;
+	/**
+	 * 首帧窗口剩余的「默认视口重算」次数：引擎布局把根节点摆在与画布尺寸
+	 * 相关的位置（initRootNodePosition 默认 [center,center]），首次布局与
+	 * resize 触发的再布局都会让内容整体位移——窗口内每次布局落地都重算
+	 * （见 renderMindMap）。用尽即停手：之后的重渲染不再抢视口。
+	 */
+	private initialViewportRecalcBudget = 0;
+	/**
+	 * 本会话打开时恢复了用户保存的视口：停用一切自动化视口干预
+	 * （首帧重算、落界校验回退、补居中），绝不覆盖用户的缩放/平移。
+	 */
+	private restoredSavedViewport = false;
 
 	constructor(private readonly deps: EngineControllerDeps) {}
 
@@ -199,6 +249,8 @@ export class EngineController {
 			this.destroyInstance();
 			canvasEl.empty();
 			const options = this.deps.getSetupOptions();
+			/** 节点内联内容渲染器（缺省 = 不开启引擎自绘节点内容通道） */
+			const nodeContentRenderer = this.deps.createNodeContent ?? null;
 			this.mindMap = createMindMap(canvasEl, tree, {
 				layout: options.layout,
 				lineStyle: options.lineStyle,
@@ -209,6 +261,12 @@ export class EngineController {
 				performanceThreshold: options.performanceThreshold,
 				lang: this.deps.getLang(),
 				onHyperlinkJump: (link) => this.deps.openHyperlink(link),
+				// 节点内联内容（方案 B 原型）：缺省时引擎两键为 false/null，全部走默认文本。
+				// 包一层箭头：方法引用脱离对象会触发 unbound-method（deps 未持有 this 语义）
+				createNodeContent: nodeContentRenderer
+					? (node, doc, style, lang) =>
+							nodeContentRenderer(node, doc, style, lang)
+					: null,
 			});
 			this.engineEvents.onEngine(this.mindMap, 'data_change', () => {
 				this.deps.onRootDataChanged();
@@ -263,13 +321,47 @@ export class EngineController {
 					this.deps.onNodeAttachmentClick(node);
 				},
 			);
+			// 布局落地即应用视口（**本帧内**）：引擎默认 initRootNodePosition=
+			// [center,center]，首次布局把**根节点**摆在画布中心——不在布局任务里
+			// 纠正，用户会先看到「根居中」、150ms 兜底时才跳成「整体居中」。
+			// 该事件在引擎布局任务内发出（renderer.render 是 setTimeout(0) →
+			// _render），与布局同帧提交，浏览器不会绘制中间态；再布局（resize
+			// 会按新画布尺寸重摆根节点、图片回灌会改节点尺寸）也按此重算。
+			// 重算次数由 initialViewportRecalcBudget 限定，用尽即停手。
+			this.initialViewportRecalcBudget = 2;
+			this.engineEvents.onEngine(
+				this.mindMap,
+				'node_tree_render_end',
+				() => {
+					if (
+						this.restoredSavedViewport ||
+						this.initialViewportRecalcBudget <= 0
+					) {
+						return;
+					}
+					const applied = this.defaultViewSignature;
+					if (applied !== null && this.viewSignature() !== applied) {
+						// 视口已不是打开时自动设置的那个（用户平移/缩放）：停手
+						this.initialViewportRecalcBudget = 0;
+						return;
+					}
+					this.initialViewportRecalcBudget--;
+					this.restoreOrFitViewport();
+				},
+			);
 			this.mindMap.render();
 			this.deps.setupFeatures();
 			this.deps.onEngineReady(options.layout, options.lineStyle);
-			// 首帧后：有保存的视口（缩放/平移）则恢复，否则适配全图
+			// 兜底：布局晚变（工具栏重建、工作区 settle）而不再有布局事件时，
+			// 最后再应用一次（与布局事件里那次幂等：几何未变则平移量为 0）；
+			// 并补一次重算预算，覆盖本次 resize 触发的再布局。
 			this.cancelViewportTimer();
 			this.viewportTimer = window.setTimeout(() => {
 				this.viewportTimer = null;
+				this.initialViewportRecalcBudget = Math.max(
+					this.initialViewportRecalcBudget,
+					1,
+				);
 				this.restoreOrFitViewport();
 			}, VIEWPORT_RESTORE_DELAY_MS);
 		} catch (error) {
@@ -296,7 +388,14 @@ export class EngineController {
 	destroyInstance(): void {
 		this.disconnectInitObserver();
 		this.cancelViewportTimer();
+		this.cancelRecenterTimer();
+		this.defaultViewSignature = null;
+		this.initialViewportRecalcBudget = 0;
+		this.restoredSavedViewport = false;
 		this.engineEvents.destroy();
+		// 在途延时任务（延时 fit / 渲染根轮询链 / 文本编辑宏任务）先取消：
+		// 它们的闭包会触碰引擎实例，销毁后到期会在空实例上白跑（轮询链还会续排）。
+		cancelEngineTimers(this.mindMap);
 		destroyMindMap(this.mindMap);
 		this.mindMap = null;
 		this.deps.getCanvasEl()?.empty();
@@ -307,6 +406,10 @@ export class EngineController {
 		this.initSeq++;
 		this.disconnectInitObserver();
 		this.cancelViewportTimer();
+		this.cancelRecenterTimer();
+		this.defaultViewSignature = null;
+		this.initialViewportRecalcBudget = 0;
+		this.restoredSavedViewport = false;
 	}
 
 	/** 取消首帧后的视口恢复（幂等） */
@@ -314,6 +417,14 @@ export class EngineController {
 		if (this.viewportTimer !== null) {
 			window.clearTimeout(this.viewportTimer);
 			this.viewportTimer = null;
+		}
+	}
+
+	/** 取消挂起的补居中（幂等） */
+	private cancelRecenterTimer(): void {
+		if (this.recenterTimer !== null) {
+			window.clearTimeout(this.recenterTimer);
+			this.recenterTimer = null;
 		}
 	}
 
@@ -346,6 +457,37 @@ export class EngineController {
 		}
 		const setup = this.deps.getSetupOptions();
 		this.writeThemeConfig(setup.layout, value, setup.themePref);
+	}
+
+	/**
+	 * 应用性能模式设置（开关 / 阈值变更）：**运行时切换，不重建实例**。
+	 *
+	 * 引擎显式支持（`after_update_config` 会在 `openPerformance` 变化时绑定/解绑
+	 * `view_data_change` 处理器并 `forceLoadNode`，见 `applyPerformanceMode`），
+	 * 故省掉「整树 structuredClone + 引擎销毁重建 + 视口重设」——性能阈值是设置
+	 * 面板里的滑块（唯一高频拖拽项），这条路径的收益最直接。
+	 *
+	 * 阈值判据与创建期同源（`shouldEnablePerformanceMode`）；节点数按**渲染树**
+	 * 统计（性能模式下节点实例仍留在 `parent.children`，计数准确，见 count 探针）。
+	 */
+	applyPerformance(
+		performanceMode: boolean,
+		performanceThreshold: number,
+	): void {
+		const mindMap = this.mindMap;
+		if (!mindMap) {
+			return;
+		}
+		const root = getRenderRoot(mindMap);
+		const nodeCount = root ? countTreeNodes(root) : 0;
+		applyPerformanceMode(
+			mindMap,
+			shouldEnablePerformanceMode(
+				nodeCount,
+				performanceMode,
+				performanceThreshold,
+			),
+		);
 	}
 
 	/** 应用主题（深色判定按当前主题偏好重算；连线样式随偏好与布局） */
@@ -406,7 +548,12 @@ export class EngineController {
 		}
 	}
 
-	/** 打开后恢复保存的视口；无则默认 100% + 整体内容包围盒居中（大图可读） */
+	/**
+	 * 打开后恢复保存的视口；无则默认 100% + 整体内容包围盒居中（大图可读）。
+	 *
+	 * 居中/适配的几何换算在 mindmap 侧先同步到实时容器：首帧后工作区布局
+	 * settle、工具栏重建都会让引擎缓存尺寸失真，是「打开即偏移」的根源。
+	 */
 	private restoreOrFitViewport(): void {
 		const file = this.deps.getFile();
 		const mindMap = this.mindMap;
@@ -417,12 +564,87 @@ export class EngineController {
 		try {
 			if (savedView) {
 				mindMap.view.setTransformData(savedView);
+				// 保存的变换按当时的容器/内容记录：尺寸大改或内容布局变化后
+				// 恢复它可能把内容推出画布（打开即空白）。明确判定不可见时
+				// 放弃恢复、回退默认居中；无法判定则保持（fail-open）。
+				if (isContentVisibleInCanvas(mindMap) === false) {
+					centerContentAtFullScale(mindMap);
+					this.defaultViewSignature = this.viewSignature();
+					this.restoredSavedViewport = false;
+				} else {
+					// 恢复的是用户自己的视口：禁用补居中与首帧重算，不覆盖
+					this.defaultViewSignature = null;
+					this.restoredSavedViewport = true;
+				}
 			} else {
 				centerContentAtFullScale(mindMap);
+				this.defaultViewSignature = this.viewSignature();
+				this.restoredSavedViewport = false;
 			}
 		} catch (error) {
 			console.error('恢复视图状态失败', error);
 			fitMindMap(mindMap);
+			this.defaultViewSignature = null;
+			this.restoredSavedViewport = false;
+		}
+	}
+
+	/**
+	 * 排一次「补居中」：图片尺寸回灌等**首帧之后**才落定的几何变化会改动
+	 * 内容包围盒，令首帧居中失效（打开即偏移、点适应画布才回正）。
+	 *
+	 * 仅对打开时自动设置的默认视口生效：已恢复保存视口、或用户已自行平移/
+	 * 缩放（视口签名变化）时跳过，绝不覆盖用户操作。多次调用自动去重。
+	 */
+	scheduleViewportRecenter(): void {
+		if (!this.mindMap) {
+			return;
+		}
+		this.cancelRecenterTimer();
+		this.recenterTimer = window.setTimeout(() => {
+			this.recenterTimer = null;
+			const signature = this.defaultViewSignature;
+			const mindMap = this.mindMap;
+			if (!mindMap || signature === null || this.restoredSavedViewport) {
+				return;
+			}
+			if (this.viewSignature() !== signature) {
+				// 用户已移动/缩放视口：不打扰
+				this.defaultViewSignature = null;
+				return;
+			}
+			// 几何可能又变（图片落定、容器 settle）：重新对齐后居中
+			centerContentAtFullScale(mindMap);
+			this.defaultViewSignature = this.viewSignature();
+		}, VIEWPORT_RECENTER_DELAY_MS);
+	}
+
+	/** 当前视口签名（scale|x|y；读取失败返回 null） */
+	private viewSignature(): string | null {
+		const mindMap = this.mindMap;
+		if (!mindMap?.view) {
+			return null;
+		}
+		try {
+			const state = mindMap.view.getTransformData().state as unknown as {
+				scale?: unknown;
+				x?: unknown;
+				y?: unknown;
+			};
+			const scale = Number(state.scale);
+			const x = Number(state.x);
+			const y = Number(state.y);
+			if (
+				!Number.isFinite(scale) ||
+				!Number.isFinite(x) ||
+				!Number.isFinite(y)
+			) {
+				return null;
+			}
+			return `${scale}|${x}|${y}`;
+		} catch (error) {
+			console.warn('读取视口签名失败', error);
+			return null;
 		}
 	}
 
@@ -441,7 +663,8 @@ export class EngineController {
 		}
 		const tree = this.mindMap.getData();
 		if (updateReferencesOnRename(tree, file, oldPath, this.deps.app)) {
-			this.mindMap.setData(tree);
+			// 保留撤销历史（引擎 setData 会清空历史 → 之后 Ctrl+Z 永久失效）
+			replaceMindMapData(this.mindMap, tree);
 			return true;
 		}
 		return false;
@@ -461,10 +684,21 @@ export class EngineController {
 		}
 		const tree = this.mindMap.getData();
 		if (removeReferencesOnDelete(tree, file, this.deps.app)) {
-			this.mindMap.setData(tree);
+			// 同上：走保留历史的替换入口，Ctrl+Z 仍可回退这次引用清理
+			replaceMindMapData(this.mindMap, tree);
 			return true;
 		}
 		return false;
+	}
+
+	/**
+	 * 本图是否**可能**含指向该文件的引用（渲染器树快速预检，零拷贝）。
+	 *
+	 * 供「自动更新内部链接关闭时是否提示」使用：无关文件不打扰用户
+	 * （与 updateReferencesOnRename / removeReferencesOnDelete 的短路同一判据）。
+	 */
+	hasReferencesFor(file: TFile, oldPath: string): boolean {
+		return this.rendererTreeHasMatchingRef(file, oldPath);
 	}
 
 	/**
@@ -490,13 +724,13 @@ export class EngineController {
 		];
 		let found = false;
 		walkTree(root, (node) => {
+			// 一趟扫描：比对串为空（无任何引用字段）时不可能命中非空 needle，
+			// 故无需先 hasNodeReference 再取串（那是同一份字段表扫两遍）
 			const data = node.getData() as MindMapNodeData;
-			if (hasNodeReference(data)) {
-				const haystack = nodeReferenceHaystack(data);
-				if (needles.some((needle) => haystack.includes(needle))) {
-					found = true;
-					return false; // 命中即终止整树遍历
-				}
+			const haystack = nodeReferenceHaystack(data);
+			if (needles.some((needle) => haystack.includes(needle))) {
+				found = true;
+				return false; // 命中即终止整树遍历
 			}
 			return undefined;
 		});

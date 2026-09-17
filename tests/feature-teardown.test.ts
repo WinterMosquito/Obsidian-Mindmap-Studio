@@ -383,16 +383,18 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 			classList: { add: vi.fn<(name: string) => void>(), remove: vi.fn<(name: string) => void>() },
 			style: {} as CSSStyleDeclaration,
 		};
+		const canvasRect = vi.fn(() => ({
+			left: 0,
+			top: 0,
+			right: 800,
+			bottom: 600,
+			width: 800,
+			height: 600,
+		}));
 		const canvasEl = {
 			createDiv: (_cls?: string) => handleEl,
-			getBoundingClientRect: () => ({
-				left: 0,
-				top: 0,
-				right: 800,
-				bottom: 600,
-				width: 800,
-				height: 600,
-			}),
+			// 画布矩形读取次数是本文件一条断言的观测面（帧内不得再读）
+			getBoundingClientRect: canvasRect,
 		};
 		/** 节点 data：调宽提交会就地清 `mdImageAutoSize`（加载期自动校正标记） */
 		const data: Record<string, unknown> = {};
@@ -433,6 +435,7 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 			binder,
 			handleEl,
 			canvasEl,
+			canvasRect,
 			imageEl,
 			node,
 			data,
@@ -504,6 +507,112 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 		expect(harness.handleEl.classList.remove).toHaveBeenCalledWith('is-visible');
 	});
 
+	it('帧内只做「预览」写入（不 execCommand），收尾走一次命令（一条历史 + 一次保存调度）', () => {
+		// 用户实测缺陷（2026-09-16）：「图片拖动大小时保存好几次 + 卡顿」。
+		// 根因：引擎 Command.exec 对非白名单命令一律 addHistory()（整树 getCopyData +
+		// JSON.stringify 比对）并 emit('data_change') ⇒ 视图层 scheduleSave / 状态栏 /
+		// 标题重算全被逐帧触发。现帧内走 previewNodeImageSize（同款数据写入，不上
+		// 历史），只有收尾那一次走命令。
+		const harness = makeResizeView({ width: 200, height: 100 });
+		setupImageResize(harness.view);
+		harness.hoverImage();
+		harness.pressHandle(500);
+
+		// 拖 40 content px（缩放 1）：建立一帧
+		canvasWindow.listenerOf('mousemove', true)?.({
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+			clientX: 540,
+		});
+		canvasWindow.runFrame();
+
+		// 帧内：数据已更新、画面已重绘，但**没有命令**（= 不上历史、不触发保存调度）
+		expect(harness.data.imageSize).toEqual({
+			width: 240,
+			height: 120,
+			custom: true,
+		});
+		expect(harness.render).toHaveBeenCalled();
+		expect(harness.execCommand).not.toHaveBeenCalled();
+
+		// 收尾：一次命令把整次调宽记为一条历史（一次 Ctrl+Z 撤回整次），并调度一次保存
+		canvasWindow.listenerOf('mouseup', true)?.({});
+		expect(harness.execCommand).toHaveBeenCalledTimes(1);
+		expect(harness.execCommand.mock.calls[0]).toEqual([
+			'SET_NODE_DATA',
+			harness.node,
+			{ imageSize: { width: 240, height: 120, custom: true } },
+		]);
+		expect(harness.scheduleSave).toHaveBeenCalledTimes(1);
+	});
+
+	it('收尾时最终尺寸与最后一帧预览值相同：仍要走一次命令（否则整次调宽进不了历史）', () => {
+		const harness = makeResizeView({ width: 200, height: 100 });
+		setupImageResize(harness.view);
+		harness.hoverImage();
+		harness.pressHandle(500);
+
+		canvasWindow.listenerOf('mousemove', true)?.({
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+			clientX: 540,
+		});
+		canvasWindow.runFrame();
+		expect(harness.execCommand, '前置：帧内未走命令').not.toHaveBeenCalled();
+
+		// 松手时 applied === latest（最后一帧就是最终值）——判据是「与起始尺寸有净变化」，
+		// 不是「与最后一帧相同」，否则一次调宽完全不留历史
+		canvasWindow.listenerOf('mouseup', true)?.({});
+		expect(harness.execCommand).toHaveBeenCalledTimes(1);
+	});
+
+	it('拖回原尺寸（净变化为 0）：收尾不提交（不产生空历史）', () => {
+		const harness = makeResizeView({ width: 200, height: 100 });
+		setupImageResize(harness.view);
+		harness.hoverImage();
+		harness.pressHandle(500);
+
+		// 拖出去再拖回来：最终尺寸 = 起始尺寸
+		for (const clientX of [560, 500]) {
+			canvasWindow.listenerOf('mousemove', true)?.({
+				preventDefault: vi.fn(),
+				stopPropagation: vi.fn(),
+				clientX,
+			});
+			canvasWindow.runFrame();
+		}
+		canvasWindow.listenerOf('mouseup', true)?.({});
+
+		expect(harness.execCommand).not.toHaveBeenCalled();
+		expect(harness.scheduleSave).toHaveBeenCalledTimes(1);
+	});
+
+	it('画布矩形每会话只读一次：帧内手柄定位不再触发额外强制布局', () => {
+		const harness = makeResizeView({ width: 200, height: 100 });
+		setupImageResize(harness.view);
+		harness.hoverImage();
+		harness.pressHandle(500);
+		// 会话建立后（hover 的首次定位 1 次 + startSession 快照 1 次）不再读画布矩形
+		const afterStart = harness.canvasRect.mock.calls.length;
+
+		for (const clientX of [540, 580]) {
+			canvasWindow.listenerOf('mousemove', true)?.({
+				preventDefault: vi.fn(),
+				stopPropagation: vi.fn(),
+				clientX,
+			});
+			canvasWindow.runFrame();
+		}
+
+		expect(
+			harness.canvasRect.mock.calls.length,
+			'帧内读画布矩形 = 每帧一次强制布局',
+		).toBe(afterStart);
+		// 手柄确实被定位过（不是「因为不读矩形所以什么都没做」）
+		expect(harness.handleEl.style.left).toBeTruthy();
+		expect(harness.handleEl.style.top).toBeTruthy();
+	});
+
 	it('重复收尾幂等：无会话时不重复移除手柄、不触发保存', () => {
 		const harness = makeResizeView();
 		setupImageResize(harness.view);
@@ -565,13 +674,16 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 		expect(canvasWindow.frames).toHaveLength(1);
 
 		canvasWindow.runFrame(0);
-		// 起点 200×100、右拖 100（scale 1）→ 300×150，经 SET_NODE_DATA 写引擎
-		expect(harness.execCommand).toHaveBeenCalledWith(
-			ENGINE_COMMANDS.SET_NODE_DATA,
-			harness.node,
-			{ imageSize: { width: 300, height: 150, custom: true } },
-		);
+		// 起点 200×100、右拖 100（scale 1）→ 300×150：帧内**只做预览写入**
+		// （数据落上 + 重绘），**不走命令**——命令一律 addHistory + data_change，
+		// 逐帧走等于每步一条历史 + 每步一次自动保存调度（保存好几次 + 卡顿）
+		expect(harness.data.imageSize).toEqual({
+			width: 300,
+			height: 150,
+			custom: true,
+		});
 		expect(harness.render).toHaveBeenCalled();
+		expect(harness.execCommand).not.toHaveBeenCalled();
 	});
 
 	it('拖动中的写入按步长合并：小位移不写引擎，松手补写最终尺寸', () => {
@@ -589,38 +701,46 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 		// 首次移动立即写入（拖动无死区）：起点 200×100，+2px → 202×101
 		fire(502);
 		canvasWindow.runFrame(0);
-		expect(harness.execCommand).toHaveBeenCalledExactlyOnceWith(
-			ENGINE_COMMANDS.SET_NODE_DATA,
-			harness.node,
-			{ imageSize: { width: 202, height: 101, custom: true } },
-		);
+		expect(harness.data.imageSize).toEqual({
+			width: 202,
+			height: 101,
+			custom: true,
+		});
 		expect(
 			harness.data.mdImageAutoSize,
 			'拖拽提交即用户意图：自动校正标记被清除（否则尺寸不会回写文件）',
 		).toBeUndefined();
+		expect(harness.execCommand, '帧内不上历史').not.toHaveBeenCalled();
 
-		// 距上次写入仅 6px（不足最小步长 8px）→ 不写引擎（每次写入都是整树重排）
+		// 距上次写入仅 6px（不足最小步长 8px）→ 连数据都不写（每次写入都是整树重排）
 		fire(508);
 		canvasWindow.runFrame(1);
-		expect(harness.execCommand).toHaveBeenCalledTimes(1);
+		expect(harness.data.imageSize).toEqual({
+			width: 202,
+			height: 101,
+			custom: true,
+		});
 
 		// 距上次写入 10px → 写入 212×106
 		fire(512);
 		canvasWindow.runFrame(2);
-		expect(harness.execCommand).toHaveBeenCalledTimes(2);
-		expect(harness.execCommand).toHaveBeenLastCalledWith(
-			ENGINE_COMMANDS.SET_NODE_DATA,
-			harness.node,
-			{ imageSize: { width: 212, height: 106, custom: true } },
-		);
+		expect(harness.data.imageSize).toEqual({
+			width: 212,
+			height: 106,
+			custom: true,
+		});
 
 		// 松手：最终 214×107 距上次写入仅 2px（帧回调里被跳过）→ 收尾必须补写，
-		// 否则图片会回弹到上一个写入值 212×106
+		// 否则图片会回弹到上一个写入值 212×106；且整次调宽只记**一条**历史
 		fire(514);
 		canvasWindow.runFrame(3);
-		expect(harness.execCommand).toHaveBeenCalledTimes(2);
+		expect(harness.data.imageSize).toEqual({
+			width: 212,
+			height: 106,
+			custom: true,
+		});
 		canvasWindow.listenerOf('mouseup', true)?.({});
-		expect(harness.execCommand).toHaveBeenLastCalledWith(
+		expect(harness.execCommand).toHaveBeenCalledExactlyOnceWith(
 			ENGINE_COMMANDS.SET_NODE_DATA,
 			harness.node,
 			{ imageSize: { width: 214, height: 107, custom: true } },
@@ -641,11 +761,11 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 		canvasWindow.runFrame(0);
 		// 2x 下渲染 200×100 屏幕 px ⇒ content 起点 100×50；右拖 100 屏幕 px = 50 content px
 		// ⇒ 150×75（若漏了 scale 折算会写成 250×125）
-		expect(harness.execCommand).toHaveBeenCalledWith(
-			ENGINE_COMMANDS.SET_NODE_DATA,
-			harness.node,
-			{ imageSize: { width: 150, height: 75, custom: true } },
-		);
+		expect(harness.data.imageSize).toEqual({
+			width: 150,
+			height: 75,
+			custom: true,
+		});
 	});
 
 	it('引擎重建（再次 setup）先收尾旧会话并移除旧手柄', () => {

@@ -44,6 +44,60 @@ export function isSchemeUrl(value: string): boolean {
 }
 
 /**
+ * 本地绝对路径 → `file:///` URL。
+ *
+ * 用途：Obsidian 拖入系统文件时，按住 `Ctrl`（Win/Linux）/`Option`（mac）会
+ * **不复制进库**、直接写一条指向原位置的绝对链接（官方帮助「Drag and drop」）。
+ * 三个分支（形态由路径本身决定，勿统一套 `file:///`）：
+ * - 盘符路径 `C:\a\b.pdf` → `file:///C:/a/b.pdf`；
+ * - POSIX 绝对路径 `/home/a.pdf` → `file:///home/a.pdf`；
+ * - UNC/网络路径 `//server/share/a.pdf` → `file://server/share/a.pdf`。
+ *
+ * 空格等字符经 `encodeURI` 转义（`%20`）：与 Obsidian/浏览器同口径，也让链接
+ * 落在 `(…)` 里不破坏 Markdown 语法。
+ */
+export function fileUrlFromAbsolutePath(path: string): string {
+	const normalized = path.replace(/\\/g, '/');
+	const encoded = encodeURI(normalized);
+	if (normalized.startsWith('//')) {
+		return `file:${encoded}`;
+	}
+	if (normalized.startsWith('/')) {
+		return `file://${encoded}`;
+	}
+	return `file:///${encoded}`;
+}
+
+/**
+ * `file:///` URL → 本地绝对路径（交给系统默认应用打开时用）；非 `file://` 返回 null。
+ *
+ * 与 `fileUrlFromAbsolutePath` 互逆（含 Windows 盘符前导斜杠的还原：`/C:/a` → `C:/a`）。
+ * URL 解码失败（含未编码的 `%`）时按原样返回——路径里带 `%` 是常见的真实文件名。
+ */
+export function absolutePathFromFileUrl(url: string): string | null {
+	if (!url.startsWith('file://')) {
+		return null;
+	}
+	let path = url.slice('file://'.length);
+	try {
+		path = decodeURIComponent(path);
+	} catch {
+		// 含未编码 % 的路径：按原样
+	}
+	if (!path) {
+		return null;
+	}
+	if (/^\/[a-zA-Z]:/.test(path)) {
+		return path.slice(1);
+	}
+	if (path.startsWith('/')) {
+		return path;
+	}
+	// `file://server/share` → UNC `//server/share`
+	return `//${path}`;
+}
+
+/**
  * 独立成串的 URL 文本（scheme:// + 非空白，整串即一个地址，无其他词语）。
  * 语义与 md-outline INLINE_RE 的裸 URL 分支一致（scheme 白名单同步），
  * 用于识别「label 本身是 URL」的 md 链接：节点显示遵循 icon-only 规范，

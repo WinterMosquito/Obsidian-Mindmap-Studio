@@ -10,7 +10,8 @@
  *   ResizeObserver 事件驱动，尺寸恢复即创建；
  * - 装配/销毁：创建后的引擎事件注册顺序、特性装配与 onEngineReady 顺序、
  *   装配失败兜底销毁、destroyInstance 把引擎事件逐条 off（引用一致）；
- * - 引用预检：无关文件的重命名/删除必须零拷贝短路，命中才 getData+setData；
+ * - 引用预检：无关文件的重命名/删除必须零拷贝短路，命中才 getData + 整树替换
+ *   （replaceMindMapData——保留撤销历史，勿退回会清空历史的引擎 setData）；
  * - 图片点击的拖拽抑制窗口（含 300ms 边界）；
  * - refresh 的深拷贝重建、persistViewport 的按路径写入，以及
  *   restoreOrFitViewport「有保存视口优先恢复，否则默认 100% + 内容包围盒居中」。
@@ -26,16 +27,27 @@ import { App, TFile } from 'obsidian';
 // —— hoisted 桩：vi.mock 工厂与测试体共享同一组 mock 函数 ——
 const mocks = vi.hoisted(() => {
 	return {
+		applyPerformanceMode: vi.fn(),
 		arrangeMindMap: vi.fn(),
+		// destroyInstance 会先取消该实例的在途延时任务（延时 fit / 渲染根轮询链 /
+		// 文本编辑宏任务），故 mock 面必须包含它，否则每次销毁都会抛
+		// 「No "cancelEngineTimers" export is defined on the mock」
+		cancelEngineTimers: vi.fn(),
 		centerContentAtFullScale: vi.fn(),
+		countTreeNodes: vi.fn(),
 		createMindMap: vi.fn(),
 		destroyMindMap: vi.fn(),
 		fitMindMap: vi.fn(),
 		getRenderRoot: vi.fn(),
 		getRootText: vi.fn(),
 		getThemeConfig: vi.fn(),
+		// 保存视口落界校验（默认 null＝无法判定，保持「有保存视口即恢复」行为）
+		isContentVisibleInCanvas: vi.fn(),
 		isDarkTheme: vi.fn(),
 		isEditingText: vi.fn(),
+		// 整树替换入口（保留撤销历史）：引用更新经它落数据，勿退回引擎 setData
+		// ——后者会 clearHistory，导致此后 Ctrl+Z 永久失效
+		replaceMindMapData: vi.fn(),
 		updateReferencesOnRename: vi.fn(),
 		removeReferencesOnDelete: vi.fn(),
 	};
@@ -302,9 +314,16 @@ beforeEach(() => {
 	ResizeObserverStub.instances = observers;
 	vi.stubGlobal('ResizeObserver', ResizeObserverStub);
 	mocks.arrangeMindMap.mockReset();
+	mocks.cancelEngineTimers.mockReset();
 	mocks.centerContentAtFullScale.mockReset();
 	mocks.destroyMindMap.mockReset();
 	mocks.fitMindMap.mockReset();
+	mocks.isContentVisibleInCanvas.mockReset();
+	mocks.isContentVisibleInCanvas.mockReturnValue(null);
+	mocks.applyPerformanceMode.mockReset();
+	mocks.applyPerformanceMode.mockReturnValue(true);
+	mocks.countTreeNodes.mockReset();
+	mocks.countTreeNodes.mockReturnValue(0);
 	mocks.getRenderRoot.mockReset();
 	mocks.getRenderRoot.mockReturnValue(null);
 	mocks.getRootText.mockReset();
@@ -531,9 +550,9 @@ describe('EngineController 初始化代际锁（并发 init 只有一代胜出�
 		oldObserver.fire();
 		expect(mocks.createMindMap).toHaveBeenCalledTimes(1);
 
-		// 不残留监听：引擎作用域只有胜出那一代的 5 条，销毁时逐条 off
+		// 不残留监听：引擎作用域只有胜出那一代的 6 条，销毁时逐条 off
 		const engine = h.engines[0]!;
-		expect(registeredEvents(engine)).toHaveLength(5);
+		expect(registeredEvents(engine)).toHaveLength(6);
 		h.controller.destroyInstance();
 		expect(
 			callPairs(engine.off),
@@ -558,8 +577,8 @@ describe('EngineController 初始化代际锁（并发 init 只有一代胜出�
 		observers[0]!.fire();
 
 		expect(destroyedEngines()).toEqual([oldEngine]);
-		// 旧引擎的 DOM/引擎事件一并清理，不跨实例残留
-		expect(oldEngine.off).toHaveBeenCalledTimes(5);
+		// 旧引擎的 DOM/引擎事件一并清理，不跨实例残留（6 条引擎事件）
+		expect(oldEngine.off).toHaveBeenCalledTimes(6);
 		expect(h.engines).toHaveLength(2);
 		expect(h.controller.mindMap).toBe(h.engines[1]);
 	});
@@ -598,6 +617,8 @@ describe('EngineController 装配与销毁', () => {
 			'node_img_click',
 			'node_dragend',
 			'node_attachmentClick',
+			// 布局落地即应用视口（首帧不能先亮「根居中」再跳「整体居中」）
+			'node_tree_render_end',
 		]);
 		expect(engine.render).toHaveBeenCalledTimes(1);
 		expect(h.deps.setupFeatures).toHaveBeenCalledTimes(1);
@@ -669,7 +690,7 @@ describe('EngineController 装配与销毁', () => {
 
 		const engine = h.engines[0]!;
 		expect(mocks.destroyMindMap).toHaveBeenCalledWith(engine);
-		expect(engine.off).toHaveBeenCalledTimes(5);
+		expect(engine.off).toHaveBeenCalledTimes(6);
 		expect(h.controller.mindMap).toBeNull();
 	});
 
@@ -681,6 +702,9 @@ describe('EngineController 装配与销毁', () => {
 		h.controller.destroyInstance();
 
 		expect(mocks.destroyMindMap).toHaveBeenCalledWith(engine);
+		// 在途延时任务必须先被取消（代码里紧邻 destroyMindMap 之前）：它们的闭包
+		// 会触碰引擎实例，销毁后到期会在空实例上白跑（渲染根轮询链还会续排下一次）。
+		expect(mocks.cancelEngineTimers).toHaveBeenCalledWith(engine);
 		expect(h.controller.mindMap).toBeNull();
 		expect(h.canvas.empty.mock.calls.length).toBe(emptyBefore + 1);
 		// off 的 (事件名, 监听器) 与注册时完全一致：引擎按引用摘除，包一层即泄漏
@@ -696,7 +720,7 @@ describe('EngineController 装配与销毁', () => {
 
 		// 只有第一次销毁真的带实例（首帧前的那次防御性清理传的是 null）
 		expect(destroyedEngines()).toEqual([engine]);
-		expect(engine.off).toHaveBeenCalledTimes(5);
+		expect(engine.off).toHaveBeenCalledTimes(6);
 	});
 
 	it('destroyInstance 断开零尺寸等待中的观察器（不留跨生命周期的观察）', () => {
@@ -850,7 +874,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 		expect(h.engines[0]!.getData).not.toHaveBeenCalled();
 	});
 
-	it('无关文件的重命名：零拷贝跳过（不 getData / 不 setData）', () => {
+	it('无关文件的重命名：零拷贝跳过（不 getData / 不替换整树）', () => {
 		const h = readyHarness();
 		mocks.getRenderRoot.mockReturnValue(
 			renderNode({ text: '无关节点', image: 'notes/other.png' }),
@@ -866,10 +890,10 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 		expect(mocks.getRenderRoot).toHaveBeenCalledTimes(1);
 		expect(mocks.updateReferencesOnRename).not.toHaveBeenCalled();
 		expect(h.engines[0]!.getData).not.toHaveBeenCalled();
-		expect(h.engines[0]!.setData).not.toHaveBeenCalled();
+		expect(mocks.replaceMindMapData).not.toHaveBeenCalled();
 	});
 
-	it('预检命中：走 getData + 精确更新，成功则 setData 并返回 true', () => {
+	it('预检命中：走 getData + 精确更新，成功则替换整树并返回 true', () => {
 		const h = readyHarness();
 		const engine = h.engines[0]!;
 		const tree = makeTree('Root');
@@ -889,13 +913,13 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 			'notes/old.png',
 			expect.any(App),
 		);
-		// setData 收到的是刚取出的那一份树（不是再取一次）
+		// 替换收到的是刚取出的那一份树（不是再取一次）；走**保留历史**的入口
 		expect(engine.getData).toHaveBeenCalledTimes(1);
-		expect(engine.setData).toHaveBeenCalledTimes(1);
-		expect(engine.setData).toHaveBeenCalledWith(tree);
+		expect(mocks.replaceMindMapData).toHaveBeenCalledTimes(1);
+		expect(mocks.replaceMindMapData).toHaveBeenCalledWith(engine, tree);
 	});
 
-	it('预检命中但更新无实际变更：不 setData，返回 false', () => {
+	it('预检命中但更新无实际变更：不替换整树，返回 false', () => {
 		const h = readyHarness();
 		mocks.getRenderRoot.mockReturnValue(
 			renderNode({ hyperlink: '[[notes/old]]' }),
@@ -909,7 +933,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 
 		expect(changed).toBe(false);
 		expect(mocks.updateReferencesOnRename).toHaveBeenCalledTimes(1);
-		expect(h.engines[0]!.setData).not.toHaveBeenCalled();
+		expect(mocks.replaceMindMapData).not.toHaveBeenCalled();
 	});
 
 	it('预检 needle 覆盖名称 / 完整路径 / 去扩展名 basename / URL 编码四种形态', () => {
@@ -963,7 +987,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 		expect(h.engines[0]!.getData).not.toHaveBeenCalled();
 	});
 
-	it('删除引用预检命中：清除成功则 setData 并返回 true', () => {
+	it('删除引用预检命中：清除成功则替换整树并返回 true', () => {
 		const h = readyHarness();
 		const engine = h.engines[0]!;
 		const tree = makeTree('Root');
@@ -981,7 +1005,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 			file,
 			expect.any(App),
 		);
-		expect(engine.setData).toHaveBeenCalledWith(tree);
+		expect(mocks.replaceMindMapData).toHaveBeenCalledWith(engine, tree);
 	});
 });
 
@@ -1094,6 +1118,79 @@ describe('EngineController 视口持久化与恢复', () => {
 		expect(h.engines[0]!.view.setTransformData).toHaveBeenCalledWith(saved);
 		expect(mocks.centerContentAtFullScale).not.toHaveBeenCalled();
 		expect(mocks.fitMindMap).not.toHaveBeenCalled();
+	});
+
+	it('保存视口已被判定不可见（尺寸大改后推出画布）：放弃恢复，回退默认居中', () => {
+		vi.useFakeTimers();
+		const h = buildHarness();
+		h.canvas.width = 800;
+		h.canvas.height = 600;
+		const saved = { transform: { x: 9, y: 8, scale: 1.5 }, state: { c: 3 } };
+		h.viewState.hydrate({
+			viewState: { [h.file!.path]: { layout: 'mindMap', view: saved } },
+		});
+		// 明确判定不可见（false）：恢复它会让画面停在画布外
+		mocks.isContentVisibleInCanvas.mockReturnValueOnce(false);
+
+		h.controller.initMindMap(makeTree('Root'));
+		vi.advanceTimersByTime(150);
+
+		// 仍按记录恢复过（随后被落界校验否决），但不 fit——回退路径是默认居中
+		expect(h.engines[0]!.view.setTransformData).toHaveBeenCalledTimes(1);
+		expect(mocks.centerContentAtFullScale).toHaveBeenCalledWith(h.engines[0]);
+		expect(mocks.fitMindMap).not.toHaveBeenCalled();
+	});
+
+	it('首次布局落地即应用视口（不等 150ms）：首帧不会先亮「根居中」再跳「整体居中」', () => {
+		vi.useFakeTimers();
+		const h = readyHarness();
+
+		// 引擎在布局任务内发出该事件（与布局同帧提交）：此刻就应用视口
+		fireEngineEvent(h.engines[0]!, 'node_tree_render_end');
+		expect(mocks.centerContentAtFullScale).toHaveBeenCalledTimes(1);
+
+		// 150ms 兜底仍执行一次（布局晚变而不再有布局事件时）
+		vi.advanceTimersByTime(150);
+		expect(mocks.centerContentAtFullScale).toHaveBeenCalledTimes(2);
+	});
+
+	it('首帧重算预算用尽后，后续布局落地不再抢视口', () => {
+		vi.useFakeTimers();
+		const h = readyHarness();
+		const engine = h.engines[0]!;
+
+		// 首帧窗口内每次布局落地都重算：覆盖 resize 触发的再布局
+		// （引擎按新画布尺寸重摆根节点）与图片尺寸回灌
+		fireEngineEvent(engine, 'node_tree_render_end');
+		fireEngineEvent(engine, 'node_tree_render_end');
+		expect(mocks.centerContentAtFullScale).toHaveBeenCalledTimes(2);
+
+		// 预算用尽：用户编辑等触发的重渲染不再移动视口
+		fireEngineEvent(engine, 'node_tree_render_end');
+		expect(mocks.centerContentAtFullScale).toHaveBeenCalledTimes(2);
+	});
+
+	it('有保存视口时：布局落地按保存值恢复，后续落地不重复应用（不覆盖用户视口）', () => {
+		vi.useFakeTimers();
+		const h = buildHarness();
+		h.canvas.width = 800;
+		h.canvas.height = 600;
+		const saved = { transform: { x: 9, y: 8, scale: 1.5 }, state: { c: 3 } };
+		h.viewState.hydrate({
+			viewState: { [h.file!.path]: { layout: 'mindMap', view: saved } },
+		});
+
+		h.controller.initMindMap(makeTree('Root'));
+		expect(h.engines[0]!.view.setTransformData).not.toHaveBeenCalled();
+
+		fireEngineEvent(h.engines[0]!, 'node_tree_render_end');
+		expect(h.engines[0]!.view.setTransformData).toHaveBeenCalledTimes(1);
+		expect(h.engines[0]!.view.setTransformData).toHaveBeenCalledWith(saved);
+		expect(mocks.centerContentAtFullScale).not.toHaveBeenCalled();
+
+		// 再布局落地：用户自己的视口不再被重复应用（不覆盖缩放/平移）
+		fireEngineEvent(h.engines[0]!, 'node_tree_render_end');
+		expect(h.engines[0]!.view.setTransformData).toHaveBeenCalledTimes(1);
 	});
 
 	it('保存视口的键按文件路径隔离（换文件后不回退到其它文件的视口）', () => {
@@ -1282,5 +1379,40 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 
 		expect(mocks.isDarkTheme).not.toHaveBeenCalled();
 		expect(h.deps.getSetupOptions).not.toHaveBeenCalled();
+	});
+
+	it('applyPerformance 按阈值判据切换性能模式，且不重建实例', () => {
+		const h = readyHarness();
+		const engine = h.engines[0]!;
+		// 渲染树可取（节点数判据按它统计；性能模式下渲染树仍完整，见 count 探针）
+		mocks.getRenderRoot.mockReturnValue({});
+		mocks.countTreeNodes.mockReturnValue(151);
+
+		// 开关开 + 阈值 1 ⇒ 启用
+		h.controller.applyPerformance(true, 1);
+		expect(mocks.countTreeNodes).toHaveBeenCalledTimes(1);
+		expect(mocks.applyPerformanceMode).toHaveBeenLastCalledWith(engine, true);
+
+		// 开关关 ⇒ 关闭（判据与创建期同源：shouldEnablePerformanceMode 未被 mock）
+		h.controller.applyPerformance(false, 1);
+		expect(mocks.applyPerformanceMode).toHaveBeenLastCalledWith(engine, false);
+
+		// 开关开但阈值高于节点数（500 > 151）⇒ 同样关闭
+		h.controller.applyPerformance(true, 500);
+		expect(mocks.applyPerformanceMode).toHaveBeenLastCalledWith(engine, false);
+
+		// 全程原地切换：引擎实例未换、未销毁重建
+		expect(h.engines).toHaveLength(1);
+		expect(h.controller.mindMap).toBe(engine);
+		expect(destroyedEngines()).toEqual([]);
+	});
+
+	it('applyPerformance 无引擎时静默（不统计节点、不切换）', () => {
+		const h = buildHarness();
+
+		expect(() => h.controller.applyPerformance(true, 1)).not.toThrow();
+
+		expect(mocks.countTreeNodes).not.toHaveBeenCalled();
+		expect(mocks.applyPerformanceMode).not.toHaveBeenCalled();
 	});
 });

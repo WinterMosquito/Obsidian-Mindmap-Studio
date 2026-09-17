@@ -5,6 +5,17 @@
  * 重置窗口——高频编辑停止后最终计数立即可见，下一次事件不被上一窗口再推迟）。
  * 节流器按视图 WeakMap 持有，视图关闭时调用 cancelStatusBarUpdate 取消尾随刷新。
  * 状态栏 DOM 归插件层 StatusBarService 所有，本模块只广播计数/清空。
+ *
+ * ## 为什么走**渲染树**是正确且划算的（2026-09-16 实证，勿再「优化」成增量维护）
+ * 性能模式（`removeNodeWhenOutCanvas`）**只把视口外节点摘出 DOM**
+ * ——vendor 实测 `node.removeSelf()` = `this.group.remove()` + 移除泛化连线，
+ * **不碰 `parent.children`** ⇒ 渲染树结构始终完整、节点实例齐全
+ * （`verify:visual` 的 **count 探针**：阈值 1 强制开启性能模式的 151 节点地图，
+ * 渲染树计数 151 / DOM 仅 11 组）。故：
+ * - 计数正确性：不会漏计（早期注释「移出渲染树会漏计」是错的）；
+ * - 成本：纯指针遍历、零分配、300ms 节流（每次数据变更最多 ~3 次/秒）；
+ * - 反例代价：增量维护要覆盖引擎**自带快捷键**（Tab/Enter/Shift+Tab/Del/Backspace
+ *   直接 execCommand 插入删除，绕过插件包装）与整树替换路径，漏一处即长期漂移。
  */
 import { countTreeNodes, getRenderRoot } from '../engine/mindmap';
 import { createThrottler, type Throttler } from '../core/concurrency';

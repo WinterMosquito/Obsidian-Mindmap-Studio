@@ -18,21 +18,28 @@ import {
 	autoSplitNode,
 	captureAutoSplitCandidate,
 	runAutoSplitCheck,
+	splitAllLinks,
 } from '../src/features/view-split-links';
 import { parseMdOutline } from '../src/markdown/md-outline';
 
-const { execCommandMock, setNodeTextMock, isEditingTextMock, ENGINE } = vi.hoisted(
-	() => ({
-		execCommandMock: vi.fn<(...args: unknown[]) => void>(),
-		setNodeTextMock: vi.fn<(...args: unknown[]) => void>(),
-		isEditingTextMock: vi.fn<() => boolean>(() => false),
-		// 命令名取值与 src/engine/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的
-		// token 契约由 vendor-contract 测试把关，这里只验证编排传了哪一个命令。
-		ENGINE: {
-			INSERT_CHILD_NODE: 'INSERT_CHILD_NODE',
-		},
-	}),
-);
+const {
+	execCommandMock,
+	setNodeTextMock,
+	isEditingTextMock,
+	replaceDataMock,
+	ENGINE,
+} = vi.hoisted(() => ({
+	execCommandMock: vi.fn<(...args: unknown[]) => void>(),
+	setNodeTextMock: vi.fn<(...args: unknown[]) => void>(),
+	isEditingTextMock: vi.fn<() => boolean>(() => false),
+	// 整树替换入口（批量拆分走它）：必须保留撤销历史，见 replaceMindMapData
+	replaceDataMock: vi.fn<(...args: unknown[]) => void>(),
+	// 命令名取值与 src/engine/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的
+	// token 契约由 vendor-contract 测试把关，这里只验证编排传了哪一个命令。
+	ENGINE: {
+		INSERT_CHILD_NODE: 'INSERT_CHILD_NODE',
+	},
+}));
 
 vi.mock('../src/engine/mindmap', () => ({
 	ENGINE_COMMANDS: ENGINE,
@@ -40,6 +47,9 @@ vi.mock('../src/engine/mindmap', () => ({
 		setNodeTextMock(...args);
 	},
 	isEditingText: (): boolean => isEditingTextMock(),
+	replaceMindMapData: (...args: unknown[]): void => {
+		replaceDataMock(...args);
+	},
 }));
 
 /** 由真实解析产物构造节点桩（getData 返回同一 data 引用，引擎语义） */
@@ -61,9 +71,17 @@ function editNode(node: MindMapNode, text: string): void {
 	(node.getData() as Record<string, unknown>).text = text;
 }
 
-function makeHarness(settings = { autoSplitMixedLinks: true }) {
+function makeHarness(
+	settings = { autoSplitMixedLinks: true },
+	/** 批量路径的整树来源（getData 每次返回深拷贝，与引擎语义一致） */
+	sourceTree?: unknown,
+) {
 	const raw = {
-		mindMap: { execCommand: execCommandMock, render: vi.fn() } as unknown,
+		mindMap: {
+			execCommand: execCommandMock,
+			render: vi.fn(),
+			getData: vi.fn(() => structuredClone(sourceTree)),
+		} as unknown,
 		app: {} as unknown,
 		plugin: { settings },
 		scheduleSave: vi.fn<() => void>(),
@@ -158,5 +176,36 @@ describe('候选捕获与检查（captureAutoSplitCandidate / runAutoSplitCheck�
 		// 候选已作废：新引擎上同样无动作（本用例无从产生新候选）
 		runAutoSplitCheck(view);
 		expect(execCommandMock).not.toHaveBeenCalled();
+	});
+});
+
+describe('splitAllLinks：批量拆分（整树替换语义）', () => {
+	/** 整树来源：真实解析产物（含单个可拆混排节点） */
+	function sourceTree() {
+		return structuredClone(
+			parseMdOutline('- 关于 [[冬天]] 和 [[秋天]] 的问题\n', '根').tree,
+		);
+	}
+
+	it('可拆节点 → 走**保留历史**的整树替换入口（replaceMindMapData）', () => {
+		const { view } = makeHarness({ autoSplitMixedLinks: true }, sourceTree());
+
+		const result = splitAllLinks(view);
+
+		expect(result).toEqual({ nodes: 1, links: 2 });
+		// 关键回归：此前直调引擎 setData（内部 clearHistory）→ 拆分后 Ctrl+Z 失效；
+		// 现经 replaceMindMapData（内部 updateData：只追加一条历史）
+		expect(replaceDataMock).toHaveBeenCalledTimes(1);
+		expect(replaceDataMock.mock.calls[0]![0]).toBe(view.mindMap);
+	});
+
+	it('无可拆内容 → 不替换整树、不触碰引擎', () => {
+		const { view } = makeHarness(
+			{ autoSplitMixedLinks: true },
+			structuredClone(parseMdOutline('- 纯文本\n', '根').tree),
+		);
+
+		expect(splitAllLinks(view)).toEqual({ nodes: 0, links: 0 });
+		expect(replaceDataMock).not.toHaveBeenCalled();
 	});
 });

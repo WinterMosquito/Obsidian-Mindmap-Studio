@@ -6,7 +6,7 @@
  * 引擎 Search 插件的访问（search/jump/matchNodeList 等）经 mindmap.ts
  * 防腐收口函数进行，本模块不触碰引擎内部状态。
  */
-import { setIcon } from 'obsidian';
+import { setIcon, setTooltip } from 'obsidian';
 import { createDebouncer, type Debouncer } from '../core/concurrency';
 import { t } from '../core/i18n';
 import {
@@ -53,23 +53,18 @@ export function buildSearchBar(view: SearchViewContext): void {
 		},
 	});
 	view.searchCountEl = searchBar.createSpan('mindmap-search-count');
-	const prevButton = searchBar.createEl('button', {
-		cls: 'mindmap-search-btn',
-		attr: { title: t(view.lang, 'search.prev') },
-	});
+	const prevButton = searchBar.createEl('button', { cls: 'mindmap-search-btn' });
 	setIcon(prevButton, 'chevron-up');
+	// 官方 tooltip（原生样式/定位；aria-label 由核心写入，不再手写 title）
+	setTooltip(prevButton, t(view.lang, 'search.prev'));
 	prevButton.onclick = () => searchPrev(view);
-	const nextButton = searchBar.createEl('button', {
-		cls: 'mindmap-search-btn',
-		attr: { title: t(view.lang, 'search.next') },
-	});
+	const nextButton = searchBar.createEl('button', { cls: 'mindmap-search-btn' });
 	setIcon(nextButton, 'chevron-down');
+	setTooltip(nextButton, t(view.lang, 'search.next'));
 	nextButton.onclick = () => searchNext(view);
-	const closeButton = searchBar.createEl('button', {
-		cls: 'mindmap-search-btn',
-		attr: { title: t(view.lang, 'search.close') },
-	});
+	const closeButton = searchBar.createEl('button', { cls: 'mindmap-search-btn' });
 	setIcon(closeButton, 'x');
+	setTooltip(closeButton, t(view.lang, 'search.close'));
 	closeButton.onclick = () => closeSearchBar(view);
 	// 语言变更时就地更新 tooltip（不重建 DOM、不重复注册监听）
 	searchButtons.set(view, {
@@ -116,9 +111,9 @@ export function refreshSearchBarLabels(view: SearchViewContext): void {
 	if (!buttons) {
 		return;
 	}
-	buttons.prev.setAttribute('title', t(view.lang, 'search.prev'));
-	buttons.next.setAttribute('title', t(view.lang, 'search.next'));
-	buttons.close.setAttribute('title', t(view.lang, 'search.close'));
+	setTooltip(buttons.prev, t(view.lang, 'search.prev'));
+	setTooltip(buttons.next, t(view.lang, 'search.next'));
+	setTooltip(buttons.close, t(view.lang, 'search.close'));
 }
 
 /** 关闭搜索栏并结束引擎搜索 */

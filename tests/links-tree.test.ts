@@ -11,6 +11,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, TFile } from 'obsidian';
 import { fileLookupIndex } from '../src/links/file-lookup';
+import { parseMdOutline } from '../src/markdown/md-outline';
+import { serializeMdBody } from '../src/markdown/md-serialize';
 import {
 	removeReferencesOnDelete,
 	updateReferencesOnRename,
@@ -218,6 +220,41 @@ describe('updateReferencesOnRename：重命名后引用改指向新位置', () =
 		expect(dataOf(link).hyperlink).toBe('[[新名]]');
 	});
 
+	it('超链接（md 形态 `路径.md`）：官方关闭 Wikilinks 时同样改写', () => {
+		const renamed = file('folder/新名.md');
+		const { app } = fakeApp([renamed]);
+		const link = node({
+			text: '链接',
+			hyperlink: 'folder/旧名.md',
+			mdLinkStyle: 'md',
+			mdLinkText: '链接',
+		});
+		expect(
+			updateReferencesOnRename(tree(link), renamed, 'folder/旧名.md', app),
+		).toBe(true);
+		expect(dataOf(link).hyperlink).toBe('folder/新名.md');
+	});
+
+	it('md 形态：裸 dest 也命中；远程地址不误改', () => {
+		const renamed = file('folder/新名.md');
+		const { app } = fakeApp([renamed]);
+
+		const bare = node({ text: '链接', hyperlink: '旧名.md' });
+		expect(
+			updateReferencesOnRename(tree(bare), renamed, 'folder/旧名.md', app),
+		).toBe(true);
+		expect(dataOf(bare).hyperlink).toBe('新名.md');
+
+		const external = node({
+			text: '外链',
+			hyperlink: 'https://example.com/旧名.md',
+		});
+		expect(
+			updateReferencesOnRename(tree(external), renamed, 'folder/旧名.md', app),
+		).toBe(false);
+		expect(dataOf(external).hyperlink).toBe('https://example.com/旧名.md');
+	});
+
 	it('跨文件夹移动：前缀必须换成新位置（不得留下 [[folder/新名]] 悬空链接）', () => {
 		const moved = file('other/新名.md');
 		const { app } = fakeApp([moved]);
@@ -370,20 +407,34 @@ describe('重命名与清除的 mode 差异（共享同一遍历实现）', () =
 		expect(getFiles).not.toHaveBeenCalled();
 	});
 
-	it('回收站内的重命名退化为清除：引用清空且不调用 getResourcePath', () => {
-		// 用户视角是「删除」：把引用改指向 .trash/ 下的位置只会让节点继续显示已删除的图片
+	it('回收站内的重命名：图片清空、链接与附件保留、不调用 getResourcePath', () => {
+		// 用户视角是「删除」：图片引用改指向 .trash/ 只会让节点继续显示已删除的图片，
+		// 故清空；而**链接与附件**按 K55 保留为未解析引用（Obsidian 语义，
+		// 可随文件恢复而复原）
 		const trashed = file('.trash/pic.png');
 		const { app, getResourcePath } = fakeApp([trashed]);
 		const pic = node({ text: '图片', image: `${RESOURCE_PREFIX}assets/pic.png` });
-		// 链接按真实形态指向该图片文件（linkTargets 用 stripMd，只剥 .md，
+		// 链接与附件按真实形态指向该图片文件（linkTargets 用 stripMd，只剥 .md，
 		// 故 [[pic.png]] 命中而 [[pic]] 是「另一篇笔记」、不该命中）
 		const link = node({ text: '链接', hyperlink: '[[pic.png]]' });
+		const attach = node({
+			text: '附件 pic.png',
+			attachmentUrl: `${RESOURCE_PREFIX}assets/pic.png`,
+			attachmentName: 'pic.png',
+		});
 
 		expect(
-			updateReferencesOnRename(tree(pic, link), trashed, 'assets/pic.png', app),
+			updateReferencesOnRename(
+				tree(pic, link, attach),
+				trashed,
+				'assets/pic.png',
+				app,
+			),
 		).toBe(true);
 		expect(dataOf(pic).image).toBe('');
-		expect(dataOf(link).hyperlink).toBe('');
+		expect(dataOf(link).hyperlink, '链接只改不删（K55）').toBe('[[pic.png]]');
+		expect(dataOf(attach).attachmentUrl, '附件整条删除（K55）').toBeUndefined();
+		expect(dataOf(attach).text, '可见名一并去掉').toBe('附件');
 		// 分支归属：回收站场景不产出替换地址（索引构建那 1 次不算替换）
 		expect(replacementCalls(getResourcePath, 1)).toEqual([]);
 	});
@@ -422,50 +473,131 @@ describe('removeReferencesOnDelete：删除后清除引用', () => {
 		expect(getFiles).toHaveBeenCalledTimes(1);
 	});
 
-	it('附件：attachmentUrl 与 attachmentName 同时清空', () => {
+	it('附件删除：**整条删除**——字段清空、节点文字里的可见名一并去掉', () => {
+		// 用户明确要求（2026-09-15）：附件不纳入「保留未解析引用」，删除后引用与
+		// 文字一起去掉。只清字段会让名字在下次保存变成普通文本残留（K55）
 		const gone = file('files/报 告.pdf');
 		const { app } = fakeApp([gone]);
 		const attach = node({
-			text: '附件',
+			text: '见 报 告.pdf 的说明',
+			mdDerivedText: '见 报 告.pdf 的说明',
 			attachmentUrl: `${RESOURCE_PREFIX}files/报 告.pdf`,
 			attachmentName: '报 告.pdf',
+			mdAttachmentLinkpath: 'files/报 告.pdf',
 		});
 		expect(removeReferencesOnDelete(tree(attach), gone, app)).toBe(true);
-		expect(dataOf(attach).attachmentUrl).toBe('');
-		// 名称必须一并清空，否则残留的名称会显示在无附件的节点上
-		expect(dataOf(attach).attachmentName).toBe('');
+		const data = dataOf(attach);
+		expect(data.attachmentUrl).toBeUndefined();
+		expect(data.attachmentName).toBeUndefined();
+		expect(data.mdAttachmentLinkpath).toBeUndefined();
+		expect(data.text, '可见名去掉、双空格归一').toBe('见 的说明');
+		expect(data.mdDerivedText, '保留旧派生值 ⇒ 视为已编辑 ⇒ 走合成').toBe(
+			'见 报 告.pdf 的说明',
+		);
 	});
 
-	it('超链接与文档双链一律清空', () => {
+	it('回归：删除附件后行内只剩文字（引用与该段文字一起消失）', () => {
+		const md = ['# 测试', '- 见 [[报告.pdf]] 的说明'].join('\n');
+		const parsed = parseMdOutline(`${md}\n`, '测试').tree;
+		const gone = file('报告.pdf');
+		const { app } = fakeApp([gone]);
+
+		expect(removeReferencesOnDelete(parsed, gone, app)).toBe(true);
+		expect(serializeMdBody(parsed, null)).toBe(
+			['# 测试', '- 见 的说明'].join('\n'),
+		);
+	});
+
+	it('回归：纯附件节点被整条删除 → 节点一并摘除（不留空行）', () => {
+		// 「整个删除」：引用、可见文字、以及已空的节点本身一起消失。若只清文字，
+		// 序列化会留下空列表项 `- `，重新解析又变成一个 `-` 文本节点（脏数据）
+		const md = ['# 测试', '- [[报告.pdf]]', '- 保留的节点'].join('\n');
+		const parsed = parseMdOutline(`${md}\n`, '测试').tree;
+		const gone = file('报告.pdf');
+		const { app } = fakeApp([gone]);
+
+		expect(removeReferencesOnDelete(parsed, gone, app)).toBe(true);
+		const out = serializeMdBody(parsed, null);
+		expect(out, '附件节点整条消失、邻节点不受影响').toBe(
+			['# 测试', '- 保留的节点'].join('\n'),
+		);
+		expect(out).not.toContain('报告.pdf');
+	});
+
+	it('链接引用**保留**（未解析链接）且不算变更 → 不触发无意义保存', () => {
+		// 2026-09-15 修订（K55）：删笔记不再清链接字段——此前清空字段但不动
+		// text/mdSegments，下次保存会把 `[[笔记A]]` 静默降级为纯文本 `笔记A`
 		const gone = file('folder/旧名.md');
 		const { app } = fakeApp([gone]);
 		const link = node({ text: '链接', hyperlink: '[[folder/旧名#小节|别名]]' });
 		const doc = node({ text: '文档', mdWikiLinkpath: '[[旧名]]' });
 
-		expect(removeReferencesOnDelete(tree(link, doc), gone, app)).toBe(true);
-		expect(dataOf(link).hyperlink).toBe('');
-		expect(dataOf(doc).mdWikiLinkpath).toBe('');
+		expect(
+			removeReferencesOnDelete(tree(link, doc), gone, app),
+			'仅链接引用的树：无改动',
+		).toBe(false);
+		expect(dataOf(link).hyperlink).toBe('[[folder/旧名#小节|别名]]');
+		expect(dataOf(doc).mdWikiLinkpath).toBe('[[旧名]]');
 	});
 
-	it('linkTargets 覆盖完整路径、去扩展名路径与裸 basename 三形态（表驱动）', () => {
+	it('删除模式：命中与否都保留链接（匹配判定由重命名模式体现）', () => {
 		const gone = file('folder/旧名.md');
-		const cases: { label: string; link: string; expected: boolean }[] = [
-			{ label: '裸名', link: '[[旧名]]', expected: true },
-			{ label: '目录加裸名', link: '[[folder/旧名]]', expected: true },
-			{ label: '完整路径含扩展名', link: '[[folder/旧名.md]]', expected: true },
-			{ label: '别名形态', link: '[[旧名|看这里]]', expected: true },
-			{ label: '否决：别的笔记', link: '[[另一个笔记]]', expected: false },
-			{ label: '否决：非维基链接', link: 'https://example.com/a', expected: false },
-			{ label: '否决：残缺维基链接', link: '[[旧名', expected: false },
+		const cases = [
+			{ label: '裸名', link: '[[旧名]]' },
+			{ label: '目录加裸名', link: '[[folder/旧名]]' },
+			{ label: '完整路径含扩展名', link: '[[folder/旧名.md]]' },
+			{ label: '别名形态', link: '[[旧名|看这里]]' },
+			{ label: '不命中的链接', link: '[[另一个笔记]]' },
 		];
-		for (const { label, link, expected } of cases) {
+		for (const { label, link } of cases) {
 			const { app } = fakeApp([gone]);
 			const target = node({ text: '链接', hyperlink: link });
 			expect(removeReferencesOnDelete(tree(target), gone, app), label).toBe(
-				expected,
+				false,
 			);
-			expect(dataOf(target).hyperlink, label).toBe(expected ? '' : link);
+			expect(dataOf(target).hyperlink, label).toBe(link);
 		}
+	});
+
+	it('重命名模式：linkTargets 三形态仍照旧改写、非目标不动', () => {
+		// 保留原有「匹配形态」覆盖——删除模式不再改写链接，故改由重命名模式锁定
+		const renamed = file('folder/新名.md');
+		const cases = [
+			{ label: '裸名', link: '[[旧名]]', expected: '[[新名]]' },
+			{ label: '目录加裸名', link: '[[folder/旧名]]', expected: '[[folder/新名]]' },
+			{ label: '不命中：别的笔记', link: '[[另一个笔记]]', expected: null },
+			{ label: '不命中：非维基链接', link: 'https://example.com/a', expected: null },
+		];
+		for (const { label, link, expected } of cases) {
+			const { app } = fakeApp([renamed]);
+			const target = node({ text: '链接', hyperlink: link });
+			const changed = updateReferencesOnRename(
+				tree(target),
+				renamed,
+				'folder/旧名.md',
+				app,
+			);
+			expect(changed, label).toBe(expected !== null);
+			expect(dataOf(target).hyperlink, label).toBe(expected ?? link);
+		}
+	});
+
+	it('回归（用户实测）：删掉行内某个目标 → 整行**逐字不变**', () => {
+		// 原样复现报告：`[[笔记A]]` 出现两次，其中一次是混排行的首链。删除
+		// 笔记A.md 后，此处曾把两处 `[[笔记A]]` 都降级为纯文本 `笔记A`
+		//（其余链接因台账仍在而保留语法）——首链字段被清、text/台账不动，
+		// 下次保存的合成结果就是那个形状（K55）
+		const md = [
+			'# 测试',
+			'- 单链接混排：见 [[笔记A]] 的说明',
+			'- 多链接混排：见 [[笔记A]] 与 [[笔记B|乙]] 以及 [[笔记C]]',
+		].join('\n');
+		const parsed = parseMdOutline(`${md}\n`, '测试').tree;
+		const gone = file('笔记A.md');
+		const { app } = fakeApp([gone]);
+
+		expect(removeReferencesOnDelete(parsed, gone, app)).toBe(false);
+		expect(serializeMdBody(parsed, null), '文件逐字不变').toBe(md);
 	});
 
 	it('仅剩 mdAttachmentLinkpath 的节点：预检通过但该字段不被更新', () => {

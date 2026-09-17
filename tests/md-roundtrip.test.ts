@@ -639,11 +639,12 @@ describe('编辑合成', () => {
 		expect(out[1], '其余层级保持原文').toBe('- l0');
 	});
 
-	it('编辑多行文本：首行带链接 token，续行缩进 = 列表缩进 + 2 空格', () => {
+	it('编辑多行文本：首行 token 原位写回，续行缩进 = 列表缩进 + 2 空格', () => {
 		const { tree, data } = firstChild('- [[目标|别名]] 说明\n');
 		data.text = '别名 说明\n第二行';
+		// 显示名「别名」在新文本里原位出现 → token 按对齐表写回原位（不再尾插）
 		expect(serializeMdBody(tree, null)).toBe(
-			['- 别名 说明 [[目标|别名]]', '  第二行'].join('\n'),
+			['- [[目标|别名]] 说明', '  第二行'].join('\n'),
 		);
 	});
 
@@ -934,8 +935,10 @@ describe('图片独占节点', () => {
 			{ md: '- 标题 ![[c.png]]', out: '- 标题' },
 			{ md: '# 标题 ![[c.png]]', out: '# 标题' },
 			{
+				// 额外 token（非首图）在显示文本里有剥壳名 → 按对齐表原位写回：
+				// 不再残留重复的剥壳名、也不再尾插
 				md: '- ![[a.png]] 与 ![[b.png]]',
-				out: '- 与 b.png ![[b.png]]',
+				out: '- 与 ![[b.png]]',
 			},
 			{ md: '- ![截图](https://x.com/a.png)', out: '- ' },
 			{ md: '- 图文 ![截图](https://x.com/a.png) 尾', out: '- 图文 尾' },
@@ -1208,6 +1211,22 @@ describe('URL icon-only 与附件/文档双链', () => {
 		expect(data.hyperlink).toBe(url);
 		expect(data.text, 'URL 本体不进节点文本').toBe('');
 		expect(roundTrip(md).out1).toBe(md);
+	});
+
+	it('file:/// 绝对链接（拖入系统文件的 Ctrl/Option 形态）：带显示名解析 + 逐字回写', () => {
+		// 这是拖入系统文件按住 Ctrl/Option 时**我们写出的**形态（见 view-node-actions
+		// applyExternalLink / md-serialize renderHyperlink 的 scheme 分支）：
+		// 必须能被自己解析回同一组字段，否则「写完就认不出」会污染后续编辑
+		const md = '- [报告.pdf](file:///C:/%E8%B5%84%E6%96%99/%E6%8A%A5%E5%91%8A.pdf)';
+		const { data } = firstChild(md + '\n');
+		expect(data.hyperlink).toBe(
+			'file:///C:/%E8%B5%84%E6%96%99/%E6%8A%A5%E5%91%8A.pdf',
+		);
+		expect(data.mdLinkStyle).toBe('md');
+		expect(data.mdLinkText, '显示名 = 文件名（md 链接形态，不是 autolink）').toBe(
+			'报告.pdf',
+		);
+		expect(roundTrip(md).out1, '未编辑 → 逐字回写').toBe(md);
 	});
 
 	it('非 URL 的 md 链接（相对路径/含空格/含括号）解析与合成', () => {
@@ -1592,19 +1611,18 @@ describe('图文/链接合成不丢 token', () => {
 		);
 	});
 
-	it('图文 + 链接节点编辑文本：图片与链接都写回', () => {
+	it('图文 + 链接节点编辑文本：链接原位写回，无显示名的首图尾插', () => {
 		const { tree, data } = firstChild('- ![[a.png]] 见 [[笔记]]\n');
 		data.text = '见图与笔记';
-		// mdRaw 中图片特征在链接之前 → 输出顺序保持 图 → 链接
-		expect(serializeMdBody(tree, null)).toBe(
-			'- 见图与笔记 ![[a.png]] [[笔记]]',
-		);
+		// 链接在显示文本里有剥壳名「笔记」→ 写回原位；首图不占显示文本
+		// （位置信息不在文本中）→ 保持既有尾插行为
+		expect(serializeMdBody(tree, null)).toBe('- 见图与[[笔记]] ![[a.png]]');
 	});
 
-	it('已有链接的节点插入图片：链接在前（mdRaw 顺序），图片追加在后', () => {
+	it('已有链接的节点插入图片：链接原位保留，新插入的图片尾插', () => {
 		const { tree, data } = firstChild('- 见 [[笔记]]\n');
 		Object.assign(data, { image: 'a.png', mdImageTarget: 'a.png' });
-		expect(serializeMdBody(tree, null)).toBe('- 见 笔记 ![[a.png]] [[笔记]]');
+		expect(serializeMdBody(tree, null)).toBe('- 见 [[笔记]] ![[a.png]]');
 	});
 
 	it('已有图片的节点插入链接：图片保留（链接字段新增后 rawOk 失败 → 两枚 token 都写出）', () => {
@@ -1643,19 +1661,50 @@ describe('图文/链接合成不丢 token', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 九之补、多 token 编辑后保真（mdExtraTokens：额外 token 原文按序尾插行尾）
+// 九之补、多 token 编辑后保真（mdSegments 台账：first=false 的额外 token）
 //
 // 一行内多链接 / 多 URL / 多图的**非首个 token** 此前在编辑后合成时降级或丢失
-// （多 URL 连内容都丢）；现由解析侧收集原文切片（md-outline）、合成路径按序
-// 尾插（md-serialize.inlineTokens，2026-09-13）。**位置不保真**（与首 token
-// 同为行尾）——原位保真是标准文档 §5.2 的登记项。
+// （多 URL 连内容都丢）；现由解析侧把原文切片记入台账（md-outline）、合成路径
+// 按序尾插（md-serialize.inlineTokens，2026-09-13）。
+//
+// **原位保真（2026-09-14）**：解析侧另存 `mdSegments`（显示文本 ↔ 原文对齐表），
+// 编辑后合成优先按显示名把 token 写回**原位**（composeFirstLineSegmented）；
+// 对齐不上（显示名被改 / 该 token 不在显示文本中 / 命中落在手输的链接语法内）
+// 才回落尾插。本组前半是**回落路径**（文本里已无显示名），后半是**原位路径**。
 // ---------------------------------------------------------------------------
-describe('多 token 编辑后保真（mdExtraTokens）', () => {
-	it('多双链：额外双链原文尾插，链接语法不降级为文本', () => {
+/** 台账（`mdSegments`）的类型化访问：解析产物在测试里是宽松 data，收口一次 */
+function segmentsOf(data: unknown): {
+	kind: string;
+	text: string;
+	raw: string;
+	first: boolean;
+}[] {
+	return (
+		(
+			data as {
+				mdSegments?: {
+					kind: string;
+					text: string;
+					raw: string;
+					first: boolean;
+				}[];
+			}
+		).mdSegments ?? []
+	);
+}
+
+/** 台账里的额外 token（first=false）——多 token 保真数据的唯一来源 */
+function extrasOf(data: unknown): ReturnType<typeof segmentsOf> {
+	return segmentsOf(data).filter((segment) => !segment.first);
+}
+
+describe('多 token 编辑后保真（尾插回落路径）', () => {
+	it('多双链：额外双链原文入台账，编辑后尾插且语法不降级', () => {
 		const { tree, data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
-		expect(data.mdExtraTokens, '解析：非首个双链原文入字段').toEqual([
-			{ raw: '[[B]]', kind: 'link' },
-		]);
+		expect(
+			extrasOf(data),
+			'解析：非首个双链原文入台账（first=false）',
+		).toEqual([{ kind: 'link', text: 'B', raw: '[[B]]', first: false }]);
 		data.text = '改过了';
 		expect(serializeMdBody(tree, null)).toBe('- 改过了 [[A]] [[B]]');
 	});
@@ -1663,8 +1712,11 @@ describe('多 token 编辑后保真（mdExtraTokens）', () => {
 	it('多裸 URL：第二个 URL 内容不丢（此前编辑后整体消失）', () => {
 		const { tree, data } = firstChild('- 参考 https://a.com 与 https://b.com\n');
 		expect(data.text, 'URL 本体不进文本（icon-only）').toBe('参考 与');
-		expect(data.mdExtraTokens).toEqual([
-			{ raw: 'https://b.com', kind: 'link' },
+		expect(
+			extrasOf(data),
+			'无显示名的额外 token：只保原文（text 空串，不参与原位定位）',
+		).toEqual([
+			{ kind: 'link', text: '', raw: 'https://b.com', first: false },
 		]);
 		data.text = '两个站点';
 		// 首 URL 由字段承载（回写为规范 <url> 形态）；额外 token 是原文切片（裸 URL）
@@ -1675,8 +1727,11 @@ describe('多 token 编辑后保真（mdExtraTokens）', () => {
 
 	it('多图：非首图嵌入语法保留（此前编辑后降级为文件名文本）', () => {
 		const { tree, data } = firstChild('- ![[a.png]] 与 ![[b.png]]\n');
-		expect(data.mdExtraTokens, '图片类额外 token 单独标记 kind').toEqual([
-			{ raw: '![[b.png]]', kind: 'image' },
+		expect(
+			extrasOf(data),
+			'图片类额外 token 以 kind=image 记账',
+		).toEqual([
+			{ kind: 'image', text: 'b.png', raw: '![[b.png]]', first: false },
 		]);
 		data.text = '两张图';
 		expect(serializeMdBody(tree, null)).toBe('- 两张图 ![[a.png]] ![[b.png]]');
@@ -1684,8 +1739,8 @@ describe('多 token 编辑后保真（mdExtraTokens）', () => {
 
 	it('URL + 双链混排：额外双链尾插在首链之后', () => {
 		const { tree, data } = firstChild('- 对比 https://a.com 与 [[笔记B]]\n');
-		expect(data.mdExtraTokens).toEqual([
-			{ raw: '[[笔记B]]', kind: 'link' },
+		expect(extrasOf(data)).toEqual([
+			{ kind: 'link', text: '笔记B', raw: '[[笔记B]]', first: false },
 		]);
 		data.text = '对比结果';
 		expect(serializeMdBody(tree, null)).toBe(
@@ -1695,8 +1750,8 @@ describe('多 token 编辑后保真（mdExtraTokens）', () => {
 
 	it('多枚额外 token 按出现顺序尾插', () => {
 		const { tree, data } = firstChild('- a https://x.com b https://y.com c\n');
-		expect(data.mdExtraTokens).toEqual([
-			{ raw: 'https://y.com', kind: 'link' },
+		expect(extrasOf(data)).toEqual([
+			{ kind: 'link', text: '', raw: 'https://y.com', first: false },
 		]);
 		data.text = 'abc';
 		expect(serializeMdBody(tree, null)).toBe(
@@ -1706,8 +1761,8 @@ describe('多 token 编辑后保真（mdExtraTokens）', () => {
 
 	it('图 + 双链 + 额外双链：三枚 token 齐出（字段两枚 + 尾插一枚）', () => {
 		const { tree, data } = firstChild('- ![[a.png]] 见 [[笔记]] 与 [[笔记B]]\n');
-		expect(data.mdExtraTokens).toEqual([
-			{ raw: '[[笔记B]]', kind: 'link' },
+		expect(extrasOf(data)).toEqual([
+			{ kind: 'link', text: '笔记B', raw: '[[笔记B]]', first: false },
 		]);
 		data.text = '混合';
 		expect(serializeMdBody(tree, null)).toBe(
@@ -1717,7 +1772,7 @@ describe('多 token 编辑后保真（mdExtraTokens）', () => {
 
 	it('无额外 token 的节点行为不变（对照组）', () => {
 		const { tree, data } = firstChild('- 见 [[笔记]]\n');
-		expect(data.mdExtraTokens).toBeUndefined();
+		expect(extrasOf(data)).toEqual([]);
 		data.text = '改过了';
 		expect(serializeMdBody(tree, null)).toBe('- 改过了 [[笔记]]');
 	});
@@ -1728,35 +1783,106 @@ describe('多 token 编辑后保真（mdExtraTokens）', () => {
 		const out = serializeMdBody(tree, null);
 		const re: MNode = parseMdOutline(out + '\n', '根').tree;
 		expect(
-			re.children[0]!.data.mdExtraTokens,
+			extrasOf(re.children[0]!.data),
 			'重解析后 [[B]] 仍是额外 token',
-		).toEqual([{ raw: '[[B]]', kind: 'link' }]);
+		).toEqual([{ kind: 'link', text: 'B', raw: '[[B]]', first: false }]);
 		expect(serializeMdBody(re, null), '二次往返逐字相等').toBe(out);
 	});
 
-	it('未编辑的存量节点：mdExtraTokens 不参与（rawOk 逐字回写）', () => {
+	it('未编辑的存量节点：台账不参与（rawOk 逐字回写）', () => {
 		const md = '- a https://x.com b https://y.com c';
 		expect(roundTrip(md).out1).toBe(md);
 	});
 
 	it('尾插行可被整体剥为纯文本：清除链接后额外双链不残留语法', () => {
 		// 「尾插不影响后续整理」：多 token（含额外 token）的双链可经「清除链接」
-		// 降级为纯文本——额外 token 的 link 类一并清除（image 类保留，见 K9）。
+		// 降级为纯文本——台账里链接类的额外段一并清除（图片类与首链段保留）。
 		const { tree, data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
-		// 与 clearNodeHyperlink 等价：清两通道字段 + 过滤额外 token 的 link 类
+		// 与 clearNodeHyperlink 等价：清两通道字段 + 过滤台账里的链接类额外段
 		delete data.mdWikiLinkpath;
 		delete data.mdLinkText;
-		const kept = (
-			data.mdExtraTokens as { raw: string; kind: string }[]
-		).filter((token) => token.kind !== 'link');
+		const kept = segmentsOf(data).filter(
+			(segment) => segment.kind === 'image' || segment.first,
+		);
 		if (kept.length > 0) {
-			data.mdExtraTokens = kept;
+			data.mdSegments = kept;
 		} else {
-			delete data.mdExtraTokens;
+			delete data.mdSegments;
 		}
 		const out = serializeMdBody(tree, null);
 		expect(out, '显示名文本保留、链接语法全部消失').toBe('- 参见 A 与 B');
 		expect(out).not.toContain('[[');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 九之补 2、多 token 编辑后**原位**保真（mdSegments 对齐表）
+//
+// 解析侧把「显示文本里可见的 token」登记为对齐表（剥壳显示名 + 原文切片）；
+// 编辑后合成按段序在新文本中定位显示名，命中即把 token 的**实时渲染形态**
+// （首链/首图取当前别名与尺寸，额外 token 用原文）写回该位置。
+// ---------------------------------------------------------------------------
+describe('多 token 原位保真（mdSegments）', () => {
+	it('解析：对齐表按出现顺序记录有显示名的 token', () => {
+		const { data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
+		expect(data.mdSegments).toEqual([
+			{ kind: 'link', text: 'A', raw: '[[A]]', first: true },
+			{ kind: 'link', text: 'B', raw: '[[B]]', first: false },
+		]);
+	});
+
+	it('多双链：编辑后两枚 token 都写回原位（不再尾插）', () => {
+		const { tree, data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
+		data.text = '参见 A 和 B';
+		expect(serializeMdBody(tree, null)).toBe('- 参见 [[A]] 和 [[B]]');
+	});
+
+	it('部分对不上：命中的原位、未命中的尾插（内容不丢）', () => {
+		const { tree, data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
+		data.text = '参见 A 与'; // 第二枚的显示名被删掉
+		expect(serializeMdBody(tree, null)).toBe('- 参见 [[A]] 与 [[B]]');
+	});
+
+	it('显示名被改写：该 token 回落尾插（不做猜测性替换）', () => {
+		const { tree, data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
+		data.text = '参见 甲 与 乙';
+		expect(serializeMdBody(tree, null)).toBe('- 参见 甲 与 乙 [[A]] [[B]]');
+	});
+
+	it('首链原位：实时渲染形态（别名已改写时用新形态）', () => {
+		const { tree, data } = firstChild('- 说明 [[笔记|旧名]] 结尾\n');
+		data.text = '说明 旧名 结尾';
+		expect(serializeMdBody(tree, null)).toBe('- 说明 [[笔记|旧名]] 结尾');
+	});
+
+	it('非首图原位（有显示名）：编辑后写回原位置，剥壳名不重复', () => {
+		const { tree, data } = firstChild('- 前 ![[a.png]] 与 ![[b.png]] 后\n');
+		data.text = '前 b.png 后';
+		// 首图无显示名（尾插），非首图有显示名（原位）→ 两枚都在，且不重复
+		const out = serializeMdBody(tree, null);
+		expect(out).toContain('![[b.png]]');
+		expect(out).toContain('![[a.png]]');
+		expect(out).not.toContain('b.png ![[');
+	});
+
+	it('原位结果再解析：不动点（对齐表重建、二次往返逐字相等）', () => {
+		const { tree, data } = firstChild('- 参见 [[A]] 与 [[B]]\n');
+		data.text = '参见 A 和 B';
+		const out = serializeMdBody(tree, null);
+		const re: MNode = parseMdOutline(out + '\n', '根').tree;
+		expect(re.children[0]!.data.mdSegments, '重解析后对齐表重建').toEqual([
+			{ kind: 'link', text: 'A', raw: '[[A]]', first: true },
+			{ kind: 'link', text: 'B', raw: '[[B]]', first: false },
+		]);
+		expect(re.children[0]!.data.mdDerivedText, '剥壳文本与新行一致').toBe(
+			'参见 A 和 B',
+		);
+		expect(serializeMdBody(re, null), '二次往返逐字相等').toBe(out);
+	});
+
+	it('未编辑的存量节点：原位路径不参与（rawOk 逐字回写）', () => {
+		const md = '- 参见 [[A]] 与 [[B]]';
+		expect(roundTrip(md).out1).toBe(md);
 	});
 });
 

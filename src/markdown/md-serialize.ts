@@ -45,8 +45,16 @@ function needsDestBraces(dest: string): boolean {
  * 不能 import 本模块。此处仅消费，勿在本地复制一份判定。
  */
 
-/** 行内 token 渲染：链接（仅合成路径使用） */
-function renderHyperlink(data: MdNodeData): string | null {
+/**
+ * 节点承载链接的**文件写法**（wiki 双链 / 附件嵌入 / md 链接 / autolink）。
+ *
+ * 唯一来源：合成回写（`composeLine`）与视图侧「复制链接」动作共用——复制到剪贴板
+ * 的必须是**粘回笔记即可用的那一串**（md 形态要连 `[显示名](…)` 一起，不能只给
+ * 裸路径），语法判定不能各写一份。
+ *
+ * @returns 该节点没有可写链接时返回 null
+ */
+export function renderHyperlink(data: MdNodeData): string | null {
 	// 双链附件（attachmentUrl 通道）：重建 wikilink。优先取原始 linkpath
 	// （attachmentUrl 可能已被视图层重写为解析后的库内路径）；合成路径本就
 	// 是「文本被编辑后」的规范化回写，别名细节由 rawOk 逐字回写保真。
@@ -258,8 +266,9 @@ function linkFeatureOf(data: MdNodeData): string | null {
  * 消失）。两枚 token 都必须写出；顺序按 mdRaw 中出现位置决定，新建的 token 追加
  * 在已有 token 之后，保证再次保存时行结构稳定（不再改动）。
  *
- * 两枚之外的**额外 token**（`mdExtraTokens`：多链接 / 多 URL / 多图）按记录
- * 顺序追加在最后——此前它们在编辑后丢失（多 URL 连内容都丢，2026-09-13 修复）。
+ * 两枚之外的**额外 token**（多链接 / 多 URL / 多图；台账 `mdSegments` 里
+ * `first: false` 的项）按记录顺序追加在最后——此前它们在编辑后丢失
+ * （多 URL 连内容都丢，2026-09-13 修复）。
  */
 function inlineTokens(data: MdNodeData, app: App | null): string[] {
 	const out: string[] = [];
@@ -278,10 +287,26 @@ function inlineTokens(data: MdNodeData, app: App | null): string[] {
 	} else if (link) {
 		out.push(link);
 	}
-	for (const extra of data.mdExtraTokens ?? []) {
-		out.push(extra.raw);
+	// 额外 token（含无显示名者）：台账里的原文切片，按出现顺序
+	for (const segment of data.mdSegments ?? []) {
+		if (!segment.first) {
+			out.push(segment.raw);
+		}
 	}
 	return out;
+}
+
+/**
+ * 图片尺寸参数的**仅尺寸**后缀（md 图片 `![alt|宽x高](url)` 用）。
+ * 与 embedLabelSuffix 的差别：无尺寸时返回空串——md 形态的 alt 走 `![alt]` 位置，
+ * 不能再套 `|alt`（否则写出 `![alt|alt](url)`）。
+ */
+function imageSizeSuffix(data: MdNodeData): string {
+	const size = customImageSize(data);
+	if (size === null) {
+		return '';
+	}
+	return `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
 }
 
 /** 行内 token 渲染：图片（仅合成路径使用） */
@@ -305,15 +330,16 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 	if (isExternalImageRef(image) || isExternalImageRef(target)) {
 		// alt 与尺寸可共存（`![alt|300](url)`），故用「仅尺寸」后缀，不能再套
 		// embedLabelSuffix（无尺寸时它返回 `|alt`，会写出 `![alt|alt](url)`）。
-		const size = customImageSize(data);
-		const sizeOnly =
-			size === null
-				? ''
-				: `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
 		// 回写地址：优先当前 image（它就是引擎里的那张图）；只有 image 已是资源
 		// 地址（app://）而原始引用才是外链时，才回落到 mdImageTarget（解析期快照
 		// 可能已过期——「换图」后它仍指向旧图）。
-		return `![${alt}${sizeOnly}](${isExternalImageRef(image) ? image : target})`;
+		return `![${alt}${imageSizeSuffix(data)}](${isExternalImageRef(image) ? image : target})`;
+	}
+	// **库内图片的 md 形态**：官方「使用 \[\[Wikilinks\]\]」关闭时新建的图写
+	// `![alt|尺寸](路径)`（该设置同时管 links 与 images，见 platform/vault-prefs）。
+	// 形态由解析期记录 / 新建时按设置写入（md-meta.mdImageStyle），缺省按 wiki。
+	if (data.mdImageStyle === 'md') {
+		return `![${alt}${imageSizeSuffix(data)}](${target || image})`;
 	}
 	if (target && image === target) {
 		return `![[${target}${sizeSuffix}]]`;
@@ -559,8 +585,106 @@ function rawHasForeignEmbed(raw: string, own: readonly string[]): boolean {
 	return false;
 }
 
-/** 合成路径：节点文本首行（剥壳文本 + 行尾链接/图片 token） */
+/**
+ * 命中的显示名是否落在**用户手输的链接语法内部**（`[[…]]` / `[text](…)`）。
+ *
+ * 这种文本语义上更接近「换链」而非「原位保留」：原位替换会写出
+ * `[[新[[目标]]]]` 这类畸形嵌套（用户手输 `[[新目标]]` + 节点自身链接 ⇒ 期望
+ * `[[新目标]] [[目标]]`），故退化为尾插（旧行为）。
+ */
+function inLinkSyntax(text: string, start: number, length: number): boolean {
+	const before = start > 0 ? text[start - 1] ?? '' : '';
+	const after = text[start + length] ?? '';
+	return /[[\]()]/.test(before) || /[[\]()]/.test(after);
+}
+
+/**
+ * 合成路径（**原位**优先）：按 `mdSegments`（显示文本 ↔ 原文对齐表）把有显示名的
+ * token 写回它原来在句子里的位置，返回 null 表示没有可用对齐表（调用方走尾插）。
+ *
+ * 规则（解析侧只登记**在显示文本中可见**的 token，见 MdTokenSegment）：
+ * 1. 取新文本首行 T，按段序在 T 中定位每个 token 的显示名（贪心、只向前找），
+ *    命中的位置即该 token 的落点，其显示名被替换为 token 的**实时渲染形态**
+ *    （首链/首图取当前别名与尺寸，额外 token 用原文）；
+ * 2. 定位失败（用户改了显示名、或该 token 本就不在显示文本中）→ 回落尾插，
+ *    与既有行为一致——**内容与语法不丢**优先于位置；
+ * 3. 每枚 token 只输出一次：输出清单按值「取用即摘除」，避免与原尾插路径重复。
+ */
+function composeFirstLineSegmented(
+	data: MdNodeData,
+	app: App | null,
+): string | null {
+	const segments = Array.isArray(data.mdSegments) ? data.mdSegments : null;
+	if (!segments || segments.length === 0) {
+		return null;
+	}
+	const text = (typeof data.text === 'string' ? data.text : '').split('\n')[0] ?? '';
+	// 本节点当前应写出的全部 token 形态（与 inlineTokens 同源，便于「取用即摘除」）
+	const pending: string[] = [];
+	const link = renderHyperlink(data);
+	if (link) {
+		pending.push(link);
+	}
+	const image = renderImage(data, app);
+	if (image) {
+		pending.push(image);
+	}
+	// 额外 token（多链接 / 多 URL / 多图里字段装不下的那部分）：台账按出现顺序
+	for (const segment of segments) {
+		if (!segment.first) {
+			pending.push(segment.raw);
+		}
+	}
+	const takeToken = (form: string): boolean => {
+		const index = pending.indexOf(form);
+		if (index === -1) {
+			return false;
+		}
+		pending.splice(index, 1);
+		return true;
+	};
+	const slots: { start: number; end: number; form: string }[] = [];
+	let anchor = 0;
+	for (const segment of segments) {
+		// 首链/首图取实时形态（别名/尺寸可能已被编辑）；额外 token 用原文
+		const form = segment.first
+			? segment.kind === 'image'
+				? image
+				: link
+			: segment.raw;
+		// 该 token 已不在当前字段里（清除链接 / 移除图片）或已被别的段取用 → 跳过
+		if (!form || !takeToken(form)) {
+			continue;
+		}
+		const name = typeof segment.text === 'string' ? segment.text : '';
+		const at = name ? text.indexOf(name, anchor) : -1;
+		if (at === -1 || inLinkSyntax(text, at, name.length)) {
+			pending.push(form); // 对不上 / 命中落在链接语法内 → 尾插（旧行为）
+			continue;
+		}
+		slots.push({ start: at, end: at + name.length, form });
+		anchor = at + name.length;
+	}
+	let line = '';
+	let cursor = 0;
+	for (const slot of slots) {
+		line += text.slice(cursor, slot.start) + slot.form;
+		cursor = slot.end;
+	}
+	line = (line + text.slice(cursor)).trimEnd();
+	if (pending.length > 0) {
+		const tail = pending.join(' ');
+		line = line ? `${line} ${tail}` : tail;
+	}
+	return line;
+}
+
+/** 合成路径：节点文本首行（原位 token，无对齐表时回落「剥壳文本 + 行尾 token」） */
 function composeFirstLine(data: MdNodeData, app: App | null): string {
+	const segmented = composeFirstLineSegmented(data, app);
+	if (segmented !== null) {
+		return segmented;
+	}
 	const text = typeof data.text === 'string' ? data.text.split('\n')[0] ?? '' : '';
 	let line = text.trimEnd();
 	const tokens = inlineTokens(data, app);
@@ -572,13 +696,52 @@ function composeFirstLine(data: MdNodeData, app: App | null): string {
 }
 
 /**
+ * 纯 token 节点判定：节点文本**恰为**其链接/图片自身的显示名（不含换行）。
+ *
+ * 语义：这类节点的「文本」不是描述文字，而是 token 的可见名——换图/换链后只写
+ * 新 token（不重复输出旧名）；编辑它等于**改别名**（K6，回写见
+ * domain/wiki-display.editedWikilinkAlias）。编辑弹窗据此选模式：别名模式 vs
+ * 原文模式（见 view-node-actions.editNodeText）——**两个判定必须同源**，
+ * 否则会出现「弹窗给的是别名、写回按原文」这类错位。
+ */
+export function isPureLinkNode(data: MdNodeData): boolean {
+	const text = typeof data.text === 'string' ? data.text : '';
+	return (
+		!text.includes('\n') &&
+		text.trim() !== '' &&
+		(nodeLinkDisplay(data) === text.trim() ||
+			imageSelfText(data) === text.trim())
+	);
+}
+
+/**
+ * 节点**内容**（不含 list 标记 / `#` 前缀 / 续行缩进）：多行以 `\n` 连接。
+ *
+ * 三态与序列化输出完全一致（避免「编辑原文」弹窗预填与实际写盘漂移）：
+ * 1. 未编辑（rawOk）→ **mdRaw 全文**（含全部 `[[ ]]` 语法与续行原文）；
+ * 2. 其余 → 首行合成（composeNodeFirstLine）+ 续行文本。
+ * 序列化的 nodeLines 也走本函数（同一实现，勿在别处再抄一遍分派）。
+ */
+export function composeNodeContent(data: MdNodeData, app: App | null): string {
+	if (rawOk(data, app)) {
+		return data.mdRaw;
+	}
+	const rest = (typeof data.text === 'string' ? data.text : '')
+		.split('\n')
+		.slice(1);
+	return [composeNodeFirstLine(data, app), ...rest].join('\n');
+}
+
+/**
  * 节点首行「内容」（不含 list 标记 / `#` 前缀，也不含续行）——
  * 序列化输出与 links-split 的拆分分析共用同一入口。
  *
  * 三态与序列化完全一致（避免拆分分析与实际写出口径漂移）：
  * 1. 未编辑（rawOk）→ 原文首行（含全部 `[[ ]]` 语法）；
  * 2. 纯 token 节点（文本恰为链接/图片自身显示名）→ 只输出 token；
- * 3. 其余（文本被编辑过）→ 文本 + 行尾 token（composeFirstLine）。
+ * 3. 其余（文本被编辑过）→ 文本 + token；token 位置优先按 `mdSegments` 对齐表
+ *    写回**原位**，无可对齐信息（改了显示名 / 该 token 不在显示文本中）才尾插
+ *    （composeFirstLine → composeFirstLineSegmented）。
  */
 export function composeNodeFirstLine(
 	data: MdNodeData,
@@ -587,15 +750,8 @@ export function composeNodeFirstLine(
 	if (rawOk(data, app)) {
 		return data.mdRaw.split('\n')[0]!;
 	}
-	const text = typeof data.text === 'string' ? data.text : '';
-	// 纯 token 节点（文本恰为链接/图片自身显示名，来自解析的单链/单图行，
-	// 或「插入链接」已同步文本）→ 换图/换链后只输出新 token，避免旧名冗余。
-	if (
-		!text.includes('\n') &&
-		text.trim() !== '' &&
-		(nodeLinkDisplay(data) === text.trim() ||
-			imageSelfText(data) === text.trim())
-	) {
+	// 纯 token 节点（文本恰为链接/图片自身显示名）→ 只输出 token（避免旧名冗余）
+	if (isPureLinkNode(data)) {
 		// 两枚 token 都要写出（图文/图+链接节点此前只写一枚 → 图片丢失）
 		const tokens = inlineTokens(data, app);
 		if (tokens.length > 0) {
@@ -635,18 +791,12 @@ export function serializeMdBody(
 		app: App | null,
 	): string[] => {
 		const data: MdNodeData = child.data ?? {};
-		if (rawOk(data, app)) {
-			const rawLines = data.mdRaw.split('\n');
-			return [
-				prefix + rawLines[0]!,
-				...rawLines.slice(1).map((l) => restIndent + l),
-			];
-		}
-		const text = typeof data.text === 'string' ? data.text : '';
-		// 首行口径统一在 composeNodeFirstLine（拆分分析共用同一实现）
+		// 内容三态（未编辑原文 / 纯 token / 文本+token）统一在 composeNodeContent，
+		// 与「编辑原文」弹窗的预填同一实现——两处各写一份必然漂移
+		const lines = composeNodeContent(data, app).split('\n');
 		return [
-			prefix + composeNodeFirstLine(data, app),
-			...text.split('\n').slice(1).map((l) => restIndent + l),
+			prefix + (lines[0] ?? ''),
+			...lines.slice(1).map((l) => restIndent + l),
 		];
 	};
 

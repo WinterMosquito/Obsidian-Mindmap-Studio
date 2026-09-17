@@ -2,7 +2,7 @@
  * 用户入口注册：命令面板命令与丝带图标。
  * 生命周期（registerView、事件监听、设置面板）由 main.ts 负责。
  */
-import { MarkdownView, Plugin } from 'obsidian';
+import { MarkdownView, Plugin, setTooltip } from 'obsidian';
 import { MindMapView } from './features/view';
 import { createNewMindMap } from './creation';
 import { fitMindMap } from './engine/mindmap';
@@ -180,7 +180,8 @@ export function registerCommands(plugin: IPluginCommandsHost): void {
 
 /**
  * 创建丝带图标（onload 时调用一次）。
- * @returns 图标元素——官方无 removeRibbonIcon，语言变更时就地更新 aria-label
+ * @returns 图标元素——官方无 removeRibbonIcon，语言变更时就地经官方
+ * `setTooltip` 更新提示文案
  */
 export function addMindMapRibbonIcon(
 	plugin: IPluginCommandsHost,
@@ -197,7 +198,7 @@ export function addMindMapRibbonIcon(
 /**
  * 语言变更后刷新用户入口文案：命令面板在注册时缓存 `name`，故按 id
  * 先 `removeCommand` 再重注册（官方 1.7.2+ 提供 removeCommand）；
- * 丝带图标无移除 API，就地更新提示文案。
+ * 丝带图标无移除 API，经官方 `setTooltip` 就地更新提示文案。
  */
 export function refreshCommandLabels(
 	plugin: IPluginCommandsHost,
@@ -207,8 +208,8 @@ export function refreshCommandLabels(
 		plugin.removeCommand(id);
 	}
 	registerCommands(plugin);
-	ribbonEl?.setAttribute(
-		'aria-label',
-		t(plugin.settings.language, 'command.createMindMap'),
-	);
+	// 丝带图标无移除 API：经官方 setTooltip 就地更新提示（aria-label）
+	if (ribbonEl) {
+		setTooltip(ribbonEl, t(plugin.settings.language, 'command.createMindMap'));
+	}
 }

@@ -8,28 +8,26 @@
  *   仍吞键），见 handleEditNodeHotkey。
  */
 import { Platform, Scope } from 'obsidian';
-import {
-	ENGINE_COMMANDS,
-	getActiveNode,
-	isEditingText,
-	startNodeTextEdit,
-} from '../engine/mindmap';
-import type { App } from 'obsidian';
-import type { ViewEngineContext } from './view-context';
+import { ENGINE_COMMANDS, getActiveNode, isEditingText } from '../engine/mindmap';
+import { deleteActiveNode, editNodeText } from './view-node-actions';
+import { fitToScreen, zoomToSelection } from './view-viewport';
+import type { ViewNodeEditContext } from './view-context';
 
 /**
- * 快捷键注册所需的最小视图面：引擎 + 搜索栏入口 + 视图作用域宿主。
+ * 快捷键注册所需的最小视图面：引擎 + 编辑入口（app/lang/save）+ 搜索栏入口 +
+ * 视图作用域宿主。
  *
  * `View.scope` 自 Obsidian 1.5.7 起**默认为 null**，官方要求视图自行赋值
  * （`this.scope = new Scope(this.app.scope)`）——不赋值时 `scope?.register(...)`
  * 静默失效，视图内所有快捷键（F2 / Mod+F / Mod+Z…）全部无效。
  */
-export interface ViewHotkeyHost extends ViewEngineContext {
+export interface ViewHotkeyHost extends ViewNodeEditContext {
 	/** 打开搜索栏（Mod+F） */
 	openSearchBar(): void;
 	/** 视图作用域（可能为 null，见上方说明） */
 	scope: Scope | null;
-	readonly app: App;
+	/** 引擎画布容器（缩放手势取画布尺寸用；`Shift+1/2`） */
+	readonly canvasEl: HTMLElement | null;
 }
 
 /**
@@ -75,6 +73,61 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 	}
 	// F2 = 编辑当前激活节点（引擎自带 F2 判定苛刻，见 handleEditNodeHotkey）
 	scope.register([], 'F2', (evt) => handleEditNodeHotkey(view, evt));
+	// 删除选中节点：`Delete` / `Backspace`（官方 Canvas 同款：Backspace 或
+	// Delete 删除选中卡片，见 en/Plugins/Canvas.md）。引擎未绑定这两个键，
+	// 此前只能走右键菜单/工具栏。
+	scope.register([], 'Delete', (evt) => handleDeleteNodeHotkey(view, evt));
+	scope.register([], 'Backspace', (evt) => handleDeleteNodeHotkey(view, evt));
+	// 画布缩放：官方 Canvas 的 `Shift+1`（缩放至全览）与 `Shift+2`（缩放至选区）。
+	// 输入类目标让位（返回 true）：`Shift+1` / `Shift+2` 在输入框里是打 `!` / `@`，
+	// 不能拿来缩放画布。
+	scope.register(['Shift'], '1', (evt) => {
+		if (isTextEntryTarget(evt.target)) {
+			return true;
+		}
+		fitToScreen(view);
+		return false;
+	});
+	scope.register(['Shift'], '2', (evt) => {
+		if (isTextEntryTarget(evt.target)) {
+			return true;
+		}
+		// 空选区时 `Shift+2` 无意义 → 回落到全览（与官方「没有选中就没有选区」一致）
+		if (!zoomToSelection(view)) {
+			fitToScreen(view);
+		}
+		return false;
+	});
+}
+
+/**
+ * `Delete` / `Backspace`：删除当前激活节点（对齐官方 Canvas）。
+ *
+ * 让位（返回 true、不吞键）的三种情形——吞掉会破坏既有语义：
+ * - 焦点在输入框/文本编辑中（`Backspace` 是退格）；
+ * - 无激活节点（交回核心，避免把「什么都没选时的 Delete」变成静默 no-op）。
+ */
+function handleDeleteNodeHotkey(
+	view: ViewHotkeyHost,
+	evt: KeyboardEvent,
+): boolean {
+	if (isTextEntryTarget(evt.target)) {
+		return true;
+	}
+	const mindMap = view.mindMap;
+	if (!mindMap) {
+		return true;
+	}
+	if (isEditingText(mindMap)) {
+		return true;
+	}
+	if (!getActiveNode(mindMap)) {
+		return true;
+	}
+	evt.preventDefault();
+	evt.stopPropagation();
+	deleteActiveNode(view);
+	return false;
 }
 
 /** 文本输入类目标（搜索框/弹窗输入/引擎文本编辑框）：F2 让位，不劫持 */
@@ -91,34 +144,46 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * F2：编辑当前激活节点的文本。
+ * F2：**未选中节点时＝重命名文件（Obsidian 官方语义），选中节点时＝编辑该节点**。
  *
  * 引擎自身也绑了 F2（TextEdit 插件的 `keyCommand.addShortcut('F2')`），但它的
  * `onKeydown` 前置判定要求事件目标为 `document.body`，且
  * `enableShortcutOnlyWhenMouseInSvg` 默认 true（指针须在画布内）——点击节点后
  * 往往不满足，故引擎的 F2 时灵时不灵。这里由视图 scope 接管：
- * - 已接管即阻断冒泡，避免引擎的 window 级监听再触发一次（它会先 hide 再
- *   show，编辑框闪烁并丢光标）；
- * - 返回 false 让 Obsidian 认为已消费，否则核心 F2「重命名文件」会接手；
+ * - 有激活节点 → 编辑它，并阻断冒泡（否则引擎 window 级 F2 再 hide+show 一次，
+ *   编辑框闪烁并丢光标）；中心节点被选中时同样如此——而中心节点的文本就是文件名，
+ *   与 Obsidian「F2 = 重命名文件」的结果一致（见 `view-title-renamer`）；
+ * - **无激活节点 → 让位**（返回 true、不阻断）：F2 归 Obsidian 核心＝重命名当前文件。
+ *   2026-09-15 对齐官方语义——此前会无条件吞键，等于在导图视图里**用不了官方 F2**；
  * - 正在编辑文本时忽略（吞键但不重开），避免打断输入；
  * - 输入框内让位（返回 true = 未接管），F2 交回输入框与核心。
  */
 export function handleEditNodeHotkey(
-	view: ViewEngineContext,
+	view: ViewNodeEditContext,
 	evt: KeyboardEvent,
 ): boolean {
 	if (isTextEntryTarget(evt.target)) {
 		return true;
 	}
-	evt.preventDefault();
-	evt.stopPropagation();
 	const mindMap = view.mindMap;
-	if (!mindMap || isEditingText(mindMap)) {
+	// 引擎未就绪：吞键（无处可编辑，也不该让核心在渲染未完成时改名）
+	if (!mindMap) {
+		evt.preventDefault();
+		evt.stopPropagation();
+		return false;
+	}
+	if (isEditingText(mindMap)) {
+		evt.preventDefault();
+		evt.stopPropagation();
 		return false;
 	}
 	const node = getActiveNode(mindMap);
-	if (node) {
-		startNodeTextEdit(mindMap, node);
+	if (!node) {
+		// 未选中节点：交回 Obsidian（官方 F2 = 重命名文件）
+		return true;
 	}
+	evt.preventDefault();
+	evt.stopPropagation();
+	editNodeText(view, node);
 	return false;
 }

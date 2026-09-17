@@ -435,6 +435,28 @@
   filter: drop-shadow(0 0 5px var(--mm-drag-target-color, #f59e0b));
 }
 
+/* ========== 节点内联内容（方案 B：features/node-inline-content.ts 自绘） ==========
+   布局 / 排版 / 配色 / 轻标记样式**全部内联在元素上**（该模块 CONTENT_STYLES 一族
+   常量，唯一来源）：引擎导出 PNG/SVG 只注入自身 CSS 与 header/footer 的 cssText，
+   插件 styles.css 不在导出图里生效——属性一旦只写在类规则里，导出图就会掉样式
+   （而 foreignObject 尺寸仍按屏上测宽固定 → 溢出/错位）。
+   此处只保留**纯屏幕装饰**（不含任何影响尺寸的属性，丢失不影响导出）。
+   另注：引擎的离屏测宽元素是挂在画布容器下的 position:fixed 子 div——**勿**给
+   `.mindmap-canvas-container > div` 加 width/height 规则（见上方同名警示注释）。 */
+.mindmap-node-inline-content a.internal-link:hover,
+.mindmap-node-inline-content a.external-link:hover {
+  text-decoration: underline;
+}
+
+/* ========== 节点文本弹窗（自绘节点的编辑入口，ui/modal-text.ts） ========== */
+/* 编辑的是**写回文件的那份文本**（可含 [[双链]] 等语法），等宽更易读 */
+.mindmap-modal-textarea {
+  min-height: 90px;
+  resize: vertical;
+  font-family: var(--font-monospace, monospace);
+  line-height: 1.4;
+}
+
 /* ========== 双链文档图标（mindmap.ts createNodePrefixContent 自绘） ========== */
 /* 图标为 <svg> 根元素，被引擎放进 foreignObject（HTML 上下文）：display:block
    去除行内基线间隙，手型光标提示可点（点击 = 打开目标）。 */

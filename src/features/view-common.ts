@@ -9,13 +9,13 @@ import { Notice } from 'obsidian';
 import { ENGINE_COMMANDS, getActiveNode } from '../engine/mindmap';
 import { t } from '../core/i18n';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
-import type { MindMapViewContext } from './view-context';
+import type { MindMapViewContext, ViewNodeEditContext } from './view-context';
 
 /**
  * 取当前激活节点；无则提示「请先选择一个节点」并返回 null。
  * 工具栏/右键各入口共用的前置守卫。
  */
-export function requireActiveNode(view: MindMapViewContext): MindMapNode | null {
+export function requireActiveNode(view: ViewNodeEditContext): MindMapNode | null {
 	const node = getActiveNode(view.mindMap);
 	if (!node) {
 		new Notice(t(view.lang, 'common.selectNodeFirst'));

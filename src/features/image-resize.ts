@@ -18,12 +18,18 @@
  * - **写入按最小步长合并**（`MIN_COMMIT_STEP_PX`）：每次写入都是引擎**整树**
  *   重排，逐帧写入等于每帧全量重排（拖 100px = 几十次重排）；位移不足步长时
  *   只跟随重定位手柄（廉价），松手时无条件补写最终尺寸（否则会停在上一个写入值）；
+ * - **帧内写入不上历史**（`previewNodeImageSize`）：引擎命令一律 `addHistory()`
+ *   ——整树 `getCopyData()` + `JSON.stringify` 比对后 `emit('data_change')`，
+ *   逐帧走命令等于「每 8px 一条历史 + 每步一次自动保存调度 + 全树深拷贝开销」，
+ *   用户实测表现为「拖动时保存好几次 + 卡顿」；只有收尾那一次走命令（一条历史、
+ *   一次保存调度，一次 Ctrl+Z 撤回整次调宽）；
  * - 会话记录**所属引擎**：引擎重建（再次 setup）或视图关闭时会话被强制收尾，
  *   此时旧会话的节点已不属于当前引擎，陈旧帧回调与补写都必须据此短路。
  */
 import {
 	getDrawTransform,
 	getNodeGroupEl,
+	previewNodeImageSize,
 	setNodeImageSize,
 } from '../engine/mindmap';
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
@@ -60,6 +66,15 @@ interface ResizeSession {
 	/** 最近一次实际写入引擎的尺寸（相同/不足步长则跳过重渲染） */
 	applied: { width: number; height: number } | null;
 	rafId: number | null;
+	/**
+	 * 会话建立时的画布视口矩形（手柄定位的坐标系原点）。
+	 *
+	 * 缓存而非每帧读：帧内先写 `handle.style.left/top` 再读 `imageEl` 矩形已是
+	 * 「写→读」交替，再多一次画布矩形读取会额外触发一次强制布局（拖拽调宽是
+	 * 帧率敏感路径）。拖动期间画布元素自身不移动（内容变化不影响容器矩形），
+	 * 会话内视作常量。
+	 */
+	canvasRect: DOMRect | null;
 	/** 画布所属窗口（popout 窗口里 mousemove/mouseup 不落在主窗口） */
 	win: Window;
 	moveListener: (event: MouseEvent) => void;
@@ -101,10 +116,19 @@ function currentNodeImageEl(node: MindMapNode): SVGImageElement | null {
 	return el instanceof SVGImageElement ? el : null;
 }
 
-/** 手柄定位到图片右下角内侧（内嵌避免指针移向手柄时先触发图片 mouseleave） */
-function positionHandle(view: MindMapViewContext, imageEl: SVGImageElement): void {
+/**
+ * 手柄定位到图片右下角内侧（内嵌避免指针移向手柄时先触发图片 mouseleave）。
+ *
+ * `cachedCanvasRect` 由拖拽会话传入（会话内画布矩形恒定，见 ResizeSession）；
+ * 悬停态（无会话）传空，此时读一次 DOM 即可——每次 hover 只发生一次。
+ */
+function positionHandle(
+	view: MindMapViewContext,
+	imageEl: SVGImageElement,
+	cachedCanvasRect?: DOMRect | null,
+): void {
 	const handle = getState(view).handleEl;
-	const canvasRect = view.canvasEl?.getBoundingClientRect();
+	const canvasRect = cachedCanvasRect ?? view.canvasEl?.getBoundingClientRect();
 	if (!handle || !canvasRect) {
 		return;
 	}
@@ -177,11 +201,19 @@ function shouldCommit(
  * 提交尺寸到引擎（content px）。同时清除「加载期自动校正」标记：用户拖过即为
  * 用户意图，序列化须把尺寸回写成 `|宽度`（否则拖拽结果不落盘）。
  *
+ * `commit` 区分两条通道（这是「拖动时保存好几次 + 卡顿」的修复点）：
+ * - `false`（帧内）：只改数据 + 重绘，**不进历史、不派发 `data_change`**
+ *   （`previewNodeImageSize`）——否则每 8px 一条历史、每次都触发自动保存调度，
+ *   且 `addHistory` 的整树深拷贝 + 序列化比对本身就是拖动卡顿的主因；
+ * - `true`（收尾）：走引擎命令，**一次拖动只记一条历史**（一次 Ctrl+Z 撤回整次
+ *   调宽），并由 `data_change` 触发一次保存调度。
+ *
  * 引擎取 `session.engine`：两处调用点都已校验它等于当前引擎，陈旧会话不会误写。
  */
 function commitSize(
 	session: ResizeSession,
 	size: { width: number; height: number },
+	commit: boolean,
 ): void {
 	// md 字段引擎不识别，仅序列化用：就地删标记即可（尺寸本身走引擎命令）。
 	// getData() 取不到时跳过——清标记是尽力而为，不能连累尺寸写入
@@ -190,7 +222,11 @@ function commitSize(
 		delete data.mdImageAutoSize;
 	}
 	session.applied = size;
-	setNodeImageSize(session.engine, session.node, size.width, size.height);
+	if (commit) {
+		setNodeImageSize(session.engine, session.node, size.width, size.height);
+		return;
+	}
+	previewNodeImageSize(session.engine, session.node, size.width, size.height);
 }
 
 /** 应用待应用尺寸（rAF 回调）：写引擎数据并跟随重定位手柄 */
@@ -207,14 +243,16 @@ function applyPending(view: MindMapViewContext, session: ResizeSession): void {
 		// 不足步长：不写引擎（每次写入都是整树重排），只把手柄跟到当前位置
 		const imageEl = currentNodeImageEl(session.node);
 		if (imageEl) {
-			positionHandle(view, imageEl);
+			positionHandle(view, imageEl, session.canvasRect);
 		}
 		return;
 	}
-	commitSize(session, pending);
+	// 帧内：不上历史、不触发保存调度（否则拖一次 = 几十条历史 + 反复落盘 + 卡顿）
+	commitSize(session, pending, false);
+	// 写入后引擎会重建图片元素，故此处才查询（在提交前取到的是游离元素）
 	const imageEl = currentNodeImageEl(session.node);
 	if (imageEl) {
-		positionHandle(view, imageEl);
+		positionHandle(view, imageEl, session.canvasRect);
 	}
 }
 
@@ -233,20 +271,31 @@ function endSession(view: MindMapViewContext): void {
 	// 移除时带同款 capture 标志（与注册匹配）
 	session.win.removeEventListener('mousemove', session.moveListener, true);
 	session.win.removeEventListener('mouseup', session.upListener, true);
-	// 补写最终尺寸：拖动中的写入按步长合并，最后一次往往未达步长——
-	// 不补写就会停在上一个写入值（松手后图片「回弹」几像素）。
-	// 引擎已重建时跳过：旧会话的节点不属于新引擎。
+	// 补写最终尺寸并**把整次调宽记成一条历史**：
+	// - 帧内写入是「预览」（只改数据 + 重绘，不进历史、不派发 data_change）；
+	// - 收尾统一走一次命令 → 一条历史（一次 Ctrl+Z 撤回整次调宽）+ 一次保存调度。
+	// 注意判据是「本次拖动作过写入 + 与起始尺寸有净变化」，**不是**与最后一帧
+	// 预览值是否相同：最后一帧往往恰好就是最终值，若按「值相同则不提交」处理，
+	// 整次调宽将**完全进不了历史**（撤销无从回退）。
+	// 净变化为 0（拖回原尺寸）时不提交：引擎 addHistory 本身也会去重。
+	// 引擎已重建时跳过：旧会话的节点不属于当前引擎。
 	const mindMap = view.mindMap;
+	const finalSize = session.latest ?? session.applied;
 	if (
-		session.latest &&
+		session.applied !== null &&
+		finalSize &&
+		!sameSize(
+			{ width: session.startWidth, height: session.startHeight },
+			finalSize,
+		) &&
 		mindMap &&
-		mindMap === session.engine &&
-		!sameSize(session.applied, session.latest)
+		mindMap === session.engine
 	) {
-		commitSize(session, session.latest);
+		commitSize(session, finalSize, true);
 	}
 	// 官方嵌入语法持久化：engine data.imageSize 已随拖拽更新，
 	// scheduleSave → 序列化 rawOk 尺寸特征不符 → 合成回写 `|宽度`
+	// （收尾提交已由 data_change 调度过一次，此处兜底「只预览未提交」的情形）
 	view.scheduleSave();
 	hideHandle(view);
 }
@@ -281,6 +330,8 @@ function startSession(
 		latest: null,
 		applied: null,
 		rafId: null,
+		// 会话内画布矩形恒定（见 ResizeSession 注释）：只在这里读一次
+		canvasRect: view.canvasEl?.getBoundingClientRect() ?? null,
 		win: view.containerEl.win,
 		moveListener: (moveEvent: MouseEvent) => {
 			const current = getState(view).session;

@@ -13,6 +13,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+	absolutePathFromFileUrl,
+	fileUrlFromAbsolutePath,
 	isAppResourceUrl,
 	isExternalImageRef,
 	isHttpUrl,
@@ -203,6 +205,71 @@ describe('isUrlLikeText', () => {
 		expect(isUrlLikeText('zotero://select/x')).toBe(false);
 		expect(isUrlLikeText('ftp://a/b')).toBe(true);
 		expect(isSchemeUrl('ftp://a/b')).toBe(true);
+	});
+});
+
+/**
+ * `file:///` 绝对链接的构造与还原（拖入系统文件时按住 Ctrl/Option 的形态，
+ * 见官方帮助「Drag and drop」）：两个函数互为逆运算，形态差异按路径本身决定
+ * （盘符 / POSIX / UNC 三种前缀），错误统一会导致链接写出去打不开。
+ */
+describe('fileUrlFromAbsolutePath / absolutePathFromFileUrl', () => {
+	it.each([
+		{
+			path: 'C:\\资料\\报告.pdf',
+			expected: 'file:///C:/%E8%B5%84%E6%96%99/%E6%8A%A5%E5%91%8A.pdf',
+			why: 'Windows 盘符 + 反斜杠归一 + 中文转义',
+		},
+		{
+			path: 'C:/notes/a b.pdf',
+			expected: 'file:///C:/notes/a%20b.pdf',
+			why: '空格转义为 %20（否则 `(…)` 链接语法被断开）',
+		},
+		{
+			path: '/home/u/a.pdf',
+			expected: 'file:///home/u/a.pdf',
+			why: 'POSIX 绝对路径：file:// + /… = 三个斜杠',
+		},
+		{
+			path: '//server/share/a.pdf',
+			expected: 'file://server/share/a.pdf',
+			why: 'UNC：file: + //server 形态（不能凑成四斜杠）',
+		},
+		{
+			path: 'notes/a.pdf',
+			expected: 'file:///notes/a.pdf',
+			why: '相对形态（非 Electron 场景）按盘符分支兜底',
+		},
+	])('fileUrlFromAbsolutePath($path)（$why）', ({ path, expected }) => {
+		expect(fileUrlFromAbsolutePath(path)).toBe(expected);
+	});
+
+	it.each([
+		{ url: 'file:///C:/notes/a%20b.pdf', expected: 'C:/notes/a b.pdf', why: '盘符前导斜杠还原 + 解码' },
+		{ url: 'file:///home/u/a.pdf', expected: '/home/u/a.pdf', why: 'POSIX 原样' },
+		{ url: 'file://server/share/a.pdf', expected: '//server/share/a.pdf', why: 'UNC 还原两斜杠' },
+		{ url: 'file:///C:/100%/a.pdf', expected: 'C:/100%/a.pdf', why: '含未编码 % 不抛错（真实文件名常见）' },
+	])('absolutePathFromFileUrl($url)（$why）', ({ url, expected }) => {
+		expect(absolutePathFromFileUrl(url)).toBe(expected);
+	});
+
+	it('非 file:// 地址一律 null（调用方据此回落库内解析路径）', () => {
+		expect(absolutePathFromFileUrl('https://example.com/a.pdf')).toBeNull();
+		expect(absolutePathFromFileUrl('C:/notes/a.pdf')).toBeNull();
+		expect(absolutePathFromFileUrl('app://vault/a.pdf')).toBeNull();
+		expect(absolutePathFromFileUrl('file://')).toBeNull();
+	});
+
+	it('往返一致：路径 → URL → 路径', () => {
+		for (const path of [
+			'C:\\资料\\报告.pdf',
+			'/home/u/a b.pdf',
+			'//server/share/a.pdf',
+		]) {
+			expect(absolutePathFromFileUrl(fileUrlFromAbsolutePath(path))).toBe(
+				path.replace(/\\/g, '/'),
+			);
+		}
 	});
 });
 

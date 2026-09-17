@@ -374,25 +374,80 @@ export async function createAspectSetNodeImageOptions(
 }
 
 /**
- * 递归按图片原始比例校正树内所有图片尺寸（有界并发探测）。
- * 返回是否有修改；探测失败的图片保持默认尺寸。
+ * 给缺 `imageSize` 的图片节点填**默认尺寸**（统一宽高、`custom:false` ⇒ 引擎按
+ * imgMax 约束渲染）。返回填充的节点数。
+ *
+ * 为什么必须有（vendor 0.14.0-fix.3 实测）：引擎 `createImgNode → getImgShowSize`
+ * 对 `data.imageSize` 直接解构（`let {custom,width,height} = getData('imageSize')`），
+ * **缺字段即 TypeError、该节点的渲染链中断**（无头实测：一图缺失 ⇒ 整图
+ * `renderer.root` 为空）。而解析器不产 `imageSize`（`PLAIN_IMAGE_FIELDS` 只含
+ * image/mdImage*）——旧流程靠「加载期探测在引擎创建**前**完成」隐式兜底。
+ * 任何「先渲染、后校正」的路径（加载首帧、原文模式把文本节点编辑成图片）都必须
+ * 先调本函数；这是同步 O(n) 指针遍历，不探测、不等加载。
+ */
+export function ensureDefaultImageSizes(tree: MindMapTreeNode): number {
+	let filled = 0;
+	walkTree(tree, (node) => {
+		const data = node.data as MdNodeData | undefined;
+		if (!data?.image || data.imageSize) {
+			return;
+		}
+		data.imageSize = {
+			width: IMAGE_WIDTH,
+			height: IMAGE_HEIGHT,
+			custom: false,
+		};
+		filled++;
+	});
+	return filled;
+}
+
+/**
+ * 图片尺寸校正条目（**探测结果，不改树**）。
+ *
+ * `data` 是树节点 data 对象的**引用**：写回按对象身份定位（引擎节点的 data 与
+ * 树 data 是同一对象），故无需 uid ——加载期 uid 尚未分配（`ensureUniqueUids` 在
+ * 引擎创建时才跑），用 uid 做键会写空。
+ * `image` 记录探测时的地址：写回前比对，图片已被用户换掉则丢弃该条。
+ */
+export interface ImageSizeCorrection {
+	data: MdNodeData;
+	/** 探测时的图片地址（写回前的身份守卫） */
+	image: string;
+	width: number;
+	height: number;
+	/** 写进 `imageSize.custom`（引擎按值精确渲染；false 时引擎自行约束） */
+	custom: boolean;
+	/**
+	 * 自动按比例校正所得（vs 用户参数 `![[图|300]]`）：树侧须打
+	 * `mdImageAutoSize` 标记，序列化跳过尺寸回写——显示尺寸不是用户意图。
+	 */
+	autoSize: boolean;
+}
+
+/**
+ * 探测树内图片节点的应展示尺寸（有界并发），**不写树**。
  *
  * 官方嵌入尺寸参数（mdImageWidth/mdImageHeight，来自 `![[图|300]]` /
  * `![[图|300x150]]` / `![alt|300](url)`）优先：
  * - 宽度恒取参数值；
  * - 高度取参数值；仅宽度时按原始比例补齐（探测失败回退统一高度）；
- * - 此类节点为 custom:true，不受默认校正影响。
+ * - 此类节点为 custom:true，不受默认校正影响（autoSize:false，无标记）。
+ *
+ * 拆出「探测」与「写回」两步是为了**加载路径**：探测不再串行挡在首帧前
+ * （见 `features/view.ts` 的加载序列），首帧先用默认尺寸出画，探测完成后
+ * 经 `applyImageSizeCorrectionsToEngine` 回灌并重渲染一次。
  */
-export async function walkCorrectImageSizesByAspect(
+export async function collectImageSizeCorrections(
 	tree: MindMapTreeNode,
-): Promise<boolean> {
+): Promise<ImageSizeCorrection[]> {
 	const nodes: MindMapTreeNode[] = [];
 	walkTree(tree, (node) => {
 		if (node.data?.image) {
 			nodes.push(node);
 		}
 	});
-	let changed = false;
+	const corrections: ImageSizeCorrection[] = [];
 	// 单节点探测失败不影响其它节点；只汇总记录一次（避免大图逐条刷屏）
 	let failedCount = 0;
 	let firstError: unknown = null;
@@ -402,15 +457,15 @@ export async function walkCorrectImageSizesByAspect(
 		async (node: MindMapTreeNode) => {
 			try {
 				const data = node.data as MdNodeData;
+				const image = typeof data.image === 'string' ? data.image : '';
 				let size: { width: number; height: number; custom: boolean };
+				let autoSize = false;
 				if (typeof data.mdImageWidth === 'number' && data.mdImageWidth > 0) {
 					// 官方尺寸参数：宽度取参数；高度取参数或按原始比例补齐
 					const width = data.mdImageWidth;
 					let height = data.mdImageHeight;
 					if (height === undefined) {
-						const natural = await probeImageNaturalSize(
-							typeof data.image === 'string' ? data.image : '',
-						);
+						const natural = await probeImageNaturalSize(image);
 						height =
 							natural && natural.width > 0 && natural.height > 0
 								? Math.max(
@@ -422,29 +477,22 @@ export async function walkCorrectImageSizesByAspect(
 					size = { width, height, custom: true };
 				} else {
 					// 无参数：默认统一高度按原始比例（已有自定义尺寸不覆盖，防御）
-					if (node.data?.imageSize?.custom) {
+					if (data.imageSize?.custom) {
 						return;
 					}
-					size = await computeAspectImageSize(
-						typeof data.image === 'string' ? data.image : '',
-					);
-					if (size.custom) {
-						// 显示尺寸而非用户意图：custom:true 才能让引擎按比例精确渲染
-						//（custom:false 会被引擎按 imgMax 重新适配），但必须打标记——
-						// 否则序列化会把 custom 尺寸当成拖拽结果回写成 `|宽度`
-						data.mdImageAutoSize = true;
-					}
+					size = await computeAspectImageSize(image);
+					// custom:true 才能让引擎按比例精确渲染（custom:false 会被引擎按
+					// imgMax 重新适配）；此时需打标记，避免序列化把它当拖拽结果回写
+					autoSize = size.custom;
 				}
-				const current = node.data?.imageSize;
-				if (
-					!current ||
-					current.width !== size.width ||
-					current.height !== size.height ||
-					current.custom !== size.custom
-				) {
-					node.data.imageSize = size;
-					changed = true;
-				}
+				corrections.push({
+					data,
+					image,
+					width: size.width,
+					height: size.height,
+					custom: size.custom,
+					autoSize,
+				});
 			} catch (error) {
 				// 单节点探测异常：跳过该节点，保留现有尺寸，不中断整树校正
 				failedCount++;
@@ -458,5 +506,50 @@ export async function walkCorrectImageSizesByAspect(
 			firstError,
 		);
 	}
+	return corrections;
+}
+
+/**
+ * 校正结果写回树（对象身份匹配）。返回是否有实际改动
+ * （值相同的条目不写，避免惊动引擎重渲染与序列化）。
+ */
+export function applyImageSizeCorrectionsToTree(
+	corrections: readonly ImageSizeCorrection[],
+): boolean {
+	let changed = false;
+	for (const correction of corrections) {
+		const { data } = correction;
+		const current = data.imageSize;
+		if (
+			!current ||
+			current.width !== correction.width ||
+			current.height !== correction.height ||
+			current.custom !== correction.custom
+		) {
+			data.imageSize = {
+				width: correction.width,
+				height: correction.height,
+				custom: correction.custom,
+			};
+			changed = true;
+		}
+		if (correction.autoSize) {
+			data.mdImageAutoSize = true;
+		}
+	}
 	return changed;
+}
+
+/**
+ * 递归按图片原始比例校正树内所有图片尺寸（有界并发探测）。
+ * 返回是否有修改；探测失败的图片保持默认尺寸。
+ *
+ * 探测 + 写回两步的组合（探测实现见 `collectImageSizeCorrections`）；
+ * **加载路径**请改用两步式（首帧不等待探测），见 `features/view.ts`。
+ */
+export async function walkCorrectImageSizesByAspect(
+	tree: MindMapTreeNode,
+): Promise<boolean> {
+	const corrections = await collectImageSizeCorrections(tree);
+	return applyImageSizeCorrectionsToTree(corrections);
 }

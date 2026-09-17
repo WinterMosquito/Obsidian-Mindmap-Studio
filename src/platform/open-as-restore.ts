@@ -13,7 +13,6 @@
  *    Markdown 打开，且布局（仅在导图视图加载时按路径读取）不会被应用。
  */
 import type {
-	App,
 	Component,
 	Workspace,
 	WorkspaceLeaf,
@@ -32,7 +31,6 @@ export class OpenAsPreferenceRestorer {
 	private host: Component | null = null;
 
 	constructor(
-		private readonly app: App,
 		private readonly workspace: Workspace,
 		private readonly openAs: OpenAsLookup,
 		/** 是否为本插件的导图视图（注入 MindMapView 类引用判定，避免本模块依赖视图实现） */

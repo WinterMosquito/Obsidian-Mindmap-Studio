@@ -12,10 +12,43 @@
  */
 
 /** 行类型（data.mdType）：md 三种行形态 */
-export type MdLineType = 'heading' | 'list' | 'plain';
+type MdLineType = 'heading' | 'list' | 'plain';
 
 /** 链接样式（data.mdLinkStyle）：wiki 双链 / md 标准链接（含 autolink） */
-export type MdLinkStyle = 'wiki' | 'md';
+type MdLinkStyle = 'wiki' | 'md';
+
+/**
+ * 图片嵌入的语法形态（data.mdImageStyle）：wiki `![[图.png]]` / md `![alt](图.png)`。
+ *
+ * 来源两处、语义不同：
+ * - **解析期**：按原文形态记录（保往返——未编辑时 mdRaw 逐字回写，编辑后合成回写
+ *   也须保持用户原本的写法，不能把 `![a](b.png)` 翻成 `![[b.png]]`）；
+ * - **新建/换图**：跟随官方设置「Use \[\[Wikilinks\]\]」（见 platform/vault-prefs），
+ *   关闭时写 md 形态——官方该设置同时管 links 与 images。
+ */
+type MdImageStyle = 'wiki' | 'md';
+
+/**
+ * 行内 token 段（`mdSegments` 的元素，见 MdNodeMeta.mdSegments）。
+ * 有显示名者：`text` 与解析侧 `pieces` 中的那一段**逐字相同**（对齐基准）；
+ * 无显示名者：`text` 为空串（仅参与「原文不丢」，不参与原位定位）。
+ * `raw` 恒为该 token 的原文切片。
+ */
+export interface MdTokenSegment {
+	/** 'image' = 走 image 字段的图片嵌入；'link' = 链接类（双链/md 链接/文档或附件嵌入） */
+	kind: 'link' | 'image';
+	/** token 在显示文本中的样子（剥壳显示名，与 data.text 的那一段逐字相同） */
+	text: string;
+	/** 原文切片（`[[A]]` / `![[图|300]]` / `[文本](url)`） */
+	raw: string;
+	/**
+	 * 该 token 是否由「首链 / 首图」字段承载：
+	 * true → 合成时取**实时渲染形态**（别名、尺寸可能已被编辑）；
+	 * false → 额外 token（多链接 / 多 URL / 多图里字段装不下的那部分），按其原文
+	 * `raw` 原样输出；`text` 为剥壳显示名或空串（无显示名者，见字段契约）。
+	 */
+	first: boolean;
+}
 
 export interface MdNodeMeta {
 	/** 原始 md 行（可能多行）：未编辑逐字回写的依据 */
@@ -70,6 +103,8 @@ export interface MdNodeMeta {
 	mdEmbedPipe?: string;
 	/** 图片的原始库内引用（![[路径]] 的路径）：换图检测与回写目标 */
 	mdImageTarget?: string;
+	/** 图片嵌入的语法形态（见 MdImageStyle；缺省按 wiki 处理） */
+	mdImageStyle?: MdImageStyle;
 	/**
 	 * 嵌入语法的显示尺寸参数（Obsidian 官方语法：`![[图|宽度]]` /
 	 * `![[图|宽x高]]` / `![alt|宽度](url)`）。仅宽度时高度按原始宽高比
@@ -86,18 +121,25 @@ export interface MdNodeMeta {
 	 */
 	mdImageAlt?: string;
 	/**
-	 * 未被「首图 / 首链」字段承载的**额外行内 token 原文**（按出现顺序）。
+	 * 行内 token 段（**显示文本 ↔ 原文**的对齐表，也是**唯一的行内 token 台账**）。
 	 *
-	 * 保真回写数据：一行内有多个链接 / 多个 URL / 多张图时，只有首个（图、链接
-	 * 各一枚）进 image / hyperlink / mdWikiLinkpath 等字段；其余此前在**编辑后
-	 * 合成**时丢失（多 URL 连内容都丢；多图 / 多链接丢语法）。本字段收集全部
-	 * 额外 token 的**原文切片**，合成时按序全部尾插——位置不保真（与首 token
-	 * 同为行尾），但内容与语法不丢。未编辑时仍走 mdRaw 逐字回写，本字段不参与。
+	 * 一行内的 token 分两类，全部按出现顺序登记在此：
+	 * - **首图 / 首链**（由 `image` / `hyperlink` / `mdWikiLinkpath` / `attachmentUrl`
+	 *   字段承载）→ `first: true`：合成时取**实时渲染形态**（别名、尺寸可能已被编辑）；
+	 * - **额外 token**（多链接 / 多 URL / 多图里字段装不下的那部分）→ `first: false`：
+	 *   记录**原文切片**，合成时原样输出。这批此前单存于 `mdExtraTokens`，与对齐表
+	 *   两表并存需要人工同步（links-split / 清除链接两处）——已并入本字段（单一权威）。
 	 *
-	 * kind 用途：**图片类嵌入不是链接**（K9）——「清除链接」只清 link 类；
-	 * 图片类保留（拆分重写父行时，额外 token 以新行解析结果重建）。
+	 * `text` 是该 token 在**显示文本**里的样子（剥壳显示名，与 `data.text` 的那一段
+	 * 逐字相同）：编辑后据此在新文本里按序定位，把 token 写回**原位**（K52）。
+	 * **无显示名的 token**（首图、URL icon-only、非图片附件嵌入）登记为 `text: ''`
+	 * ——位置信息不在显示文本中 → 合成时保持尾插，且首 token 由字段实时渲染，
+	 * 不会写出过期原文。
+	 *
+	 * 未编辑时仍走 mdRaw 逐字回写，本字段不参与；`links-split` 重写父行时按
+	 * 新行解析结果整体重建（避免被抽走的 token 凭旧记录复活）。
 	 */
-	mdExtraTokens?: { raw: string; kind: 'image' | 'link' }[];
+	mdSegments?: MdTokenSegment[];
 	/**
 	 * 节点图尺寸来自**加载期自动校正**（按原始宽高比算出的显示尺寸，非用户意图）。
 	 *

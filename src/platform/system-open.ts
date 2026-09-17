@@ -33,3 +33,27 @@ export function openFileWithSystemApp(
 	}
 	new Notice(t(lang, 'common.cannotOpen'));
 }
+
+/**
+ * 用系统默认应用打开**库外**绝对路径（`file:///` 链接指向的文件，见
+ * domain/url.absolutePathFromFileUrl）。与 openFileWithSystemApp 同一实现路径
+ * （Electron `shell.openPath`），差别只在输入：这里没有 TFile——文件不在库里。
+ */
+export function openAbsolutePathWithSystemApp(
+	path: string,
+	lang: Language,
+): void {
+	if (Platform.isDesktopApp) {
+		try {
+			const nodeRequire = require as (id: string) => unknown;
+			const { shell } = nodeRequire('electron') as {
+				shell: { openPath(path: string): Promise<string> };
+			};
+			void shell.openPath(path);
+			return;
+		} catch (error) {
+			console.error('调用系统默认应用打开失败:', path, error);
+		}
+	}
+	new Notice(t(lang, 'common.cannotOpen'));
+}

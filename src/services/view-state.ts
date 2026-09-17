@@ -29,7 +29,7 @@ export class ViewStateStore {
 	 */
 	constructor(
 		private persist: (state: Record<string, PathState>) => void | Promise<void>,
-		private debounceMs = VIEW_STATE_PERSIST_MS,
+		debounceMs = VIEW_STATE_PERSIST_MS,
 	) {
 		this.debouncer = createDebouncer(debounceMs);
 	}

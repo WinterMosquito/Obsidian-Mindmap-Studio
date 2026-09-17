@@ -386,6 +386,12 @@ vi.mock('obsidian', async (importOriginal) => {
 			this.record.disabledStates.push(disabled);
 			return this;
 		}
+
+		/** 官方 ButtonComponent.setTooltip：写 buttonEl 的 aria-label（tooltip 由核心驱动） */
+		setTooltip(tooltip: string): this {
+			this.buttonEl.attrs['aria-label'] = tooltip;
+			return this;
+		}
 	}
 
 	/**
@@ -1304,10 +1310,10 @@ describe('openImageEditorModal（节点图片编辑弹窗）', () => {
 		expect(buttonIn(harness.buttons, t('zh', 'modal.apply')).ctaCalls).toBe(
 			1,
 		);
-		// 悬停提示说明「会自动保存到附件目录」
+		// 悬停提示说明「会自动保存到附件目录」（官方 setTooltip 写 aria-label）
 		expect(
 			buttonIn(harness.actions, t('zh', 'modal.image.chooseLocal')).buttonEl
-				.title,
+				.attrs['aria-label'],
 		).toBe(t('zh', 'modal.image.localHint'));
 
 		// 打开即预览：库内路径经统一解析入口 → 资源地址

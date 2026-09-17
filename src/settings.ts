@@ -32,6 +32,12 @@ export interface MindMapStudioSettings {
 	autoSave: boolean;
 	/** 被编辑节点含「双链 + 描述文字」时自动拆分为子节点（见 links-split） */
 	autoSplitMixedLinks: boolean;
+	/**
+	 * 重命名 / 删除库内文件时自动更新导图里的引用（对齐官方设置
+	 * 「Settings → Files & Links → Automatically update internal links」，默认开启）。
+	 * 关闭后：重命名不改链接（链接变未解析）、删除不清理引用与附件。
+	 */
+	autoUpdateLinks: boolean;
 	exportScale: number;
 	enableDrag: boolean;
 	performanceMode: boolean;
@@ -47,6 +53,8 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	autoSave: true,
 	// 默认开启：仅在节点被编辑后生效，存量未编辑节点不会被改写
 	autoSplitMixedLinks: true,
+	// 默认开启（与官方「Automatically update internal links」默认一致）
+	autoUpdateLinks: true,
 	exportScale: 2,
 	enableDrag: true,
 	// 默认开启性能模式：节点数超过阈值（performanceThreshold）时自动启用
@@ -119,6 +127,8 @@ export function sanitizeSettings(
 		autoSplitMixedLinks:
 			pickBool('autoSplitMixedLinks') ??
 			DEFAULT_SETTINGS.autoSplitMixedLinks,
+		autoUpdateLinks:
+			pickBool('autoUpdateLinks') ?? DEFAULT_SETTINGS.autoUpdateLinks,
 		exportScale:
 			pickClampedInt('exportScale', EXPORT_SCALE_MIN, EXPORT_SCALE_MAX) ??
 			DEFAULT_SETTINGS.exportScale,
@@ -148,6 +158,35 @@ const LIVE_REFRESH_SETTING_KEYS = new Set<string>([
 	'performanceThreshold',
 	'language',
 ]);
+
+/**
+ * 相对「上次已应用」的设置快照，算出本次真正变化的 LIVE_REFRESH 键（首次应用 = 全部）。
+ *
+ * 为什么要算差集（2026-09-17 性能轮，见 AGENTS.md K59）：应用动作此前一律让每个视图
+ * **重建引擎 + 全量重渲染**，而其中多数键**根本不影响已打开的图**——默认布局 / 默认
+ * 连线样式在文件加载时已定为「文件显式选择 ?? 默认值」，之后再改默认值不会改变已打开
+ * 的图；主题则有引擎的原地通道（`setThemeConfig`）。算出差集后，视图只做真会改变
+ * 渲染的事（`features/view.applySettingsChange`）。
+ *
+ * 保守口径：`previous === null`（首次应用）返回**全部键**，让视图走最完整的路径，
+ * 不依赖「调用方一定先记过快照」这一隐式前提。
+ */
+export function diffLiveRefreshKeys(
+	previous: MindMapStudioSettings | null,
+	next: MindMapStudioSettings,
+): Set<string> {
+	const changed = new Set<string>();
+	for (const key of LIVE_REFRESH_SETTING_KEYS) {
+		if (
+			previous === null ||
+			previous[key as keyof MindMapStudioSettings] !==
+				next[key as keyof MindMapStudioSettings]
+		) {
+			changed.add(key);
+		}
+	}
+	return changed;
+}
 
 /** 设置面板 */
 export class MindMapStudioSettingTab extends PluginSettingTab {
@@ -243,6 +282,11 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 						name: t(this.lang, 'settings.autoSplitMixedLinks'),
 						desc: t(this.lang, 'settings.autoSplitMixedLinksDesc'),
 						control: { type: 'toggle', key: 'autoSplitMixedLinks' },
+					},
+					{
+						name: t(this.lang, 'settings.autoUpdateLinks'),
+						desc: t(this.lang, 'settings.autoUpdateLinksDesc'),
+						control: { type: 'toggle', key: 'autoUpdateLinks' },
 					},
 					{
 						name: t(this.lang, 'settings.enableDrag'),

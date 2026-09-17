@@ -9,10 +9,16 @@
  *
  * 覆盖：wikilink / wiki 嵌入（含官方尺寸参数与非法参数）/ md 链接（尖括号目标剥壳）/
  * md 图片（尺寸在标签尾、目标不剥壳）/ autolink / 裸 URL（标点剥离与去重）/
- * 重复调用的状态无关性 / frontmatter 切分（含 CRLF 与重复块）。
+ * 重复调用的状态无关性 / frontmatter 切分（含 CRLF 与重复块）；
+ * 以及 `buildInlineData` 产出的 **mdSegments 对齐表**（显示文本 ↔ 原文）的登记边界
+ * ——它是编辑后「原位写回」的定位基准（K52），单测钉住「登记谁 / 不登记谁」。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { splitFrontmatter, tokenizeInline } from '../src/markdown/md-outline';
+import {
+	buildInlineData,
+	splitFrontmatter,
+	tokenizeInline,
+} from '../src/markdown/md-outline';
 
 describe('tokenizeInline — wikilink', () => {
 	it('[[笔记]] → 完整 token（label 空串，位置为切片语义）', () => {
@@ -329,6 +335,60 @@ describe('tokenizeInline — 混合与状态无关性', () => {
 		expect(tokenizeInline('[[B]]'), '参数不同的第二次调用仍从行首扫描').toEqual([
 			{ start: 0, end: 5, kind: 'wiki', target: 'B', label: '' },
 		]);
+	});
+});
+
+describe('buildInlineData — mdSegments 对齐表（原位写回的定位基准）', () => {
+	it('有显示名的 token 按出现顺序登记：首链 first=true，其余 false', () => {
+		const data = buildInlineData('参见 [[A]] 与 [[B|乙]]');
+		expect(data.mdSegments).toEqual([
+			{ kind: 'link', text: 'A', raw: '[[A]]', first: true },
+			{ kind: 'link', text: '乙', raw: '[[B|乙]]', first: false },
+		]);
+	});
+
+	it('与 data.text 对齐：每段的 text 必须逐字出现在剥壳文本里', () => {
+		// 对齐表唯一的用途是「在新文本里按显示名定位」——段的 text 若不在
+		// data.text 里，原位写回永远对不上（只能回落尾插），登记就失去意义
+		const data = buildInlineData(
+			'见 [[A]] 与 https://x.com 以及 ![[b.png]] 收尾',
+		);
+		expect(data.mdSegments?.length).toBeGreaterThan(0);
+		for (const segment of data.mdSegments ?? []) {
+			expect(
+				data.text,
+				`段「${segment.text}」的显示名应逐字出现在剥壳文本里`,
+			).toContain(segment.text);
+		}
+	});
+
+	it('无显示名的 token：首枚不登记（由字段承载），额外枚只记原文', () => {
+		// 位置信息不在显示文本中 → 不参与原位定位；首枚由 hyperlink 字段实时渲染，
+		// 额外枚按原文切片尾插（内容与语法不丢，2026-09-13 起）
+		const data = buildInlineData('参考 https://a.com 与 <https://b.com>');
+		expect(data.hyperlink, '首枚 URL 进引擎单链字段').toBe('https://a.com');
+		expect(data.mdSegments, '台账只登记额外的那一枚').toEqual([
+			{ kind: 'link', text: '', raw: '<https://b.com>', first: false },
+		]);
+		expect(data.text).toBe('参考 与');
+	});
+
+	it('首图不登记（不占显示文本）、非首图登记为 image 段', () => {
+		const data = buildInlineData('前 ![[a.png]] 与 ![[b.png]] 后');
+		expect(data.mdSegments).toEqual([
+			{ kind: 'image', text: 'b.png', raw: '![[b.png]]', first: false },
+		]);
+	});
+
+	it('文档嵌入登记为链接段（非图片嵌入走链接通道）', () => {
+		const data = buildInlineData('见 ![[笔记]]');
+		expect(data.mdSegments).toEqual([
+			{ kind: 'link', text: '笔记', raw: '![[笔记]]', first: true },
+		]);
+	});
+
+	it('纯文本行：不产生 mdSegments 字段（未编辑逐字回写，无需对齐表）', () => {
+		expect(buildInlineData('纯文本一行').mdSegments).toBeUndefined();
 	});
 });
 

@@ -141,6 +141,62 @@ export function wikilinkTargetIsAttachment(linkpath: string): boolean {
 }
 
 /**
+ * 新建链接的**路径形态**（官方 `设置 → 文件与链接 → New link format`）。
+ * 取值与官方一致：最短路径（默认）/ 相对路径 / 绝对路径。
+ */
+export type LinkPathFormat = 'shortest' | 'relative' | 'absolute';
+
+/**
+ * 按官方「New link format」把目标文件的库内路径写成链接路径。
+ *
+ * - `shortest`：库内唯一 → 只写文件名（官方「Uses the shortest unique path」）；
+ *   有同名文件分布在不同目录时写**完整路径**（否则会指向错误的文件）；
+ * - `relative`：相对当前文件的路径（同目录 → 文件名；上级目录 → `../…`）；
+ * - `absolute`：从库根起的完整路径。
+ *
+ * **只用于新建**：已有链接的改写沿用用户原始前缀（见 links-tree 的引用更新）,
+ * 本函数不参与。
+ *
+ * @param targetPath 目标文件在库内的完整路径（含扩展名）
+ * @param sourcePath 当前文件（导图所在 .md）的路径，相对路径的基准；空值按库根
+ * @param format     官方偏好
+ * @param ambiguous  库内是否存在**同名**文件（`shortest` 是否退化为完整路径；
+ *                   由调用方判定——本模块不接触 vault）
+ */
+export function formatLinkPath(
+	targetPath: string,
+	sourcePath: string,
+	format: LinkPathFormat,
+	ambiguous: boolean,
+): string {
+	if (format === 'absolute') {
+		return targetPath;
+	}
+	if (format === 'relative') {
+		const fromDir = sourcePath.split('/').slice(0, -1);
+		const toParts = targetPath.split('/');
+		const toDir = toParts.slice(0, -1);
+		let shared = 0;
+		while (
+			shared < fromDir.length &&
+			shared < toDir.length &&
+			fromDir[shared] === toDir[shared]
+		) {
+			shared++;
+		}
+		const ups = Array.from({ length: fromDir.length - shared }, () => '..');
+		return [...ups, ...toDir.slice(shared), toParts[toParts.length - 1]].join(
+			'/',
+		);
+	}
+	// shortest：同名冲突时官方也退化为（能唯一定位的）更长路径
+	if (ambiguous) {
+		return targetPath;
+	}
+	return targetPath.split('/').pop() ?? targetPath;
+}
+
+/**
  * 链接的「可见文本」（Obsidian 双链语义）：
  * 别名优先；否则取 linkpath 末段并去 .md 扩展（笔记显示名）；
  * 非维基链接（URL / 库内路径）原样可见。

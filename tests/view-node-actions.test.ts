@@ -28,6 +28,7 @@ import {
 	addImageToActiveNode,
 	addLinkToActiveNode,
 	applyDocWikiLink,
+	applyMdLink,
 	applyNodeAttachment,
 	clearNodeHyperlink,
 	copyNode,
@@ -231,6 +232,11 @@ function makeView(
 		lang?: Language;
 		/** false = 无引擎实例（视图已关闭/重建中） */
 		withEngine?: boolean;
+		/**
+		 * 官方设置「使用 \[\[Wikilinks\]\]」被关闭（底层 `vault.getConfig('useMarkdownLinks')`）。
+		 * 默认 false = 官方默认（写 `[[双链]]`）。
+		 */
+		useMarkdownLinks?: boolean;
 	} = {},
 ) {
 	const engine = makeEngine(options.activeNode ?? null, options.root ?? null);
@@ -238,10 +244,13 @@ function makeView(
 	const getResourcePath = vi.fn<(file: unknown) => string>(
 		(file: unknown) => `app://local/${(file as { path: string }).path}`,
 	);
+	const getConfig = vi.fn((key: string) =>
+		key === 'useMarkdownLinks' ? options.useMarkdownLinks === true : undefined,
+	);
 	const raw: RawViewStub = {
 		mindMap: options.withEngine === false ? null : engine,
 		lang: options.lang ?? 'zh',
-		app: { vault: { getResourcePath } } as unknown as App,
+		app: { vault: { getResourcePath, getConfig } } as unknown as App,
 		scheduleSave,
 	};
 	return {
@@ -252,6 +261,7 @@ function makeView(
 		render: engine.render,
 		scheduleSave,
 		getResourcePath,
+		getConfig,
 	};
 }
 
@@ -350,6 +360,11 @@ interface LinkChannelCase {
 	display: string;
 	/** attachment 通道的引擎字段值 */
 	url?: string;
+	/**
+	 * 期望写入通道的链接串（缺省 = 原样 `link`）。
+	 * 已解析到库内文件时会按官方「New link format」取路径（默认最短路径）。
+	 */
+	written?: string;
 }
 
 const LINK_CHANNEL_CASES: LinkChannelCase[] = [
@@ -372,6 +387,9 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		link: '[[归档/笔记#小节]]',
 		resolved: { path: '归档/笔记.md', extension: 'md' },
 		channel: 'wiki',
+		// 官方「New link format」默认最短路径：目录前缀去掉、`.md` 省略，
+		// 用户写的 `#区块` 保留（不是路径的一部分）
+		written: '[[笔记#小节]]',
 		// 可见文本取 linkpath 末段（区块引用保留在文本里），解析才用去掉 # 的 target
 		display: '笔记#小节',
 	},
@@ -468,10 +486,13 @@ describe('addLinkToActiveNode：链接通道分流（表驱动）', () => {
 			node,
 			testCase.display,
 		);
-		expect(render).toHaveBeenCalled();
+		// 渲染由 setNodeText（真实实现内部 `render()`）完成，**本模块不得再补一次**：
+		// 多一次就是整树重排白跑（2026-09-16 简化，见 applyDocWikiLink 注释）。
+		// 本文件里 setNodeText 是桩，故这里观察到的就是「模块自身没有渲染」。
+		expect(render).not.toHaveBeenCalled();
 
 		if (testCase.channel === 'wiki') {
-			expect(data.mdWikiLinkpath).toBe(testCase.link);
+			expect(data.mdWikiLinkpath).toBe(testCase.written ?? testCase.link);
 			expect(data.mdLinkText).toBe(testCase.display);
 			expect(data.attachmentUrl).toBeUndefined();
 		} else {
@@ -485,7 +506,7 @@ describe('addLinkToActiveNode：链接通道分流（表驱动）', () => {
 });
 
 describe('addLinkToActiveNode：库内解析入参', () => {
-	it('解析用去掉 #区块 的 target，通道写入仍用原始链接串', async () => {
+	it('解析用去掉 #区块 的 target；写入按官方 New link format 取最短路径', async () => {
 		const node = fakeNode();
 		const { view } = makeView({ activeNode: node });
 		resolveMock.mockReturnValue(fakeFile('归档/笔记.md', 'md'));
@@ -495,7 +516,8 @@ describe('addLinkToActiveNode：库内解析入参', () => {
 
 		// 区块引用不是路径的一部分，交给解析会找不到文件（退回非 .md 判定）
 		expect(resolveMock).toHaveBeenCalledWith('归档/笔记', view.app);
-		expect(dataOf(node).mdWikiLinkpath).toBe('[[归档/笔记#小节]]');
+		// 官方默认「最短路径」：目录前缀去掉、`.md` 省略；`#区块` 是用户意图，保留
+		expect(dataOf(node).mdWikiLinkpath).toBe('[[笔记#小节]]');
 	});
 
 	it('非双链的库内路径：整串交给解析，写通道时不做末段裁剪', async () => {
@@ -780,6 +802,36 @@ describe('addLinkToActiveNode：守卫、取消与自兜错误', () => {
 });
 
 describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () => {
+	it('官方关闭「使用 \\[\\[Wikilinks\\]\\]」：文档链接改写 md 形态 `[显示名](路径.md)`', () => {
+		const node = fakeNode();
+		const { view, execCommand } = makeView({ useMarkdownLinks: true });
+
+		applyDocWikiLink(view, node, '[[folder/笔记|别名]]', undefined);
+
+		// 走 hyperlink 通道（引擎原生链接图标）而非 mdWikiLinkpath（自绘文档页图标）
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.SET_NODE_HYPERLINK,
+			node,
+			'folder/笔记.md',
+		]);
+		const data = dataOf(node);
+		expect(data.mdLinkStyle).toBe('md');
+		expect(data.mdLinkText, '显示名 = 别名').toBe('别名');
+		expect(data.mdWikiLinkpath, '不写双链通道字段').toBeUndefined();
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '别名');
+	});
+
+	it('官方 Wikilinks 开启（默认）：仍是双链形态（行为不变）', () => {
+		const node = fakeNode();
+		const { view } = makeView();
+
+		applyDocWikiLink(view, node, '[[folder/笔记]]', undefined);
+
+		const data = dataOf(node);
+		expect(data.mdWikiLinkpath).toBe('[[folder/笔记]]');
+		expect(data.hyperlink).toBeUndefined();
+	});
+
 	it('applyDocWikiLink（完全空白节点）：覆盖为纯双链节点（便捷路径保留）', () => {
 		const node = fakeNode();
 		const { view, execCommand, scheduleSave } = makeView();
@@ -823,17 +875,22 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 
 	it('applyDocWikiLink（仅 extra 孤存：移除首图后残留 ![[b.png]]）→ 建为子节点、extra 不动（R4 修订）', () => {
 		// 场景：多图行移除首图（removeNodeImage 不清 extra）→ 节点 text / image /
-		// 链接字段全空、仅 mdExtraTokens 有内容。此前该形态被判「完全空白」而覆盖
+		// 链接字段全空、仅台账里有额外 token。此前该形态被判「完全空白」而覆盖
 		const node = fakeNode({
-			data: { text: '', mdExtraTokens: [{ raw: '![[b.png]]', kind: 'image' }] },
+			data: {
+				text: '',
+				mdSegments: [
+					{ kind: 'image', text: 'b.png', raw: '![[b.png]]', first: false },
+				],
+			},
 		});
 		const { view, execCommand, scheduleSave } = makeView();
 
 		applyDocWikiLink(view, node, '[[笔记]]', undefined);
 
 		const data = dataOf(node);
-		expect(data.mdExtraTokens, '额外 token 原样保留').toEqual([
-			{ raw: '![[b.png]]', kind: 'image' },
+		expect(data.mdSegments, '额外 token 原样保留（未被覆盖改写）').toEqual([
+			{ kind: 'image', text: 'b.png', raw: '![[b.png]]', first: false },
 		]);
 		expect(data.mdWikiLinkpath, '父节点未被覆盖为纯双链').toBeUndefined();
 		expect(setNodeTextMock).not.toHaveBeenCalled();
@@ -904,10 +961,90 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 				// basename 会被 Obsidian 去掉扩展名，回写必须用完整库内路径
 				mdAttachmentLinkpath: '附件/报告.pdf',
 				mdLinkStyle: 'wiki',
+				// PDF 可嵌入 → 写嵌入语法 `![[报告.pdf]]`（与 Obsidian 拖放一致）
+				mdEmbed: true,
 				isActive: false,
 			},
 		]);
 		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyMdLink（空白节点）：写 hyperlink 通道 + md 链接形态（[名](url)）', () => {
+		const node = fakeNode();
+		const { view, execCommand, scheduleSave, render } = makeView();
+
+		applyMdLink(view, node, 'file:///C:/x/%E6%8A%A5%E5%91%8A.pdf', '报告.pdf');
+
+		const data = dataOf(node);
+		// 与「添加链接」的 URL 分支同一命令（引擎同时维护 hyperlink 与链接图标状态）
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.SET_NODE_HYPERLINK,
+			node,
+			'file:///C:/x/%E6%8A%A5%E5%91%8A.pdf',
+		]);
+		// 带显示名的 md 链接形态（`mdLinkText` ≠ 地址 ⇒ 回写 `[名](url)`，不是 autolink）：
+		// 拖入系统文件按住 Ctrl/Option 时 Obsidian 写出的就是这种形态
+		expect(data.mdLinkStyle).toBe('md');
+		expect(data.mdLinkText).toBe('报告.pdf');
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '报告.pdf');
+		expect(markNodeNeedLayoutMock).toHaveBeenCalledWith(node);
+		// 重绘有两处来源，本模块**不补第三次**：① SET_NODE_HYPERLINK 命令在引擎侧
+		// 走 setNodeDataRender → reRender → render（本文件里 execCommand 是桩，
+		// 故观察不到）；② 有文本时 setNodeText 内部 render。故此处 render 为 0。
+		expect(render).not.toHaveBeenCalled();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyMdLink（已有内容）：链接建为子节点，父节点字段不动', () => {
+		const node = fakeNode({ data: { text: '正文' } });
+		const { view, execCommand, scheduleSave } = makeView();
+
+		applyMdLink(view, node, 'file:///D:/a%20b.pdf', 'a b.pdf');
+
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: 'a b.pdf',
+				hyperlink: 'file:///D:/a%20b.pdf',
+				mdLinkStyle: 'md',
+				mdLinkText: 'a b.pdf',
+				hyperlinkTitle: 'file:///D:/a%20b.pdf',
+				isActive: false,
+			},
+		]);
+		expect(dataOf(node).hyperlink, '父节点不被改写').toBeUndefined();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyMdLink：空白节点上的残留字段被清（回写不凭空多出旧引用）', () => {
+		// hasAnyContent 只认「文字 / 图片 / mdWikiLinkpath / attachmentUrl / hyperlink /
+		// 额外 token」——「移除引用」后残留的 mdAttachmentLinkpath / mdEmbed 不算内容，
+		// 故这类节点走**覆盖**路径，覆盖时必须把残渣一并清掉
+		const node = fakeNode({
+			data: { mdAttachmentLinkpath: '附件/旧.pdf', mdEmbed: true },
+		});
+		const { view } = makeView();
+
+		applyMdLink(view, node, 'file:///C:/x.pdf', 'x.pdf');
+
+		const data = dataOf(node);
+		expect(data.mdAttachmentLinkpath).toBeUndefined();
+		expect(data.mdEmbed).toBeUndefined();
+	});
+
+	it('applyNodeAttachment（不可嵌入的附件，如 zip）：写普通链接（不置 mdEmbed）', () => {
+		const node = fakeNode();
+		const file = fakeFile('附件/归档.zip', 'zip');
+		const { view } = makeView();
+
+		applyNodeAttachment(view, node, file);
+
+		const data = dataOf(node);
+		expect(data.attachmentUrl).toBe('app://local/附件/归档.zip');
+		// 不可嵌入 ⇒ 无 mdEmbed：回写为 `[[归档.zip]]`（Obsidian 对这类文件也只插链接）
+		expect(data.mdEmbed).toBeUndefined();
 	});
 
 	it('applyNodeAttachment（完全空白节点）：覆盖为附件链接（便捷路径保留）', () => {
@@ -922,6 +1059,8 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		expect(data.attachmentUrl).toBe('app://local/附件/报告.pdf');
 		expect(data.attachmentName).toBe('报告.pdf');
 		expect(data.mdAttachmentLinkpath).toBe('附件/报告.pdf');
+		// PDF 可嵌入 → 嵌入语法（保存后文件里是 `![[报告.pdf]]`）
+		expect(data.mdEmbed).toBe(true);
 		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '报告.pdf');
 		expect(execCommand, '空白节点不建子节点').not.toHaveBeenCalled();
 		expect(scheduleSave).toHaveBeenCalled();
@@ -947,6 +1086,7 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 				attachmentName: '报告.pdf',
 				mdAttachmentLinkpath: '附件/报告.pdf',
 				mdLinkStyle: 'wiki',
+				mdEmbed: true,
 				isActive: false,
 			},
 		]);
@@ -1017,14 +1157,15 @@ describe('removeNodeText / clearNodeHyperlink', () => {
 		]);
 	});
 
-	it('清除链接：额外 token 中的链接类一并移除、图片类保留（图片嵌入不是链接）', () => {
+	it('清除链接：台账里链接类的**额外**段被清、图片类与首链段保留', () => {
 		const node = fakeNode({
 			data: {
 				mdWikiLinkpath: '[[笔记]]',
 				mdLinkText: '笔记',
-				mdExtraTokens: [
-					{ raw: '[[笔记B]]', kind: 'link' },
-					{ raw: '![[图.png]]', kind: 'image' },
+				mdSegments: [
+					{ kind: 'link', text: '笔记', raw: '[[笔记]]', first: true },
+					{ kind: 'link', text: '笔记B', raw: '[[笔记B]]', first: false },
+					{ kind: 'image', text: '图.png', raw: '![[图.png]]', first: false },
 				],
 			},
 		});
@@ -1032,24 +1173,30 @@ describe('removeNodeText / clearNodeHyperlink', () => {
 
 		clearNodeHyperlink(view, node);
 
-		expect(dataOf(node).mdExtraTokens, 'link 类被清、image 类保留').toEqual([
-			{ raw: '![[图.png]]', kind: 'image' },
+		expect(
+			dataOf(node).mdSegments,
+			'链接类额外段被清；图片类（非链接，见 K9）与首链段保留',
+		).toEqual([
+			{ kind: 'link', text: '笔记', raw: '[[笔记]]', first: true },
+			{ kind: 'image', text: '图.png', raw: '![[图.png]]', first: false },
 		]);
 	});
 
-	it('清除链接：额外 token 全为链接类时字段被删除（不留空数组）', () => {
+	it('清除链接：额外段全为链接类时字段被删除（不留空数组）', () => {
 		const node = fakeNode({
 			data: {
 				mdWikiLinkpath: '[[笔记]]',
 				mdLinkText: '笔记',
-				mdExtraTokens: [{ raw: '[[笔记B]]', kind: 'link' }],
+				mdSegments: [
+					{ kind: 'link', text: '笔记B', raw: '[[笔记B]]', first: false },
+				],
 			},
 		});
 		const { view } = makeView();
 
 		clearNodeHyperlink(view, node);
 
-		expect(dataOf(node).mdExtraTokens).toBeUndefined();
+		expect(dataOf(node).mdSegments).toBeUndefined();
 	});
 });
 

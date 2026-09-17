@@ -11,7 +11,7 @@
  * （与 Obsidian 内部一致），最后以共享缓存索引兜底 URL 编码名/路径后缀等
  * 历史形态。
  */
-import { App, FileSystemAdapter, TFile, normalizePath } from 'obsidian';
+import { App, FileSystemAdapter, TFile, TFolder, normalizePath } from 'obsidian';
 import { isAppResourceUrl, isRemoteOrDataUrl } from '../domain/url';
 import { fileLookupIndex, lookupIndexedFile } from './file-lookup';
 
@@ -231,6 +231,42 @@ export function resolveDroppedFile(
 	}
 
 	return null;
+}
+
+/**
+ * 文件夹下的**全部文件**（含子目录）——官方 Canvas「拖入文件夹 = 加入其中所有文件」
+ * （`en/Plugins/Canvas.md`）的选文件口径。
+ *
+ * 前缀按 `folder.path + '/'` 构造，**根文件夹必须特判**：vault 根的 `TFolder.path`
+ * 是 `'/'`，直接拼接得到 `'//'`，整库拖入会被当成空文件夹（一个文件都匹配不到）。
+ * 同理 `'/'` 前缀本身也只匹配库根下的直接文件。
+ */
+export function filesUnderFolder(
+	files: readonly TFile[],
+	folderPath: string,
+): TFile[] {
+	const prefix = folderPath === '' || folderPath === '/' ? '' : `${folderPath}/`;
+	return files.filter((file) => file.path.startsWith(prefix));
+}
+
+/**
+ * 从拖拽事件中解析被拖入的**文件夹**（官方 Canvas：拖入文件夹 = 加入其中
+ * 所有文件，`en/Plugins/Canvas.md`「Add cards from folders」）。
+ *
+ * 数据源与 `resolveDroppedFile` 同口径（`text/plain` 优先）：文件浏览器拖出的
+ * 文件夹与文件是同一种载荷，只有路径指向的类型不同，故按 `TFolder` 收窄判定；
+ * 解析为文件（或解析不出）时返回 null，由调用方回落到文件/外部文件通道。
+ */
+export function resolveDroppedFolder(
+	dataTransfer: DataTransfer,
+	app: App,
+): TFolder | null {
+	const plain = dataTransfer.getData('text/plain').trim();
+	if (!plain) {
+		return null;
+	}
+	const target = app.vault.getAbstractFileByPath(normalizePath(plain));
+	return target instanceof TFolder ? target : null;
 }
 
 /**

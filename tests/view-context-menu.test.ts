@@ -116,6 +116,7 @@ const {
 	resetZoomMock,
 	getNodeDataStringMock,
 	startNodeTextEditMock,
+	editNodeTextMock,
 	clearNodeHyperlinkMock,
 	copyNodeMock,
 	pasteNodeAsChildMock,
@@ -132,6 +133,7 @@ const {
 	resetZoomMock: vi.fn<(mindMap: unknown) => void>(),
 	getNodeDataStringMock: vi.fn<(node: unknown, key: string) => string>(),
 	startNodeTextEditMock: vi.fn<(mindMap: unknown, node: unknown) => void>(),
+	editNodeTextMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	clearNodeHyperlinkMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	copyNodeMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	pasteNodeAsChildMock: vi.fn<(view: unknown, node: unknown) => void>(),
@@ -164,6 +166,8 @@ vi.mock('../src/features/view-node-actions', () => ({
 	clearNodeHyperlink: clearNodeHyperlinkMock,
 	copyNode: copyNodeMock,
 	deleteActiveNode: deleteActiveNodeMock,
+	// 编辑文本的共用入口（默认节点走引擎编辑框、自绘节点走插件弹窗）
+	editNodeText: editNodeTextMock,
 	pasteNodeAsChild: pasteNodeAsChildMock,
 	removeNodeImage: removeNodeImageMock,
 	removeNodeText: removeNodeTextMock,
@@ -321,6 +325,86 @@ describe('setupContextMenu（注册）', () => {
 	});
 });
 
+describe('链接类动作（对齐 Obsidian 阅读视图的链接右键）', () => {
+	const writeText = vi.fn<(text: string) => Promise<void>>(() =>
+		Promise.resolve(),
+	);
+
+	beforeEach(() => {
+		writeText.mockClear();
+		// node 环境无剪贴板：整体替换 navigator（Node 自带 navigator 为只读 getter）
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	/** 打开节点菜单（与下方矩阵同款路径：引擎 node_contextmenu 事件） */
+	function openMenu(data: Record<string, unknown>) {
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		harness.binder.fireEngine(
+			'node_contextmenu',
+			fakeContextMenuEvent(null),
+			fakeNode(data),
+		);
+		return lastMenu();
+	}
+
+	it('「复制链接」给**文件里的写法**：md 形态含 [显示名](路径)（此前只给裸路径）', () => {
+		const menu = openMenu({
+			text: '说明书',
+			hyperlink: '目录/说明.md',
+			mdLinkStyle: 'md',
+			mdLinkText: '说明书',
+		});
+
+		menu.click(zh('menu.copyLink'));
+
+		expect(writeText).toHaveBeenCalledTimes(1);
+		expect(writeText).toHaveBeenCalledWith('[说明书](目录/说明.md)');
+	});
+
+	it('「复制链接」wiki 双链：原样复制 [[linkpath|别名]]', () => {
+		const menu = openMenu({
+			text: '别名',
+			mdWikiLinkpath: '[[笔记|别名]]',
+			mdLinkStyle: 'wiki',
+			mdLinkText: '别名',
+		});
+
+		menu.click(zh('menu.copyLink'));
+
+		expect(writeText).toHaveBeenCalledWith('[[笔记|别名]]');
+	});
+
+	it('「复制链接」URL 通道：复制 autolink 写法 <…>（粘回笔记即成链接）', () => {
+		const menu = openMenu({ text: '站点', hyperlink: 'https://example.com' });
+
+		menu.click(zh('menu.copyLink'));
+
+		expect(writeText).toHaveBeenCalledWith('<https://example.com>');
+	});
+
+	it('「在新标签页打开链接」把原始通道值交给 openHyperlink（mode=tab）', () => {
+		const harness = makeView();
+		const openHyperlink = vi.fn<(link: string, mode?: string) => void>();
+		(harness.raw as { openHyperlink?: unknown }).openHyperlink = openHyperlink;
+		setupContextMenu(harness.view);
+		const node = fakeNode({ text: '别名', mdWikiLinkpath: '[[笔记|别名]]' });
+		harness.binder.fireEngine(
+			'node_contextmenu',
+			fakeContextMenuEvent(null),
+			node,
+		);
+
+		lastMenu().click(zh('menu.openLinkNewTab'));
+
+		expect(openHyperlink).toHaveBeenCalledWith('[[笔记|别名]]', 'tab');
+	});
+});
+
 describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => {
 	/** 打开节点菜单（右键命中由引擎 node_contextmenu 事件触发） */
 	function openNodeMenu(node: unknown) {
@@ -339,6 +423,8 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		edit: [zh('menu.editText'), zh('menu.addChild'), zh('menu.addSibling')],
 		clip: [zh('menu.copyNode'), zh('menu.pasteAsChild')],
 		link: [zh('menu.addLink')],
+		/** 有链接时追加的链接类动作（对齐 Obsidian 阅读视图的链接右键） */
+		linkActions: [zh('menu.openLinkNewTab'), zh('menu.copyLink')],
 		clear: [zh('modal.link.clear')],
 		imageBtn: [zh('menu.addImage')],
 		imageBlock: [zh('menu.viewImageFullscreen'), zh('menu.removeImage')],
@@ -380,7 +466,15 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		{
 			name: '带文档链接（mdWikiLinkpath 通道）',
 			data: { text: '笔记', mdWikiLinkpath: '[[笔记]]', mdLinkStyle: 'wiki' },
-			expected: [...G.edit, ...G.clip, ...G.link, ...G.clear, ...G.imageBtn, ...G.del],
+			expected: [
+				...G.edit,
+				...G.clip,
+				...G.link,
+				...G.linkActions,
+				...G.clear,
+				...G.imageBtn,
+				...G.del,
+			],
 			hasClear: true,
 			hasImageBlock: false,
 			hasRemoveText: false,
@@ -388,7 +482,15 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		{
 			name: '带外链（引擎 hyperlink 通道）',
 			data: { text: '示例', hyperlink: 'https://example.com' },
-			expected: [...G.edit, ...G.clip, ...G.link, ...G.clear, ...G.imageBtn, ...G.del],
+			expected: [
+				...G.edit,
+				...G.clip,
+				...G.link,
+				...G.linkActions,
+				...G.clear,
+				...G.imageBtn,
+				...G.del,
+			],
 			hasClear: true,
 			hasImageBlock: false,
 			hasRemoveText: false,
@@ -399,7 +501,15 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				mdWikiLinkpath: '[[笔记]]',
 				hyperlink: 'https://example.com',
 			},
-			expected: [...G.edit, ...G.clip, ...G.link, ...G.clear, ...G.imageBtn, ...G.del],
+			expected: [
+				...G.edit,
+				...G.clip,
+				...G.link,
+				...G.linkActions,
+				...G.clear,
+				...G.imageBtn,
+				...G.del,
+			],
 			hasClear: true,
 			hasImageBlock: false,
 			hasRemoveText: false,
@@ -461,6 +571,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				...G.edit,
 				...G.clip,
 				...G.link,
+				...G.linkActions,
 				...G.clear,
 				...G.imageBtn,
 				...G.imageBlock,
@@ -551,13 +662,15 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		expect(menu.item(zh('menu.deleteNode')).icon).toBe('trash-2');
 	});
 
-	it('编辑文本：委托 startNodeTextEdit(引擎, 节点)', () => {
+	it('编辑文本：委托共用编辑入口 editNodeText(视图, 节点)（默认节点→引擎框、自绘节点→弹窗）', () => {
 		const node = fakeNode({ text: '主题' });
 		const { menu, view, execCommand } = openNodeMenu(node);
 		menu.click(zh('menu.editText'));
-		expect(startNodeTextEditMock).toHaveBeenCalledTimes(1);
-		expect(startNodeTextEditMock).toHaveBeenCalledWith(view.mindMap, node);
+		expect(editNodeTextMock).toHaveBeenCalledTimes(1);
+		expect(editNodeTextMock).toHaveBeenCalledWith(view, node);
 		// 引擎无 ENTER_TEXT_EDIT 命令：文本编辑只能经官方 node_dblclick 事件进入
+		// （默认文本节点）或插件弹窗（自绘节点）——菜单层不再直接碰引擎
+		expect(startNodeTextEditMock).not.toHaveBeenCalled();
 		expect(execCommand).not.toHaveBeenCalled();
 	});
 
@@ -643,11 +756,12 @@ describe('画布空白右键菜单', () => {
 		return { ...harness, event };
 	}
 
-	it('未命中节点：画布菜单条目与顺序（粘贴/重置缩放/适应画布/整理/撤销/重做）', () => {
+	it('未命中节点：画布菜单条目与顺序（新建节点/粘贴/重置缩放/适应画布/整理/撤销/重做）', () => {
 		const { event } = fireCanvas(null);
 		const menu = lastMenu();
 		expect(event.preventDefault).toHaveBeenCalledTimes(1);
 		expect(menu.titles()).toEqual([
+			zh('menu.newNode'),
 			zh('menu.pasteNode'),
 			zh('menu.resetZoom'),
 			zh('command.fitCanvas'),

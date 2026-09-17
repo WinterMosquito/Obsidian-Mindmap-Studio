@@ -36,6 +36,7 @@ import {
 	setDragPrevTarget,
 	toCanvasPoint,
 } from '../engine/mindmap';
+import { duplicateAfterAltDrag } from './view-drag-duplicate';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 
@@ -59,6 +60,13 @@ interface ViewPoint {
 
 interface AssistSession {
 	draggedNode: MindMapNode;
+	/**
+	 * 拖拽前的父节点（`Alt` 复制时判定「是否真的换了父」，见
+	 * view-drag-duplicate；不换父则不撤销历史）。
+	 */
+	originParent: MindMapNode | null;
+	/** 最近一次 move 的 `Alt` 状态（mac 为 Option）：松手时决定移动还是复制 */
+	altHeld: boolean;
 	/** 被拖节点及其子孙的 uid 集（候选排除集） */
 	excludeUids: Set<string>;
 	/** 当前高亮/外借的节点（跨 move 跟踪，变更时切换类名） */
@@ -127,7 +135,7 @@ function collectExcludeUids(dragged: MindMapNode): Set<string> {
 }
 
 /** 高亮/取消高亮节点（引擎重渲染会重建 group，类名随帧维护） */
-function setHighlight(view: MindMapViewContext, session: AssistSession, node: MindMapNode | null): void {
+function setHighlight(session: AssistSession, node: MindMapNode | null): void {
 	if (session.lentNode && session.lentNode !== node) {
 		getNodeGroupEl(session.lentNode)?.classList.remove('mindmap-drag-target');
 	}
@@ -150,7 +158,7 @@ function endSession(view: MindMapViewContext): void {
 		session.rafId = null;
 	}
 	session.pendingEvent = null;
-	setHighlight(view, session, null);
+	setHighlight(session, null);
 	session.win.removeEventListener('mousemove', session.moveListener);
 	session.win.removeEventListener('mouseup', session.upListener);
 }
@@ -185,7 +193,7 @@ function handleMove(view: MindMapViewContext, session: AssistSession, event: Mou
 	}
 	// 引擎本轮已有精确命中（挂子/前后插兄弟）：让位并撤高亮
 	if (drag.overlapNode || drag.prevNode || drag.nextNode) {
-		setHighlight(view, session, null);
+		setHighlight(session, null);
 		return;
 	}
 	const point = toCanvasPoint(mindMap, event.clientX, event.clientY);
@@ -241,10 +249,10 @@ function handleMove(view: MindMapViewContext, session: AssistSession, event: Mou
 	}
 	const nearest = pickNearestNode(anchors, point, DRAG_TARGET_RADIUS_PX, (anchor) => anchor.point);
 	if (!nearest) {
-		setHighlight(view, session, null);
+		setHighlight(session, null);
 		return;
 	}
-	setHighlight(view, session, nearest.node);
+	setHighlight(session, nearest.node);
 	if (nearest.kind === 'after') {
 		setDragOverlapTarget(mindMap, null);
 		setDragPrevTarget(mindMap, nearest.node);
@@ -274,12 +282,17 @@ export function setupDragTargetAssist(view: MindMapViewContext): void {
 		}
 		const session: AssistSession = {
 			draggedNode,
+			originParent: draggedNode.parent ?? null,
+			altHeld: false,
 			excludeUids: collectExcludeUids(draggedNode),
 			lentNode: null,
 			pendingEvent: null,
 			rafId: null,
 			win: view.containerEl.win,
 			moveListener: (event: MouseEvent) => {
+				// Alt（mac: Option）状态按**最近一次移动**记：官方 Canvas 以松手时
+				// 的按键为准，拖拽中途按下/松开都按最后一次计
+				session.altHeld = event.altKey;
 				// rAF 合帧：两次渲染帧之间的高频 move 只保留最新一次判定——
 				// 判定是全树锚点重建（O(n)），按帧率而非事件频率计价
 				//（大图 + 高回报率鼠标下事件频率可达帧率的数倍）
@@ -305,6 +318,11 @@ export function setupDragTargetAssist(view: MindMapViewContext): void {
 	});
 	// 引擎在 onMouseup 消费落点之后发出 node_dragend → 此处收尾安全
 	view.engineEvents.onEngine(mindMap, 'node_dragend', () => {
+		const session = sessions.get(view);
+		// Alt 拖拽 = 复制（官方 Canvas）：先改写再收尾（会话内含被拖节点与原父）
+		if (session?.altHeld) {
+			duplicateAfterAltDrag(view, session.draggedNode, session.originParent);
+		}
 		endSession(view);
 	});
 }

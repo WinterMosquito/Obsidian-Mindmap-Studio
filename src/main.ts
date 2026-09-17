@@ -10,11 +10,12 @@
  * mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
  */
 import { Plugin, TFile, TFolder } from 'obsidian';
-import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS } from './core/constants';
+import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, SETTINGS_APPLY_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS } from './core/constants';
 import { createDebouncer } from './core/concurrency';
 import {
 	MindMapStudioSettings,
 	MindMapStudioSettingTab,
+	diffLiveRefreshKeys,
 	sanitizeSettings,
 } from './settings';
 import { MindMapView } from './features/view';
@@ -76,6 +77,19 @@ export default class MindMapStudioPlugin extends Plugin {
 	 * 生效（sanitizeSettings 不经防抖），仅磁盘写入合并突发。
 	 */
 	private readonly settingsPersistDebouncer = createDebouncer(SETTINGS_PERSIST_DEBOUNCE_MS);
+	/**
+	 * 设置**应用到视图**的防抖：应用一轮会重建每个打开的视图的引擎
+	 * （`EngineController.refresh`：整树 structuredClone + 全量重渲染），
+	 * 而 LIVE_REFRESH 键里含滑块（性能阈值 step 100）——不防抖就是拖一次
+	 * 滑块重建几十轮引擎。2026-09-17 起按键差集分流（见 K59）：主题原地生效、
+	 * 默认布局/默认连线样式不再重建，只有「引擎创建期通道」的键才真重建。
+	 */
+	private readonly settingsApplyDebouncer = createDebouncer(SETTINGS_APPLY_DEBOUNCE_MS);
+	/**
+	 * 上次**已应用**到视图的设置快照：`applySettingsToViewsNow` 据此算出本次真正
+	 * 变化的键（`diffLiveRefreshKeys`），让视图走最小刷新路径（见 K59）。
+	 */
+	private appliedSettingsSnapshot: MindMapStudioSettings | null = null;
 	/**
 	 * 视图状态（布局/视口，按文件路径）——与设置合并写 data.json。
 	 * persist 回调返回写盘 Promise（write 内部吞错不会拒绝），
@@ -185,7 +199,6 @@ export default class MindMapStudioPlugin extends Plugin {
 		// 打开方式记忆：偏好为 mindmap 的 .mindmap.md 以 markdown 视图被激活时，
 		// 自动切入导图视图（重新打开仍为思维导图）。
 		const restorer = new OpenAsPreferenceRestorer(
-			this.app,
 			this.app.workspace,
 			this.viewState,
 			(view) => view instanceof MindMapView,
@@ -241,6 +254,8 @@ export default class MindMapStudioPlugin extends Plugin {
 			this.settingsPersistDebouncer.cancel();
 			void this.saveSettings();
 		}
+		// 挂起的「设置应用到视图」直接丢弃：此刻视图正在关闭，重建引擎无意义
+		this.settingsApplyDebouncer.cancel();
 		this.statusBarEl = null;
 	}
 
@@ -287,13 +302,33 @@ export default class MindMapStudioPlugin extends Plugin {
 		});
 	}
 
-	/** 设置变更后应用到所有打开的思维导图视图 */
+	/**
+	 * 设置变更后应用到所有打开的思维导图视图（**防抖合并突发**：拖一次滑块只
+	 * 重建一轮引擎；内存设置已即时生效，落盘另有 settingsPersistDebouncer）。
+	 *
+	 * 取「叶子列表」放在回调里：防抖窗口内打开/关闭的视图按**触发时刻**的实际
+	 * 集合处理，不会给已关闭的视图补刷新、也不会漏掉刚打开的视图。
+	 */
 	applySettingsToViews(): void {
+		this.settingsApplyDebouncer.schedule(() => {
+			this.applySettingsToViewsNow();
+		});
+	}
+
+	/** 立即应用到所有打开的思维导图视图（防抖回调本体；测试与卸载路径可直接调） */
+	applySettingsToViewsNow(): void {
+		// 差集 = 本次真正变化的 LIVE_REFRESH 键：视图据此走最小刷新路径
+		//（主题原地生效；默认布局/默认连线样式对已打开的图本就不生效，跳过重建）
+		const changedKeys = diffLiveRefreshKeys(
+			this.appliedSettingsSnapshot,
+			this.settings,
+		);
+		this.appliedSettingsSnapshot = { ...this.settings };
 		this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
 			const view = leaf.view;
 			if (view instanceof MindMapView) {
 				view.refreshToolbar();
-				view.refreshMindMap();
+				view.applySettingsChange(changedKeys);
 			}
 		});
 	}

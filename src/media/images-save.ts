@@ -1,6 +1,10 @@
 /**
- * 图片保存：图片文件入库（遵循附件存放位置规则）、文件名清理。
+ * 外部文件入库（遵循「新附件默认位置」规则）、文件名清理。
  * 从 images.ts 拆出；地址解析回库内文件统一走 links-resolve.resolvePathToFile。
+ *
+ * 服务两个入口：`saveImageToVault`（粘贴/拖入图片）与 `saveAttachmentToVault`
+ * （拖入系统文件——**任意类型**，含无扩展名者）。两者共用同一条串行队列与落点规则：
+ * 落点一律由 `fileManager.getAvailablePathForAttachment` 决定（与 Obsidian 一致）。
  */
 import { App, Notice, TFile, normalizePath } from 'obsidian';
 import { isImageExtension } from '../core/constants';
@@ -105,32 +109,62 @@ export function buildPastedImageName(now = new Date()): string {
 export function saveImageToVault(
 	options: SaveImageOptions,
 ): Promise<TFile | null> {
-	return saveQueue(() => saveImageToVaultInner(options));
+	return saveQueue(() => saveToVaultInner(options, 'image'));
 }
 
-async function saveImageToVaultInner({
-	app,
-	sourcePath,
-	file,
-	maxSizeMB = 10,
-	preferredName,
-	filename,
-	lang = 'zh',
-}: SaveImageOptions): Promise<TFile | null> {
-	const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+/**
+ * 将**任意类型**的拖入文件保存到库的附件目录（图片是同一条通道的特例）。
+ *
+ * 与图片入库**共用同一串行队列**：队列保证的是「文件名选择 + 写入」的互斥原子性，
+ * 与类型无关——分两条队列反而会让同名图片/附件并发写同一目标（TOCTOU）。
+ * **不做类型白名单**（2026-09-15）：解析侧对「非文档扩展名」一视同仁按附件处理
+ * （`wikilinkTargetIsAttachment`），Obsidian 拖放同样导入任意文件，白名单比两侧都窄
+ * 只会造成「拖入被拒、手写却行」。大小上限只对图片生效（`MAX_IMAGE_SIZE_MB` 是
+ * 粘贴/拖入图片的历史约定），其它附件不限——Obsidian 导入系统文件同样不限大小。
+ */
+export function saveAttachmentToVault(
+	options: SaveImageOptions,
+): Promise<TFile | null> {
+	return saveQueue(() => saveToVaultInner(options, 'attachment'));
+}
+
+/** 入库类型：image＝图片专用校验；attachment＝任意可导入类型（拖入系统文件） */
+type SaveKind = 'image' | 'attachment';
+
+async function saveToVaultInner(
+	{
+		app,
+		sourcePath,
+		file,
+		maxSizeMB = 10,
+		preferredName,
+		filename,
+		lang = 'zh',
+	}: SaveImageOptions,
+	kind: SaveKind,
+): Promise<TFile | null> {
+	// 扩展名取末段 `.` 之后；无扩展名（`Makefile`）或 `.hidden` 形态 → 空串。
+	// **不要**用 `split('.').pop()`：无扩展名时它返回整个文件名（`Makefile` → `makefile`），
+	// 拼出的落点会变成 `Makefile.makefile`。
+	const dot = file.name.lastIndexOf('.');
+	const ext = dot > 0 ? file.name.slice(dot + 1).toLowerCase() : '';
 	const isImage = file.type.startsWith('image/') || isImageExtension(ext);
-	if (!isImage) {
-		new Notice(t(lang, 'attachment.chooseImage'));
-		return null;
+	if (kind === 'image') {
+		if (!isImage) {
+			new Notice(t(lang, 'attachment.chooseImage'));
+			return null;
+		}
+		const maxBytes = maxSizeMB * 1024 * 1024;
+		if (file.size > maxBytes) {
+			const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+			new Notice(
+				tf(lang, 'attachment.tooLarge', { size: sizeMB, max: maxSizeMB }),
+			);
+			return null;
+		}
 	}
-	const maxBytes = maxSizeMB * 1024 * 1024;
-	if (file.size > maxBytes) {
-		const sizeMB = (file.size / 1024 / 1024).toFixed(1);
-		new Notice(
-			tf(lang, 'attachment.tooLarge', { size: sizeMB, max: maxSizeMB }),
-		);
-		return null;
-	}
+	/** 名称兜底（原名被清理/截断为空时）：图片与非图片各自的语义化兜底名 */
+	const fallbackName = isImage ? 'image' : 'attachment';
 	try {
 		// 文件名选择与乱码修复：
 		// 1. filename 显式命名最高优先（粘贴图片的 Obsidian 核心约定命名）；
@@ -147,13 +181,13 @@ async function saveImageToVaultInner({
 				? sanitizeFileName(truncateByCodePoint(filename, 50))
 				: sanitizeFileName(
 						truncateByCodePoint(
-							safeName.replace(/\.[^.]+$/, '') || 'image',
+							safeName.replace(/\.[^.]+$/, '') || fallbackName,
 							50,
 						),
-					)) || 'image';
+					)) || fallbackName;
 		// 文件名保持原名（不加时间戳/随机后缀）；
 		// 遵循系统「附件存放位置」设置：必须传入 sourcePath。
-		const fileName = `${baseName}.${ext}`;
+		const fileName = ext ? `${baseName}.${ext}` : baseName;
 		let availablePath = normalizePath(
 			await app.fileManager.getAvailablePathForAttachment(
 				fileName,

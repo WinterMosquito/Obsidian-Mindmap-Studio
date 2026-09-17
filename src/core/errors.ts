@@ -10,7 +10,7 @@ import { Notice } from 'obsidian';
 import { t, type Language, type TranslationKey } from './i18n';
 
 /** 从 unknown 错误中提取可展示消息（Notice / console 输出用） */
-export function errorMessage(error: unknown): string {
+function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 

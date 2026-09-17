@@ -78,5 +78,3 @@ parseForESLint(text) {
 		};
 	},
 };
-
-export default plainTextParser;

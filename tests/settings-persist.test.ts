@@ -17,6 +17,7 @@ import MindMapStudioPlugin from '../src/main';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import {
 	SETTINGS_PERSIST_DEBOUNCE_MS,
+	SETTINGS_APPLY_DEBOUNCE_MS,
 	VIEW_STATE_PERSIST_MS,
 } from '../src/core/constants';
 
@@ -247,6 +248,61 @@ describe('scheduleSettingsPersist（滑块突发合并）', () => {
 		expect(h.saved[0]?.['language']).toBe('zh');
 		expect(h.saved[0]?.['exportScale']).toBe(DEFAULT_SETTINGS.exportScale);
 		expect(h.saved[0]?.['performanceThreshold']).toBe(2000);
+	});
+});
+
+describe('applySettingsToViews（重建引擎的突发合并）', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/**
+	 * 为什么钉死：应用一轮 = 每个打开的视图**销毁并重建引擎 + 全量重渲染 +
+	 * 工具栏重建**（EngineController.refresh），而 LIVE_REFRESH 键里含滑块
+	 * （performanceThreshold，step 100）——不防抖就是拖一次滑块重建几十轮。
+	 */
+	it('滑块连续变更（跨多个窗口）只应用一次；窗口未到不应用', async () => {
+		const h = makeHarness();
+		await h.plugin.loadSettings();
+		// 观测面：应用一轮就会查询活动叶子（`applySettingsToViewsNow` 的第一步）。
+		// 用空叶子列表即可——本用例只验证「应用了几轮」，不验证视图刷新细节。
+		const getLeaves = vi.fn(() => [] as unknown[]);
+		(h.plugin as unknown as { app: unknown }).app = {
+			workspace: { getLeavesOfType: getLeaves },
+		};
+
+		// 19 档滑块，每档 40ms（总跨度 720ms > 一个 250ms 窗口）
+		for (let i = 0; i < 19; i++) {
+			h.plugin.settings.performanceThreshold = 100 + i * 100;
+			h.plugin.applySettingsToViews();
+			if (i < 18) {
+				await vi.advanceTimersByTimeAsync(40);
+			}
+		}
+		// 最后一次触发后，窗口未走完不得应用（否则每档都重建一轮引擎）
+		await vi.advanceTimersByTimeAsync(SETTINGS_APPLY_DEBOUNCE_MS - 1);
+		expect(getLeaves).not.toHaveBeenCalled();
+
+		await vi.advanceTimersByTimeAsync(1);
+		expect(getLeaves).toHaveBeenCalledTimes(1);
+	});
+
+	it('onunload 丢弃挂起的应用（视图正在关闭，重建引擎无意义）', async () => {
+		const h = makeHarness();
+		await h.plugin.loadSettings();
+		const getLeaves = vi.fn(() => [] as unknown[]);
+		(h.plugin as unknown as { app: unknown }).app = {
+			workspace: { getLeavesOfType: getLeaves },
+		};
+
+		h.plugin.applySettingsToViews();
+		h.plugin.onunload();
+		await vi.advanceTimersByTimeAsync(SETTINGS_APPLY_DEBOUNCE_MS + 50);
+
+		expect(getLeaves).not.toHaveBeenCalled();
 	});
 });
 

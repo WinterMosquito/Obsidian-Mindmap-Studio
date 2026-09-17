@@ -31,6 +31,12 @@ const ZH = {
 	'command.openAsMarkdown': '以 Markdown 打开',
 	'command.backToMarkdown': '切换回 Markdown',
 	'command.splitLinksAll': '拆分文档内全部混排双链',
+	'modal.text.titleRaw': '编辑节点原文（Markdown）',
+	'modal.text.hintRaw':
+		'这里就是文件里的那一行：双链 `[[…]]`、URL、`**粗体**` 等语法原样保存，节点内渲染为可点文本 / 样式。多行请直接换行（只有首行承载链接语法）。',
+	'modal.text.preview': '节点将显示为：',
+	'nodeTextTruncated':
+		'节点文本过长，此处仅显示开头部分；完整内容仍保存在文件中，双击节点可查看或编辑',
 	'rename.titleConflict': '已存在同名文件，无法按中心节点重命名',
 	'rename.titleFailed': '按中心节点重命名文件失败',
 
@@ -62,6 +68,9 @@ const ZH = {
 	'menu.copyNode': '复制节点',
 	'menu.pasteAsChild': '粘贴为子节点',
 	'menu.addLink': '添加链接',
+	// 与 Obsidian 阅读视图「链接右键」同款动作（官方 Canvas 亦有 Open in browser）
+	'menu.openLinkNewTab': '在新标签页打开链接',
+	'menu.copyLink': '复制链接',
 	'menu.addImage': '添加图片',
 	'menu.viewImageFullscreen': '全屏查看图片',
 	'menu.removeImage': '移除图片',
@@ -89,26 +98,33 @@ const ZH = {
 	'common.imageSavedTo': '图片已保存到：',
 	'common.pasteImageFailed': '粘贴图片失败：',
 	'common.insertLinkFailed': '添加链接失败：',
+	'common.linkCopied': '链接已复制',
+	'common.clipboardError': '无法访问剪贴板',
 	'common.insertImageFailed': '添加图片失败：',
 	'common.dropFailed': '处理拖入文件失败：',
 	'common.imageSetOnNode': '已设置节点图片：',
 	'common.linkedTo': '已将节点链接到',
 	'common.nodeCreatedAndLinked': '已创建节点并链接到',
-	'common.cannotPreview': '无法在 Obsidian 中预览该文件类型',
 	'common.cannotOpen': '无法打开该文件类型',
+	// 官方「自动更新内部链接」关闭时的告知：链接仍指向旧位置（成为未解析链接）
+	'common.linksNotUpdatedOnRename':
+		'「{name}」已重命名：本图有指向它的引用未更新（已关闭「自动更新内部链接」，引用现为未解析链接）',
+	'common.linksNotUpdatedOnDelete':
+		'「{name}」已删除：本图有指向它的引用未清理（已关闭「自动更新内部链接」，引用现为未解析链接）',
+	// 官方 Canvas：双击画布空白新建卡片 / 空白右键「新建节点」
+	'menu.newNode': '新建节点',
 
 	// ===== 拖拽/导入 =====
-	'common.selectNodeBeforeDrop': '请先选择一个节点，再拖入图片',
-	'common.onlySupportedFiles':
-		'不支持的文件类型（仅支持笔记、图片与可链接的附件）',
-	'common.onlyImagesSupported': '外部拖入仅支持图片文件',
-	'common.noImagesDropped': '未识别到图片文件',
+	'common.selectNodeBeforeDrop': '请先选择一个节点，再拖入文件',
+	'common.noFilesDropped': '未识别到可导入的文件',
 	'common.importing': '正在导入',
-	'common.imagesToVault': '张图片到仓库中…',
+	'common.filesToVault': '个文件到仓库中…',
 	'common.imported': '已导入',
-	'common.imagesStored': '张图片（存放路径遵循「附件默认存放路径」设置）',
-	'common.imagesPlaced': '1 张挂到所选节点，其余各新建为子节点',
-	'common.importImageFailed': '部分图片导入失败：',
+	'common.filesStored': '个文件（存放路径遵循「附件默认存放路径」设置）',
+	'common.filesPlaced': '1 个挂到所选节点，其余各新建为子节点',
+	'common.importFileFailed': '部分文件导入失败：',
+	'common.absoluteLinkInserted':
+		'已插入指向原文件位置的绝对链接（未复制进仓库）',
 
 	// ===== 弹窗 - 链接 =====
 	'modal.link.title': '设置节点链接',
@@ -132,6 +148,11 @@ const ZH = {
 	'modal.image.clear': '清除图片',
 	'modal.image.internalPath': '仓库路径：',
 	'modal.image.address': '图片 URL：',
+
+	// ===== 弹窗 - 节点文本（自绘节点的编辑入口）=====
+	'modal.text.title': '编辑节点文本',
+	'modal.text.hint':
+		'节点文本 = 写回文件的内容，可含 [[双链]]、[链接](url)、图片与 **轻标记**（选中节点双击或按 F2 打开）',
 
 	// ===== 弹窗 - 命名 =====
 	'modal.name.folder': '文件夹：',
@@ -164,6 +185,9 @@ const ZH = {
 	'settings.autoSplitMixedLinks': '自动拆分混排双链',
 	'settings.autoSplitMixedLinksDesc':
 		'被编辑的节点若含「双链 + 描述文字」，自动把文档/附件双链拆分为子节点（图片与外链不动）',
+	'settings.autoUpdateLinks': '自动更新内部链接',
+	'settings.autoUpdateLinksDesc':
+		'重命名 / 删除库内文件时，自动更新导图节点里的链接与附件引用（对应官方设置「自动更新内部链接」）。关闭后：重命名不再改写链接（会变成未解析链接），删除也不再清理引用',
 	'settings.language': '语言',
 	'settings.languageDesc': '界面语言',
 
@@ -230,6 +254,12 @@ const EN: Record<TranslationKey, string> = {
 	'command.openAsMarkdown': 'Open as Markdown',
 	'command.backToMarkdown': 'Switch to Markdown',
 	'command.splitLinksAll': 'Split all mixed links in document',
+	'modal.text.titleRaw': 'Edit node source (Markdown)',
+	'modal.text.hintRaw':
+		'This is the actual line from the file: wikilink `[[…]]`, URL and `**bold**` syntax are kept verbatim and rendered as clickable text / styles inside the node. Add newlines for extra lines (only the first line carries link syntax).',
+	'modal.text.preview': 'The node will show:',
+	'nodeTextTruncated':
+		'Node text is too long, so only the beginning is shown here; the full text is kept in the file (double-click the node to view or edit it).',
 	'rename.titleConflict': 'A file with that name already exists; cannot rename by central node',
 	'rename.titleFailed': 'Failed to rename the file by its central node',
 
@@ -261,6 +291,8 @@ const EN: Record<TranslationKey, string> = {
 	'menu.copyNode': 'Copy node',
 	'menu.pasteAsChild': 'Paste as child',
 	'menu.addLink': 'Add link',
+	'menu.openLinkNewTab': 'Open link in new tab',
+	'menu.copyLink': 'Copy link',
 	'menu.addImage': 'Add image',
 	'menu.viewImageFullscreen': 'View image fullscreen',
 	'menu.removeImage': 'Remove image',
@@ -288,26 +320,33 @@ const EN: Record<TranslationKey, string> = {
 	'common.imageSavedTo': 'Image saved to: ',
 	'common.pasteImageFailed': 'Paste image failed: ',
 	'common.insertLinkFailed': 'Add link failed: ',
+	'common.linkCopied': 'Link copied',
+	'common.clipboardError': 'Cannot access the clipboard',
 	'common.insertImageFailed': 'Add image failed: ',
 	'common.dropFailed': 'Failed to handle dropped file: ',
 	'common.imageSetOnNode': 'Image set on node: ',
 	'common.linkedTo': 'Linked node to ',
 	'common.nodeCreatedAndLinked': 'Node created and linked to ',
-	'common.cannotPreview': 'Cannot preview this file type in Obsidian',
 	'common.cannotOpen': 'Cannot open this file type',
+	'common.linksNotUpdatedOnRename':
+		'"{name}" was renamed: references in this map were not updated (Automatically update internal links is off — they are now unresolved)',
+	'common.linksNotUpdatedOnDelete':
+		'"{name}" was deleted: references in this map were not cleaned up (Automatically update internal links is off — they are now unresolved)',
+	// Official Canvas: double-click blank canvas / blank context menu to create a node
+	'menu.newNode': 'New node',
 
 	// ===== 拖拽/导入 =====
-	'common.selectNodeBeforeDrop': 'Please select a node before dropping an image',
-	'common.onlySupportedFiles':
-		'Unsupported file type (notes, images and linkable attachments only)',
-	'common.onlyImagesSupported': 'Only image files can be dropped from outside Obsidian',
-	'common.noImagesDropped': 'No image files detected',
+	'common.selectNodeBeforeDrop': 'Please select a node before dropping a file',
+	'common.noFilesDropped': 'No importable files detected',
 	'common.importing': 'Importing',
-	'common.imagesToVault': 'image(s) to the vault…',
+	'common.filesToVault': 'file(s) to the vault…',
 	'common.imported': 'Imported',
-	'common.imagesStored': 'image(s) (saved to the path in "Default location for new attachments")',
-	'common.imagesPlaced': '1 on the selected node, the rest as new child nodes',
-	'common.importImageFailed': 'Some images failed to import: ',
+	'common.filesStored':
+		'file(s) (saved to the path in "Default location for new attachments")',
+	'common.filesPlaced': '1 on the selected node, the rest as new child nodes',
+	'common.importFileFailed': 'Some files failed to import: ',
+	'common.absoluteLinkInserted':
+		'Inserted absolute links to the original locations (files not copied)',
 
 	// ===== 弹窗 - 链接 =====
 	'modal.link.title': 'Set node link',
@@ -333,6 +372,11 @@ const EN: Record<TranslationKey, string> = {
 	'modal.image.clear': 'Clear image',
 	'modal.image.internalPath': 'Vault path: ',
 	'modal.image.address': 'Image URL: ',
+
+	// ===== Modal - node text (edit entry for custom-content nodes) =====
+	'modal.text.title': 'Edit node text',
+	'modal.text.hint':
+		'Node text is what gets written back: [[wikilinks]], [links](url), images and **markup** are allowed (double-click a node or press F2)',
 
 	// ===== 弹窗 - 命名 =====
 	'modal.name.folder': 'Folder: ',
@@ -367,6 +411,9 @@ const EN: Record<TranslationKey, string> = {
 	'settings.autoSplitMixedLinks': 'Auto-split mixed links',
 	'settings.autoSplitMixedLinksDesc':
 		'When an edited node mixes links with description text, split document/attachment links into child nodes (images and external URLs are left untouched)',
+	'settings.autoUpdateLinks': 'Automatically update internal links',
+	'settings.autoUpdateLinksDesc':
+		'When a vault file is renamed or deleted, update the links and attachment references on mind-map nodes (mirrors the official "Automatically update internal links" setting). Turn it off to leave links untouched: renaming no longer rewrites them (they become unresolved) and deleting no longer cleans up references',
 	'settings.language': 'Language',
 	'settings.languageDesc': 'UI language',
 

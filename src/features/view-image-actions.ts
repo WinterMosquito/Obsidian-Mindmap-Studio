@@ -12,6 +12,7 @@ import {
 import { resolvePathToFile } from '../links/links-resolve';
 import { openImageEditorModal } from '../ui/modal-image';
 import { saveImageToVault } from '../media/images-save';
+import { prefersMarkdownLinks } from '../platform/vault-prefs';
 import { notifyError } from '../core/errors';
 import {
 	isAppResourceUrl,
@@ -37,6 +38,8 @@ export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): vo
 	delete data.mdImageWidth;
 	delete data.mdImageHeight;
 	delete data.mdImageAlt;
+	// 语法形态一并清：留着会让「后续新图」沿用已被删除图片的旧形态
+	delete data.mdImageStyle;
 	// 同步清掉自动校正标记：留着会让「本节点后续新图」的尺寸也不回写
 	delete data.mdImageAutoSize;
 	view.scheduleSave();
@@ -119,8 +122,13 @@ export async function applyNodeImage(
 	}
 	if (mdTarget) {
 		data.mdImageTarget = mdTarget;
+		// 语法形态跟随官方设置「Use \[\[Wikilinks\]\]」（该设置同时管 links 与
+		// images）：关闭 → 写 `![alt](路径)`，开启（默认）→ 写 `![[路径]]`。
+		// 仅**新建/换图**时按设置取——既有图的形态由解析期记录、不改写。
+		data.mdImageStyle = prefersMarkdownLinks(view.app) ? 'md' : 'wiki';
 	} else {
 		delete data.mdImageTarget;
+		delete data.mdImageStyle;
 	}
 	// 插入/更换是用户意图：清除「加载期自动校正」标记，本次尺寸照旧回写
 	delete data.mdImageAutoSize;
@@ -128,7 +136,7 @@ export async function applyNodeImage(
 }
 
 /** 引用归一：显示地址 + md 回写目标 */
-export function normalizeImageReference(
+function normalizeImageReference(
 	url: string,
 	app: App,
 ): { display: string; mdTarget: string | null } {

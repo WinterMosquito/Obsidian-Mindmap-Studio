@@ -10,15 +10,31 @@
  * - openHyperlink（view-link-navigator.ts） 节点超链接跳转路由；
  * - 本类只做编排：生命周期事件 → 装配 services 与 view-* 交互特性。
  */
-import { FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
-import { Language, t } from '../core/i18n';
+import { type EventRef, FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import { Language, t, tf } from '../core/i18n';
+import type { TranslationKey } from '../core/i18n';
+import { renderMathWithMathJax } from '../platform/math-jax';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 import { notifyError } from '../core/errors';
-import { walkCorrectImageSizesByAspect } from '../media/images-path';
+import { applyImageSizeCorrectionsToEngine } from '../engine/mindmap';
+import {
+	collectImageSizeCorrections,
+	ensureDefaultImageSizes,
+	type ImageSizeCorrection,
+} from '../media/images-path';
 import { openAsMarkdown } from '../markdown/md-open';
 import { registerWikilinkInteractions } from './view-wikilink';
-import type { MindMapViewContext, ViewPluginContext } from './view-context';
+import { buildInlineNodeContent } from './node-inline-content';
+import {
+	setupCanvasQuickCreate,
+	setupNodeTextEditFallback,
+} from './view-node-actions';
+import type {
+	HyperlinkOpenMode,
+	MindMapViewContext,
+	ViewPluginContext,
+} from './view-context';
 import { DocumentService, SavePipeline } from '../services/document-service';
 import { EngineController } from '../services/engine-controller';
 import {
@@ -36,6 +52,7 @@ import {
 import { setupDragAndDrop } from './view-dnd';
 import { setupContextMenu } from './view-context-menu';
 import { registerViewHotkeys } from './view-hotkeys';
+import { setupViewportGestures } from './view-viewport';
 import { handleWindowPaste, setupPasteHandler } from './view-paste';
 import {
 	cancelStatusBarUpdate,
@@ -44,9 +61,13 @@ import {
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { setupImageResize, teardownImageResize } from './image-resize';
 import { setupDragTargetAssist, teardownDragTargetAssist } from './drag-target';
+import { gateNodeWidthHandles, setupNodeWidthRefresh } from './view-node-width';
 import { EventBinder } from '../core/event-binder';
 import { TitleRenamer } from './view-title-renamer';
-import { openHyperlink as linkNavigatorOpen } from './view-link-navigator';
+import {
+	isResolvedWikiLinkpath,
+	openHyperlink as linkNavigatorOpen,
+} from './view-link-navigator';
 import {
 	captureAutoSplitCandidate,
 	runAutoSplitCheck,
@@ -55,6 +76,36 @@ import {
 
 /** 视图装配完成信号超时（毫秒）：正常 onOpen 会 resolve；超时表示装配未完成，降级继续加载 */
 const READY_TIMEOUT_MS = 10_000;
+
+/**
+ * 可在**不重建引擎**的前提下完成刷新的 LIVE_REFRESH 键（键集合由 `settings.ts`
+ * 的 `diffLiveRefreshKeys` 产出；这里只决定「收到这个键时做什么」）。
+ *
+ * - `defaultTheme`：引擎 `setThemeConfig` 通道原地生效（与 css-change 同款）；
+ * - `defaultLayout` / `defaultLineStyle`：**故意留空**——会话字段在
+ *   `loadMindMapFromFile` 里已按「文件显式选择 ?? 默认值」定值，此后默认值变更对
+ *   已打开的图**本就不生效**（重建一轮也不会有任何可见变化）⇒ 跳过即行为等价
+ *   的优化（省掉整树 `structuredClone` + 全量重渲染，实测口径见 K58）。
+ *
+ * - `performanceMode` / `performanceThreshold`：引擎显式支持运行时切换
+ *   （`updateConfig` → `after_update_config` 重新绑定视口变化处理器 + `forceLoadNode`，
+ *   见 `engine/mindmap.applyPerformanceMode`）——性能阈值是设置面板的滑块，收益最直接。
+ *
+ * 其余两个键**必须重建**（引擎侧只有创建期通道，2026-09-17 审计结论见 K62）：
+ * - `enableDrag`：节点拖拽由引擎 Drag 插件承担，而该插件在本插件创建期按此开关
+ *   注册（`engine/mindmap.createMindMap` 的 `addPlugin(Drag)`）；运行时切换需要
+ *   `removePlugin`（**未入 d.cts**，属插件生命周期操作）——一个很少切换的布尔
+ *   设置不值得承担解绑不完整的风险；
+ * - `language`：引擎无 `lang` 选项，语言在创建期被闭包捕获两处（默认节点文案与
+ *   自绘钩子的 `lang` 实参），重建才能让两者一致（UI 侧另有 `refreshLanguageUi`）。
+ */
+const IN_PLACE_REFRESH_KEYS = new Set([
+	'defaultTheme',
+	'defaultLayout',
+	'defaultLineStyle',
+	'performanceMode',
+	'performanceThreshold',
+]);
 
 /** 视图状态里 mdBackMode 的白名单取值（非法/缺失回退 source） */
 function readMdBackMode(value: unknown): 'source' | 'preview' {
@@ -90,6 +141,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	viewEvents = new EventBinder();
 	private boundHandleCssChange: (() => void) | null = null;
 	/**
+	 * `css-change` 的 `EventRef`：`registerEvent` 的清理时机是 **Component 卸载**，
+	 * 而本视图在 `onClose` 并不卸载，故须自行保存引用并在 `onClose` 显式 `offref`。
+	 */
+	private cssChangeRef: EventRef | null = null;
+	/** 窗口级 paste 监听器（须按同一函数引用移除；`registerDomEvent` 同样只在卸载时清理） */
+	private pasteHandler: ((event: ClipboardEvent) => void) | null = null;
+	/**
 	 * 视图装配完成信号：onOpen 进入时重建、DOM 装配完成后 resolve。
 	 * onLoadFile 与 onOpen 的调用时序 Obsidian 不保证，onLoadFile 据此
 	 * 等待装配完成（替代原 10ms setTimeout 轮询的 waitForReady）。
@@ -107,6 +165,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 且尺寸非零，会在已关闭的视图上建出完整引擎实例（无人销毁）。
 	 */
 	private pendingInitRaf: number | null = null;
+	/**
+	 * 挂起的「图片尺寸校正」结果（探测在首帧前起步、首帧后回灌，见加载序列注释）。
+	 * 引擎尚未创建时留待 onEngineReady；文件切换/卸载时丢弃。
+	 */
+	private pendingImageCorrections: ImageSizeCorrection[] | null = null;
 	/**
 	 * 当前布局（持久化到文件的唯一来源；不依赖 getData() 返回活引用还是深拷贝）。
 	 * 由本类经 applyLayout/resolveLayout 维护（工具栏变更走 applyLayout 方法）。
@@ -203,6 +266,24 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			}),
 			viewState: this.plugin.viewState,
 			openHyperlink: (link) => this.openHyperlink(link),
+			// 节点内联内容（方案 B 原型）：含行内链接 / 轻标记、或超长文本（引擎的
+			// SVG 换行是逐字符二次复杂度，长行必须接管）且无图的节点改走自绘 HTML；
+			// 其余节点返回 null 走引擎默认文本（点击跳转复用 view-wikilink 既有分流）
+			createNodeContent: (node, doc, style, lang) => {
+				// 宽度手柄门禁（幂等）：纯文本/含图节点上的拖宽手柄是死的
+				// （引擎文本路径不认 customTextWidth），只留在自绘节点上
+				gateNodeWidthHandles(node);
+				return buildInlineNodeContent(node, doc, style, lang, {
+					// 未解析的库内链接弱化显示（对齐 Obsidian 阅读视图）：解析器在此注入
+					// ——node-inline-content 不接触 Obsidian API（见 InlineContentOptions）
+					isResolvedLink: (linkpath) =>
+						isResolvedWikiLinkpath(this, linkpath),
+					// 行内数学 `$…$`：官方 loadMathJax 通道（platform/math-jax，
+					// 字面占位 + 异步替换，失败安全回落字面）
+					renderMath: (_doc, tex, holder) =>
+						renderMathWithMathJax(tex, holder),
+				});
+			},
 			onRootDataChanged: () => {
 				this.scheduleSave();
 				updateStatusBar(this);
@@ -224,8 +305,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				setupPasteHandler(this);
 				setupContextMenu(this);
 				registerWikilinkInteractions(this);
+				// 画布视口手势（Ctrl+滚轮缩放 / 滚轮平移 / 中键拖）：对齐官方 Canvas
+				setupViewportGestures(this);
+				// 双击画布空白 → 在根节点下新建（官方 Canvas「双击画布新建卡片」）
+				setupCanvasQuickCreate(this);
+				// 自绘（富）节点的双击编辑兜底（引擎编辑框对自绘节点静默 no-op）
+				setupNodeTextEditFallback(this);
 				setupImageResize(this);
 				setupDragTargetAssist(this);
+				// 拖左右边框改宽结束 → 重建自绘内容（节点高度方能跟随新宽度）
+				setupNodeWidthRefresh(this);
 			},
 			onEngineReady: (layout, lineStyle) =>
 				this.onEngineReady(layout, lineStyle),
@@ -275,23 +364,27 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				this.applyTheme();
 			}
 		};
-		this.registerEvent(
-			this.app.workspace.on('css-change', this.boundHandleCssChange),
+		this.cssChangeRef = this.app.workspace.on(
+			'css-change',
+			this.boundHandleCssChange,
 		);
+		this.registerEvent(this.cssChangeRef);
 		// 视图内快捷键（搜索 / 撤销重做 / F2 编辑节点）：内部会按官方要求
 		// 确保 this.scope 已创建（View.scope 默认为 null，不创建则全部失效）
 		registerViewHotkeys(this);
 
-		// 窗口级粘贴兜底：只注册一次（随视图生命周期由 Component 自动清理），
+		// 窗口级粘贴兜底：只注册一次（随视图生命周期由 Component 自动清理，
+		// 另在 onClose 按同一引用显式移除——见那里的对称回收说明），
 		// 不放在 setupPasteHandler 中，避免每次刷新引擎累积监听。
 		// 激活视图判定在此处做（需要 MindMapView 类引用），view-paste 保持无类依赖。
 		// 挂在画布所属窗口（popout 窗口里主窗口收不到 paste）
-		this.registerDomEvent(this.containerEl.win, 'paste', (event) => {
+		this.pasteHandler = (event: ClipboardEvent) => {
 			if (this.app.workspace.getActiveViewOfType(MindMapView) !== this) {
 				return;
 			}
 			handleWindowPaste(this, event);
-		});
+		};
+		this.registerDomEvent(this.containerEl.win, 'paste', this.pasteHandler);
 
 		resolveReady();
 		if (this.file) {
@@ -303,13 +396,19 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 等待装配完成（onOpen 尚未执行时挂起，替代原 10ms 轮询）。
 		// 10s 超时降级：正常装配毫秒级完成；超时表示 onOpen 未 resolveReady
 		// （异常路径/极端情形），继续加载但 DOM 可能不完整。
+		let timeoutId: number | null = null;
 		const readyTimeout = new Promise<'timeout'>((resolve) => {
-			window.setTimeout(() => resolve('timeout'), READY_TIMEOUT_MS);
+			timeoutId = window.setTimeout(() => resolve('timeout'), READY_TIMEOUT_MS);
 		});
 		const result = await Promise.race([
 			this.whenReady.then(() => 'ready' as const),
 			readyTimeout,
 		]);
+		// 正常路径下定时器必须撤掉：否则每次打开文件都留下一个 10s 的空转
+		// 定时器（视图关闭后仍在表里，插件卸载前不释放）
+		if (timeoutId !== null) {
+			window.clearTimeout(timeoutId);
+		}
 		if (result === 'timeout') {
 			console.warn(
 				'MindMapView: 等待视图装配超时，降级继续加载',
@@ -337,6 +436,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 隐式取值会把新文件的内容写进本文件（见 SavePipeline 归属不变式）。
 		await this.savePipeline.save(file, this.engine.getDataSnapshot());
 		this.frontmatterByPath.delete(file.path);
+		// 挂起的图片尺寸校正属于本文件：文件已卸载，丢弃（引擎随后销毁，
+		// 回灌会落空，留着只会在新文件上误判）
+		this.pendingImageCorrections = null;
 		// 文件切换后允许再次加载同一路径（新会话）。仅清理「仍属于本次卸载」的
 		// 标记：await 期间可能已开始加载新文件（onLoadFile），无条件置空会把
 		// 新加载的代际标记抹掉，其 rAF 守卫随即判为过期 → 导图不渲染。
@@ -380,14 +482,31 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				this.leaf.getViewState().state?.mdBackMode,
 			);
 			const tree = doc.tree;
-			// 按图片原始宽高比校正尺寸（统一高度、宽度按比例），
-			// 在首次渲染前完成，避免首帧用固定比例再跳变。
-			// 官方嵌入尺寸参数（![[图|300]]）的节点在此过程中按参数定尺寸。
-			await walkCorrectImageSizesByAspect(tree);
-			// 加载期间文件已切换：丢弃过期结果
-			if (this.loadingFilePath !== file.path) {
-				return;
-			}
+			// 按图片原始宽高比校正尺寸（统一高度、宽度按比例）。
+			//
+			// **探测不再挡在首帧前**（2026-09-16 优化）：此前 `await` 在首帧之前，
+			// 冷缓存时打开「图片多」的文档要串行等 ceil(图数/6) 批解码（单张超时
+			// 2500ms），首帧因此被推迟；现起步探测（不与首帧串行）→ 首帧先按默认
+			// 尺寸出画 → 探测完成后按「data 对象身份 + image 地址」回灌并重渲染一次
+			// （只影响尺寸确实变了的图片节点）。代价是尺寸可能在图片加载后就位时
+			// 跳一下（原先靠阻塞首帧规避）。
+			// 既有不变式不变：自动校正的尺寸打 mdImageAutoSize 标记、**不回写文件**
+			// （官方参数 `![[图|300]]` 的节点仍按参数定尺寸）。
+			//
+			// 先同步填**默认尺寸**（引擎硬要求：`getImgShowSize` 对缺失的 imageSize
+			// 直接解构抛错、整图渲染中断——旧流程靠「探测先于引擎」隐式兜底，
+			// 见 ensureDefaultImageSizes 注释）：O(n) 指针遍历，不探测不等加载。
+			ensureDefaultImageSizes(tree);
+			void collectImageSizeCorrections(tree).then((corrections) => {
+				// 加载期间文件已切换：丢弃过期结果
+				if (this.loadingFilePath !== file.path) {
+					return;
+				}
+				this.pendingImageCorrections = corrections;
+				if (this.applyPendingImageCorrections()) {
+					this.engine.scheduleViewportRecenter();
+				}
+			});
 			// 上一帧若尚未执行（快速切换文件），先取消，避免旧树被渲染
 			this.cancelPendingInit();
 			this.pendingInitRaf = this.containerEl.win.requestAnimationFrame(
@@ -422,8 +541,35 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		return lineStyle;
 	}
 
+	/**
+	 * 回灌挂起的图片尺寸校正（首帧后）。
+	 *
+	 * 两条调用路径合起来覆盖「探测先完成 / 引擎先就绪」：
+	 * 探测完成时（`collectImageSizeCorrections().then`）与引擎创建完成时
+	 * （`onEngineReady`）各调一次，谁在后面谁生效。引擎重建（设置刷新/换文件）
+	 * 后 data 对象不再同一 ⇒ 身份匹配落空，不会盖错节点。
+	 *
+	 * @returns 是否实际回灌。真实尺寸替换默认尺寸会改动节点包围盒，
+	 *   调用方据此排补居中——否则首帧居中会停在旧包围盒上（打开即偏移）。
+	 */
+	private applyPendingImageCorrections(): boolean {
+		const corrections = this.pendingImageCorrections;
+		const mindMap = this.mindMap;
+		if (!corrections || corrections.length === 0 || !mindMap) {
+			return false;
+		}
+		this.pendingImageCorrections = null;
+		applyImageSizeCorrectionsToEngine(mindMap, corrections);
+		return true;
+	}
+
 	/** 引擎就绪收尾：同步布局/连线样式选择器；md 模式重建工具栏补返回按钮 */
 	private onEngineReady(layout: string, lineStyle: string): void {
+		// 图片尺寸校正回灌（探测在首帧前起步；引擎此刻才存在时在此落地）。
+		// 回灌改动节点尺寸 → 内容包围盒变化，排补居中修正默认视口
+		if (this.applyPendingImageCorrections()) {
+			this.engine.scheduleViewportRecenter();
+		}
 		if (this.layoutSelect) {
 			this.layoutSelect.value = layout;
 		}
@@ -472,9 +618,35 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 	}
 
-	/** 重建思维导图实例（设置变更后调用） */
-	refreshMindMap(): void {
-		this.engine.refresh();
+	/**
+	 * 应用设置变更（LIVE_REFRESH 键的**变更子集**，由 `diffLiveRefreshKeys` 产出）：
+	 * 能原地生效的绝不重建引擎。
+	 *
+	 * 重建一轮 = 整树 `structuredClone` + 销毁重建引擎 + 全量重渲染（每次全量渲染
+	 * 的 DOM 写入量见 K58 实测），故只有「引擎创建期通道」的键才值得付这个代价。
+	 */
+	applySettingsChange(changedKeys: ReadonlySet<string>): void {
+		const requiresRebuild = [...changedKeys].some(
+			(key) => !IN_PLACE_REFRESH_KEYS.has(key),
+		);
+		if (requiresRebuild) {
+			this.engine.refresh();
+			return;
+		}
+		if (changedKeys.has('defaultTheme')) {
+			// 主题偏好（默认/强制亮/强制暗）变更 → 引擎原地换 themeConfig
+			this.applyTheme();
+		}
+		if (
+			changedKeys.has('performanceMode') ||
+			changedKeys.has('performanceThreshold')
+		) {
+			// 性能模式开关/阈值变更 → 引擎运行时切换虚拟渲染（不重建实例）
+			this.engine.applyPerformance(
+				this.plugin.settings.performanceMode,
+				this.plugin.settings.performanceThreshold,
+			);
+		}
 	}
 
 	private applyTheme(): void {
@@ -565,23 +737,51 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	// ==================== 链接跳转 / 引用更新 / 清理 ====================
 
 	/**
-	 * 打开节点超链接（wiki / http / 库内路径）—— 委托 view-link-navigator。
+	 * 打开节点超链接（wiki / http / 库内路径 / 库外 file://）—— 委托 view-link-navigator。
 	 * 保留 MindMapViewContext 接口契约（engine-controller / view-wikilink 依赖）。
 	 */
-	openHyperlink(link: string, openNew = false): void {
-		linkNavigatorOpen(this, link, openNew);
+	openHyperlink(link: string, mode: HyperlinkOpenMode = 'current'): void {
+		linkNavigatorOpen(this, link, mode);
 	}
 
 	updateReferencesOnRename(file: TFile, oldPath: string): void {
+		// 对齐官方设置「自动更新内部链接」（默认开启）：关闭后重命名不再改写引用
+		// ——引用会变成未解析链接，与 Obsidian 关掉该设置后其它笔记的表现一致；
+		// 但官方关掉后是**逐个提示**是否更新（Settings.md：be prompted to update
+		// links after renaming），静默跳过等于用户无从知晓，故在此告知。
+		if (!this.plugin.settings.autoUpdateLinks) {
+			this.notifyReferencesKept(file, oldPath, 'common.linksNotUpdatedOnRename');
+			return;
+		}
 		if (this.engine.updateReferencesOnRename(file, oldPath)) {
 			this.scheduleSave();
 		}
 	}
 
 	updateReferencesOnDelete(file: TFile): void {
+		// 同上：关闭后既不改写链接、也不清理附件引用与内嵌图片
+		if (!this.plugin.settings.autoUpdateLinks) {
+			this.notifyReferencesKept(file, file.path, 'common.linksNotUpdatedOnDelete');
+			return;
+		}
 		if (this.engine.removeReferencesOnDelete(file)) {
 			this.scheduleSave();
 		}
+	}
+
+	/**
+	 * 「引用保持不变」的告知（仅在**本图确有可能的引用**时提示——无关文件的
+	 * 重命名/删除不该弹提示；判据与引用更新的短路预检同源）。
+	 */
+	private notifyReferencesKept(
+		file: TFile,
+		oldPath: string,
+		key: TranslationKey,
+	): void {
+		if (!this.engine.hasReferencesFor(file, oldPath)) {
+			return;
+		}
+		new Notice(tf(this.lang, key, { name: file.name }));
 	}
 
 	override async onClose(): Promise<void> {
@@ -602,6 +802,21 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.whenReady = new Promise(() => {});
 		this.engine.persistViewport();
 		await this.savePipeline.save();
+		// 视图级注册的**对称回收**：`onClose` 不触发 Component 卸载，而
+		// `registerEvent` / `registerDomEvent` / `scope.register` 的清理时机分别是
+		// 卸载与作用域销毁 ⇒ 同一实例经历多次 onClose→onOpen 时这些注册会逐次叠加，
+		// 故在此显式注销（卸载路径上的重复注销是幂等 no-op）。
+		if (this.cssChangeRef) {
+			this.app.workspace.offref(this.cssChangeRef);
+			this.cssChangeRef = null;
+		}
+		if (this.pasteHandler) {
+			this.containerEl.win.removeEventListener('paste', this.pasteHandler);
+			this.pasteHandler = null;
+		}
+		// 作用域置空：下次 onOpen 经 ensureViewScope 重建干净的 Scope，
+		// 避免 9 个视图热键处理器在同一 Scope 上重复注册。
+		this.scope = null;
 		// 清理视图生命周期作用域的事件（搜索输入框 input/keydown 等）
 		this.viewEvents.destroy();
 		this.engine.destroyInstance();

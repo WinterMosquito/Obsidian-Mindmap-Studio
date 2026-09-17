@@ -13,13 +13,21 @@
  *   故断言 setScale 收到第二/三参，且不做任何节点居中；
  * - `arrangeMindMap`（自动整理）：只走引擎 RESET_LAYOUT（清除自由拖拽位置，不触碰
  *   children 顺序），延时后走 `fitMindMap` 适应画布（fit 全图，整理结果一览无余）。
+ *   K67 起另有渲染窗口守卫：引擎渲染期 `renderer.root` 会被临时置 null（异步布局回填），
+ *   此时执行 RESET_LAYOUT 会遍历 null 根并抛 TypeError（用户实测），故 root 缺失时
+ *   改为等待回填后执行（超上限放弃）——本文件钉住「延后执行」与「上限放弃」两条。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import { RESET_LAYOUT_VIEWPORT_DELAY_MS } from '../src/core/constants';
+import {
+	RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,
+	RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS,
+	RESET_LAYOUT_VIEWPORT_DELAY_MS,
+} from '../src/core/constants';
 import {
 	arrangeMindMap,
 	centerContentAtFullScale,
+	isContentVisibleInCanvas,
 	resetZoom,
 } from '../src/engine/mindmap';
 
@@ -34,9 +42,20 @@ vi.hoisted(() => {
  * 容器矩形 left=10 top=20 → 画布内包围盒 x=100 y=200 200×100。
  */
 function makeMindMap(
-	options: { openPerformance?: boolean; hasDraw?: boolean; hasElRect?: boolean } = {},
+	options: {
+		openPerformance?: boolean;
+		hasDraw?: boolean;
+		hasElRect?: boolean;
+		/** 实时容器矩形（模拟首帧后布局 settle / 工具栏重建过的容器） */
+		liveRect?: { left: number; top: number; width: number; height: number };
+	} = {},
 ) {
-	const { openPerformance = false, hasDraw = true, hasElRect = true } = options;
+	const {
+		openPerformance = false,
+		hasDraw = true,
+		hasElRect = true,
+		liveRect,
+	} = options;
 	const setScale = vi.fn<(scale: number, cx?: number, cy?: number) => void>();
 	const fit = vi.fn<() => void>();
 	const moveNodeToCenter = vi.fn<() => void>();
@@ -55,6 +74,8 @@ function makeMindMap(
 		// 引擎中间态：draw / elRect 可能尚未就绪（measureContentBox 会返回 null）
 		...(hasDraw ? { draw: { rbox } } : {}),
 		...(hasElRect ? { elRect: { left: 10, top: 20 } } : {}),
+		// 实时容器：首帧后容器尺寸/位置可能与引擎创建时的缓存不同
+		...(liveRect ? { el: { getBoundingClientRect: () => liveRect } } : {}),
 	} as unknown as MindMap;
 
 	return {
@@ -190,6 +211,79 @@ describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
 	it('引擎缺失时静默', () => {
 		expect(() => centerContentAtFullScale(null)).not.toThrow();
 	});
+
+	it('容器几何已变（首帧后布局 settle）：以实时容器为准，不用缓存 width/height', () => {
+		// 引擎创建时缓存 800×600 / 原点(10,20)；首帧后容器变为 800×520 且上移
+		const { mindMap, setScale, translateXY } = makeMindMap({
+			liveRect: { left: 0, top: 40, width: 800, height: 520 },
+		});
+
+		centerContentAtFullScale(mindMap);
+
+		// 缩放锚点 = 实时画布中心（缓存的 300 会让内容纵向偏移）
+		expect(setScale).toHaveBeenCalledExactlyOnceWith(1, 400, 260);
+		// 包围盒原点换算也走实时容器：y = 220−40 = 180
+		// 平移量 = ((800−200)/2 − 110, (520−100)/2 − 180) = (190, 30)
+		expect(translateXY).toHaveBeenCalledExactlyOnceWith(190, 30);
+	});
+
+	it('容器几何可得时先同步引擎几何（resize），再算视口', () => {
+		const resize = vi.fn<() => void>();
+		const { mindMap, setScale } = makeMindMap({
+			liveRect: { left: 0, top: 0, width: 800, height: 600 },
+		});
+		(mindMap as unknown as { resize?: () => void }).resize = resize;
+
+		centerContentAtFullScale(mindMap);
+
+		expect(resize).toHaveBeenCalledTimes(1);
+		// 必须先同步（重读容器、更新 SVG 尺寸），后写视口
+		expect(resize.mock.invocationCallOrder[0]!).toBeLessThan(
+			setScale.mock.invocationCallOrder[0]!,
+		);
+	});
+});
+
+describe('isContentVisibleInCanvas（保存视口恢复后的落界校验）', () => {
+	it('内容在画布内 → true；被保存视口推出画布 → false', () => {
+		const visible = makeMindMap({
+			liveRect: { left: 0, top: 0, width: 800, height: 600 },
+		});
+		expect(isContentVisibleInCanvas(visible.mindMap)).toBe(true);
+
+		const outside = makeMindMap({
+			liveRect: { left: 0, top: 0, width: 800, height: 600 },
+		});
+		(outside.mindMap as unknown as { draw: { rbox: unknown } }).draw.rbox = () => ({
+			x: 5000,
+			y: 5000,
+			width: 200,
+			height: 100,
+		});
+		expect(isContentVisibleInCanvas(outside.mindMap)).toBe(false);
+	});
+
+	it('NaN 包围盒（保存视口损坏）→ false（回退居中）', () => {
+		const broken = makeMindMap({
+			liveRect: { left: 0, top: 0, width: 800, height: 600 },
+		});
+		(broken.mindMap as unknown as { draw: { rbox: unknown } }).draw.rbox = () => ({
+			x: NaN,
+			y: NaN,
+			width: NaN,
+			height: NaN,
+		});
+		expect(isContentVisibleInCanvas(broken.mindMap)).toBe(false);
+	});
+
+	it('性能模式 / 引擎结构不可得 → null（fail-open，不误伤合法视口恢复）', () => {
+		// 性能模式：视口外节点被回收，rbox 只覆盖已加载子集，判定不可靠
+		expect(
+			isContentVisibleInCanvas(makeMindMap({ openPerformance: true }).mindMap),
+		).toBeNull();
+		expect(isContentVisibleInCanvas(makeMindMap({ hasDraw: false }).mindMap)).toBeNull();
+		expect(isContentVisibleInCanvas(null)).toBeNull();
+	});
 });
 
 describe('arrangeMindMap（执行 RESET_LAYOUT 后适应画布）', () => {
@@ -222,6 +316,53 @@ describe('arrangeMindMap（执行 RESET_LAYOUT 后适应画布）', () => {
 
 		vi.advanceTimersByTime(1);
 		expect(fit).toHaveBeenCalledTimes(1);
+	});
+
+	it('渲染窗口期（root 暂缺）：延后到回填后再执行 RESET_LAYOUT', () => {
+		vi.useFakeTimers();
+		const { mindMap, execCommand, fit } = makeMindMap();
+		const renderer = (mindMap as unknown as { renderer: { root: unknown } })
+			.renderer;
+		renderer.root = null;
+
+		expect(arrangeMindMap(mindMap)).toBe(true);
+		// 窗口期内立即执行会遍历 null 根并在回调首行抛 TypeError（见 K67）
+		expect(execCommand).not.toHaveBeenCalled();
+
+		// 仍缺失：持续等待（未到上限既不执行也不放弃）
+		vi.advanceTimersByTime(RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS * 3);
+		expect(execCommand).not.toHaveBeenCalled();
+
+		// 渲染结束、root 回填 → 下一个轮询点执行命令
+		renderer.root = { isRoot: true };
+		vi.advanceTimersByTime(RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS);
+		expect(execCommand).toHaveBeenCalledExactlyOnceWith('RESET_LAYOUT');
+
+		// fit 仍按原延时（等引擎 reflow）
+		expect(fit).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS);
+		expect(fit).toHaveBeenCalledTimes(1);
+	});
+
+	it('渲染根在等待上限内未回填：放弃、只记日志、不执行命令', () => {
+		vi.useFakeTimers();
+		const errorSpy = spyConsoleError();
+		const { mindMap, execCommand, fit } = makeMindMap();
+		(mindMap as unknown as { renderer: { root: unknown } }).renderer.root = null;
+
+		expect(arrangeMindMap(mindMap)).toBe(true);
+
+		vi.advanceTimersByTime(
+			RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS + RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,
+		);
+
+		expect(execCommand).not.toHaveBeenCalled();
+		expect(fit).not.toHaveBeenCalled();
+		expect(errorSpy).toHaveBeenCalledWith(
+			'自动整理失败：渲染根在等待上限内未回填',
+		);
+		// 等待链已终止：不再排定时器
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it('命令抛错时返回 false、不排定时器、不抛异常', () => {

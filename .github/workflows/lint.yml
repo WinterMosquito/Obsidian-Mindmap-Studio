@@ -24,6 +24,12 @@ jobs:
                   node-version: ${{ matrix.node-version }}
                   cache: 'npm'
             - run: npm ci
+
+            # 发布元数据护栏（versions.json 形状 / 当前版本与 minAppVersion 一致 /
+            # README 非空）：本仓库 eslint 把 versions.json 放进 globalIgnores，
+            # 而官方 obsidian-workflows 对它做 **error** 级校验 ⇒ 此前没有替代检查。
+            - run: npm run check:release
+
             - run: npm run build --if-present
             # --reporter=verbose 便于定位失败用例；--bail=1 首个失败即停（省矩阵时间）
             - run: npm test -- --reporter=verbose --bail=1
@@ -40,6 +46,16 @@ jobs:
                   path: coverage/
                   retention-days: 14
             - run: npm run lint
+
+            # CSS 检查（stylelint）：styles.css 是发布资产之一，而官方目录 scanner
+            # 在 release 模式**强制**跑同一套 ruleset（见 stylelint.config.mjs 顶部
+            # 说明；规则面照抄 obsidian-workflows src/lint.ts:10-123，浏览器基准由
+            # minAppVersion 推得）。此前本地完全没有 CSS 检查。
+            - run: npm run lint:css
+
+            # 死代码检查（knip，见 AGENTS K57）：未使用文件 / 导出 / 类型；
+            # 「仅测试引用」的导出属有意保留（测试直测契约，knip 以 tests 为入口故不误报）
+            - run: npm run check:dead-code
 
             # 渲染契约验证（scripts/verify-visual.mjs）：把 src/engine/mindmap.ts 打成浏览器
             # IIFE，配真实 styles.css 在无头 Chrome 里渲染场景并断言 --dump-dom。

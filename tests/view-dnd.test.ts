@@ -20,8 +20,9 @@
  *   saveImageToVault 入库后再按资源地址挂图。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { App, TFile } from 'obsidian';
+import type { App, TFile, TFolder } from 'obsidian';
 import { TFile as TFileClass } from 'obsidian';
+import { isEmbeddableAttachmentExtension } from '../src/core/constants';
 import type { EventBinder } from '../src/core/event-binder';
 import type { SaveImageOptions } from '../src/media/images-save';
 import type { Language, TranslationKey } from '../src/core/i18n';
@@ -50,11 +51,20 @@ const h = vi.hoisted(() => ({
 			label: string | undefined,
 		) => void
 	>(),
+	applyMdLink: vi.fn<
+		(view: MindMapViewContext, node: MindMapNode, url: string, label: string) => void
+	>(),
 	saveImageToVault: vi.fn<
+		(options: SaveImageOptions) => Promise<TFile | null>
+	>(),
+	saveAttachmentToVault: vi.fn<
 		(options: SaveImageOptions) => Promise<TFile | null>
 	>(),
 	resolveDroppedFile: vi.fn<
 		(dataTransfer: DataTransfer, app: App) => TFile | null
+	>(),
+	resolveDroppedFolder: vi.fn<
+		(dataTransfer: DataTransfer, app: App) => TFolder | null
 	>(),
 	extractDroppedFileNames: vi.fn<(dataTransfer: DataTransfer) => string[]>(),
 	getActiveNode: vi.fn<(mindMap: MindMap | null) => MindMapNode | null>(),
@@ -101,34 +111,52 @@ vi.mock('../src/engine/mindmap', () => ({
 
 // 节点挂载动作（图片/附件/文档双链）以桩替换：本文件只验证「分发到哪个函数、
 // 入参是什么」，三者内部写数据的形态由 view-node-actions 自己的用例覆盖。
-vi.mock('../src/features/view-node-actions', () => ({
-	applyNodeImage: (
-		view: MindMapViewContext,
-		node: MindMapNode,
-		url: string,
-	): Promise<void> => h.applyNodeImage(view, node, url),
-	applyNodeAttachment: (
-		view: MindMapViewContext,
-		node: MindMapNode,
-		file: TFile,
-	): void => {
-		h.applyNodeAttachment(view, node, file);
-	},
-	applyDocWikiLink: (
-		view: MindMapViewContext,
-		node: MindMapNode,
-		link: string,
-		label: string | undefined,
-	): void => {
-		h.applyDocWikiLink(view, node, link, label);
-	},
-}));
+// `newDocLinkFor` 用**真实现**：拖入断言链依赖官方「New link format」的换算
+// （默认最短路径），桩掉反而掩盖行为。
+vi.mock('../src/features/view-node-actions', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../src/features/view-node-actions')>();
+	return {
+		newDocLinkFor: actual.newDocLinkFor,
+		applyNodeImage: (
+			view: MindMapViewContext,
+			node: MindMapNode,
+			url: string,
+		): Promise<void> => h.applyNodeImage(view, node, url),
+		applyNodeAttachment: (
+			view: MindMapViewContext,
+			node: MindMapNode,
+			file: TFile,
+		): void => {
+			h.applyNodeAttachment(view, node, file);
+		},
+		applyDocWikiLink: (
+			view: MindMapViewContext,
+			node: MindMapNode,
+			link: string,
+			label: string | undefined,
+		): void => {
+			h.applyDocWikiLink(view, node, link, label);
+		},
+		applyMdLink: (
+			view: MindMapViewContext,
+			node: MindMapNode,
+			url: string,
+			label: string,
+		): void => {
+			h.applyMdLink(view, node, url, label);
+		},
+	};
+});
 
-// 图片入库以桩替换：断言入参（sourcePath / preferredName / lang / 上限）与
+// 入库以桩替换：断言入参（sourcePath / preferredName / lang / 上限）与
 // 「是否发生写入」这一分流判据；真实入库链（串行队列、重名兜底）另有用例。
+// 图片与非图片共用同一桩形态（saveAttachmentToVault 是同通道的另一入口）。
 vi.mock('../src/media/images-save', () => ({
 	saveImageToVault: (options: SaveImageOptions): Promise<TFile | null> =>
 		h.saveImageToVault(options),
+	saveAttachmentToVault: (options: SaveImageOptions): Promise<TFile | null> =>
+		h.saveAttachmentToVault(options),
 }));
 
 vi.mock('../src/links/links-resolve', () => ({
@@ -136,6 +164,11 @@ vi.mock('../src/links/links-resolve', () => ({
 		dataTransfer: DataTransfer,
 		app: App,
 	): TFile | null => h.resolveDroppedFile(dataTransfer, app),
+	// 拖入**文件夹**（官方 Canvas：加入其中所有文件）：未命中文件夹时回落文件通道
+	resolveDroppedFolder: (
+		dataTransfer: DataTransfer,
+		app: App,
+	): unknown => h.resolveDroppedFolder(dataTransfer, app),
 	extractDroppedFileNames: (dataTransfer: DataTransfer): string[] =>
 		h.extractDroppedFileNames(dataTransfer),
 }));
@@ -172,24 +205,24 @@ function createdAndLinked(lang: Language, name: string): string {
 	return `${t(lang, 'common.nodeCreatedAndLinked')} [[${name}]]`;
 }
 
-/** `正在导入` + 空格 + 数量 + 空格 + `张图片到仓库中…` */
+/** `正在导入` + 空格 + 数量 + 空格 + `个文件到仓库中…` */
 function importingToVault(lang: Language, count: number): string {
-	return `${t(lang, 'common.importing')} ${count} ${t(lang, 'common.imagesToVault')}`;
+	return `${t(lang, 'common.importing')} ${count} ${t(lang, 'common.filesToVault')}`;
 }
 
-/** `已导入` + 数量 + `张图片（存放路径…）` */
+/** `已导入` + 数量 + `个文件（存放路径…）` */
 function importedSummary(lang: Language, count: number): string {
-	return `${t(lang, 'common.imported')} ${count} ${t(lang, 'common.imagesStored')}`;
+	return `${t(lang, 'common.imported')} ${count} ${t(lang, 'common.filesStored')}`;
 }
 
-/** 多图汇总：在单行汇总后换行追加归属说明 */
+/** 多文件汇总：在单行汇总后换行追加归属说明 */
 function importedWithPlacement(lang: Language, count: number): string {
-	return `${importedSummary(lang, count)}\n${t(lang, 'common.imagesPlaced')}`;
+	return `${importedSummary(lang, count)}\n${t(lang, 'common.filesPlaced')}`;
 }
 
-/** `部分图片导入失败：` + 错误消息 */
+/** `部分文件导入失败：` + 错误消息 */
 function importImageFailed(lang: Language, message: string): string {
-	return `${t(lang, 'common.importImageFailed')}${message}`;
+	return `${t(lang, 'common.importFileFailed')}${message}`;
 }
 
 /** `处理拖入文件失败：` + 错误消息（drop 层兜底） */
@@ -278,10 +311,15 @@ function makeDataTransfer(
 	};
 }
 
-/** 拖拽事件桩（dataTransfer 传 null 模拟无数据搬运） */
+/**
+ * 拖拽事件桩（dataTransfer 传 null 模拟无数据搬运）。
+ * `modifiers` 覆盖带修饰键的拖入：`Ctrl`（Win/Linux）/`Option`（mac，DOM 里是
+ * altKey）决定「不导入、写 file:/// 绝对链接」（见 view-dnd.shouldInsertAbsoluteLink）。
+ */
 function makeDragEvent(
 	dataTransfer: FakeDataTransfer | null,
 	relatedTarget: unknown = null,
+	modifiers: { ctrlKey?: boolean; altKey?: boolean } = {},
 ) {
 	const preventDefault = vi.fn();
 	const stopPropagation = vi.fn();
@@ -289,6 +327,8 @@ function makeDragEvent(
 		event: {
 			dataTransfer: dataTransfer as unknown as DataTransfer,
 			relatedTarget,
+			ctrlKey: modifiers.ctrlKey ?? false,
+			altKey: modifiers.altKey ?? false,
 			preventDefault,
 			stopPropagation,
 		} as unknown as DragEvent,
@@ -297,9 +337,18 @@ function makeDragEvent(
 	};
 }
 
-/** 系统拖入的文件桩：分发链只读 name/type/size（arrayBuffer 不需要，入库被桩替换） */
-function fakeFile(name: string, type: string, size = 1024): File {
-	return { name, type, size } as unknown as File;
+/**
+ * 系统拖入的文件桩：分发链只读 name/type/size（arrayBuffer 不需要，入库被桩替换）。
+ * `path` 是 Electron 在 File 上挂的**非标准**属性——Ctrl/Option 分支靠它取原位置
+ * （见 view-dnd.droppedAbsolutePath），不传即模拟「拿不到原路径」。
+ */
+function fakeFile(name: string, type: string, size = 1024, path?: string): File {
+	return {
+		name,
+		type,
+		size,
+		...(path === undefined ? {} : { path }),
+	} as unknown as File;
 }
 
 /** 用 Object.assign 而非类型断言：mock 的 TFile 类可实例化，避免 no-tfile-tfolder-cast */
@@ -385,12 +434,17 @@ async function settle(): Promise<void> {
 	}
 }
 
-/** 触发 drop 并等分发链落地 */
+/** 触发 drop 并等分发链落地（modifiers 见 makeDragEvent） */
 async function fireDrop(
 	binder: Harness['binder'],
 	dataTransfer: FakeDataTransfer,
+	modifiers: { ctrlKey?: boolean; altKey?: boolean } = {},
 ) {
-	const { event, preventDefault, stopPropagation } = makeDragEvent(dataTransfer);
+	const { event, preventDefault, stopPropagation } = makeDragEvent(
+		dataTransfer,
+		null,
+		modifiers,
+	);
 	binder.fire('drop', event);
 	await settle();
 	return { preventDefault, stopPropagation };
@@ -442,16 +496,18 @@ const ATTACHMENT_EXTENSIONS = [
 	'wmv',
 ] as const;
 
-/** 三类都不匹配 → 拒绝（无法写回 Markdown） */
-const UNSUPPORTED_FILES: Array<{ extension: string; name: string }> = [
+/**
+ * 非图片、非文档类的库内文件：**2026-09-15 起不再有白名单**——与解析侧
+ * `wikilinkTargetIsAttachment`（非文档扩展名即附件）同口径，一律走附件通道。
+ * 此前这份清单用于断言「被拒绝」，现在用于断言「能挂上」。
+ */
+const NON_CURATED_FILES: Array<{ extension: string; name: string }> = [
 	{ extension: 'docx', name: '合同.docx' },
 	{ extension: 'txt', name: '说明.txt' },
 	{ extension: 'csv', name: '表格.csv' },
 	{ extension: 'exe', name: '工具.exe' },
-	// .mindmap 自身既非图片、非 md、也非可链接附件（走不到任何写回通道）
+	// .mindmap 自身既非图片、非 md：按解析侧口径也是附件（回形针）
 	{ extension: 'mindmap', name: '另一张.mindmap' },
-	// 无扩展名：Obsidian 的 TFile.extension 为空串
-	{ extension: '', name: 'README' },
 ];
 
 describe('setupDragAndDrop：画布监听注册与事件拦截', () => {
@@ -736,6 +792,11 @@ describe('库内文件拖入：分发分支', () => {
 					// 回写用完整库内路径（basename 会被 Obsidian 去掉扩展名）
 					mdAttachmentLinkpath: `docs/${name}`,
 					mdLinkStyle: 'wiki',
+					// 可嵌入的附件（PDF/音视频）默认写嵌入语法 `![[…]]`，与 Obsidian 拖放一致
+					// （zip/epub 等不可嵌入的写普通链接，见 isEmbeddableAttachmentExtension）
+					...(isEmbeddableAttachmentExtension(extension)
+						? { mdEmbed: true }
+						: {}),
 					isActive: false,
 				},
 			);
@@ -746,21 +807,20 @@ describe('库内文件拖入：分发分支', () => {
 		}
 	});
 
-	it('不支持的库内文件（表驱动）：不触碰引擎与挂载函数，只提示支持范围', async () => {
-		for (const item of UNSUPPORTED_FILES) {
+	it('库内非图片非文档的文件（表驱动）：一律走附件通道（白名单已取消）', async () => {
+		for (const item of NON_CURATED_FILES) {
 			resetHarnessMocks();
 			const { view, binder, execCommand } = makeHarness();
 			setupDragAndDrop(view);
-			h.resolveDroppedFile.mockReturnValue(
-				fakeTFile({
-					extension: item.extension,
-					name: item.name,
-					basename: item.name.replace(/\.[^.]+$/, ''),
-					path: `docs/${item.name}`,
-				}),
-			);
-			// 即使有激活节点也不挂载（扩展名分流在节点判断之前）
-			h.getActiveNode.mockReturnValue(fakeNode());
+			const file = fakeTFile({
+				extension: item.extension,
+				name: item.name,
+				basename: item.name.replace(/\.[^.]+$/, ''),
+				path: `docs/${item.name}`,
+			});
+			h.resolveDroppedFile.mockReturnValue(file);
+			const node = fakeNode();
+			h.getActiveNode.mockReturnValue(node);
 
 			await fireDrop(
 				binder,
@@ -769,14 +829,47 @@ describe('库内文件拖入：分发分支', () => {
 				}),
 			);
 
-			expect(h.noticeCalls, item.name).toEqual([
-				textOf(ZH, 'common.onlySupportedFiles'),
-			]);
-			expect(h.applyNodeImage, item.name).not.toHaveBeenCalled();
-			expect(h.applyNodeAttachment, item.name).not.toHaveBeenCalled();
+			// 与手写 `[[说明.txt]]` 的解析结果一致：回形针通道
+			expect(h.applyNodeAttachment, item.name).toHaveBeenCalledWith(
+				view,
+				node,
+				file,
+			);
+			expect(h.noticeCalls, item.name).toEqual([linkedTo(ZH, item.name)]);
 			expect(h.applyDocWikiLink, item.name).not.toHaveBeenCalled();
+			expect(h.applyNodeImage, item.name).not.toHaveBeenCalled();
 			expect(execCommand, item.name).not.toHaveBeenCalled();
+			// 零入库：库内既有文件，不复制
+			expect(h.saveImageToVault, item.name).not.toHaveBeenCalled();
 		}
+	});
+
+	it('库内无扩展名文件（README）：按 Obsidian 默认视为文档 → 文档双链通道', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		const file = fakeTFile({
+			extension: '',
+			name: 'README',
+			basename: 'README',
+			path: 'docs/README',
+		});
+		h.resolveDroppedFile.mockReturnValue(file);
+		const node = fakeNode();
+		h.getActiveNode.mockReturnValue(node);
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({ files: [fakeFile('README', '')] }),
+		);
+
+		// 无扩展名 ⇒ `wikilinkTargetIsAttachment` 为 false ⇒ 文档通道（同 Obsidian 默认）
+		expect(h.applyDocWikiLink).toHaveBeenCalledWith(
+			view,
+			node,
+			'[[README]]',
+			'README',
+		);
+		expect(h.applyNodeAttachment).not.toHaveBeenCalled();
 	});
 
 	it('库内 .md（表驱动：basename / 扩展名大小写）：选中走文档双链通道，未选中在根节点下新建并写 mdWikiLinkpath', async () => {
@@ -1074,7 +1167,7 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 		expect(execCommand).not.toHaveBeenCalled();
 	});
 
-	it('混合载荷（图片 + 非图片）：提示仅支持图片，但不阻断图片导入', async () => {
+	it('混合载荷（图片 + 非图片）：两张都入库、各按类型挂载（不再拒绝非图片）', async () => {
 		const { view, binder } = makeHarness();
 		setupDragAndDrop(view);
 		const node = fakeNode();
@@ -1087,6 +1180,13 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 				path: 'attachments/a.png',
 			}),
 		);
+		const txt = fakeTFile({
+			extension: 'txt',
+			name: '说明.txt',
+			basename: '说明',
+			path: 'attachments/说明.txt',
+		});
+		h.saveAttachmentToVault.mockResolvedValue(txt);
 
 		await fireDrop(
 			binder,
@@ -1098,25 +1198,173 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 			}),
 		);
 
+		// 图片走图片入库通道，非图片走附件入库通道；挂载按类型分流
 		expect(h.saveImageToVault).toHaveBeenCalledTimes(1);
+		expect(h.saveAttachmentToVault).toHaveBeenCalledTimes(1);
 		expect(h.applyNodeImage).toHaveBeenCalledWith(
 			view,
 			node,
 			'app://vault/attachments/a.png',
 		);
+		expect(h.applyNodeAttachment).toHaveBeenCalledWith(view, node, txt);
+		// 两个文件：单图特有的「已设为节点图片」不再出现，改走统一汇总
 		expect(h.noticeCalls).toEqual([
-			textOf(ZH, 'common.onlyImagesSupported'),
+			importingToVault(ZH, 2),
+			importedWithPlacement(ZH, 2),
+		]);
+	});
+
+	it('PDF 拖入：走附件入库通道（不是图片通道）→ 挂回形针', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		const node = fakeNode();
+		h.getActiveNode.mockReturnValue(node);
+		const pdf = fakeTFile({
+			extension: 'pdf',
+			name: '报告.pdf',
+			basename: '报告',
+			path: 'attachments/报告.pdf',
+		});
+		h.saveAttachmentToVault.mockResolvedValue(pdf);
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({ files: [fakeFile('报告.pdf', 'application/pdf')] }),
+		);
+
+		// 分流：PDF 不走图片通道（无大小上限、无图片校验），挂载走 applyNodeAttachment
+		expect(h.saveImageToVault).not.toHaveBeenCalled();
+		expect(h.saveAttachmentToVault).toHaveBeenCalledTimes(1);
+		expect(h.applyNodeAttachment).toHaveBeenCalledWith(view, node, pdf);
+		expect(h.noticeCalls).toEqual([
 			importingToVault(ZH, 1),
-			imageSetOnNode(ZH, 'a.png'),
+			importedSummary(ZH, 1),
+		]);
+		expect(h.noticeTimeouts).toEqual([undefined, 5000]);
+	});
+
+	it('笔记（.md）拖入：入库后走文档双链通道（.md 省扩展名）', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		const node = fakeNode();
+		h.getActiveNode.mockReturnValue(node);
+		const note = fakeTFile({
+			extension: 'md',
+			name: '笔记.md',
+			basename: '笔记',
+			path: 'notes/笔记.md',
+		});
+		h.saveAttachmentToVault.mockResolvedValue(note);
+
+		await fireDrop(binder, makeDataTransfer({ files: [fakeFile('笔记.md', 'text/markdown')] }));
+
+		expect(h.saveAttachmentToVault).toHaveBeenCalledTimes(1);
+		expect(h.applyDocWikiLink).toHaveBeenCalledWith(view, node, '[[笔记]]', '笔记');
+		expect(h.applyNodeAttachment).not.toHaveBeenCalled();
+	});
+
+	it('任意类型的系统文件都导入（.txt 走附件通道，不再有白名单）', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		const node = fakeNode();
+		h.getActiveNode.mockReturnValue(node);
+		const txt = fakeTFile({
+			extension: 'txt',
+			name: '说明.txt',
+			basename: '说明',
+			path: 'attachments/说明.txt',
+		});
+		h.saveAttachmentToVault.mockResolvedValue(txt);
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({ files: [fakeFile('说明.txt', 'text/plain')] }),
+		);
+
+		expect(h.saveImageToVault).not.toHaveBeenCalled();
+		expect(h.saveAttachmentToVault).toHaveBeenCalledTimes(1);
+		// 非文档扩展名 ⇒ 附件通道（与手写 `[[说明.txt]]` 一致）
+		expect(h.applyNodeAttachment).toHaveBeenCalledWith(view, node, txt);
+		expect(h.applyDocWikiLink).not.toHaveBeenCalled();
+		expect(h.noticeCalls).toEqual([
+			importingToVault(ZH, 1),
 			importedSummary(ZH, 1),
 		]);
 	});
 
-	it('外链 URL / 全非图片载荷：只提示未识别到图片（8s），诊断信息不进入用户提示', async () => {
+	it('无扩展名的系统文件（README）：导入后走文档通道', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		const node = fakeNode();
+		h.getActiveNode.mockReturnValue(node);
+		const readme = fakeTFile({
+			extension: '',
+			name: 'README',
+			basename: 'README',
+			path: 'attachments/README',
+		});
+		h.saveAttachmentToVault.mockResolvedValue(readme);
+
+		await fireDrop(binder, makeDataTransfer({ files: [fakeFile('README', '')] }));
+
+		expect(h.saveAttachmentToVault).toHaveBeenCalledTimes(1);
+		expect(h.applyDocWikiLink).toHaveBeenCalledWith(
+			view,
+			node,
+			'[[README]]',
+			'README',
+		);
+		expect(h.applyNodeAttachment).not.toHaveBeenCalled();
+	});
+
+	it('按住 Ctrl 拖入：不导入，写指向原位置的 file:/// 绝对链接（官方 Drag and drop 语义）', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		const node = fakeNode();
+		h.getActiveNode.mockReturnValue(node);
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({
+				files: [
+					fakeFile('报告.pdf', 'application/pdf', 1024, 'C:\\资料\\报告.pdf'),
+				],
+			}),
+			{ ctrlKey: true },
+		);
+
+		expect(h.saveAttachmentToVault).not.toHaveBeenCalled();
+		expect(h.saveImageToVault).not.toHaveBeenCalled();
+		expect(h.applyMdLink).toHaveBeenCalledWith(
+			view,
+			node,
+			'file:///C:/%E8%B5%84%E6%96%99/%E6%8A%A5%E5%91%8A.pdf',
+			'报告.pdf',
+		);
+		expect(h.noticeCalls).toEqual([
+			textOf(ZH, 'common.absoluteLinkInserted'),
+		]);
+	});
+
+	it('Ctrl 拖入但拿不到原路径（非 Electron 环境）：不写链接、不提示成功', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		h.getActiveNode.mockReturnValue(fakeNode());
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({ files: [fakeFile('报告.pdf', 'application/pdf')] }),
+			{ ctrlKey: true },
+		);
+
+		expect(h.applyMdLink).not.toHaveBeenCalled();
+		expect(h.noticeCalls).toEqual([]);
+	});
+
+	it('拖拽载荷里没有任何文件：只提示未识别到可导入文件（8s），诊断信息不进入用户提示', async () => {
 		const cases: Array<{
 			label: string;
 			dataTransfer: FakeDataTransfer;
-			expectOnlyImagesNotice: boolean;
 			expectDebug: string[][] | null;
 		}> = [
 			{
@@ -1128,38 +1376,24 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 						'text/uri-list': 'https://example.com/remote.png',
 					},
 				}),
-				expectOnlyImagesNotice: false,
 				expectDebug: [
 					[
-						'拖入未识别到图片，拖拽数据:',
+						'拖入未识别到文件，拖拽数据:',
 						'text/plain: https://example.com/remote.png | text/uri-list: https://example.com/remote.png',
 					],
 				],
 			},
 			{
-				label: '仅非图片文件',
-				dataTransfer: makeDataTransfer({
-					types: ['text/plain'],
-					files: [fakeFile('a.txt', 'text/plain')],
-					data: { 'text/plain': 'hello' },
-				}),
-				expectOnlyImagesNotice: true,
-				expectDebug: [['拖入未识别到图片，拖拽数据:', 'text/plain: hello']],
-			},
-			{
 				label: 'types 为空（无任何可读数据）',
-				dataTransfer: makeDataTransfer({ files: [fakeFile('a.bin', '')] }),
-				expectOnlyImagesNotice: true,
+				dataTransfer: makeDataTransfer(),
 				expectDebug: null,
 			},
 			{
 				label: 'getData 抛错（个别自定义类型读不到）',
 				dataTransfer: makeDataTransfer({
 					types: ['application/x-custom'],
-					files: [fakeFile('a.bin', '')],
 					getDataThrows: ['application/x-custom'],
 				}),
-				expectOnlyImagesNotice: true,
 				expectDebug: null,
 			},
 			{
@@ -1169,9 +1403,8 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 					types: ['text/plain'],
 					data: { 'text/plain': 'y'.repeat(300) },
 				}),
-				expectOnlyImagesNotice: false,
 				expectDebug: [
-					['拖入未识别到图片，拖拽数据:', `text/plain: ${'y'.repeat(100)}`],
+					['拖入未识别到文件，拖拽数据:', `text/plain: ${'y'.repeat(100)}`],
 				],
 			},
 		];
@@ -1186,21 +1419,19 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 
 			await fireDrop(binder, item.dataTransfer);
 
-			const expected = [textOf(ZH, 'common.noImagesDropped')];
-			if (item.expectOnlyImagesNotice) {
-				expected.unshift(textOf(ZH, 'common.onlyImagesSupported'));
-			}
-			expect(h.noticeCalls, item.label).toEqual(expected);
-			expect(h.noticeTimeouts, item.label).toEqual(
-				item.expectOnlyImagesNotice ? [undefined, 8000] : [8000],
-			);
+			expect(h.noticeCalls, item.label).toEqual([
+				textOf(ZH, 'common.noFilesDropped'),
+			]);
+			expect(h.noticeTimeouts, item.label).toEqual([8000]);
 			expect(h.saveImageToVault, item.label).not.toHaveBeenCalled();
+			expect(h.saveAttachmentToVault, item.label).not.toHaveBeenCalled();
 			expect(h.applyNodeImage, item.label).not.toHaveBeenCalled();
+			// 归属检查在「有文件」之后：无文件时不该先弹「请先选择节点」
+			expect(h.getActiveNode, item.label).not.toHaveBeenCalled();
 			// 面向用户的提示不含原始 MIME 与拖拽载荷
 			const userFacing = h.noticeCalls.join(' | ');
 			expect(userFacing, item.label).not.toContain('text/plain');
 			expect(userFacing, item.label).not.toContain('example.com');
-			expect(userFacing, item.label).not.toContain('hello');
 
 			if (item.expectDebug) {
 				expect(consoleArgs(debugSpy), item.label).toEqual(item.expectDebug);
@@ -1208,6 +1439,20 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 				expect(debugSpy, item.label).not.toHaveBeenCalled();
 			}
 		}
+	});
+
+	it('载荷里有文件但未选中主题：只提示先选择节点（不再细分图片/附件）', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		h.getActiveNode.mockReturnValue(null);
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({ files: [fakeFile('说明.txt', 'text/plain')] }),
+		);
+
+		expect(h.noticeCalls).toEqual([textOf(ZH, 'common.selectNodeBeforeDrop')]);
+		expect(h.saveAttachmentToVault).not.toHaveBeenCalled();
 	});
 
 	it('外部图片但未选中主题：只提示先选择节点，不保存、不弹导入提示', async () => {
@@ -1372,7 +1617,7 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 		expect(h.noticeCalls).toContain(importImageFailed(ZH, '磁盘已满'));
 		expect(h.noticeCalls).toContain(imageSetOnNode(ZH, 'b.png'));
 		expect(consoleArgs(errorSpy)).toEqual([
-			['导入拖入的图片失败', 'Error: 磁盘已满'],
+			['导入拖入的文件失败', 'Error: 磁盘已满'],
 		]);
 		expect(h.applyNodeImage).toHaveBeenCalledWith(
 			view,
@@ -1396,7 +1641,7 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 			makeDataTransfer({ files: [fakeFile('a.png', 'image/png')] }),
 		);
 
-		expect(consoleArgs(errorSpy)).toEqual([['导入拖入的图片失败', 'null']]);
+		expect(consoleArgs(errorSpy)).toEqual([['导入拖入的文件失败', 'null']]);
 		expect(h.noticeCalls).toEqual([
 			importingToVault(ZH, 1),
 			// 返回 null 的失败没有错误对象 → errorMessage(null) 为 'null'
@@ -1529,7 +1774,9 @@ function resetHarnessMocks(): void {
 	h.applyNodeImage.mockReset();
 	h.applyNodeAttachment.mockReset();
 	h.applyDocWikiLink.mockReset();
+	h.applyMdLink.mockReset();
 	h.saveImageToVault.mockReset();
+	h.saveAttachmentToVault.mockReset();
 	h.resolveDroppedFile.mockReset();
 	h.extractDroppedFileNames.mockReset();
 	h.getActiveNode.mockReset();
@@ -1541,6 +1788,7 @@ function resetHarnessMocks(): void {
 	h.getActiveNode.mockReturnValue(null);
 	h.getRenderRoot.mockReturnValue(null);
 	h.saveImageToVault.mockResolvedValue(null);
+	h.saveAttachmentToVault.mockResolvedValue(null);
 	h.createAspectSetNodeImageOptions.mockImplementation((url) =>
 		Promise.resolve({
 			url: url ?? '',

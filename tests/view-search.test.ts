@@ -309,11 +309,13 @@ describe('buildSearchBar（搜索栏装配）', () => {
 			'mindmap-search-btn',
 			'mindmap-search-btn',
 		]);
-		expect(buttons.map((button) => button.attr['title'])).toEqual([
+		expect(buttons.map((button) => button.attr['aria-label'])).toEqual([
 			'上一个 (Shift+Enter)',
 			'下一个 (Enter)',
 			'关闭 (Escape)',
 		]);
+		// 不再手写 `title`：tooltip 只走官方 setTooltip 的 aria-label（否则双显）
+		expect(buttons.every((button) => !('title' in button.attr))).toBe(true);
 		expect(setIconMock.mock.calls.map((call) => call[1])).toEqual([
 			'chevron-up',
 			'chevron-down',
@@ -797,7 +799,7 @@ describe('refreshSearchBarLabels（语言变更就地刷新）', () => {
 		refreshSearchBarLabels(h.view);
 
 		expect(input.attr['placeholder']).toBe(t('en', 'toolbar.searchPlaceholder'));
-		expect(buttons.map((button) => button.attr['title'])).toEqual([
+		expect(buttons.map((button) => button.attr['aria-label'])).toEqual([
 			t('en', 'search.prev'),
 			t('en', 'search.next'),
 			t('en', 'search.close'),

@@ -12,8 +12,9 @@
  * - refreshToolbar 清空后重建。
  *
  * 隔离策略：引擎面（../src/engine/mindmap）、同级特性模块（view-search / view-export /
- * view-node-actions）与 obsidian 的 setIcon、Notice 全部用 vi.mock 替换——
- * 本测试只验证工具栏自身的装配与接线，不触碰 vendor bundle（避免加载引擎）。
+ * view-node-actions）与 obsidian 的 setIcon、Notice 全部用 vi.mock 替换；setTooltip
+ * 走全局 mock 的最小实现（写 aria-label）——本测试只验证工具栏自身的装配与接线，
+ * 不触碰 vendor bundle（避免加载引擎）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
@@ -156,6 +157,11 @@ class FakeEl {
 		this.texts.push(text);
 	}
 
+	/** 官方 setTooltip 桩（全局 mock）经此写入 aria-label */
+	setAttribute(name: string, value: string): void {
+		this.attr[name] = value;
+	}
+
 	empty(): void {
 		this.emptyCount += 1;
 		this.children.length = 0;
@@ -226,13 +232,13 @@ function buttonsOf(group: FakeEl): FakeEl[] {
 	return group.children.filter((child) => child.tag === 'button');
 }
 
-/** 按 tooltip 取按钮；缺失即失败（按钮未装配或文案变了） */
-function buttonByTitle(group: FakeEl, title: string): FakeEl {
+/** 按 tooltip 取按钮（官方 setTooltip 写入 aria-label）；缺失即失败（按钮未装配或文案变了） */
+function buttonByTooltip(group: FakeEl, tooltip: string): FakeEl {
 	const button = buttonsOf(group).find(
-		(child) => child.attr['title'] === title,
+		(child) => child.attr['aria-label'] === tooltip,
 	);
 	if (!button) {
-		throw new Error(`未找到按钮：${title}`);
+		throw new Error(`未找到按钮：${tooltip}`);
 	}
 	return button;
 }
@@ -241,7 +247,7 @@ function buttonByTitle(group: FakeEl, title: string): FakeEl {
 function clickButton(button: FakeEl): void {
 	const handler = button.onclick;
 	if (!handler) {
-		throw new Error(`按钮未接线 onclick：${button.attr['title'] ?? ''}`);
+		throw new Error(`按钮未接线 onclick：${button.attr['aria-label'] ?? ''}`);
 	}
 	handler();
 }
@@ -284,7 +290,7 @@ describe('buildToolbar（装配与分组结构）', () => {
 			'button',
 		]);
 		expect(
-			buttonsOf(left).map((button) => button.attr['title']),
+			buttonsOf(left).map((button) => button.attr['aria-label']),
 		).toEqual([
 			t('zh', 'toolbar.addChild'),
 			t('zh', 'toolbar.addSibling'),
@@ -296,10 +302,13 @@ describe('buildToolbar（装配与分组结构）', () => {
 			t('zh', 'toolbar.insertLink'),
 			t('zh', 'toolbar.insertImage'),
 		]);
-		// 每个按钮都有 aria-label，且与 tooltip 一致（无障碍）
+		// 无障碍标签由官方 setTooltip 写入 aria-label；不再手写 `title`
+		// （浏览器原生提示会与官方 tooltip 双显）
 		expect(
 			buttonsOf(left).every(
-				(button) => button.attr['aria-label'] === button.attr['title'],
+				(button) =>
+					(button.attr['aria-label'] ?? '') !== '' &&
+					!('title' in button.attr),
 			),
 		).toBe(true);
 		// 图标按按钮顺序接线（左组先于中/右组构建，故取前 9 次 setIcon 调用）
@@ -336,7 +345,7 @@ describe('buildToolbar（装配与分组结构）', () => {
 			'button',
 			'button',
 		]);
-		const backButton = buttonByTitle(left, t('zh', 'toolbar.backToMarkdown'));
+		const backButton = buttonByTooltip(left, t('zh', 'toolbar.backToMarkdown'));
 		clickButton(backButton);
 		expect(h.backToMarkdown).toHaveBeenCalledTimes(1);
 	});
@@ -348,7 +357,8 @@ describe('buildToolbar（装配与分组结构）', () => {
 
 		expect(
 			buttonsOf(left).some(
-				(button) => button.attr['title'] === t('zh', 'toolbar.backToMarkdown'),
+				(button) =>
+					button.attr['aria-label'] === t('zh', 'toolbar.backToMarkdown'),
 			),
 		).toBe(false);
 		expect(h.backToMarkdown).not.toHaveBeenCalled();
@@ -361,9 +371,9 @@ describe('buildToolbar（左侧按钮的动作接线）', () => {
 		buildToolbar(h.view);
 		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
 
-		clickButton(buttonByTitle(left, t('zh', 'toolbar.addChild')));
-		clickButton(buttonByTitle(left, t('zh', 'toolbar.addSibling')));
-		clickButton(buttonByTitle(left, t('zh', 'toolbar.deleteNode')));
+		clickButton(buttonByTooltip(left, t('zh', 'toolbar.addChild')));
+		clickButton(buttonByTooltip(left, t('zh', 'toolbar.addSibling')));
+		clickButton(buttonByTooltip(left, t('zh', 'toolbar.deleteNode')));
 
 		expect(h.execCommand.mock.calls.map((call) => call[0])).toEqual([
 			'INSERT_CHILD_NODE',
@@ -378,8 +388,8 @@ describe('buildToolbar（左侧按钮的动作接线）', () => {
 		buildToolbar(h.view);
 		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
 
-		clickButton(buttonByTitle(left, t('zh', 'toolbar.undo')));
-		clickButton(buttonByTitle(left, t('zh', 'toolbar.redo')));
+		clickButton(buttonByTooltip(left, t('zh', 'toolbar.undo')));
+		clickButton(buttonByTooltip(left, t('zh', 'toolbar.redo')));
 
 		expect(h.execCommand.mock.calls.map((call) => call[0])).toEqual([
 			'BACK',
@@ -392,13 +402,13 @@ describe('buildToolbar（左侧按钮的动作接线）', () => {
 		buildToolbar(h.view);
 		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
 
-		clickButton(buttonByTitle(left, t('zh', 'toolbar.search')));
+		clickButton(buttonByTooltip(left, t('zh', 'toolbar.search')));
 		expect(siblingMocks.openSearchBar).toHaveBeenCalledWith(h.view);
 
-		clickButton(buttonByTitle(left, t('zh', 'toolbar.insertLink')));
+		clickButton(buttonByTooltip(left, t('zh', 'toolbar.insertLink')));
 		expect(siblingMocks.addLinkToActiveNode).toHaveBeenCalledWith(h.view);
 
-		clickButton(buttonByTitle(left, t('zh', 'toolbar.insertImage')));
+		clickButton(buttonByTooltip(left, t('zh', 'toolbar.insertImage')));
 		expect(siblingMocks.addImageToActiveNode).toHaveBeenCalledWith(h.view);
 	});
 
@@ -408,7 +418,7 @@ describe('buildToolbar（左侧按钮的动作接线）', () => {
 		buildToolbar(h.view);
 		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
 
-		clickButton(buttonByTitle(left, t('zh', 'toolbar.arrange')));
+		clickButton(buttonByTooltip(left, t('zh', 'toolbar.arrange')));
 
 		expect(engineMocks.arrangeMindMap).toHaveBeenCalledWith(h.mindMap);
 		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.arrangeDone'));
@@ -429,7 +439,7 @@ describe('buildToolbar（右侧画布/导出按钮顺序与接线）', () => {
 			'div',
 			'button',
 		]);
-		expect(buttonsOf(right).map((button) => button.attr['title'])).toEqual([
+		expect(buttonsOf(right).map((button) => button.attr['aria-label'])).toEqual([
 			t('zh', 'toolbar.resetZoom'),
 			t('zh', 'command.fitCanvas'),
 			t('zh', 'toolbar.zoomIn'),
@@ -451,7 +461,7 @@ describe('buildToolbar（右侧画布/导出按钮顺序与接线）', () => {
 		buildToolbar(h.view);
 		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
 
-		clickButton(buttonByTitle(right, t('zh', 'toolbar.resetZoom')));
+		clickButton(buttonByTooltip(right, t('zh', 'toolbar.resetZoom')));
 
 		expect(engineMocks.resetZoom).toHaveBeenCalledTimes(1);
 		expect(engineMocks.resetZoom).toHaveBeenCalledWith(h.mindMap);
@@ -462,9 +472,9 @@ describe('buildToolbar（右侧画布/导出按钮顺序与接线）', () => {
 		buildToolbar(h.view);
 		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
 
-		clickButton(buttonByTitle(right, t('zh', 'command.fitCanvas')));
-		clickButton(buttonByTitle(right, t('zh', 'toolbar.zoomIn')));
-		clickButton(buttonByTitle(right, t('zh', 'toolbar.zoomOut')));
+		clickButton(buttonByTooltip(right, t('zh', 'command.fitCanvas')));
+		clickButton(buttonByTooltip(right, t('zh', 'toolbar.zoomIn')));
+		clickButton(buttonByTooltip(right, t('zh', 'toolbar.zoomOut')));
 
 		expect(engineMocks.fitMindMap).toHaveBeenCalledWith(h.mindMap);
 		expect(engineMocks.zoomInMindMap).toHaveBeenCalledWith(h.mindMap);
@@ -479,7 +489,7 @@ describe('buildToolbar（右侧画布/导出按钮顺序与接线）', () => {
 		buildToolbar(h.view);
 		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
 
-		clickButton(buttonByTitle(right, t('zh', 'toolbar.exportPng')));
+		clickButton(buttonByTooltip(right, t('zh', 'toolbar.exportPng')));
 
 		expect(siblingMocks.exportPNG).toHaveBeenCalledWith(h.view);
 	});
@@ -663,7 +673,7 @@ describe('refreshToolbar（设置变更后重建）', () => {
 		expect(setIconMock.mock.calls.length).toBe(firstCallIcons * 2);
 		// 新按钮仍可用：重置缩放仍接到 resetZoom
 		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
-		clickButton(buttonByTitle(right, t('zh', 'toolbar.resetZoom')));
+		clickButton(buttonByTooltip(right, t('zh', 'toolbar.resetZoom')));
 		expect(engineMocks.resetZoom).toHaveBeenCalledWith(h.mindMap);
 	});
 
@@ -682,7 +692,7 @@ describe('refreshToolbar（设置变更后重建）', () => {
 
 		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
 		expect(
-			buttonsOf(left).map((button) => button.attr['title']),
+			buttonsOf(left).map((button) => button.attr['aria-label']),
 		).toEqual([
 			t('en', 'toolbar.addChild'),
 			t('en', 'toolbar.addSibling'),

@@ -3,7 +3,8 @@
  *
  * 覆盖模块自身的分支决策（不覆盖桩自身行为）：
  * - 点击分流：Ctrl/Cmd+点击（新标签）vs 普通点击（仅命中节点内 <a> 才打开）、
- *   Shift/Alt 让位（保留引擎多选语义）；
+ *   Shift/Alt 让位（保留引擎多选语义）；修饰键判定＝官方 `Keymap.isModEvent`
+ *   （mock 实现官方文档语义），中键经 `button === 0` 守卫隔离（走画布 auxclick 通道）；
  * - 三通道取值：文档双链存 mdWikiLinkpath（自绘图标通道，不写引擎 hyperlink）；
  *   双链附件/嵌入附件/拖入附件存 attachmentUrl + mdAttachmentLinkpath（回形针
  *   通道，同样不写 hyperlink）——attachmentUrl 是「引用仍在」的门控，linkpath
@@ -12,8 +13,12 @@
  * - 锚点优先级：节点内渲染的 <a data-href>（Obsidian MarkdownRenderer 产物）
  *   优先于节点 data 通道；
  * - 悬停预览去重：同一目标元素 400ms 内只触发一次 hover-link；
- * - 悬停预览触发面：外链/协议地址不触发（核心只服务库内目标），
+ * - 悬停预览触发面：**两级**（2026-09-16 定稿）——锚点优先（指针在某枚链接文字上
+ *   → 预览那一枚；含「首链是外链时的行内库内 md 链接」实测场景）＋节点级兜底
+ *   （悬停节点其它位置 → 预览该节点承载的链接）。两条路径都**不做解析预检**
+ *   （目标存在性交核心判断）；外链/协议地址不触发（核心只服务库内目标），
  *   按住鼠标键（拖拽节点经过其它节点 / 框选扫过）不触发；
+ * - 中键点击链接：画布 auxclick（仅命中锚点）→ 新标签打开；
  * - 悬停预览锚定尺寸：SVG 节点缺 offsetWidth/offsetHeight（HTMLElement 专有），
  *   官方 HoverPopover.position() 的锚定矩形是混合取值（宽高走 offset*、位置走
  *   getBoundingClientRect()），不补齐时 bottom/right 为 NaN → 预览只会出现在
@@ -28,7 +33,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VIEW_TYPE } from '../src/core/constants';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapViewContext } from '../src/features/view-context';
+import type {
+	HyperlinkOpenMode,
+	MindMapViewContext,
+} from '../src/features/view-context';
 import {
 	ensureOffsetSize,
 	registerWikilinkInteractions,
@@ -114,9 +122,10 @@ function asElement(el: FakeElement): Element {
 	return el as unknown as Element;
 }
 
-/** 记录 onEngine 监听，供用例按事件名触发（模拟引擎回调） */
+/** 记录 onEngine / onDom 监听，供用例按事件名触发（模拟引擎回调与画布委托） */
 function makeEngineBinder() {
 	const listeners = new Map<string, (...args: unknown[]) => void>();
+	const domListeners = new Map<string, (event: unknown) => void>();
 	return {
 		onEngine(
 			_emitter: unknown,
@@ -125,11 +134,21 @@ function makeEngineBinder() {
 		): void {
 			listeners.set(event, listener);
 		},
+		onDom(_target: unknown, event: string, listener: (event: unknown) => void): void {
+			domListeners.set(event, listener);
+		},
 		fire(event: string, ...args: unknown[]): void {
 			listeners.get(event)?.(...args);
 		},
+		/** 触发经 onDom 注册的 DOM 事件（画布委托路径） */
+		fireDom(event: string, payload: unknown): void {
+			domListeners.get(event)?.(payload);
+		},
 		has(event: string): boolean {
 			return listeners.has(event);
+		},
+		hasDom(event: string): boolean {
+			return domListeners.has(event);
 		},
 	};
 }
@@ -154,6 +173,7 @@ function fakeMouseEvent(
 			| 'clientX'
 			| 'clientY'
 			| 'buttons'
+			| 'button'
 		>
 	> = {},
 ) {
@@ -163,6 +183,8 @@ function fakeMouseEvent(
 		metaKey: false,
 		shiftKey: false,
 		altKey: false,
+		// 主键为默认（中键用例显式覆盖 button: 1）
+		button: 0,
 		// 视口坐标：弹窗定位已不依赖指针坐标，保留以覆盖事件原样透传
 		clientX: 150,
 		clientY: 420,
@@ -176,6 +198,12 @@ function makeView(mindMap: unknown = {}) {
 	const binder = makeEngineBinder();
 	const openHyperlink = vi.fn();
 	const trigger = vi.fn();
+	// 库内解析桩：点击路径交给 openHyperlink（本文件以 spy 替换），悬停预览
+	// **不再**做插件侧预检（目标存在性交核心判断，2026-09-16 回撤）——保留该桩
+	// 只为满足视图面结构，用例不依赖其返回值
+	const getFirstLinkpathDest = vi.fn<(target: string, source: string) => object | null>(
+		() => ({}),
+	);
 	// 叶子桩：悬停预览的 hoverParent 应为官方 HoverParent（WorkspaceLeaf 实现该接口）
 	const leaf = { hoverPopover: null };
 	const view = {
@@ -184,9 +212,21 @@ function makeView(mindMap: unknown = {}) {
 		openHyperlink,
 		leaf,
 		file: { path: 'notes/x.mindmap.md' },
-		app: { workspace: { trigger } },
+		app: {
+			workspace: { trigger },
+			metadataCache: { getFirstLinkpathDest },
+		},
+		// 画布委托的目标（binder 桩只记录，不做 addEventListener）
+		canvasEl: {},
 	} as unknown as MindMapViewContext;
-	return { view, binder, openHyperlink, trigger, leaf };
+	return {
+		view,
+		binder,
+		openHyperlink,
+		trigger,
+		leaf,
+		getFirstLinkpathDest,
+	};
 }
 
 /** 把 target 与锚点都摆进同一节点 group（命中路径的前置条件） */
@@ -251,7 +291,7 @@ describe('node_click（点击分流）', () => {
 			event,
 		);
 		// 双通道取值：mdWikiLinkpath（文档双链，自绘图标通道）优先于 hyperlink
-		expect(openHyperlink).toHaveBeenCalledWith('[[笔记]]', true);
+		expect(openHyperlink).toHaveBeenCalledWith('[[笔记]]', 'tab');
 		// 修饰键点击接管：必须阻断默认行为与冒泡（否则引擎/浏览器再跳一次）
 		expect(event.preventDefault).toHaveBeenCalledTimes(1);
 		expect(event.stopPropagation).toHaveBeenCalledTimes(1);
@@ -267,8 +307,78 @@ describe('node_click（点击分流）', () => {
 			fakeNode({ hyperlink: 'https://example.com' }),
 			event,
 		);
-		expect(openHyperlink).toHaveBeenCalledWith('https://example.com', true);
+		expect(openHyperlink).toHaveBeenCalledWith('https://example.com', 'tab');
 		expect(event.preventDefault).toHaveBeenCalledTimes(1);
+	});
+
+	it('修饰键矩阵（官方 Tabs 表）：Ctrl+Alt=新标签组、+Shift=新窗口、单独 Shift/Alt=不接管', () => {
+		// 判定实现＝官方 Keymap.isModEvent（mock 按官方 d.ts 语义桩化）：本矩阵即官方表的行为锁
+		const cases: Array<{
+			name: string;
+			modifiers: Parameters<typeof fakeMouseEvent>[1];
+			expected: string | null;
+		}> = [
+			{
+				name: 'Ctrl+Alt → 新标签组（split）',
+				modifiers: { ctrlKey: true, altKey: true },
+				expected: 'split',
+			},
+			{
+				name: 'Ctrl+Alt+Shift → 新窗口（window）',
+				modifiers: { ctrlKey: true, altKey: true, shiftKey: true },
+				expected: 'window',
+			},
+			{
+				// 官方表只在 Source 模式下让 Shift 加入「新标签」；本视图无 Source 模式
+				name: 'Ctrl+Shift → 仍是新标签（tab）',
+				modifiers: { ctrlKey: true, shiftKey: true },
+				expected: 'tab',
+			},
+			{
+				name: '单独 Shift：不接管（节点选择语义交回引擎）',
+				modifiers: { shiftKey: true },
+				expected: null,
+			},
+			{
+				name: '单独 Alt：不接管',
+				modifiers: { altKey: true },
+				expected: null,
+			},
+		];
+		for (const item of cases) {
+			const { view, binder, openHyperlink } = makeView();
+			getNodeGroupElMock.mockReturnValue(null);
+			registerWikilinkInteractions(view);
+			binder.fire(
+				'node_click',
+				fakeNode({ hyperlink: 'https://example.com' }),
+				fakeMouseEvent(new FakeElement(), item.modifiers),
+			);
+			if (item.expected === null) {
+				expect(openHyperlink, item.name).not.toHaveBeenCalled();
+			} else {
+				expect(openHyperlink, item.name).toHaveBeenCalledWith(
+					'https://example.com',
+					item.expected,
+				);
+			}
+		}
+	});
+
+	it('中键（button 1）不经 node_click 修饰键分支：中键只走画布 auxclick 通道', () => {
+		const { view, binder, openHyperlink } = makeView();
+		getNodeGroupElMock.mockReturnValue(null);
+		registerWikilinkInteractions(view);
+		const event = fakeMouseEvent(new FakeElement(), { button: 1 });
+		binder.fire(
+			'node_click',
+			fakeNode({ hyperlink: 'https://example.com' }),
+			event,
+		);
+		// 官方 Keymap.isModEvent 对中键返回 'tab'（新标签）：node_click 路径以
+		// button === 0 隔离，避免与画布 auxclick 中键通道重复接管
+		expect(openHyperlink).not.toHaveBeenCalled();
+		expect(event.preventDefault).not.toHaveBeenCalled();
 	});
 
 	it('Ctrl+点击：mdWikiLinkpath 为空时回退 hyperlink', () => {
@@ -280,7 +390,7 @@ describe('node_click（点击分流）', () => {
 			fakeNode({ mdWikiLinkpath: '', hyperlink: 'https://b.com' }),
 			fakeMouseEvent(new FakeElement(), { ctrlKey: true }),
 		);
-		expect(openHyperlink).toHaveBeenCalledWith('https://b.com', true);
+		expect(openHyperlink).toHaveBeenCalledWith('https://b.com', 'tab');
 	});
 
 	it('Ctrl+点击：mdWikiLinkpath 非字符串（通道空值）不得当链接用', () => {
@@ -293,7 +403,7 @@ describe('node_click（点击分流）', () => {
 			fakeNode({ mdWikiLinkpath: 123, hyperlink: 'https://c.com' }),
 			fakeMouseEvent(new FakeElement(), { ctrlKey: true }),
 		);
-		expect(openHyperlink).toHaveBeenCalledWith('https://c.com', true);
+		expect(openHyperlink).toHaveBeenCalledWith('https://c.com', 'tab');
 	});
 
 	it('Ctrl+点击附件节点：走回形针通道打开原始 linkpath（新标签）', () => {
@@ -309,7 +419,7 @@ describe('node_click（点击分流）', () => {
 			}),
 			fakeMouseEvent(new FakeElement(), { ctrlKey: true }),
 		);
-		expect(openHyperlink).toHaveBeenCalledWith('attachments/report.pdf', true);
+		expect(openHyperlink).toHaveBeenCalledWith('attachments/report.pdf', 'tab');
 	});
 
 	it('Ctrl+点击：附件通道优先于 hyperlink（双通道并存时的读取顺序）', () => {
@@ -325,7 +435,7 @@ describe('node_click（点击分流）', () => {
 			}),
 			fakeMouseEvent(new FakeElement(), { ctrlKey: true }),
 		);
-		expect(openHyperlink).toHaveBeenCalledWith('attachments/report.pdf', true);
+		expect(openHyperlink).toHaveBeenCalledWith('attachments/report.pdf', 'tab');
 	});
 
 	it('Ctrl+点击但节点无任何链接：不跳转、不阻断事件', () => {
@@ -351,7 +461,7 @@ describe('node_click（点击分流）', () => {
 		);
 		// data-href 是原始 linkpath（无 [[ ]]），resolveAnchorLink 包成 wikilink 形态，
 		// 交给 openHyperlink 的 parseWikilink 分支；节点自身链接被锚点压过
-		expect(openHyperlink).toHaveBeenCalledWith('[[目标笔记]]', true);
+		expect(openHyperlink).toHaveBeenCalledWith('[[目标笔记]]', 'tab');
 	});
 
 	it('Ctrl+点击命中锚点：data-href 优先于 href（Obsidian 内链形态）', () => {
@@ -367,7 +477,7 @@ describe('node_click（点击分流）', () => {
 			fakeMouseEvent(anchor, { ctrlKey: true }),
 		);
 		// 内部锚点（#标题）随 linkpath 原样透传，不做截断
-		expect(openHyperlink).toHaveBeenCalledWith('[[目录/笔记#标题]]', true);
+		expect(openHyperlink).toHaveBeenCalledWith('[[目录/笔记#标题]]', 'tab');
 	});
 
 	it('普通点击命中锚点：当前标签页打开（external-link 用 href）', () => {
@@ -517,62 +627,62 @@ describe('node_click（表驱动：链接形态与否决集）', () => {
 	const nodeChannelCases: {
 		name: string;
 		data: Record<string, unknown>;
-		expected: [string, boolean] | null;
+		expected: [string, HyperlinkOpenMode] | null;
 	}[] = [
 		{
 			name: '文档双链（mdWikiLinkpath 通道）',
 			data: { mdWikiLinkpath: '[[笔记]]' },
-			expected: ['[[笔记]]', true],
+			expected: ['[[笔记]]', 'tab'],
 		},
 		{
 			name: '文档双链带别名',
 			data: { mdWikiLinkpath: '[[目录/笔记|别名]]' },
-			expected: ['[[目录/笔记|别名]]', true],
+			expected: ['[[目录/笔记|别名]]', 'tab'],
 		},
 		{
 			name: '附件链接（引擎 hyperlink 通道）',
 			data: { hyperlink: '[[附件.pdf]]' },
-			expected: ['[[附件.pdf]]', true],
+			expected: ['[[附件.pdf]]', 'tab'],
 		},
 		{
 			name: '外链 http（引擎 hyperlink 通道）',
 			data: { hyperlink: 'https://example.com/a?b=1' },
-			expected: ['https://example.com/a?b=1', true],
+			expected: ['https://example.com/a?b=1', 'tab'],
 		},
 		{
 			name: 'obsidian:// 链接',
 			data: { hyperlink: 'obsidian://open?vault=V&file=笔记' },
-			expected: ['obsidian://open?vault=V&file=笔记', true],
+			expected: ['obsidian://open?vault=V&file=笔记', 'tab'],
 		},
 		{
 			name: '内部锚点（无目标）',
 			data: { hyperlink: '[[#标题]]' },
-			expected: ['[[#标题]]', true],
+			expected: ['[[#标题]]', 'tab'],
 		},
 		{
 			name: '双通道并存：mdWikiLinkpath 优先',
 			data: { mdWikiLinkpath: '[[文档]]', hyperlink: 'https://ignored.com' },
-			expected: ['[[文档]]', true],
+			expected: ['[[文档]]', 'tab'],
 		},
 		{
 			name: '畸形输入 [[未闭合',
 			data: { hyperlink: '[[未闭合' },
-			expected: ['[[未闭合', true],
+			expected: ['[[未闭合', 'tab'],
 		},
 		{
 			name: '畸形输入 别名空目标 [[|别名]]',
 			data: { mdWikiLinkpath: '[[|别名]]' },
-			expected: ['[[|别名]]', true],
+			expected: ['[[|别名]]', 'tab'],
 		},
 		{
 			name: '图片 embed ![[图.png]]',
 			data: { mdWikiLinkpath: '![[图.png]]' },
-			expected: ['![[图.png]]', true],
+			expected: ['![[图.png]]', 'tab'],
 		},
 		{
 			name: '空白链接（空格）',
 			data: { hyperlink: '   ' },
-			expected: ['   ', true],
+			expected: ['   ', 'tab'],
 		},
 		{
 			name: '无任何链接',
@@ -674,15 +784,190 @@ describe('node_click（表驱动：链接形态与否决集）', () => {
 	});
 });
 
+describe('中键点击链接（画布 auxclick → 新标签）', () => {
+	beforeEach(() => {
+		getNodeGroupElMock.mockReset();
+		vi.stubGlobal('Element', FakeElement);
+		vi.stubGlobal('HTMLAnchorElement', FakeAnchorElement);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('中键命中锚点：新标签打开（data-href 包成双链形态）并阻断默认行为', () => {
+		const { view, binder, openHyperlink } = makeView();
+		const anchor = new FakeAnchorElement().setAttr('data-href', '目标笔记');
+		anchor.closestResult = anchor;
+		registerWikilinkInteractions(view);
+
+		const event = fakeMouseEvent(anchor, { button: 1 });
+		binder.fireDom('auxclick', event);
+
+		expect(openHyperlink).toHaveBeenCalledWith('[[目标笔记]]', 'tab');
+		expect(event.preventDefault).toHaveBeenCalledTimes(1);
+		expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+	});
+
+	it('非中键 / 非元素目标 / 未命中锚点 / 锚点无目标：不接管', () => {
+		const { view, binder, openHyperlink } = makeView();
+		getNodeGroupElMock.mockReturnValue(new FakeElement());
+		registerWikilinkInteractions(view);
+
+		// 左键（button 0）：交回引擎
+		binder.fireDom('auxclick', fakeMouseEvent(new FakeElement(), { button: 0 }));
+		// 中键但元素不在锚点内（closest → null）
+		binder.fireDom('auxclick', fakeMouseEvent(new FakeElement(), { button: 1 }));
+		// 中键但事件目标非 Element（文本节点）
+		binder.fireDom('auxclick', fakeMouseEvent({ nodeType: 3 }, { button: 1 }));
+
+		expect(openHyperlink).not.toHaveBeenCalled();
+	});
+
+	it('未注册画布元素（canvasEl 为 null）：不注册 auxclick（无画布可委托）', () => {
+		const { view, binder } = makeView();
+		(view as unknown as { canvasEl: null }).canvasEl = null;
+		registerWikilinkInteractions(view);
+		expect(binder.hasDom('auxclick')).toBe(false);
+	});
+});
+
+describe('节点内锚点悬停（锚点优先：预览指针所在的那一枚）', () => {
+	beforeEach(() => {
+		getNodeGroupElMock.mockReset();
+		vi.stubGlobal('Element', FakeElement);
+		vi.stubGlobal('HTMLAnchorElement', FakeAnchorElement);
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it('注册画布 mouseover 委托（节点内「节点体→锚点 / 锚点→锚点」移动的补齐路径）', () => {
+		const { view, binder } = makeView();
+		registerWikilinkInteractions(view);
+		expect(binder.hasDom('mouseover')).toBe(true);
+	});
+
+	it('节点级 mouseenter 命中锚点：预览该锚点目标，targetEl 即锚点', () => {
+		const { view, binder, trigger } = makeView();
+		const anchor = new FakeAnchorElement().setAttr('data-href', '目录/第二枚');
+		anchorInGroup(anchor);
+		registerWikilinkInteractions(view);
+
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ mdWikiLinkpath: '[[首链]]' }),
+			fakeMouseEvent(anchor),
+		);
+
+		const payload = trigger.mock.calls[0]?.[1] as {
+			linktext: string;
+			targetEl: unknown;
+		};
+		// 悬停哪枚锚点预览哪枚（不错位到节点首链）
+		expect(payload.linktext).toBe('目录/第二枚');
+		expect(payload.targetEl).toBe(anchor);
+	});
+
+	it('实测场景：首链是外链时，悬停行内 md 链接仍预览其库内目标', () => {
+		// `- md 链接：见 [站点](https://example.com) 与 [文档](笔记D.md)`
+		// 节点级只装得下首链（外链 → linktext 为 null），「文档」只有锚点知道目标
+		const { view, binder, trigger } = makeView();
+		const anchor = new FakeAnchorElement().setAttr('data-href', '笔记D.md');
+		anchorInGroup(anchor);
+		registerWikilinkInteractions(view);
+
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ hyperlink: 'https://example.com', mdLinkStyle: 'md' }),
+			fakeMouseEvent(anchor),
+		);
+
+		const payload = trigger.mock.calls[0]?.[1] as {
+			linktext: string;
+			targetEl: unknown;
+		};
+		expect(payload.linktext).toBe('笔记D.md');
+		expect(payload.targetEl).toBe(anchor);
+	});
+
+	it('锚点不是库内目标（外链 href）→ 回落到节点级首链，而不是放弃预览', () => {
+		const { view, binder, trigger } = makeView();
+		const anchor = new FakeAnchorElement().setAttr(
+			'href',
+			'https://example.com',
+		);
+		const groupEl = anchorInGroup(anchor);
+		registerWikilinkInteractions(view);
+
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ mdWikiLinkpath: '[[笔记A]]' }),
+			fakeMouseEvent(anchor),
+		);
+
+		const payload = trigger.mock.calls[0]?.[1] as {
+			linktext: string;
+			targetEl: unknown;
+		};
+		expect(payload.linktext).toBe('笔记A');
+		// 节点级兜底：targetEl 回到节点 group（弹窗定位锚定整节点）
+		expect(payload.targetEl).toBe(groupEl);
+	});
+
+	it('画布 mouseover 命中锚点：按该锚点目标预览（节点内移动不改目标）', () => {
+		const { view, binder, trigger } = makeView();
+		const anchor = new FakeAnchorElement().setAttr('data-href', 'B');
+		anchor.closestResult = anchor;
+		getNodeGroupElMock.mockReturnValue(new FakeElement());
+		registerWikilinkInteractions(view);
+
+		binder.fireDom('mouseover', fakeMouseEvent(anchor));
+
+		const payload = trigger.mock.calls[0]?.[1] as { linktext: string };
+		expect(payload.linktext).toBe('B');
+	});
+
+	it('画布 mouseover：外链锚点 / 按住鼠标键 / 非元素目标 / 未命中锚点：不接管', () => {
+		const { view, binder, trigger } = makeView();
+		const external = new FakeAnchorElement().setAttr(
+			'href',
+			'https://example.com',
+		);
+		external.closestResult = external;
+		getNodeGroupElMock.mockReturnValue(new FakeElement());
+		registerWikilinkInteractions(view);
+
+		// 外链锚点（库内目标解析不出）：节点级判断在 mouseenter 路径，这里不重复处理
+		binder.fireDom('mouseover', fakeMouseEvent(external));
+		// 拖拽/框选期间鼠标滑过锚点
+		binder.fireDom('mouseover', fakeMouseEvent(external, { buttons: 1 }));
+		// 文本节点等非 Element 目标
+		binder.fireDom('mouseover', fakeMouseEvent({ nodeType: 3 }));
+		// 元素但不在锚点内（closest → null）
+		binder.fireDom('mouseover', fakeMouseEvent(new FakeElement()));
+
+		expect(trigger).not.toHaveBeenCalled();
+	});
+});
+
 describe('node_mouseenter（悬停预览）', () => {
 	beforeEach(() => {
 		getNodeGroupElMock.mockReset();
+		// 锚点识别（点击路径）与锚点桩的 instanceof 判定需要构造器桩
+		vi.stubGlobal('Element', FakeElement);
+		vi.stubGlobal('HTMLAnchorElement', FakeAnchorElement);
 		// 去重按 Date.now() 的时间窗判定：固定系统时间 + 假定时器让 400ms 边界可测
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
 	});
 
 	afterEach(() => {
+		vi.unstubAllGlobals();
 		vi.useRealTimers();
 	});
 
@@ -775,6 +1060,41 @@ describe('node_mouseenter（悬停预览）', () => {
 			fakeMouseEvent(targetEl),
 		);
 		expect(trigger).not.toHaveBeenCalled();
+	});
+
+	it('未解析目标：仍触发预览（目标是否存在交核心判断，插件侧不再预检）', () => {
+		// 2026-09-16 回撤：此前用 isResolvedWikiLinkpath 预检「未解析不预览」，
+		// 与「节点级预览」叠加后让常规悬停静默无反应。核心对不存在的目标
+		// 本就不会弹窗，插件侧无需重复拦截。
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement();
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ mdWikiLinkpath: '[[尚不存在的笔记]]' }),
+			fakeMouseEvent(targetEl),
+		);
+
+		const payload = trigger.mock.calls[0]?.[1] as { linktext: string };
+		expect(payload.linktext).toBe('尚不存在的笔记');
+	});
+
+	it('区块链接：linktext 带区块原样传给核心（核心据此预览对应小节）', () => {
+		const { view, binder, trigger } = makeView();
+		const targetEl = new FakeElement();
+		getNodeGroupElMock.mockReturnValue(targetEl);
+		registerWikilinkInteractions(view);
+
+		binder.fire(
+			'node_mouseenter',
+			fakeNode({ mdWikiLinkpath: '[[笔记#标题]]' }),
+			fakeMouseEvent(targetEl),
+		);
+
+		const payload = trigger.mock.calls[0]?.[1] as { linktext: string };
+		expect(payload.linktext).toBe('笔记#标题');
 	});
 
 	it('外链节点（hyperlink 为协议地址）：不触发预览（核心只服务库内目标）', () => {

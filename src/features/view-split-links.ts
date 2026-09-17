@@ -3,12 +3,18 @@
  *
  * 判定与方案在 `src/markdown/links-split.ts`（纯逻辑，零引擎依赖）；本模块只负责
  * 把方案施加到引擎并给用户反馈：
- * - 单节点：走引擎命令逐条插入（可控，与其它编辑同一条通道）；
- * - 全文批量：改写数据树后一次性 `setData`——与引用更新（`links-tree`）同一
- *   路径，性能模式下也不会漏掉视口外节点。
+ * - 单节点：走引擎命令逐条插入（可控，与其它编辑同一条通道；每条命令各记一条
+ *   历史，`Ctrl+Z` 逐步回退）；
+ * - 全文批量：改写数据树后一次性**替换**（`replaceMindMapData`）——与引用更新
+ *   （`links-tree`）同一路径，性能模式下也不会漏掉视口外节点，且**保留撤销历史**
+ *   （整批一条历史，一次 `Ctrl+Z` 回到拆分前）。
  */
 import { Notice } from 'obsidian';
-import { isEditingText, setNodeText } from '../engine/mindmap';
+import {
+	isEditingText,
+	replaceMindMapData,
+	setNodeText,
+} from '../engine/mindmap';
 import {
 	planSplitLinks,
 	splitAllLinksInTree,
@@ -32,7 +38,7 @@ import type { MindMapViewContext } from './view-context';
  *
  * @returns 新增子节点数量
  */
-export function applySplitPlan(
+function applySplitPlan(
 	view: MindMapViewContext,
 	node: MindMapNode,
 	plan: SplitLinkPlan,
@@ -53,7 +59,7 @@ export function applySplitPlan(
 }
 
 /** 对指定节点执行拆分（无可拆内容返回 0；自动路径不提示） */
-export function splitNodeLinks(
+function splitNodeLinks(
 	view: MindMapViewContext,
 	node: MindMapNode,
 ): number {
@@ -86,7 +92,9 @@ export function splitAllLinks(view: MindMapViewContext): SplitAllResult {
 	}
 	// 新增节点需要 uid（缺失/重复会让引擎按 uid 查找时误删/漏删）
 	ensureUniqueUids(tree);
-	mindMap.setData(tree);
+	// **保留撤销历史**：一次 Ctrl+Z 回到拆分前。此前用引擎 setData，其内部
+	// clearHistory() 会让拆分后 Ctrl+Z 彻底无反应（见 replaceMindMapData 注释）
+	replaceMindMapData(mindMap, tree);
 	view.scheduleSave();
 	return result;
 }

@@ -9,7 +9,7 @@
 import { App, Modal, type TFile } from 'obsidian';
 import { t, type Language } from '../core/i18n';
 import { createButton, createModalSettle, VaultFileSuggest } from './modal-common';
-import { isLinkAttachmentExtension } from '../core/constants';
+import { isRenderableImageExtension } from '../core/constants';
 import {
 	formatWikilink,
 	isDocumentExtension,
@@ -61,10 +61,14 @@ export function openLinkEditorModal(
 				f.extension.toLowerCase() !== 'md' &&
 				isDocumentExtension(f.extension),
 		);
+		// 附件（可链接的库内文件）：**与解析侧同一口径**——非文档类即附件
+		// （`wikilinkTargetIsAttachment`），不再用白名单（2026-09-15 对齐：否则
+		// `[[说明.txt]]` 手写能显示、联想里却选不到）。图片仍在排除之列：图片走
+		// `![[…]]` 图片语义（「添加图片」通道），在链接弹窗里选它只会得到回形针。
 		const attachments = allFiles.filter(
 			(f) =>
 				!isDocumentExtension(f.extension) &&
-				isLinkAttachmentExtension(f.extension),
+				!isRenderableImageExtension(f.extension),
 		);
 
 		/**

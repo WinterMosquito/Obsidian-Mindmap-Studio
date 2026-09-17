@@ -21,6 +21,7 @@
  * - bundle 顶层求值即探测全屏 API（触碰 document.documentElement），纯 Node 环境
  *   加载前必须先打最小 document 桩（见下方，vitest 每文件环境隔离，桩不外泄）。
  */
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -60,6 +61,21 @@ const bundleExports = Object.keys(vendor).filter(
 const mindMapPrototype = (vendor.MindMap as { prototype: Record<string, unknown> })
 	.prototype;
 
+/**
+ * 产物**字节级**身份（sha256，小写十六进制）。
+ *
+ * 存在的理由：本文件其余断言都钉在「API 面」上（导出类 / 原型方法 / 命令名 /
+ * 事件名令牌），无法发现 vendor 文件被手工编辑、或被换成来源不同的同名产物——
+ * 而 `vendor/BUILD.md` 明确要求「不可手工编辑，一切修改必须从包源码重新打包」。
+ * 该值同时登记在 `vendor/BUILD.md` 的「来源定性」一节；
+ * **重新打包后必须同步更新两处**。
+ */
+const EXPECTED_BUNDLE_SHA256 =
+	'a97b0caab190f14e9f814ecbd932dac186780537949afe65f95aa2c4ae1b8382';
+const bundleSha256 = createHash('sha256')
+	.update(readFileSync(BUNDLE_PATH))
+	.digest('hex');
+
 describe('vendor 契约：产物存在性', () => {
 	it('bundle 与手写声明都在磁盘上（缺失时本文件全部断言失去意义，故先钉死）', () => {
 		expect(existsSync(BUNDLE_PATH), 'vendor/simple-mind-map.cjs').toBe(true);
@@ -68,6 +84,14 @@ describe('vendor 契约：产物存在性', () => {
 		// （fix.3 实测 406,580 B）
 		expect(statSync(BUNDLE_PATH).size).toBeGreaterThan(100_000);
 		expect(bundleSource.length).toBeGreaterThan(100_000);
+	});
+
+	it('bundle 的 sha256 与 vendor/BUILD.md 登记值一致（防手工编辑与换源）', () => {
+		// 失败含义：产物字节被改动过（手工编辑，或换了来源不同的同名产物）。
+		// 若确为「按 vendor/BUILD.md 配方重新打包」，则同步更新两处常量。
+		expect(bundleSha256, 'vendor/simple-mind-map.cjs 的 sha256').toBe(
+			EXPECTED_BUNDLE_SHA256,
+		);
 	});
 });
 
@@ -109,6 +133,9 @@ describe('vendor 契约：MindMap 原型面（d.cts 声明 ↔ bundle 运行时�
 			'addPlugin',
 			'getData',
 			'setData',
+			// 保留历史的整树替换入口（replaceMindMapData）：引擎升级若移除它，
+			// 撤销链会退回「setData 清空历史」的旧行为，必须在契约层拦住
+			'updateData',
 			'updateConfig',
 			'setLayout',
 			'setThemeConfig',
@@ -119,11 +146,70 @@ describe('vendor 契约：MindMap 原型面（d.cts 声明 ↔ bundle 运行时�
 	});
 });
 
+describe('vendor 契约：画布导航手势（由引擎实现，插件不得重复实现）', () => {
+	// 为什么钉死：features/view-viewport.ts 只补「抑制中键自动滚动」与 Shift+1/2，
+	// 滚轮平移/缩放与中键拖平移**全部依赖引擎**。若升级后引擎丢了这些行为，
+	// 插件侧的手势会整体失效（而不是降级），必须在契约层先失败。
+	it('滚轮：默认平移 + Ctrl/Cmd 以指针为锚缩放（createMindMap 已显式钉住两者）', () => {
+		expect(bundleSource, '默认行为 = 平移').toMatch(
+			/mousewheelAction:\w+\.MOUSE_WHEEL_ACTION\.MOVE/,
+		);
+		expect(bundleSource, 'Ctrl/Cmd+滚轮缩放未被引擎默认关闭').toMatch(
+			/disableMouseWheelZoom:!1/,
+		);
+		expect(bundleSource, 'Ctrl/Cmd 分支与缩放同路').toMatch(
+			/t\.ctrlKey\|\|t\.metaKey/,
+		);
+	});
+
+	it('滚轮事件先 stopPropagation：容器级 wheel 监听收不到（重复实现即死代码）', () => {
+		expect(bundleSource, '监听挂在引擎 el 上').toMatch(
+			/"wheel",this\.onMousewheel/,
+		);
+		expect(bundleSource, '处理前先 stopPropagation + preventDefault').toMatch(
+			/onMousewheel\(t\)\{t\.stopPropagation\(\),t\.preventDefault\(\)/,
+		);
+	});
+
+	it('中键拖拽：引擎自置 isMiddleMousedown 并派发 drag，监听在 window（拖出画布仍跟手）', () => {
+		expect(bundleSource, 'mousedown 按 which 记录中键').toMatch(
+			/which===2&&\(this\.isMiddleMousedown=!0\)/,
+		);
+		expect(bundleSource, '中键与左键同样派发 drag').toMatch(
+			/this\.isMiddleMousedown\|\|/,
+		);
+		expect(bundleSource, 'mousemove 监听在 window').toMatch(
+			/window\.addEventListener\("mousemove",this\.onMousemove\)/,
+		);
+	});
+});
+
+describe('vendor 契约：两种 getData() 的语义（活引用 vs 深拷贝）', () => {
+	// 为什么钉死：插件里有两条互相依赖相反语义的路径——
+	// ① `Node.getData()` 返回**活引用**：帧内图片尺寸预览（previewNodeImageSize）
+	//    与清标记（delete data.mdImageAutoSize）都是**就地改写**，若引擎改成返回
+	//    拷贝，这些操作会静默变成 no-op（画面不跟手、尺寸不回写）；
+	// ② `MindMap.getData()` 返回**深拷贝**：批量拆分（splitAllLinks）先改树再整树
+	//    回灌，若变成活引用，改动会直接写进引擎渲染树而绕过渲染/历史。
+	it('Node.getData() 返回活引用（不经拷贝）', () => {
+		expect(bundleSource, 'Node.getData 本体形态').toMatch(
+			/getData\(t\)\{return t\?this\.nodeData\.data\[t\]:this\.nodeData\.data\}/,
+		);
+	});
+
+	it('MindMap.getData() 返回拷贝（走 command.getCopyData）', () => {
+		expect(bundleSource, 'MindMap.getData 走 getCopyData').toMatch(
+			/getData\(t\)\{let e=this\.command\.getCopyData\(\)/,
+		);
+	});
+});
+
 describe('vendor 契约：ENGINE_COMMANDS 命令名全表', () => {
 	/** 引擎命令名权威表（0.14.0-fix.3）：新增/改名须走 vendor/BUILD.md 升级流程第 3 步 */
 	const expectedCommands = [
 		'BACK',
 		'FORWARD',
+		'CLEAR_ACTIVE_NODE',
 		'INSERT_CHILD_NODE',
 		'INSERT_NODE',
 		'REMOVE_NODE',

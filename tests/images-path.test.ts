@@ -13,8 +13,11 @@ import { App, TFile } from 'obsidian';
 import { IMAGE_HEIGHT, IMAGE_WIDTH } from '../src/core/constants';
 import { fileLookupIndex } from '../src/links/file-lookup';
 import {
+	applyImageSizeCorrectionsToTree,
 	cacheImageFail,
+	collectImageSizeCorrections,
 	computeAspectImageSize,
+	ensureDefaultImageSizes,
 	createAspectSetNodeImageOptions,
 	createSetNodeImageOptions,
 	IMAGE_FAIL_TTL_MS,
@@ -238,6 +241,46 @@ describe('resolveImagePath / walkResolveImagePaths（地址解析路由）', () 
 		expect(dataOf(children[3]!.children[0]!).image).toBe(
 			`${RESOURCE_PREFIX}assets/pic.png`,
 		);
+	});
+});
+
+describe('ensureDefaultImageSizes（引擎硬要求：image 节点必有 imageSize）', () => {
+	// 引擎 createImgNode → getImgShowSize 直接解构 data.imageSize，
+	// 缺字段即 TypeError、整图渲染链中断（verify:visual 的 image 探针对照组实测）。
+	// 解析器不产 imageSize（PLAIN_IMAGE_FIELDS 不含它），故「先渲染后校正」的
+	// 路径必须先填默认值。
+	it('缺失的填默认（custom:false → 引擎自行约束），已有的（含 custom:false）不动', () => {
+		const filled = ensureDefaultImageSizes(
+			node({ text: 'root' }, [
+				node({ text: '', image: probeUrl('a.png') }),
+				node({
+					text: '',
+					image: probeUrl('b.png'),
+					imageSize: { width: 999, height: 111, custom: true },
+				}),
+				node({
+					text: '',
+					image: probeUrl('c.png'),
+					imageSize: { width: 200, height: 120, custom: false },
+				}),
+				node({ text: '无图节点' }),
+			]),
+		);
+
+		expect(filled).toBe(1);
+	});
+
+	it('填充值为统一默认盒（IMAGE_WIDTH × IMAGE_HEIGHT，custom:false）', () => {
+		const tree = node({ text: '', image: probeUrl('default-box.png') });
+
+		expect(ensureDefaultImageSizes(tree)).toBe(1);
+		expect(tree.data.imageSize).toEqual({
+			width: IMAGE_WIDTH,
+			height: IMAGE_HEIGHT,
+			custom: false,
+		});
+		// 幂等：再填一次为 no-op（已有的不动）
+		expect(ensureDefaultImageSizes(tree)).toBe(0);
 	});
 });
 
@@ -472,6 +515,55 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 		const tree = node({ text: 'root' }, [node({ text: 'leaf' })]);
 		await expect(walkCorrectImageSizesByAspect(tree)).resolves.toBe(false);
 		expect(FakeImage.instances).toHaveLength(0);
+	});
+
+	it('两步式：collect 只探测不写树，apply 才写（加载路径首帧不等探测的前提）', async () => {
+		const tree = node({ text: '', image: probeUrl('two-step.png') });
+		const pending = collectImageSizeCorrections(tree);
+		lastImage().emitLoad(300, 100);
+		const corrections = await pending;
+
+		// 探测阶段**零写入**：树仍是默认尺寸（首帧因此可以直接出画）
+		expect(tree.data.imageSize).toBeUndefined();
+		expect(corrections).toHaveLength(1);
+		expect(corrections[0]).toMatchObject({
+			image: probeUrl('two-step.png'),
+			width: Math.round((IMAGE_HEIGHT * 300) / 100),
+			height: IMAGE_HEIGHT,
+			custom: true,
+			autoSize: true,
+		});
+		// 条目持有 data **对象引用**（跨引擎重建后按对象身份回灌，不依赖 uid）
+		expect(corrections[0]?.data).toBe(tree.data);
+
+		// 写回阶段：值不同 → 写入并报改动
+		expect(applyImageSizeCorrectionsToTree(corrections)).toBe(true);
+		expect(tree.data.imageSize).toEqual({
+			width: Math.round((IMAGE_HEIGHT * 300) / 100),
+			height: IMAGE_HEIGHT,
+			custom: true,
+		});
+		expect(dataOf(tree).mdImageAutoSize).toBe(true);
+
+		// 幂等：同一份结果再写一次为 no-op（不惊动引擎重渲染/序列化）
+		expect(applyImageSizeCorrectionsToTree(corrections)).toBe(false);
+	});
+
+	it('官方参数（![[图|300]]）的条目 autoSize=false：不标自动校正（回写须保留参数）', async () => {
+		const tree = node({
+			text: '',
+			image: probeUrl('param-flag.png'),
+			mdImageTarget: '图.png',
+			mdImageWidth: 300,
+		});
+		const pending = collectImageSizeCorrections(tree);
+		lastImage().emitLoad(300, 100);
+		const corrections = await pending;
+
+		expect(corrections).toHaveLength(1);
+		expect(corrections[0]?.autoSize).toBe(false);
+		applyImageSizeCorrectionsToTree(corrections);
+		expect(dataOf(tree).mdImageAutoSize).toBeUndefined();
 	});
 
 	it('官方嵌入语法仅宽度（![[图|300]]）：宽度取参数、高度按原始比例补齐', async () => {

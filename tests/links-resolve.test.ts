@@ -12,7 +12,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, FileSystemAdapter, TFile } from 'obsidian';
 import { fileLookupIndex } from '../src/links/file-lookup';
-import { resolveDroppedFile, resolvePathToFile } from '../src/links/links-resolve';
+import {
+	filesUnderFolder,
+	resolveDroppedFile,
+	resolvePathToFile,
+} from '../src/links/links-resolve';
 
 /** 资源地址前缀：fake vault 的 getResourcePath 输出形态 */
 const RESOURCE_PREFIX = 'app://fake/';
@@ -508,5 +512,40 @@ describe('resolveDroppedFile（拖拽形态与 dragManager 私有触点）', () 
 			types: ['application/x-obsidian'],
 		});
 		expect(resolveDroppedFile(dt, app)).toBe(pic);
+	});
+});
+
+describe('filesUnderFolder（拖入文件夹 = 加入其中所有文件）', () => {
+	const files = [
+		file('notes/a.md'),
+		file('notes/sub/b.md'),
+		file('notes2/c.md'),
+		file('root.md'),
+	];
+
+	it('普通文件夹：含子目录文件，不误收同前缀兄弟目录（notes2）', () => {
+		expect(filesUnderFolder(files, 'notes').map((f) => f.path)).toEqual([
+			'notes/a.md',
+			'notes/sub/b.md',
+		]);
+	});
+
+	it('库根（path 为 "/"）：整库全部文件——不得因 "//" 前缀落空', () => {
+		// 回归：此前按 `${folder.path}/` 拼前缀，根文件夹得到 '//'，
+		// 一个文件都匹配不到 → 整库拖入被提示「没有文件」
+		expect(filesUnderFolder(files, '/').map((f) => f.path)).toEqual([
+			'notes/a.md',
+			'notes/sub/b.md',
+			'notes2/c.md',
+			'root.md',
+		]);
+	});
+
+	it('空路径（防御）：同样按整库处理', () => {
+		expect(filesUnderFolder(files, '')).toHaveLength(4);
+	});
+
+	it('空文件夹：返回空数组（调用方据此提示「没有文件」）', () => {
+		expect(filesUnderFolder(files, 'empty')).toEqual([]);
 	});
 });

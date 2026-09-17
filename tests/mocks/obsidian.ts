@@ -7,7 +7,9 @@
  *   2. 被依赖的类能被 `extends` / `instanceof` / `new`。
  *
  * **交互行为不在这里实现**：各测试文件按需自建局部桩（不要把测试专用
- * 断言逻辑堆进本文件，它会污染其他测试的语义基线）。
+ * 断言逻辑堆进本文件，它会污染其他测试的语义基线）。例外是**官方契约的
+ * 最小语义**（`Keymap.isModEvent` / `setTooltip` 写入 aria-label）：生产代码
+ * 经它们分流与落提示、多个套件共同依赖，故集中于此并按官方 d.ts 语义实现。
  */
 
 export class App {}
@@ -40,7 +42,6 @@ export function normalizePath(p: unknown): string {
    测试不实例化这些类的交互行为，方法只补最小可用链式面 ==== */
 
 export class TAbstractFile {}
-export class MarkdownRenderChild {}
 
 /** Modal 桩：只保证 createModalSettle 的 setCloseCallback 可链式调用 */
 export class Modal {
@@ -118,6 +119,11 @@ export class ButtonComponent {
 	setCta(): ButtonComponent {
 		return this;
 	}
+
+	/** 官方组件级 tooltip（modal-image 经它落提示；本桩不记录调用） */
+	setTooltip(_tooltip: string): ButtonComponent {
+		return this;
+	}
 }
 
 export class AbstractInputSuggest {
@@ -131,6 +137,50 @@ export const Platform = {
 	isMobile: false,
 	isIosApp: false,
 	isAndroidApp: false,
+	/** 平台判定参与「拖入修饰键」分派（mac 用 Option、其余用 Ctrl），测试按 win/linux 基线 */
+	isMacOS: false,
+	isWin: true,
+	isLinux: false,
 };
 
 export function setIcon(_parent: unknown, _iconId: string): void {}
+
+/**
+ * setTooltip 桩：官方行为的最小面——写 `aria-label`（Obsidian 原生 tooltip
+ * 由它驱动）。工具栏按钮与丝带提示的无障碍断言依赖这一步写入；
+ * 位置/延迟等展示行为不在 mock 范围。
+ */
+export function setTooltip(el: HTMLElement, tooltip: string): void {
+	el.setAttribute('aria-label', tooltip);
+}
+
+/**
+ * Keymap 桩：实现官方 `Keymap.isModEvent` 的**文档语义**（修饰键表）——
+ * view-wikilink 经它分流链接落点，测试需要与生产同一条官方口径；
+ * 与 Platform / Scope / Modal 桩同理，只补被生产代码消费的最小面。
+ * 官方 d.ts：'tab' if Cmd/Ctrl（或中键）、'split' if Cmd/Ctrl+Alt、
+ * 'window' if Cmd/Ctrl+Alt+Shift，否则 false。
+ */
+export class Keymap {
+	static isModEvent(
+		evt?: {
+			ctrlKey?: boolean;
+			metaKey?: boolean;
+			altKey?: boolean;
+			shiftKey?: boolean;
+			button?: number;
+		} | null,
+	): 'tab' | 'split' | 'window' | false {
+		if (!evt) {
+			return false;
+		}
+		if (evt.ctrlKey === true || evt.metaKey === true) {
+			return evt.altKey === true
+				? evt.shiftKey === true
+					? 'window'
+					: 'split'
+				: 'tab';
+		}
+		return evt.button === 1 ? 'tab' : false;
+	}
+}

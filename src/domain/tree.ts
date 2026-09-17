@@ -10,11 +10,6 @@
  * - visit 返回 false 可立即终止整棵树遍历（搜索命中即停的短路场景）。
  */
 
-/** 可遍历树节点（运行时 children 可能缺失：解析/编辑中间态，按可选处理） */
-export interface TreeNodeLike {
-	children?: readonly TreeNodeLike[] | null;
-}
-
 /**
  * 先序深度优先遍历树（父节点先于子节点）。
  * @param visit  访问回调；返回 false 时立即终止整棵树的遍历

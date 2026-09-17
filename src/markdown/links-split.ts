@@ -34,6 +34,7 @@ import { App } from 'obsidian';
 import { isRenderableImageTarget } from '../core/constants';
 import {
 	buildInlineData,
+	INLINE_LINK_FIELDS,
 	isLinkReferenceDefinition,
 	tokenizeInline,
 	type InlineToken,
@@ -47,6 +48,7 @@ import {
 	wikilinkTargetIsAttachment,
 } from '../domain/wikilink';
 import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MdTokenSegment } from '../domain/md-meta';
 import type { MdNodeData } from '../core/node-data';
 
 /** 可承载子节点的行类型（plain 段落跳过，见文件头） */
@@ -58,19 +60,11 @@ const SPLITTABLE_LINE_TYPES: ReadonlySet<string> = new Set([
 /**
  * 父节点上承载链接的字段（与解析侧三条通道一一对应）。
  * 「被抽走的首链接」占用其中一组：清空后按新行的解析结果回填。
+ *
+ * 清单本体在解析侧（`md-outline.INLINE_LINK_FIELDS`）——这里只是别名，
+ * 避免「解析能写哪些字段」出现第二份定义（拆分时**不动**图片字段，见下方用法）。
  */
-export const PARENT_LINK_FIELDS = [
-	'hyperlink',
-	'hyperlinkTitle',
-	'mdLinkStyle',
-	'mdLinkText',
-	'mdWikiLinkpath',
-	'attachmentUrl',
-	'attachmentName',
-	'mdAttachmentLinkpath',
-	'mdEmbed',
-	'mdEmbedPipe',
-] as const;
+const PARENT_LINK_FIELDS = INLINE_LINK_FIELDS;
 
 /** 待抽离 token：`[[X]]` / `![[X]]` 且目标不是图片（外链、图片一律不动） */
 function isExtractableToken(tok: InlineToken): boolean {
@@ -124,7 +118,7 @@ function visibleNameOf(tok: InlineToken, rawLink: string): string {
 }
 
 /** 待追加的子节点（拆分产物） */
-export interface SplitLinkChild {
+interface SplitLinkChild {
 	/** 可见名（子节点文本；附件嵌入为空——与解析侧「嵌入不占文本」同口径） */
 	text: string;
 	/** 子节点初始数据（完整双链 / 附件通道字段） */
@@ -145,11 +139,12 @@ export interface SplitLinkPlan {
 	/** 新行的链接字段（仅清空后回填；无剩余链接时为空对象） */
 	parentLinkFields: Record<string, unknown>;
 	/**
-	 * 新行的额外 token（多 token 保真数据；新行无额外 token 时为 undefined）。
-	 * 施加方案时按此重建 `mdExtraTokens`——被抽走的 token 不残留
-	 * （否则下次合成会重复追加），未抽出的多枚 token 不丢失。
+	 * 新行的行内 token 台账（显示文本 ↔ 原文对齐表，见 domain/md-meta.MdTokenSegment；
+	 * 额外 token 的原文也在此，是**唯一**台账）。按新行解析结果重建：被抽走的
+	 * token 不残留（否则下次合成会把它写回原位 / 重复追加，复活已抽出的链接），
+	 * 未抽出的多枚 token 不丢失。
 	 */
-	parentExtraTokens?: { raw: string; kind: 'image' | 'link' }[];
+	parentSegments?: MdTokenSegment[];
 	/** 待追加的子节点（按原文出现顺序，已按目标去重） */
 	children: SplitLinkChild[];
 }
@@ -183,12 +178,12 @@ export function writeSplitPlanToData(
 	data.text = plan.parentText;
 	data.mdRaw = plan.parentRaw;
 	data.mdDerivedText = plan.parentText;
-	// 额外 token 以**新行解析结果**为准重建：被抽走/消失的 token 不残留
-	//（否则下次合成会把它们重复追加），未抽出的多枚 token 不丢失
-	if (plan.parentExtraTokens && plan.parentExtraTokens.length > 0) {
-		data.mdExtraTokens = plan.parentExtraTokens;
+	// 行内 token 台账以**新行解析结果**为准整体重建：被抽走/消失的 token 不残留
+	//（否则下次合成会把它们写回原位或重复追加），未抽出的多枚 token 不丢失
+	if (plan.parentSegments && plan.parentSegments.length > 0) {
+		data.mdSegments = plan.parentSegments;
 	} else {
-		delete data.mdExtraTokens;
+		delete data.mdSegments;
 	}
 }
 
@@ -196,7 +191,7 @@ export function writeSplitPlanToData(
  * 就地施加方案到**数据树**节点（批量路径用；uid 由调用方经 ensureUniqueUids 补）。
  * 与单节点路径（引擎命令逐条插入）语义一致，差别只在落地方式。
  */
-export function applySplitLinkPlan(
+function applySplitLinkPlan(
 	node: MindMapTreeNode,
 	plan: SplitLinkPlan,
 ): void {
@@ -214,8 +209,11 @@ export function applySplitLinkPlan(
  *
  * - 只改传入的树，不涉及引擎；`uid` 由调用方在 setData 前补
  *   （`ensureUniqueUids`：缺失/重复会让引擎按 uid 查找时误删/漏删）；
- * - 扫描源必须是**数据树**：性能模式（`removeNodeWhenOutCanvas`）会把视口外
- *   节点移出渲染树，用渲染树扫描会静默漏掉它们；
+ * - 扫描源是**数据树**（要写回的那一份）：本函数就地改树、调用方随即整树替换，
+ *   必须与序列化同源。注意口径澄清（vendor 0.14.0-fix.3 实测 + verify:visual 的
+ *   count 探针）：性能模式（`removeNodeWhenOutCanvas`）**只把视口外节点摘出
+ *   DOM**（`node.removeSelf()` = `group.remove()`），节点实例仍留在 `parent.children`
+ *   ⇒ **渲染树结构始终完整**，遍历渲染树不会漏节点（早期注释误写为「移出渲染树」）；
  * - 先收集候选、再逐个施加：拆分会在遍历中插入子节点，边遍历边改会让结果不确定。
  */
 export function splitAllLinksInTree(
@@ -475,9 +473,7 @@ export function planSplitLinks(
 		clearParentLink:
 			firstFieldToken !== null && extractedSet.has(firstFieldToken),
 		parentLinkFields: pickLinkFields(reparsed),
-		...(reparsed.mdExtraTokens
-			? { parentExtraTokens: reparsed.mdExtraTokens }
-			: {}),
+		...(reparsed.mdSegments ? { parentSegments: reparsed.mdSegments } : {}),
 		children,
 	};
 }
