@@ -89,7 +89,8 @@
 - 未编辑的行**逐字回写**（frontmatter 原样保留；段落间空行与独立的 `---` 分隔线会做规范化）；**纯双链节点**（整行只有一个双链）的编辑即**改别名**，回写为 `[[笔记|新别名]]`（清空文本 = 去掉别名，链接保留；文本与链接共存的节点仍按「文本 + 链接」回写）。
 - 布局、视口与「打开方式」按文件记在插件 `data.json`；节点图片尺寸则以官方嵌入语法（`![[图|300]]`）写入笔记本体。
 - 编辑**中心节点**会自动重命名 `.mindmap.md`（Obsidian 原生更新链接/反链）。
-- 配置仅存本地，无遥测。
+- 配置仅存本地，无遥测，插件**不发起任何网络请求**——不会有任何数据外发。
+- **仅在你主动要求时**才会触及仓库之外的文件：按住 `Ctrl` / `Option` 拖入文件所生成的绝对链接（`file:///…`）在你点击时交给系统默认应用打开；插件不会读取、复制或上传这些文件。
 
 ### ⑤ 与 Obsidian 的差异（有意保留）
 
@@ -109,10 +110,10 @@
 ## 📦 安装
 
 - **社区插件**（上架后）：**设置 → 第三方插件** → 搜索 *MindMap Studio*。
-- **从 GitHub Release 安装（推荐）**：从仓库 [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) 页面下载最新版本的附件（`main.js`、`manifest.json`、`styles.css`），复制到 `<仓库>/.obsidian/plugins/mindmap-studio/`，重启 Obsidian 后在 **设置 → 第三方插件** 启用。
+- **从 GitHub Release 安装（推荐）**：从仓库 [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) 页面下载最新版本的附件（`main.js`、`manifest.json`、`styles.css`；Release 另附 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`，用于覆盖内置引擎的第三方许可），把这三个插件文件复制到 `<仓库>/.obsidian/plugins/mindmap-studio/`，重启 Obsidian 后在 **设置 → 第三方插件** 启用。
 - **从源码构建**：`npm install && npm run build` 生成 `main.js`，与 `manifest.json`、`styles.css` 一起放入插件目录。
 
-> 需要 Obsidian 1.13.0 或更高版本，仅支持桌面端（Windows / macOS / Linux）。配置仅存本地（插件 `data.json`），无遥测。`main.js` 由 CI 构建并随每个 GitHub Release 发布（不提交进仓库）。
+> 需要 Obsidian 1.13.0 或更高版本，仅支持桌面端（Windows / macOS / Linux）。配置仅存本地（插件 `data.json`），无遥测、不发起网络请求。`main.js` 由 CI 构建并随每个 GitHub Release 发布（不提交进仓库）；每个 Release 另附 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`——内置引擎是第三方 MIT / BSD-3-Clause 代码，而压缩后的 bundle 自身无法携带这些声明。
 
 ## 🛠 开发
 
@@ -121,12 +122,14 @@ npm install
 npm run dev      # watch 模式
 npm run build    # 类型检查 + 生产构建（main.js）
 npm test         # 回归测试（vitest）
-npm run lint
+npm run lint     # ESLint（官方 obsidianmd 规则集，warning 即失败）
+npm run lint:css # 样式表规则——与社区目录 scanner 的 stylelint 规则面一致
+npm run check:release   # 发布元数据护栏（versions.json / manifest / README）
 npm run verify:visual   # 无头 Chrome 渲染契约校验（加 `-- --perf` 取真实耗时基线）
 ```
 
-引擎（`vendor/simple-mind-map.cjs`）为 vendor 产物，请勿手工编辑；升级时从上游源码重新打包替换。打包内含的第三方许可见 [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md)。
+引擎（`vendor/simple-mind-map.cjs`）为 vendor 产物，请勿手工编辑；升级时从上游源码重新打包替换。打包内含的第三方许可见 [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md)——该文件随每个 Release 一并发布，因为压缩后的 `main.js` 自身无法携带这些声明。
 
 ## ⚖️ 许可证
 
-MIT —— 见仓库根目录 `LICENSE` 文件。
+MIT —— 见仓库根目录 `LICENSE` 文件。插件内置 [simple-mind-map](https://github.com/wanglin2/mind-map) 引擎及其依赖，各自遵循其原始许可（MIT / BSD-3-Clause），声明见 [`vendor/THIRD-PARTY-NOTICES.md`](vendor/THIRD-PARTY-NOTICES.md)。这两个文件随每个 Release 一并发布。
