@@ -62,18 +62,27 @@ const mindMapPrototype = (vendor.MindMap as { prototype: Record<string, unknown>
 	.prototype;
 
 /**
- * 产物**字节级**身份（sha256，小写十六进制）。
+ * 产物**字节级**身份（sha256，小写十六进制）——**按 LF 归一后**计算。
  *
  * 存在的理由：本文件其余断言都钉在「API 面」上（导出类 / 原型方法 / 命令名 /
  * 事件名令牌），无法发现 vendor 文件被手工编辑、或被换成来源不同的同名产物——
  * 而 `vendor/BUILD.md` 明确要求「不可手工编辑，一切修改必须从包源码重新打包」。
  * 该值同时登记在 `vendor/BUILD.md` 的「来源定性」一节；
  * **重新打包后必须同步更新两处**。
+ *
+ * **为什么必须归一换行**（2026-09-17 实测教训，勿「修正」回原始字节）：仓库没有
+ * `.gitattributes`，而检出侧 `core.autocrlf=true`（Windows）会把该文件写成 CRLF，
+ * CI 的 Linux 检出得到的则是索引里的 LF——**同一提交的原始字节跨平台不同**。
+ * 曾直接对原始字节取哈希：本地（CRLF，96 处）算得 `a97b0caa…`、CI（LF）算得
+ * `dca4cead…`，于是**本地绿、CI 红**，发布工作流被自己的门禁拦下。
+ *
+ * 代价（有意接受）：纯换行符改动不再被该断言发现。但换行符差异是「检出方式」的
+ * 产物而不是内容改动，两者在上游行为上等价，故不作为漂移处理。
  */
 const EXPECTED_BUNDLE_SHA256 =
-	'a97b0caab190f14e9f814ecbd932dac186780537949afe65f95aa2c4ae1b8382';
+	'dca4ceadeea46ad003ad600aacecc328b388f3505855c83d63b4b12a300ac898';
 const bundleSha256 = createHash('sha256')
-	.update(readFileSync(BUNDLE_PATH))
+	.update(readFileSync(BUNDLE_PATH, 'utf8').replace(/\r\n/g, '\n'), 'utf8')
 	.digest('hex');
 
 describe('vendor 契约：产物存在性', () => {
@@ -86,10 +95,10 @@ describe('vendor 契约：产物存在性', () => {
 		expect(bundleSource.length).toBeGreaterThan(100_000);
 	});
 
-	it('bundle 的 sha256 与 vendor/BUILD.md 登记值一致（防手工编辑与换源）', () => {
-		// 失败含义：产物字节被改动过（手工编辑，或换了来源不同的同名产物）。
+	it('bundle 的 sha256（LF 归一）与 vendor/BUILD.md 登记值一致（防手工编辑与换源）', () => {
+		// 失败含义：产物**内容**被改动过（手工编辑，或换了来源不同的同名产物）。
 		// 若确为「按 vendor/BUILD.md 配方重新打包」，则同步更新两处常量。
-		expect(bundleSha256, 'vendor/simple-mind-map.cjs 的 sha256').toBe(
+		expect(bundleSha256, 'vendor/simple-mind-map.cjs 的 sha256（LF 归一）').toBe(
 			EXPECTED_BUNDLE_SHA256,
 		);
 	});

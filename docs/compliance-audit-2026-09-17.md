@@ -316,7 +316,7 @@ scanner（`obsidian-workflows`）用 `npx --prefix <tmp> eslint --config <tmp>/e
 | V5 | 已修 | 新增 `stylelint.config.mjs`（规则照抄官方 `src/lint.ts:10-123`；`browsers: ['electron >= 39']` 由 `minAppVersion: 1.13.0` 推得）+ `lint:css` 脚本 + 两个工作流步骤；新增 devDeps `stylelint@^17.15.0`、`stylelint-no-unsupported-browser-features@^8.1.2`（**锁文件已同步**，`npm ci` 仍一致） | `stylelint "**/*.css"` exit 0，印证 §4「文件本身干净」的判定 |
 | V6 | 已修 | 新增 `scripts/check-release-metadata.mjs` + `check:release` 脚本，接入两个工作流：`versions.json` 形状与 semver、`manifest.version` 在表内、**当前版本**的值 == `minAppVersion`、README 非空 | 正向 exit 0；四个负向用例（数组 / 缺当前版本 / minAppVersion 不一致 / README 无有效内容）均 exit 1 并给出对应 `::error::` |
 | V7 | 已修 | `release.yml` 在构建前新增门禁：`check:release` + `npm test` + `npm run lint` + `npm run lint:css`（tag push **不**触发 `lint.yml`，故须在发布流程内自证） | — |
-| V8 | 已修 | `vendor/BUILD.md` 登记产物 sha256；`tests/vendor-contract.test.ts` 新增字节级身份断言（此前所有契约都只钉 API 面，对字节改动无感） | 断言值与实测一致 |
+| V8 | 已修 | `vendor/BUILD.md` 登记产物 sha256；`tests/vendor-contract.test.ts` 新增字节级身份断言（此前所有契约都只钉 API 面，对字节改动无感） | **首次实现有缺陷，被 CI 抓出并已修正**：断言原按**原始字节**取哈希，而本仓库无 `.gitattributes`、检出侧 `core.autocrlf=true` ⇒ 本地工作树是 CRLF+BOM、CI 的 Linux 检出是 LF+BOM，**同一提交的原始字节跨平台不同**（本地 `a97b0caa…` / CI `dca4cead…`），发布工作流被自己的门禁拦下。已改为**按 LF 归一后**计算，登记值 `dca4cead…c898`（= CI 值）。两侧均已实测：本地（CRLF+BOM）与「字节级模拟的 CI 状态（LF+BOM）」下测试均通过 |
 | V15 | 已修 | `eslint.config.mts` 新增 `OFFICIAL_RESTRICTED_IMPORT_PATTERNS`（官方 7 个包，文案取自 `eslint-plugin-master/lib/ruleOptions.ts:19-56`），前缀接入 9 个模块边界块与 domain 块 | 负向探针：`axios`、`moment`（值导入）各报一条 |
 | V16 | 已修 | domain 块新增裸说明符闭包（**用 `regex` 而非 `group: ['*']`**，理由见下） | 负向探针：`node:fs`、`lodash` 各报一条；`./wikilink` **不报** |
 | V17 | 已修 | `eslint.config.mts` 新增 `src/**/*.ts` 块，显式传 `minAppVersion`（值读自 `manifest.json`，不重复字面量） | `tsc` + `eslint` 通过 |
@@ -349,7 +349,7 @@ scanner（`obsidian-workflows`）用 `npx --prefix <tmp> eslint --config <tmp>/e
    自撰配置（与模板照抄、走 `globalIgnores` 的 `esbuild.config.mjs` / `version-bump.mjs` 不同类），
    纳入 lint 而非忽略；否则 eslint 会以「not found by the project service」直接失败。
 
-**两处被实测推翻的假设**（记录以免后人重踩，均由负向探针发现）：
+**三处被实测推翻的假设**（记录以免后人重踩；前两处由本地负向探针发现，第三处由**首次推送后的 CI** 发现——本地环境无法暴露它）：
 
 1. `patterns` 里的 `group: ['*']` **不能**当「裸包名」闭包——core 的 group 匹配以
    `allowRelativePaths: true` 配置 `ignore`（`eslint/lib/rules/no-restricted-imports.js`），
@@ -358,6 +358,14 @@ scanner（`obsidian-workflows`）用 `npx --prefix <tmp> eslint --config <tmp>/e
 2. 校验 `versions.json` 时**不能**要求「所有版本的值都等于 `minAppVersion`」——历史版本
    可以合法地要求更低的 app 版本；唯一正确的不变式是「**当前**版本的值等于
    `manifest.minAppVersion`」。
+3. **对「文本类入库文件」取原始字节哈希，跨平台不可复现**（本地绿、CI 红）。仓库无
+   `.gitattributes`，而检出侧 `core.autocrlf=true`：`vendor/simple-mind-map.cjs` 在
+   Windows 工作树是 **BOM + CRLF**（406,580 B），在 CI 的 Linux 检出是 **BOM + LF**
+   （406,484 B，少 96 个 `\r`），故原始字节哈希必然不同。正确做法是**按 LF 归一后**取哈希。
+   两个连带教训：① 用 `ReadAllText` / `WriteAllText` 做「模拟 LF 检出」会**静默吞掉 BOM**
+   （差 3 字节：406,481 ≠ 406,484），使模拟失真、结论错误——必须做**字节级**转换；
+   ② **不要**为此添加 `vendor/** -text` 之类的 `.gitattributes`：在既有 CRLF 工作副本上，
+   它会让下一次 `git add` 把 CRLF 原样写进索引，等于**静默改掉 vendor 产物**。
 
 **仍未实施（P3）**：V9–V14、V18、V19，清单与建议见 §5。
 
