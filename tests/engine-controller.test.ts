@@ -972,6 +972,26 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 		expect(third.getData).not.toHaveBeenCalled();
 	});
 
+	it('oldBasename 为空的文件（.gitignore）：空 needle 不再恒命中，无关节点零拷贝短路', () => {
+		const h = readyHarness();
+		mocks.getRenderRoot.mockReturnValue(
+			renderNode({ image: 'notes/other.png' }),
+		);
+
+		// .gitignore 去扩展名后 basename 为空 ⇒ needles 含空串。
+		// 旧实现 `haystack.includes('')` 恒真 ⇒ 预检恒命中、白走整树深拷贝
+		// 精确路径；新实现显式跳过空 needle（见 node-data.nodeReferenceMatches）
+		const changed = h.controller.updateReferencesOnRename(
+			makeFile('.gitignore'),
+			'.gitignore',
+		);
+
+		expect(changed).toBe(false);
+		expect(mocks.getRenderRoot).toHaveBeenCalledTimes(1);
+		expect(h.engines[0]!.getData).not.toHaveBeenCalled();
+		expect(mocks.updateReferencesOnRename).not.toHaveBeenCalled();
+	});
+
 	it('删除引用同样经预检：无关文件零拷贝跳过', () => {
 		const h = readyHarness();
 		mocks.getRenderRoot.mockReturnValue(

@@ -12,7 +12,11 @@
  * 历史形态。
  */
 import { App, FileSystemAdapter, TFile, TFolder, normalizePath } from 'obsidian';
-import { isAppResourceUrl, isRemoteOrDataUrl } from '../domain/url';
+import {
+	isAppResourceUrl,
+	isRemoteOrDataUrl,
+	resourceUrlPathCandidates,
+} from '../domain/url';
 import { fileLookupIndex, lookupIndexedFile } from './file-lookup';
 
 /**
@@ -58,8 +62,16 @@ export function resolvePathToFile(
 		return null;
 	}
 
-	// 资源地址（app://...）：经共享缓存索引解析（含编码/后缀形态回退）
+	// 资源地址（app://...）：先「直解」（提取路径 → 直查 → 校验地址全等），
+	// 再回退共享索引（历史 / 非标准形态兜底）。直解的动机：索引是**惰性全库
+	// 构建**（10 万文件实测 300ms+，且为同步阻塞），而「打开含图文档」的首个
+	// 图片解析就会触发它——直解把该场景从「全库扫描」压到「一次直查 + 一次
+	// 地址校验」（~1µs），索引只在直解落空时才付构建成本。
 	if (isAppResourceUrl(text)) {
+		const direct = resolveResourceUrlDirect(text, app);
+		if (direct) {
+			return direct;
+		}
 		return lookupIndexedFile(text, app, fileLookupIndex.get(app));
 	}
 
@@ -100,6 +112,38 @@ export function resolvePathToFile(
 
 	// 索引兜底：URL 编码文件名、路径后缀等历史/异常形态（O(1)）
 	return lookupIndexedFile(text, app, fileLookupIndex.get(app));
+}
+
+/**
+ * 资源地址直解：提取路径候选 → 直查文件 → **校验资源地址与查询全等**。
+ *
+ * 为什么必须校验：地址可能来自历史数据或手工构造，若只按路径直查，形如
+ * `app://x/笔记.md` 的伪地址会命中真实文件（路径巧合），把「解析失败」变成
+ * 「解析到别的文件」。全等校验与索引的键匹配同口径：命中 = 该文件的**当前**
+ * 资源地址；不命中（含 mtime 缓存串过期）即回退索引——索引对这类地址同样
+ * miss，行为与改动前一致。
+ *
+ * 与索引的一处有意差异（方向为「更正确」）：文件被外部修改后 mtime 变化，
+ * 陈旧索引键对**新地址**会 miss（原实现在该窗口返回 null），而直解按当前
+ * 资源地址校验可直接命中。
+ *
+ * @returns 直解命中返回文件；任一环不成立返回 null（调用方回退索引）
+ */
+function resolveResourceUrlDirect(url: string, app: App): TFile | null {
+	for (const candidate of resourceUrlPathCandidates(url)) {
+		const file = app.vault.getFileByPath(normalizePath(candidate));
+		if (!file) {
+			continue;
+		}
+		try {
+			if (app.vault.getResourcePath(file) === url) {
+				return file;
+			}
+		} catch {
+			// 该候选的资源地址计算失败：继续下一候选（最终回退索引）
+		}
+	}
+	return null;
 }
 
 /**

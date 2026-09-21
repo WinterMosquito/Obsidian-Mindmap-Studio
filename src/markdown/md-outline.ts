@@ -329,12 +329,19 @@ export interface InlineData extends MdNodeData {
  * 在别处重写一遍必然漂移。
  */
 export function buildInlineData(raw: string): InlineData {
+	const toks = tokenizeInline(raw);
+	// 无 token 快路径（纯文本行）：整行即显示文本，省去 pieces 数组 + 切片 +
+	// join 的分配；归一化（连续空格折叠 + trim）与下方通用路径同口径。
+	// 「链接引用定义行」的守卫在 buildLineInlineData 层，不经过本条分支。
+	if (toks.length === 0) {
+		const text = raw.replace(/[ \t]{2,}/g, ' ').trim();
+		return { text, mdRaw: raw, mdDerivedText: text };
+	}
 	const data: InlineData = {
 		text: '',
 		mdRaw: raw,
 		mdDerivedText: '',
 	};
-	const toks = tokenizeInline(raw);
 	let firstLink = false;
 	let firstImg = false;
 	const pieces: string[] = [];

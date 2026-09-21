@@ -22,6 +22,7 @@ import {
 	isRemoteOrDataUrl,
 	isSchemeUrl,
 	isUrlLikeText,
+	resourceUrlPathCandidates,
 } from '../src/domain/url';
 
 describe('isHttpUrl', () => {
@@ -489,5 +490,53 @@ describe('谓词间的蕴含关系（防止子集链被打破）', () => {
 		// obsidian:// 只在超链接集合中（不是图片、不是资源地址）
 		expect(isHyperlinkProtocolUrl('obsidian://open')).toBe(true);
 		expect(isExternalImageRef('obsidian://open')).toBe(false);
+	});
+});
+
+describe('resourceUrlPathCandidates（资源地址 → 库内路径候选）', () => {
+	it.each([
+		{
+			value: 'app://local/assets/pic.png',
+			expected: ['assets/pic.png'],
+			why: '桌面单库前缀 app://local',
+		},
+		{
+			value: 'app://abc123/dir/note.md',
+			expected: ['dir/note.md'],
+			why: '多库/移动端前缀 app://<id>（只取 :// 后第一个 / 之后）',
+		},
+		{
+			value: 'app://local/a/b.png?1700000000',
+			expected: ['a/b.png'],
+			why: '剥离 mtime 缓存串（query）',
+		},
+		{
+			value: 'app://local/a/b.png#frag',
+			expected: ['a/b.png'],
+			why: '剥离锚点',
+		},
+		{
+			value: 'app://local/assets/%E5%9B%BE%20%E7%89%87.png',
+			expected: ['assets/%E5%9B%BE%20%E7%89%87.png', 'assets/图 片.png'],
+			why: '编码形态：原样 + decode 两个候选（原样优先）',
+		},
+		{
+			value: 'app://local/a%b.png',
+			expected: ['a%b.png'],
+			why: '含未编码 %：decode 抛错仅保留原样',
+		},
+		{ value: 'https://x/a.png', expected: [], why: '非资源地址' },
+		{ value: 'app://local', expected: [], why: '无路径段' },
+		{ value: 'app://local/', expected: [], why: '空路径' },
+		{ value: 'app://local/?q=1', expected: [], why: '只有 query' },
+		{ value: '', expected: [], why: '空串' },
+	])('resourceUrlPathCandidates($value) === $expected（$why）', ({ value, expected }) => {
+		expect(resourceUrlPathCandidates(value)).toEqual(expected);
+	});
+
+	it('未编码中文路径：原样与 decode 相同 → 去重为单候选', () => {
+		expect(resourceUrlPathCandidates('app://local/目录/笔记.md')).toEqual([
+			'目录/笔记.md',
+		]);
 	});
 });

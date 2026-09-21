@@ -35,7 +35,7 @@ import {
 import { shouldEnablePerformanceMode } from '../core/constants';
 import type { NodeContentStyle } from '../engine/mindmap';
 import { ensureUniqueUids } from '../markdown/markdown';
-import { nodeReferenceHaystack } from '../core/node-data';
+import { nodeReferenceMatches } from '../core/node-data';
 import {
 	removeReferencesOnDelete,
 	updateReferencesOnRename,
@@ -724,11 +724,10 @@ export class EngineController {
 		];
 		let found = false;
 		walkTree(root, (node) => {
-			// 一趟扫描：比对串为空（无任何引用字段）时不可能命中非空 needle，
-			// 故无需先 hasNodeReference 再取串（那是同一份字段表扫两遍）
+			// 零分配匹配（nodeReferenceMatches）：内联「无引用字段即不可能命中」的
+			// 短路，不为每节点构造比对串——预检按全树调用、命中率通常为 0
 			const data = node.getData() as MindMapNodeData;
-			const haystack = nodeReferenceHaystack(data);
-			if (needles.some((needle) => haystack.includes(needle))) {
+			if (nodeReferenceMatches(data, needles)) {
 				found = true;
 				return false; // 命中即终止整树遍历
 			}

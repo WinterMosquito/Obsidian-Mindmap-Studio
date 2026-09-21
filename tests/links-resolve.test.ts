@@ -1,7 +1,8 @@
 /**
  * links-resolve 回归测试：统一解析入口 resolvePathToFile 的按形态路由——
- * 远程拒绝 / obsidian:// / 资源地址（app://）→ 索引 / 路径直查 /
- * file:// → 官方 FileSystemAdapter 剥库根 → 官方解析轨 → 索引兜底，
+ * 远程拒绝 / obsidian:// / 资源地址（app://）→ 直解（提取路径直查 + 地址
+ * 全等校验）/ 路径直查 / file:// → 官方 FileSystemAdapter 剥库根 →
+ * 官方解析轨 → 索引兜底，
  * 以及 resolveDroppedFile 的拖拽形态与 dragManager 私有触点。
  *
  * 断言策略：除了「解析出哪个 TFile」（身份比对），还用 spy 断言分支归属——
@@ -53,13 +54,16 @@ interface FakeAppOptions {
 	linkpathDest?: (linkpath: string) => TFile | null;
 	/** Obsidian 拖拽私有触点 app.dragManager 的桩 */
 	dragManager?: unknown;
+	/** 覆盖 vault.getResourcePath 输出（默认 `${RESOURCE_PREFIX}${path}`） */
+	resourcePath?: (file: TFile) => string;
 }
 
 function fakeApp(files: TFile[], opts: FakeAppOptions = {}) {
 	const byPath = new Map(files.map((f) => [f.path, f] as const));
 	const getFileByPath = vi.fn((p: string): TFile | null => byPath.get(p) ?? null);
 	const getResourcePath = vi.fn(
-		(f: TFile): string => `${RESOURCE_PREFIX}${f.path}`,
+		(f: TFile): string =>
+			opts.resourcePath ? opts.resourcePath(f) : `${RESOURCE_PREFIX}${f.path}`,
 	);
 	const getFiles = vi.fn((): TFile[] => files);
 	const getFirstLinkpathDest = vi.fn(
@@ -267,27 +271,85 @@ describe('resolvePathToFile：资源地址（app://）分支', () => {
 		fileLookupIndex.invalidate();
 	});
 
-	it('资源地址经共享索引直达，返回索引中的 TFile 身份', () => {
+	it('资源地址**直解**直达：提取路径直查 + 地址全等校验，不触发全库索引构建', () => {
 		const url = `${RESOURCE_PREFIX}assets/pic.png`;
-		const { app, getFileByPath, getFiles, getFirstLinkpathDest } = fakeApp(FILES);
-		const index = fileLookupIndex.get(app);
-		expect(resolvePathToFile(url, app)).toBe(index.get('assets/pic.png'));
-		// 分支归属：完全不过官方解析轨（app:// 只由索引承接）
+		const target = FILES[0]!; // assets/pic.png
+		const { app, getFileByPath, getFiles, getResourcePath, getFirstLinkpathDest } =
+			fakeApp(FILES);
+		expect(resolvePathToFile(url, app)).toBe(target);
+		// 直解：按**提取出的库内路径**直查 + getResourcePath 全等校验
+		expect(getFileByPath).toHaveBeenCalledWith('assets/pic.png');
+		expect(getResourcePath).toHaveBeenCalledWith(target);
+		// 性能契约：直解命中不得触碰索引（getFiles 是全库索引构建的唯一入口，
+		// 10 万文件的库同步构建 300ms+ ——「打开含图文档」的首个图片解析
+		// 不得付这笔成本）
+		expect(getFiles).not.toHaveBeenCalled();
+		// 分支归属：完全不过官方解析轨
 		expect(getFirstLinkpathDest).not.toHaveBeenCalled();
-		// 唯一的 getFileByPath 调用来自索引内部的直查候选，地址原样传入
-		// （没有库根剥离/归一化，说明没走 file:// 或路径直查分支）
-		expect(getFileByPath).toHaveBeenCalledTimes(1);
-		expect(getFileByPath).toHaveBeenCalledWith(url);
-		// 索引按需惰性构建，且只扫描一次文件列表
-		expect(getFiles).toHaveBeenCalledTimes(1);
 	});
 
-	it('资源地址未命中返回 null：不误当库内路径、不过官方轨', () => {
+	it('资源地址未命中：直解落空后回退索引（仍不过官方轨），最终返回 null', () => {
 		const url = `${RESOURCE_PREFIX}nowhere.png`;
-		const { app, getFileByPath, getFirstLinkpathDest } = fakeApp(FILES);
+		const { app, getFileByPath, getFirstLinkpathDest, getFiles } = fakeApp(FILES);
 		expect(resolvePathToFile(url, app)).toBeNull();
+		// 直解先试提取路径（nowhere.png）落空，回退索引（索引内部再直查原地址）
+		expect(getFileByPath).toHaveBeenCalledWith('nowhere.png');
 		expect(getFileByPath).toHaveBeenCalledWith(url);
+		// 只有回退路径才付索引成本：构建 1 次 + 未命中自愈的数量比对 1 次
+		//（缓存建立后的首次校验必然执行，见 file-lookup.VALIDATE_MIN_INTERVAL_MS）
+		expect(getFiles).toHaveBeenCalledTimes(2);
 		expect(getFirstLinkpathDest).not.toHaveBeenCalled();
+	});
+
+	it('URL 编码路径（中文/空格）：decode 候选直解命中，不建索引', () => {
+		const target = FILES[2]!; // assets/中文 附件.pdf
+		const { app, getFiles } = fakeApp(FILES, {
+			resourcePath: (f) => `${RESOURCE_PREFIX}${encodeURIComponent(f.path)}`,
+		});
+		const url = `${RESOURCE_PREFIX}${encodeURIComponent(target.path)}`;
+		expect(resolvePathToFile(url, app)).toBe(target);
+		expect(getFiles).not.toHaveBeenCalled();
+	});
+
+	it('带 mtime 缓存串（?query）的资源地址：校验全等 → 直解命中', () => {
+		const url = `${RESOURCE_PREFIX}assets/pic.png?1700000000`;
+		const { app, getFiles } = fakeApp(FILES, {
+			resourcePath: (f) => `${RESOURCE_PREFIX}${f.path}?1700000000`,
+		});
+		expect(resolvePathToFile(url, app)).toBe(FILES[0]);
+		expect(getFiles).not.toHaveBeenCalled();
+	});
+
+	it('地址校验失败（路径存在但资源地址不符）→ 不直接解析，回退索引按既有兜底语义', () => {
+		const url = `${RESOURCE_PREFIX}assets/pic.png`;
+		const { app, getFiles } = fakeApp(FILES, {
+			resourcePath: (f) => `${RESOURCE_PREFIX}other/${f.path}`,
+		});
+		// 直解校验不通过（当前资源地址带 other/ 前缀）→ 回退索引；索引按
+		// 「文件名后缀兜底」命中同一文件——与改动前的行为完全一致
+		expect(resolvePathToFile(url, app)).toBe(FILES[0]);
+		expect(getFiles).toHaveBeenCalledTimes(1); // 回退才构建
+	});
+
+	it('资源地址无路径段（app://local）：直解无候选，回退索引后仍返回 null', () => {
+		const { app, getFiles, getFirstLinkpathDest } = fakeApp(FILES);
+		expect(resolvePathToFile('app://local', app)).toBeNull();
+		// 回退路径才付索引成本：构建 1 次 + 未命中自愈的数量比对 1 次
+		expect(getFiles).toHaveBeenCalledTimes(2);
+		expect(getFirstLinkpathDest).not.toHaveBeenCalled();
+	});
+
+	it('getResourcePath 抛错：直解异常被吞不崩溃，回退索引按既有兜底语义解析', () => {
+		const url = `${RESOURCE_PREFIX}assets/pic.png`;
+		const { app, getFiles } = fakeApp(FILES, {
+			resourcePath: () => {
+				throw new Error('adapter 不可用');
+			},
+		});
+		// 直解：getFileByPath 命中但资源地址校验抛错（被吞）→ 落空 → 回退索引；
+		// 索引构建时资源地址形态同样跳过，但文件名后缀兜底仍命中同一文件
+		expect(resolvePathToFile(url, app)).toBe(FILES[0]);
+		expect(getFiles).toHaveBeenCalledTimes(1); // 仅构建（命中即返回，不走自愈）
 	});
 });
 

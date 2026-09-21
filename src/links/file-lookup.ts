@@ -7,62 +7,100 @@
  * 全库构建一次索引需要对每个文件调用 getResourcePath（大库下可达数百毫秒）。
  * 而多个高频路径都会触发查询：自动保存（md 图片路径回写）、
  * 文件重命名/删除（引用更新）、附件点击/悬浮、链接跳转兜底。
- * 文件列表在 create/rename/delete 事件之外不会变化，因此缓存分层保鲜：
+ * 文件列表在库事件之外不会变化，因此缓存分层保鲜（2026-09-18 性能轮修订）：
  * - 命中快路径：缓存存在即直接复用，不重扫文件列表——getFiles 每次调用
  *   都全量拷贝数组，而保存序列化会逐图片节点反查（O(图片数×文件数)），
  *   快路径把高频命中的成本压回 O(1)；
- * - 事件失效：vault-sync 在 create/rename/delete 事件里调用
- *   fileLookupIndex.invalidate() 显式失效（修改内容不影响索引，无需失效）；
+ * - create **增量补建**（noteCreated）：create 是库事件里最高频的一类
+ *   （批量导入/外部同步），原「整体失效」会让风暴期内的每次查询都付一遍
+ *   O(文件数 × 路径深度 + getResourcePath) 的全量重建；
+ * - rename / delete 整体失效（invalidate）：旧形态键无法安全地增量摘除
+ *   （后缀键可被多个文件共享，摘错会误删别人的键），保持全量重建；
  * - 未命中自愈：索引未命中（事件遗漏等罕见场景）时经 validate 按文件
- *   数量比对一次、必要时重建并重试，防陈旧索引漏检新文件。
+ *   数量比对一次、必要时重建并重试，防陈旧索引漏检新文件；比对本身有
+ *   时间窗节流（同一保存批次里逐节点 miss 只扫描一次文件列表）。
  * 失效后下一次查询（含失效事件的同批处理）会重建，时序上无竞态。
  */
 import { App, TFile, normalizePath } from 'obsidian';
 import { isRemoteOrDataUrl } from '../domain/url';
 
 /**
- * 构建「多种地址形态 → TFile」的查找索引：
+ * 把**单个文件**的全部形态键写入索引：
  * - 库内路径（folder/name.ext）
  * - 资源地址（app://...，getResourcePath 输出）
  * - 文件名与 URL 编码文件名
  * - 路径后缀（folder/name.ext，兼容绝对路径/历史数据形态）
- * 一次构建后供整树遍历 / 批量查找 O(1) 复用。
+ *
+ * 全量重建（buildFileLookupIndex）与增量补建（FileLookupIndexService.noteCreated）
+ * **必须共用本实现**——两处各写一份键形态表必然漂移（漏一种形态＝该形态查不到）。
  */
+function writeFileEntries(
+	app: App,
+	index: Map<string, TFile>,
+	file: TFile,
+): void {
+	index.set(file.path, file);
+	const name = file.name;
+	index.set(name, file);
+	try {
+		index.set(encodeURIComponent(name), file);
+	} catch {
+		// 个别文件名编码失败，跳过该形态
+	}
+	const segments = file.path.split('/');
+	for (let i = 2; i <= segments.length; i++) {
+		index.set(segments.slice(-i).join('/'), file);
+	}
+	try {
+		index.set(app.vault.getResourcePath(file), file);
+	} catch {
+		// 个别文件资源地址计算失败，跳过该形态
+	}
+}
+
+/** 构建「多种地址形态 → TFile」的查找索引（一次构建后供整树遍历 / 批量查找 O(1) 复用） */
 export function buildFileLookupIndex(
 	app: App,
 	allFiles: TFile[],
 ): Map<string, TFile> {
 	const index = new Map<string, TFile>();
 	for (const file of allFiles) {
-		index.set(file.path, file);
-		const name = file.name;
-		index.set(name, file);
-		try {
-			index.set(encodeURIComponent(name), file);
-		} catch {
-			// 个别文件名编码失败，跳过该形态
-		}
-		const segments = file.path.split('/');
-		for (let i = 2; i <= segments.length; i++) {
-			index.set(segments.slice(-i).join('/'), file);
-		}
-		try {
-			index.set(app.vault.getResourcePath(file), file);
-		} catch {
-			// 个别文件资源地址计算失败，跳过该形态
-		}
+		writeFileEntries(app, index, file);
 	}
 	return index;
 }
 
 /**
+ * `validate` 数量比对的最小间隔（毫秒）：窗口内的重复校验直接复用缓存。
+ * 存在的理由：索引未命中的自愈查询在一次保存序列化里可能**逐节点**发生
+ * （每个解析不出的图片/附件各触发一次），逐次 getFiles 的全量数组拷贝
+ * 在大库下是纯浪费；窗口外的首次校验仍会真实比对（节流不吞事件遗漏，
+ * 只把它推迟到窗口外——自愈本就是 best-effort）。
+ */
+export const VALIDATE_MIN_INTERVAL_MS = 500;
+
+/**
  * 全库文件查找索引服务：「多种地址形态 → TFile」的 O(1) 查找缓存。
- * 命中快路径不重扫文件列表（新鲜度由库事件 invalidate 保证）；
+ * 命中快路径不重扫文件列表（新鲜度由库事件增量/失效保证）；
  * `validate` 按文件数量比对校验（慢路径，供索引未命中时自愈调用）。
  */
 export class FileLookupIndexService {
 	private cache: Map<string, TFile> | null = null;
 	private cacheCount = 0;
+	/**
+	 * basename（去扩展名）→ 库内文件数：同名冲突判断用。
+	 * 与 cache 同生命周期——重建时统计、增量补建时递增，查询零扫描
+	 * （替代调用方每次新建链接都 getFiles + some 的全量扫描）。
+	 */
+	private basenameCounts: Map<string, number> | null = null;
+	/** 上次实际执行数量比对的时刻；null = 尚未比对（首次 validate 一定执行） */
+	private lastValidateAt: number | null = null;
+
+	/**
+	 * @param now 时钟（默认 `Date.now`）。可注入以便测试推进 validate 的
+	 *   节流窗口，不依赖真实时间等待。
+	 */
+	constructor(private readonly now: () => number = Date.now) {}
 
 	/** 获取（可能缓存的）全库文件查找索引；缓存存在即复用，无则构建 */
 	get(app: App): Map<string, TFile> {
@@ -77,30 +115,99 @@ export class FileLookupIndexService {
 	 * 数量变化（或无缓存）→ 重建。仅在索引未命中时调用，
 	 * 避免高频命中路径反复付出 getFiles 的全量数组拷贝；
 	 * 重建复用同一次扫描结果，不重复调用 getFiles。
+	 *
+	 * 校验节流（见 `VALIDATE_MIN_INTERVAL_MS`）：同一时间窗内的重复调用
+	 * 直接复用当前缓存；`invalidate` 会重置窗口，使库列表真正变化后的
+	 * 第一次校验立即执行。无缓存时不受节流影响（必然重建）。
 	 */
 	validate(app: App): Map<string, TFile> {
-		if (this.cache) {
-			const files = app.vault.getFiles();
-			if (files.length === this.cacheCount) {
-				return this.cache;
-			}
-			return this.rebuild(app, files);
+		if (!this.cache) {
+			return this.rebuild(app);
 		}
-		return this.rebuild(app);
+		const now = this.now();
+		if (
+			this.lastValidateAt !== null &&
+			now - this.lastValidateAt < VALIDATE_MIN_INTERVAL_MS
+		) {
+			return this.cache;
+		}
+		this.lastValidateAt = now;
+		const files = app.vault.getFiles();
+		if (files.length === this.cacheCount) {
+			return this.cache;
+		}
+		return this.rebuild(app, files);
+	}
+
+	/**
+	 * 库内新建文件时**增量**补建索引条目（vault `create` 事件调用）。
+	 *
+	 * 语义与全量重建的键集合一致（`writeFileEntries` 同一实现）；同形态键
+	 * 本就后写覆盖、不保证多同名文件的消歧——消歧由官方解析轨承担，与
+	 * 全量重建口径完全相同（顺序差异只影响「指向哪个同名文件」的兜底选择）。
+	 *
+	 * 缓存尚未建立时无需动作（下次构建自然包含新文件）；对同一路径重复
+	 * 调用幂等（不重复计数）。
+	 */
+	noteCreated(app: App, file: TFile): void {
+		const cache = this.cache;
+		if (!cache || cache.has(file.path)) {
+			return;
+		}
+		writeFileEntries(app, cache, file);
+		this.cacheCount++;
+		const counts = this.basenameCounts;
+		if (counts) {
+			const key = file.basename;
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
+	}
+
+	/**
+	 * 库内是否存在与 file **同名（basename，另一路径）**的文件。
+	 *
+	 * 命中共享索引的 basename 计数（零扫描）；索引尚未建立时回落一次
+	 * getFiles 扫描——与调用方原口径完全一致（读取失败按无冲突处理，
+	 * fail-open 不阻断新建链接）。
+	 */
+	hasBasenameConflict(app: App, file: TFile): boolean {
+		const counts = this.basenameCounts;
+		if (!counts) {
+			try {
+				return app.vault
+					.getFiles()
+					.some(
+						(other) => other !== file && other.basename === file.basename,
+					);
+			} catch {
+				return false;
+			}
+		}
+		return (counts.get(file.basename) ?? 0) > 1;
 	}
 
 	/** 构建索引并更新缓存计数（files 可传入已扫描的文件列表避免重复扫描） */
 	private rebuild(app: App, files?: TFile[]): Map<string, TFile> {
 		const list = files ?? app.vault.getFiles();
-		this.cache = buildFileLookupIndex(app, list);
+		const index = new Map<string, TFile>();
+		const counts = new Map<string, number>();
+		for (const file of list) {
+			writeFileEntries(app, index, file);
+			const key = file.basename;
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
+		this.cache = index;
 		this.cacheCount = list.length;
-		return this.cache;
+		this.basenameCounts = counts;
+		return index;
 	}
 
-	/** 库文件列表变化（create/rename/delete）后使缓存失效 */
+	/** 库文件列表变化（rename/delete）后使缓存失效（create 走 noteCreated 增量） */
 	invalidate(): void {
 		this.cache = null;
 		this.cacheCount = 0;
+		this.basenameCounts = null;
+		this.lastValidateAt = null;
 	}
 }
 

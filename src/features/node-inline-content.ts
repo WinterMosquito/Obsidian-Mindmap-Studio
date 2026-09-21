@@ -406,10 +406,28 @@ const ESCAPED_MARKUP_RE = new RegExp('\\\\' + ESCAPABLE_CLASS);
 const INLINE_COMMENT_RE = /%%[\s\S]*?%%/;
 
 /**
+ * 段序列缓存条目：段序列 + **接管判定**的惰性结果。
+ *
+ * 为什么把判定一并缓存：`resolveSelfDrawSource`（引擎自绘钩子每次节点内容
+ * 重建都会走）需要「该节点是否被自绘接管」的布尔，而 `hasRichSegments` /
+ * `needsHiddenSyntax` 是**只依赖原文**的纯函数——不缓存就等于每次重建都重扫
+ * 3 个正则（转义 / 行内数学 / 注释）并遍历一遍段数组。
+ */
+interface SegmentCacheEntry {
+	segments: readonly InlineSegment[];
+	/** 有链接段或轻标记段（可点 / 混合字形，SVG 单串文本表达不了） */
+	rich: boolean;
+	/** 含渲染期必须消费的隐藏语法（`\*` 转义 / `%%注释%%` / 行内数学 `$…$`） */
+	hidden: boolean;
+}
+
+/**
  * 段序列缓存（**按原文内容寻址**，与节点/引擎实例无关）。
  *
- * 引擎每帧渲染都会为每个自绘节点重新调用构建器（拖拽/缩放期间帧率敏感），而
- * 「原文 → 段序列」是纯函数：同一行反复 tokenize + 轻标记切分纯属浪费。
+ * 引擎在节点**内容重建**时会为每个自绘节点调用构建器（编辑提交 / 拖宽收尾 /
+ * 性能模式强制加载等；纯拖动与缩放**不**重建内容——K58 的 perf 探针实测空
+ * render 构建器调用 0 次），而「原文 → 段序列 + 接管判定」是纯函数：同一行
+ * 反复 tokenize + 轻标记切分纯属浪费。
  * 内容寻址天然避免跨导图实例串味（同一 uid 在不同文件里也不会命中彼此的段）。
  *
  * 淘汰策略是 **LRU**（命中即提升；超限淘汰最旧的一条，而非整表清空）：
@@ -419,8 +437,40 @@ const INLINE_COMMENT_RE = /%%[\s\S]*?%%/;
  * 正在渲染的热点节点一起刷掉——此后每次渲染全部重 tokenize（缓存命中率归零）。
  * 上限用于防御极端输入（大文件里大量互不相同的长行）导致无界增长。
  */
-const segmentCache = new Map<string, readonly InlineSegment[]>();
+const segmentCache = new Map<string, SegmentCacheEntry>();
 const SEGMENT_CACHE_MAX = 512;
+
+/**
+ * 取（或构建）该原文的缓存条目：段序列与接管判定**一次算出、共享同一缓存**。
+ * `buildInlineSegments`（段序列）与 `resolveSelfDrawSource`（接管判定）都经此入口。
+ */
+function segmentEntryOf(raw: string): SegmentCacheEntry {
+	const cached = segmentCache.get(raw);
+	if (cached) {
+		// LRU 提升：删后重插 → 回到队尾（Map 迭代顺序 = 插入顺序）
+		segmentCache.delete(raw);
+		segmentCache.set(raw, cached);
+		return cached;
+	}
+	const segments = buildInlineSegmentsUncached(raw);
+	const entry: SegmentCacheEntry = {
+		segments,
+		rich: hasRichSegments(segments),
+		hidden: needsHiddenSyntax(raw, segments),
+	};
+	// 淘汰最旧的一条（而非整表清空）：热点条目已由上方命中路径持续刷新到队尾，
+	// 被淘汰的只会是长期未命中的键
+	if (segmentCache.size >= SEGMENT_CACHE_MAX) {
+		// `IteratorResult` 已把 `.next().value` 定到 `string | undefined`，无需断言。
+		// （原此处有 `as string | undefined`，理由是旧的「被推定为 any」判断，已失效。）
+		const oldest = segmentCache.keys().next().value;
+		if (oldest !== undefined) {
+			segmentCache.delete(oldest);
+		}
+	}
+	segmentCache.set(raw, entry);
+	return entry;
+}
 
 /**
  * ## 为什么长文本**绝不能**回落引擎默认 SVG 文本（2026-09-15 实测修订）
@@ -446,26 +496,7 @@ export const MAX_INLINE_CONTENT_CHARS = 2000;
  * 返回值**只读**（缓存共享同一数组）：调用方不得就地修改。
  */
 export function buildInlineSegments(raw: string): readonly InlineSegment[] {
-	const cached = segmentCache.get(raw);
-	if (cached) {
-		// LRU 提升：删后重插 → 回到队尾（Map 迭代顺序 = 插入顺序）
-		segmentCache.delete(raw);
-		segmentCache.set(raw, cached);
-		return cached;
-	}
-	const segments = buildInlineSegmentsUncached(raw);
-	// 淘汰最旧的一条（而非整表清空）：热点条目已由上方命中路径持续刷新到队尾，
-	// 被淘汰的只会是长期未命中的键
-	if (segmentCache.size >= SEGMENT_CACHE_MAX) {
-		// `IteratorResult` 已把 `.next().value` 定到 `string | undefined`，无需断言。
-		// （原此处有 `as string | undefined`，理由是旧的「被推定为 any」判断，已失效。）
-		const oldest = segmentCache.keys().next().value;
-		if (oldest !== undefined) {
-			segmentCache.delete(oldest);
-		}
-	}
-	segmentCache.set(raw, segments);
-	return segments;
+	return segmentEntryOf(raw).segments;
 }
 
 /**
@@ -663,7 +694,7 @@ function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null {
 	}
 	// 注意：**没有**「超长就不接管」这条——超长必须接管（见 MAX_INLINE_CONTENT_CHARS：
 	// 引擎逐字符换行是二次复杂度，长行交给它正是白屏/卡死的成因）
-	const segments = buildInlineSegments(raw);
+	const entry = segmentEntryOf(raw);
 	const overlong = raw.length > MAX_INLINE_CONTENT_CHARS;
 	// 接管判据（满足其一）：
 	// ① 有链接/轻标记段（可点 / 混合字形，SVG 单串文本表达不了）；
@@ -674,10 +705,11 @@ function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null {
 	//    **去掉后仍有可见内容**时才算（否则会渲染出空节点，比原样显示注释更糟，
 	//    故让引擎按字面显示）；数学以字面占位、异步替换，无该风险。
 	// 都不满足的纯短文本走引擎 SVG 文本（测宽廉价、可双击**原位**编辑）。
-	if (!overlong && !hasRichSegments(segments) && !needsHiddenSyntax(raw, segments)) {
+	// 判定结果（rich/hidden）与段序列同源、随条目缓存——纯函数不重复扫描。
+	if (!overlong && !entry.rich && !entry.hidden) {
 		return null;
 	}
-	return { raw, segments, overlong };
+	return { raw, segments: entry.segments, overlong };
 }
 
 /**

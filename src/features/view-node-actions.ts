@@ -20,6 +20,7 @@ import { openNodeTextModal } from '../ui/modal-text';
 import { markNodeNeedLayout } from '../engine/mindmap';
 import { notifyError } from '../core/errors';
 import { isEmbeddableAttachmentExtension } from '../core/constants';
+import { fileLookupIndex } from '../links/file-lookup';
 import { resolvePathToFile } from '../links/links-resolve';
 import { t } from '../core/i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
@@ -174,17 +175,13 @@ function newDocLinkpath(file: TFile, sourcePath: string, app: App): string {
 /**
  * 库内是否存在**同名**文件（不同目录）——最短路径会指向歧义目标，官方口径是
  * 「最短**唯一**路径」，故退化为带目录的路径。
- * 读取失败（无 vault 上下文等）时按「无冲突」处理：退回最短路径，不报错。
+ *
+ * 性能：查询下沉到共享文件索引的 basename 计数（缓存命中零扫描）——此前每次
+ * 新建文档链接都 getFiles 全量拷贝 + some 扫描，拖入多个文件时逐次付。
+ * 索引尚未建立 / 读取失败时由服务回落原口径（按「无冲突」处理，fail-open）。
  */
 function hasBasenameConflict(file: TFile, app: App): boolean {
-	try {
-		const files = app.vault?.getFiles?.() ?? [];
-		return files.some(
-			(other) => other !== file && other.basename === file.basename,
-		);
-	} catch {
-		return false;
-	}
+	return fileLookupIndex.hasBasenameConflict(app, file);
 }
 
 /**

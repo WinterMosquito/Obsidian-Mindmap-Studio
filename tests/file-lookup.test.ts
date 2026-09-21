@@ -5,6 +5,11 @@
  * 断言策略：除「命中哪个 TFile」外，还用 spy 断言 getFiles 的调用次数——
  * 命中快路径不得重扫文件列表（getFiles 每次全量拷贝数组，大库下是主要成本），
  * 这既是性能契约也是「缓存是否真的生效」的唯一可观测证据。
+ *
+ * 2026-09-18 性能轮新增契约：
+ * - create 增量补建（noteCreated）：不触发全量重建、计数同步、幂等；
+ * - validate 时间窗节流：窗口内不重扫、窗口外恢复真实比对（时钟注入推进）；
+ * - hasBasenameConflict：索引命中走计数（零额外扫描）、未建立时回落扫描。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, TFile } from 'obsidian';
@@ -13,6 +18,7 @@ import {
 	fileLookupIndex,
 	FileLookupIndexService,
 	lookupIndexedFile,
+	VALIDATE_MIN_INTERVAL_MS,
 } from '../src/links/file-lookup';
 
 /** 资源地址前缀：fake vault 的 getResourcePath 输出形态 */
@@ -119,8 +125,14 @@ describe('buildFileLookupIndex（索引键形态）', () => {
 });
 
 describe('FileLookupIndexService（缓存判效与失效）', () => {
-	// 独立实例做隔离，避免触碰跨测试共享的插件级单例
-	const service = new FileLookupIndexService();
+	// 独立实例做隔离，避免触碰跨测试共享的插件级单例；
+	// 注入可控时钟：validate 的校验节流窗口需要可推进（不依赖真实等待）
+	let service: FileLookupIndexService;
+	let clock = 0;
+	beforeEach(() => {
+		clock = 0;
+		service = new FileLookupIndexService(() => clock);
+	});
 
 	it('get 命中快路径：缓存存在即复用，且不重扫文件列表', () => {
 		const { app, getFiles } = fakeApp([file('a.png')]);
@@ -139,17 +151,84 @@ describe('FileLookupIndexService（缓存判效与失效）', () => {
 		expect(app2.getFiles).not.toHaveBeenCalled();
 	});
 
-	it('validate 按文件数量判效：数量一致复用、数量变化重建', () => {
+	it('validate 按文件数量判效：数量一致复用、数量变化（窗口外）重建', () => {
 		const app1 = fakeApp([file('a.png')]);
 		const cached = service.get(app1.app);
 		expect(service.validate(app1.app)).toBe(cached);
 
 		const app2 = fakeApp([file('a.png'), file('b.png')]);
+		// 同一时间窗内的重复校验被节流：直接复用缓存（见 VALIDATE_MIN_INTERVAL_MS）
+		expect(service.validate(app2.app)).toBe(cached);
+		// 推进到窗口外：真实比对发现数量变化 → 重建
+		clock += VALIDATE_MIN_INTERVAL_MS;
 		const rebuilt = service.validate(app2.app);
 		expect(rebuilt).not.toBe(cached);
 		expect(rebuilt.get('b.png')?.path).toBe('b.png');
 		// 重建结果本身也被缓存：再次 validate 复用同一实例
 		expect(service.validate(app2.app)).toBe(rebuilt);
+	});
+
+	it('validate 节流：窗口内不重扫文件列表，窗口外恢复真实比对', () => {
+		const app = fakeApp([file('a.png')]);
+		const cached = service.get(app.app);
+		// 首次校验（窗口从无到有）会真实比对：构建 1 次 + 校验 1 次
+		expect(service.validate(app.app)).toBe(cached);
+		expect(app.getFiles).toHaveBeenCalledTimes(2);
+		// 窗口内第二次校验：直接复用（一次保存序列化里逐节点 miss 会连续走到这里）
+		expect(service.validate(app.app)).toBe(cached);
+		expect(app.getFiles).toHaveBeenCalledTimes(2);
+		// 窗口外：恢复真实比对（数量一致 → 仍复用同一实例）
+		clock += VALIDATE_MIN_INTERVAL_MS;
+		expect(service.validate(app.app)).toBe(cached);
+		expect(app.getFiles).toHaveBeenCalledTimes(3);
+	});
+
+	it('noteCreated 增量补建：新文件进缓存、计数同步，且不触发全量重扫', () => {
+		const app1 = fakeApp([file('a.png')]);
+		const cached = service.get(app1.app);
+		const app2 = fakeApp([file('a.png'), file('b.png')]);
+		service.noteCreated(app2.app, file('b.png'));
+		// 仍是同一缓存实例：未整体失效、未重建
+		expect(service.get(app2.app)).toBe(cached);
+		expect(cached.get('b.png')?.path).toBe('b.png');
+		expect(app2.getFiles).not.toHaveBeenCalled();
+	});
+
+	it('noteCreated 幂等：同一路径重复事件不重复计数', () => {
+		const target = file('dir/a.png');
+		const app = fakeApp([target]);
+		service.get(app.app);
+		service.noteCreated(app.app, file('dir/a.png')); // 事件重放：同 path
+		expect(service.hasBasenameConflict(app.app, target)).toBe(false);
+	});
+
+	it('noteCreated 在缓存未建立时 no-op（下次构建自然包含新文件）', () => {
+		const app = fakeApp([file('a.png')]);
+		service.noteCreated(app.app, file('a.png'));
+		expect(service.get(app.app).get('a.png')?.path).toBe('a.png');
+	});
+
+	it('hasBasenameConflict：索引命中走 basename 计数（零额外扫描）', () => {
+		const target = file('dir/x.png');
+		const app = fakeApp([target, file('other/x.png')]);
+		service.get(app.app);
+		expect(service.hasBasenameConflict(app.app, target)).toBe(true);
+		expect(app.getFiles).toHaveBeenCalledTimes(1); // 仅构建时扫描一次
+
+		const single = fakeApp([file('dir/y.png')]);
+		service.invalidate();
+		service.get(single.app);
+		expect(service.hasBasenameConflict(single.app, file('dir/y.png'))).toBe(
+			false,
+		);
+		expect(single.getFiles).toHaveBeenCalledTimes(1);
+	});
+
+	it('hasBasenameConflict：索引未建立时回落一次扫描（fail-open 语义不变）', () => {
+		const target = file('dir/x.png');
+		const app = fakeApp([target, file('other/x.png')]);
+		expect(service.hasBasenameConflict(app.app, target)).toBe(true);
+		expect(app.getFiles).toHaveBeenCalledTimes(1);
 	});
 
 	it('validate 重建复用同一次扫描结果（getFiles 只调用一次）', () => {

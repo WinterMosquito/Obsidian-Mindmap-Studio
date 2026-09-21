@@ -33,6 +33,47 @@ export function isAppResourceUrl(value: string): boolean {
 	return value.startsWith('app://');
 }
 
+/**
+ * 资源地址（`app://`）的**库内路径候选**（只提取、不保证存在）。
+ *
+ * 用途：`links-resolve` 的「资源地址直解」——按路径直查文件、再校验其资源
+ * 地址与查询全等，从而**免去为解析一个地址而构建全库索引**（10 万文件的库
+ * 实测同步构建 300ms+；直解 ~1µs）。索引仍保留为兜底（历史/非标准形态）。
+ *
+ * 解析口径（不依赖 Obsidian 的 host 语义，多库前缀 `app://local/`、
+ * `app://<id>/` 一律覆盖）：取 `://` 后**第一个 `/` 之后的全部内容**，
+ * 截到 `?`/`#` 之前；返回 `[原样串, decodeURIComponent 串]`（相同则去重，
+ * decode 失败仅保留原样）。无路径段 / 空路径返回空数组。
+ */
+export function resourceUrlPathCandidates(url: string): string[] {
+	if (!isAppResourceUrl(url)) {
+		return [];
+	}
+	const rest = url.slice('app://'.length);
+	const slash = rest.indexOf('/');
+	if (slash === -1) {
+		return [];
+	}
+	let path = rest.slice(slash + 1);
+	const cut = path.search(/[?#]/);
+	if (cut !== -1) {
+		path = path.slice(0, cut);
+	}
+	if (!path) {
+		return [];
+	}
+	const candidates = [path];
+	try {
+		const decoded = decodeURIComponent(path);
+		if (decoded !== path) {
+			candidates.push(decoded);
+		}
+	} catch {
+		// 含未编码 % 等字符：仅用原样候选
+	}
+	return candidates;
+}
+
 export function isHyperlinkProtocolUrl(value: string): boolean {
 	return (
 		isHttpUrl(value) || value.startsWith('obsidian://') || value.startsWith('file://')

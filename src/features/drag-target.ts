@@ -19,7 +19,7 @@
  * 生命周期（只在节点被拖动时启用，其余时刻零开销）：
  * - node_dragging（引擎每次拖拽移动发出）→ 首次触发时挂 window 监听；
  * - window mousemove（仅拖拽会话中存在）→ rAF 合帧（每渲染帧至多一次）→
- *   判定 + 高亮 + 外借；
+ *   判定 + 高亮 + 外借（判定按「半径内才建锚点」预筛，见 handleMove）；
  * - window mouseup / node_dragend（均晚于引擎消费落点）→ 清理；
  * - engineEvents 随引擎实例销毁，无跨实例泄漏。
  */
@@ -32,6 +32,7 @@ import {
 	getNodeLayoutRect,
 	getRenderRoot,
 	isRootNode,
+	readNodeViewportCenter,
 	setDragOverlapTarget,
 	setDragPrevTarget,
 	toCanvasPoint,
@@ -97,7 +98,8 @@ export function nodeViewportCenter(
 
 /**
  * 在候选中取指针最近且落在识别半径（节点中心均匀圆域）内的节点；
- * 并列时取先出现者（与引擎自上而下的树序一致）。纯函数，可单测。
+ * 并列（等距）时**后出现者胜**（`<=` 比较下后到者覆盖先到者的既有行为，
+ * 2026-09-21 复查订正注释、行为自始未变）。纯函数，可单测。
  * 用平方距离比较（单调等价），免去每候选一次 Math.hypot 的开方开销——
  * 本函数在大图拖拽期间按帧调用、候选可达数千。
  */
@@ -181,7 +183,21 @@ export function gapCenter(a: ViewPoint, b: ViewPoint): ViewPoint {
 	return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-/** 拖拽期间的 mousemove：引擎命中则让位，未命中则外借最近锚点（挂子/插兄弟） */
+/** 节点是否属于「被拖节点及其子孙」（候选排除集；uid 缺失按不排除处理，与 collectExcludeUids 同口径） */
+function isExcludedNode(session: AssistSession, node: MindMapNode): boolean {
+	const uid = (node.getData?.('uid') as string | undefined) ?? '';
+	return uid !== '' && session.excludeUids.has(uid);
+}
+
+/**
+ * 拖拽期间的 mousemove：引擎命中则让位，未命中则外借最近锚点（挂子/插兄弟）。
+ *
+ * 性能（2026-09-18）：本函数按帧调用、候选可达数千，**命中识别半径的锚点
+ * 才创建对象**——先以平方距离就地预筛（`readNodeViewportCenter` 零分配读取
+ * 中心），未命中不产生任何分配。锚点数组的顺序与既有仲裁顺序严格一致
+ * （先全部「挂子」、再全部「兄弟间隙」；并列语义由 pickNearestNode 承担）：
+ * 预筛只做「是否在半径内」的布尔判定，不改变候选相对顺序与距离比较口径。
+ */
 function handleMove(view: MindMapViewContext, session: AssistSession, event: MouseEvent): void {
 	const mindMap = view.mindMap;
 	if (!mindMap) {
@@ -206,47 +222,73 @@ function handleMove(view: MindMapViewContext, session: AssistSession, event: Mou
 		return;
 	}
 	const transform = getDrawTransform(mindMap);
+	const radiusSq = DRAG_TARGET_RADIUS_PX * DRAG_TARGET_RADIUS_PX;
 	const anchors: DropAnchor[] = [];
-	/** 按父节点收集的子节点（已过滤被拖子树），用于构造兄弟间隙锚点 */
-	const childrenByParent = new Map<MindMapNode, MindMapNode[]>();
+	/** 预筛用的中心 scratch（每帧一个，仅同步消费） */
+	const center: ViewPoint = { x: 0, y: 0 };
+
+	// 第一遍：挂子锚点（节点中心）——先序与既有仲裁顺序一致
 	walkTree(root, (node) => {
-		const uid = (node.getData?.('uid') as string | undefined) ?? '';
-		const inDraggedSubtree = uid !== '' && session.excludeUids.has(uid);
-		if (!inDraggedSubtree && !isRootNode(node)) {
-			// 挂子锚点：节点中心
-			anchors.push({
-				kind: 'child',
-				node,
-				point: nodeViewportCenter(node, transform),
-			});
+		if (isExcludedNode(session, node)) {
+			return undefined;
 		}
-		// 兄弟间隙锚点的父节点：不在被拖子树内（往自身子树里插兄弟非法）
-		if (!inDraggedSubtree) {
-			const children = (node.children ?? []).filter((child) => {
-				const childUid = (child.getData?.('uid') as string | undefined) ?? '';
-				return childUid === '' || !session.excludeUids.has(childUid);
-			});
-			if (children.length >= 2) {
-				childrenByParent.set(node, children);
+		if (!isRootNode(node)) {
+			readNodeViewportCenter(node, transform, center);
+			const dx = point.x - center.x;
+			const dy = point.y - center.y;
+			if (dx * dx + dy * dy <= radiusSq) {
+				// 命中才创建锚点（每帧命中通常个位数）
+				anchors.push({
+					kind: 'child',
+					node,
+					point: nodeViewportCenter(node, transform),
+				});
 			}
 		}
 		return undefined;
 	});
-	// 挂子锚点 + 兄弟间隙锚点统一按距离仲裁（间隙锚点唯一归属一对兄弟）
-	for (const [, children] of childrenByParent) {
-		for (let i = 0; i < children.length - 1; i++) {
-			const a = children[i]!;
-			const b = children[i + 1]!;
-			anchors.push({
-				kind: 'after',
-				node: a,
-				point: gapCenter(
-					nodeViewportCenter(a, transform),
-					nodeViewportCenter(b, transform),
-				),
-			});
+
+	// 第二遍：兄弟间隙锚点（父先序；过滤被拖子树后的相邻对，锚点唯一归属
+	// 一对兄弟）——父与对的顺序均与既有实现一致（Map 迭代序 = 先序）
+	walkTree(root, (node) => {
+		if (isExcludedNode(session, node)) {
+			return undefined;
 		}
-	}
+		const children = node.children;
+		if (!children || children.length < 2) {
+			return undefined;
+		}
+		let prev: MindMapNode | null = null;
+		let prevX = 0;
+		let prevY = 0;
+		for (const child of children) {
+			if (isExcludedNode(session, child)) {
+				continue;
+			}
+			readNodeViewportCenter(child, transform, center);
+			const curX = center.x;
+			const curY = center.y;
+			if (prev) {
+				// 间隙中点也先就地预筛，命中才构造正式锚点坐标
+				const midX = (prevX + curX) / 2;
+				const midY = (prevY + curY) / 2;
+				const dx = point.x - midX;
+				const dy = point.y - midY;
+				if (dx * dx + dy * dy <= radiusSq) {
+					anchors.push({
+						kind: 'after',
+						node: prev,
+						point: gapCenter({ x: prevX, y: prevY }, { x: curX, y: curY }),
+					});
+				}
+			}
+			prev = child;
+			prevX = curX;
+			prevY = curY;
+		}
+		return undefined;
+	});
+
 	const nearest = pickNearestNode(anchors, point, DRAG_TARGET_RADIUS_PX, (anchor) => anchor.point);
 	if (!nearest) {
 		setHighlight(session, null);

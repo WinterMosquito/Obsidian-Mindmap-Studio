@@ -547,22 +547,70 @@ export function fitMindMap(mindMap: MindMap | null): void {
 }
 
 /**
+ * 视口已在目标位置的判定容差（px，亚像素）：平移量小于它时视为「已居中」，
+ * 完全不动 view。为什么必须显式短路（K70）：vendor 的 `setScale` **无条件**
+ * emit `view_data_change`（`scaleInCenter` 在 Δ=0 时也 `transform() + emit`），
+ * 性能模式下该事件经 200ms 节流器触发**分片整树渲染**；而本函数在打开窗口内
+ * 被多次调用（首帧渲染结束 / 150ms 兜底 / 图片回灌补居中），几何未变时的
+ * 重复调用若不短路就是白渲染一轮（500 节点 ≈ 2495 条属性空写，见 K58）。
+ */
+const VIEW_CENTER_EPSILON = 0.5;
+
+/** 引擎根组（draw）的当前变换；不可得或含非有限值返回 null（调用方回退 DOM 路径） */
+function readDrawTransform(mindMap: MindMap): {
+	scaleX: number;
+	scaleY: number;
+	translateX: number;
+	translateY: number;
+} | null {
+	const transform = (
+		mindMap as unknown as {
+			draw?: {
+				transform?: () => {
+					scaleX?: unknown;
+					scaleY?: unknown;
+					translateX?: unknown;
+					translateY?: unknown;
+				};
+			};
+		}
+	).draw?.transform?.();
+	if (!transform) {
+		return null;
+	}
+	const scaleX = Number(transform.scaleX);
+	const scaleY = Number(transform.scaleY);
+	const translateX = Number(transform.translateX);
+	const translateY = Number(transform.translateY);
+	if (
+		!Number.isFinite(scaleX) ||
+		!Number.isFinite(scaleY) ||
+		!Number.isFinite(translateX) ||
+		!Number.isFinite(translateY)
+	) {
+		return null;
+	}
+	return { scaleX, scaleY, translateX, translateY };
+}
+
+/**
  * 打开时的默认视口：100% 缩放 + **整体内容居中**（按渲染内容包围盒居中，
  * 不按根节点——根节点居中会让偏心的树偏向一侧）。
  *
- * 顺序：先 `setScale(1, 画布中心)` 固定比例（锚定画布中心，避免内容跳动），
- * 再按当前包围盒平移，使包围盒中心落在画布中心。
+ * 顺序：**比例非 1 时先** `setScale(1, 画布中心)` 固定比例（锚定画布中心，
+ * 避免内容跳动；比例已是 1 时跳过缩放，见下方「幂等」），再按当前包围盒平移，
+ * 使包围盒中心落在画布中心。
+ *
+ * **幂等**（K70）：比例已是 1 且内容已在画布中心（亚像素）时**零调用**——
+ * 不碰 view、不发 `view_data_change`（性能模式下会触发分片整树渲染）；
+ * 比例已是 1 时也跳过 `setScale`（vendor 无条件 emit，同款浪费，只是通常
+ * 与 `translateXY` 的 emit 落在同一节流窗口，收益更小）。
  */
 export function centerContentAtFullScale(mindMap: MindMap | null): void {
 	if (!mindMap) {
 		return;
 	}
 	try {
-		// 性能模式下视口外节点被回收，包围盒会失真：先强制渲染全部节点
-		// （与 fitMindMap 同款做法；随后引擎按新视口重新回收）
-		if (mindMap.opt?.openPerformance) {
-			mindMap.renderer.forceLoadNode?.();
-		}
 		// 先同步引擎几何（SVG 尺寸与缓存矩形），再取**实时容器**做换算：
 		// 首帧后容器尺寸/位置可能已变（布局 settle、工具栏重建），沿用
 		// 缓存值会把内容按旧画布中心摆放 → 打开即偏移。
@@ -571,17 +619,69 @@ export function centerContentAtFullScale(mindMap: MindMap | null): void {
 		if (!size) {
 			return;
 		}
-		mindMap.view?.setScale(1, size.width / 2, size.height / 2);
-		// 包围盒必须在 setScale(1) 之后测：rbox 含当前变换，1:1 下
-		// box 的宽高即内容像素尺寸（居中算式的前提）
+		const transform = readDrawTransform(mindMap);
+		const scaleIsOne =
+			transform !== null &&
+			Math.abs(transform.scaleX - 1) < 1e-6 &&
+			Math.abs(transform.scaleY - 1) < 1e-6;
+		/** 比例非 1 时才 setScale（已是 1 时 vendor 也会无条件 emit，属白渲染） */
+		const applyScale = (): void => {
+			if (!scaleIsOne) {
+				mindMap.view?.setScale(1, size.width / 2, size.height / 2);
+			}
+		};
+		// 包围盒口径分两路（2026-09-20 性能轮，见 K70）：
+		// - 性能模式：**数据层几何并集**（全树、零 DOM）——旧实现先 forceLoadNode
+		//   把整树**同步**装配进 DOM 再测 rbox，且打开窗口内被多轮触发（首帧/
+		//   重入/兜底/图片回灌），是用户实测「多节点打开卡顿严重」的主因；
+		// - 常规模式：DOM 全树在，rbox 精确（含形状描边），行为与旧版一致。
+		const dataBox =
+			mindMap.opt?.openPerformance && transform !== null
+				? measureContentBoxFromData(mindMap)
+				: null;
+		if (dataBox && transform) {
+			// 数据层盒是布局坐标（不含视口变换）：内容中心屏幕位置 =
+			// 布局坐标 × scale + translate（引擎 getNodePosInClient 同口径），
+			// 平移增量 = 画布中心 - 当前屏幕位置。
+			const centerX =
+				(dataBox.x + dataBox.width / 2) * transform.scaleX +
+				transform.translateX;
+			const centerY =
+				(dataBox.y + dataBox.height / 2) * transform.scaleY +
+				transform.translateY;
+			const dx = size.width / 2 - centerX;
+			const dy = size.height / 2 - centerY;
+			if (
+				scaleIsOne &&
+				Math.abs(dx) < VIEW_CENTER_EPSILON &&
+				Math.abs(dy) < VIEW_CENTER_EPSILON
+			) {
+				// 已在目标态：零调用短路（否则 setScale / translateXY 会白触发
+				// 一轮分片整树渲染；translateXY(0,0) 本身虽 no-op，但不可依赖）
+				return;
+			}
+			applyScale();
+			mindMap.view?.translateXY(dx, dy);
+			return;
+		}
+		// 回退：DOM 测量（性能模式下渲染树几何不可得，或常规模式）。
+		// rbox 含当前变换（画布内坐标），1:1 下 box 的宽高即内容像素尺寸；
+		// 比例非 1 时先 setScale 再测（rbox 口径随之更新）。
+		applyScale();
 		const box = measureContentBox(mindMap);
 		if (!box) {
 			return;
 		}
-		mindMap.view?.translateXY(
-			(size.width - box.width) / 2 - box.x,
-			(size.height - box.height) / 2 - box.y,
-		);
+		const dx = (size.width - box.width) / 2 - box.x;
+		const dy = (size.height - box.height) / 2 - box.y;
+		if (
+			Math.abs(dx) < VIEW_CENTER_EPSILON &&
+			Math.abs(dy) < VIEW_CENTER_EPSILON
+		) {
+			// translateXY(0,0) 引擎自身 no-op；显式返回保持「已在目标态零调用」契约
+			return;
+		}
+		mindMap.view?.translateXY(dx, dy);
 	} catch (error) {
 		// 引擎尚未就绪等边角情况：回退 fit（至少让内容可见）
 		console.error('设置默认视口失败', error);
@@ -621,6 +721,76 @@ function measureContentBox(
 		width: box.width,
 		height: box.height,
 	};
+}
+
+/** 渲染树节点的数据层几何面（仅取计算所需字段，缺省时调用方回退 DOM 测量） */
+interface DataLayerNode {
+	readonly left?: unknown;
+	readonly top?: unknown;
+	readonly width?: unknown;
+	readonly height?: unknown;
+	readonly children?: readonly DataLayerNode[];
+}
+
+/**
+ * 内容包围盒（**数据层**：渲染树全树节点的布局几何并集，布局坐标系）。
+ *
+ * 存在理由（K70，2026-09-20 用户实测「多节点打开卡顿严重、加载很久」）：
+ * 性能模式下视口外节点被引擎回收出 DOM，`draw.rbox()` 只覆盖可见子集 ⇒
+ * 旧实现必须 `forceLoadNode()` 把整树**同步**装配进 DOM 再测量（vendor 的
+ * forceLoadNode 是同步递归 render），且打开窗口内被多轮触发（首帧渲染结束、
+ * 其自身 emit 重入、150ms 兜底、图片回灌补居中）。而布局阶段已为全树写入
+ * `left/top/width/height`（引擎裁剪判定 `checkIsInClient` 同源字段），
+ * 直接求并集即可——零 DOM 装配、O(n) 纯计算。
+ *
+ * 字段语义（vendor 实读）：`get left() { return this.customLeft || this._left }`
+ * ——拖拽调整过位置的节点用 customLeft/customTop，渲染与判定同样读它，故一致。
+ *
+ * @returns 全树几何并集；渲染树不可得或几何全不可用时返回 null（调用方回退）
+ */
+function measureContentBoxFromData(
+	mindMap: MindMap,
+): { x: number; y: number; width: number; height: number } | null {
+	const root = (
+		mindMap as unknown as {
+			renderer?: { root?: DataLayerNode | null };
+		}
+	).renderer?.root;
+	if (!root) {
+		return null;
+	}
+	let minX = Infinity;
+	let minY = Infinity;
+	let maxX = -Infinity;
+	let maxY = -Infinity;
+	const walk = (node: DataLayerNode): void => {
+		const left = Number(node.left);
+		const top = Number(node.top);
+		const width = Number(node.width);
+		const height = Number(node.height);
+		if (
+			Number.isFinite(left) &&
+			Number.isFinite(top) &&
+			Number.isFinite(width) &&
+			Number.isFinite(height)
+		) {
+			if (left < minX) minX = left;
+			if (top < minY) minY = top;
+			if (left + width > maxX) maxX = left + width;
+			if (top + height > maxY) maxY = top + height;
+		}
+		const children = node.children;
+		if (children) {
+			for (const child of children) {
+				walk(child);
+			}
+		}
+	};
+	walk(root);
+	if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+		return null;
+	}
+	return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
 /**
@@ -1366,22 +1536,64 @@ export function setDragPrevTarget(
 	}
 }
 
-/** 节点布局矩形（content 坐标，引擎布局字段 left/top/width/height） */
-export function getNodeLayoutRect(
+/**
+ * 就地读取节点布局字段（零分配）：`getNodeLayoutRect`（返回对象）与
+ * `readNodeViewportCenter`（帧内零分配路径）**共用本字段表**——引擎字段的
+ * 归一逻辑只此一处，两者不会漂移。
+ */
+function readNodeLayoutFields(
 	node: MindMapNode,
-): { left: number; top: number; width: number; height: number } {
+	out: { left: number; top: number; width: number; height: number },
+): void {
 	const n = node as unknown as {
 		left?: number;
 		top?: number;
 		width?: number;
 		height?: number;
 	};
-	return {
-		left: typeof n.left === 'number' ? n.left : 0,
-		top: typeof n.top === 'number' ? n.top : 0,
-		width: typeof n.width === 'number' ? n.width : 0,
-		height: typeof n.height === 'number' ? n.height : 0,
-	};
+	out.left = typeof n.left === 'number' ? n.left : 0;
+	out.top = typeof n.top === 'number' ? n.top : 0;
+	out.width = typeof n.width === 'number' ? n.width : 0;
+	out.height = typeof n.height === 'number' ? n.height : 0;
+}
+
+/** 节点布局矩形（content 坐标，引擎布局字段 left/top/width/height） */
+export function getNodeLayoutRect(
+	node: MindMapNode,
+): { left: number; top: number; width: number; height: number } {
+	const out = { left: 0, top: 0, width: 0, height: 0 };
+	readNodeLayoutFields(node, out);
+	return out;
+}
+
+/**
+ * `readNodeViewportCenter` 的模块级 scratch：仅承载**同步读取 → 立即消费**
+ * 的临时字段，不跨调用持有；本模块中对它的使用只有该函数（无重入风险）。
+ */
+const viewportCenterScratch = { left: 0, top: 0, width: 0, height: 0 };
+
+/**
+ * 就地读取节点中心的**画布视口坐标**（零分配，写入 `out`）。
+ *
+ * 存在的理由：拖拽落点识别域（`features/drag-target` 的 handleMove）按帧对
+ * 全树调用本换算，大图候选可达数千——每节点一个临时坐标对象是纯 GC 压力。
+ * 换算口径必须与 `features/drag-target.nodeViewportCenter` 完全一致
+ * （同一字段归一 + 同一中心公式；feature-helpers 有一致性用例钉住不漂移）。
+ */
+export function readNodeViewportCenter(
+	node: MindMapNode,
+	transform: DrawTransform,
+	out: { x: number; y: number },
+): void {
+	readNodeLayoutFields(node, viewportCenterScratch);
+	out.x =
+		(viewportCenterScratch.left + viewportCenterScratch.width / 2) *
+			transform.scaleX +
+		transform.translateX;
+	out.y =
+		(viewportCenterScratch.top + viewportCenterScratch.height / 2) *
+			transform.scaleY +
+		transform.translateY;
 }
 
 /** 指针位置（引擎 toPos：相对画布的视口坐标，与变换后的节点矩形同空间） */

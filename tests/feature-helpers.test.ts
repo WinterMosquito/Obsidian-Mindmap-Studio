@@ -2,6 +2,7 @@
  * 交互特性纯函数回归（表驱动边界用例）：
  * - drag-target.ts：`nodeViewportCenter`（节点中心 → 画布视口空间）、
  *   `gapCenter`（兄弟间隙中点）、`pickNearestNode`（均匀圆域命中与最近仲裁）；
+ * - engine/mindmap.ts：`readNodeViewportCenter`（就地零分配版，与前者逐例一致）；
  * - image-resize.ts：`computeResizedSize`（水平拖动 + 等比缩放 + 上下限联动钳制）；
  * - constants.ts：`DRAG_TARGET_RADIUS_PX`（识别域半径取值）。
  *
@@ -15,6 +16,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { DRAG_TARGET_RADIUS_PX } from '../src/core/constants';
+import { readNodeViewportCenter } from '../src/engine/mindmap';
 import {
 	gapCenter,
 	nodeViewportCenter,
@@ -116,6 +118,19 @@ describe('drag-target.nodeViewportCenter（节点中心 → 画布视口空间�
 		expect(nodeViewportCenter(big as unknown as MindMapNode, IDENTITY)).toEqual(
 			nodeViewportCenter(small as unknown as MindMapNode, IDENTITY),
 		);
+	});
+
+	it('引擎就地版（readNodeViewportCenter）与返回值版逐例一致（防两处公式漂移）', () => {
+		// 就地版是拖拽落点预筛的零分配路径（drag-target.handleMove 按帧对全树调用）；
+		// 两处换算必须永远同结果，否则「预筛命中但仲裁不命中」这类错位会静默发生
+		for (const { name, node, transform, expected } of cases) {
+			const out = { x: 0, y: 0 };
+			readNodeViewportCenter(node as unknown as MindMapNode, transform, out);
+			expect(out, name).toEqual(expected);
+			expect(out, name).toEqual(
+				nodeViewportCenter(node as unknown as MindMapNode, transform),
+			);
+		}
 	});
 });
 

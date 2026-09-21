@@ -21,6 +21,11 @@
  * - 覆盖（导出保真）：导出 SVG（`map.getSvgData().svgHTML`）里自绘根元素 / 锚点 /
  *   轻标记元素必须带**内联样式**——引擎导出只注入自身 CSS 与 header/footer 的
  *   cssText，插件 styles.css 不在导出图里生效；
+ * - 覆盖（打开视口的性能契约，`perf-box` 探针，见 AGENTS.md K70）：121 节点性能模式
+ *   大图 + 800×300 视口——`centerContentAtFullScale` 前后 `.smm-node` 数均 < 总数 50%
+ *   （不装配全量 DOM）、内容中心 = 画布中心 ±2px、数据层几何并集与 DOM 全量盒尺寸差
+ *   ≤8px；探针规模须取「刚过阈值的最小量」（641 节点版本会因分片渲染任务链推后
+ *   其余探针的读取窗口而连锁失败，见 K70 ③）；
  * - 不覆盖：样式级联的极端回归。历史上有害规则
  *   `.mindmap-canvas-container > div{width:100%}` 会在 foreignObject 渲染路径下
  *   放大测宽（引擎的离屏测宽元素是**挂在画布容器下的 position:fixed 子 div**，
@@ -437,8 +442,17 @@ for (let i = 19; i >= 1; i--) {
 }
 const viewportMap = createMindMap(viewportHolder, chain, options);
 
-// 与插件同款时序：引擎 render() 后首帧异步完成，视口设置在延时后执行
-window.setTimeout(() => {
+// 与插件同款时序：引擎 render() 后首帧异步完成，视口设置在延时后执行。
+// 就绪判定改为「引擎首帧事件（node_tree_render_end）+ 节点出现」的轮询
+// （基准延时 150ms 保留，之后每 50ms 复查，上限 600ms）：固定 150ms 在冷启动/
+// 高负载下偶发不足——2026-09-18 实测两次与代码无关的假失败：容器尚无
+// .smm-node 时锚定探针读 null 尺寸、视口探针包围盒为空（中心 NaN → 字段缺失）。
+// 就绪即测（通常零额外虚拟时间），真正渲染失败时轮询到上限仍会如实报告。
+let viewportRendered = false;
+viewportMap.on('node_tree_render_end', () => {
+	viewportRendered = true;
+});
+const runViewportProbes = () => {
 	const probe = document.createElement('pre');
 	probe.id = 'viewport-probe';
 	try {
@@ -507,7 +521,197 @@ window.setTimeout(() => {
 		anchorProbe.textContent = JSON.stringify({ error: String(error) });
 	}
 	document.body.appendChild(anchorProbe);
-}, 150);
+};
+const waitViewportReady = (deadline) => {
+	if (
+		viewportRendered ||
+		viewportHolder.querySelector('.smm-node') ||
+		Date.now() > deadline
+	) {
+		runViewportProbes();
+		return;
+	}
+	window.setTimeout(() => waitViewportReady(deadline), 50);
+};
+window.setTimeout(() => waitViewportReady(Date.now() + 600), 150);
+
+// —— 大图性能模式探针：内容包围盒的数据层求法（居中不再全树装配 DOM） ——
+// 背景（2026-09-20 用户报告「多节点打开卡顿严重、加载很久」）：打开时的默认
+// 视口居中此前用 forceLoadNode + rbox 测全内容包围盒——性能模式下这是把整树
+// 节点**同步**装配进 DOM（vendor 的 forceLoadNode 同步递归 render），且打开窗口
+// 内被多轮触发（首帧渲染结束、其自身 emit 重入、150ms 兜底、图片回灌补居中）。
+// 修复方向：性能模式改用渲染树布局几何（node.left/top/width/height，与引擎裁剪
+// 判定 checkIsInClient 同源）直接求盒，全程不碰 DOM；引擎随后按新视口自行回收/补齐。
+// 本探针钉住两条契约：
+//   ① 居中不装配全量 DOM：centerContentAtFullScale 前后 .smm-node 数均 ≪ 总数；
+//   ② 数据层盒与 DOM 全量盒（forceLoadNode + rbox）尺寸口径一致（容差内）。
+const perfBoxHolder = document.createElement('div');
+perfBoxHolder.id = 'perf-box';
+perfBoxHolder.className = 'mindmap-canvas-container';
+perfBoxHolder.style.width = '800px';
+perfBoxHolder.style.height = '300px';
+document.body.appendChild(perfBoxHolder);
+// 121 节点（1 + 10×(1+11)），超过阈值 100 ⇒ 性能模式生效；800×300 视口远小于
+// 内容范围 ⇒ 首帧裁剪必然显著（全量 vs 可见子集的差可判定）。
+// 规模刻意取「刚过阈值」的最小量：本探针在共享页面里跑，图越大，其分片渲染
+// 任务链（引擎 view_data_change 后每子节点一个 setTimeout）越长，越可能把
+// 其余探针的读取窗口推后（2026-09-20 实测 641 节点版本会连锁失败 43 项）。
+const perfBoxTree = { data: { text: 'perf-root', uid: 'pb-root' }, children: [] };
+for (let i = 0; i < 10; i++) {
+	const branch = { data: { text: 'b' + i, uid: 'pb-b' + i }, children: [] };
+	for (let j = 0; j < 11; j++) {
+		branch.children.push({
+			data: { text: 'l' + i + '-' + j, uid: 'pb-l-' + i + '-' + j },
+			children: [],
+		});
+	}
+	perfBoxTree.children.push(branch);
+}
+const perfBoxProbe = document.createElement('pre');
+perfBoxProbe.id = 'perf-box-probe';
+perfBoxProbe.textContent = 'PENDING';
+document.body.appendChild(perfBoxProbe);
+let perfBoxMap = null;
+let perfBoxRendered = false;
+try {
+	perfBoxMap = createMindMap(perfBoxHolder, perfBoxTree, {
+		...options,
+		performanceMode: true,
+		performanceThreshold: 100,
+	});
+	perfBoxMap.on('node_tree_render_end', () => {
+		perfBoxRendered = true;
+	});
+} catch (error) {
+	perfBoxProbe.textContent = JSON.stringify({ error: String(error) });
+}
+/** 渲染树全量节点的布局几何并集（画布/布局坐标系，不依赖 DOM） */
+const collectDataBox = (root) => {
+	let minX = Infinity;
+	let minY = Infinity;
+	let maxX = -Infinity;
+	let maxY = -Infinity;
+	const walk = (node) => {
+		const { left, top, width, height } = node;
+		if (
+			Number.isFinite(left) &&
+			Number.isFinite(top) &&
+			Number.isFinite(width) &&
+			Number.isFinite(height)
+		) {
+			if (left < minX) minX = left;
+			if (top < minY) minY = top;
+			if (left + width > maxX) maxX = left + width;
+			if (top + height > maxY) maxY = top + height;
+		}
+		const children = node.children || [];
+		for (const child of children) walk(child);
+	};
+	if (root) walk(root);
+	if (!Number.isFinite(minX)) return null;
+	return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+};
+const runPerfBoxProbe = () => {
+	try {
+		if (!perfBoxMap) return;
+		const domCount = () => perfBoxHolder.querySelectorAll('.smm-node').length;
+		const firstFrameDom = domCount();
+		// 生产入口：默认视口居中（修复后：性能模式走数据层盒，不装配全量）
+		centerContentAtFullScale(perfBoxMap);
+		const afterCenterDom = domCount();
+		const transform = perfBoxMap.draw.transform();
+		const dataBox = collectDataBox(perfBoxMap.renderer.root);
+		const canvasRect = perfBoxHolder.getBoundingClientRect();
+		// 内容中心（画布内坐标）= 布局中心 × scale + translate（引擎 getNodePosInClient 同口径）
+		const contentCenter = dataBox
+			? [
+					(dataBox.x + dataBox.width / 2) * transform.scaleX + transform.translateX,
+					(dataBox.y + dataBox.height / 2) * transform.scaleY + transform.translateY,
+				]
+			: null;
+		// 对照：DOM 全量盒（forceLoadNode + rbox）放最后测，避免污染上面的裁剪计数
+		perfBoxMap.renderer.forceLoadNode();
+		const allDom = domCount();
+		const rbox = perfBoxMap.draw.rbox();
+		perfBoxProbe.textContent = JSON.stringify({
+			total: countTreeNodes(perfBoxTree),
+			firstFrameDom,
+			afterCenterDom,
+			allDom,
+			scale: Math.round(transform.scaleX * 1000) / 1000,
+			canvas: [Math.round(canvasRect.width), Math.round(canvasRect.height)],
+			contentCenter: contentCenter
+				? [Math.round(contentCenter[0]), Math.round(contentCenter[1])]
+				: null,
+			canvasCenter: [
+				Math.round(canvasRect.width / 2),
+				Math.round(canvasRect.height / 2),
+			],
+			dataBox: dataBox
+				? { width: Math.round(dataBox.width), height: Math.round(dataBox.height) }
+				: null,
+			domBox: { width: Math.round(rbox.width), height: Math.round(rbox.height) },
+		});
+	} catch (error) {
+		perfBoxProbe.textContent = JSON.stringify({ error: String(error) });
+	}
+};
+window.setTimeout(() => {
+	const wait = (deadline) => {
+		if (perfBoxRendered || Date.now() > deadline) {
+			runPerfBoxProbe();
+			return;
+		}
+		window.setTimeout(() => wait(deadline), 50);
+	};
+	wait(Date.now() + 600);
+}, 400);
+
+/**
+ * 等图首帧落地后再读取引擎结构（事件 + 轮询；同 viewport / anchor 的 K69 ④ 修法）。
+ *
+ * 存在的理由（2026-09-21 复查加固）：多处探针原先「建图 → 固定 ms → 读
+ * renderer.root」，而引擎 render() 经 setTimeout(0) 起链、布局分片跨多个宏任务
+ * ——冷启动 / 机器负载高时固定延时不足，读到 renderer.root 为 null 的中间态
+ * （perf / image / count / layout 四个探针在负载机上稳定假失败，同页其余探针
+ * 正常）。就绪即测（通常零额外虚拟时间），真正渲染失败时轮询到上限仍会如实
+ * 报告（run 照常执行，读到什么断言什么）。
+ *
+ * @param map 引擎实例（可为 null）
+ * @param holder 画布容器（.smm-node 出现作为兜底判据）
+ * @param run 就绪后的读取动作
+ * @param baseDelay 基准延时（默认 80ms，之后每 40ms 复查）
+ * @param timeout 轮询上限（默认 1200ms）
+ * @param strict 只认 node_tree_render_end 事件（渲染**完整**落地）：读 DOM 结构 /
+ *   计数的探针必须传 true——.smm-node / renderer.root 兜底只保证「首个
+ *   节点已创建」，部分渲染的中间态会把「首帧尚未完成时调 render()」变成
+ *   「全量重建」（实测：空 render 构建器调用 500 次 vs 期望 0；2026-09-21）。
+ */
+const whenMapReady = (map, holder, run, baseDelay = 80, timeout = 1200, strict = false) => {
+	let rendered = false;
+	try {
+		if (map && typeof map.on === 'function') {
+			map.on('node_tree_render_end', () => {
+				rendered = true;
+			});
+		}
+	} catch {
+		// 无事件面的桩：仅靠轮询兜底
+	}
+	const ready = () =>
+		rendered ||
+		(!strict &&
+			(!!(map && map.renderer && map.renderer.root) ||
+				!!(holder && holder.querySelector && holder.querySelector('.smm-node'))));
+	const wait = (deadline) => {
+		if (ready() || Date.now() > deadline) {
+			run();
+			return;
+		}
+		window.setTimeout(() => wait(deadline), 40);
+	};
+	window.setTimeout(() => wait(Date.now() + timeout), baseDelay);
+};
 
 // —— 布局探针：六种布局渲染 × 连线样式分派 × 根节点连线起点 ——
 // 连线路径 = 容器内非节点形状的 path（节点形状带 class="smm-node-shape"，
@@ -529,9 +733,9 @@ window.setTimeout(() => {
 			layoutMaps[layout] = { holder, error: 'createMindMap 抛错: ' + String(error) };
 		}
 	}
-	// 引擎首帧渲染是异步的：createMindMap 返回时 renderer.root 仍为 null，
-	// 必须再等一轮才能读取渲染树（此前同步读取导致本探针全部误报）。
-	window.setTimeout(() => {
+	// 六张图逐一等首帧落地后再读取（事件 + 轮询；此前固定 400ms，负载机器上
+	// 读到 renderer.root 为 null 的中间态——2026-09-21 复查加固，见 whenMapReady）。
+	const runLayoutRead = () => {
 		const report = {};
 		try {
 			for (const layout of ${JSON.stringify(LAYOUT_PROBE_LAYOUTS)}) {
@@ -584,7 +788,31 @@ window.setTimeout(() => {
 		} catch (error) {
 			layoutProbe.textContent = JSON.stringify({ error: String(error) });
 		}
-	}, 400);
+	};
+	const layoutEntries = ${JSON.stringify(LAYOUT_PROBE_LAYOUTS)}
+		.map((layoutName) => layoutMaps[layoutName])
+		.filter((entry) => entry && !entry.error);
+	// 六张图各自等首帧**完整**落地：只认 node_tree_render_end（读 DOM 结构的一侧
+	// 必须用严格判据——.smm-node 出现只代表首个节点已创建，部分渲染时会少算）
+	let layoutsRendered = 0;
+	for (const entry of layoutEntries) {
+		try {
+			entry.map.on('node_tree_render_end', () => {
+				layoutsRendered++;
+			});
+		} catch {
+			// 无事件面的桩：交给超时兜底
+		}
+	}
+	const allLayoutReady = () => layoutsRendered >= layoutEntries.length;
+	const waitLayouts = (deadline) => {
+		if (allLayoutReady() || Date.now() > deadline) {
+			runLayoutRead();
+			return;
+		}
+		window.setTimeout(() => waitLayouts(deadline), 50);
+	};
+	window.setTimeout(() => waitLayouts(Date.now() + 1200), 80);
 }, 200);
 
 // —— 方案B 原型探针：自绘节点内联内容的装配 × 测宽同源 × 点击命中锚点 ——
@@ -989,22 +1217,26 @@ window.setTimeout(() => {
 		const linkHolder = makeHolder('perf-link', 1200, 400);
 		// 构建器调用计数（决定「每帧重建」是否成立的前提测量）：
 		// 包一层 options.createNodeContent，测 idle render 与「改文本」render 各调几次。
-		// 共享 options 会被随后创建的所有地图用——测量窗口必须短且随后恢复。
+		// 构建器计数器**只装在本探针两张图的 options 浅拷贝上**——不修改共享
+		// options：同页其他图的渲染（如 count 探针 151 节点图的首帧）同样会调用
+		// createNodeContent，装共享对象会把它们的调用记进本探针的空 render 窗口
+		// （实测「空 render 仍调用构建器 151」＝被邻图首帧污染；2026-09-21）。
 		let builderCalls = 0;
 		const origBuilder = options.createNodeContent;
-		options.createNodeContent = (node, doc, style, lang) => {
+		const countedBuilder = (node, doc, style, lang) => {
 			builderCalls++;
 			return origBuilder(node, doc, style, lang);
 		};
+		const perfOptions = { ...options, createNodeContent: countedBuilder };
 		const plainMap = createMindMap(
 			plainHolder,
 			{ data: { text: 'root-p', uid: 'root-p' }, children: plainChildren },
-			options,
+			perfOptions,
 		);
 		const linkMap = createMindMap(
 			linkHolder,
 			{ data: { text: 'root-l', uid: 'root-l' }, children: linkChildren },
-			options,
+			perfOptions,
 		);
 
 		// 一次大图用于 countTreeNodes（数据树 1000 节点）
@@ -1013,7 +1245,9 @@ window.setTimeout(() => {
 			big = { data: { text: 'b' + i }, children: [big] };
 		}
 
-		window.setTimeout(() => {
+		// 两张图各自等首帧落地后再进入测量链（事件 + 轮询；此前固定 200ms 起链，
+		// 负载机上首帧未落完就开始计数与结构性断言——2026-09-21 复查加固）
+		const startMeasureChain = () => {
 			// 首帧 settle 后才测量：引擎 render() 会经 rAF 调度，**同步读计数恒为 0**
 			// （那是异步假象，不是「没发生」）。每个阶段等 60ms 再读累计计数。
 			const measureAfter = (ms, record) =>
@@ -1061,14 +1295,22 @@ window.setTimeout(() => {
 						linkMap.render();
 						measureAfter(60, () => {
 							report.editBuilderCallsLink = builderCalls;
-							// 恢复共享构建器（避免影响后续探针）
-							options.createNodeContent = origBuilder;
+							// 共享 options 自始未被修改（计数器装在浅拷贝上），无需恢复
 							finishReport();
 						});
 					});
 				});
 			});
-		}, 200);
+		};
+		let perfReady = 0;
+		const perfOnReady = () => {
+			perfReady++;
+			if (perfReady === 2) {
+				startMeasureChain();
+			}
+		};
+		whenMapReady(plainMap, plainHolder, perfOnReady, 80, 1200, true);
+		whenMapReady(linkMap, linkHolder, perfOnReady, 80, 1200, true);
 		return;
 	} catch (error) {
 		report.error = String(error);
@@ -1311,7 +1553,9 @@ window.setTimeout(() => {
 		report.filled = ensureDefaultImageSizes(tree);
 		const holder = makeHolder('map-image');
 		const map = createMindMap(holder, tree, options);
-		window.setTimeout(() => {
+		// 主组等首帧落地后再读 / 回灌（事件 + 轮询；此前固定 400ms，负载机器上
+		// renderer.root 仍为 null——2026-09-21 复查加固，见 whenMapReady）
+		whenMapReady(map, holder, () => {
 			try {
 				report.rawHasRoot = !!rawMap.renderer.root;
 				const node = map.renderer.root ? map.renderer.root.children[0] : null;
@@ -1330,18 +1574,25 @@ window.setTimeout(() => {
 							},
 						])
 					: -1;
-				window.setTimeout(() => {
+				// 回灌触发的渲染落地后再读尺寸：轮询到目标宽（或超时）而非固定
+				// 200ms——超时仍读实际值，真失败照常由断言报红
+				const waitApplied = (deadline) => {
 					report.afterWidth = sizeOf(holder, 'width');
 					report.afterHeight = sizeOf(holder, 'height');
-					report.marked = !!(data && data.mdImageAutoSize === true);
-					imageProbe.textContent = JSON.stringify(report);
-				}, 200);
+					if (report.afterWidth === 120 || Date.now() > deadline) {
+						report.marked = !!(data && data.mdImageAutoSize === true);
+						imageProbe.textContent = JSON.stringify(report);
+						return;
+					}
+					window.setTimeout(() => waitApplied(deadline), 40);
+				};
+				window.setTimeout(() => waitApplied(Date.now() + 800), 60);
 				return;
 			} catch (error) {
 				report.error = String(error);
 			}
 			imageProbe.textContent = JSON.stringify(report);
-		}, 400);
+		}, 80, 1200, true);
 		return;
 	} catch (error) {
 		report.error = String(error);
@@ -1380,7 +1631,9 @@ window.setTimeout(() => {
 			{ data: { text: 'root-c', uid: 'root-c' }, children },
 			{ ...options, performanceMode: true, performanceThreshold: 1 },
 		);
-		window.setTimeout(() => {
+		// 等首帧落地后再计数（事件 + 轮询；此前固定 400ms，负载机器上
+		// renderer.root 仍为 null → 计数 0——2026-09-21 复查加固）
+		whenMapReady(map, holder, () => {
 			try {
 				report.trueNodes = total;
 				report.renderTreeNodes = countTreeNodes(map.renderer.root);
@@ -1390,7 +1643,7 @@ window.setTimeout(() => {
 				report.error = String(error);
 			}
 			countProbe.textContent = JSON.stringify(report);
-		}, 400);
+		}, 80, 1200, true);
 		return;
 	} catch (error) {
 		report.error = String(error);
@@ -2281,6 +2534,65 @@ function checkViewport(dom) {
 	if (typeof probe.resetDrift !== 'number' || probe.resetDrift > 1) {
 		failures.push(
 			`重置缩放漂移 ${probe.resetDrift}px > 1px（应锁定屏幕可见内容）`,
+		);
+	}
+	return failures;
+}
+
+/**
+ * 校验大图性能模式探针（`#perf-box-probe`，见 buildEntrySource）：
+ * ① 居中不装配全量 DOM——`centerContentAtFullScale` 前后 `.smm-node` 数均 ≪ 总数
+ *    （修复「打开大图卡顿」的核心契约：性能模式走数据层包围盒，不 forceLoadNode）；
+ * ② 内容中心落在画布中心（数据层盒 + transform 的居中算式正确）；
+ * ③ 数据层盒与 DOM 全量盒尺寸口径一致（容差 8px，含 SVG 描边/形状差异）。
+ */
+function checkPerfBox(dom) {
+	const { probe, failures: parseFailures } = readProbe(
+		dom,
+		'perf-box-probe',
+		'大图包围盒',
+	);
+	if (parseFailures) return parseFailures;
+	const failures = [];
+	if (probe.total !== 121) {
+		failures.push(`大图节点数 ${probe.total} ≠ 121（探针结构退化）`);
+	}
+	if (!(probe.firstFrameDom > 0) || !(probe.firstFrameDom < probe.total * 0.5)) {
+		failures.push(
+			`首帧 DOM ${probe.firstFrameDom}/${probe.total}：性能模式裁剪未生效或探针退化`,
+		);
+	}
+	if (!(probe.afterCenterDom < probe.total * 0.5)) {
+		failures.push(
+			`居中后 DOM ${probe.afterCenterDom}/${probe.total}：centerContentAtFullScale 装配了全量节点（应走数据层盒）`,
+		);
+	}
+	const [cx, cy] = probe.contentCenter ?? [];
+	const [wx, wy] = probe.canvasCenter ?? [];
+	if (
+		typeof cx !== 'number' ||
+		typeof cy !== 'number' ||
+		typeof wx !== 'number' ||
+		typeof wy !== 'number' ||
+		Math.abs(cx - wx) > 2 ||
+		Math.abs(cy - wy) > 2
+	) {
+		failures.push(`内容中心 (${cx},${cy}) 未居中于画布中心 (${wx},${wy})`);
+	}
+	const dataWidth = probe.dataBox?.width;
+	const dataHeight = probe.dataBox?.height;
+	const domWidth = probe.domBox?.width;
+	const domHeight = probe.domBox?.height;
+	if (
+		typeof dataWidth !== 'number' ||
+		typeof dataHeight !== 'number' ||
+		typeof domWidth !== 'number' ||
+		typeof domHeight !== 'number' ||
+		Math.abs(dataWidth - domWidth) > 8 ||
+		Math.abs(dataHeight - domHeight) > 8
+	) {
+		failures.push(
+			`数据层盒 ${dataWidth}×${dataHeight} 与 DOM 盒 ${domWidth}×${domHeight} 相差 > 8px`,
 		);
 	}
 	return failures;
@@ -3186,6 +3498,15 @@ async function runChecks(dom, diag) {
 	);
 	for (const failure of viewportFailures) diag.log(`      - ${failure}`);
 	failed += viewportFailures.length;
+
+	// 大图性能模式契约：居中不装配全量 DOM + 数据层盒口径（打开大图卡顿修复）
+	diag.log('  · viewport 探针完成，进入 perf-box 探针');
+	const perfBoxFailures = safe('perf-box 探针', () => checkPerfBox(dom));
+	diag.log(
+		`  ${perfBoxFailures.length === 0 ? '✓' : '✗'} perf-box 大图居中不装配全量 DOM（数据层包围盒）`,
+	);
+	for (const failure of perfBoxFailures) diag.log(`      - ${failure}`);
+	failed += perfBoxFailures.length;
 
 	// 悬停预览锚定契约：SVG 节点补齐 offsetWidth/offsetHeight（弹窗可上下翻转）
 	diag.log('  · viewport 探针完成，进入 anchor 探针');

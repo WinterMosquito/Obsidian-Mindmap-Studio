@@ -311,8 +311,11 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   节点里的链接同样可点且多行结构保留（`paragraph` 场景，对应 README 的对外承诺）、
   超长单行 20k 字必须接管并截断（`hugeline` 场景；若回归成「回落引擎」，该场景既会
   断言失败，也会因吃掉 `--virtual-time-budget` 而让后续探针集体失败），
-  外加**十二个**探针：viewport（20 层深链大图必须 100% 缩放、整体内容居中，且重置缩放漂移
-  ≤1px）、anchor（SVG 节点补齐 `offsetWidth/offsetHeight`，弹窗锚定矩形
+  外加**十六个**探针：viewport（20 层深链大图必须 100% 缩放、整体内容居中，且重置缩放漂移
+  ≤1px）、perf-box（121 节点性能模式大图 + 800×300 视口：`centerContentAtFullScale` 前后
+  `.smm-node` 数均 < 总数 50%＝不装配全量 DOM、内容中心 = 画布中心 ±2px、数据层几何并集与
+  DOM 全量盒尺寸差 ≤8px——钉住 K70 的打开路径性能契约；探针规模须取「刚过阈值的最小量」，
+  641 节点版本会因分片渲染任务链推后其余探针的读取窗口而连锁失败）、anchor（SVG 节点补齐 `offsetWidth/offsetHeight`，弹窗锚定矩形
   `bottom/right` 必须为有限数，否则预览只会出现在上方）、inline（**方案 B**：
   自绘节点内容必须落在 foreignObject 内、引擎离屏克隆测宽与渲染宽度同源、`**重点**`
   渲染为 `<strong>`，且合成 click 后 `node_click` 的 `event.target` 就是锚点本体、
@@ -343,6 +346,24 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   **所有探针不做耗时断言**——脚本跑在 `--virtual-time-budget` 下，时钟被虚拟化；
   且引擎 `render()` 经 rAF 调度 ⇒ **计数类测量必须等 settle 再读**（同步读恒为 0
   是异步假象，不是「没发生」）。
+  **运行注意（2026-09-20 实测，排查「打开卡顿」时踩到）**：① **不要与 CPU 密集任务并行跑**——
+  同机并行 `npm test`（48 文件）时 perf / image / count / layout 探针出现 14 项假失败，
+  单独复跑即全绿；虚拟时间只在**空闲**时推进，真实 CPU 被抢占会让「固定延时后读取」的探针
+  读到未渲染完的中间态（`renderer.root` 为 null）。② **`--perf` 对环境负载敏感**：同一份
+  代码曾连续 3 次失败、机器空闲后 1 次通过；失败归因务必先做「同页旧行为对照实验」（临时
+  恢复旧实现跑同一命令），不要直接怀疑改动。③ 四个固定延时型探针（perf / image / count /
+  layout）已于 **2026-09-21 复查完成同款加固**（`whenMapReady`：`node_tree_render_end` 事件 +
+  `.smm-node` / `renderer.root` 轮询，上限 1200ms；image 回灌后的读取改为「轮询到目标宽或超时」）
+  ——它们在负载机上曾**稳定**假失败（探针读到 `renderer.root` 为 null 的中间态），加固后同一
+  环境全绿。失败时仍先按 ①② 排除环境（本轮已用「同页旧行为对照 + 加固后转绿」双重确证根因）。
+  ④ 加固过程中的两个衍生修复（2026-09-21，同轮）：a) 读 DOM 结构 / 计数的探针必须用
+  `whenMapReady` 的 **strict 模式**（只认 `node_tree_render_end`）——`.smm-node` / `renderer.root`
+  兜底在「首个节点已创建」时就为真，此时调 `render()` 会把部分渲染变成全量重建（实测「空 render
+  构建器调用 500 次」vs 期望 0）；b) perf 探针的构建器计数器**不得装在共享 options 上**（页内
+  所有图共用同一 options 对象，邻图首帧会把 151 次调用记进本探针的空 render 窗口）——现装在本
+  探针两张图的 options 浅拷贝上。**附**：本轮两次踩到「模板字符串内注释不得出现反引号」（K69 已
+  记录该坑）——在 `buildEntrySource` 模板段内新增/修改注释后应立即扫描确认（解析模板段、找
+  注释行中的反引号），不要等运行报 `SyntaxError` / `ReferenceError: node is not defined`。
   **真实耗时走另一通道（opt-in）**：`npm run verify:visual -- --perf [--perf-edits N]`——同一页跑
   「空跑 / 负载」两种入口、按**进程墙钟差**给真实成本（虚拟时钟下页内计时不可用，见 K63）。
   **负向自检已做**：`rootLineStartPositionKeepSameInCurve` 改回 false 报出 4 项失败；
@@ -746,6 +767,93 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   `getRenderRoot`，缺失则按 `RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS` 轮询等回填，上限
   `RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS`（超限只记日志、不抛）；回填后仍走原「RESET_LAYOUT → 80ms 后
   fit」路径。回归：`tests/viewport.test.ts`（窗口期延后执行 / 上限放弃两条）。
+
+- [K68] **性能轮（2026-09-18）：四处「重复付出的成本」收敛——索引增量补建与校验节流、拖拽帧内预筛、自绘判定缓存**：
+  ① **`create` 事件由整体失效改增量补建**（`file-lookup.FileLookupIndexService.noteCreated`，与全量重建共用
+  `writeFileEntries` 键形态表，勿各写一份）：`create` 是最高频的一类库事件（批量导入 / 外部同步 / 图片入库后
+  立即解析路径即高频路径），原「invalidate 即整体失效 + 下次查询全量重建」会让风暴期内的每次查询都付一遍
+  O(文件数 × 路径深度 + getResourcePath)（注释自述大库数百毫秒）。rename / delete **仍整体失效**——旧形态键
+  无法安全地增量摘除（后缀键可被多个文件共享，摘错会误删别人的键）；文件夹 create 不进索引（只收录 TFile）。
+  ② **`validate` 数量比对加时间窗节流**（`VALIDATE_MIN_INTERVAL_MS`，构造函数可注入时钟供测试推进）：
+  「索引未命中」的自愈查询在一次保存序列化里可能逐节点发生（每个解析不出的图片/附件各触发一次），逐次
+  `getFiles` 全量数组拷贝是纯浪费。窗口内直接复用缓存；`invalidate` 重置窗口；`lastValidateAt === null`
+  （首次校验）不受节流——事件遗漏的自愈只被推迟到窗口外，本就是 best-effort。
+  ③ **basename 同名冲突查询走索引计数**（`hasBasenameConflict`，`view-node-actions.newDocLinkpath` 消费）：
+  替代每次新建文档链接的 `getFiles` + `some` 全量扫描；索引未建立时回落原扫描（fail-open 语义不变）。
+  ④ **拖拽落点识别域帧内预筛**（`drag-target.handleMove`）：先以平方距离就地判定（`engine/mindmap.readNodeViewportCenter`
+  零分配读取中心；与 `drag-target.nodeViewportCenter` 同字段表 + 同公式，有逐例一致性测试），**命中识别半径
+  才创建锚点对象**——大图拖拽从每帧 O(n) 次对象分配降到 O(命中数)。**顺序与仲裁语义严格不变**：先全部
+  「挂子」再全部「兄弟间隙」、并列由 `pickNearestNode` 的 `<=` 承担（其单测与 `nodeViewportCenter` 单测未动）。
+  ⑤ **自绘接管判定随段序列缓存**（`node-inline-content.segmentEntryOf`）：`hasRichSegments` / `needsHiddenSyntax`
+  是只依赖原文的纯函数，原每次节点内容重建都重扫 3 个正则 + 段遍历，现与段序列同条目（LRU 512 与
+  `segmentCacheStats` 口径不变；`isResolvedLink` 仍在每次构建时求值、不进缓存——它依赖库状态）。
+  **明确不改**：「拖宽每 8px 提交一次全树 `render()`」（P5，`previewNodeImageSize`）维持现状——浪费在 vendor
+  渲染器内部（K58/K61 已量化），插件侧改动的 ROI 判据是「能否减少 render 次数」而非单次更快。
+  回归锁定：`tests/file-lookup.test.ts`（增量补建 / 幂等 / 无缓存 no-op / 节流窗口 / basename 计数与回落）、
+  `tests/feature-helpers.test.ts`（就地版与返回值版逐例一致）。
+
+- [K69] **性能轮（2026-09-18，第二轮）：资源地址直解免全库建索引、引用预检零分配、解析纯文本快路径**：
+  ① **资源地址（app://）直解**（`domain/url.resourceUrlPathCandidates` + `links-resolve.resolveResourceUrlDirect`）：
+  索引是**惰性全库构建**（10 万文件实测 **303.8ms** 同步阻塞，而「打开含图文档」的首个图片解析
+  ——`resolvePathToFile('app://…')`——就会触发它）。直解把该分支改为「提取 host 后的路径候选
+  （原样 + decode）→ `getFileByPath` 直查 → **`getResourcePath(file) === url` 全等校验**」，
+  实测 **1.9µs**（10 万文件库，getFiles 调用 0 次）；校验不通过（含 mtime 缓存串过期）回退索引
+  ——历史/非标准形态的兜底能力与行为不变（唯一有意差异：文件被外部修改后，陈旧索引对**新地址**
+  会 miss 返回 null，直解按当前地址校验可命中——方向为「更正确」）。**全等校验不可省**：只按路径
+  直查会让手工构造的伪地址（`app://x/笔记.md`）命中「路径巧合」的真实文件。
+  ② **引用预检零分配**（`core/node-data.nodeReferenceMatches` 取代原 `nodeReferenceHaystack`，
+  消费方 `engine-controller.rendererTreeHasMatchingRef`）：预检按**全树**调用、无关文件的命中率
+  通常为 0，原「拼接比对串 + includes」每节点一次数组 + join；新实现只对非空字符串字段做子串
+  比较，2000 节点实测 **0.68ms → 0.51ms**（1.3×；无引用节点零分配，含链接的图收益较小）。
+  原比对串的「跨字段误命中」（needle 含 `|` 横跨两字段）不再发生——更严格只减误报，真实引用都在
+  单字段内。另一处差异：**空 needle 不再恒命中**（旧 `haystack.includes('')` 恒真，而 `oldBasename`
+  对 `.gitignore` 这类「点开头且无其他点」的文件名去扩展名后为空 ⇒ 旧实现每次重命名/删除这类文件
+  都会白走一遍整树深拷贝精确路径）。
+  ③ **解析无 token 快路径**（`md-outline.buildInlineData`）：纯文本行不再经 pieces 数组 + 切片 +
+  join（归一化口径不变：连续空格折叠 + trim）；2000 节点（80% 纯文本行）parse **2.0ms**。
+  ④ **`--perf` 复测**：真实墙钟 300 次编辑 ≈ 48.5ms/次（与上一轮 48.0 同量级，无回归）；内存轮
+  4 条硬断言全绿（离屏测量 1 / 历史 163 == 上限 / 上限 == `resolveHistoryLimit(500)` / 段缓存 ≤512）。
+  ⑤ **verify:visual 的 viewport / anchor 探针就绪判定改为「`node_tree_render_end` 事件 + 轮询
+  （上限 600ms）」**：原固定 150ms 在冷启动/高负载下偶发**假失败**（2026-09-18 实测两次：容器尚无
+  `.smm-node` → 锚定探针读 null 尺寸、视口探针包围盒为空 → 字段缺失；同代码复跑即过，与代码无关）。
+  **注意 `buildEntrySource` 返回模板字符串**——页内注释里不得出现反引号（会提前终止字符串，实测
+  踩坑：`ReferenceError: node is not defined`）。
+  回归锁定：`tests/links-resolve.test.ts`（直解命中不建索引 / 回退索引 / 编码与 mtime 形态 /
+  校验失败回退 / 无路径段 / `getResourcePath` 抛错兜底）、`tests/url.test.ts`（路径候选提取的
+  11 条边界）、`tests/engine-controller.test.ts`（空 needle 不再触发恒命中的零拷贝短路）。
+  **未改**：拖宽全树 `render()`（P5，维持 K68 结论——渲染非编辑手感大头）。
+
+- [K70] **性能轮（2026-09-20，第三轮）：打开多节点图的默认视口居中不再装配全量 DOM**（用户实测
+  「多节点打开卡顿严重、加载很久」）：
+  ① **主因**：性能模式下视口外节点被引擎回收，`draw.rbox()` 只覆盖可见子集 ⇒ 旧实现
+  `centerContentAtFullScale` 先 `forceLoadNode()` 把整树**同步**装配进 DOM 再测包围盒（vendor 的
+  forceLoadNode 是同步递归 render），且该动作在打开窗口内被**多轮**触发：首帧渲染结束 →（forceLoadNode
+  结束时 emit `node_tree_render_end` → **同步重入**同一处理器，重算预算 2 被连耗）→ 150ms 兜底预算 +1
+  → 图片回灌后的补居中（不受预算限制）。按已有实测口径（500 节点 ≈ 3759 DOM 元素，见 K58），
+  2000 节点图每轮约 1.5 万元素的同步装配 × 4 轮 ⇒ 打开窗口内的主线程长任务。
+  ② **修复**（`engine/mindmap.measureContentBoxFromData`）：性能模式改用**数据层几何并集**——遍历
+  `renderer.root` 全树读 `left/top/width/height`（与引擎裁剪判定 `checkIsInClient` 同源；vendor 实读
+  `get left() { return this.customLeft || this._left }`，拖拽调整过位置的节点与渲染读同一字段），
+  零 DOM 装配、O(n) 纯计算；平移量 = 画布中心 −（布局中心 × scale + translate）（引擎
+  `getNodePosInClient` 同口径）。数据层几何不可得（`renderer.root` 缺失等中间态）回退原 DOM 测量路径，
+  **不补 forceLoadNode**（此时 rbox 多半同样不可得，静默降级）。常规模式（非性能）行为不变（rbox 精确）。
+  **`fitMindMap` 仍 forceLoadNode**：引擎 `view.fit()` 内部基于 rbox，替换需复刻 fit 的 padding/边界
+  语义（风险大于收益），且它是用户主动动作（适应画布/自动整理）而非常驻打开路径。
+  ③ **探针**（`verify:visual` 的 `perf-box`，121 节点 > 阈值 100 + 800×300 视口）：钉住「节点 DOM 数
+  在居中前后均 < 总数 50%（不装配全量）」「内容中心 = 画布中心 ±2px」「数据层盒与 DOM
+  全量盒尺寸差 ≤ 8px」。**规模刻意取刚过阈值的最小量**：探针在共享页面里跑，图越大其分片渲染任务链
+  （`view_data_change` 后每子节点一个 setTimeout）越长——2026-09-20 实测 641 节点版本把其余探针的读取
+  窗口推后，连锁失败 **43 项**（dump 里场景已渲染、探针读取时尚未：自绘内容是探针之后才创建的）。
+  ④ **打开窗口内的重复调用幂等短路**（承 ① 的「多轮触发」）：`centerContentAtFullScale` 现于
+  「比例已是 1 且内容已在画布中心（< 0.5px）」时**完全不动 view**——vendor 的 `setScale` **无条件**
+  emit `view_data_change`（`scaleInCenter` 在 Δ=0 时也 `transform() + emit`），性能模式下经 200ms
+  节流器触发**分片整树渲染**（每轮 = 整树布局 + 属性空写，K58 口径）；打开窗口内本函数被调 3 次
+  （首帧渲染结束 / 150ms 兜底 / 图片回灌补居中），其中「几何未变」的兜底轮此前每轮白渲染一次，
+  现为 O(n) 纯计算后直接返回。比例已是 1 时也跳过 `setScale`（同源 emit 浪费；通常与
+  `translateXY` 的 emit 落同一节流窗口、收益较小，但避免「仅有 setScale 的调用」白开一个窗口）。
+  ⑤ **回归锁定**：`tests/viewport.test.ts`（性能模式走数据层几何并集、**不** forceLoadNode、平移量与
+  几何不变量；数据层几何不可得回退 DOM 测量且仍不 forceLoadNode；**已在目标态零调用**、
+  **比例 1 跳过 setScale**）。
 
 ## 新增功能检查清单
 

@@ -5,8 +5,8 @@
  * 本服务仅剩两类职责：
  * 1. 打开视图的引用更新 —— 文件重命名/删除后，通知每个打开的导图视图
  *    同步树内图片/[[链接]] 引用（links-tree 预检零拷贝）；
- * 2. 文件查找缓存失效 —— 库文件列表变化时清除共享的 path→file 缓存
- *    （图片解析/回写用，images-path 惰性重建）。
+ * 2. 文件查找缓存保鲜 —— create 增量补建、rename/delete 整体失效共享的
+ *    path→file 缓存（图片解析/回写用，file-lookup 惰性重建）。
  *
  * 本服务是 vault rename/delete/create 事件的**单一注册入口**：
  * 插件侧的补充处理（如视图状态键迁移）经 hooks 注入，不再各自
@@ -69,7 +69,15 @@ export class VaultSyncService {
 			}),
 		);
 		plugin.registerEvent(
-			this.app.vault.on('create', () => fileLookupIndex.invalidate()),
+			this.app.vault.on('create', (file) => {
+				// 库内新建**文件**：**增量**补建索引（create 是最高频的一类库事件
+				// ——批量导入/外部同步；原「整体失效」会让风暴期内的每次查询都
+				// 付一遍全量重建）。文件夹不影响文件索引（索引只收录 TFile），
+				// 若一并整体失效则每次建目录都白白废弃索引。
+				if (file instanceof TFile) {
+					fileLookupIndex.noteCreated(this.app, file);
+				}
+			}),
 		);
 	}
 

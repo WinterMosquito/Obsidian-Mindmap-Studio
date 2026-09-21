@@ -5,9 +5,11 @@
  * - `centerContentAtFullScale`（打开时的默认视口）：需求是「100% 缩放 + **整体内容
  *   包围盒**居中」，不是根节点居中（偏心的树会偏到一侧）、也不是 fit 全图（大图会被
  *   压到文字不可读）。实现顺序固定为「先 `setScale(1, 画布中心)` 定比例 → 再按
- *   `draw.rbox() − elRect` 得到的包围盒平移」；顺序颠倒时平移量算的是旧比例下的
- *   坐标，本文件用 invocationCallOrder 与几何不变量（平移后包围盒中心 = 画布中心）
- *   把这两点都钉住；
+ *   包围盒平移」；顺序颠倒时平移量算的是旧比例下的坐标。包围盒有两路口径（K70
+ *   起）：**性能模式用数据层几何并集**（渲染树 left/top/width/height，零 DOM
+ *   装配——旧实现 forceLoadNode 全树**同步**装配进 DOM 是用户实测「多节点打开
+ *   卡顿」主因），常规模式走 `draw.rbox() − elRect`（DOM 精确）。本文件用
+ *   invocationCallOrder 与几何不变量（平移后包围盒中心 = 画布中心）把这两点都钉住；
  * - `resetZoom`（工具栏「重置缩放」）：回到 100% 但**以画布中心为锚点**——引擎平移量
  *   相对画布原点，只 `setScale(1)`（省略锚点）会让内容绕原点跳动（表现为「视图乱飘」）。
  *   故断言 setScale 收到第二/三参，且不做任何节点居中；
@@ -48,6 +50,13 @@ function makeMindMap(
 		hasElRect?: boolean;
 		/** 实时容器矩形（模拟首帧后布局 settle / 工具栏重建过的容器） */
 		liveRect?: { left: number; top: number; width: number; height: number };
+		/**
+		 * `draw.transform()` 的当前比例（默认 1 = 打开首帧后的真实状态）。
+		 * K70 起「比例已是 1」会跳过 `setScale`（vendor 的无条件
+		 * `view_data_change` emit 在性能模式下会白触发分片整树渲染）——
+		 * 需要断言 `setScale` 被调用的用例传 0.5。
+		 */
+		scale?: number;
 	} = {},
 ) {
 	const {
@@ -55,6 +64,7 @@ function makeMindMap(
 		hasDraw = true,
 		hasElRect = true,
 		liveRect,
+		scale = 1,
 	} = options;
 	const setScale = vi.fn<(scale: number, cx?: number, cy?: number) => void>();
 	const fit = vi.fn<() => void>();
@@ -63,6 +73,14 @@ function makeMindMap(
 	const forceLoadNode = vi.fn<() => void>();
 	const execCommand = vi.fn<(...args: unknown[]) => void>();
 	const rbox = vi.fn(() => ({ x: 110, y: 220, width: 200, height: 100 }));
+	// draw.transform()：数据层盒换算「布局坐标 × scale + translate」用
+	// （引擎 getNodePosInClient 同口径），也是「比例是否已是 1」判据的来源
+	const drawTransform = vi.fn(() => ({
+		scaleX: scale,
+		scaleY: scale,
+		translateX: 0,
+		translateY: 0,
+	}));
 
 	const mindMap = {
 		width: 800,
@@ -70,9 +88,23 @@ function makeMindMap(
 		execCommand,
 		opt: { openPerformance },
 		view: { setScale, fit, translateXY },
-		renderer: { root: { isRoot: true }, moveNodeToCenter, forceLoadNode },
+		renderer: {
+			root: {
+				isRoot: true,
+				// 数据层几何（布局坐标系，K70 起性能模式的包围盒来源）。
+				// 与 rbox 的 DOM 盒**刻意取不同值**：两路口径的平移量不同
+				// （(170,160) vs (200,50)），用例可据此判定实际走的路径
+				left: 30,
+				top: 40,
+				width: 400,
+				height: 200,
+				children: [],
+			},
+			moveNodeToCenter,
+			forceLoadNode,
+		},
 		// 引擎中间态：draw / elRect 可能尚未就绪（measureContentBox 会返回 null）
-		...(hasDraw ? { draw: { rbox } } : {}),
+		...(hasDraw ? { draw: { rbox, transform: drawTransform } } : {}),
 		...(hasElRect ? { elRect: { left: 10, top: 20 } } : {}),
 		// 实时容器：首帧后容器尺寸/位置可能与引擎创建时的缓存不同
 		...(liveRect ? { el: { getBoundingClientRect: () => liveRect } } : {}),
@@ -135,7 +167,8 @@ describe('resetZoom（回到 100%，以画布中心为锚点）', () => {
 
 describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
 	it('先以画布中心定 100%，再按包围盒平移到画布中心（不 fit 全图）', () => {
-		const { mindMap, setScale, translateXY, fit } = makeMindMap();
+		// 比例 0.5：需要真的执行 setScale（比例已是 1 时新实现跳过，见 K70）
+		const { mindMap, setScale, translateXY, fit } = makeMindMap({ scale: 0.5 });
 
 		centerContentAtFullScale(mindMap);
 
@@ -152,7 +185,7 @@ describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
 	});
 
 	it('顺序：先定比例再平移（平移量须与新比例同一坐标系）', () => {
-		const { mindMap, setScale, translateXY } = makeMindMap();
+		const { mindMap, setScale, translateXY } = makeMindMap({ scale: 0.5 });
 
 		centerContentAtFullScale(mindMap);
 
@@ -161,19 +194,71 @@ describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
 		);
 	});
 
-	it('性能模式：先强制渲染全部节点，包围盒才反映全图而非可见子集', () => {
+	it('性能模式：走数据层几何并集求包围盒，不装配全量 DOM（K70）', () => {
 		const { mindMap, forceLoadNode, setScale, translateXY } = makeMindMap({
 			openPerformance: true,
 		});
 
 		centerContentAtFullScale(mindMap);
 
-		expect(forceLoadNode).toHaveBeenCalledTimes(1);
-		// forceLoadNode 必须早于 setScale（视口外节点被回收时包围盒会失真）
-		expect(forceLoadNode.mock.invocationCallOrder[0]!).toBeLessThan(
-			setScale.mock.invocationCallOrder[0]!,
-		);
-		expect(translateXY).toHaveBeenCalledTimes(1);
+		// 旧实现先 forceLoadNode 把整树**同步**装配进 DOM（打开大图卡顿主因，
+		// 且其 emit 会同步重入本函数再装配一次）；新契约绝不触发它——
+		// 全树布局几何（left/top/width/height，与引擎裁剪判定 checkIsInClient
+		// 同源）直接求并集，视口外节点无需进 DOM。
+		expect(forceLoadNode).not.toHaveBeenCalled();
+		// 比例已是 1（打开首帧后的真实状态）：跳过 setScale（vendor 的无条件
+		// view_data_change emit 在性能模式下会白触发分片整树渲染，见 K70）
+		expect(setScale).not.toHaveBeenCalled();
+		// 数据层盒（布局坐标）x=30 y=40 400×200；scale=1、translate=(0,0)
+		// ⇒ 内容中心屏幕位置 (230,140)，平移量 = (400−230, 300−140) = (170,160)。
+		// 与 DOM 路径的 (200,50) 不同 ⇒ 断言值本身即证明走了数据层路径
+		expect(translateXY).toHaveBeenCalledExactlyOnceWith(170, 160);
+		// 几何不变量：内容中心 + 平移量 = 画布中心
+		const [dx, dy] = translateXY.mock.calls[0]!;
+		expect(230 + dx).toBe(400);
+		expect(140 + dy).toBe(300);
+	});
+
+	it('性能模式：已在目标态（比例 1 + 内容居中）时零调用——不发 view_data_change（K70）', () => {
+		const { mindMap, setScale, translateXY } = makeMindMap({
+			openPerformance: true,
+		});
+		// 数据层几何中心 = 画布中心 (400,300)：left=200 top=200 400×200
+		(
+			mindMap as unknown as { renderer: { root: Record<string, unknown> } }
+		).renderer.root = {
+			isRoot: true,
+			left: 200,
+			top: 200,
+			width: 400,
+			height: 200,
+			children: [],
+		};
+
+		centerContentAtFullScale(mindMap);
+
+		// vendor 的 setScale 无条件 emit view_data_change（性能模式下经 200ms
+		// 节流器触发分片整树渲染）——打开窗口内本函数被多次调用（首帧渲染
+		// 结束 / 150ms 兜底 / 图片回灌补居中），已在目标态时若不短路，每次
+		// 重复调用都白渲染一轮（500 节点 ≈ 2495 条属性空写，见 K58）
+		expect(setScale).not.toHaveBeenCalled();
+		expect(translateXY).not.toHaveBeenCalled();
+	});
+
+	it('性能模式：数据层几何不可得（引擎中间态）时回退 DOM 测量，仍不 forceLoadNode', () => {
+		const { mindMap, forceLoadNode, translateXY } = makeMindMap({
+			openPerformance: true,
+		});
+		// 抹掉渲染树几何（root 无 left/top/width/height）⇒ 数据层盒不可得
+		(
+			mindMap as unknown as { renderer: { root: Record<string, unknown> } }
+		).renderer.root = { isRoot: true };
+
+		centerContentAtFullScale(mindMap);
+
+		// 回退 DOM 测量：rbox(110,220,200,100) − elRect(10,20) ⇒ 平移 (200, 50)
+		expect(translateXY).toHaveBeenCalledExactlyOnceWith(200, 50);
+		expect(forceLoadNode).not.toHaveBeenCalled();
 	});
 
 	it('包围盒不可得（draw 缺失）：只设比例、不平移', () => {
@@ -186,7 +271,11 @@ describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
 	});
 
 	it('容器矩形不可得（elRect 缺失）：同样只设比例、不平移', () => {
-		const { mindMap, setScale, translateXY } = makeMindMap({ hasElRect: false });
+		// 比例 0.5：需要真的执行 setScale（比例已是 1 时新实现跳过，见 K70）
+		const { mindMap, setScale, translateXY } = makeMindMap({
+			hasElRect: false,
+			scale: 0.5,
+		});
 
 		centerContentAtFullScale(mindMap);
 
@@ -196,7 +285,9 @@ describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
 
 	it('引擎抛错时降级为 fit 全图（至少让内容可见）', () => {
 		const errorSpy = spyConsoleError();
-		const { mindMap, setScale, translateXY, fit } = makeMindMap();
+		// 比例 0.5：保证走到 setScale 才有「引擎抛错」可注入（K70 起比例
+		// 已是 1 时跳过 setScale）
+		const { mindMap, setScale, translateXY, fit } = makeMindMap({ scale: 0.5 });
 		setScale.mockImplementation(() => {
 			throw new Error('引擎尚未就绪');
 		});
@@ -213,9 +304,12 @@ describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
 	});
 
 	it('容器几何已变（首帧后布局 settle）：以实时容器为准，不用缓存 width/height', () => {
-		// 引擎创建时缓存 800×600 / 原点(10,20)；首帧后容器变为 800×520 且上移
+		// 引擎创建时缓存 800×600 / 原点(10,20)；首帧后容器变为 800×520 且上移。
+		// 比例 0.5：需要真的执行 setScale 才能断言锚点用了实时中心（K70 起
+		// 比例已是 1 时跳过 setScale）
 		const { mindMap, setScale, translateXY } = makeMindMap({
 			liveRect: { left: 0, top: 40, width: 800, height: 520 },
+			scale: 0.5,
 		});
 
 		centerContentAtFullScale(mindMap);
@@ -229,8 +323,11 @@ describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
 
 	it('容器几何可得时先同步引擎几何（resize），再算视口', () => {
 		const resize = vi.fn<() => void>();
+		// 比例 0.5：保证 setScale 真的执行（比例已是 1 时新实现跳过，见 K70），
+		// 顺序断言才有对象可比较
 		const { mindMap, setScale } = makeMindMap({
 			liveRect: { left: 0, top: 0, width: 800, height: 600 },
+			scale: 0.5,
 		});
 		(mindMap as unknown as { resize?: () => void }).resize = resize;
 
