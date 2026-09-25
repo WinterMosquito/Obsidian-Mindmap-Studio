@@ -185,6 +185,9 @@ const ZH = {
 	'settings.autoSplitMixedLinks': '自动拆分混排双链',
 	'settings.autoSplitMixedLinksDesc':
 		'被编辑的节点若含「双链 + 描述文字」，自动把文档/附件双链拆分为子节点（图片与外链不动）',
+	'settings.selfDrawPlainNodes': '文本节点快速渲染（打开大图显著加速）',
+	'settings.selfDrawPlainNodesDesc':
+		'所有含文字的节点改由插件渲染，打开大图速度可提升数倍。双击节点将打开编辑弹窗。仅对之后打开的文件生效',
 	'settings.autoUpdateLinks': '自动更新内部链接',
 	'settings.autoUpdateLinksDesc':
 		'重命名 / 删除库内文件时，自动更新导图节点里的链接与附件引用（对应官方设置「自动更新内部链接」）。关闭后：重命名不再改写链接（会变成未解析链接），删除也不再清理引用',
@@ -411,6 +414,9 @@ const EN: Record<TranslationKey, string> = {
 	'settings.autoSplitMixedLinks': 'Auto-split mixed links',
 	'settings.autoSplitMixedLinksDesc':
 		'When an edited node mixes links with description text, split document/attachment links into child nodes (images and external URLs are left untouched)',
+	'settings.selfDrawPlainNodes': 'Fast text node rendering (much faster on large maps)',
+	'settings.selfDrawPlainNodesDesc':
+		'All text-bearing nodes are rendered by the plugin — opening large maps can be several times faster. Double-click opens an edit dialog. Applies to maps opened afterwards',
 	'settings.autoUpdateLinks': 'Automatically update internal links',
 	'settings.autoUpdateLinksDesc':
 		'When a vault file is renamed or deleted, update the links and attachment references on mind-map nodes (mirrors the official "Automatically update internal links" setting). Turn it off to leave links untouched: renaming no longer rewrites them (they become unresolved) and deleting no longer cleans up references',

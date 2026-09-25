@@ -15,7 +15,9 @@
 		"lint:css": "stylelint \"**/*.css\"",
 		"check:dead-code": "knip --include files,exports,types",
 		"check:release": "node scripts/check-release-metadata.mjs",
-		"verify:visual": "node scripts/verify-visual.mjs"
+		"lint:scanner": "node scripts/scanner-lint.mjs",
+		"verify:visual": "node scripts/verify-visual.mjs",
+		"build:vendor": "node scripts/build-vendor.mjs"
 	},
 	"keywords": [
 		"obsidian",
@@ -37,6 +39,7 @@
 		"esbuild": "0.25.5",
 		"eslint": "^9.39.4",
 		"eslint-plugin-obsidianmd": "^0.4.2",
+		"fast-check": "^3.22.0",
 		"globals": "^17.6.0",
 		"jiti": "^2.6.1",
 		"knip": "^6.36.0",

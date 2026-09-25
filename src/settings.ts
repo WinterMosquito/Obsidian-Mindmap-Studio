@@ -42,6 +42,14 @@ export interface MindMapStudioSettings {
 	enableDrag: boolean;
 	performanceMode: boolean;
 	performanceThreshold: number;
+	/**
+	 * 文本节点快速渲染：**所有含文字的节点**由插件自绘渲染，跳过引擎的
+	 * 逐字符文本测宽——实测它是打开大图的成本主体（0.13ms/字符；5000 节点
+	 * 全自绘 1.36s vs 引擎文本 8.6s，见 `docs/engine-upstream-patch-proposal.md`）。
+	 * 代价：双击节点改用弹窗编辑（引擎内联编辑框对自绘节点静默 no-op）。
+	 * **仅对之后打开的文件生效**（不在 LIVE_REFRESH_SETTING_KEYS，见 K62 路由表）。
+	 */
+	selfDrawPlainNodes: boolean;
 	language: Language;
 }
 
@@ -61,6 +69,9 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	// 虚拟渲染（仅渲染可视区域节点）。用户可在此关闭。
 	performanceMode: true,
 	performanceThreshold: 500,
+	// 默认开启：跳过引擎逐字符测宽（打开大图的成本主体，实测 6.3 倍提升）；
+	// 代价是双击节点走弹窗编辑——可在设置里关闭以恢复引擎内联编辑框
+	selfDrawPlainNodes: true,
 	language: 'zh',
 };
 
@@ -133,6 +144,8 @@ export function sanitizeSettings(
 			pickClampedInt('exportScale', EXPORT_SCALE_MIN, EXPORT_SCALE_MAX) ??
 			DEFAULT_SETTINGS.exportScale,
 		enableDrag: pickBool('enableDrag') ?? DEFAULT_SETTINGS.enableDrag,
+		selfDrawPlainNodes:
+			pickBool('selfDrawPlainNodes') ?? DEFAULT_SETTINGS.selfDrawPlainNodes,
 		performanceMode:
 			pickBool('performanceMode') ?? DEFAULT_SETTINGS.performanceMode,
 		performanceThreshold:
@@ -308,6 +321,11 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 							max: PERFORMANCE_THRESHOLD_MAX,
 							step: 100,
 						},
+					},
+					{
+						name: t(this.lang, 'settings.selfDrawPlainNodes'),
+						desc: t(this.lang, 'settings.selfDrawPlainNodesDesc'),
+						control: { type: 'toggle', key: 'selfDrawPlainNodes' },
 					},
 					{
 						name: t(this.lang, 'settings.exportScale'),

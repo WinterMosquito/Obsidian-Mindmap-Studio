@@ -80,7 +80,7 @@ const mindMapPrototype = (vendor.MindMap as { prototype: Record<string, unknown>
  * 产物而不是内容改动，两者在上游行为上等价，故不作为漂移处理。
  */
 const EXPECTED_BUNDLE_SHA256 =
-	'dca4ceadeea46ad003ad600aacecc328b388f3505855c83d63b4b12a300ac898';
+	'ce3bbadd973a9cbbedcd65140394265f6f4ae73cf6c28b55a14f6425cd9d5f77';
 const bundleSha256 = createHash('sha256')
 	.update(readFileSync(BUNDLE_PATH, 'utf8').replace(/\r\n/g, '\n'), 'utf8')
 	.digest('hex');
@@ -90,7 +90,7 @@ describe('vendor 契约：产物存在性', () => {
 		expect(existsSync(BUNDLE_PATH), 'vendor/simple-mind-map.cjs').toBe(true);
 		expect(existsSync(DCTS_PATH), 'vendor/simple-mind-map.d.cts').toBe(true);
 		// 数量级断言：防「空文件 / 被截断的产物」也能通过后续契约
-		// （fix.3 实测 406,580 B）
+		// （fix.3 + 自有补丁实测 408,032 B，2026-09-25 重打包）
 		expect(statSync(BUNDLE_PATH).size).toBeGreaterThan(100_000);
 		expect(bundleSource.length).toBeGreaterThan(100_000);
 	});

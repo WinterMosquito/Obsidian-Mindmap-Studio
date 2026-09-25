@@ -171,7 +171,14 @@ export default defineConfig(
 		'dist',
 		// 只排除预打包的第三方产物；手写的类型声明 vendor/simple-mind-map.d.cts
 		// 是项目维护的公共契约面（见下方 vendor 块），不随之一并排除。
+		// vendor/upstream/** 是 fix.3 源码原样入仓（自有补丁的打包源，见
+		// vendor/BUILD.md「补丁管理」节）：第三方源码不 lint，正确性由
+		// 「重打包 + vendor 契约测试 + 全量测试」回归把关。
+		// vendor/patches/** 是引擎侧自有补丁（随 upstream 风格、在引擎模块图内
+		// 运行，不适用插件侧 lint 规则），同上由重打包与全量回归把关。
 		'vendor/*.cjs',
+		'vendor/upstream/**',
+		'vendor/patches/**',
 		'scripts/**',
 		'esbuild.config.mjs',
 		'version-bump.mjs',

@@ -274,6 +274,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// （引擎文本路径不认 customTextWidth），只留在自绘节点上
 				gateNodeWidthHandles(node);
 				return buildInlineNodeContent(node, doc, style, lang, {
+					// 文本节点快速渲染（设置项，默认开）：全部含文字节点自绘，
+					// 跳过引擎逐字符测宽——打开大图的成本主体（实测 6.3 倍，见设置项注释）
+					selfDrawPlain: this.plugin.settings.selfDrawPlainNodes,
 					// 未解析的库内链接弱化显示（对齐 Obsidian 阅读视图）：解析器在此注入
 					// ——node-inline-content 不接触 Obsidian API（见 InlineContentOptions）
 					isResolvedLink: (linkpath) =>

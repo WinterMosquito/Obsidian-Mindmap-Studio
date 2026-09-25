@@ -57,6 +57,19 @@ jobs:
             # 「仅测试引用」的导出属有意保留（测试直测契约，knip 以 tests 为入口故不误报）
             - run: npm run check:dead-code
 
+            # 社区目录对照通道（scripts/scanner-lint.mjs，2026-09-25 社区目录
+            # 工作流优化轮）：用官方 obsidian-workflows 的**固定版本集**
+            # （eslint 9.37.0 + eslint-plugin-obsidianmd 0.4.1 + typescript-eslint
+            # 8.61.1，隔离安装）＋**逐字照抄**的 scanner 配置实跑一遍——
+            # 「假如现在提交社区目录，JS/TS 面会扫出什么」。本地 eslint 配置
+            # （obsidianmd 0.4.2 recommended + 项目更严边界）已实测 ⊇ scanner 面
+            # （探针双向对照，见 AGENTS K81），故此步骤当前恒绿；它守的是
+            # 「本地配置被无意改窄」——本地绿 + 此处红即出现真实缺口。
+            # 仅在主矩阵版本执行（对照结果与 Node 版本无关）。
+            - name: Community directory parity scan (scanner ESLint)
+              if: matrix.node-version == '24.x'
+              run: npm run lint:scanner
+
             # 渲染契约验证（scripts/verify-visual.mjs）：把 src/engine/mindmap.ts 打成浏览器
             # IIFE，配真实 styles.css 在无头 Chrome 里渲染场景并断言 --dump-dom。
             # 这些「引擎运行时 DOM 装配」行为单测覆盖不到（单测只能验证数据字段）。

@@ -774,6 +774,16 @@ export function serializeMdBody(
 
 	/** 输出一个"块"，heading/plain 前插入空行分隔（首行除外） */
 	const pushBlock = (lines: string[]): void => {
+		// 块首空行不输出：空行只承担「块分隔」角色，由下方统一补一枚。否则围栏
+		// 开始前保留的空行（classifyLines 的围栏相邻 flush 并入 plain 块 mdRaw，
+		// 使其以 '\n' 开头）会与本函数补的分隔空行叠加，每趟往返多一枚、无不动
+		// 点（「`# 标题` + 空行 + 围栏」场景实测累积，2026-09-25 修复）。
+		// 只剥块首、不剥块尾：列表行不经本函数（直接 out.push，无分隔逻辑），
+		// 块尾空行从不与分隔叠加、从不累积——旧行为对它是逐字保留且幂等的，
+		// 剥除反而会丢掉用户在围栏与后续列表之间的有意空行。
+		while (lines.length > 0 && lines[0] === '') {
+			lines.shift();
+		}
 		if (lines.length === 0) {
 			return;
 		}

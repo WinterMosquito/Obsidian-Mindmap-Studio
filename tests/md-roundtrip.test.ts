@@ -254,11 +254,19 @@ describe('解析结构', () => {
 		expect(r.tree.children[0]!.data.mdType).toBe('list');
 	});
 
-	it('空标题（`#`/`# `）不产生节点；空列表项（`- `）退化为 plain 段落', () => {
-		expect(parseMdOutline('#\n', '根').tree.children, '`#` 无文本').toHaveLength(0);
-		expect(parseMdOutline('# \n', '根').tree.children, '`# ` 无文本').toHaveLength(
-			0,
-		);
+	it('空标题（`#`/`# `）保留为空文本节点；空列表项（`- `）退化为 plain 段落', () => {
+		// 2026-09-25 起：空标题不再丢弃（零丢失口径，与空列表项退化 plain 对齐）；
+		// 引擎对空文本节点有既有先例（图片独占 / URL icon-only 子节点）。
+		for (const line of ['#', '# ']) {
+			const children = parseMdOutline(`${line}\n`, '根').tree.children;
+			expect(children, `\`${line}\` 保留为空 heading 节点`).toHaveLength(1);
+			expect(children[0]!.data.mdType).toBe('heading');
+			expect(children[0]!.data.text).toBe('');
+		}
+		// 幂等：`#` 首趟归一为 `# `（序列化前缀携带尾随空格），`# ` 原样不动点
+		expect(roundTrip('#\n').out1, '`#` 归一为 `# `').toBe('# ');
+		expect(roundTrip('# \n').out1, '`# ` 原样回写').toBe('# ');
+		expect(roundTrip('# \n').out2, '第二趟不动点').toBe('# ');
 		// `- ` 行 trimEnd 后是 `-`，不再满足 LIST_RE（要求标记后有空白+内容）→ 落为 plain 段落。
 		// 锁定现状（用户不会写该形态，但空列表行不得被静默当链接/列表处理）。
 		const bare = parseMdOutline('- \n', '根').tree.children;
@@ -565,17 +573,36 @@ describe('往返不动点', () => {
 		);
 	});
 
-	it('已知非幂等：`# 标题` 后紧跟「空行 + 围栏」时每趟往返多一空行（记录现状）', () => {
-		// 成因：标题后空行被保留下来成为 plain 块的首行（mdRaw 以 '\n' 开头），
-		// 而 serializeMdBody 的 pushBlock 又为该块补一枚分隔空行 → 两者叠加累积。
-		// 前有段落文本时不会触发（见「围栏块…逐字回写」用例），故此处只锁定现状：
-		// 一旦 pushBlock/空行保留策略被修正，本用例会失败并提示更新期望值。
-		const first = roundTrip(['# 顶', '', '```', 'code', '```'].join('\n'));
-		expect(first.out1).toBe(['# 顶', '', '', '```', 'code', '```'].join('\n'));
-		const second = roundTrip(first.out1);
-		expect(second.out1, '第二趟再多一枚空行（非不动点）').toBe(
-			['# 顶', '', '', '', '```', 'code', '```'].join('\n'),
+	it('幂等修复（2026-09-25 R1）：`# 标题` 后「空行 + 围栏」往返为不动点', () => {
+		// 曾有缺陷：标题后空行被围栏相邻 flush 保留为 plain 块首行（mdRaw 以
+		// '\n' 开头），与 serializeMdBody pushBlock 补的块分隔空行叠加 → 每趟
+		// 往返多一枚空行、无不动点。修复：pushBlock 剥块首/块尾空行（空行只
+		// 承担块分隔角色，统一补一枚）；本用例由「锁定现状」转为正向断言。
+		const input = ['# 顶', '', '```', 'code', '```'].join('\n');
+		const first = roundTrip(input);
+		expect(first.out1, '空行不叠加：首趟即原文').toBe(input);
+		expect(first.out2, '第二趟不动点').toBe(first.out1);
+	});
+
+	it('幂等（R1）：围栏闭合后空行并入块尾 → 逐字保留且不累积', () => {
+		// 围栏闭合后的空行经 classifyLines 的围栏相邻 flush 并入围栏块 mdRaw
+		// 尾部；列表行不经 pushBlock（直接输出、无分隔逻辑），块尾空行从不与
+		// 分隔叠加 → 原样逐字保留即不动点（R1 只剥块首，理由见 pushBlock 注释）。
+		const input = ['```', 'code', '```', '', '', '- 项目'].join('\n');
+		const first = roundTrip(input);
+		expect(first.out1, '块尾空行逐字保留').toBe(input);
+		expect(first.out2, '第二趟不动点').toBe(first.out1);
+	});
+
+	it('幂等（R1）：文档以「空行 + 围栏」开头，块首空行归一不累积', () => {
+		// 与 568 行同根因：块首空行（围栏相邻 flush 并入 mdRaw）+ pushBlock
+		// 分隔叠加会累积；块首剥除后首趟归一、第二趟不动点。
+		const input = ['', '', '```', 'code', '```'].join('\n');
+		const first = roundTrip(input);
+		expect(first.out1, '块首空行归一为无（文档首块无分隔）').toBe(
+			['```', 'code', '```'].join('\n'),
 		);
+		expect(first.out2, '第二趟不动点').toBe(first.out1);
 	});
 });
 

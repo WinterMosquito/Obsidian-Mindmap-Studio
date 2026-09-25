@@ -20,6 +20,7 @@ import { t, type Language } from '../core/i18n';
 import { walkTree } from '../domain/tree';
 import { docWikiLinkDisplay, type WikiAliasSource } from '../domain/wiki-display';
 import {
+	RENDER_ASYNC_NODE_THRESHOLD,
 	RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,
 	RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS,
 	RESET_LAYOUT_VIEWPORT_DELAY_MS,
@@ -74,6 +75,12 @@ export interface CreateMindMapOptions {
 	enableDrag: boolean;
 	performanceMode: boolean;
 	performanceThreshold: number;
+	/**
+	 * 打开分片渲染显式覆盖（可选）：不传时按 `RENDER_ASYNC_NODE_THRESHOLD`
+	 * 阈值判据（生产默认）；传布尔则强制开/关——bench 对照实验（同步 vs 分片）
+	 * 的专用通道，走 `--bench-open` + `BENCH_RENDER_ASYNC` 环境变量。
+	 */
+	renderAsync?: boolean;
 	lang: Language;
 	onHyperlinkJump?: ((link: string, node: MindMapNode) => void) | null;
 	/**
@@ -366,6 +373,15 @@ export function createMindMap(
 							)
 					: null,
 			},
+			{
+				// 打开分片渲染（2026-09-25 性能轮方案 B，补丁 6）：把 `_render` 整树
+				// 渲染接入引擎既有 async 通道（每子节点一个宏任务），打开/重建大图时
+				// 消除 1s 级 UI 冻结。显式传 renderAsync 优先（bench 对照用），否则按
+				// 节点数阈值判据。字段未入 d.cts，经 Object.assign 注入（同
+				// createNodePrefixContent 口径）。
+				renderAsync:
+					options.renderAsync ?? nodeCount >= RENDER_ASYNC_NODE_THRESHOLD,
+			},
 		),
 	);
 
@@ -402,6 +418,32 @@ export function createMindMap(
 	// 默认热键（命令一律由用户在 Hotkeys 中自行分配）。故移除它——自动整理统一
 	// 走 mindmap-arrange 命令，用户把它绑到 Ctrl+L 时同样以「适应画布」收尾。
 	removeEngineShortcut(mindMap, 'Control+l');
+
+	// 首帧前批量预测量 + 元素复用（引擎补丁 5，见 vendor/BUILD.md「补丁清单」）：
+	// 用与正式路径同一条构建链（doc / style / lang 全绑定）预生成自绘内容——
+	// ① 集中挂载测一次 reflow，尺寸写入内容寻址测量缓存（补丁 4）；② 元素按
+	// uid 登记，正式内容创建点（MindMapNode）优先复用 ⇒ 首帧只剩一遍内容构建
+	// 且测量零 reflow。构建 / 数据 / 样式任何不一致只导致缓存 miss 或复用失效
+	// （回退原路径，无副作用）。时序：`new MindMap` 的首帧渲染只排了
+	// setTimeout(0)，本调用发生在其回调之前。
+	if (createNodeContent) {
+		const preMeasure = (
+			MindMap as unknown as {
+				preMeasureCustomContents?: (
+					map: unknown,
+					build: (proxyNode: unknown) => unknown,
+				) => void;
+			}
+		).preMeasureCustomContents;
+		preMeasure?.(mindMap, (proxyNode) =>
+			createNodeContent(
+				proxyNode as MindMapNode,
+				el.ownerDocument,
+				resolveNodeContentStyle(proxyNode as MindMapNode),
+				options.lang,
+			),
+		);
+	}
 	return mindMap;
 }
 

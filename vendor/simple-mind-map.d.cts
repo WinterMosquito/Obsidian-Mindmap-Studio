@@ -73,6 +73,17 @@ export interface SetNodeImageOptions {
 
 export class MindMap {
 	constructor(options: MindMapOptions);
+	/**
+	 * 自有补丁（2026-09-25 性能轮，补丁 5）：首帧前批量预测量自绘内容尺寸，
+	 * 并把构建出的内容元素按 uid 登记（`__preMeasuredContentMap`）供正式
+	 * 路径复用——生产由 `engine/mindmap.ts` 在 `new MindMap` 之后、首帧前
+	 * 调用，`buildContent` 与 `customCreateNodeContent` 为同一条构建链。
+	 * 详见 vendor/BUILD.md「补丁清单」。
+	 */
+	static preMeasureCustomContents(
+		mindMap: MindMap,
+		buildContent: (proxyNode: unknown) => unknown,
+	): void;
 	addPlugin(
 		Plugin: new (options: AnyObject) => unknown,
 		options?: AnyObject,

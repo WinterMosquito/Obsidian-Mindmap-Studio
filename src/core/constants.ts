@@ -233,6 +233,18 @@ export function shouldEnablePerformanceMode(
 }
 
 /**
+ * 打开分片渲染阈值（2026-09-25 性能轮方案 B）：节点数 ≥ 此值时引擎 `_render`
+ * 整树渲染走既有 async 通道（`MindMapNode.render` 的第三参数——每子节点一个
+ * 宏任务），把 1s 级同步冻结拆成短任务链，打开大图时 UI 保持响应。
+ *
+ * 阈值依据（实测账本）：同步打开耗时 ∝ 节点数（5000 节点 ≈ 1.15s，K72）；
+ * 千节点级同步冻结约 230ms 已接近可感边缘，故取 1000。分片的总时长代价与
+ * 冻结消除实测对照见 AGENTS.md K75（`--bench-open` + `BENCH_RENDER_ASYNC`）。
+ * 引擎侧只读 opt.renderAsync（不存在 = 同步，行为与上游一致，见补丁 6）。
+ */
+export const RENDER_ASYNC_NODE_THRESHOLD = 1000;
+
+/**
  * Obsidian 能在标签页中渲染、不会出现空白页的扩展名（md/canvas/PDF/图片/纯文本·代码）。
  * 用于点击导图内链接/附件时判断能否直接用 Obsidian 打开。
  * 音频/视频不在其中：Obsidian 桌面端没有音频/视频的标签页视图，

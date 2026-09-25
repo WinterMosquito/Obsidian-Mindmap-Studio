@@ -36,15 +36,19 @@ jobs:
               run: npm ci
 
             # 发布门禁：tag push **不会**触发 lint.yml（其 on.push 只匹配 branches，
-            # 不匹配 tag），故这里必须自证——测试与 lint 全绿才允许进入构建与发布。
-            # 官方 obsidian-workflows 的 release 模式同样在 tag 上强制跑一遍校验；
-            # 此处用本仓库自有脚本等价承接（不引入 scanner 的固定版本依赖）。
+            # 不匹配 tag），故这里必须自证——测试、lint 与社区目录对照全绿才允许
+            # 进入构建与发布。官方 obsidian-workflows 的 release 模式同样在 tag 上
+            # 强制跑 scanner 校验：本仓库以自有脚本等价承接（check:release 覆盖
+            # manifest/versions/README 面）＋**对照通道**（lint:scanner——用 scanner
+            # 的固定版本集与其规则面实跑，定位与边界见 scripts/scanner-lint.mjs
+            # 文件头；本地配置已实测 ⊇ scanner 面，见 AGENTS K81）。
             - name: Verify release metadata, tests and lint
               run: |
                   npm run check:release
                   npm test
                   npm run lint
                   npm run lint:css
+                  npm run lint:scanner
 
             - name: Build plugin
               run: npm run build

@@ -18,10 +18,9 @@
  * 已知边界（引擎行为，非缺陷）：**拖拽过程中**高度滞后一拍——引擎每帧的
  * `reRender([])` 不重建自绘内容，故松手时才校正；宽度本身是实时跟随的。
  */
-import { refreshNodeCustomContent } from '../engine/mindmap';
+import { isCustomNodeContent, refreshNodeCustomContent } from '../engine/mindmap';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
-import { shouldSelfDrawNode } from './node-inline-content';
 
 /**
  * 安装**每节点**的宽度手柄门禁（幂等；在首个节点内容回调里调用即可装上）。
@@ -33,13 +32,19 @@ import { shouldSelfDrawNode } from './node-inline-content';
  * 文本路径，不认 `customTextWidth`）⇒ 纯文本 / 含图节点上的手柄是**死手柄**
  * （拖动毫无反应，用户实测 2026-09-16）。
  *
- * 修法：给 Node 原型的方法加一层「且会被自绘接管」的判定——判据与
- * `buildInlineNodeContent` 同一来源（`shouldSelfDrawNode`），手柄只留在拖动
- * 真正生效的节点上。初始节点也在门禁之内：补丁在**首个内容回调**时装上，而
- * 回调发生在 `createNodeData` 内、早于同一节点的 `initDragHandle`；手柄本身
- * 又是「节点激活时懒创建」（`updateDragHandle` 同样先过这个判定），故不存在
- * 漏网手柄。原型是引擎模块级共享的 Node 类，装一次即覆盖所有节点与后续引擎实例
- * （判定只看节点数据，与实例无关）。
+ * 修法：给 Node 原型的方法加一层「且**确实已被自绘接管**」的判定——判据取
+ * **运行时事实**（`engine/mindmap.isCustomNodeContent`，即引擎
+ * `nodeCreateContents.isUseCustomNodeContent()` 的 `!!_customNodeContent`），
+ * 手柄只留在拖动真正生效的节点上。
+ *
+ * 为什么用运行时事实而不是静态判定（2026-09-25 改）：自绘接管面随设置
+ * （`selfDrawPlainNodes`）与节点内容变化，静态判定的输入需要逐处同步；而
+ * `_customNodeContent` 就是 `buildInlineNodeContent` 的实际产物——「有内容」
+ * 与「拖宽生效」是同一件事，天然不会失配（K26d 教训的正解）。
+ * 初始节点也在门禁之内：补丁在**首个内容回调**时装上，回调返回后引擎立即
+ * 赋值 `_customNodeContent`（早于同一节点的 `initDragHandle` 与激活时的
+ * `updateDragHandle`）——判定被调用时事实已成立，故不存在漏网手柄。原型是
+ * 引擎模块级共享的 Node 类，装一次即覆盖所有节点与后续引擎实例。
  */
 export function gateNodeWidthHandles(node: MindMapNode): void {
 	const proto = Object.getPrototypeOf(node) as {
@@ -57,7 +62,7 @@ export function gateNodeWidthHandles(node: MindMapNode): void {
 			// 注意：引擎原门禁返回的是 `... && customCreateNodeContent`——即**函数本身**
 			// （真值但非布尔 true），故此处只能按真值判断，不能写 `=== true`
 			// （写严了会让所有节点都被判为「无手柄」，拖宽整体失效）。
-			return Boolean(original.call(this)) && shouldSelfDrawNode(this);
+			return Boolean(original.call(this)) && isCustomNodeContent(this);
 		};
 		proto.__mindmapStudioWidthGate = true;
 	} catch (error) {

@@ -191,6 +191,19 @@ const MARKUP_TAGS: Record<InlineTextStyle, string> = {
  */
 export interface InlineContentOptions {
 	/**
+	 * 所有**含文字的纯文本节点**也接管（缺省 false = 保持原型行为）。
+	 *
+	 * 生产经设置 `settings.selfDrawPlainNodes` 注入（默认开，2026-09-25）。
+	 * 理由（实测）：引擎对**不自绘**节点做逐字符文本测宽
+	 *（`nodeCreateContents.createTextNode` 的逐字符循环 + 每字符一次强制
+	 * `getBBox`，实测 ~0.13ms/字符）——这是**打开大图的成本绝对主体**；
+	 * 自绘接管后引擎在 `createNodeData` 提前 return，测量全部跳过
+	 * （5000 节点实测：引擎文本 8.6s → 全自绘 1.36s，6.3 倍）。
+	 * 代价：该节点失去引擎内联编辑框（双击走插件弹窗，见 `view-node-actions`）。
+	 * 含图 / 空文本节点不在此列（图片走引擎图片通道、空文本无内容可绘）。
+	 */
+	selfDrawPlain?: boolean;
+	/**
 	 * 库内 linkpath 是否**已解析**到文件（缺省视为已解析）。
 	 *
 	 * 未解析 → 锚点带 `is-unresolved` 类 + 弱化配色：对齐 Obsidian 阅读视图
@@ -640,7 +653,7 @@ export function buildInlineNodeContent(
 	lang: Language = 'zh',
 	options: InlineContentOptions = {},
 ): HTMLElement | null {
-	const source = resolveSelfDrawSource(node);
+	const source = resolveSelfDrawSource(node, options.selfDrawPlain === true);
 	if (!source) {
 		return null;
 	}
@@ -674,7 +687,10 @@ interface SelfDrawSource {
  * （引擎侧「宽度手柄只在能生效的节点上显示」的门禁）必须同一判据——两处各写
  * 一份判定迟早漂移（手柄留在不接管的节点上＝死手柄，用户实测 2026-09-16）。
  */
-function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null {
+function resolveSelfDrawSource(
+	node: MindMapNode,
+	selfDrawPlain = false,
+): SelfDrawSource | null {
 	const data = node.getData?.() as Record<string, unknown> | null | undefined;
 	if (!data) {
 		return null;
@@ -704,27 +720,26 @@ function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null {
 	//    它们的正确显示同样只有自绘能做到（数学要挂 MathJax 产物）。注释仅在
 	//    **去掉后仍有可见内容**时才算（否则会渲染出空节点，比原样显示注释更糟，
 	//    故让引擎按字面显示）；数学以字面占位、异步替换，无该风险。
+	// ④ （2026-09-25）`selfDrawPlain` 开启时**任意含文字的纯文本节点**也接管：
+	//    引擎对不自绘节点做逐字符文本测宽（~0.13ms/字符），是打开大图的成本
+	//    绝对主体；接管后引擎在 createNodeData 提前 return、测量全跳过
+	//    （5000 节点实测 8.6s → 1.36s）。代价见 InlineContentOptions.selfDrawPlain。
+	//    边界：**渲染后必须仍有可见内容**（段序列非空）——纯空白 / 整行只有
+	//    注释的节点不接管（否则渲染出空节点，比让引擎按字面显示更糟）。
 	// 都不满足的纯短文本走引擎 SVG 文本（测宽廉价、可双击**原位**编辑）。
 	// 判定结果（rich/hidden）与段序列同源、随条目缓存——纯函数不重复扫描。
-	if (!overlong && !entry.rich && !entry.hidden) {
+	const plain = selfDrawPlain && entry.segments.length > 0;
+	if (!overlong && !entry.rich && !entry.hidden && !plain) {
 		return null;
 	}
 	return { raw, segments: entry.segments, overlong };
 }
 
-/**
- * 该节点是否会**被自绘接管**（= `buildInlineNodeContent` 会不会返回元素）。
- *
- * 消费方是宽度手柄门禁（`features/view-node-width.ts`）：引擎「拖左右边框改宽」
- * 只对**自绘/富文本**节点生效（纯文本走 `textAutoWrapWidth` 的 SVG 文本路径，
- * 完全不认 `customTextWidth`——拖了没反应），而手柄的显示门禁
- * （`checkEnableDragModifyNodeWidth`）只看**全局开关**，于是纯文本节点上会出现
- * **死手柄**（用户实测 2026-09-16）。门禁按本判据逐节点收窄后，手柄只留在拖动
- * 真正生效的节点上。
- */
-export function shouldSelfDrawNode(node: MindMapNode): boolean {
-	return resolveSelfDrawSource(node) !== null;
-}
+// 注（2026-09-25）：曾导出 `shouldSelfDrawNode`（静态判定「将被自绘接管」）供
+// 宽度手柄门禁消费；`selfDrawPlain` 引入后判定依赖**调用期选项**，且门禁改用
+// 更直接的运行时事实（`engine/mindmap.isCustomNodeContent` = 节点是否真的有
+// 自绘内容），该静态判定不再有生产消费方，已删除。自绘/不接管的判据单一来源
+// 仍是 `resolveSelfDrawSource`（本文件内部）。
 
 /**
  * 是否存在**渲染期必须消费**的隐藏语法（转义 / 注释）。

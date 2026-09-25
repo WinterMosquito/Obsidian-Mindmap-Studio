@@ -171,6 +171,7 @@ src/
     file-creator.ts # 文件浏览器「新建」菜单注入（私有 API 防御式访问）
 tests/
   md-roundtrip.test.ts # md 往返回归（describe/it 场景矩阵：解析结构/深度/不动点/编辑合成/rawOk 分支矩阵/uid/视图状态）
+  md-roundtrip-property.test.ts # 往返生成式验证（fast-check：P1 不动点 T∘T=T / P2 canonical 行守恒——与 docs §3.6 白名单一一对应 / P3 不抛错 / P4 自建语料 fixtures/roundtrip/*.md + CRLF 程序生成 + 变异冒烟；生成空间按 §3.6 #10 收窄）
   md-inline.test.ts    # 行内 token 解析（链接/图片/embed/尖括号 URL 的边界形态）
   md-line-write.test.ts # 节点原文写入（整体重建行内字段 / 未编辑往返锁 / 多行 / 未闭合语法）
   domain.test.ts       # domain 层单测（wikilink 契约 + walkTree 语义）
@@ -222,6 +223,7 @@ tests/
   mocks/obsidian.ts    # obsidian 最小 mock（vitest alias，包本身无运行时 JS）
 docs/
   markdown-mindmap-standard.md  # Markdown ↔ 思维导图映射规则（权威标准）
+  engine-upstream-patch-proposal.md # 引擎上游补丁建议（打开大图瓶颈：逐字符文本测量；实测数据 + 根因 + 补丁方案，见 K72）
   release-notes-<tag>.md        # 各版本发布说明（中英双语；release.yml 按 tag 取用，缺失回退自动生成）
 ```
 
@@ -236,8 +238,8 @@ docs/
 | 文件 | 行数 | 豁免理由 |
 |---|---|---|
 | `src/engine/mindmap.ts` | 942 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。拆开等于把私有访问面摊到多个文件，耦合面反而变大——**这一条是必须豁免的，拆分即违约** |
-| `src/markdown/md-serialize.ts` | 858 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆） |
-| `src/markdown/md-outline.ts` | 943 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移 |
+| `src/markdown/md-serialize.ts` | 890 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆） |
+| `src/markdown/md-outline.ts` | 962 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移 |
 | `src/core/i18n.ts` | 470 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
 | `src/features/view.ts` | 643 | 视图 Controller：**第 6 步拆分后的纯编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；业务已全部外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。再拆会把「生命周期编排顺序集中可见」这一收口点摊到多文件 |
 | `src/services/engine-controller.ts` | 530 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法。与 `mindmap.ts` **同性质**——拆开即把私有访问面摊开，故同样必须豁免 |
@@ -246,14 +248,14 @@ docs/
 | `src/features/drag-target.ts` | 322 | 单一算法收口（拖拽落点仲裁）：两类锚点（节点中心／兄弟间隙中点）必须共用同一套「按指针距离最近仲裁 + 引擎三态让位」规则，拆开会让锚点判定与视觉高亮口径漂移 |
 | `src/features/view-node-actions.ts` | 581 | 节点操作（链接/文本/剪贴板/删除）的**共用入口**——工具栏与右键菜单同调；图片操作已拆至 `view-image-actions.ts` 并由本文件 re-export，此处是剩余语义相关操作集，再拆会让两个菜单的调用面分叉 |
 | `src/features/view-dnd.ts` | 484 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配 |
-| `src/main.ts` | 316 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。业务逻辑已全部外置（见文件头），拆开 onload 会破坏「装配顺序集中可见」的可读性收益；当前仅超线 16 行 |
+| `src/main.ts` | 330 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。业务逻辑已全部外置（见文件头），拆开 onload 会破坏「装配顺序集中可见」的可读性收益；当前超线 30 行 |
 | `src/markdown/links-split.ts` | 476 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。与 `md-outline` / `md-serialize` 同性质 |
 | `src/core/constants.ts` | 357 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件，互有基表派生；「可链接附件」「系统媒体」两份白名单已于 2026-09-15 删除——附件口径收敛到 `domain/wikilink.wikilinkTargetIsAttachment`）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音 |
 | `src/settings.ts` | 313 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。`sanitizeSettings` 被 data.json 加载与面板写回共用（已在「代码结构」清单登记） |
 | `src/features/node-inline-content.ts` | 750 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分）→ HTML（锚点契约 + **内联样式常量**）。三份东西互为契约——样式常量即导出保真契约（K53 ⑤，引擎导出不注入插件 CSS）、锚点属性即 `view-wikilink` 的识别契约（K53 ③）——拆开会让「显示名口径 / 样式来源 / 锚点形态」跨文件漂移；文件的复杂度全部来自这三个契约的**取值表**（段类型 × 标记 × 样式），不是职责堆叠 |
 | `src/features/view-wikilink.ts` | 348 | 链接交互**单一关注点**：**点击路径**的锚点识别（`findAnchorInNode` / `resolveAnchorLink`）与**悬停预览**（两级：锚点优先 + 节点级 `nodeLink` 三通道 + `hover-link` 事件）同在一处，还有中键 `auxclick`；把悬停拆出去会让「链接怎么取、锚点取哪个目标」出现第二份实现——正是本文件当初拆出（原在 view.ts）要消除的问题。两条预览路径**都不预检目标是否存在**（交核心判断，见 K21） |
 
-行数为 2026-09-15 快照（**取消拖入白名单并同步文档后**按 `Get-Content` 行数重测：`md-outline.ts` 943、`md-serialize.ts` 858、`mindmap.ts` 942、`node-inline-content.ts` 750、`view.ts` 643、`view-node-actions.ts` 581、`engine-controller.ts` 530、`view-dnd.ts` 484、`i18n.ts` 470、`links-split.ts` 476、`images-path.ts` 462、`image-resize.ts` 394、`constants.ts` 357、`view-wikilink.ts` 348、`drag-target.ts` 322、`main.ts` 316、`settings.ts` 313；2026-09-15 复核：全部 17 个超限文件均已登记理由），仅供参考；判定以「是否已在表内登记理由」为准，不以数字为准。
+行数为 2026-09-25 快照（R1/R2 后按 `Get-Content` 行数重测：`md-outline.ts` 962、`md-serialize.ts` 890、`mindmap.ts` 942、`node-inline-content.ts` 750、`view.ts` 643、`view-node-actions.ts` 581、`engine-controller.ts` 530、`view-dnd.ts` 484、`i18n.ts` 470、`links-split.ts` 476、`images-path.ts` 462、`image-resize.ts` 394、`constants.ts` 357、`view-wikilink.ts` 348、`drag-target.ts` 322、`main.ts` 330、`settings.ts` 313；2026-09-15 复核：全部 17 个超限文件均已登记理由），仅供参考；判定以「是否已在表内登记理由」为准，不以数字为准。
 
 ## 测试与 CI
 
@@ -451,6 +453,8 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
    **不算差异**：Obsidian 自带的核心面板作用于当前文件，导图视图打开时同样可用，插件不重复实现。**拖入类型白名单已于 2026-09-15 取消**（原登记为「两侧口径不同」的边界）：库内拖入、系统文件导入、链接弹窗联想三处统一走 `wikilinkTargetIsAttachment`（非文档扩展名即附件，无扩展名视为文档）——`[[说明.txt]]` 手写能显示、拖入也同样能挂上；随之删除三份失效白名单（`constants.isLinkAttachmentExtension` / `isImportableExtension` / `isSystemMediaExtension`）与两条失效文案（`common.onlySupportedFiles` / `common.cannotPreview`），并把「不可渲染的库内文件」点击行为统一为**交系统默认应用**（此前只有音视频外跳、其余弹「无法预览」——白名单取消后任意扩展名都可能入库，弹提示等于「链了打不开」）。回归：`tests/view-dnd.test.ts`（PDF 走附件通道 / 笔记走文档通道 / **任意类型走附件通道** / `Ctrl` 绝对链接 / 拿不到原路径不写不提示 / 载荷无文件才提示 `noFilesDropped`）、`tests/url.test.ts`（file URL 往返三形态 + 解码边界）、`tests/view-node-actions.test.ts`（可嵌入 → `mdEmbed`、zip → 无）、`tests/view-wikilink.test.ts`（修饰键矩阵 5 例 + 中键守卫 1 例、未解析不预览）、`tests/node-inline-content.test.ts`（轻标记扩展 / 转义 / 注释 / 未解析标记）、`npm run verify:visual` 的 `syntax` 场景与 `OBSIDIAN_SHIM_SOURCE` 垫片（本页模块图经 `view-wikilink` → `view-link-navigator` 触达 `obsidian` 运行时导出，故 esbuild 加 `alias` 指向最小垫片——**不是** `external`，否则浏览器里留下无法解析的裸导入；垫片自 2026-09-17 起同步导出 `Keymap` 桩（修饰键判定改用官方 API 的具名导入，见本条 ①）。
 - [K54] **节点编辑弹窗的两种模式（2026-09-15，用户实测反馈修订）**：编辑框此前一律编辑 `data.text`（**显示文本**）——双链只剩剥壳名、外链（icon-only）连影子都没有，用户既看不到也改不了语法。现按节点类型分流（`view-node-actions.editNodeText`）：① **纯链接节点**（`md-serialize.isPureLinkNode`：整行一个链接/图片、文本即其显示名）→ **别名模式**：编辑 `data.text`，提交经 `setNodeText`（K6 不变）；② **其余富节点** → **原文模式**：编辑**文件里的那一行**（`[[双链]]` / URL / 轻标记全可见可改），预填 `md-serialize.composeNodeContent`（= 下次写盘会写出的内容，与序列化 `nodeLines` 同一实现），**实时预览** `node-inline-content.inlineContentPreview`（**渲染器口径**：URL 显示为地址——与引擎侧 `buildInlineData().text` 的 icon-only 口径**不同**，预览必须用前者，否则用户会以为 URL 又没了），提交经 `markdown/md-line-write.applyRawToNode` **重解析**写回：先清空再回填全部行内字段（链接通道 + 图片通道 + `mdSegments` + `mdImageAutoSize`，清单取自解析侧常量 `md-outline.INLINE_LINK_FIELDS` / `PLAIN_IMAGE_FIELDS`）+ 三个文本字段由解析结果写就 ⇒ `text === mdDerivedText`（**未编辑**）⇒ 保存**逐字写回用户输入**（等价于「改文件再重载」）。多行：首行承载链接语法，续行按纯文本并入（行首按解析侧口径 `trimStart`，缩进由序列化器补）；结构字段（`mdType`/`mdLevel`）不动；取消或未改动不写盘。原文新增/更换图片时：`resolveImagePath` 换资源地址 + `walkCorrectImageSizesByAspect` 异步校正尺寸后补一次渲染。回归：`tests/md-line-write.test.ts`（7 例：整体重建 / 未编辑往返锁 / 多行 / 未闭合语法 / 结构字段）、`tests/view-hotkeys.test.ts`（两模式分流 + 预览口径）。
 - [K53] **自绘（富）节点的渲染与编辑入口（方案 B Phase 1）**：含行内链接 / 轻标记 / **超长文本**（见⑦，引擎逐字符换行会对长行二次爆炸）且**无图**的节点由 `features/node-inline-content.ts` 生成 HTML（`a.internal-link[data-href]` / `a.external-link[href]`，与 Obsidian 锚点形态一致），经 `engine/mindmap.ts` 的 `createNodeContent` 钩子注入引擎 `isUseCustomNodeContent` + `customCreateNodeContent`（两键未入 d.cts，`Object.assign` 防腐透传；返回 null 的节点走默认 SVG 文本），点击复用 `view-wikilink` 既有节点内锚点分流（**零改造**）；悬停走**节点级预览**（不按锚点判定，见 K21/回撤说明）。八条边界：① **渲染源随编辑切换**——未编辑读 `mdRaw`，已编辑读 `data.text`（mdRaw 是解析期快照，判据与 rawOk 同源：`text === mdDerivedText`）；② 接管后引擎跳过 text/image/icon/hyperlink/tag/note/**prefix**，故**双链文档页图标在富节点上不再出现**（有意：内联锚点已承担「可点 + 目标名」，对齐阅读视图；三类图标体系仍服务未接管节点），含图节点整体不接管；③ 自绘节点无 `_textData`，引擎编辑框对其**静默 no-op**（`textEdit.show()` 的 `isUseCustomNodeContent()` 守卫）→ 编辑入口统一走 `features/view-node-actions.editNodeText`（默认节点→引擎编辑框、富节点→`ui/modal-text` 弹窗；弹窗**两种模式**——纯链接节点别名、其余原文，见 K54），三处入口（双击 / 右键「编辑文本」/ F2）共用；④ **行内语法的显示层**（2026-09-15 扩至官方完整清单）：轻标记 `**粗**`/`__粗__`、`*斜*`/`_斜_`（下划线式要求两侧非字母数字，`snake_case` 不误判）、`` `码` ``（含双反引号跨度）、`~~删~~`、`==高亮==`、`***粗斜***` 只在渲染期剥成语义元素（`strong`/`em`/`code`/`del`/`mark`）；另有 `%%注释%%` **渲染期整段隐藏**（阅读视图口径）与反斜杠转义 `\*`（消费反斜杠、按字面显示——此前会被误渲染成斜体）。两类**隐藏语法**同样触发接管（转义恒触发；注释仅在**去掉后仍有可见内容**时触发，否则会渲染出一个空节点）；全部单层、不跨行、不嵌套、定界符内首尾须非空白，`data.text` 与文件原文一律保真；**含轻标记的节点同样被接管**（2026-09-15 修订：此前只按「含链接」接管，`**粗**` 在无链接节点里原样显示——用户实测发现），代价与含链接节点同款（编辑入口走弹窗，见③）；⑤ **导出保真**：自绘内容的布局/排版/配色/轻标记样式**全部内联在元素上**（`node-inline-content.ts` 的 `CONTENT_STYLES` / `INTERNAL_LINK_STYLES` / `EXTERNAL_LINK_STYLES` / `MARKUP_STYLES` 为唯一来源，`styles.css` 只留纯屏幕装饰）——引擎导出（vendor `getSvgData`）只注入 `joinCss()`（引擎自身 CSS）与 header/footer 的 cssText，**插件 styles.css 不在导出图里生效**，样式一旦只写在类规则里，导出 PNG 就会掉排版（foreignObject 尺寸仍按屏上测宽固定 → 溢出/错位）；⑥ **锚点级悬停预览**：富节点内每枚锚点各自预览**自己**的目标（节点级 `nodeLink` 取「首链」会与所见错位）——指针直接进入锚点走 `node_mouseenter` 的锚点分支，节点**内部**在锚点间移动不会重新触发引擎事件，故另有画布 `mouseover` 委托补齐；节点非锚点区域悬停不再预览；⑦ **性能收口**（2026-09-14，2026-09-15 修订）：段序列按**原文内容寻址**缓存（`segmentCache`，上限 512 满则整表清空——渲染期缓存，重建成本远低于内存风险；内容寻址天然避免跨导图串味）。**超长文本必须接管并截断展示**（原文 > `MAX_INLINE_CONTENT_CHARS`=2000 → 一并接管，尾部 `…` + `data-truncated` + `title` 提示，显示 ≤2000 字；文件与 `data.text` 一字不动，双击弹窗看/改全文）——**原「超长回落引擎」是陷阱**：引擎 `createTextNode` 的换行是**逐字符**迭代（每加一字重新拼接整行 + 重新测量一次），单行开销**二次增长**，用户实测「白屏 / 卡死后关闭」即由此而来；无头 Chrome 同机实测 20k 字单行：引擎 ≈ **+2.8s**（整轮 1.1s→3.9s）vs 自绘 HTML ≈ **0**。渲染成本由此与文本长度**脱钩**（每节点上界 = 2000 字）。**残留边界**：**含图 + 超长文本**的节点无法接管（图片走引擎图片通道），其长行仍由引擎换行承担——建议把该节点拆短（这类节点在方案 B 前也是同样代价）。⑧ **未解析链接弱化（注入式解析）**：库内锚点在目标**未解析**时加 `is-unresolved` 类 + 弱化配色（`--link-unresolved-color`/`-opacity`，字面量兜底供导出图用）——对齐 Obsidian 阅读视图「指向尚不存在的笔记的链接显示为更弱的颜色」，用户据此知道点击会新建/打不开。解析器由调用方注入（`InlineContentOptions.isResolvedLink`，生产在 `view.ts` 经 `view-link-navigator.isResolvedWikiLinkpath` 注入 `metadataCache.getFirstLinkpathDest`）——`node-inline-content` 必须能在无 Obsidian 运行时的页面里打包（`verify:visual` 直接打包它），故**不得**自己 import Obsidian；解析**每次构建实时求值**，不进段序列缓存（缓存按原文寻址，与库状态无关）。判据：`#区块`/`|别名` 不参与解析，`[[#标题]]` 这类同笔记内区块链接按「当前文件存在即已解析」处理。回归：`tests/node-inline-content.test.ts`（接管判定含「仅轻标记」「未闭合标记」「转义/注释」「超长回落」边界、轻标记扩展与转义/注释段序列、未解析标记 5 例、缓存命中、内联样式契约）、`tests/view-wikilink.test.ts`（锚点级悬停 6 例 + 未解析不预览 + 区块链接按目标解析 + 修饰键矩阵）、`tests/view-hotkeys.test.ts`（富节点分支）、`npm run verify:visual` 的 inline / markup / syntax / paragraph / hugeline 场景 + inline / export / scale 三个探针（foreignObject 装配、离屏测宽同源、合成点击命中锚点、`<strong>`/`<code>`/`<mark>` 渲染、仅轻标记节点也接管且无锚点、`\*转义\*` 消费反斜杠、`%%注释%%` 不进显示、未解析链接带 `is-unresolved`（对照组已解析链接不加标记）、超长节点接管 + 显示 ≤2000 字 + `…` + `data-truncated` + `title`、导出 SVG 内联样式、30 富节点全渲染且离屏测宽元素恒为 1；负向自检：关掉 `isUseCustomNodeContent` 报 7 项、去掉内联样式报 1 项、**解析桩改为恒真报「未解析链接未标记 is-unresolved（实得 0）」1 项、注释分支改为不隐藏报「%%注释%% 未被隐藏」1 项**——后两条用于证明新断言非空转，复查时实测过。**注**：该脚本跑在 `--virtual-time-budget` 下（时钟被虚拟化），**不做耗时断言**——性能基线需在真实时钟环境另设。
+
+- [K71] **往返幂等与空结构零丢失（2026-09-25，R1/R2/R8/R9）**：① **块首空行不输出**——`md-serialize.pushBlock` 剥块首空行：围栏相邻 flush 会把空行并入 plain 块 mdRaw（以 `\n` 开头），与补的分隔空行叠加曾致「`# 标题`+空行+围栏」每趟往返多一枚、无不动点；**只剥块首不剥块尾**——列表行不经 pushBlock（直接输出、无分隔逻辑），尾空行从不累积，剥除反而丢用户有意空行（`md-roundtrip.test.ts` 围栏黄金用例锁定）。② **空标题（`#`/`# `）保留为空文本 heading 节点**（此前丢弃＝保存后该行消失，与「空列表项退化 plain」口径对齐）：`classifyLines` 不再按 text 过滤；`#` 首趟归一为 `# `（序列化前缀携带尾随空格），第二趟起不动点；编辑合成走既有 heading 路径（`## 新文字`）。③ **等价性分级与规范化白名单成文**于 `docs/markdown-mindmap-standard.md` §3.6（L0 字节级 / L1 内容级两级定义，白名单 10 条）——**canonical 化函数与白名单一一对应，文档与测试不得漂移**。④ **生成式验证** `tests/md-roundtrip-property.test.ts`（fast-check，devDependency）：P1 不动点 T∘T=T（300 runs）/ P2 canonical 行序列守恒 / P3 任意输入不抛错 / P4 自建语料 `tests/fixtures/roundtrip/*.md`（8 份，正文-only，CRLF 程序生成防 autocrlf 检出漂移）+ 字符级变异冒烟；**生成空间按 #10 收窄**（空列表项钉 0 层缩进——text 为 null 与 `''` 都要覆盖）。⑤ **属性测试发现的既有缺陷已登记**（§3.6 #10）：根层缩进列表保存后缩进按树深度重排，紧随其后的缩进行被二次解析并作续行（内容不丢、第二趟收敛）——彻底修复需 `mdIndent` 类字段（解析/序列化/拆分三处联动），未实施。回归：`md-roundtrip.test.ts`「幂等修复（R1）」3 例 +「空标题保留」例；property 6 例。
 
 ### 引擎行为、视口与布局
 
@@ -855,6 +859,312 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   几何不变量；数据层几何不可得回退 DOM 测量且仍不 forceLoadNode；**已在目标态零调用**、
   **比例 1 跳过 setScale**）。
 
+- [K72] **打开大图的成本主体：引擎逐字符文本测量；插件侧以自绘接管规避（2026-09-25，性能轮实测）**：
+  ① **实测定位**（`verify:visual --bench-open`，真实墙钟）：打开成本 ≈ 1.8s 固定 + Σ(节点字符数 × **0.13ms**)
+  （5000 与 10000 节点独立拟合一致）；5000 节点含 5% 长文本（1540 字）= 58.8s、去长文本 8.6s、
+  **全节点自绘 1.36s**（6.3 倍）；折叠 3 层反而 34.9s（引擎给每个折叠节点渲染展开按钮 ≈ +26s，
+  **净负，勿采用**）。
+  ② **根因**（vendor 内部，插件不可改）：`nodeCreateContents.createTextNode` 逐字符换行循环
+  （每字符一次 `measureText` + O(L²) 字符串重建）+ `measureText` 每字符一次「克隆 → 挂 body →
+  `getBBox()` 强制布局 → 移除」（svg.js retry 路径）；发生在**渲染期节点构造**，早于
+  `MindMapNode.render` 的性能模式门——`openPerformance` 裁剪不掉它。上游补丁建议（快路径 +
+  canvas measureText + 缓存）见 `docs/engine-upstream-patch-proposal.md`。
+  ③ **插件侧规避（已实施）**：`settings.selfDrawPlainNodes`（默认开）——所有含文字节点经
+  `node-inline-content` 自绘接管，引擎 `createNodeData` 提前 return、测量全跳过；**边界**：空文本 /
+  含图 / 隐藏后无可见内容（纯空白、整行注释）不接管（否则渲染空节点或丢图片/图标）；
+  自绘节点双击走 `ui/modal-text` 弹窗（`editNodeText` 经 `isCustomNodeContent` 运行时事实分流，
+  零改动自动适配）；**宽度手柄门禁**改为消费同一运行时事实（`engine/mindmap.isCustomNodeContent`），
+  替代原静态判定 `shouldSelfDrawNode`（零引用，已删）。
+  ④ **设置路由（K62 同族）**：`selfDrawPlainNodes` **不在** LIVE_REFRESH 集合——仅对**之后打开**的
+  文件生效（避免切换设置时大图重建卡顿）；`selfDrawPlain` 经 `InlineContentOptions` 每次构建
+  实时读取（回调持有 settings 活引用），重开文件即生效。
+  ⑤ **回归**：`node-inline-content.test.ts`（selfDrawPlain 接管 + 边界 4 例）、
+  `view-node-width.test.ts`（运行时事实门禁 + 自绘纯文本形态）、`settings.test.ts`（布尔校验）；
+  性能基线 `npm run verify:visual -- --bench-open`（opt-in，同 `--perf`）。
+- [K73] **编辑帧成本的真实构成：引擎 `nodeDraw.has()` 的 O(n) 兄弟查找独占 27ms；三处引擎补丁把空 render 落地 26.1→2.7ms、一次编辑 47.6→21.4ms（2026-09-25，性能轮实测 + vendor 自有补丁）**：
+  ① **实测分解**（`verify:visual --perf --perf-ops=<变体>` 真实墙钟差分，A/B/B/A 取最小；
+  变体全表与口径见 `vendor/BUILD.md`「补丁清单」节）：500 节点 / 非性能模式 ——
+  `copy`（getCopyData 整树深拷贝）0.2ms、`stringify`（JSON.stringify 整树）0.55ms、
+  `compare` ≈0、`history`（originAddHistory 全流程）**0.8ms**、`editnohist` 46.1ms vs
+  `edit` 47.6ms（**addHistory 真实增量仅 1.5ms**）、`idle`/`rafonly`/`layoutonly`/`themetick` ≈0、
+  `rendertick`（一次空 render 落地）**26.1ms**、`rendernocb` 26.2ms、`rootrender` 27.1ms、
+  `nodeupdate`（全子节点 update 总量）0.8ms、`noderenderline` ≈0。
+  ② **修正 K65 的归因**：K65 推断「编辑手感大头在 addHistory 的整树深拷贝 + JSON 比对」——
+  实测为**误**（0.8ms，占 3%）；K58 的「2495 条同值空写」在绝对时间上也可忽略（约 1.4ms，
+  与 K63 的旧判断一致）。真凶是 `MindMapNode.render` 复用分支的 `this.nodeDraw.has(this.group)`：
+  svg.js `has → index` = `[].slice.call(childNodes).indexOf(node)` —— **每节点每轮把全部兄弟
+  节点拷进新数组再线性查找**，500 节点即 25 万次操作 + 500 次数组分配/轮 ≈ **27ms**。
+  ③ **三处自有补丁（已入 vendor，改动面与维护流程见 BUILD.md「补丁清单」）**：a) 上述 has →
+  `parentNode` 直接父判断（O(1)，语义等价：has 只判直接子且节点 group 在 nodeDraw 下平铺）
+  ——**空 render 落地 26.1→2.7ms、一次编辑 47.6→21.4ms**；b) 节点数据快照去 JSON 化
+  （`cloneNodeData` 值级深拷贝 + `isNodeDataChanged` 深比较，替代每节点每轮 1 parse + 3
+  stringify；保留因**零写点依赖**——任何数据变化都反映在值上——且消除整树序列化分配，≈1.4ms）；
+  c) svg.js `attr` 同值短路（`vendor/patches/`，经打包 entry 注入；空 render 2495 次同值
+  setAttribute → 0 mutation，编辑路径同值空写 1997→0，≈1.4ms，大图/低端设备边际更大）。
+  ④ **方法论与契约**：页内时钟在 `--virtual-time-budget` 下虚拟化（同步代码期间时钟不动），
+  耗时只能用「同页两次调用的进程墙钟差」；`mutation` 变体采集 DOM 变更分布（补丁后空 render
+  mutation = 0；edit 探针同值空写 0 为机械判据）。**新快照为值级对象（非字符串）**：生产面
+  `MindMapNode.update` 与 `Base` lru 分支，消费面 `Base.checkIsNodeDataChange` 唯一，异常
+  形态按「已变化」处理（安全方向）。
+  ⑤ **生产口径 vs 负载旧口径（2026-09-25 追加实测，重要）**：`--perf` 负载原未接
+  `selfDrawPlain: true`（生产自 K72 起默认开）——编辑后 text 不含链接段 ⇒ 不接管 ⇒
+  切回引擎 SVG 渲染 + 逐字符测量，**此前测得的 47.6ms 是旧口径人造成本**；负载改接
+  生产默认后（编辑保持自绘，DOM 变化 -0.5 元素/次），**一次编辑 = 5.3ms**（render 落地
+  3.0 + addHistory ≈1.5 + 编辑同步 <1）。以 git HEAD 旧产物在生产口径下同测对照：
+  **一次编辑 29.4→5.3ms（-82%）、空 render 落地 28.1→3.0ms（-89%）**。
+  ⑥ **回归**：1578 测试全绿（含 vendor sha256 契约更新为 `e02e796a…` / 408,032 B）；
+  全部视觉探针；lint；打开基准不劣化（5000 节点 1298ms）。
+- [K74] **打开路径测量缓存：自绘内容尺寸按 `outerHTML` 内容寻址；重复打开 5000 节点 1276→≈810ms（-37%）（2026-09-25，性能轮续，补丁 4）**：
+  ① **背景**：`measureCustomNodeContentSize` = 清空离屏容器 + appendChild +
+  getBoundingClientRect（每节点一次强制 reflow），测量段占打开成本 ≈0.15ms/节点（K72）。
+  ② **补丁 4**（改动面与实测见 BUILD.md「补丁清单」）：自绘内容全内联样式（K53 ⑤）
+  ⇒ `outerHTML` 即完整尺寸 key；模块级缓存（跨引擎实例存活）⇒ 同文件重复打开
+  （生产高频：切回/重开）命中率 ≈100%；命中时连 `cloneNode` 一并省（调用方改传源元素）；
+  **字体未就绪（`document.fonts.status !== 'loaded'`）不写缓存**（防 fallback 度量污染）。
+  ③ **容量须 ≥ 工作集（实测教训）**：4096 容量下「顺序重扫 + 淘汰」击穿命中率，
+  收益仅 20%（省 261ms）；放大到 ≥工作集（定 16384，最坏 ≈16MB）后省 466–518ms。
+  ④ **验证通道**：`BENCH_TWICE=1`（`--bench-open`）同页建图→首帧→销毁→重建，与单次
+  运行墙钟差 = 第二次打开成本；`--perf-ops=clockcheck` 定论**页内时钟不可用**（3e7 次
+  sqrt 忙等页内读数 = 0.0ms，K58 旧结论成立）。⑤ **边界**：首次打开不变（缓存冷）；
+  本补丁只消测量段——内容构建 / 节点对象 / 布局为引擎固有成本。**当前 sha 以 BUILD.md
+  登记为准**（补丁 4 后 `09718fde…` / 408,449 B）。回归：全量测试 + 视觉探针
+  （尺寸类断言即缓存正确性验证）。
+
+- [K75] **首帧前预测量 + 元素复用：打开 5000 节点再降 8%；并修正「测量段 700ms」的高估（2026-09-25，性能轮续，补丁 5）**：
+  ① **机制**（改动面与实测见 BUILD.md「补丁清单」补丁 5）：`new MindMap` 之后、首帧前
+  经 `MindMap.preMeasureCustomContents(mindMap, buildContent)`（engine/mindmap.ts 绑定
+  doc/style/lang 注入，与 `customCreateNodeContent` 同一条构建链）walk 数据树、以轻量
+  代理节点预生成自绘内容 → clone 集中挂载（`width: max-content` wrapper 保持块级宽度
+  语义）一次 reflow → 尺寸写补丁 4 缓存；构建出的元素按 uid 存入
+  `__preMeasuredContentMap`、正式内容创建点优先复用（取用即删）⇒ 首帧只剩一遍构建。
+  配套把 `checkEnableDragModifyNodeWidth` 从 opt 开关改为**实例事实**
+  （`isUseCustomNodeContent()`）——复用后内容可不经构建回调创建，opt 口径会给死手柄
+  （实例口径与拖宽内部三重检查对齐）。
+  ② **两段实验的负→正结论**：A1（只预测量、不保留元素）实测**净零**（100% 命中
+  4750/4750 但总时长无变化）——预测量构建 + 正式构建构成**两遍构建**，抵消测量节省；
+  A2（元素复用）省掉第二遍构建后 **1258→1151ms（-8%）**。
+  ③ **对 K72/K74 的修正**：「测量段 ≈700ms / 0.15ms/节点」**高估约 5 倍**——A2 净收益
+  仅 102ms ⇒ 4501 次测量的真实成本 ≈100–150ms；`twice` 通道（K74）的「重复打开
+  -37%」中**主体是同页第二张图的整体热页红利**（同页对照不纯），缓存独占收益远小于此。
+  ④ **诊断常驻**：`__PREMEASURE_STATS__`（预测量构建/命中/写入）与
+  `__MEASURE_STATS__`（正式测量命中/未命中）页面全局、`--bench-open` 打印——
+  测量缓存健康度的长期观测。
+  ⑤ **边界**：预测量在 `createMindMap` 同步段完成（处于 Obsidian 加载态内）；构建/
+  数据/样式任何不一致只会导致缓存 miss 或复用失效（回退原路径，零副作用）；单节点
+  构建抛错即跳过该节点。
+
+- [K76] **打开分片渲染（激活引擎既有 async 通道）：主线程阻塞从「整树单块」降为「单节点块」，代价 +1.4%~+3.4%；专项审计结论入册（2026-09-25，性能轮方案 B，补丁 6）**：
+  ① **动机**：打开 5000 节点的 1.14s 是**单个同步宏任务**（UI 全程冻结）——K72 把测宽
+  成本换到自绘路径、K75 把测量段做薄之后，这是打开路径最后一处体感缺口。
+  ② **机制**（改动面与实测见 BUILD.md「补丁清单」补丁 6）：`_render` 整树渲染原传
+  `root.render(cb)`；改为 `opt.renderAsync` 为真时传 `root.render(cb, false, true)`——
+  激活 `MindMapNode.render` **既有** async 通道（每子节点一个宏任务，回调计数链完整）。
+  **非新机制**：性能模式视口变化路径（`onViewDataChange`，Render.js bindEvent）一直
+  以 async=true 运行；本次只是把 `_render` 主路径接上。插件侧按
+  `RENDER_ASYNC_NODE_THRESHOLD`（1000）注入，显式覆盖通道
+  `CreateMindMapOptions.renderAsync`（对照实验用）。
+  ③ **实测对照**（`--bench-open` + `BENCH_RENDER_ASYNC=0/1`，同 bundle 仅页内全局变量
+  不同）：500 节点 473→489ms（+3.4%）｜5000 节点 1137→1164ms（**+2.4%**）｜10000 节点
+  2255→2287ms（+1.4%）——相对代价随规模**下降**（绝对 +16~32ms）；正确性指标
+  （DOM .smm-node / 自绘锚点 / 截断数）三规模全一致；生产默认路径（不设变量、5000 ≥
+  阈值）实测 1168ms 与强制分片一致（阈值判据生效）。
+  ④ **专项审计结论（两窗口模型）**：布局窗口（`root=null`、doLayout 分片期间）是
+  **既有**窗口（K67 守卫覆盖）；渲染窗口（`root` 已回填、`isRendering=true`）为本轮
+  新增面，逐项核实——重入由 `hasWaitRendering` 排队兜底（多次 render() 合并重跑）；
+  `node_tree_render_end` 仍在整树完成时 emit（插件侧视口恢复零改动）；引擎 12 处
+  `renderer.root` 消费点全为交互触发且 root 已回填、部分自带判空；未渲染节点
+  （group=null）与性能模式视口外**同构**（既有容忍覆盖：点击落空不崩，拖拽/框选/
+  键盘导航正常）；`highlightNode` 的 `isRendering` 跳过语义自洽（登记）。**唯一新增
+  守卫**：async 派发前检查 `mindMap.el`（destroy 断链，避免销毁后在游离 DOM 上白跑）。
+  ⑤ **边界**：分片序 = 树序（根→子逐步长出），非视口优先；`forceLoadNode`（配置切换
+  路径）未接分片（低频，登记）；「UI 不冻结」是机制性结论（主线程最坏阻塞 ≈ 单节点
+  渲染 0.2ms），无头探针验证的是总时长与正确性。
+  ⑥ **回归**：1578 测试全绿（含 vendor sha256 契约更新）；全部视觉探针；lint；打开
+  基准三规模正确性一致（`8c0a6d83…` / 410,276 B）。
+
+- [K77] **打开成本的精确构成：「内容构建」仅 ≈60–110ms（不是 800–950ms）——「构建加速」方向负结论（2026-09-25，性能轮调研）**：
+  ① **实验**（`--bench-open` + 新增 `BENCH_VARIANT=no-content` / `BENCH_STOP_AT=start`
+  探针）：no-content = `createNodeContent` 返回带尺寸空 span（`cssText` 定 180×60）
+  ——变量只有 `buildInlineNodeContent` 的构建与测量。5000 节点实测：full **1137ms**
+  vs no-content **924ms** → 构建+测量 ≈ **213ms**；减测量段 ≈100–150ms（K75 独立实测）
+  ⇒ **构建段 ≈60–110ms**——与 K75 的 A2 净收益 107ms（= 一遍构建）交叉吻合。
+  ② **两个方法论教训**：空元素**必须带尺寸**——无尺寸节点塌缩 ⇒ 树变矮 ⇒ 651 组
+  （vs 15 组）挤进视口被装配，差值完全不可归因（首轮实验 +47ms 的假象）；**跨进程
+  分段差分（`BENCH_STOP_AT=start` vs end）信噪比不足**——固定开销漂移 ±100–260ms
+  淹没段成本（100–200ms 级），full@stop(1401) 反而 > full@end(1137)。变量隔离必须
+  走「同口径 end、单变量替换」矩阵。两探针保留（`verify:visual` 脚本内，默认不激活）。
+  ③ **构成修正**（推翻 K72 时代的「构建 ≈800–950ms」推算）：打开 1137ms ≈ 构建
+  60–110 + 测量 100–150 + **引擎固有 ≈880–980**（5000 × 节点对象构造/getSize/
+  事件绑定、布局 4 task、foreignObject/连线、首帧装配；**后经 K78 修正：其中
+  ≈174ms 是 initDragHandle 的监听器泛滥，固有余量 ≈710–810ms**）。**大头在
+  引擎固有成本**，插件侧不可及；cssText 批量化/cloneNode 模板等手段的上限 =
+  构建段的 30–50%（≈20–50ms，打开 -2~4%）——**负 ROI，不投入**。
+  ④ **后续若再探**：唯一量级项 = 引擎固有段的「节点对象轻量化 / 布局算法」——
+  vendor 上游贡献方向（成本高，见 K76 审计模式）；插件侧打开路径**就此收官**
+  （K72 自绘换路径 → K74/K75 测量做薄 → K76 冻结消除 → K77 构成定论）。
+
+- [K78] **vendor 上游贡献首战：拖宽监听器惰性注册——打开 5000 节点再降 13%（-174ms），并修复潜伏泄漏（2026-09-25，性能轮，补丁 7）**：
+  ① **发现路径**（「补丁即探针」方法论）：K77 把 ≈880–980ms 归入「引擎固有」后，
+  逐个审计 constructor 每节点调用链（`getSize` 已做薄 / `updateGeneralization`
+  守卫早退 ≈5–10ms 非热点 / **`initDragHandle`**——补丁 5 ③ 的实例口径门禁让
+  5000 自绘节点全部通过，每节点 3 个监听器（window mousemove/mouseup +
+  mindMap node_mouseup）= **15000 个**，且全库无解绑）。
+  ② **三重代价**：打开期注册实测 ≈174ms（**A/B/B/A 交替对照**：手工回滚基线
+  min 1327ms vs 补丁 min 1153ms，哈希双向校验 `8c0a6d83↔1e335f8f`——跨时段
+  漂移 ±100–260ms 再次被同批交替消掉，K77 教训的第二次应用）；此后每次鼠标
+  移动 10000 个 window 监听器被调用后早退（运行期长尾）；**节点销毁后实例被
+  window 监听器永久持有**（每开一次大图 +10000 监听器 + 实例滞留——K65 长会话
+  探针测 DOM 增删未覆盖此形态，登记为 vendor 上游 bug 的本仓库修复）。
+  ③ **补丁 7**（改动面与机制见 BUILD.md「补丁清单」）：`initDragHandle` 只 bind；
+  手柄 `mousedown` 开会话才注册、`mouseup` 收尾（新增
+  `unbindDragHandleGlobalEvents`）即解——常态零全局监听；收尾补 `!this.group`
+  守卫（会话中节点被删除时安全）。同引用重复 `addEventListener` 浏览器天然去重。
+  ④ **回归**：1578 测试（含 sha256 契约 `1e335f8f…` / 410,692 B）/ 全部视觉探针
+  （`history` 拖宽全流程、`handle` 手柄显隐覆盖惰性注册路径）/ lint。
+  ⑤ **方向定调**：这是「vendor 上游贡献（节点对象轻量化）」的第一个实锤——
+  「固有」成本必须逐点审计而非整体放弃；其余固有段（节点构造/布局 4 task/
+  foreignObject/装配）尚有 ~700–800ms，逐点审计的边际成本递增，**按需再战**
+  （下一个候选：布局 4 task 的 walk 分布与 `getSize` 重复调用分布）。
+
+- [K79] **布局平移的二次复杂度实锤：adjustTopValue 293 万次子树平移 → 延迟物化 O(n)，5000 节点再降 6%（2026-09-25，性能轮，补丁 8/9）**：
+  ① **发现**（K78 后的下一个候选：布局 task 的 walk 分布）：新增 `BENCH_VARIANT=
+  count-layout` 页内包裹计数探针（零 upstream 改动）——5000 节点逻辑结构图首帧：
+  `adjustTopValue` 1 次、`updateBrothers` **2101 次**（含递归）、`updateChildren`
+  **平移 292 万节点次**（≈节点数 × 584——同一子树被多级祖先的 updateBrothers
+  反复全量平移，``updateChildren`` 为递归子树遍历）。
+  ② **短路实验的失败与教训**：`skip-adjust`（页内 patch `adjustTopValue=noop`）
+  读数 +570ms 且 DOM 629 组（vs 15）——**几何塌缩污染视口裁剪**，同 K77 空元素
+  教训的第三次出现：**后置处理的短路必改几何 ⇒ 短路法不适用于布局**。正确路径 =
+  「等价优化本身即探针」（几何正确的补丁，收益即份额）。
+  ③ **补丁 8**（字段快路径）：`item[prop] += offset` 走 getter/setter（`customTop
+  || _top` 读 + 写 `_top`）；核实 `_top`/`_left` 唯一读点在 getter 内部，「分量
+  自定义位置 undefined」时字段直写严格等价——单独收益仅 ≈23ms（V8 访问器内联
+  良好）——**排除「访问器是大头」假设**。
+  ④ **补丁 9**（延迟物化，量级项）：可延迟性前提逐条核实——difference 判定不读
+  top（只读 childrenAreaHeight2/height/margin）、adjustTopValue 同 task 内无外部
+  观察者 ⇒ `updateBrothers` 只记账（子树根 + 累计 offset）、末尾自顶向下一次物化
+  （O(n)）。**等价性边界**（实施中推演修正）：物化的「继承」在 hasCustomPosition
+  截断（对齐原 updateChildren 递归守卫）、「遍历」不截断（记账根可位于自定义位置
+  祖先之下）——几何逐字节等价的验证 = `layout` 探针（六布局 × 连线 × 根连线起点）
+  + 全部视觉探针 + 1578 测试全绿。
+  ⑤ **实测**（同批 A/B）：5000 节点 **1161→1091ms（-70ms / -6%）**；10000 节点
+  **2255→1741ms**（含补丁 7 复合）。相对 293 万次的操作量，-70ms 说明**单次
+  遍历/回调成本很低**（JIT 友好），二次复杂度在**更大图**才会进一步放大——
+  本补丁的真正价值 = 把 O(传播×子树) 降为 **O(n)** 的结构性改善。
+  ⑥ **回归**：1578 测试（含 sha256 `ce3bbadd…` / 411,297 B）/ 全部视觉探针 /
+  lint；`count-layout` 计数探针常驻供后续布局调研复用。
+
+- [K80] **「outerHTML 镜像序列化」负结论：估算 25–70ms 的候选实测 < 噪声（≈30ms）——已回滚；节点构造段审计收口（2026-09-25，性能轮）**：
+  ① **候选**：`measureCustomNodeContentSize` 以 `outerHTML` 作内容寻址 key——预测量
+  与正式测量对**同一元素**各序列化一次（5000 节点打开 ≈9500 次「镜像序列化」），
+  按 5–15μs/次估算 25–70ms，看似诱人。
+  ② **补丁 10（零行为差异版）**：预测量阶段把 key 附着为元素 **JS 属性**
+  （`__smmMeasureKey`，不参与 HTML 序列化），正式测量优先取用。正确性前提已核实：
+  `addXmlns` 幂等（重复 setAttribute 同值无变化）、元素在「预测量 → 正式测量」
+  之间无任何修改路径（MathJax 异步注入是唯一的构建后修改，但它发生在**首次测量
+  之后**且无重测机制；本方案不改「测量回写附着」，故「元素修改后重测」的既有
+  语义完全不变——当时的保守取舍，事后被证明选对了）。
+  ③ **实测与决策**：补丁组 1117/1137/1153ms vs 基线组 1091/1098/1123ms——**两组
+  区间完全重叠**（回滚后复测 1131/1191 亦重叠）⇒ 收益 < 组内噪声 ≈30ms，**序列化
+  单次成本远低于估算**（~1–2μs，DOM 序列化为 native 快速路径）。**回滚**（哈希
+  机械校验 `ce3bbadd` 精确还原）——不为无实测支撑的优化增加代码面。
+  ④ **方法论**：本轮第三次「估算被实测否定」（K77 构建段、K79 访问器、K80 序列化）
+  ——**微优化的估算必须先过同批 A/B 的噪声检验**；K78 起的「同批交替对照」是唯一
+  可信判据（跨时段漂移 ±100–260ms ≫ 噪声 ≫ 多数单项优化收益）。
+  ⑤ **节点构造段审计收口**：剩余已知候选（`checkIsInClient` 的 `draw.transform()`
+  每节点读取、`createNodeData` 的 `typeList/createTypes` 每节点数组构建、
+  `updateGeneralization` 的 removeGeneralization 细节、首帧 renderLine 遍历）
+  预估单项均 <30ms——**逐点审计的收益已低于测量噪声**，打开路径的插件侧+vendor
+  自有补丁优化**就此收口**（累计：K72 自绘换路径 → K74/K75 测量做薄 → K76 分片
+  冻结消除 → K77 构成定论 → K78 监听器 -13% → K79 布局平移 -6% → K80 收口）。
+  ⑥ **若未来仍要动**：剩余量级项只在「节点对象构造 / 首帧装配遍历」的**结构性
+  重写**（如延迟构造视口外节点——改动引擎核心生命周期，风险等级 = 补丁 9 之上），
+  或接入真实时间性能通道（longtask）另立靶点——两者的共同前提是**先有 ≥50ms 的
+  可复现单项收益证据**。
+
+- [K81] **社区目录对照通道：本地工作流已 ⊇ scanner 校验面（探针双向验证，0 实质缺口）；`lint:scanner` 常驻为「防收窄护栏」（2026-09-25，社区目录工作流优化轮）**：
+  ① **范围**：以官方 `obsidianmd/obsidian-workflows` v1.0.0 源码（`src/manifest.ts`
+  / `repo-checks.ts` / `lint.ts` / `release.ts` / `main.ts`）为**校验面权威定义**，
+  逐面审计本仓库工作流。**结论：0 实质缺口，多处更严**——
+  · scanner stylelint：`stylelint.config.mjs` 已照抄官方 ruleset + electron 版本
+  推导（`minAppVersion 1.13.0 → electron 39`）✓；
+  · scanner ESLint：`eslint.config.mts` 已接入 `eslint-plugin-obsidianmd ^0.4.2`
+  recommended（比 scanner 固定的 0.4.1 新）+ 项目更严边界，`--max-warnings 0`
+  ——**探针双向对照**（同一违规样本两侧跑）：问题集完全一致，scanner 经
+  `toWarns` 把 recommended 降级而**本地保持 error**（no-implied-eval /
+  no-unsafe-call / rule-custom-message 均为 error），即**本地 ⊇ 且更严**；
+  · manifest/versions/readme/license：`check:release`（versions 逐条 semver +
+  一致性 + README）比 scanner 更严（scanner 的 semver 违规仅 warning）＋
+  `obsidianmd/validate-manifest` / `validate-license` 规则双通道 ✓；
+  · release 面：tag 一致性本地**硬失败**（scanner 仅 warning）、attestation
+  等价、draft release 额外携带 LICENSE/THIRD-PARTY-NOTICES 与发布说明 ✓。
+  ② **交付**：`scripts/scanner-lint.mjs`（`npm run lint:scanner`）——用 scanner
+  **固定版本集**（官方 `SCANNER_ESLINT_DEPS`，刻意不用项目 0.4.2）＋**逐字照抄**
+  的 `buildScannerEslintConfig(true)` 配置＋**隔离安装**（专属缓存目录，空
+  userconfig 隔离开发机 npm 配置，node 直跑 npm/npx CLI 入口）实跑——输出
+  「假如现在提交社区目录，JS/TS 面会扫出什么」。**定位不是补本地缺的检查**
+  （本地已覆盖），而是把对照关系机械化：a) 可直接作发布门禁；b) **防收窄
+  护栏**——未来本地配置被无意改窄时「本地绿 + 本通道红」即暴露缺口。
+  已接入 `lint.yml`（Node 24 主矩阵）与 `release.yml`（发布门禁）。
+  ③ **边界（登记）**：· `vendor/**` 不在对照范围（第三方源码入仓，其 .js 不入
+  tsconfig，官方配置的 projectService 会报 78 条 "not found by the project
+  service" 解析错误淹没结论）——**若服务端确实扫描 vendored 源码，以服务端
+  报告为准**；应对预案：把 `vendor/upstream/` 移出版本库（保留 `vendor/patches/`
+  + 文档化 `npm install simple-mind-map@0.14.0-fix.3 --no-save` 拉取流程，
+  重打包脚本对 upstream 缺失给出明确报错）；· 官方配置显式声明的
+  `obsidianmd/regex-lookbehind` 在 0.4.1/0.4.2 上实测均未触发（探针
+  `/(?<=a)b/` 两侧不报）——照抄配置，以服务端为准。
+  ④ **附**：审计中确认 scanner ESLint 对本仓库 `src/`（69 文件）扫描 **0 违规
+  0 警告**——社区目录的 JS/TS 检查面天然通过；探针（`src/__scanner_probe__.ts`）
+  已删除，对照证据即上述双向对照表。
+
+- [K82] **官方模板对照审计：0 缺口（构建配置逐字节同源），开发最佳实践全面满足或超越（2026-09-25，社区目录工作流优化轮续）**：
+  ① **范围**：以官方 `obsidianmd/obsidian-sample-plugin`（master，含其 AGENTS.md
+  的 18 类最佳实践清单）逐条对照本仓库。**结论：0 缺口**——
+  · 构建配置：`esbuild.config.mjs` 与模板**逐字节同源**（banner / external 列表
+  / prod 判定 / sourcemap 策略 / treeShaking / minify 全一致），`package.json`
+  build 脚本与 `tsconfig.json`（strict + noUncheckedIndexedAccess 等）逐字段
+  对齐且多两项（`noImplicitOverride` / `allowJs`）；
+  · 工程实践：**不提交构建产物**（`main.js` 在 .gitignore 且未被 git 跟踪）、
+  **tags 无 v 前缀**（0.0.5/0.1.0…0.1.3，与「Do not use a leading v」一致）、
+  `register*` 守卫 27 处覆盖（外加引擎事件的 `EventBinder` 统一销毁，K36）、
+  manifest 全字段（含 `isDesktopOnly: true` 与稳定 id）、`onload` 轻量装配
+  （引擎懒创建于视图打开时）；
+  · **超越面**：ESLint 版本更新（obsidianmd 0.4.2 vs 模板 0.4.0）+ scanner
+  对照通道（K81）；分层架构 + 依赖矩阵机械强制（K50/K51，模板仅「多文件」建议）；
+  1578 测试 + 视觉探针 + CI 矩阵（模板仅手动测试）；AGENTS.md 数千行工程记录
+  （模板 270 行速查）；`main.ts` 330 行超线但已登记豁免（模板建议「最小化」=
+  生命周期编排，实际职责即此）。
+  ② **可反向吸收项**：无（模板的全部实践本仓库均已满足）。
+  ③ **边界**：本审计为静态对照（文档 + 配置 + 工程文件），未逐条重放模板的
+  「Troubleshooting」清单（其条目均为环境类问题，本仓库 CI 与本地构建长期绿）；
+  引擎升级与发布流程的对照见 vendor/BUILD.md 与 release.yml。
+
+- [K83] **官方开发者指南规则对照（eslint-plugin-obsidianmd 源码全量）：0 缺口；locale 规则探针实测全为误报，不接入（2026-09-25，社区目录工作流优化轮续）**：
+  ① **范围**：以官方 `eslint-plugin`（master，版本 **0.4.2**——与本仓库
+  devDependency 同版本，无新规则可升）的**完整规则表（40 条）+ 配置构成**
+  （`recommended` / `recommendedWithLocalesEn` 增量块，`lib/index.ts:351-394`）
+  逐条对照。
+  ② **`recommendedWithLocalesEn` 增量评估（2 条 locale 规则）**：官方文件模式为
+  `**/en.json` / `**/en*.ts` / `**/en-*.ts` / `**/en/*.ts` 等——本仓库英文文案在
+  **`src/core/i18n.ts`（basename `i18n` 不匹配）**，且规则内部有硬编码文件名判定
+  （`isEnglishLocaleModule`，无法经配置绕过）。**探针实测**（把 EN 字典原文复制为
+  `src/en-probe.ts` 匹配 `**/en-*.ts`，启用规则 + `allowAutoFix` 跑
+  `--fix`）：13 条警告**全部为引用类误报**——键盘键名（`(Tab)`→建议`(tab)`、
+  `press F2`→`f2`）、引用 Obsidian 官方设置名/选项显示名（`"Default location for
+  new attachments"`、`"Auto"`、`Logical structure`）、数量拼接片段
+  （`'node'/'nodes'`）、Markdown 语法占位符（`[links](url)`→建议`URL`）。
+  **裁决：不接入、文案不改**（规则无法豁免引用类场景，此即其 warn 级 + 默认
+  不自动修的原因）；探针与临时配置已删除。
+  ③ **`prefer-active-doc`（官方默认禁用，🚫）评估**：本仓库 5 处「裸 document」
+  引用经逐一核对**全部为注释文本或循环变量名**（`for (const document of
+  documents)` 的 TFile 命名）——**0 真实违规**；官方亦禁用（标识符名误报），
+  不启用。
+  ④ **结论**：开发者指南规则面对本仓库 **0 缺口**——`recommended` 全表已启用
+  （上轮 scanner 审计已验证 src 69 文件 0 违规），增量规则经探针实测不适用，
+  禁用规则无真实违规。与 K81（scanner 校验面）、K82（模板最佳实践面）合流：
+  社区目录三线对照（校验 / 实践 / 指南）**全部闭环**。
+
 ## 新增功能检查清单
 
 按以下顺序自检（先官方 API，再自研；先收口，再实现）：
@@ -863,7 +1173,7 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 2. **收口**：是否触碰引擎内部形态？只允许经 `mindmap.ts` / `services/engine-controller.ts` 具名函数；库内文件解析走 `links-resolve.resolvePathToFile`；并发原语走 `concurrency.ts`；DOM/事件监听走 `this.register*` / `EventBinder`；URL 形态判断走 `domain/url.ts`（背景见 K25 / K28 / K29）。
 3. **官方优先**：面向 Obsidian 的能力先对照官方 `obsidian.d.ts` 与帮助文档；官方缺口才允许私有触点，且必须防御式实现并在本文件登记（见 K39）。
 4. **测试**：新增 `tests/*.test.ts`（纯逻辑直测；引擎运行时 DOM 装配类行为交 `verify:visual`）；同步本文件「代码结构」两份清单——`agents-md-sync` 测试会强制。
-5. **校验链**（顺序执行，全绿才提交）：`npm run build`（tsc 检查 src+tests）→ `npm test` → `npm run lint`（须在插件根 cwd，见 K43）→ `npm run lint:css`（改过 `styles.css` 必跑，见「测试与 CI」的 CSS 检查段）→ `npm run check:release`（改过 `manifest.json` / `versions.json` / README 时必跑）→ 新增/删除导出或文件时加 `npm run check:dead-code`（见 K57）→ 涉及渲染/DOM 装配时加 `npm run verify:visual`。
+5. **校验链**（顺序执行，全绿才提交）：`npm run build`（tsc 检查 src+tests）→ `npm test` → `npm run lint`（须在插件根 cwd，见 K43）→ `npm run lint:css`（改过 `styles.css` 必跑，见「测试与 CI」的 CSS 检查段）→ `npm run check:release`（改过 `manifest.json` / `versions.json` / README 时必跑）→ 新增/删除导出或文件时加 `npm run check:dead-code`（见 K57）→ 涉及渲染/DOM 装配时加 `npm run verify:visual` → **改过 `vendor/upstream/` 或 `vendor/patches/` 时加 `npm run build:vendor` 重打包，并同步 `vendor/BUILD.md` 与 `tests/vendor-contract.test.ts` 两处 sha256 常量（见 K73）**。
 6. **超限登记**：新增文件超 300 行 → 在「文件规模与豁免」表登记理由。
 7. **声明式设置/版本**：改 `minAppVersion` 或给声明式设置新增键 → 人工核对对应 `@since`（lint 盲区，见 K41）。
 

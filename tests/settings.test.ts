@@ -42,6 +42,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			enableDrag: false,
 			performanceMode: false,
 			performanceThreshold: 100,
+			selfDrawPlainNodes: false,
 			language: 'en',
 		});
 		expect(out).toEqual({
@@ -55,6 +56,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			enableDrag: false,
 			performanceMode: false,
 			performanceThreshold: 100,
+			selfDrawPlainNodes: false,
 			language: 'en',
 		});
 	});
@@ -132,6 +134,13 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		// 合法布尔即使是 false 也必须保留（false 不等于"缺失"）
 		expect(sanitizeSettings({ autoSave: false }).autoSave).toBe(false);
 		expect(sanitizeSettings({ enableDrag: false }).enableDrag).toBe(false);
+		// 文本节点快速渲染（2026-09-25）：非布尔回退默认（true）、false 保留
+		expect(
+			sanitizeSettings({ selfDrawPlainNodes: 'yes' }).selfDrawPlainNodes,
+		).toBe(DEFAULT_SETTINGS.selfDrawPlainNodes);
+		expect(
+			sanitizeSettings({ selfDrawPlainNodes: false }).selfDrawPlainNodes,
+		).toBe(false);
 	});
 
 	it('数值字段钳制到面板取值域并取整（坏值不直达引擎/导出）', () => {
@@ -231,6 +240,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			autoUpdateLinks: DEFAULT_SETTINGS.autoUpdateLinks,
 			enableDrag: DEFAULT_SETTINGS.enableDrag,
 			performanceMode: DEFAULT_SETTINGS.performanceMode,
+			selfDrawPlainNodes: DEFAULT_SETTINGS.selfDrawPlainNodes,
 		});
 	});
 });

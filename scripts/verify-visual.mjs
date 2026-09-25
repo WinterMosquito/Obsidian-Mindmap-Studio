@@ -41,6 +41,8 @@
  *   npm run verify:visual -- --require-chrome    # 无 Chrome 时失败（CI 用）
  *   npm run verify:visual -- --keep              # 保留临时目录（排查用）
  *   npm run verify:visual -- --log-dir <dir>     # 落盘诊断日志（CI 归档用）
+ *   npm run verify:visual -- --bench-open        # 打开基准：500/5000/10000 节点「打开→可交互」真实墙钟基线（不断言）
+ *   npm run verify:visual -- --perf --perf-ops=copy   # 编辑帧成本分解：copy/stringify/compare/history（历史改造设计依据）
  *   CHROME_PATH=/path/to/chrome npm run verify:visual
  *
  * 退出码：0 = 通过或（未要求时）缺浏览器跳过；1 = 断言失败或缺浏览器但要求了。
@@ -348,7 +350,7 @@ export function setIcon() {}
 `;
 
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
-function buildEntrySource({ workloadEdits = 0, memoryProbe = false } = {}) {
+function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps = 'edit' } = {}) {
 	const mindmapModule = join(ROOT, 'src', 'engine', 'mindmap.ts').replaceAll('\\', '/');
 	const wikilinkModule = join(ROOT, 'src', 'features', 'view-wikilink.ts').replaceAll(
 		'\\',
@@ -375,10 +377,10 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false } = {}) {
 		null,
 		'\t',
 	);
-	return `import { applyImageSizeCorrectionsToEngine, applyPerformanceMode, centerContentAtFullScale, countTreeNodes, createMindMap, HISTORY_BUDGET_BYTES, previewNodeImageSize, refreshNodeCustomContent, replaceMindMapData, resetZoom, resolveHistoryLimit, setNodeImageSize, setNodeText } from ${JSON.stringify(mindmapModule)};
+	return `import { applyImageSizeCorrectionsToEngine, applyPerformanceMode, centerContentAtFullScale, countTreeNodes, createMindMap, HISTORY_BUDGET_BYTES, isCustomNodeContent, previewNodeImageSize, refreshNodeCustomContent, replaceMindMapData, resetZoom, resolveHistoryLimit, setNodeImageSize, setNodeText } from ${JSON.stringify(mindmapModule)};
 import { ensureDefaultImageSizes } from ${JSON.stringify(imagesPathModule)};
 import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
-import { buildInlineNodeContent, segmentCacheStats, shouldSelfDrawNode } from ${JSON.stringify(inlineContentModule)};
+import { buildInlineNodeContent, segmentCacheStats } from ${JSON.stringify(inlineContentModule)};
 import { gateNodeWidthHandles } from ${JSON.stringify(nodeWidthModule)};
 
 const scenarios = ${serialized};
@@ -1149,9 +1151,11 @@ window.setTimeout(() => {
 		// 引擎内部诊断：门禁后手柄节点根本没被创建
 		report.plainHasHandleNodes = Array.isArray(plainNode && plainNode._dragHandleNodes);
 		report.richHasHandleNodes = Array.isArray(richNode && richNode._dragHandleNodes);
-		// 判据自身的取值（断言用的前置事实：纯文本 false / 自绘 true）
-		report.wantedPlain = plainNode ? shouldSelfDrawNode(plainNode) : null;
-		report.wantedRich = richNode ? shouldSelfDrawNode(richNode) : null;
+		// 接管事实（断言用的前置事实：纯文本 false / 自绘 true）——2026-09-25 起
+		// 取引擎运行时事实（_customNodeContent，防腐函数 isCustomNodeContent），
+		// 与生产门禁判据同源（原静态判定 shouldSelfDrawNode 已删）
+		report.wantedPlain = plainNode ? isCustomNodeContent(plainNode) : null;
+		report.wantedRich = richNode ? isCustomNodeContent(richNode) : null;
 	} catch (error) {
 		report.error = String(error);
 	}
@@ -2119,7 +2123,22 @@ window.setTimeout(() => {
 		const map = createMindMap(
 			holder,
 			{ data: { text: 'root-pl', uid: 'root-pl' }, children },
-			{ ...options, performanceMode: false },
+			{
+				...options,
+				performanceMode: false,
+				// 与生产默认一致（settings.selfDrawPlainNodes 默认开，2026-09-25）：
+				// 纯文本节点也自绘。否则负载的编辑路径是旧口径——编辑后 text 无
+				// 链接段 ⇒ 不接管 ⇒ 切回引擎 SVG 渲染 + 逐字符测量，测出的不是
+				// 生产编辑成本（生产编辑走 applyRawToNode 重解析写回，节点回
+				// text === mdDerivedText 的未编辑态，继续自绘，见 K54）。
+				createNodeContent: (node, doc, style, lang) => {
+					gateNodeWidthHandles(node);
+					return buildInlineNodeContent(node, doc, style, lang, {
+						isResolvedLink: (linkpath) => !linkpath.startsWith('未解析'),
+						selfDrawPlain: true,
+					});
+				},
+			},
 		);
 		/**
 		 * 长会话采样：强制 GC 后读堆 / DOM / 命令历史 / 段缓存。
@@ -2193,6 +2212,305 @@ window.setTimeout(() => {
 		window.setTimeout(() => {
 			baseline = sample('baseline');
 			let done = 0;
+			// —— 操作分解变体（--perf-ops，2026-09-25 三分实测基建）——
+			// 口径：同步连打 N 次单一操作，Node 侧用「同页两次调用的墙钟差 / N」
+			// 得单次成本（页内时钟被虚拟化，见文件头）。变体：
+			//   copy      仅 getCopyData（整树深拷贝）
+			//   stringify 仅 JSON.stringify（对同一份拷贝反复序列化）
+			//   compare   仅两个等长不同引用大串的 === 比对（全量字节比较）
+			//   history   originAddHistory 全流程（copy + stringify + 判重比对；
+			//             数据未变 ⇒ 判重后 return、不进栈，是纯引擎历史成本）
+			// 交叉校验：history ≈ copy + stringify + compare + 常数。
+			// sink 累计防 JIT 死代码消除（stringify/compare 结果必须真的被构造）。
+			const OPS = ${JSON.stringify(workloadOps)};
+			const LIGHT_OPS = ['copy', 'stringify', 'compare', 'history'];
+			if (LIGHT_OPS.indexOf(OPS) !== -1) {
+				try {
+					const command = map.command;
+					let sink = 0;
+					let preparedCopy = null;
+					let strA = '';
+					let strB = '';
+					if (OPS === 'stringify') {
+						preparedCopy = command.getCopyData();
+					} else if (OPS === 'compare') {
+						strA = JSON.stringify(command.getCopyData());
+						strB = JSON.stringify(command.getCopyData());
+					}
+					while (done < EDITS) {
+						if (OPS === 'copy') {
+							preparedCopy = command.getCopyData();
+						} else if (OPS === 'stringify') {
+							sink += JSON.stringify(preparedCopy).length;
+						} else if (OPS === 'compare') {
+							sink += strA === strB ? 1 : 0;
+						} else if (OPS === 'history') {
+							command.originAddHistory();
+						}
+						done++;
+					}
+					window.__PERF_SINK__ = sink;
+					report();
+				} catch (error) {
+					loadProbe.textContent = JSON.stringify({ error: String(error) });
+				}
+				return;
+			}
+			// —— 编辑链对照变体（2026-09-25 分解实测第二批）——
+			//   idle       仅执行与 edit 相同的 150ms 定时器链（不做任何操作）：
+			//              验证「间隔等待本身」是否污染 edit 读数
+			//   rendertick 每次 render() 后等一拍：一次整树渲染落地的真实墙钟
+			//              （含浏览器布局/绘制，与 edit 的差 = 数据写入的份额）
+			//   editnohist 同 edit 但先 command.pause()（暂停历史收集）：
+			//              edit − editnohist = addHistory 的真实增量
+			//   mutation   不做负载：装 MutationObserver 后空 render 一次，采集
+			//              「属性名分布 + 同值/真变化拆分 + 文本/增删」——用于定位
+			//              27.5ms/次 render 的真实写点构成（patch 覆盖率的判据）
+			if (OPS === 'mutation') {
+				const mutationStats = {
+					attributes: 0,
+					sameValue: 0,
+					realChange: 0,
+					characterData: 0,
+					childListAdded: 0,
+					childListRemoved: 0,
+					byName: {},
+					realChangeSamples: [],
+				};
+				const observer = new MutationObserver((records) => {
+					for (const record of records) {
+						if (record.type === 'attributes') {
+							mutationStats.attributes++;
+							const name = record.attributeName || '?';
+							mutationStats.byName[name] =
+								(mutationStats.byName[name] || 0) + 1;
+							let now = null;
+							try {
+								now = record.target.getAttribute(record.attributeName);
+							} catch (readError) {
+								now = null;
+							}
+							if (now === record.oldValue) {
+								mutationStats.sameValue++;
+							} else {
+								mutationStats.realChange++;
+								if (mutationStats.realChangeSamples.length < 8) {
+									mutationStats.realChangeSamples.push(
+										name +
+											' [' +
+											String(record.oldValue).slice(0, 30) +
+											' -> ' +
+											String(now).slice(0, 30) +
+											']',
+									);
+								}
+							}
+						} else if (record.type === 'characterData') {
+							mutationStats.characterData++;
+						} else if (record.type === 'childList') {
+							mutationStats.childListAdded += record.addedNodes.length;
+							mutationStats.childListRemoved += record.removedNodes.length;
+						}
+					}
+				});
+				observer.observe(holder, {
+					childList: true,
+					subtree: true,
+					attributes: true,
+					attributeOldValue: true,
+					characterData: true,
+				});
+				map.render();
+				window.setTimeout(() => {
+					observer.disconnect();
+					loadProbe.textContent = JSON.stringify({
+						nodes: NODES,
+						edits: EDITS,
+						done: true,
+						mutation: mutationStats,
+					});
+					holder.remove();
+				}, 500);
+				return;
+			}
+			//   themetick  仅 map.initTheme()（mergeTheme 深合并 + setBackgroundStyle）
+			//   layoutonly 仅 renderer.layout.doLayout(空回调)——布局计算（不含节点渲染）
+			//   rendernocb 仅 renderer.render()（绕过 MindMap.render 的 initTheme）
+			//   ——三者与 rendertick 构成二分：定位 26ms 在「主题合并 / 布局计算 /
+			//     节点渲染递归」中的落点
+			if (OPS === 'themetick' || OPS === 'layoutonly' || OPS === 'rendernocb') {
+				const tickOnce = () => {
+					if (done >= EDITS) {
+						window.__PERF_SINK__ = 1;
+						report();
+						return;
+					}
+					if (OPS === 'themetick') {
+						map.initTheme();
+					} else if (OPS === 'layoutonly') {
+						map.renderer.layout.doLayout(() => {});
+					} else {
+						map.renderer.render();
+					}
+					window.setTimeout(() => {
+						done++;
+						tickOnce();
+					}, ${PERF_WORKLOAD_EDIT_GAP_MS});
+				};
+				tickOnce();
+				return;
+			}
+			//   rootrender 仅 root.render(空回调)——节点渲染递归（含 renderLine+update）
+			//   nodeupdate 每轮对全部子节点调 update(true)——整树 update 总量微基准
+			//   noderenderline 每轮对全部子节点调 renderLine()——连线渲染总量微基准
+			if (
+				OPS === 'rootrender' ||
+				OPS === 'nodeupdate' ||
+				OPS === 'noderenderline'
+			) {
+				const nodeOnce = () => {
+					if (done >= EDITS) {
+						window.__PERF_SINK__ = 1;
+						report();
+						return;
+					}
+					const root = map.renderer.root;
+					if (!root) {
+						window.__PERF_SINK__ = 1;
+						report();
+						return;
+					}
+					if (OPS === 'rootrender') {
+						root.render(() => {});
+					} else {
+						const list = root.children || [];
+						for (let i = 0; i < list.length; i++) {
+							if (OPS === 'nodeupdate') {
+								list[i].update(true);
+							} else {
+								list[i].renderLine();
+							}
+						}
+					}
+					window.setTimeout(() => {
+						done++;
+						nodeOnce();
+					}, ${PERF_WORKLOAD_EDIT_GAP_MS});
+				};
+				nodeOnce();
+				return;
+			}
+			//   rafonly    每次仅调度一个空 rAF（不等回调内容），与 rendertick 同链
+			//              同间隔——把「rAF/虚拟时间调度的底噪」从渲染成本里剥离
+			//   undo       预热一次编辑（产生第二条历史）后，BACK / FORWARD 交替——
+			//              每轮一次撤销或重做帧（含历史恢复 + 渲染落地）。历史两条
+			//              ⇒ 交替永不越界；BACK 与 FORWARD 成本近似，均值即单帧成本
+			if (OPS === 'undo') {
+				let phase = 0;
+				const undoOnce = () => {
+					if (done >= EDITS) {
+						window.__PERF_SINK__ = 1;
+						report();
+						return;
+					}
+					if (phase === 0) {
+						map.execCommand('BACK');
+						phase = 1;
+					} else {
+						map.execCommand('FORWARD');
+						phase = 0;
+					}
+					window.setTimeout(() => {
+						done++;
+						undoOnce();
+					}, ${PERF_WORKLOAD_EDIT_GAP_MS});
+				};
+				const warmList = map.renderer.root
+					? map.renderer.root.children
+					: [];
+				if (warmList.length > 0) {
+					setNodeText(map, warmList[0], 'undo-warmup');
+				}
+				window.setTimeout(() => {
+					undoOnce();
+				}, 400);
+				return;
+			}
+			//   rafonly    每次仅调度一个空 rAF（不等回调内容），与 rendertick 同链
+			//              同间隔——把「rAF/虚拟时间调度的底噪」从渲染成本里剥离
+			//   clockcheck 同步忙等固定工作量（3e7 次 sqrt），同时报告页内
+			//              performance.now() 差与 Node 侧墙钟差——判定「页内计时
+			//              在 --virtual-time-budget 下是否可用」（K58 旧结论称
+			//              耗时恒近 0；bench 的构造期=24ms 非零与之矛盾，需定论）。
+			//              忙等用固定次数而非时钟条件，防时钟冻结死循环。
+			if (OPS === 'clockcheck') {
+				const t0 = performance.now();
+				let acc = 0;
+				for (let i = 0; i < 3e7; i++) {
+					acc += Math.sqrt(i);
+				}
+				const t1 = performance.now();
+				loadProbe.textContent = JSON.stringify({
+					nodes: NODES,
+					edits: EDITS,
+					done: true,
+					clock: { pageDelta: t1 - t0, accOk: acc > 0 },
+				});
+				holder.remove();
+				return;
+			}
+			//   rafonly    每次仅调度一个空 rAF（不等回调内容），与 rendertick 同链
+			//              同间隔——把「rAF/虚拟时间调度的底噪」从渲染成本里剥离
+			if (OPS === 'rafonly') {
+				const rafOnce = () => {
+					if (done >= EDITS) {
+						window.__PERF_SINK__ = 1;
+						report();
+						return;
+					}
+					window.requestAnimationFrame(() => {});
+					window.setTimeout(() => {
+						done++;
+						rafOnce();
+					}, ${PERF_WORKLOAD_EDIT_GAP_MS});
+				};
+				rafOnce();
+				return;
+			}
+			if (OPS === 'idle') {
+				const idleOnce = () => {
+					if (done >= EDITS) {
+						window.__PERF_SINK__ = 1;
+						report();
+						return;
+					}
+					window.setTimeout(() => {
+						done++;
+						idleOnce();
+					}, ${PERF_WORKLOAD_EDIT_GAP_MS});
+				};
+				idleOnce();
+				return;
+			}
+			if (OPS === 'rendertick') {
+				const rtOnce = () => {
+					if (done >= EDITS) {
+						window.__PERF_SINK__ = 1;
+						report();
+						return;
+					}
+					map.render();
+					window.setTimeout(() => {
+						done++;
+						rtOnce();
+					}, ${PERF_WORKLOAD_EDIT_GAP_MS});
+				};
+				rtOnce();
+				return;
+			}
+			if (OPS === 'editnohist' && map.command && map.command.pause) {
+				map.command.pause();
+			}
 			const editOnce = () => {
 				const list = nodes();
 				if (done >= EDITS || list.length === 0) {
@@ -2232,6 +2550,43 @@ const PERF_WORKLOAD_NODES = 500;
  */
 const PERF_WORKLOAD_EDITS_DEFAULT = 300;
 /**
+ * 操作分解变体（`--perf-ops`）的默认次数：变体为同步连打（无逐次间隔），
+ * 100 次的墙钟差已远超运行间噪声，同时把单变体测量时长压到数秒级。
+ */
+const PERF_OPS_EDITS_DEFAULT = 100;
+/**
+ * `--perf-ops` 合法取值。`edit`（默认）＝既有「N 次文本编辑」负载；
+ * 其余为 2026-09-25 三分实测基建：把编辑帧成本分解为引擎底层的
+ * copy（getCopyData 整树深拷贝）、stringify（JSON.stringify）、compare
+ * （历史判重比对）、history（originAddHistory 全流程，交叉校验三者之和）。
+ */
+const PERF_OPS_VARIANTS = [
+	'edit',
+	'editnohist',
+	'idle',
+	'rendertick',
+	'rendernocb',
+	'undo',
+	'rootrender',
+	'nodeupdate',
+	'noderenderline',
+	'nodedrawhas',
+	'layoutonly',
+	'themetick',
+	'rafonly',
+	'clockcheck',
+	'mutation',
+	'copy',
+	'stringify',
+	'compare',
+	'history',
+];
+/**
+ * 同步连打（无 150ms 间隔链）的轻量分解变体。其余变体（edit / editnohist /
+ * idle / rendertick）与 edit 同构（逐次等一拍），预算与默认次数按编辑链处理。
+ */
+const PERF_LIGHT_OPS = ['copy', 'stringify', 'compare', 'history'];
+/**
  * 负载块启动延迟：必须晚于其余探针（最后一个在 ~2400ms 虚拟时间）跑完，
  * 否则会与它们的测量窗口互相污染；同时须保证该块在虚拟时间预算
  * （`--virtual-time-budget=8000`）内完成——虚拟时间只在空闲时推进，
@@ -2248,10 +2603,32 @@ const PERF_WORKLOAD_DELAY_MS = 3400;
 const PERF_WORKLOAD_EDIT_GAP_MS = 150;
 
 /** 生成承载页：加载仓库真实 styles.css（CSS 级联回归是本脚本的验证目标之一） */
-function buildPageSource({ bundleFile = 'bundle.js' } = {}) {
+function buildPageSource({
+	bundleFile = 'bundle.js',
+	benchNodes = null,
+	benchTwice = false,
+	benchRenderAsync = null,
+	benchStopAt = 'end',
+} = {}) {
 	const cssUrl = new URL(
 		`file:///${join(ROOT, 'styles.css').replaceAll('\\', '/')}`,
 	).href;
+	// 打开基准页（--bench-open）：同 bundle、同页面模板，仅以全局变量区分节点规模，
+	// 使「规模」成为两次 Chrome 调用之间**唯一的变量**（差值的可归因性靠这条保证）。
+	// benchRenderAsync（BENCH_RENDER_ASYNC=0/1）：打开分片渲染对照开关——同样走
+	// 页内全局变量，bundle 字节不变（null=不注入，走生产阈值判据）。
+	const benchScript =
+		benchNodes === null
+			? ''
+			: `\t\t<script>window.__BENCH_NODES__ = ${benchNodes};${
+					benchTwice ? 'window.__BENCH_TWICE__ = true;' : ''
+				}${
+					typeof benchRenderAsync === 'boolean'
+						? `window.__BENCH_RENDER_ASYNC__ = ${benchRenderAsync};`
+						: ''
+				}${
+					benchStopAt !== 'end' ? `window.__BENCH_STOP_AT__ = ${JSON.stringify(benchStopAt)};` : ''
+				}</script>\n`;
 	return `<!doctype html>
 <html lang="zh">
 	<head>
@@ -2260,7 +2637,7 @@ function buildPageSource({ bundleFile = 'bundle.js' } = {}) {
 		<link rel="stylesheet" href="${cssUrl}" />
 	</head>
 	<body>
-		<script src="${bundleFile}"></script>
+${benchScript}\t\t<script src="${bundleFile}"></script>
 	</body>
 </html>
 `;
@@ -3656,12 +4033,13 @@ async function measureRealClockWorkload({
 	firstControlMs,
 	controlProbe,
 	edits,
+	ops = 'edit',
 }) {
 	// 探针块在**浏览器入口**（entry）里，故负载版是另一份 entry + bundle；
 	// 打包与写盘一律移出计时窗口——否则 esbuild 的时间（百毫秒级）会被误记成负载成本
 	await writeFile(
 		join(workDir, 'entry-perf.mjs'),
-		buildEntrySource({ workloadEdits: edits, memoryProbe: true }),
+		buildEntrySource({ workloadEdits: edits, memoryProbe: true, workloadOps: ops }),
 		'utf8',
 	);
 	await build({
@@ -3681,8 +4059,11 @@ async function measureRealClockWorkload({
 	// 虚拟时间预算：编辑按 PERF_WORKLOAD_EDIT_GAP_MS 间隔（须 > 引擎历史防抖）⇒
 	// 预算要够走完负载与收尾。虚拟等待不计真实耗时，多给不花钱；空跑与负载给同一
 	// 预算，两次调用的唯一差异就只剩「编辑」本身
-	const budgetMs =
-		PERF_WORKLOAD_DELAY_MS + 400 + edits * PERF_WORKLOAD_EDIT_GAP_MS + 3000;
+	// 轻量分解变体为同步连打（无逐次间隔）⇒ 预算只需覆盖启动与收尾；
+	// 带间隔变体（edit / editnohist / idle / rendertick）与 edit 同构，预算随 edits 放大
+	const budgetMs = PERF_LIGHT_OPS.includes(ops)
+		? PERF_WORKLOAD_DELAY_MS + 400 + 3000
+		: PERF_WORKLOAD_DELAY_MS + 400 + edits * PERF_WORKLOAD_EDIT_GAP_MS + 3000;
 	// A/B/B/A 交替各两次、取各自**最小值**：单次对比会被系统性冷热差（首次运行的
 	// 冷却、profile 预热、OS 文件缓存）整片吃掉——首版单次 A→B 实测出过 −233ms 的
 	// 负差值（第二次运行反而更快）。交替 + 取最小可把这类单调漂移抵掉。
@@ -3713,23 +4094,509 @@ async function measureRealClockWorkload({
 			`真实墙钟负载未跑完（done=${String(probe.done)} / edits=${String(probe.edits)}，应 ${edits}）——负载启动延迟或虚拟时间预算不足`,
 		];
 	}
+	// 分布采集变体：不读墙钟差，只打印 DOM 变更构成（定位写点用）
+	if (ops === 'mutation') {
+		const m = probe.mutation ?? null;
+		if (!m) return ['mutation 变体未产出分布数据'];
+		const top = Object.entries(m.byName || {})
+			.sort((a, b) => b[1] - a[1])
+			.slice(0, 12)
+			.map(([name, count]) => `${name}x${count}`)
+			.join(' / ');
+		diag.log(
+			`      ⓘ 空 render mutation 分布（${probe.nodes} 节点）：属性 ${m.attributes}（同值 ${m.sameValue} / 真变化 ${m.realChange}）、文本 ${m.characterData}、增删 ${m.childListAdded}/${m.childListRemoved}`,
+		);
+		diag.log(`         top 属性：${top}`);
+		if ((m.realChangeSamples || []).length > 0) {
+			diag.log(`         真变化样本：${m.realChangeSamples.join(' | ')}`);
+		}
+		return [];
+	}
 	const best = (list) => Math.min(...list);
 	const controlMs = best(samples.control);
 	const loadMs = best(samples.load);
 	const deltaMs = loadMs - controlMs;
+	// 页内时钟校验：页内 performance.now() 差 vs Node 侧墙钟差（同段忙等）——
+	// 页内读数非零且与墙钟同量级 ⇒ 页内计时在虚拟时间下可用（可做阶段级分解）
+	if (ops === 'clockcheck') {
+		const c = probe.clock ?? null;
+		const pageDelta = c ? Number(c.pageDelta) : NaN;
+		diag.log(
+			`      ⓘ 页内时钟校验（同步忙等 3e7 次 sqrt）：页内 performance.now() 差 = ${
+				Number.isFinite(pageDelta) ? pageDelta.toFixed(1) : '?'
+			}ms；Node 侧墙钟差 = ${deltaMs.toFixed(0)}ms ⇒ ` +
+				(Number.isFinite(pageDelta) && pageDelta > 20
+					? '页内计时可用（阶段级分解走页内打点）'
+					: '页内计时不可用（耗时仍用墙钟差分）'),
+		);
+		return [];
+	}
 	const fmt = (list) => list.map((ms) => ms.toFixed(0)).join(' / ');
+	const loadLabel = ops === 'edit' ? `${edits} 次编辑` : `${ops} × ${edits}`;
+	const unitNote = ops === 'edit' ? '；每次 = 一次整树渲染' : '；单次成本由墙钟差 / N 给出';
 	diag.log(
-		`      ⓘ 真实墙钟（${probe.nodes} 节点 / 非性能模式，A/B/B/A 取最小）：空跑 ${fmt(samples.control)}ms；负载（+${edits} 次编辑）${fmt(samples.load)}ms`,
+		`      ⓘ 真实墙钟（${probe.nodes} 节点 / 非性能模式，A/B/B/A 取最小；操作=${ops}）：空跑 ${fmt(samples.control)}ms；负载（+${loadLabel}）${fmt(samples.load)}ms`,
 	);
 	diag.log(
-		`         ⇒ ${edits} 次编辑 ≈ ${deltaMs.toFixed(0)}ms（平均 ${(deltaMs / edits).toFixed(1)}ms/次；每次 = 一次整树渲染）${deltaMs <= 0 ? '——差值为负说明噪声仍大于负载成本，请加大 --perf-edits' : ''}`,
+		`         ⇒ ${loadLabel} ≈ ${deltaMs.toFixed(0)}ms（平均 ${(deltaMs / edits).toFixed(1)}ms/次${unitNote}）${deltaMs <= 0 ? '——差值为负说明噪声仍大于负载成本，请加大 --perf-edits' : ''}`,
 	);
+	// 长会话内存断言只对 edit 负载有意义（其余变体不产生历史/内存增长，会假失败）
+	if (ops !== 'edit') return [];
 	return checkLongSessionMemory({
 		control: controlProbe?.memory ?? null,
 		load: probe.memory ?? null,
 		edits,
 		diag,
 	});
+}
+
+// ---------------------------------------------------------------------------
+// 打开基准（--bench-open）：大图「打开 → 可交互」的真实墙钟通道（2026-09-25）
+// ---------------------------------------------------------------------------
+
+/** 打开基准的节点规模阶梯（生产性能模式阈值 500 的 1× / 10× / 20×） */
+const OPEN_BENCH_SIZES = [500, 5000, 10000];
+/** 单次 Chrome 的虚拟时间预算：大图首帧的分片渲染任务链长，放宽到 15s（虚拟等待不计真实耗时） */
+const OPEN_BENCH_BUDGET_MS = 15000;
+
+/**
+ * 打开基准入口（`--bench-open`）：页面内生成 N 节点生产形态数据，走生产打开路径
+ * （createMindMap → 首帧 `node_tree_render_end` → `centerContentAtFullScale`），
+ * 完成后把读数写进 `#open-bench-probe`。
+ *
+ * ⚠️ 返回值是模板字符串：其内注释与字符串**不得出现反引号**（K69 记录的坑）。
+ */
+function buildBenchEntrySource() {
+	const mindmapModule = join(ROOT, 'src', 'engine', 'mindmap.ts').replaceAll('\\', '/');
+	const inlineContentModule = join(
+		ROOT,
+		'src',
+		'features',
+		'node-inline-content.ts',
+	).replaceAll('\\', '/');
+	const nodeWidthModule = join(ROOT, 'src', 'features', 'view-node-width.ts').replaceAll(
+		'\\',
+		'/',
+	);
+	const imageUrl = new URL(
+		`file:///${join(ROOT, 'assets', 'mindmap.png').replaceAll('\\', '/')}`,
+	).href;
+	// 对照实验变体（BENCH_VARIANT 环境变量）：full=全内容形态（默认）｜no-long=去长文本
+	// ｜no-content=内容构建对照（createNodeContent 返回空 span——与 full 的墙钟差值
+	// =「内容构建+测量」总成本；空元素 outerHTML 全同 ⇒ 测量缓存 100% 命中且无
+	// reflow，测量份额≈0，差值即构建段净成本）。K76 调研「内容构建加速」的依据实验。
+	// 用于把打开成本归因到内容类型；BENCH_FOLD=N：深度 ≥N 的节点设 expand=false
+	// ——验证「按需展开」对打开成本的削减（引擎 walk 对折叠节点跳过子树构造，见
+	// simple-mind-map utils/index.js walk 的 stop 语义与 MindMapNode.createNodeData 入口）。
+	const variant = process.env.BENCH_VARIANT || 'full';
+	const longText =
+		variant === 'no-long' ? "'去长文本节点'" : "'长文本段落内容'.repeat(220)";
+	const foldLevel = Number.parseInt(process.env.BENCH_FOLD ?? '', 10) || 0;
+	// all-link：所有节点带链接字段（触发插件自绘接管）——验证「自绘 = 跳过引擎
+	// 逐字符测量」的收益量级（插件侧降自绘阈值方案的量化依据）
+	const allLink = variant === 'all-link';
+	return `import { centerContentAtFullScale, createMindMap } from ${JSON.stringify(mindmapModule)};
+import { buildInlineNodeContent } from ${JSON.stringify(inlineContentModule)};
+import { gateNodeWidthHandles } from ${JSON.stringify(nodeWidthModule)};
+
+const BENCH_NODES = window.__BENCH_NODES__ || 500;
+const IMAGE_URL = ${JSON.stringify(imageUrl)};
+const ALL_LINK = ${allLink};
+// 变体名（页内分派用，见 createNodeContent 的 no-content 分支）
+const VARIANT = ${JSON.stringify(variant)};
+// 长文本路径（BENCH_VARIANT=no-long 时为短文本对照）
+const LONG_TEXT = ${longText};
+
+const probeEl = document.createElement('pre');
+probeEl.id = 'open-bench-probe';
+probeEl.textContent = 'PENDING';
+document.body.appendChild(probeEl);
+
+/** 生成第 i 号节点（20 取模分流：链接 / 图片 / 长文本 / 纯文本；ALL_LINK 时全走链接形态） */
+function makeNode(i) {
+	const r = ALL_LINK ? 0 : i % 20;
+	if (r === 0) {
+		return {
+			data: {
+				uid: 'n-' + i,
+				text: '链接 笔记' + i,
+				mdType: 'plain',
+				mdRaw: '链接 [[笔记' + i + ']]',
+				mdDerivedText: '链接 笔记' + i,
+				mdWikiLinkpath: '[[笔记' + i + ']]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '笔记' + i,
+			},
+			children: [],
+		};
+	}
+	if (r === 7) {
+		return {
+			data: {
+				uid: 'n-' + i,
+				text: '',
+				image: IMAGE_URL,
+				imageSize: { width: 200, height: 120, custom: true },
+				mdType: 'plain',
+				mdRaw: '![[图.png]]',
+				mdDerivedText: '',
+			},
+			children: [],
+		};
+	}
+	if (r === 13) {
+		return {
+			data: { uid: 'n-' + i, text: LONG_TEXT, mdType: 'plain', mdRaw: LONG_TEXT, mdDerivedText: LONG_TEXT },
+			children: [],
+		};
+	}
+	return {
+		data: { uid: 'n-' + i, text: '节点 ' + i + ' 内容文本', mdType: 'plain', mdRaw: '节点 ' + i + ' 内容文本', mdDerivedText: '节点 ' + i + ' 内容文本' },
+		children: [],
+	};
+}
+
+/** 生成 target 节点的树：每 50 个节点一个新分支（2 级标题），分支下每 4 个一条链（1-4 层嵌套） */
+function generateTree(target) {
+	const root = { data: { uid: 'bench-root', text: '大图基准根' }, children: [] };
+	let branch = null;
+	let chain = null;
+	let chainLen = 0;
+	for (let i = 1; i < target; i++) {
+		if (i % 50 === 1) {
+			branch = {
+				data: { uid: 'b-' + i, text: '分支 ' + i, mdType: 'heading', mdLevel: 2, mdRaw: '## 分支 ' + i, mdDerivedText: '分支 ' + i },
+				children: [],
+			};
+			root.children.push(branch);
+			chain = null;
+			chainLen = 0;
+			continue;
+		}
+		const node = makeNode(i);
+		if (chain && chainLen > 0 && chainLen < 4) {
+			chain.children.push(node);
+		} else {
+			branch.children.push(node);
+		}
+		chain = node;
+		chainLen = chainLen >= 4 ? 1 : chainLen + 1;
+	}
+	return root;
+}
+
+const holder = document.createElement('div');
+holder.id = 'map-bench';
+holder.className = 'mindmap-canvas-container';
+holder.style.width = '1400px';
+holder.style.height = '900px';
+document.body.appendChild(holder);
+
+const options = {
+	layout: 'logicalStructure',
+	lineStyle: 'auto',
+	themePref: 'default',
+	isDark: false,
+	enableDrag: true,
+	performanceMode: false,
+	performanceThreshold: 500,
+	lang: 'zh',
+	onHyperlinkJump: null,
+	createNodeContent: (node, doc, style, lang) => {
+		gateNodeWidthHandles(node);
+		// no-content 对照变体：跳过内容构建（空 span，近乎零成本）。返回非空
+		// 元素保持「自绘接管」口径（foreignObject/测量/装配链路照走），隔离的
+		// 变量只有 buildInlineNodeContent 的段序列与 DOM 构建。空元素**必须带
+		// 尺寸**（cssText 定 180×60）：无尺寸节点塌缩 → 树变矮 → 数百组节点挤进
+		// 视口被装配（实测 651 组 vs full 的 15 组），装配成本污染差值不可归因。
+		if (VARIANT === 'no-content') {
+			const placeholder = doc.createElement('span');
+			placeholder.style.cssText = 'display:inline-block;width:180px;height:60px';
+			return placeholder;
+		}
+		return buildInlineNodeContent(node, doc, style, lang, {
+			// 与生产默认一致（2026-09-25 起 settings.selfDrawPlainNodes 默认开）：
+			// 基准测的是**真实生产路径**——纯文本节点也自绘、跳过引擎逐字符测宽
+			selfDrawPlain: true,
+			isResolvedLink: (linkpath) => !linkpath.startsWith('未解析'),
+		});
+	},
+};
+
+const tree = generateTree(BENCH_NODES);
+// 打开分片渲染对照（BENCH_RENDER_ASYNC=0/1 → 页内全局变量）：显式覆盖
+// createMindMap 的 renderAsync；未注入时走生产阈值判据（RENDER_ASYNC_NODE_THRESHOLD）。
+const RENDER_ASYNC_OVERRIDE = window.__BENCH_RENDER_ASYNC__;
+if (typeof RENDER_ASYNC_OVERRIDE === 'boolean') {
+	options.renderAsync = RENDER_ASYNC_OVERRIDE;
+}
+// 折叠变体（BENCH_FOLD=N）：深度 ≥ N 的节点设 expand=false ⇒ 引擎 walk 跳过子树
+// 构造（不创建节点、不测量文本）——验证「按需展开」对打开成本的削减幅度
+const FOLD_LEVEL = ${foldLevel};
+if (FOLD_LEVEL > 0) {
+	const mark = (node, depth) => {
+		if (depth >= FOLD_LEVEL) {
+			node.data.expand = false;
+			return;
+		}
+		(node.children || []).forEach((child) => mark(child, depth + 1));
+	};
+	mark(tree, 0);
+}
+// 生产打开路径：节点数 ≥ 阈值（500）自动进入性能模式
+// twice 变体（BENCH_TWICE=1）：先建一张同数据的图、等首帧后销毁（预热模块级
+// 测量缓存），再建第二张正式图——与单次运行的进程墙钟差 = 第二次打开（缓存命中）
+// 的真实成本（测量缓存收益的专用验证通道，非常驻回归）。
+const TWICE = window.__BENCH_TWICE__ === true;
+let map = null;
+let constructMs = 0;
+let secondConstructMs = -1;
+let phase = TWICE ? 1 : 2;
+
+let finished = false;
+const finish = (reason, centerOk) => {
+	if (finished) return;
+	finished = true;
+	probeEl.textContent = JSON.stringify({
+		done: true,
+		nodes: BENCH_NODES,
+		fold: FOLD_LEVEL,
+		reason,
+		centerOk,
+		constructMs: Math.round(constructMs),
+		secondConstructMs,
+		domNodes: document.querySelectorAll('.smm-node').length,
+		anchors: document.querySelectorAll('a.internal-link').length,
+		truncated: document.querySelectorAll('[data-truncated]').length,
+		preMeasure: window.__PREMEASURE_STATS__ || null,
+		measureStats: window.__MEASURE_STATS__ || null,
+		layoutStats: window.__LAYOUT_STATS__ || null,
+	});
+};
+
+const onRenderEnd = () => {
+	setTimeout(() => {
+		if (phase === 1) {
+			// 预热图收尾：销毁 → 建正式图（同页同进程，模块级测量缓存存活）
+			map.destroy();
+			map = null;
+			phase = 2;
+			startRender();
+			return;
+		}
+		let centerOk = true;
+		try {
+			centerContentAtFullScale(map);
+		} catch (error) {
+			centerOk = false;
+			console.error('centerContentAtFullScale failed', error);
+		}
+		setTimeout(() => finish('rendered', centerOk), 80);
+	}, 60);
+};
+
+const startRender = () => {
+	const constructStart = performance.now();
+	map = createMindMap(holder, tree, { ...options, performanceMode: BENCH_NODES >= 500 });
+	const ms = performance.now() - constructStart;
+	if (phase === 1) {
+		constructMs = ms;
+	} else {
+		secondConstructMs = Math.round(ms);
+	}
+	// 布局 task 探针（K79 调研，页内 patch，零 upstream 改动）：
+	//   skip-adjust  首帧前短路 adjustTopValue（几何不精确但时间可测）——与
+	//                full 的墙钟差 = 该 task 净成本（含其内 updateBrothers 传播）。
+	//   count-layout 包裹计数：adjustTopValue / updateBrothers（含递归）/
+	//                updateChildren 平移节点数——判断二次复杂度是否成立；
+	//                计数进 probe 的 layoutStats 字段（计数不受虚拟时间影响）。
+	// 时机：createMindMap 同步段内 patch，首帧 _render 在 setTimeout(0) 排队后执行。
+	if (VARIANT === 'skip-adjust' || VARIANT === 'count-layout') {
+		const layout = map.renderer && map.renderer.layout;
+		if (layout) {
+			if (VARIANT === 'skip-adjust') {
+				layout.adjustTopValue = () => {};
+			} else {
+				const stats = { adjustCalls: 0, updateBrothersCalls: 0, updateChildrenMoves: 0 };
+				window.__LAYOUT_STATS__ = stats;
+				const origAdjust = layout.adjustTopValue.bind(layout);
+				layout.adjustTopValue = () => {
+					stats.adjustCalls++;
+					return origAdjust();
+				};
+				const origUB = layout.updateBrothers.bind(layout);
+				layout.updateBrothers = (node, addHeight) => {
+					stats.updateBrothersCalls++;
+					return origUB(node, addHeight);
+				};
+				const origUC = layout.updateChildren.bind(layout);
+				layout.updateChildren = (children, key, offset) => {
+					stats.updateChildrenMoves += children.length;
+					return origUC(children, key, offset);
+				};
+			}
+		}
+	}
+	// 分段探针（BENCH_STOP_AT=start）：node_tree_render_start 在引擎 _render 的
+	// 布局开始**前** emit（Render.js:586）——此刻 = 构造 + 首帧前预测量已完成、
+	// doLayout（含内容构建/测量）与渲染装配未开始。与 end 口径的进程墙钟差 =
+	// 「布局 + 装配」合并段；配合 no-content 变体矩阵可把内容构建份额剥离。
+	const STOP_AT = window.__BENCH_STOP_AT__ || 'end';
+	if (STOP_AT === 'start') {
+		map.on('node_tree_render_start', () => finish('render_start', true));
+	}
+	map.on('node_tree_render_end', onRenderEnd);
+};
+startRender();
+// 兜底轮询（防事件未达）：上限按次数计（虚拟时间下时间戳不可信）
+let polls = 0;
+const poll = () => {
+	if (finished) return;
+	polls++;
+	if (polls > 400) {
+		finish('timeout', false);
+		return;
+	}
+	setTimeout(poll, 50);
+};
+setTimeout(poll, 120);
+`;
+}
+
+/**
+ * 打开基准（`--bench-open`，2026-09-25）：N 节点「打开 → 可交互」的真实墙钟。
+ *
+ * 口径与 `--perf` 相同（进程墙钟；页内时钟被 `--virtual-time-budget` 虚拟化）：
+ * 同页面模板 + 同 bundle，仅 `window.__BENCH_NODES__` 不同 ⇒ 两次调用的差值是
+ * 「节点规模」的净成本。正反交替（小→大→大→小）各取最小值，抵系统性冷热漂移。
+ * **基线模式只记 ⓘ 不断言**——阈值待读数稳定后另钉（同 --perf 的既定做法）。
+ */
+async function measureOpenBench({ chromePath, workDir, diag }) {
+	const failures = [];
+	// 规模阶梯可用 --bench-nodes 覆盖（逗号分隔），实验时只跑关心的规模
+	const nodesArg = argValue('--bench-nodes');
+	const sizes = nodesArg
+		? nodesArg
+				.split(',')
+				.map((item) => Number.parseInt(item, 10))
+				.filter((nodes) => Number.isFinite(nodes) && nodes > 0)
+		: OPEN_BENCH_SIZES;
+	if (sizes.length === 0) {
+		return ['--bench-nodes 未解析出任何有效规模'];
+	}
+	await writeFile(join(workDir, 'obsidian-shim.mjs'), OBSIDIAN_SHIM_SOURCE, 'utf8');
+	await writeFile(join(workDir, 'entry-bench.mjs'), buildBenchEntrySource(), 'utf8');
+	await build({
+		entryPoints: [join(workDir, 'entry-bench.mjs')],
+		outfile: join(workDir, 'bundle-bench.js'),
+		bundle: true,
+		format: 'iife',
+		platform: 'browser',
+		logLevel: 'warning',
+		alias: { obsidian: join(workDir, 'obsidian-shim.mjs') },
+	});
+	// 打开分片渲染对照（BENCH_RENDER_ASYNC=0 强制同步 / =1 强制分片；未设=生产
+	// 阈值判据）：只改页内全局变量，bundle 恒定，两次运行差值可归因
+	const renderAsyncArg = process.env.BENCH_RENDER_ASYNC;
+	const benchRenderAsync =
+		renderAsyncArg === '1' ? true : renderAsyncArg === '0' ? false : null;
+	// 分段探针（BENCH_STOP_AT=start）：render_start 即输出（构造+预测量完成点）；
+	// 默认 end（完整打开）。分段矩阵见 K76 调研：start 与 end 口径之差 = 布局+装配。
+	const benchStopAt = process.env.BENCH_STOP_AT === 'start' ? 'start' : 'end';
+	const pageFor = (nodes) => join(workDir, `page-bench-${nodes}.html`);
+	for (const nodes of sizes) {
+		await writeFile(
+			pageFor(nodes),
+			buildPageSource({
+				bundleFile: 'bundle-bench.js',
+				benchNodes: nodes,
+				benchTwice: process.env.BENCH_TWICE === '1',
+				benchRenderAsync,
+				benchStopAt,
+			}),
+			'utf8',
+		);
+	}
+	const samples = new Map(sizes.map((nodes) => [nodes, []]));
+	const dumps = new Map();
+	const order = [...sizes, ...[...sizes].reverse()];
+	// 虚拟时间预算：默认 OPEN_BENCH_BUDGET_MS，可用 BENCH_BUDGET 覆盖（诊断用：
+	// 区分「真实计算成本」与「虚拟预算等待」——墙钟若随预算线性变化，则读数被等待主导）
+	const budgetMs =
+		Number.parseInt(process.env.BENCH_BUDGET ?? '', 10) || OPEN_BENCH_BUDGET_MS;
+	for (const nodes of order) {
+		const started = process.hrtime.bigint();
+		const dom = await dumpDom(chromePath, pageFor(nodes), join(workDir, 'profile'), diag, {
+			budgetMs,
+		});
+		samples.get(nodes).push(Number(process.hrtime.bigint() - started) / 1e6);
+		dumps.set(nodes, dom);
+	}
+	const rows = [];
+	for (const nodes of sizes) {
+		const { probe, failures: parseFailures } = readProbe(
+			dumps.get(nodes),
+			'open-bench-probe',
+			`打开基准 ${nodes}`,
+		);
+		if (parseFailures) {
+			failures.push(...parseFailures);
+			continue;
+		}
+		if (probe.done !== true || probe.nodes !== nodes) {
+			failures.push(`打开基准 ${nodes} 未完成：${JSON.stringify(probe)}`);
+			continue;
+		}
+		if (probe.centerOk !== true) {
+			failures.push(`打开基准 ${nodes} 的内容居中调用抛错`);
+		}
+		rows.push({
+			nodes,
+			ms: Math.min(...samples.get(nodes)),
+			constructMs: probe.constructMs,
+			domNodes: probe.domNodes,
+			anchors: probe.anchors,
+			truncated: probe.truncated,
+			preMeasure: probe.preMeasure ?? null,
+			measureStats: probe.measureStats ?? null,
+			layoutStats: probe.layoutStats ?? null,
+		});
+	}
+	if (failures.length > 0) return failures;
+	await diag.file(`20-dom-bench-${sizes[sizes.length - 1]}.html`, dumps.get(sizes[sizes.length - 1]) ?? '');
+	const base = rows[0];
+	const foldLabel = process.env.BENCH_FOLD ? `，折叠层 = ${process.env.BENCH_FOLD}` : '';
+	const asyncLabel =
+		benchRenderAsync === null ? '' : `，renderAsync=${benchRenderAsync ? '开' : '关'}（对照）`;
+	const stopLabel = benchStopAt === 'start' ? '，探针止于 render_start（分段）' : '';
+	diag.log(
+		`      ⓘ 打开基准（真实墙钟，各规模 2 次取最小；同页同 bundle，仅节点数不同${foldLabel}${asyncLabel}${stopLabel}）：`,
+	);
+	for (const row of rows) {
+		const delta = row.ms - base.ms;
+		diag.log(
+			`         ${String(row.nodes).padStart(5)} 节点：${row.ms.toFixed(0)}ms（相对基线增量 ${delta >= 0 ? '+' : ''}${delta.toFixed(0)}ms）｜构造期=${row.constructMs}ms｜DOM .smm-node=${row.domNodes}｜自绘锚点=${row.anchors}｜截断=${row.truncated}`,
+		);
+		if (row.preMeasure) {
+			const pm = row.preMeasure;
+			diag.log(
+				`           预测量：访问 ${pm.visited} / 构建 ${pm.built} / 缓存命中 ${pm.hit} / 入队 ${pm.queued} / 写入 ${pm.wrote}（字体就绪=${pm.canCache}）`,
+			);
+		}
+		if (row.measureStats) {
+			const ms = row.measureStats;
+			diag.log(
+				`           正式测量：缓存命中 ${ms.hit} / 未命中 ${ms.miss}（首帧 doLayout 期间的测量调用分布）`,
+			);
+		}
+		if (row.layoutStats) {
+			const ls = row.layoutStats;
+			diag.log(
+				`           布局计数：adjustTopValue ${ls.adjustCalls} 次 / updateBrothers ${ls.updateBrothersCalls} 次（含递归）/ updateChildren 平移 ${ls.updateChildrenMoves} 节点次`,
+			);
+		}
+	}
+	return [];
 }
 
 /**
@@ -3773,7 +4640,8 @@ function checkLongSessionMemory({ control, load, edits, diag }) {
 	//
 	// 读数的已知解释（2026-09-17 实测，勿误判为泄漏）：DOM 增长来自**富节点从自绘
 	// 切回引擎 SVG 渲染**——本负载用引擎级 `setNodeText`（只改 `data.text`，不同步
-	// `mdRaw` 等行内字段）⇒ `shouldSelfDrawNode` 判为非接管，引擎改渲染文本 + 链接
+	// `mdRaw` 等行内字段）⇒ 自绘判定判为非接管（与生产写回管线不同源，见 K54 的
+	// 编辑分流），引擎改渲染文本 + 链接
 	// 图标：实测 div −1 与 g / path / rect / text / tspan 各 +1。生产路径的原文写回
 	// 会重建行内字段（见 K54 / `view-node-actions`），不会触发该切换。
 	if (load.baseline && typeof after.heapBytes === 'number') {
@@ -3890,6 +4758,37 @@ async function main() {
 		return;
 	}
 
+	// 打开基准模式（--bench-open）：独立通道（不跑常规探针），早分派避免侵入主流程
+	if (ARGS.has('--bench-open')) {
+		const benchDir = await mkdtemp(join(tmpdir(), 'mindmap-bench-'));
+		diag.log(`无头打开基准（Chrome: ${chromePath}）`);
+		try {
+			const failures = await measureOpenBench({ chromePath, workDir: benchDir, diag });
+			if (failures.length > 0) {
+				for (const failure of failures) diag.log(`✗ ${failure}`);
+				process.exitCode = 1;
+			} else {
+				diag.log('✓ 打开基准完成（基线读数见上方 ⓘ；本模式不断言阈值）');
+			}
+			await diag.flush({
+				result: failures.length > 0 ? 'failed: open-bench' : 'ok: open-bench',
+			});
+		} catch (error) {
+			diag.log(
+				`✗ 打开基准异常：${error instanceof Error ? error.message : String(error)}`,
+			);
+			await diag.flush({ result: 'crashed: open-bench' });
+			process.exitCode = 1;
+		} finally {
+			if (ARGS.has('--keep')) {
+				diag.log(`  · 保留临时目录：${benchDir}`);
+			} else {
+				await rm(benchDir, { recursive: true, force: true });
+			}
+		}
+		return;
+	}
+
 	const workDir = await mkdtemp(join(tmpdir(), 'mindmap-verify-'));
 	let failed = null;
 	let crash = null;
@@ -3939,12 +4838,22 @@ async function main() {
 		// 真实墙钟基线（opt-in：默认不跑，避免给常规校验加一次重页面渲染）
 		if (ARGS.has('--perf')) {
 			const parsedEdits = Number.parseInt(argValue('--perf-edits') ?? '', 10);
+			const ops = argValue('--perf-ops') ?? 'edit';
+			if (!PERF_OPS_VARIANTS.includes(ops)) {
+				throw new Error(
+					`--perf-ops 取值非法：${ops}（可用：${PERF_OPS_VARIANTS.join(' / ')}）`,
+				);
+			}
 			const edits =
 				Number.isFinite(parsedEdits) && parsedEdits > 0
 					? parsedEdits
-					: PERF_WORKLOAD_EDITS_DEFAULT;
+					: PERF_LIGHT_OPS.includes(ops)
+						? PERF_OPS_EDITS_DEFAULT
+						: PERF_WORKLOAD_EDITS_DEFAULT;
 			diag.log(
-				'  · 进入真实墙钟模式（--perf）：同一页再跑三次（负载 ×2 / 空跑 ×1，取最小）',
+				ops === 'edit'
+					? '  · 进入真实墙钟模式（--perf）：同一页再跑三次（负载 ×2 / 空跑 ×1，取最小）'
+					: `  · 进入真实墙钟模式（--perf --perf-ops=${ops}）：同一页再跑三次（负载 ×2 / 空跑 ×1，取最小）`,
 			);
 			// 空跑的内存读数取自上面这次常规运行（同页同形状，仅不编辑）
 			const { probe: controlProbe } = readProbe(
@@ -3959,9 +4868,12 @@ async function main() {
 				firstControlMs: controlMs,
 				controlProbe,
 				edits,
+				ops,
 			});
 			diag.log(
-				`  ${perfFailures.length === 0 ? '✓' : '✗'} perf-clock 真实墙钟基线（空跑 vs 负载之差 = N 次整树渲染的真实成本）`,
+				`  ${perfFailures.length === 0 ? '✓' : '✗'} perf-clock 真实墙钟基线（空跑 vs 负载之差 = ${
+					ops === 'edit' ? 'N 次整树渲染的真实成本' : `N 次 ${ops} 的真实成本`
+				}）`,
 			);
 			for (const failure of perfFailures) diag.log(`      - ${failure}`);
 			failed += perfFailures.length;

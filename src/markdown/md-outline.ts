@@ -771,9 +771,11 @@ function classifyLines(body: string): ParsedLine[] {
 		const h = line.match(HEADING_RE);
 		if (h) {
 			const text = (h[2] ?? '').trim();
-			if (text) {
-				out.push({ kind: 'heading', indent: 0, text, level: h[1]!.length });
-			}
+			// 空标题（`#` / `# `）保留为空文本节点（2026-09-25，与「空列表项退化
+			// plain」的零丢失口径对齐）：此前丢弃会让该行在保存后消失。引擎对空
+			// 文本节点有既有先例（图片独占 / URL icon-only 子节点），序列化经
+			// 前缀 `#×N ` 合成输出 `## `（尾随空格由前缀携带），往返为不动点。
+			out.push({ kind: 'heading', indent: 0, text, level: h[1]!.length });
 			continue;
 		}
 		const l = line.match(LIST_RE);

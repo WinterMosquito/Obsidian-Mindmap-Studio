@@ -342,6 +342,68 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect(buildInlineNodeContent(node, asDocument(new FakeDocument()))).toBeNull();
 	});
 
+	it('selfDrawPlain 开启（文本节点快速渲染）：纯文本也接管', () => {
+		// 2026-09-25：跳过引擎逐字符测宽（打开大图的成本主体），设置项默认开
+		const node = fakeNode({
+			text: '纯文本',
+			mdRaw: '纯文本',
+			mdDerivedText: '纯文本',
+		});
+		const el = buildInlineNodeContent(
+			node,
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{ selfDrawPlain: true },
+		);
+		expect(el).not.toBeNull();
+		expect((childrenOf(el!)[0] as FakeTextNode).text).toBe('纯文本');
+	});
+
+	it('selfDrawPlain 开启：空文本 / 含图 / 隐藏后无可见内容仍不接管', () => {
+		const doc = () => asDocument(new FakeDocument());
+		// 空文本（URL icon-only / 图片独占）：无内容可绘，图标由引擎渲染
+		expect(
+			buildInlineNodeContent(
+				fakeNode({ text: '', mdRaw: '' }),
+				doc(),
+				{},
+				'zh',
+				{ selfDrawPlain: true },
+			),
+		).toBeNull();
+		// 含图：图片走引擎图片通道
+		expect(
+			buildInlineNodeContent(
+				fakeNode({ image: 'a.png', mdRaw: '见图 ![[a.png]]' }),
+				doc(),
+				{},
+				'zh',
+				{ selfDrawPlain: true },
+			),
+		).toBeNull();
+		// 整行只有注释：接管会渲染空节点（比让引擎按字面显示更糟）
+		expect(
+			buildInlineNodeContent(
+				fakeNode({ text: '', mdRaw: '%%只有注释%%', mdDerivedText: '' }),
+				doc(),
+				{},
+				'zh',
+				{ selfDrawPlain: true },
+			),
+		).toBeNull();
+	});
+
+	it('selfDrawPlain 关闭 / 未传（缺省）：纯文本仍走引擎 SVG 文本', () => {
+		const node = fakeNode({ text: '纯文本', mdRaw: '纯文本' });
+		expect(
+			buildInlineNodeContent(node, asDocument(new FakeDocument()), {}, 'zh', {
+				selfDrawPlain: false,
+			}),
+		).toBeNull();
+		expect(buildInlineNodeContent(node, asDocument(new FakeDocument()))).toBeNull();
+	});
+
 	it('仅轻标记（无链接）：**接管**——混合字形单串 SVG 文本表达不了', () => {
 		// 2026-09-15 修订：此前只按「含链接」接管，导致 `**粗**` 在无链接节点里
 		// 原样显示（用户实测发现）。代价与含链接节点同款：编辑入口走插件弹窗。

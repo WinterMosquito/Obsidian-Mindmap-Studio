@@ -24,6 +24,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../src/engine/mindmap', () => ({
 	refreshNodeCustomContent: mocks.refreshNodeCustomContent,
+	// 与生产同语义的桩：读节点运行时事实（nodeCreateContents.isUseCustomNodeContent
+	// 的 `!!this._customNodeContent`；防腐层对无该方法的目标回退 false）
+	isCustomNodeContent: (node: unknown): boolean =>
+		Boolean(
+			(node as { isUseCustomNodeContent?: () => boolean })
+				.isUseCustomNodeContent?.(),
+		),
 }));
 
 interface EngineRegistration {
@@ -91,7 +98,10 @@ describe('setupNodeWidthRefresh（拖宽结束 → 重建自绘内容）', () =>
 /**
  * 手柄门禁：引擎只看**全局开关**（本插件恒开）⇒ 纯文本节点上也有左右边框手柄，
  * 但引擎的 SVG 文本路径不认 `customTextWidth`（拖了没反应，用户实测 2026-09-16）。
- * 门禁把判定收窄成「该节点会被自绘接管」，与 `buildInlineNodeContent` 同一来源。
+ * 门禁把判定收窄成「该节点**确实已被自绘接管**」——判据是**运行时事实**
+ * （`isCustomNodeContent` = 引擎 `!!_customNodeContent`，2026-09-25 起；此前为
+ * 静态判定 `shouldSelfDrawNode`）。有自绘内容 ⇔ 拖宽生效，天然覆盖
+ * `selfDrawPlainNodes` 开关两种模式，无需逐处同步判据输入。
  */
 describe('gateNodeWidthHandles（每节点手柄门禁）', () => {
 	/**
@@ -99,9 +109,13 @@ describe('gateNodeWidthHandles（每节点手柄门禁）', () => {
 	 * **真值但非 `true`**（引擎实现是 `开关 && (richText || (自绘开 && 回调))`
 	 * ——最后落到的就是回调函数本身）。门禁必须按真值判断，写 `=== true` 会让
 	 * 所有节点都被判成「无手柄」（拖宽整体失效，无头实测踩过）。
+	 * `customContent` 模拟引擎 `_customNodeContent` 的运行时事实。
 	 */
 	class FakeNode {
-		constructor(private readonly data: Record<string, unknown>) {}
+		constructor(
+			private readonly data: Record<string, unknown> = {},
+			private readonly customContent = false,
+		) {}
 
 		getData(key?: string): unknown {
 			return key === undefined ? this.data : this.data[key];
@@ -110,12 +124,16 @@ describe('gateNodeWidthHandles（每节点手柄门禁）', () => {
 		checkEnableDragModifyNodeWidth(): unknown {
 			return () => null;
 		}
+
+		isUseCustomNodeContent(): boolean {
+			return this.customContent;
+		}
 	}
 
 	const asNode = (node: FakeNode): MindMapNode => node as unknown as MindMapNode;
 
-	it('纯文本节点：门禁后手柄不可用（死手柄不再出现在画布上）', () => {
-		const node = new FakeNode({ text: 'Plain', mdRaw: 'Plain' });
+	it('无自绘内容（引擎文本路径节点）：门禁后手柄不可用（死手柄不再出现在画布上）', () => {
+		const node = new FakeNode({ text: 'Plain', mdRaw: 'Plain' }, false);
 		expect(
 			node.checkEnableDragModifyNodeWidth(),
 			'前置：引擎门禁真值（函数本身，非布尔 true）',
@@ -126,9 +144,10 @@ describe('gateNodeWidthHandles（每节点手柄门禁）', () => {
 		expect(node.checkEnableDragModifyNodeWidth()).toBe(false);
 	});
 
-	it('自绘节点（含链接/轻标记/超长）：手柄照旧可用（拖宽确实生效）', () => {
+	it('有自绘内容：手柄照旧可用（拖宽确实生效，与内容类型无关）', () => {
+		// 判据只看引擎运行时事实：列表覆盖「含链接 / 轻标记 / 超长 / 自绘纯文本
+		// （selfDrawPlain 开启后的形态）」四种数据形态，只要内容事实为真即可用
 		for (const data of [
-			// 未编辑形态：text === mdDerivedText ⇒ 渲染源取 mdRaw（含链接语法）
 			{ text: '见 笔记A', mdDerivedText: '见 笔记A', mdRaw: '见 [[笔记A]]' },
 			{ text: '重点', mdDerivedText: '重点', mdRaw: '**重点**' },
 			{
@@ -136,8 +155,9 @@ describe('gateNodeWidthHandles（每节点手柄门禁）', () => {
 				mdDerivedText: 'L'.repeat(2001),
 				mdRaw: 'L'.repeat(2001),
 			},
+			{ text: '纯文本', mdDerivedText: '纯文本', mdRaw: '纯文本' },
 		]) {
-			const node = new FakeNode(data);
+			const node = new FakeNode(data, true);
 			gateNodeWidthHandles(asNode(node));
 			expect(node.checkEnableDragModifyNodeWidth(), JSON.stringify(data).slice(0, 40)).toBe(
 				true,
@@ -145,12 +165,11 @@ describe('gateNodeWidthHandles（每节点手柄门禁）', () => {
 		}
 	});
 
-	it('含图节点：手柄不可用（图片由引擎图片通道渲染，自绘不接管）', () => {
-		const node = new FakeNode({
-			text: '见图',
-			mdRaw: '见图 ![[a.png]] 与 [[B]]',
-			image: 'a.png',
-		});
+	it('含图节点（引擎图片通道，无自绘内容）：手柄不可用', () => {
+		const node = new FakeNode(
+			{ text: '见图', mdRaw: '见图 ![[a.png]] 与 [[B]]', image: 'a.png' },
+			false,
+		);
 
 		gateNodeWidthHandles(asNode(node));
 
