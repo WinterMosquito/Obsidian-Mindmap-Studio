@@ -5,7 +5,7 @@
  * （无 CSS 语言块）；官方 `obsidianmd/obsidian-workflows` 在 release 模式下
  * **强制**跑 scanner stylelint（`obsidian-workflows-main/src/lint.ts:246-329`、
  * `:565`，目标 `**\/*.css`）⇒ `styles.css` 是「scanner 会查、本地完全不查」的
- * 唯一资产（见 `docs/compliance-audit-2026-09-17.md` V5）。
+ * 唯一资产（背景见 `docs/release-notes-0.1.2.md` 的合规审计记录）。
  *
  * 规则照抄官方 `src/lint.ts:10-123` 的 `SCANNER_STYLELINT_CONFIG`，有意差异仅三处：
  * 1. 警告文案改为自述口径（官方文案面向主题作者，含其文档链接）；

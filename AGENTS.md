@@ -1178,6 +1178,30 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   禁用规则无真实违规。与 K81（scanner 校验面）、K82（模板最佳实践面）合流：
   社区目录三线对照（校验 / 实践 / 指南）**全部闭环**。
 
+- [K84] **许可声明合规：`LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md` 必须随 release 资产分发——「插件」不是豁免形态；内联注释实测仅存 1 段，本文件是逐库声明的主载体（2026-09-25，发布合规口径修正）**：
+  ① **义务判定（为什么不豁免）**：`main.js` 中约 **72%** 是 vendored 的 MIT / BSD 代码
+  （引擎 + svg.js / katex / quill(BSD-3-Clause) / deepmerge / eventemitter3 / xml-js /
+  uuid 等）——MIT 要求声明「包含在所有副本或实质性部分中」；BSD-3 要求以 **binary
+  form** 再分发时在「随分发提供的文档和/或其他材料」中复现声明。条款触发于「分发了
+  副本 / 实质性部分」这一事实（release 下载 / BRAT 自动更新 / 用户 vault 内的
+  `main.js` 都是副本），**发布物叫「插件」还是「软件」与判定无关**；Obsidian
+  目录/市场不做第三方声明检查 ≠ 无义务（请求权人是各库版权持有人）。
+  ② **实测口径（本轮修正）**：`--legal-comments=inline`（`build:vendor` 配方）只保留
+  带 `@license` / `@preserve` / `/*!` 标记的注释——`vendor/simple-mind-map.cjs` 与
+  `main.js` 中均**仅存 1 段**（svg.js 的 `@license MIT` 横幅），其余依赖均无内联
+  声明。故 **`vendor/THIRD-PARTY-NOTICES.md` 是逐库声明的主载体**（§3），内联注释仅
+  为补充佐证——**不得因「产物已有内联注释」删减发布资产**。检测覆盖面必须同时用
+  `@license` / `@preserve` / `/*!` 三标记（只测 `@license` 会漏判 `/*!` 形态）。
+  ③ **机制与落点**：`release.yml` 的 `gh release create` 携带
+  `LICENSE vendor/THIRD-PARTY-NOTICES.md`（与 `main.js` / `manifest.json` /
+  `styles.css` 并列）；Obsidian 目录解析只读三件套，**多带文件不影响目录校验**。
+  本轮同步修正：`THIRD-PARTY-NOTICES.md` §3 与 `BUILD.md` 改实测口径、`release.yml`
+  注释（原「0 命中」为 2026-09-17 审计时点口径）、`stylelint.config.mjs` 悬空审计
+  文档引用清理。
+  ④ **政策边界**：已发布版本的 `docs/release-notes-<tag>.md` 是**历史快照**——时点
+  口径与失效引用**不改**（保持发布记录原样）；现行文档/配置内的悬空引用按「移除或
+  改指现行记录」处理（范例见 K1：保留引用并标注 `git log --diff-filter=D` 取回路径）。
+
 ## 新增功能检查清单
 
 按以下顺序自检（先官方 API，再自研；先收口，再实现）：
@@ -1202,7 +1226,7 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 
 1. 更新 `manifest.json` 版本号 → `npm version patch|minor|major`（同步 `versions.json`）。
 2. 创建与版本号完全一致的 GitHub Release tag（不带 `v` 前缀）。
-3. 附加 `main.js`、`manifest.json`、`styles.css`（`.github/workflows/release.yml` 自动构建并创建草稿 Release）。
+3. 附加 `main.js`、`manifest.json`、`styles.css`，以及 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`（`.github/workflows/release.yml` 自动构建并创建草稿 Release；许可声明必须随副本分发，见 K84）。
 4. 新增版本补 `docs/release-notes-<tag>.md`（中英双语）——`release.yml` 取该文件作 Release 说明，缺失则回退自动生成。
 
 ## 安全与合规
@@ -1210,3 +1234,4 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 - 默认本地/离线运行；无遥测、不上传 vault 内容。
 - 遵循 Obsidian 开发者政策与插件指南（`isDesktopOnly: true`，minAppVersion 1.13.0）。
   **该 `true` 是承重的**（豁免了 `md-serialize.ts` 的 lookbehind 正则，见 K42）——改动前必读该条目。
+- 分发（release 资产 / BRAT 更新）必须携带 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`——vendored 代码（约 72%）的许可声明载体，内联注释不可替代（见 K84）。

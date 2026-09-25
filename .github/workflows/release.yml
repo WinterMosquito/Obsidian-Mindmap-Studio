@@ -81,12 +81,14 @@ jobs:
                   fi
 
                   # LICENSE 与 THIRD-PARTY-NOTICES.md 必须随产物分发：
-                  # main.js 中约 72% 是 vendored 的 MIT/BSD 代码，且经 minify 后不含
-                  # 任何版权或许可注释（实测 @license / @preserve / Copyright /
-                  # 许可正文均 0 命中），而 MIT 与 BSD 都要求「声明随所有副本或
-                  # 实质性部分一起分发」。这两个文件此前只在仓库里、不在发布资产中。
+                  # main.js 中约 72% 是 vendored 的 MIT/BSD 代码，且经 bundle + minify
+                  # 后逐库版权/许可声明不可见（实测仅存 1 段 svg.js 横幅，其余依赖
+                  # 均无内联声明——见 vendor/THIRD-PARTY-NOTICES.md §3），而 MIT 与
+                  # BSD 都要求「声明随所有副本或实质性部分一起分发」（BSD-3 明确指向
+                  # 「随分发提供的文档和/或其他材料」，即 THIRD-PARTY-NOTICES.md）。
+                  # 这两个文件此前只在仓库里、不在发布资产中。
                   # 注：Obsidian 目录解析只读 main.js/manifest.json/styles.css，
-                  # 多带这两个文件不影响目录校验（见 docs/compliance-audit-2026-09-17.md V2）。
+                  # 多带这两个文件不影响目录校验。
                   gh release create "$tag" \
                     --title="$tag" \
                     --draft \
