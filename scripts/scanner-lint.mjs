@@ -105,8 +105,18 @@ const OFFICIAL_IGNORES = [
 	'**/testUtils**',
 	'automation/**',
 	'e2e-tests/**',
-	// —— 本项目特有：vendored 第三方源码（理由见文件头）——
+	// —— 本项目特有适配区（官方列表不含以下目录，理由各见注释）——
+	// vendored 第三方源码（理由见文件头）
 	'vendor/**',
+	// vitest coverage 的生成物：lcov-report 含 6 个自带 JS（prettify / sorter /
+	// block-navigation 等），官方场景不先生成 coverage 故其列表无此项；本仓库
+	// lint.yml 在 lint:scanner **之前**跑 test:coverage（24.x 矩阵）⇒ 生成物被
+	// type-aware 扫描、报「not found by the project service」——CI #57/#58 红的
+	// 根因（本地按同序列 test:coverage → lint:scanner 已复现 6 errors）。
+	'coverage',
+	// verify:visual 的 --log-dir 产物（CI 在 lint:scanner 之后生成；此处防御性
+	// 排除，避免本地工作区留存日志时的同型假红）
+	'verify-visual-logs',
 ];
 
 /** scanner ESLint 配置——逐字照抄官方 buildScannerEslintConfig(true)（IGNORES 除外） */

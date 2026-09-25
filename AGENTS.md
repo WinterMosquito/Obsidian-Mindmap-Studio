@@ -1117,6 +1117,19 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   ④ **附**：审计中确认 scanner ESLint 对本仓库 `src/`（69 文件）扫描 **0 违规
   0 警告**——社区目录的 JS/TS 检查面天然通过；探针（`src/__scanner_probe__.ts`）
   已删除，对照证据即上述双向对照表。
+  ⑤ **CI 接入的实证修正（同日，#57/#58 两次红的根因）**：`lint:scanner` 入 CI 后
+  24.x 矩阵连续失败（22.x 与 release.yml 均绿）。排除法 + 本地按 CI 同序列复现
+  （`npm run test:coverage` → `npm run lint:scanner`）：根因 = **`test:coverage`
+  （24.x 独有步骤）生成的 `coverage/lcov-report/*.js`（6 个自带 JS）被 type-aware
+  扫描**、报「not found by the project service」；官方 IGNORES 列表**不含
+  `coverage`**（官方 CI 流程不先生成它），release.yml 因无 coverage 步骤而幸免，
+  本地因从未跑过 coverage 而绿。**修复**：IGNORES 的「本项目特有适配区」补
+  `coverage` / `verify-visual-logs`（本地复现序列验证通过）。**同批加固**（防
+  同型环境差异）：依赖安装重试 ×3（网络抖动自愈）、Linux npm-cli 路径候选
+  （runner 的 `lib/node_modules` 布局）、eslint 由 npx 改为**直连 CLI 入口**
+  （消除 npx「项目 node_modules 优先」的解析歧义——本地与 CI 走不同代码路径的
+  根源）。**教训**：本地预检的「绿」必须以**与 CI 相同的目录状态**验证（生成物
+  目录是第一类差异源，与 K72 的「空元素几何污染」同属「环境不对齐」家族）。
 
 - [K82] **官方模板对照审计：0 缺口（构建配置逐字节同源），开发最佳实践全面满足或超越（2026-09-25，社区目录工作流优化轮续）**：
   ① **范围**：以官方 `obsidianmd/obsidian-sample-plugin`（master，含其 AGENTS.md
