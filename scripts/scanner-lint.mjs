@@ -239,20 +239,31 @@ export default [
 }
 
 /**
- * 定位 npm/npx 的 CLI 入口（`<node>/node_modules/npm/bin/*-cli.js`）。
+ * 定位 npm/npx 的 CLI 入口。
  *
  * 为什么不用裸 `npm`/`npx` 命令：
  * - Windows 上它们是 `.cmd` shim，Node 直接 spawn 报 EINVAL，经 `shell: true`
  *   又会触发 DEP0190（args 未转义）警告；
  * - 某些开发环境会注入用户级 npm 配置（实测：沙箱的 `allow-scripts` 白名单），
  *   经 shell 的调用会撞上 `EALLOWSCRIPTS` 策略错误。
- * 直接以 `process.execPath` 运行 CLI 入口即可同时绕开两者；版本管理器
- * （fnm/volta 等）下入口不存在时回退 shell 模式（并以空 userconfig 隔离
- * 用户级配置）。
+ * 直接以 `process.execPath` 运行 CLI 入口即可同时绕开两者。候选按平台布局：
+ * - Windows / 官方安装：`<node>/node_modules/npm/bin/*-cli.js`；
+ * - Linux 发行版 / actions runner（hostedtoolcache）：`<node>/../lib/node_modules/npm/bin/*-cli.js`。
+ * 全部缺失（版本管理器 fnm/volta 等）才回退 shell 模式（并以空 userconfig
+ * 隔离用户级配置）。
  */
 function npmCliCommand(tool) {
-	const cli = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', `${tool}-cli.js`);
-	return existsSync(cli) ? { bin: process.execPath, prefixArgs: [cli], viaNode: true } : null;
+	const cli = `${tool}-cli.js`;
+	const candidates = [
+		join(dirname(process.execPath), 'node_modules', 'npm', 'bin', cli),
+		join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', cli),
+	];
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) {
+			return { bin: process.execPath, prefixArgs: [candidate] };
+		}
+	}
+	return null;
 }
 
 function runTool(tool, args, options) {
@@ -280,11 +291,30 @@ async function ensureScannerDeps() {
 	// --ignore-scripts：三个依赖均为纯 JS（无原生构建步骤），跳过更稳。
 	const emptyUserConfig = join(DEPS_DIR, '.npmrc');
 	writeFileSync(emptyUserConfig, '', 'utf8');
-	await runTool(
-		'npm',
-		['install', '--prefix', DEPS_DIR, '--userconfig', emptyUserConfig, '--no-fund', '--no-audit', '--ignore-scripts'],
-		{ cwd: ROOT, maxBuffer: 32 * 1024 * 1024 },
-	);
+	// 安装重试（CI 网络抖动防护，2026-09-25）：registry 请求偶发失败会让本脚本
+	// 以非 0 退出、把 lint.yml 的 Node 24 矩阵整条拉红（release.yml 同步骤同提交
+	// 却通过 = 瞬时性失败的实证）。最多 3 次、指数退避；npm install 幂等，
+	// 半装状态在重试时自动补全。
+	const maxAttempts = 3;
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		try {
+			await runTool(
+				'npm',
+				['install', '--prefix', DEPS_DIR, '--userconfig', emptyUserConfig, '--no-fund', '--no-audit', '--ignore-scripts'],
+				{ cwd: ROOT, maxBuffer: 32 * 1024 * 1024 },
+			);
+			return;
+		} catch (error) {
+			if (attempt === maxAttempts) {
+				throw error;
+			}
+			const waitMs = 2000 * attempt;
+			console.warn(
+				`[scanner-lint] 依赖安装第 ${attempt} 次失败，${waitMs}ms 后重试：${error instanceof Error ? error.message : String(error)}`,
+			);
+			await new Promise((resolve) => setTimeout(resolve, waitMs));
+		}
+	}
 }
 
 async function main() {
@@ -300,9 +330,6 @@ async function main() {
 	);
 
 	const eslintArgs = [
-		'--prefix',
-		DEPS_DIR,
-		'eslint',
 		'--config',
 		configPath,
 		'--no-error-on-unmatched-pattern',
@@ -313,12 +340,24 @@ async function main() {
 	console.log('[scanner-lint] 运行 scanner ESLint（官方规则面，type-aware）...');
 	let stdout = '';
 	let exitCode = 0;
+	// 直连 eslint 的 CLI 入口（node + <DEPS_DIR>/node_modules/eslint/bin/eslint.js）：
+	// 不经 npx 的「bin 解析 → 项目 node_modules 优先？」歧义（npx 可能解析到项目
+	// 自带的 eslint 9.x 而非 scanner 固定版本；这也是本地（node+cli 路径）与 CI
+	// （曾走 npx 回退路径）行为可能不一致的根源）。入口缺失时回退 npx。
+	const eslintJs = join(DEPS_DIR, 'node_modules', 'eslint', 'bin', 'eslint.js');
+	const launcher = existsSync(eslintJs)
+		? exec(process.execPath, [eslintJs, ...eslintArgs], {
+				cwd: ROOT,
+				maxBuffer: 128 * 1024 * 1024,
+				env: { ...process.env, NODE_PATH: nodePath },
+			})
+		: runTool('npx', ['--prefix', DEPS_DIR, 'eslint', ...eslintArgs], {
+				cwd: ROOT,
+				maxBuffer: 128 * 1024 * 1024,
+				env: { ...process.env, NODE_PATH: nodePath },
+			});
 	try {
-		const result = await runTool('npx', eslintArgs, {
-			cwd: ROOT,
-			maxBuffer: 128 * 1024 * 1024,
-			env: { ...process.env, NODE_PATH: nodePath },
-		});
+		const result = await launcher;
 		stdout = result.stdout;
 	} catch (error) {
 		// eslint 有 error 级问题时以非 0 退出——stderr/stdout 都可能带报告
