@@ -14,6 +14,11 @@
 
 export class App {}
 export class TFile {}
+/**
+ * loadMathJax 桩：仅保证模块图可链接（platform/math-jax 具名导入）。
+ * 真实语义（注入 MathJax 到主窗口）属交互行为，由各测试局部 vi.mock 覆写。
+ */
+export async function loadMathJax(): Promise<void> {}
 export class TFolder {}
 export class MarkdownView {}
 export class WorkspaceLeaf {}

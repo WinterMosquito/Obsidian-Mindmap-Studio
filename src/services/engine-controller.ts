@@ -33,6 +33,7 @@ import {
 	replaceMindMapData,
 } from '../engine/mindmap';
 import { shouldEnablePerformanceMode } from '../core/constants';
+import { injectMathStylesIntoExportSvg } from '../platform/math-jax';
 import type { NodeContentStyle } from '../engine/mindmap';
 import { ensureUniqueUids } from '../markdown/markdown';
 import { nodeReferenceMatches } from '../core/node-data';
@@ -267,6 +268,10 @@ export class EngineController {
 					? (node, doc, style, lang) =>
 							nodeContentRenderer(node, doc, style, lang)
 					: null,
+				// 导出 SVG 后处理（方案 B，2026-09-27）：把 MathJax CHTML 逐字符
+				// 样式注入克隆 SVG——否则导出图中 `<mjx-c>` 无 `::before` 字形规则、
+				// 渲染为空白（用户导出 PNG 实测）。模块级函数无 this 语义，直接传引用
+				handleExportSvg: injectMathStylesIntoExportSvg,
 			});
 			this.engineEvents.onEngine(this.mindMap, 'data_change', () => {
 				this.deps.onRootDataChanged();

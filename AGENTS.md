@@ -121,7 +121,12 @@ src/
     open-as-restore.ts # 「以思维导图打开」偏好恢复（active-leaf-change/file-open/启动多档延时）
     system-open.ts  #   系统默认应用打开库内文件（桌面端 shell.openPath）
     vault-prefs.ts  #   官方库级偏好读取（useMarkdownLinks / newLinkFormat；getConfig 内部接口）
-    math-jax.ts     #   行内数学渲染（官方 loadMathJax 通道；占位即回退，注入 node-inline-content）
+    math-jax.ts     #   行内数学渲染（官方 loadMathJax 通道；**实机 1.13.7 的 MathJax 3.2.2
+                    #   仅有 tex2chtml**，见 K85）；**就绪判据＝mjx-c 宽全 > 0（零宽而
+                    #   ::before content 为空串的不可见操作符豁免，见 K90 ①）+ 自驱官方
+                    #   flush（按批合并、完成后放行重试）**：未就绪同步撤回字面、塌缩产物
+                    #   不入缓存（见 K87）；占位即回退 + API 面缺失告警一次 + 未挂载入队补
+                    #   替换（K85 ②）；产物缓存/定稿回调（K86）；注入 node-inline-content）
   ui/               # L2 弹窗
    modal-common.ts / modal-image.ts / modal-link.ts / modal-name.ts / modal-text.ts
                     # 链接/图片/命名/节点文本弹窗（官方 AbstractInputSuggest 联想；settle 守卫与
@@ -154,11 +159,16 @@ src/
                     #   共用件（view-common.ts：insertChildNodeWithData 等）
     node-inline-content.ts # 节点内联内容（**方案 B 原型**）：行内 token → 段序列 →
                     #   自绘 HTML（`a.internal-link[data-href]` / `a.external-link[href]`）；
-                    #   经 engine 的 createNodeContent 钩子注入，含行内链接 / 轻标记 / 超长文本且无图的节点被
+                    #   经 engine 的 createNodeContent 钩子注入，含行内链接 / 轻标记 /
+                    #   **围栏代码块**（块级轻量渲染 + 复制按钮，见 K91）/ 超长文本且无图的节点被
                     #   完全接管（其余返回 null 回落引擎 SVG 文本）；点击/悬停复用
                     #   view-wikilink 既有锚点分流（零改造）。边界见文件头契约：
                     #   自绘节点无 `_textData`，引擎编辑框有 isUseCustomNodeContent
                     #   守卫 → 双击不进入编辑（富节点编辑入口待后续方案）
+    node-codeblock.ts # 代码块复制交互（视图层）：悬停复制按钮的点击语义——经引擎
+                    #   node_click 委托命中选择器（与 view-wikilink 锚点同款模式，
+                    #   view.ts 同段注册）；写剪贴板 + ✓ 反馈；DOM 结构构建留在
+                    #   node-inline-content.buildCodeBlockElement（该模块零监听）
     image-resize.ts # 节点图片拖拽调宽：hover 手柄 + 等比缩放（SET_NODE_DATA imageSize
                     #   custom:true + render），持久化走 Obsidian 官方嵌入尺寸语法——
                     #   结束时 scheduleSave，序列化合成回写 `|宽度`（不落 data.json）
@@ -199,10 +209,21 @@ tests/
   node-text-edit.test.ts # 右键「编辑文本」入口（延后一宏任务 emit node_dblclick、isInserting=false）
   node-inline-content.test.ts # 节点内联内容（方案 B 原型）：段序列切分与显示名口径
                         #   （多链接/URL/图片 token 边界）、接管判定（无链接/含图返回 null）、
-                        #   锚点属性契约（internal-link[data-href] / external-link[href]）
+                        #   锚点属性契约（internal-link[data-href] / external-link[href]）、
+                        #   代码块（block 标记/信息行剥离/缩进保真/复制按钮结构，见 K91）
+  node-codeblock.test.ts # 代码块复制目标解析（resolveCodeCopyTarget 四态：命中/
+                        #   非按钮/非元素/按钮在而 code 缺失）
+  math-jax.test.ts     # 行内数学渲染（platform/math-jax）：实机通道优先级（tex2chtml→tex2svg）、
+                       #   **就绪判据（mjx-c 宽全 > 0）/ 未就绪同步撤回 / flush 合并与放行
+                       #   重试 / 预算耗尽保留字面 + 告警 / 容器盒回退判定**（见 K87）；
+                       #   API 面缺失告警一次 / 抛错不上抛 / 未连接入队补替换 / 字体等待与拒绝
+                       #   不阻塞；P4 面：塌缩不入缓存、定稿回调恰好一次（见 K86）
   viewport.test.ts     # 视口几何（resetZoom 画布中心锚点 / 内容包围盒居中 / 自动整理后重置缩放）；
                        #   自动整理的渲染窗口守卫（root 暂缺延后执行 / 超上限放弃，K67）
   open-as-restore.test.ts # 「以思维导图打开」偏好恢复（多档延时/代际）
+  engine-refresh-nodes.test.ts # 批量自绘重建（refreshNodesCustomContent，P4 尺寸同步）：
+                       #   逐节点 reRender(['custom']) + **恰好一次**全树 render；空态 no-op；
+                       #   单节点抛错不中断其它节点（见 K86）
   pasted-name.test.ts  # 剪贴板图片命名（Pasted image YYYYMMDDHHMMSS）
   vendor-contract.test.ts # 引擎 vendor 契约（导出面/命令名/事件名令牌）
   view-node-actions.test.ts # 节点操作编排（链接通道分流/删除兜底/剪贴板/自兜错误）
@@ -579,10 +600,14 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   （含 `FileSystemAdapter.getBasePath`、`getAvailablePathForAttachment`、
   `getFirstLinkpathDest`、`registerHoverLinkSource`、`SettingDefinitionItem`、
   `Keymap.isModEvent`、`setTooltip` 等），
-  零废弃 API 使用。仅存三处**无官方等价**的私有触点，均防御式实现并文档化：
+  零废弃 API 使用。仅存**四处**无官方等价的私有触点，均防御式实现并文档化：
   ① `features/file-creator.ts` file-explorer「新建」菜单注入（官方仅有 file-menu，
   无 fileCreator 公共 API）；② `links/links-resolve.ts` 拖拽兜底 `dragManager`；
-  ③ `system-open.ts` 桌面端 `require('electron').shell.openPath`（d.ts 无系统打开 API）。
+  ③ `system-open.ts` 桌面端 `require('electron').shell.openPath`（d.ts 无系统打开 API）；
+  ④ `platform/math-jax.ts` 数学渲染面（d.ts 无等价）：`window.MathJax.tex2chtml/tex2svg`
+  直调 + `#MJX-CHTML-styles` 样式表读写（导出注入与就绪判定需要）——其中
+  `loadMathJax` / `finishRenderMath` 为官方 @public，渲染调用与 flush 均收口在本模块
+  （见 K85 / K87）。
   勿新增私有 API 触点；官方补齐后优先替换。
 - [K40] **版本基线**：`manifest.minAppVersion: 1.13.0`（比较基准）< 安装 typings `1.13.1`（`tsc`/lint
   的真实类型来源）< 官方最新 `1.13.2`（仅参照物）三者自洽。声明式设置的锚点
@@ -1201,6 +1226,50 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   ④ **政策边界**：已发布版本的 `docs/release-notes-<tag>.md` 是**历史快照**——时点
   口径与失效引用**不改**（保持发布记录原样）；现行文档/配置内的悬空引用按「移除或
   改指现行记录」处理（范例见 K1：保留引用并标注 `git log --diff-filter=D` 取回路径）。
+
+- [K85] **行内数学渲染的 API 面假设错误（2026-09-27 实机取证修复）：Obsidian 1.13.7 经 `loadMathJax()` 注入的 MathJax 3.2.2 是 CHTML 组件——只有 `tex2chtml` / `tex2chtmlPromise`，没有 `tex2svg`；而 `math-jax.ts` 旧实现唯一调用的就是 `tex2svg`（实机恒为 undefined）→ 产物恒 null → 数学永久停在字面占位 `$…$`，且被「占位即回退」静默吞掉（单测注入假 MathJax 未覆盖该 API 面、verify:visual 无真 MathJax，两处盲区叠加）。**
+  ① **取证**（隔离实机实例 + CDP，用户 0.1.4 构建 / Obsidian 1.13.7）：`typeof window.MathJax === 'object'`（v3.2.2）、`typeof MathJax.tex2svg === 'undefined'`、`typeof MathJax.tex2chtml === 'function'`；`tex2chtml('E=mc^2')` 返回 `<mjx-container class="MathJax" jax="CHTML">`（与阅读视图产物同源）；导图三节点 `.mindmap-node-inline-math` 均 `isConnected=true` 且子节点仅 `#text`（字面占位）——同时排除「时序/挂载」假设（曾据性能轮 preMeasure 元素复用推断的 `isConnected` 守卫拦截不成立）。
+  ② **修复（两层，实机复验后补齐第二层）**：**第一层（API 面）**——渲染优先级改为 `tex2chtml`（实机通道）→ `tex2svg`（兼容回退）；API 面全缺时 `console.warn` **一次**（模块级去重 `warnRenderApiMissing`），不再静默。**第二层（替换时机）**——引擎「首帧前预测量 + 元素复用」（补丁 5 / A2）在**未挂载**状态下走构建链；MathJax 热加载时 `await loadMathJax()` 立即返回，替换时 `holder.isConnected === false` → 若只尝试一次就放弃，「关闭再打开文件」必现字面（冷加载时因 await 期间元素已挂载而侥幸成功——两条路径都必须正确）。故未连接时产物**入队**（`pendingMath`）、随后帧经 0ms 定时器重试（`schedulePump`/`pumpPending`，预算 30 帧；不用 rAF 因后台/隐藏窗口会被节流），耗尽即放弃（导出快照/离屏克隆的安全回退）。`isConnected` 守卫语义保留（仅决定"立即替换"还是"入队"），`display` 形参通道为 `$$…$$` 支持预留；落点仍是 `math-jax.ts` 单文件，`node-inline-content` 注入面不变，vendor 零改动。
+  ③ **回归防线 + 实机证据**：`tests/math-jax.test.ts`（9 例：通道优先级 / 兼容回退 / 返回 null 回退 / 告警去重 / 抛错不上抛 / 未挂载暂不替换且帧预算耗尽后放弃 / **挂载后补替换命中** / loadMathJax 拒绝）+ `verify:visual` 新增 `math` 场景（占位 span 必须落 foreignObject、定界符回填占位文本，锁定「识别 → 占位 → 接管」三段）。实机（隔离实例 CDP，Obsidian 1.13.7）：首次打开 / 关闭重开（原失败路径）/ 编辑重建三条路径均 `.mindmap-node-inline-math` ×3 全部替换、字面残留 0，截图确认节点显示排版后的 `E = mc²`。**断言选择器注意**：产物是 `<mjx-container class="MathJax" jax="CHTML">`——按**标签名** `mjx-container` 查（`.mjx-container` 类选择器恒 0 命中，排查中曾因它误判"未渲染"）。
+  ④ **教训**：① 对外部注入对象的方法假设（即便走的是"官方通道"）必须**实机验证**，且"方法缺失"要显式告警——静默回退会把 API 假设错误变成不可见的功能缺失；② **同步构建 + 异步替换**的组合在「先构建、后挂载」路径下必有时序缺口，正确写法是"未就绪就暂存、挂载后再应用"，而不是一次性判断即放弃；③ 排查"没渲染"类问题要同时怀疑**断言工具**（选择器/取数口径）本身。
+  ⑤ **同轮扩展（G4，用户确认后落地）：单行 `$$…$$` 渲染为 display（块级）+ `\$` 转义 + 判据单一来源**——① **`MATH_SOURCE` 单一来源**：MARKUP_RE 的数学备选分支与接管判据 `INLINE_MATH_RE` 改为同源构造（`new RegExp(MATH_SOURCE)`），消除「分成两处写会漂移」；**双美元写在单美元之前**（更长定界符优先），`$$E=mc^2$$` 整段命中——修复前它会撕裂成「孤立 `$` + 行内数学 + 孤立 `$`」（注释声称的"按字面"实际不成立）。② **`InlineSegment.display` 标记**决定占位形态（`$…$` / `$$…$$`）与渲染通道（`tex2chtml({ display })`，`renderMath` 注入面加形参透传）；该字段必须经 `pushText` 重建段对象、`trimEdges`、`clampSegments` **全链保留**——首版遗漏 `pushText` 导致 display 丢失（单测红灯即拦下，已补）。③ **`ESCAPABLE_CLASS` 加 `$`**：`\$x\$` 显示字面 `$x$` 不触发数学、`价格 \$5 与 \$6.50 元` 不再残留反斜杠（修复前 `\$` 既不被消费、又会被当作数学定界符误判）。④ **边界**：**多行**块级数学（`$$` 独占行、内容跨行）不匹配、逐行字面——`[^$\n]` 不跨行，且解析层本就按行拆节点（能力缺口，非匹配缺陷）；未纳入本轮。⑤ **实机复验**（隔离实例 CDP）：4 段数学（3 行内 + 1 display）全部替换、`mjx-container[display="true"]` 恰 1、转义组无反斜杠/无 `$` 残留；单测 100 例（node-inline-content 90 + math-jax 10）与全量 1594 例、lint、verify:visual（math 场景含 `$$y^2$$` 三段占位断言）全绿。
+  ⑥ **第三层：样式表 + 字体 + 可见性三层保底（2026-09-27 二轮实机，用户「数学段消失」截图为证）**：CHTML 字形由 `<style id="MJX-CHTML-styles">` 的**逐字符规则**承载（`mjx-c.mjx-c1D438.TEX-I::before { content: "E" }` + `font-family: MJXZERO, MJXTEX-I`），**字体数据未就绪时字符宽度为 0**——此时替换产物 = 用户看到的「空白」（既非数学也非字面；用户控制台 22 条 Chromium「Slow network … Fallback font」即 MathJax 字体在慢速加载）。三层保底：① **替换前** `ensureMathFonts()` 显式加载 MJX 字体、带 **2.5s 超时**（超时照常替换，不阻塞打开）；② **替换后 60ms 自检**改判 **宽与高皆 > 0**（旧实现只查宽度，漏掉高为 0 的场景）→ 任一为 0 即**回退字面占位**并告警一次（宁可见的字面，不要看不出原因的空白）；③ **字体就绪自动重试**——回退段登记 `deferredMath`，监听 `document.fonts` 的 `loadingdone` 事件与 `ready` 承诺，字体一就绪即自动换回产物（`retryDeferredMath`；每段只做一轮，仍失败保留可见字面，无重试风暴）。**实机证据**：用户环境诊断 `replaced 24/24`、产物 `49×17`、字体 `MJXTEX / MJXTEX-I / MJXZERO = loaded`、样式表 15380 → 全部可见；隔离实例同字符「字体未加载 0 宽 / 已加载 8×11」（规则与字体族名不变，**唯一变量是字体数据是否就绪**）。**单测**新增 4 例（高度自检 / `loadingdone` 自动换回 / 重试失败保留可见字面 / 字体加载拒绝不阻塞）+ 全量 1603 例绿。
+- [K86] **数学渲染的「测量—替换时序」缺口（P4，2026-09-27 实机复验修复）：引擎对自绘内容按「离屏克隆 + getBoundingClientRect」**同步**测量（vendor `measureCustomNodeContentSize`），而 MathJax 替换是**异步**的——首次渲染必然「按字面占位测量」；替换后**没有任何重测机制**，节点尺寸停在占位高度（块级 `$$…$$` 尤甚：实测 655px 内容 / 512px 外框，内容被裁）。**
+  ① **修复三件套**：**产物缓存 + 同步复用**（`platform/math-jax.getRenderedMathNode`：`I:`/`B:` + TeX → 产物模板，复用时 `cloneNode`；`node-inline-content.buildMathElement` 命中即**同步**放置产物 → 引擎量到真实宽高；且因不再触发异步替换而**无重排循环**）；**定稿回调 → 合并批量重排**（`renderMathWithMathJax(tex, holder, display, onSettled)`，定稿＝产物保留 **或** 回退字面；holder→回调登记走 **WeakMap**（`settleCallbacks`）以贯穿「立即替换 / 挂载后补替换 / 字体就绪重试」三条路径而不污染各处签名；视图层 `scheduleMathRemeasure` 收集 Set + `window.setTimeout(0)` 合并 → `engine.refreshNodesCustomContent`（逐节点 `reRender(['custom'])` + **恰好一次**全树 `render()`））；**字体分批就绪再同步**（`document.fonts` 的 `loadingdone` 会多次触发——首批测量可能偏小；`view.installMathFontsHook` 每批把登记过的节点再同步一次，随 `register` 注销）。
+  ② **实机验收**（隔离实例 + 用户样式表 dump 复现环境 + B1–B7 语料）：24/24 替换、holder 与产物高度全一致、**17 个自绘节点「外框高度 == 内容高度」（溢出节点 0）**（修复前 655/512）；导出 SVG 最大 `foreignObject` 高度 **655**（与屏上一致）+ MathJax 逐字符规则 **24 条**注入 + `@font-face` 已剥离。
+  ③ **教训**：**「能渲染」≠「渲染对」**——前几轮的验证断言停留在「元素存在 / 尺寸非零」，而用户一眼看出的是「高度只给一行、内容被裁」。凡涉及**异步替换**的改动，验收断言**必须包含「容器尺寸 ≥ 内容尺寸」**；且**时序缺口要在最初的问题清单里闭环**（P4 早在首份报告列出，却连续多轮未修，最终以用户截图形式回归）。
+
+- [K87] **数学样式就绪的「flush 依赖」缺口（B′，2026-09-27 实测定稿并实施）：CHTML 逐字符规则只在样式表 flush 时写入——不驱动 flush 时产物「非零但塌缩」（`mjx-c` 全 0 宽），「容器宽高 > 0」判据无法识别，会把错误尺寸送进产物缓存与 P4 重排。**
+  ① **取证（多探针，本机 + 隔离实例双环境）**：`renderMath` / `finishRenderMath` / `loadMathJax` 均为官方 @public；**flush 前** `14×20` 且 11 个 `mjx-c` 全 0 宽，**flush 后** `130×20` 且全 > 0（高度 114 vs 171 同证）；`finishRenderMath` 单次 ≈**1s**（本机 1006ms / 隔离 981–1046ms 的固定成本，故**只按批调用**）；**只增不减**——S0.5 本机实测（138 规则 / 13 字形规则 / 11461 字节）调用前后零丢失、二次调用幂等，与历史事故源头 `startup.document.updateDocument()`（会把用户 15380 字节样式表重写为 6858 内部快照、抹掉字形）**行为不同**，故弃 `updateDocument`、统一走官方 flush。
+  ② **设计（B′：保留 `tex2chtml` 直调 + 自驱 flush 生命周期；`renderMath` 换道经逐字节等价验证后由用户裁决不做）**：**就绪判据**＝产物内**全部 `mjx-c` 宽 > 0**（无 `mjx-c` 退回「宽高皆 > 0」）；渲染后**同步**尝试放置，未就绪则**同一同步块内撤回字面**（浏览器不绘制中间态，消灭「先空白后出现」窗口）并登记待定；**按批合并调度 `finishRenderMath`**（100ms 合并窗口、单飞不并发），完成后放行重试；重试只做「放置与判定」，**产物恒为同一实例**（不重复渲染，无风暴）；预算＝挂载等待 200 泵 × 16ms、规则重试 3 轮（耗尽保留可见字面 + 告警一次）。**移除**旧 `ensureChtmlStyles`（`updateDocument` 路径）与字体就绪 hook（字体为渐进渲染，DOM 到位即随数据到达显形；`ensureMathFonts` 前置等待保留）；**缓存与 `onSettled` 门禁**：仅成功放置后写入/通知——塌缩产物绝不入缓存。
+  ③ **验收（隔离实例冷启动 + 视觉 + 导出，全绿）**：冷启动仅开导图（无阅读视图预热）**24/24 就绪、零字面残留、零告警**（修复前此场景必塌缩/空白）；截图确认 `前 $$E=mc^2$$ 后` 渲染为**居中块级公式**、行内 `5x²` / `abcx`、C 组转义按字面（无反斜杠）；导出 data URL 解码后 **74 个 `mjx-container` + 15 条逐字符规则注入 + `@font-face` 零残留**；单测 31 例（math-jax 套件重写）+ 全量 1618 例 / lint 0 警告 / build 全绿。
+  ④ **验收教训（本轮探针自身两处缺陷，均已修正）**：① 全局 `querySelectorAll` 取样命中了**隐藏 tab 的旧视图容器**（0×0）→ 误报「全部塌缩」；断言必须限定**可见容器**（`.mindmap-view-container` 宽高 > 0）并核对 `activeLeaf` 归属。② `doExport.export('svg')` 返回 **data URL**，直接正则统计的是 base64 文本 → 必须先解码再断言。
+
+- [K88] **数学尺寸同步的静默失效（2026-09-27 用户复验「首次渲染框小于内容」实机复现修复）：定稿回调闭包捕获的是 vendor **预测量轻量代理对象**（只有 `nodeData`/`getData`，无 `reRender`）——`refreshNodesCustomContent` 的可选链 `reRender?.()` 静默 no-op，节点外框停在字面占位测量值（实测 B 节点 512px 外框 / 655px 内容，29 次回调全部无痕，8s 内永不自愈）。**
+  ① **定位链（全部实机取证）**：注入计数器确认 `scheduleMathRemeasure` 被调 29 次（通知链正常）；记录入参形态 = `ctor:"Object"` + keys `[nodeData, mindMap, layerIndex, isGeneralization, customTextWidth, effectiveStyles, getData, style]` —— 与 vendor `preMeasure.js` 的代理对象逐字吻合；`__MEASURE_STATS__: hit 17 / miss 0`（重排若真跑过必有 miss）；手动对 `renderTree → data._node`（真实 MindMapNode，`Base.js: data._node = newNode`）调 `reRender(['custom'])` → **512 → 655 立即修复**（机制有效，喂进去的对象错）。
+  ② **修复**：`math-jax` 的定稿回调**改为携带 holder**（`onSettled(holder)`）→ 视图层 `scheduleMathRemeasure(holder)` **批次执行时**经既有 `findNodeByDom` 反查真实 MindMapNode 再重排；字体分批再同步同样只对**已解析的真实节点**执行；解析失败**显式告警一次**（不再静默）。`refreshNodesCustomContent` 对 `reRender` 缺失同样**显式告警**（消灭静默 no-op，K85 ① 教训）。**验收**：冷启动 `clipped: []`、B 节点 655/655、`miss 29`（重排真实发生）。
+  ③ **教训**：① **异步回调闭包捕获的对象可能在语义上"过期"**（构建期代理 vs 运行期真实实例）——跨模块传递"谁"时应传递**可反查的锚点**（DOM holder）而非构建期对象；② 「可选链 + 静默跳过」把功能失效变成无痕退化，任何 `?.()` 兜底都要配**首次告警**；③ 尺寸类断言必须包含 **「容器 ≥ 内容」**（K86 已记录，本轮验收首次真正纳入探针）。
+
+- [K89] **块级数学定界符对齐官方阅读视图（2026-09-27 用户 B 组复验修复）：`$$…$$` 内容**可跨行、可含单个 `$`**——开 `$$` 找**最近**的 `$$` 闭合。B3（`$$` 独占行的三行块）/ B4（多行 vmatrix）/ B6（`$$$x$$$` → tex = `$x` + 末尾字面 `$`）三者均由同一条正则修复覆盖。**
+  ① **官方基准（隔离实例阅读视图实测）**：B3/B4 → `math-block` + `display="true"`（跨行块级数学）；B6 → display 数学，内容 `$x`（`$` 作普通字符渲染）+ 末尾 `$` 按字面保留——与「开 `$$` 取最近闭合」完全一致。修复即 `MATH_SOURCE` 的 mathBlock 支：`\\$\\$(?!\\s)` → `\\$\\$(?![ \\t])`（允许紧随换行、仍拒绝空格防 `$$ 5` 价签——**其中开侧空格守卫已于 K90 ② 移除，以对齐 Obsidian 宽松口径**）+ 内容 `[^$\\n]*?\\S` → `[\\s\\S]*?\\S[\\s\\S]*?`（允许跨行与内容含 `$`，首尾空白由段流水线 `trimEdges` 裁掉，MathJax 空白不敏感）。
+  ② **附带修复：多行围栏代码块**（` ```+ … ``` ` 同长度闭合）新增独立分支，排在内联代码之前——否则跨行块级会让**围栏内的 `$$` 误配对**成数学；同时围栏内容按 `code` 段渲染，更贴近 Obsidian（阅读视图围栏为代码块）。F 组语料经核查无跨行配对风险（节点内仅一个裸 `$$`）。
+  ③ **回归**：`node-inline-content.test.ts` 新增/改写 5 例（三行块 / 多行 vmatrix / 三美元两段形态 / 围栏不误配对 / `$$ 5` 价签防护不回归）+ 全量 1623 例 / lint 0 警告 / `verify:visual` 通过；实机（隔离实例冷启动）：B3/B4/B6 全部 display 渲染、围栏为代码、**`clipped: []`**、24/24 就绪。
+
+- [K90] **数学通道两处实证缺陷修复（2026-09-27 用户 LaTeX 样张全量复验）：① 就绪判据对「设计上零宽字符」永久误判——含 `\sin` 一族命名函数的公式 3 轮 flush 重试耗尽后退字面，并误告警「数学产物不可见（字体/样式未就绪）」；② `$$` 开侧空格守卫让 `$$ f(x)=… $$` **整段不进数学通道**，块内 `\\` 还被转义分支吃成单 `\`（字面显示失真，与 MathJax 无关）。**
+  ① **A1 取证与修复（就绪判定）**：用户样张 `$\lim_{x\to 0}\frac{\sin x}{x}=1$` 停在字面 + 控制台告警。无头 Chrome + MathJax 3.2.2 CHTML（tex-chtml 组合件，与 `loadMathJax` 注入同版本同输出形态）逐字符取证：**flush 后**该产物唯一零宽字符是 `mjx-c2061`——`\sin x` 之间 MathJax 自动插入的 U+2061 函数应用符，`::before` computed content 为**空串**、设计上恒零宽（对照 `\sin x` 最小编译同现；未 flush 时全字符 content 为 `none`，该差分同时钉住 flush 前后两态）。**修复**：`isProductReady` 内零宽字符按 content 分流——`""` = 显式空内容规则（不可见操作符，U+2062/2063 同理）→ 视为就绪；`none`（规则未落盘）与非空字形规则 → 仍判未就绪（**「塌缩态」检测力不变**，不放行部分塌缩）；判定环境无 `getComputedStyle` 时防御式回退旧口径（单测桩/异常宿主）。
+  ② **B1 取证与修复（块级开侧守卫）**：用户样张 cases 节点字面显示为**单 `\`**（源文 `\\`，截图取证）——定性链：mathBlock 开侧 `(?![ \t])` 拒绝空格 → 不命中 → 块内 `\\` 落入 escaped 分支（`ESCAPABLE_CLASS` 含 `\\`）被消费成转义反斜杠。对照取证：同 tex 原样喂 MathJax，flush 后 cases 全部 15 字符宽 > 0（可正常渲染，此前只是从未到达）。**修复**：去掉开侧空格/制表守卫（对齐 Obsidian 宽松口径——`$$ x=1 $$` 照常渲染为公式，用户确认）；闭侧数字排除与内容非空约束保留；行内 `$` 价签口径不变。**边界（2026-09-27 阅读视图实测裁决为「与官方一致」，非缺陷，见 ④）**：单遍扫描器按**最早匹配位置**定优先，行内孤立的 `$` 会与更靠后的反引号内 `$` 配对成数学；样张该行已改写为无歧义形态。
+  ③ **回归**：`math-jax.test.ts` 新增 4 例（不可见字符视为就绪 / `none` 仍撤回 / 非空 content 仍撤回 / 无 `getComputedStyle` 回退）+ `node-inline-content.test.ts` 改写「`$$ 5` 价签防护」为「未配对仍字面」并新增 3 例（开侧带空格进 display / 配对优先 + 尾部字面 / cases 全等钉住 `\\` 保真）；全量 **1630 例** / lint 0 警告 / `verify:visual` 通过；样张逐行 tokenizer 审计 26 行（20 数学 + 6 字面）：25 行符合预期，唯一偏差为上述边界行（样张已改写）；部署 vault `main.js` 哈希 `3E5EDA9A…F9E`（待用户实机复验）。
+  ④ **配对边界实测与官方逐条比对（2026-09-27 用户执行，阅读视图）**：验证样张 `LaTeX边界验证.md` 8 例（V0 正常公式 / V1 孤立在前+反引号在后 / V2 反引号在前+孤立在后 / V3–V4 价签 / V5 公式+代码+公式 / V6 单个孤立 / V7 纯代码），插件侧分类经 tokenizer 审计先行钉死、用户逐条回填——**8/8 与 Obsidian 阅读视图一致**：V1 官方**同样配成公式**（闭定界符取反引号内 `$`、一个反引号进入 tex，用户截图取证；「删掉括号内反引号 `$` 即恢复字面」）⇒ 单遍扫描器的最早位置优先语义**与官方同口径**；V3/V4 官方亦**全字面** ⇒ 插件行内价签防护（开侧拒空白 + 内容以 `\S` 收尾 + 闭侧拒数字）为**官方口径的实证对齐**，非保守偏离；阅读视图与实时预览无差异。**结论：该边界为官方同款行为，不修。**
+
+- [K91] **节点内代码块轻量渲染 + Obsidian 同款复制（2026-09-28 用户确认方案后实施）：围栏块从「行内码样式」升级为块级盒子（等宽 + `--code-background` + 保留换行/缩进 + 双轴滚动 + 右上角悬停复制按钮，点击复制去围栏/去信息行的代码并短暂 ✓），不做 Prism 高亮（「轻量」裁决）。**
+  ① **数据与保真**：fence 段新增 `block: true` 标记（与 `display` 同款「重建段必须保留」纪律）；`splitFenceInfo` **展示时**剥离首行信息行（```` ```js ```` 的 `js`，CommonMark 口径；不改 fence 正则 ⇒ 零回归面）；**prose 连续空格归一化下沉**到 `splitMarkedText` 各 prose 分支（`pushPlain`/标记体），代码与数学段原文保真——此前全文预归一化会把 4 空格缩进压成 1 空格（渲染盒是 pre-wrap，观感直接被毁）；`trimEdges` 对 block 段**只裁边缘空行**（`\n`）、不裁缩进；`needsHiddenSyntax` 增加 fence 判定（`selfDrawPlain` 关闭时纯代码节点也与数学同级强制自绘）。
+  ② **样式与导出隐身**：结构/配色全内联（导出保真口径同 CONTENT_STYLES）；复制按钮可见性走**变量间接层**——内联 `opacity: var(--tmm-code-copy-opacity, 0)`，屏上由 styles.css 在 `.tmm-codeblock:hover / :focus-within` 置 1（变量可穿透内联声明，绕开「内联样式压过类规则」的层叠死结，**无需 `!important`**）；导出 SVG 不带 styles.css ⇒ 兜底 0 ⇒ 按钮天然隐身。图标用 mask + `currentColor`（随主题取色，data-URI 不写死颜色）；`CODE_BLOCK_MAX_HEIGHT_PX = 360` 封顶防长块炸版面。
+  ③ **交互接线（方案 A）**：构建器保持**零 Obsidian 依赖、零监听**（`buildCodeBlockElement` 只产出 `.tmm-codeblock > button.tmm-code-copy + pre > code`）；点击语义在 `features/node-codeblock.ts` 经引擎 `node_click` 委托（与 view-wikilink 锚点同款，view.ts 同段注册），`resolveCodeCopyTarget` 纯函数解析目标 → 属主窗口 `navigator.clipboard.writeText` → ✓ 反馈 1.2s（重复点击重置计时）。**待实测风险项实测关闭**：verify:visual 合成点击证实 `node_click` 的 `event.target` 就是按钮本体（非锚点元素穿透到真实 target）——委托选择器成立，无需备用方案 B。
+  ④ **回归**：`node-inline-content.test.ts` 新增 7 例（block 标记+信息行剥离 / 缩进空行保真 / 行内码空格保真 / 预览口径 / DOM 结构契约 / aria-label 随 lang / 纯代码节点接管）+ `node-codeblock.test.ts` 新增 4 例（解析四态）+ verify:visual 新增 `codeblock` 场景与 inline 探针断言（原文/按钮/变量间接层/点击契约）；全量 **1641 例 / 52 文件** / lint 0 警告 / lint:css 通过 / `verify:visual` 全绿。
+  ⑤ **解析层配套修复（md-outline / md-serialize，功能可用的前提，样张全文解析审计发现）**：`classifyLines` 的围栏状态此前**不感知列表项**——项内代码块的**闭合围栏**（缩进 ≤3 仍匹配 `fenceMarker`）被误判为**新围栏的开始**，后续标题/节点被整段吞进代码内容（一个文件里第二个代码块起结构即坏）。修复三件：① 列表项文本以围栏开始时置围栏状态（同行自闭合 ```` ```code``` ```` 除外，`selfClosed` 判定——顺带修掉顶层一行式围栏的同类吞行）；② 围栏闭合后的分隔空行**并入前项 mdRaw**（此前产空文本节点；并入后结束列表区，后续同级项不嵌套、文件空行逐字保留）；③ 序列化器 `nodeLines` 对空续行**不加 restIndent**（缩进空行 = 尾随空格污染文件）。**已知边界**：列表项内代码的深层缩进仍被续行 `trimStart` 归一（序列化器按树深度补 restIndent 的既有设计）——需要缩进保真的代码块用**段落式写法**（无列表标记，mdRaw 逐字）。回归：`md-roundtrip.test.ts` 新增「列表项围栏」2 例（结构不吞 + 往返不动点）；全量 **1643 例**。
+  ⑥ **交互对齐 v2（2026-09-28 用户复验反馈：「只能复制第一行 + 不明显」）**：① **复制源改构建期 dataset**——`buildCodeBlockElement` 把段文本写入 `button[data-code]`，`resolveCodeCopyTarget` **优先读 dataset**（缺失才回落 `pre > code` 的 textContent）——点击路径不再依赖 closest/querySelector 的 DOM 链（用户实测「复制到第一行」时渲染层 `<code>` 已实测含完整两行，DOM 读取链是唯一未锁定变量，dataset 从根上消除该类脆弱性）；② **按钮常显**（对齐 Obsidian 阅读视图：复制按钮一直在，悬停增强）——styles.css 基础 `--tmm-code-copy-opacity: 0.55`、hover/聚焦 1（内联兜底 0 = 导出图隐身不变）；③ 原生 `title` 提示（Obsidian 自家 tooltip 在 foreignObject 内不可用，零依赖近似）；④ **端到端复制回归**：verify:visual 桩剪贴板 + 真实视图层处理器（node-codeblock 注册，与生产 view.ts 同入口）——点击按钮后 `writeText` 实参断言 = 完整两行（`const a = 1;\n  echo hi`），复制链路被无头实测锁定。全量 **1645 例**。
+  ⑦ **部署勘误（2026-09-28「按钮看不到」根因）**：历次部署只拷 `main.js`、**从未同步 `styles.css`**——vault 内 styles.css 停在 9/14，`.tmm-codeblock { --tmm-code-copy-opacity: 0.55 }` 常显规则整体缺失 ⇒ 按钮内联兜底 0 ⇒ 永不可见（v1 的 hover 显形同样依赖该文件，一并失效）。已同步 styles.css（期间一次凭记忆误写的内容已被仓库真实文件覆盖修复）。**部署口径勘正：`main.js` 与 `styles.css` 两件都必须拷贝 vault 插件目录**；导出保真不受影响（导出图本就不带 styles.css，按钮在导出图里仍隐身）。
+  ⑧ **配色校准（2026-09-28 用户截图反馈「图标白色」，两轮）**：第一轮 `--text-faint`→`--text-muted` **实测无效（用户复验仍浅色）** ⇒ 定性：该 CSS 变量在画布 foreignObject 子树内取不到值（未定义时 color 回退到**继承值**=节点文字色，浅色节点文字→观感近白；与两版都是浅色吻合）。第二轮改**兜底方案**：`color: var(--text-muted, #666666) !important`（取到变量=跟随主题；取不到=官方默认灰）+ `.theme-dark` 分支兜底 `#999999`、hover `--text-normal` 兜底 `#1f1f1f/#ececec`；`is-copied` 同步 `!important`（否则被基态压住）；!important 仅限屏显层按钮图标色（导出图不带 styles.css 不受影响）。已部署 vault 并读回验证。**第三轮（用户贴出按钮 DOM 后定性）**：用户按钮 DOM 显示 v2 特征齐全（data-code/title/opacity 变量）且常显生效 ⇒ 其 Obsidian 加载的是 **v2 时代的 styles.css**（图标色仍是旧 `--text-faint`），**后两轮 styles.css 更新从未被重载**（opacity 变量继承正常也排除「变量在画布子树取不到」假说）——问题本质是 styles.css 加载时机不可控。**根治：图标基色内联进构建器**（`CODE_COPY_BUTTON_STYLES` 加 `color: var(--text-muted, #666666)`，内联优先级高于非 !important 类规则 ⇒ 只依赖 main.js 重载；导出不受影响——按钮在导出图本就 opacity 兜底 0 隐身），styles.css 的 color/hover/is-copied 规则保留（新鲜加载时提供 hover 增强与 is-copied 态）；契约测试补 `styleOf(button).color` 断言；部署核验=仓库与 vault 的 main.js 各含内联色串 1 处。**第四轮（用户仍报浅色 ⇒ 外观全内联）**：① 基色变量升级为 `var(--icon-color, var(--text-muted, #666666))`——`--icon-color` 是 Obsidian 原生图标按钮的取色变量，主题可独立于 `--text-muted` 定义（前三轮取错变量层的嫌疑）；② **图标形状/填充全部内联**（`maskImage` data-URI + `backgroundColor: currentColor` 进 `CODE_COPY_BUTTON_STYLES`，类型放宽为 `& Record<string, string>` 容纳 mask 键）⇒ 按钮外观**零 styles.css 依赖**；③ ✓ 反馈态内联直改（`showCopiedFeedback` 快照 `style` 属性原文 → setProperty 撤 mask/底色 + 成功色/字号 → 到点逐字还原），不依赖类规则新鲜度；④ styles.css 的图标类规则**保留未删**（旧版下内联全胜、新版下同意图不打架，删除反而引入大段精确匹配风险）；⑤ 教训记录：本轮一次三连并行编辑因凭记忆拼凑内容几乎污染三个文件（实检仅一处注释乱码，已修）——**多文件联动改动必须逐个「读回→编辑」串行执行**。verify:visual 全绿；部署核验=两边 main.js 各含 `mask-image` 与 `--icon-color` 串 1 处。
 
 ## 新增功能检查清单
 

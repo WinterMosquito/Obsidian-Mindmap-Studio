@@ -11,6 +11,16 @@ import type { TranslationKey } from './i18n';
 
 /** 自定义视图类型标识 */
 export const VIEW_TYPE = 'mindmap-view';
+
+/**
+ * 数学段 holder 的**已渲染标记类**。
+ *
+ * 单一来源：`platform/math-jax` 的异步替换路径（`MATH_CONTAINER_CLASS`）与
+ * `features/node-inline-content` 的**缓存命中同步放置路径**必须同口径——
+ * 两条路径都代表"已渲染"，主题、调试定位与断言选择器才有唯一依据
+ * （此前两处各写字面值，值相同但无约束）。
+ */
+export const MATH_RENDERED_HOLDER_CLASS = 'mindmap-inline-math';
 /** Markdown 渲染模式（.mindmap.md）的完整后缀（含点） */
 export const MD_FILE_SUFFIX = '.mindmap.md';
 
@@ -392,6 +402,15 @@ export const DRAG_TARGET_RADIUS_PX = 120;
  */
 export const IMAGE_WIDTH = 200;
 export const IMAGE_HEIGHT = 120;
+
+/**
+ * 节点内代码块（自绘 ``` 围栏段）的最大显示高度（像素）。
+ *
+ * 封顶而非无限高：导图节点是**空间对象**——一个百行代码块会把画布版面彻底压扁，
+ * 与「轻量渲染」的定位相悖。超出部分由块内纵向滚动承接（滚动条见 styles.css）。
+ * 数值口径：≈ 24 行（0.9em × 1.45 行高）——覆盖常规示例片段，又不喧宾夺主。
+ */
+export const CODE_BLOCK_MAX_HEIGHT_PX = 360;
 
 /**
  * Obsidian 核心视图类型标识（官方未公开常量；d.ts 的

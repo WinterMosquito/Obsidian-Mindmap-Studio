@@ -37,6 +37,8 @@ const ZH = {
 	'modal.text.preview': '节点将显示为：',
 	'nodeTextTruncated':
 		'节点文本过长，此处仅显示开头部分；完整内容仍保存在文件中，双击节点可查看或编辑',
+	'codeBlock.copy': '复制代码',
+	'codeBlock.copied': '已复制',
 	'rename.titleConflict': '已存在同名文件，无法按中心节点重命名',
 	'rename.titleFailed': '按中心节点重命名文件失败',
 
@@ -263,6 +265,8 @@ const EN: Record<TranslationKey, string> = {
 	'modal.text.preview': 'The node will show:',
 	'nodeTextTruncated':
 		'Node text is too long, so only the beginning is shown here; the full text is kept in the file (double-click the node to view or edit it).',
+	'codeBlock.copy': 'Copy code',
+	'codeBlock.copied': 'Copied',
 	'rename.titleConflict': 'A file with that name already exists; cannot rename by central node',
 	'rename.titleFailed': 'Failed to rename the file by its central node',
 

@@ -703,6 +703,21 @@ function classifyLines(body: string): ParsedLine[] {
 		return { char: m[1]![0]!, length: m[1]!.length };
 	};
 
+	/**
+	 * 开围栏行是否在**同一行内自闭合**（```` ```code``` ````）：
+	 * 去掉开围栏后的余文以同字符、不小于开围栏长度的连续串结尾。
+	 * 此类行是「一行的围栏」，**不进入围栏状态**——否则围栏永不闭合，
+	 * 后续行被整段吞进代码内容（2026-09-28 修）。
+	 */
+	const selfClosed = (
+		restAfterMarker: string,
+		char: string,
+		length: number,
+	): boolean => {
+		const run = char === '~' ? '~' : '`';
+		return new RegExp(`${run}{${length},}[ \\t]*$`).test(restAfterMarker);
+	};
+
 	const pushRaw = (raw: string): void => {
 		out.push({ kind: 'plain', indent: leadingSpaces(raw), text: raw, raw });
 	};
@@ -741,7 +756,13 @@ function classifyLines(body: string): ParsedLine[] {
 				pushRaw('');
 				pendingBlank--;
 			}
-			fence = open;
+			// 同行自闭合（```code```）不进入围栏状态（见 selfClosed）
+			const restAfterMarker = rawLine.slice(
+				rawLine.indexOf(open.char) + open.length,
+			);
+			if (!selfClosed(restAfterMarker, open.char, open.length)) {
+				fence = open;
+			}
 			pushRaw(rawLine);
 			lastLineIsFence = true;
 			continue;
@@ -788,6 +809,19 @@ function classifyLines(body: string): ParsedLine[] {
 					text,
 					marker: /^\d+\.$/.test(l[2]!) ? 'ordered' : l[2],
 				});
+				// 列表项文本以围栏开始（```js）：项内即围栏——置围栏状态，让续行
+				// 走「围栏内容」分支逐字保留、闭合行正确**闭合**。此前围栏状态不
+				// 感知列表项，闭合行（缩进 ≤3 仍匹配 fenceMarker）被误判为**新
+				// 围栏的开始**，后续标题/节点被整段吞进代码内容（2026-09-28 修）。
+				// 同行自闭合（```code```）不置状态。
+				const openInList = text.match(/^(`{3,}|~{3,})/);
+				if (openInList) {
+					const marker = openInList[1]!;
+					const rest = text.slice(marker.length);
+					if (!selfClosed(rest, marker[0]!, marker.length)) {
+						fence = { char: marker[0]!, length: marker.length };
+					}
+				}
 			}
 			continue;
 		}
@@ -931,10 +965,16 @@ export function parseMdOutline(
 			continue;
 		}
 		if (line.kind === 'plain') {
-			// list 项的续行（缩进大于栈顶 list 且当前处于 list 区）→ 并入文本
+			// list 项的续行（缩进大于栈顶 list 且当前处于 list 区）→ 并入文本。
+			// **空白续行**（围栏闭合后的分隔空行，classifyLines 仅在围栏相邻时保留）
+			// 同样并入前项 mdRaw——否则会产出一个空文本节点（2026-09-28 修）；
+			// 并入后**结束列表区**（空行结束 list 的既有语义不变，后续同级项不嵌套）。
+			const isBlankLine =
+				line.text.trim() === '' && (line.raw ?? '').trim() === '';
 			if (
 				listStack.length > 0 &&
-				line.indent > listStack[listStack.length - 1]!.indent
+				(isBlankLine ||
+					line.indent > listStack[listStack.length - 1]!.indent)
 			) {
 				const top = listStack[listStack.length - 1]!.node;
 				const inline = buildInlineData(line.text);
@@ -948,6 +988,9 @@ export function parseMdOutline(
 				// 续行只保留**行尾**原文（行首缩进由序列化器按树深度补 restIndent，
 				// 两者都留会写出双份缩进）；text 仍用 trim 后的显示文本
 				topData.mdRaw = `${prevRaw}\n${(line.raw ?? line.text).trimStart()}`;
+				if (isBlankLine) {
+					listStack = [];
+				}
 				continue;
 			}
 			listStack = [];

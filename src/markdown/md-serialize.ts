@@ -806,7 +806,10 @@ export function serializeMdBody(
 		const lines = composeNodeContent(data, app).split('\n');
 		return [
 			prefix + (lines[0] ?? ''),
-			...lines.slice(1).map((l) => restIndent + l),
+			// 空行**不加** restIndent：缩进空行会写出尾随空格污染文件；空行在
+			// 围栏内是代码内容、在围栏外是块分隔，均无需缩进（2026-09-28，
+			// 列表项围栏的「空白续行并入前项 mdRaw」依赖此处保持空行为空行）
+			...lines.slice(1).map((l) => (l === '' ? '' : restIndent + l)),
 		];
 	};
 

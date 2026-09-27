@@ -21,10 +21,12 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildInlineNodeContent,
 	buildInlineSegments,
+	inlineContentPreview,
 	MAX_INLINE_CONTENT_CHARS,
 	NODE_INLINE_CONTENT_CLASS,
 	segmentCacheStats,
 } from '../src/features/node-inline-content';
+import { CODE_BLOCK_MAX_HEIGHT_PX } from '../src/core/constants';
 import type { InlineSegment } from '../src/features/node-inline-content';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
 
@@ -239,6 +241,126 @@ describe('轻标记扩展（显示层，不回写）', () => {
 			'价格 $5 与 公式 $x^2',
 		]);
 	});
+
+	it('单行 `$$…$$`（display）：段带 display 标记、定界符不进显示文本', () => {
+		expect(buildInlineSegments('$$E=mc^2$$')).toEqual([
+			{ kind: 'text', text: 'E=mc^2', style: 'math', display: true },
+		]);
+	});
+
+	it('行内与 display 混排：各自成段，display 只标在双美元段上', () => {
+		expect(shape('$a$ 和 $$b$$')).toEqual(['math:a', ' 和 ', 'math:b']);
+		const flags = buildInlineSegments('$a$ 和 $$b$$')
+			.filter((segment) => segment.style === 'math')
+			.map((segment) => segment.display === true);
+		expect(flags).toEqual([false, true]);
+	});
+
+	it('紧邻两段行内数学（`$a$$b$`）：不因双美元优先而互相吞并', () => {
+		// 双美元分支只在能配对时命中；未配对时回落单美元逐个匹配（不劣化既有形态）
+		expect(shape('$a$$b$')).toEqual(['math:a', 'math:b']);
+	});
+
+	it('`\\$` 转义数学定界符：消费反斜杠、按字面显示（不触发数学渲染）', () => {
+		expect(shape('\\$x\\$')).toEqual(['$x$']);
+		expect(shape('价格 \\$5 与 \\$6.50 元')).toEqual(['价格 $5 与 $6.50 元']);
+	});
+
+	it('多行块级数学（`$$` 独占行的三行块）：解析为单个 display 数学段（对齐 Obsidian，K89）', () => {
+		const segments = buildInlineSegments('$$\nE=mc^2\n$$');
+		const math = segments.filter((segment) => segment.style === 'math');
+		expect(math).toHaveLength(1);
+		expect(math[0]?.display).toBe(true);
+		// 首尾换行由段流水线 trimEdges 裁掉（MathJax 空白不敏感，渲染等价）
+		expect(math[0]?.text).toBe('E=mc^2');
+	});
+
+	it('多行 vmatrix（官方文档示例，跨行闭合）：解析为单个 display 段', () => {
+		const src = '$$\\begin{vmatrix}a & b\\\\\nc & d\n\\end{vmatrix}=ad-bc$$';
+		const segments = buildInlineSegments(src);
+		const math = segments.filter((segment) => segment.style === 'math');
+		expect(math).toHaveLength(1);
+		expect(math[0]?.display).toBe(true);
+		expect(math[0]?.text).toContain('\\begin{vmatrix}');
+	});
+
+	it('三美元 `$$$x$$$`：display 数学（tex = `$x`）+ 末尾字面 `$`（对齐阅读视图实测，K89）', () => {
+		// Obsidian 阅读视图实测：开 `$$` 找**最近** `$$` 闭合 ⇒ 内容 `$x`
+		// （`$` 作普通字符渲染），剩余末尾 `$` 按字面保留
+		const segments = buildInlineSegments('$$$x$$$');
+		expect(segments).toHaveLength(2);
+		expect(segments[0]?.style).toBe('math');
+		expect(segments[0]?.display).toBe(true);
+		expect(segments[0]?.text).toBe('$x');
+		expect(segments[1]?.text).toBe('$');
+	});
+
+	it('多行围栏代码块：按代码段字面渲染，围栏内 `$$` 不被数学误配对（K89）', () => {
+		const src = '前\n```\n$$\nE = mc^2\n$$\n```\n后';
+		const segments = buildInlineSegments(src);
+		expect(segments.some((segment) => segment.style === 'math')).toBe(false);
+		const code = segments.find((segment) => segment.style === 'code');
+		expect(code?.text).toContain('E = mc^2');
+	});
+
+	it('围栏块段：block 标记 + 语言行剥离（`js` 不进显示/复制内容）', () => {
+		expect(buildInlineSegments('```js\nconst a = 1;\n```')).toEqual([
+			{ kind: 'text', text: 'const a = 1;', style: 'code', block: true },
+		]);
+	});
+
+	it('围栏块段：缩进与空行逐字保留（归一化不波及代码段）', () => {
+		const segments = buildInlineSegments('前\n```\n  indented\n\n    deeper\n```');
+		// 首段左缘裁剪、右缘换行保留（围栏独立成行的文档结构）
+		expect(segments[0]?.text).toBe('前\n');
+		const code = segments.find((segment) => segment.style === 'code');
+		expect(code?.block).toBe(true);
+		expect(code?.text).toBe('  indented\n\n    deeper');
+	});
+
+	it('行内码：内部连续空格保留（代码内容不被 prose 归一化波及）', () => {
+		expect(buildInlineSegments('`a  b`')).toEqual([
+			{ kind: 'text', text: 'a  b', style: 'code' },
+		]);
+	});
+
+	it('预览文本：代码块显示为去信息行后的代码（与段口径一致）', () => {
+		expect(inlineContentPreview('```js\necho hi\n```')).toBe('echo hi');
+	});
+
+	it('块级开定界符未配对仍按字面（`$$ 5` 无闭合 `$$`）', () => {
+		expect(shape('$$ 5')).toEqual(['$$ 5']);
+	});
+
+	it('块级开定界符后带空格：解析为 display 数学段（对齐 Obsidian 宽松口径，B1）', () => {
+		// 首尾空白由 trimEdges 裁掉（MathJax 空白不敏感，渲染等价）
+		expect(buildInlineSegments('$$ x=1 $$')).toEqual([
+			{ kind: 'text', text: 'x=1', style: 'math', display: true },
+		]);
+	});
+
+	it('块级配对后剩余尾部：配对段 + 尾部字面（配对优先于整体按字面）', () => {
+		expect(shape('$$ 5 与 $$ 6')).toEqual(['math:5 与 ', ' 6']);
+	});
+
+	it('cases 分段函数（开侧带空格 + 块内 `\\\\`）：完整进 display 通道（实机回归）', () => {
+		// 用户实机复现：旧守卫让 `$$ f(x)=…` 整段不进数学通道，且块内 `\\`
+		// 被转义分支消费成单 `\`（字面显示还失真）。B1 后整体按数学解析
+		const src =
+			'$$ f(x)=\\begin{cases} x & x\\ge 0 \\\\ -x & x<0 \\end{cases} $$';
+		const segments = buildInlineSegments(src);
+		const math = segments.filter((segment) => segment.style === 'math');
+		expect(segments).toHaveLength(1);
+		expect(math).toHaveLength(1);
+		expect(math[0]?.display).toBe(true);
+		expect(math[0]?.text).toContain('\\begin{cases}');
+		expect(math[0]?.text).toContain('\\\\');
+		// 全等：既钉住 trimEdges 裁边，也钉住 `\\` 未被转义分支吃掉（失真形态
+		// 会变成单 `\`，但 `\ -x` 是 `\\ -x` 的子串，只能靠全等区分）
+		expect(math[0]?.text).toBe(
+			'f(x)=\\begin{cases} x & x\\ge 0 \\\\ -x & x<0 \\end{cases}',
+		);
+	});
 });
 
 /** 最小文本节点桩 */
@@ -290,14 +412,14 @@ function fakeNode(data: Record<string, unknown> | null): MindMapNode {
 	} as unknown as MindMapNode;
 }
 
-/** 元素桩 → 便于断言的窄视图 */
-function childrenOf(el: HTMLElement): unknown[] {
-	return (el as unknown as FakeElement).children;
+/** 元素桩 → 便于断言的窄视图（形参放宽为 unknown：嵌套层级的桩同样可查） */
+function childrenOf(el: unknown): unknown[] {
+	return (el as FakeElement).children;
 }
 
-/** 元素桩的内联样式（宽度/上限断言用） */
-function styleOf(el: HTMLElement): Record<string, string> {
-	return (el as unknown as FakeElement).style;
+/** 元素桩的内联样式（宽度/上限断言用；形参放宽同 childrenOf） */
+function styleOf(el: unknown): Record<string, string> {
+	return (el as FakeElement).style;
 }
 
 /** 自绘必接管的节点数据（含链接 + 轻标记 → 必定走自绘通道） */
@@ -463,17 +585,17 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect(buildInlineNodeContent(node, asDocument(new FakeDocument()))).toBeNull();
 	});
 
-	it('行内数学：接管并写字面占位，renderMath 收到 TeX 与 holder', () => {
+	it('行内数学：接管并写字面占位，renderMath 收到 TeX / holder / display=false', () => {
 		const node = fakeNode({
 			text: '质能方程',
 			mdRaw: '$E=mc^2$',
 			mdDerivedText: '质能方程',
 		});
 		const doc = new FakeDocument();
-		const calls: { tex: string; holder: HTMLElement }[] = [];
+		const calls: { tex: string; holder: HTMLElement; display: boolean }[] = [];
 		const el = buildInlineNodeContent(node, asDocument(doc), {}, 'zh', {
-			renderMath: (_doc, tex, holder) => {
-				calls.push({ tex, holder });
+			renderMath: (_doc, tex, holder, display) => {
+				calls.push({ tex, holder, display });
 			},
 		})!;
 		expect(el).not.toBeNull();
@@ -484,6 +606,110 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.tex).toBe('E=mc^2');
 		expect(calls[0]!.holder).toBe(holder);
+		expect(calls[0]!.display).toBe(false);
+	});
+
+	it('单行 `$$…$$`：接管、占位为 `$$…$$`、renderMath 收到 display=true', () => {
+		const node = fakeNode({
+			text: '$$E=mc^2$$',
+			mdRaw: '$$E=mc^2$$',
+			mdDerivedText: '$$E=mc^2$$',
+		});
+		const calls: { tex: string; display: boolean }[] = [];
+		const el = buildInlineNodeContent(
+			node,
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{
+				renderMath: (_doc, tex, _holder, display) => {
+					calls.push({ tex, display });
+				},
+			},
+		)!;
+		expect(el).not.toBeNull();
+		const holder = childrenOf(el)[0] as FakeElement;
+		expect(holder.tagName).toBe('span');
+		expect(holder.textContent).toBe('$$E=mc^2$$');
+		expect(calls).toEqual([{ tex: 'E=mc^2', display: true }]);
+	});
+
+	it('围栏块：接管并渲染块级结构（容器/pre/code 原文/复制按钮 + 内联样式契约）', () => {
+		const node = fakeNode({
+			text: '```js\necho hi\n```',
+			mdRaw: '```js\necho hi\n```',
+			mdDerivedText: '```js\necho hi\n```',
+		});
+		const el = buildInlineNodeContent(
+			node,
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+		)!;
+		expect(el).not.toBeNull();
+		const block = childrenOf(el)[0] as FakeElement;
+		expect(block.className).toBe('tmm-codeblock');
+		// 底色/等宽走主题变量 + 字面兜底（导出图无变量上下文，口径同 CONTENT_STYLES）
+		expect(styleOf(block).backgroundColor).toContain('--code-background');
+		expect(styleOf(block).fontFamily).toContain('--font-monospace');
+		const [button, pre] = childrenOf(block) as FakeElement[];
+		expect(button?.tagName).toBe('button');
+		expect(button?.className).toBe('tmm-code-copy');
+		expect(attrsOf(button).get('aria-label')).toBe('复制代码');
+		// 复制源在构建期定死（dataset）：点击路径不依赖 DOM 链读取
+		expect(attrsOf(button).get('data-code')).toBe('echo hi');
+		// 原生悬停提示（零依赖近似 Obsidian 的 tooltip）
+		expect(attrsOf(button).get('title')).toBe('复制代码');
+		// 按钮可见性走变量间接层（屏上 hover 由 styles.css 置 1；导出无该文件 → 兜底 0 → 隐身）
+		expect(styleOf(button).opacity).toBe('var(--tmm-code-copy-opacity, 0)');
+		// 图标外观**全内联**（2026-09-28 第四轮校准）：颜色取 Obsidian 原生图标
+		// 变量 --icon-color（主题可独立于 --text-muted 定义），两级回退后到官方
+		// 默认灰；形状 mask 与填充 currentColor 同样内联——按钮外观零 styles.css
+		// 依赖（用户实机 styles.css 曾长期滞留旧版）；导出图按钮本就 opacity 0
+		// 隐身，内联外观不影响导出
+		expect(styleOf(button).color).toBe(
+			'var(--icon-color, var(--text-muted, #666666))',
+		);
+		expect(styleOf(button).backgroundColor).toBe('currentColor');
+		expect(String(styleOf(button).maskImage)).toContain('data:image/svg+xml');
+		expect(styleOf(button).maskSize).toBe('14px');
+		expect(pre?.tagName).toBe('pre');
+		expect(styleOf(pre).whiteSpace).toBe('pre');
+		expect(styleOf(pre).overflowX).toBe('auto');
+		expect(styleOf(pre).maxHeight).toBe(`${CODE_BLOCK_MAX_HEIGHT_PX}px`);
+		const code = childrenOf(pre!)[0] as FakeElement;
+		expect(code.tagName).toBe('code');
+		// 文本节点桩：内容 = 代码原文（信息行已在段构建时剥离）
+		expect((childrenOf(code)[0] as { text: string }).text).toBe('echo hi');
+	});
+
+	it('围栏块：aria-label 随 lang（en）', () => {
+		const node = fakeNode({
+			text: '```\nx\n```',
+			mdRaw: '```\nx\n```',
+			mdDerivedText: '```\nx\n```',
+		});
+		const el = buildInlineNodeContent(
+			node,
+			asDocument(new FakeDocument()),
+			{},
+			'en',
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		const button = childrenOf(block)[0] as FakeElement;
+		expect(attrsOf(button).get('aria-label')).toBe('Copy code');
+	});
+
+	it('纯代码块节点（selfDrawPlain 未开）：仍因「代码块必须自绘」而接管', () => {
+		// needsHiddenSyntax 的 fence 判定：无链接/无轻标记的纯代码节点与数学同级
+		const node = fakeNode({
+			text: '```\nx = 1\n```',
+			mdRaw: '```\nx = 1\n```',
+			mdDerivedText: '```\nx = 1\n```',
+		});
+		expect(
+			buildInlineNodeContent(node, asDocument(new FakeDocument())),
+		).not.toBeNull();
 	});
 
 	it('行内数学未注入 renderMath：仍接管（占位字面显示，与引擎一致但保留通道）', () => {

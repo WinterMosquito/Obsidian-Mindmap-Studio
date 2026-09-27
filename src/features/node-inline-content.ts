@@ -43,15 +43,21 @@
  *   （`**粗**`/`__粗__`、`*斜*`/`_斜_`、`` `码` ``、`~~删~~`、`==高亮==`、
  *   `***粗斜***`）与官方「combine them」嵌套（`**粗 _斜_**`，见 Basic formatting
  *   syntax）；另有 `%%注释%%`（渲染期隐藏，对齐阅读视图：注释只在编辑视图可见）、
- *   反斜杠转义（`\*` → 字面 `*`）与**行内数学** `$…$`（经注入的 `renderMath` 异步
- *   MathJax 渲染，占位即字面回退；`$$…$$` 块级数学不支持、按字面显示）；未闭合的
+ *   反斜杠转义（`\*` → 字面 `*`，含 `\$` 数学定界符）与**数学**——行内 `$…$`
+ *   与 `$$…$$`（display / 块级，**内容可跨行、可含单个 `$`**——`$$` 独占行的
+ *   多行块与 `$$$x$$$` 均按此解析，对齐 Obsidian 阅读视图实测口径，见 K89；
+ *   经注入的 `renderMath` 异步 MathJax 渲染，占位即字面回退）；未闭合的
  *   标记/注释按字面保留；含这些语法的节点同样被接管 → 编辑入口走弹窗（见上）；
  * - 库内锚点的 `data-href` 是**原始 linkpath**（与 Obsidian 产物一致）；目标未解析
  *   时加 `is-unresolved` 类 + 弱化配色（解析器由调用方注入，见 InlineContentOptions
  *   ——本模块必须可在无 Obsidian 运行时打包）；带子路径的显示名口径由 view-wikilink /
  *   openHyperlink 承接，本模块不做 render-time 修正（见 AGENTS.md K12）。
  */
-import { isRenderableImageTarget } from '../core/constants';
+import {
+	isRenderableImageTarget,
+	MATH_RENDERED_HOLDER_CLASS,
+	CODE_BLOCK_MAX_HEIGHT_PX,
+} from '../core/constants';
 import { t } from '../core/i18n';
 import type { Language } from '../core/i18n';
 import { isSchemeUrl, isUrlLikeText } from '../domain/url';
@@ -138,6 +144,77 @@ const MARKUP_STYLES: Record<InlineTextStyle, Partial<CSSStyleDeclaration>> = {
 	math: {},
 };
 
+/** 块级代码块容器类名（styles.css 的 hover/按钮规则与 verify:visual 断言共用） */
+export const CODE_BLOCK_CLASS = 'tmm-codeblock';
+/** 代码块复制按钮类名（视图层点击委托的选择器，见 features/node-codeblock.ts） */
+export const CODE_COPY_CLASS = 'tmm-code-copy';
+
+/**
+ * 块级代码块（围栏段）的**结构样式**：内联在元素上（导出保真，理由同
+ * CONTENT_STYLES——插件 styles.css 不进导出 SVG，类规则在导出图里整体失效）。
+ *
+ * 视觉口径「轻量」= 对齐 Obsidian 阅读视图的**无高亮**形态：等宽 + 代码底色
+ * （主题变量 + 字面量兜底，导出无色上下文时仍可读）+ 圆角 + 内边距；不做
+ * Prism 高亮。滚动与上限见 CODE_BLOCK_PRE_STYLES / CODE_BLOCK_MAX_HEIGHT_PX。
+ */
+const CODE_BLOCK_STYLES: Partial<CSSStyleDeclaration> = {
+	position: 'relative',
+	display: 'block',
+	boxSizing: 'border-box',
+	margin: '4px 0',
+	padding: '10px 12px',
+	borderRadius: '6px',
+	backgroundColor: 'var(--code-background, rgba(128, 128, 128, 0.12))',
+	color: 'var(--code-normal, var(--text-normal, inherit))',
+	fontFamily: 'var(--font-monospace, monospace)',
+	maxWidth: '100%',
+};
+
+/** 代码块内容区：保留换行/缩进（whiteSpace: pre），长行横向滚动、超高纵向滚动 */
+const CODE_BLOCK_PRE_STYLES: Partial<CSSStyleDeclaration> = {
+	margin: '0',
+	whiteSpace: 'pre',
+	overflowX: 'auto',
+	overflowY: 'auto',
+	maxHeight: `${CODE_BLOCK_MAX_HEIGHT_PX}px`,
+	fontFamily: 'inherit',
+	fontSize: '0.9em',
+	lineHeight: '1.45',
+};
+
+/**
+ * 复制按钮：**结构与外观全部内联**（绝对定位、不参与测宽），可见性用**变量间接层**：
+ *
+ * `opacity: var(--tmm-code-copy-opacity, 0)` —— 屏上 hover 时由 styles.css 在
+ * 容器上把该变量置 1；导出 SVG 不带 styles.css ⇒ 变量未定义 ⇒ 兜底 0 ⇒ 按钮
+ * **天然不出现在导出图**。
+ *
+ * **图标形状/填充/颜色也内联**（2026-09-28 第四轮，前三轮教训）：用户实机
+ * styles.css 长期滞留旧版（v2 特征在而颜色更新从未生效），任何只写在类规则里的
+ * 外观都不可靠 ⇒ mask 形状、currentColor 填充、基色全部进内联，按钮外观**零
+ * styles.css 依赖**。基色取 `--icon-color`（**Obsidian 原生图标按钮的取色变量**，
+ * 主题可独立于 --text-muted 定义它）→ `--text-muted` → 官方默认灰，三级兜底；
+ * 内联优先级高于任何非 !important 类规则，旧 styles.css 也压不住。
+ */
+const CODE_COPY_BUTTON_STYLES: Partial<CSSStyleDeclaration> & Record<string, string> = {
+	position: 'absolute',
+	top: '6px',
+	right: '6px',
+	width: '20px',
+	height: '20px',
+	padding: '0',
+	border: 'none',
+	cursor: 'pointer',
+	opacity: 'var(--tmm-code-copy-opacity, 0)',
+	color: 'var(--icon-color, var(--text-muted, #666666))',
+	backgroundColor: 'currentColor',
+	maskImage:
+		`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2' ry='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E")`,
+	maskRepeat: 'no-repeat',
+	maskPosition: 'center',
+	maskSize: '14px',
+};
+
 /** 行内数学段的占位类名（MathJax 替换后保留，供主题/调试定位） */
 const MATH_SEGMENT_CLASS = 'mindmap-node-inline-math';
 
@@ -172,8 +249,9 @@ type InlineTextStyle =
  * 轻标记 → 语义元素（与 Obsidian 阅读视图一致）。
  * `boldItalic`（`***粗斜***`）取 `strong` + 内联斜体：Obsidian 渲染为 strong+em
  * 嵌套，节点内只需视觉等价（字重 + 字形），单元素即可。
- * `math` 是**容器**而非轻标记：`<span>` 占位（字面 `$…$`），由注入的 `renderMath`
- * 异步替换为 MathJax 产物（见 InlineContentOptions.renderMath 与 buildMathElement）。
+ * `math` 是**容器**而非轻标记：`<span>` 占位（字面 `$…$` / 单行 `$$…$$`），由
+ * 注入的 `renderMath` 异步替换为 MathJax 产物（见 InlineContentOptions.renderMath
+ * 与 buildMathElement）。
  */
 const MARKUP_TAGS: Record<InlineTextStyle, string> = {
 	bold: 'strong',
@@ -212,18 +290,32 @@ export interface InlineContentOptions {
 	 */
 	isResolvedLink?: (linkpath: string) => boolean;
 	/**
-	 * 行内数学（`$…$`）的**异步渲染**注入（生产实现 = `platform/math-jax`）。
+	 * 数学（行内 `$…$` / 单行块级 `$$…$$`）的**异步渲染**注入
+	 * （生产实现 = `platform/math-jax`）。
 	 *
 	 * 本模块保持零 Obsidian 依赖（`loadMathJax` 不可在无运行时打包），故数学
-	 * 渲染作为能力注入：`buildMathElement` 先写**字面 `$…$` 占位**（即回退态），
-	 * 实现方在 MathJax 就绪后把 `holder` 内容替换为渲染产物。失败/未注入时
-	 * 占位原样保留——与「未闭合标记按字面」同一条安全口径。
+	 * 渲染作为能力注入：`buildMathElement` 先写**字面占位**（行内 `$…$` /
+	 * 块级 `$$…$$`，即回退态），实现方在 MathJax 就绪后把 `holder` 内容替换为
+	 * 渲染产物。失败/未注入时占位原样保留——与「未闭合标记按字面」同一条安全口径。
+	 *
+	 * `display` = 段模型的 display 标记（true → `tex2chtml` 的 `{ display: true }`，
+	 * 渲染为独立居中公式；实现方需原样透传给 MathJax 通道）。
 	 */
 	renderMath?: (
 		doc: InlineContentDocument,
 		tex: string,
 		holder: HTMLElement,
+		display: boolean,
 	) => void;
+	/**
+	 * **产物缓存查询**（可选，P4 尺寸同步）：返回已渲染产物的**克隆**，未命中 null。
+	 *
+	 * 命中时 `buildMathElement` **同步**放置产物、**不走** `renderMath`——引擎随后
+	 * 的离屏测量直接量到**真实宽高**，消除「按字面占位测量 → 替换后溢出」的窗口；
+	 * 且重建路径不再触发异步替换（无重排循环）。注入实现见
+	 * `platform/math-jax.getRenderedMathNode`（本模块不 import 该层）。
+	 */
+	getCachedMath?: (tex: string, display: boolean) => Node | null;
 }
 
 /** 行内段：渲染节点内联内容的最小单元（纯数据，可单测） */
@@ -244,6 +336,19 @@ export interface InlineSegment {
 	 * 那种情形下标记体的字面就是显示文本（text 字段已承载）。
 	 */
 	children?: InlineSegment[];
+	/**
+	 * 数学段的显示模式（仅 style === 'math'）：true = 单行 `$$…$$`（display /
+	 * 块级，渲染为独立居中公式），缺省 = 行内 `$…$`。该标记同时决定占位形态
+	 * 与 `renderMath` 注入面的 `display` 形参（见 buildMathElement）。
+	 */
+	display?: boolean;
+	/**
+	 * **围栏代码块**标记（仅 style === 'code' 且来自 fence 分支）：true = 块级
+	 * 轻量代码块（buildCodeBlockElement：底色盒 + 复制按钮），缺省 = 行内码
+	 * （`…` 单反引号）。与 `display` 同款纪律：**重建段对象时必须保留**，
+	 * 否则块级渲染会静默退化回行内码。
+	 */
+	block?: true;
 }
 
 /**
@@ -251,10 +356,32 @@ export interface InlineSegment {
  * `ESCAPED_MARKUP_RE` 的接管判据——分开写会出现「解释了这组、却按另一组触发接管」）。
  *
  * 依据官方帮助「Basic formatting syntax / Escaping Markdown Syntax」列的
- * `\*` `\_` `\#` `` \` `` `\|` `\~`，外加本模块额外解释的**高亮定界符** `=` 与
- * 反斜杠自身（CommonMark 允许转义任意 ASCII 标点，`\\` → `\`）。
+ * `\*` `\_` `\#` `` \` `` `\|` `\~`，外加本模块额外解释的**高亮定界符** `=`、
+ * **数学定界符** `$`（`\$x\$` 在 Obsidian 里显示字面 `$x$`、不触发数学渲染）
+ * 与反斜杠自身（CommonMark 允许转义任意 ASCII 标点，`\\` → `\`）。
  */
-const ESCAPABLE_CLASS = /[*_~=`#|\\]/.source;
+const ESCAPABLE_CLASS = /[*_~=`#|\\$]/.source;
+
+/**
+ * 数学定界符的匹配源（**单一来源**：MARKUP_RE 的数学备选分支与接管判据
+ * `INLINE_MATH_RE` 共用同一字符串——分成两处维护会漂移，本文件注释曾自认该风险）。
+ *
+ * 两支形态（**顺序即优先级：双美元写在单美元之前**，更长定界符优先）：
+ * - `mathBlock`：`$$…$$`（display / 块级数学）——内容**可跨行、可含单个 `$`**
+ *   （开 `$$` 找**最近**的 `$$` 闭合，对齐 Obsidian 阅读视图实测口径，见 K89：
+ *   `$$` 独占行的三行块 / 多行 vmatrix / `$$$x$$$`（tex = `$x`）都按此解析）；
+ *   开定界符后的空格/制表/换行**不阻断**配对（2026-09-27 B1：Obsidian 对
+ *   `$$ x=1 $$` 照常渲染为公式，去掉此前的「紧跟空格按字面」守卫——用户实测
+ *   该守卫让 `$$ f(x)=…` 整段不进数学通道，块内 `\\` 还被转义分支吃成单 `\`）；
+ * - `math`：行内 `$…$`——内容不跨行、不含 `$`，开侧仍拒绝紧空白（价签口径）。
+ * 两支同口径：闭后不得是数字（防 `$5 与 $6` 类价签误判）。转义 `\$` 由
+ * ESCAPABLE_CLASS 先行消费（escaped 分支排在数学之前），故 `\$x\$` 显示
+ * 字面 `$x$`、不触发数学。
+ */
+const MATH_SOURCE =
+	'\\$\\$(?<mathBlock>[\\s\\S]*?\\S[\\s\\S]*?)\\$\\$(?!\\d)' +
+	'|' +
+	'\\$(?!\\s)(?<math>[^$\\n]*?\\S)\\$(?!\\d)';
 
 /**
  * 行内语法的统一扫描正则（命名分组；备选顺序即优先级）。
@@ -263,9 +390,12 @@ const ESCAPABLE_CLASS = /[*_~=`#|\\]/.source;
  * 2. 行内代码 —— 定界符为 1..n 个反引号、**同长度闭合**（CommonMark 语义：
  *    `` ``a`b`` `` 允许内容含更短的反引号串）；内容按字面，内部不解释标记/转义；
  * 3. 转义 `\<可转义字符>` —— 消费反斜杠、按字面显示该字符（字符集见 ESCAPABLE_CLASS）；
- * 4. 行内数学 `$…$` —— 开 `$` 后不得紧跟空白、闭 `$` 前不得是空白、后不得是数字
- *    （Obsidian 数学扩展口径，防止 `$5 与 $6` 这类价签误判）；排在标记类之前，
- *    `$a*b*c$` 内的 `*` 不会被当斜体；
+ * 4. 数学（`MATH_SOURCE`，**双美元写在单美元之前**——更长定界符优先）：
+ *    4a. `$$…$$`（display / 块级，`mathBlock` 组；内容可跨行、可含单个 `$`——
+ *    开 `$$` 找最近 `$$` 闭合，对齐 Obsidian 实测口径）；
+ *    4b. 行内 `$…$`（`math` 组）。两支同口径：闭 `$` 前
+ *    不得是空白、后不得是数字（Obsidian 数学扩展口径，防止 `$5 与 $6` 价签误判）；
+ *    排在标记类之前，`$a*b*c$` 内的 `*` 不会被当斜体；
  * 5. `***粗斜***` / `___粗斜___`（组合字形，单独一支）；
  * 6. `**粗**` / `__粗__`、`~~删~~`、`==高亮==`、`*斜*` / `_斜_`。
  *
@@ -279,9 +409,10 @@ const ESCAPABLE_CLASS = /[*_~=`#|\\]/.source;
 const MARKUP_RE = new RegExp(
 	[
 		'(?<comment>%%[\\s\\S]*?%%)',
+		'(?<fence>```+)(?<fenceCode>[\\s\\S]*?)\\k<fence>',
 		'(?<ticks>`+)(?<code>(?:[^`\\n]|`(?!\\k<ticks>))+?)\\k<ticks>',
 		'\\\\(?<escaped>' + ESCAPABLE_CLASS + ')',
-		'\\$(?!\\s)(?<math>[^$\\n]*?\\S)\\$(?!\\d)',
+		MATH_SOURCE,
 		'\\*\\*\\*(?<boldItal>\\S(?:[^*\\n]*\\S)?)\\*\\*\\*',
 		'(?<![\\p{L}\\p{N}])___(?<boldItalU>\\S(?:[^_\\n]*\\S)?)___(?![\\p{L}\\p{N}])',
 		'\\*\\*(?<bold>\\S(?:[^*\\n]*\\S)?)\\*\\*',
@@ -301,8 +432,11 @@ const MARKUP_RE = new RegExp(
  */
 const MAX_MARKUP_DEPTH = 2;
 
-/** 行内数学的**接管判据**（与 MARKUP_RE 的 math 分支同一形态，分开写会漂移） */
-const INLINE_MATH_RE = /\$(?!\s)[^$\n]*?\S\$(?!\d)/;
+/**
+ * 数学的**接管判据**：行内 `$…$` 与单行块级 `$$…$$` 都命中。直接由
+ * `MATH_SOURCE` 构造，与 MARKUP_RE 的数学分支**同一来源**（分成两处写会漂移）。
+ */
+const INLINE_MATH_RE = new RegExp(MATH_SOURCE);
 
 /**
  * 轻标记/隐藏语法的**单遍扫描**（顺序即优先级，见 MARKUP_RE）。
@@ -326,12 +460,14 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 	 * 反复切断扫描（`\*a\*` → `*`、`a`、`*`），逐片入队会产出多个相邻文本节点。
 	 */
 	const pushPlain = (value: string): void => {
+		// prose 连续空格归一在此落地（代码/数学段不走本函数，见各分支）
+		const text = normalizeSpaces(value);
 		const last = out[out.length - 1];
 		if (last && last.style === undefined) {
-			out[out.length - 1] = { kind: 'text', text: last.text + value };
+			out[out.length - 1] = { kind: 'text', text: last.text + text };
 			return;
 		}
-		out.push({ kind: 'text', text: value });
+		out.push({ kind: 'text', text });
 	};
 	let cursor = 0;
 	// **按位置驱动**（每轮把 lastIndex 显式设为 cursor）：MARKUP_RE 是模块级共享
@@ -356,11 +492,29 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 		const groups = match.groups ?? {};
 		if (groups.comment !== undefined) {
 			// 注释：整段不进显示（连定界符一起吞掉）
+		} else if (groups.fenceCode !== undefined) {
+			// 多行围栏代码块（```+ … ``` 同长度闭合，可跨行）：**块级代码段**
+			// （block 标记 → buildCodeBlockElement：底色盒 + 复制按钮，轻量无高亮）。
+			// 首行信息行（```js）在段内剥掉——它不进显示与复制（splitFenceInfo）；
+			// 代码原文（缩进/空行）逐字保留（归一化不作用于本分支）。
+			// 同时使围栏内的 `$$` 被本分支先行消费、不被块级数学误配对（K89）
+			const { code } = splitFenceInfo(groups.fenceCode);
+			out.push({ kind: 'text', text: code, style: 'code', block: true });
 		} else if (groups.code !== undefined) {
+			// 行内码：逐字保留（连续空格是内容；阅读视图同为字面）
 			out.push({ kind: 'text', text: groups.code, style: 'code' });
 		} else if (groups.escaped !== undefined) {
 			// 转义：消费反斜杠，按字面显示该字符（无样式）
 			pushPlain(groups.escaped);
+		} else if (groups.mathBlock !== undefined) {
+			// 单行 `$$…$$`（display / 块级）：定界符不进显示文本；display 标记
+			// 决定占位形态（`$$…$$`）与渲染通道（tex2chtml 的 display 选项）
+			out.push({
+				kind: 'text',
+				text: groups.mathBlock,
+				style: 'math',
+				display: true,
+			});
 		} else if (groups.math !== undefined) {
 			// 行内数学：定界符不进显示文本（buildMathElement 的回退态自行补回）
 			out.push({ kind: 'text', text: groups.math, style: 'math' });
@@ -375,16 +529,19 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 							: groups.mark !== undefined
 								? 'highlight'
 								: 'italic';
-			const body =
+			// 标记体是 prose：先归一（children 在归一后的文本上递归，与旧口径
+			// 一致；体**内**的代码/数学子段仍各自保原文）
+			const body = normalizeSpaces(
 				groups.boldItal ??
-				groups.boldItalU ??
-				groups.bold ??
-				groups.boldU ??
-				groups.strike ??
-				groups.mark ??
-				groups.ital ??
-				groups.italU ??
-				'';
+					groups.boldItalU ??
+					groups.bold ??
+					groups.boldU ??
+					groups.strike ??
+					groups.mark ??
+					groups.ital ??
+					groups.italU ??
+					'',
+			);
 			// 官方「combine them」：标记体内再扫一层（代码内不进来——code 分支
 			// 先行；转义/注释在子层照常生效）。子层全部无样式时不挂 children
 			// ——那种情形标记体的字面就是显示文本，挂了徒增遍历。
@@ -417,6 +574,38 @@ const ESCAPED_MARKUP_RE = new RegExp('\\\\' + ESCAPABLE_CLASS);
 
 /** 行内注释（`%%…%%`，可跨行；未闭合不算） */
 const INLINE_COMMENT_RE = /%%[\s\S]*?%%/;
+
+/**
+ * prose 的连续空格归一（HTML 折叠空白语义，原文由 mdRaw 保真）。
+ *
+ * **只作用于散文文本**：代码块 / 数学段的空白是内容（缩进、对齐），必须原文
+ * 保留——故本归一化**下沉到 splitMarkedText 的各分支**（空白 prose 与标记体），
+ * 而不是切分前对全文预归一（那是 2026-09-28 前的旧序，会把代码缩进压扁）。
+ */
+function normalizeSpaces(value: string): string {
+	return value.replace(/[ \t]{2,}/g, ' ');
+}
+
+/**
+ * 围栏内容 → `{ lang, code }`：剥离首行**信息行**（```` ```js ```` 的 `js`）。
+ *
+ * CommonMark 口径：开围栏所在行的行终止符不属于内容——即有 `\n` 时内容一律从
+ * 其**之后**开始；首个 `\n` 之前的内容是信息行（无 lang 时为空串）。两种形态
+ * （**不改 fence 正则**，零回归面）：
+ * - 含 `\n` → `lang = 首行 trim`（容忍 ```` ``` js ```` 写法）、`code = 余下原文`
+ *   （缩进/空行原样；首尾空行由 trimEdges 裁）；
+ * - 不含 `\n`（单行 ```` ```code``` ````）→ 整体即代码、无 lang（既有行为）。
+ */
+function splitFenceInfo(fenceCode: string): { lang: string; code: string } {
+	const nl = fenceCode.indexOf('\n');
+	if (nl < 0) {
+		return { lang: '', code: fenceCode };
+	}
+	return {
+		lang: fenceCode.slice(0, nl).trim(),
+		code: fenceCode.slice(nl + 1),
+	};
+}
 
 /**
  * 段序列缓存条目：段序列 + **接管判定**的惰性结果。
@@ -530,16 +719,21 @@ function buildInlineSegmentsUncached(raw: string): InlineSegment[] {
 	const segments: InlineSegment[] = [];
 	let cursor = 0;
 	const pushText = (text: string): void => {
-		const normalized = text.replace(/[ \t]{2,}/g, ' ');
-		if (!normalized) {
+		if (!text) {
 			return;
 		}
-		// 轻标记在文本段内部切分（标记符不进显示文本，原文由 mdRaw 保真）
-		for (const piece of splitMarkedText(normalized)) {
+		// 轻标记在文本段内部切分（标记符不进显示文本，原文由 mdRaw 保真）。
+		// ⚠ 这里**不做**连续空格归一：归一化已下沉到 splitMarkedText 的 prose
+		// 分支——预归一化会波及其中的代码块/数学段（缩进被压扁，2026-09-28 修）
+		for (const piece of splitMarkedText(text)) {
 			segments.push({
 				kind: 'text',
 				text: piece.text,
 				...(piece.style ? { style: piece.style } : {}),
+				// display/block 只在对应段型上出现（重建段对象时必须保留，
+				// 否则 buildMathElement 拿到"行内形态"、块级代码退化为行内码）
+				...(piece.display ? { display: true } : {}),
+				...(piece.block ? { block: true } : {}),
 				...(piece.children ? { children: piece.children } : {}),
 			});
 		}
@@ -610,14 +804,24 @@ function isLinkEmbed(tok: InlineToken): boolean {
 	return tok.kind === 'wikiImg' && !isRenderableImageTarget(tok.target);
 }
 
-/** 剔除首尾空白段（并 trim 首尾文本段的边缘空白），不修改中间内容 */
+/**
+ * 剔除首尾空白段（并 trim 首尾文本段的边缘空白），不修改中间内容。
+ *
+ * **代码块段（block）例外**：只裁边缘**空行**（`\n`），不裁空格/制表——首行前
+ * 的缩进与行内对齐是代码内容（```` ```js ```` 块首行常以缩进开头；`^\s+` 会
+ * 把 4 空格缩进连同换行一起吞掉，2026-09-28 修）。
+ */
 function trimEdges(segments: InlineSegment[]): InlineSegment[] {
+	const leadingPattern = (segment: InlineSegment): RegExp =>
+		segment.style === 'code' && segment.block === true ? /^\n+/ : /^\s+/;
+	const trailingPattern = (segment: InlineSegment): RegExp =>
+		segment.style === 'code' && segment.block === true ? /\n+$/ : /\s+$/;
 	while (segments.length > 0) {
 		const first = segments[0]!;
 		if (first.kind !== 'text') {
 			break;
 		}
-		const trimmed = first.text.replace(/^\s+/, '');
+		const trimmed = first.text.replace(leadingPattern(first), '');
 		if (trimmed) {
 			segments[0] = { ...first, text: trimmed };
 			break;
@@ -629,7 +833,7 @@ function trimEdges(segments: InlineSegment[]): InlineSegment[] {
 		if (last.kind !== 'text') {
 			break;
 		}
-		const trimmed = last.text.replace(/\s+$/, '');
+		const trimmed = last.text.replace(trailingPattern(last), '');
 		if (trimmed) {
 			segments[segments.length - 1] = { ...last, text: trimmed };
 			break;
@@ -667,6 +871,7 @@ export function buildInlineNodeContent(
 			// 用户拖过左右边框时按引擎写入的宽度渲染（未拖过 → null → 500 折行上限）
 			explicitWidth: customTextWidthOf(node),
 			options,
+			lang,
 		},
 	);
 }
@@ -716,7 +921,7 @@ function resolveSelfDrawSource(
 	// ① 有链接/轻标记段（可点 / 混合字形，SVG 单串文本表达不了）；
 	// ② 文本超过展示上限（**绝不能**交给引擎：其换行是逐字符二次复杂度，见
 	//    MAX_INLINE_CONTENT_CHARS 的实测）；
-	// ③ 有**隐藏/异步语法**需消费（`\*` 转义、`%%注释%%`、行内数学 `$…$`）——
+	// ③ 有**隐藏/异步语法**需消费（`\*` 转义、`%%注释%%`、数学 `$…$` / `$$…$$`）——
 	//    它们的正确显示同样只有自绘能做到（数学要挂 MathJax 产物）。注释仅在
 	//    **去掉后仍有可见内容**时才算（否则会渲染出空节点，比原样显示注释更糟，
 	//    故让引擎按字面显示）；数学以字面占位、异步替换，无该风险。
@@ -756,9 +961,15 @@ function needsHiddenSyntax(
 	if (ESCAPED_MARKUP_RE.test(raw)) {
 		return true;
 	}
-	// 行内数学：只有自绘能挂 MathJax 产物（引擎 SVG 文本恒为字面 `$…$`）。
-	// 接管后仍以字面占位（见 buildMathElement），渲染失败也安全回落。
+	// 数学（行内 `$…$` / 单行块级 `$$…$$`）：只有自绘能挂 MathJax 产物
+	//（引擎 SVG 文本恒为字面 `$…$`）。接管后仍以字面占位（见 buildMathElement），
+	// 渲染失败也安全回落。
 	if (INLINE_MATH_RE.test(raw)) {
+		return true;
+	}
+	// 代码块（fence 段）：只有自绘能渲染为块级盒子 + 复制按钮（引擎 SVG 文本
+	// 恒为字面围栏）。纯同步构建零依赖，接管成本仅一次 DOM 装配。
+	if (segments.some((segment) => segment.style === 'code' && segment.block === true)) {
 		return true;
 	}
 	if (!INLINE_COMMENT_RE.test(raw)) {
@@ -852,6 +1063,8 @@ interface BuildContentParams {
 	explicitWidth: number | null;
 	/** 外部解析依赖（未解析链接弱化，见 InlineContentOptions） */
 	options: InlineContentOptions;
+	/** 界面语言：代码块复制按钮的 aria-label 等构建期文案（见 buildCodeBlockElement） */
+	lang: Language;
 }
 
 /**
@@ -918,7 +1131,7 @@ function buildContentElement(
 	}
 	for (const segment of segments) {
 		if (segment.kind === 'text') {
-			box.appendChild(buildTextElement(doc, segment, params.options));
+			box.appendChild(buildTextElement(doc, segment, params));
 			continue;
 		}
 		box.appendChild(buildAnchor(doc, segment, params.options));
@@ -929,15 +1142,19 @@ function buildContentElement(
 /**
  * 文本段 → 节点：无样式 = 纯文本；带轻标记时包一层语义元素（视觉增强，
  * 不影响回写）。`children` 存在时递归构建内层（一层嵌套，见 MAX_MARKUP_DEPTH）；
- * `math` 样式走 `buildMathElement`（字面占位 + 注入的异步 MathJax 渲染）。
+ * `math` 样式走 `buildMathElement`（字面占位 + 注入的异步 MathJax 渲染）；
+ * `code + block` 走 `buildCodeBlockElement`（块级轻量代码块 + 复制按钮）。
  */
 function buildTextElement(
 	doc: InlineContentDocument,
 	segment: InlineSegment,
-	options: InlineContentOptions,
+	params: BuildContentParams,
 ): Node {
 	if (segment.style === 'math') {
-		return buildMathElement(doc, segment, options);
+		return buildMathElement(doc, segment, params.options);
+	}
+	if (segment.style === 'code' && segment.block === true) {
+		return buildCodeBlockElement(doc, segment, params.lang);
 	}
 	if (!segment.style) {
 		return doc.createTextNode(segment.text);
@@ -946,7 +1163,7 @@ function buildTextElement(
 	Object.assign(wrapper.style, MARKUP_STYLES[segment.style]);
 	if (segment.children && segment.children.length > 0) {
 		for (const child of segment.children) {
-			wrapper.appendChild(buildTextElement(doc, child, options));
+			wrapper.appendChild(buildTextElement(doc, child, params));
 		}
 		return wrapper;
 	}
@@ -955,10 +1172,51 @@ function buildTextElement(
 }
 
 /**
- * 行内数学段（`$…$`）：先写**字面 `$…$` 占位**——占位即回退态，MathJax 不可用、
- * 渲染抛错、导出快照（离屏文档）时都停在这份字面显示，与「未闭合标记按字面」
- * 同一条安全口径。渲染由注入的 `options.renderMath` 异步完成（生产实现见
- * `platform/math-jax`；本模块不 import Obsidian，保持无运行时可打包/可单测）。
+ * 块级代码块段（围栏，`block` 标记）：轻量渲染 + Obsidian 同款复制按钮。
+ *
+ * 结构：`div.tmm-codeblock`（底色盒）>`button.tmm-code-copy`（绝对定位，
+ * 悬停显隐见 CODE_COPY_BUTTON_STYLES）+ `pre > code`（原文：换行/缩进逐字）。
+ *
+ * 「轻量」= 不载入 Prism、不做高亮：底色/等宽/滚动（样式见 CODE_BLOCK_*）；
+ * **点击行为不在本函数**——视图层经引擎 `node_click` 委托命中选择器
+ * （features/node-codeblock.ts），本模块保持零 Obsidian 依赖、零监听、可单测。
+ * 复制内容 = `segment.text`（信息行已在 splitFenceInfo 剥离）。
+ */
+function buildCodeBlockElement(
+	doc: InlineContentDocument,
+	segment: InlineSegment,
+	lang: Language,
+): HTMLElement {
+	const block = doc.createElement('div');
+	block.className = CODE_BLOCK_CLASS;
+	Object.assign(block.style, CODE_BLOCK_STYLES);
+	const button = doc.createElement('button');
+	button.className = CODE_COPY_CLASS;
+	button.setAttribute('aria-label', t(lang, 'codeBlock.copy'));
+	// 原生悬停提示（Obsidian 用自家 tooltip 体系；foreignObject 内取不到，
+	// title 是零依赖近似——与 aria-label 同文案）
+	button.setAttribute('title', t(lang, 'codeBlock.copy'));
+	// **复制内容在构建期定死**（data-code）：视图层点击处理直接读它，不依赖
+	// closest/querySelector 的 DOM 链——「复制到第一行」这类 DOM 读取脆弱性
+	// 从根上消除；文本 = 已剥信息行的代码原文（与显示一致）
+	button.setAttribute('data-code', segment.text);
+	Object.assign(button.style, CODE_COPY_BUTTON_STYLES);
+	const pre = doc.createElement('pre');
+	Object.assign(pre.style, CODE_BLOCK_PRE_STYLES);
+	const code = doc.createElement('code');
+	code.appendChild(doc.createTextNode(segment.text));
+	pre.appendChild(code);
+	block.appendChild(button);
+	block.appendChild(pre);
+	return block;
+}
+
+/**
+ * 数学段（行内 `$…$` / 单行块级 `$$…$$`）：先写**与原文同形的字面占位**——
+ * 占位即回退态，MathJax 不可用、渲染抛错、导出快照（离屏文档）时都停在这份
+ * 字面显示，与「未闭合标记按字面」同一条安全口径。渲染由注入的
+ * `options.renderMath` 异步完成（生产实现见 `platform/math-jax`；本模块不
+ * import Obsidian，保持无运行时可打包/可单测）。
  */
 function buildMathElement(
 	doc: InlineContentDocument,
@@ -967,8 +1225,19 @@ function buildMathElement(
 ): HTMLElement {
 	const holder = doc.createElement(MARKUP_TAGS.math);
 	holder.className = MATH_SEGMENT_CLASS;
-	holder.textContent = `$${segment.text}$`;
-	options.renderMath?.(doc, segment.text, holder);
+	const display = segment.display === true;
+	// 占位与原文定界符同形：行内 `$…$` / 单行块级 `$$…$$`
+	holder.textContent = display ? `$$${segment.text}$$` : `$${segment.text}$`;
+	// 产物缓存命中（同一 TeX 已渲染过）：**同步**放入克隆产物——引擎随后的
+	// 离屏测量直接量到真实宽高（不存在「按占位测量 → 替换后溢出」的窗口），
+	// 且不触发异步替换 ⇒ 由重排引发的重建不会再次触发重排（无循环）
+	const cached = options.getCachedMath?.(segment.text, display);
+	if (cached) {
+		holder.replaceChildren(cached);
+		holder.classList.add(MATH_RENDERED_HOLDER_CLASS);
+		return holder;
+	}
+	options.renderMath?.(doc, segment.text, holder, display);
 	return holder;
 }
 

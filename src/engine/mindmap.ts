@@ -108,6 +108,19 @@ export interface CreateMindMapOptions {
 				lang: Language,
 		  ) => HTMLElement | null)
 		| null;
+	/**
+	 * **导出 SVG 后处理**（可选）：引擎导出 PNG/SVG/PDF 时对**克隆的** SVG
+	 * 调用，须原样返回收到的同一对象（vendor `opt.handleBeingExportSvg`，
+	 * 未入 d.cts，经 Object.assign 注入，与 createNodePrefixContent 同口径）。
+	 *
+	 * 用途：把只存在于**文档级**的样式注入导出 SVG——MathJax CHTML 的逐字符
+	 * 字形依赖 `<style id="MJX-CHTML-styles">` 的 `mjx-c…::before` 规则，
+	 * 而引擎导出只注入自身 CSS，导致导出图中数学元素无内容、渲染为空白
+	 * （2026-09-27 用户实测：导出 PNG 里 `$E=mc^2$` 节点空白）。
+	 *
+	 * `svg` 为 @svgdotjs/svg.js 元素对象（原生节点在 `.node`）。
+	 */
+	handleExportSvg?: ((svg: unknown) => unknown) | null;
 }
 
 /** 自绘节点内容可用的主题样式（引擎 style 合并结果，解析收口在 mindmap.ts） */
@@ -381,6 +394,12 @@ export function createMindMap(
 				// createNodePrefixContent 口径）。
 				renderAsync:
 					options.renderAsync ?? nodeCount >= RENDER_ASYNC_NODE_THRESHOLD,
+				// 导出 SVG 后处理：把文档级 MathJax 样式注入克隆 SVG（契约与背景见
+				// CreateMindMapOptions.handleExportSvg）；字段未入 d.cts，经
+				// Object.assign 注入（同 createNodePrefixContent 口径）。
+				// ⚠ 新增注入键请**并入现有段**：Object.assign 的类型重载只覆盖到
+				// 3 个 source，第 4 段起返回 `any` → 触发 no-unsafe-argument。
+				handleBeingExportSvg: options.handleExportSvg ?? null,
 			},
 		),
 	);
@@ -1361,6 +1380,59 @@ export function refreshNodeCustomContent(
 	} catch (error) {
 		console.error('重建节点自绘内容失败', error);
 	}
+}
+
+/** 「传入对象不可重排」告警去重（同一根因整会话只提示一次） */
+let refreshMissingReRenderWarned = false;
+
+/**
+ * **批量**重建多个节点的自绘内容（同 `refreshNodeCustomContent` 语义）。
+ *
+ * 用于「数学异步替换定稿后同步节点尺寸」（P4，2026-09-27）：含数学的节点可能
+ * 在同一帧内成批定稿（一次打开多个公式），若逐个走 `refreshNodeCustomContent`
+ * 会各触发一次**全树** `render()`。此处逐节点 `reRender(['custom'])`、
+ * **最后一次** `render()`——N 个节点 1 次重排。
+ *
+ * 收敛性：重建会重新调用 `customCreateNodeContent` → `buildMathElement`；
+ * 因 `platform/math-jax` 的产物缓存已命中（定稿即入缓存），重建路径是**同步**
+ * 放置产物、**不再触发异步替换**，故不会再回调重排（无循环）。
+ *
+ * ⚠ `reRender` 缺失时**显式告警**（K85 ① 教训：静默跳过会让功能以无痕方式
+ * 退化）。历史事故（K88）：调用方曾传入**预测量轻量代理对象**（只有
+ * `nodeData`/`getData`，无 `reRender`）——可选链静默 no-op，数学定稿后尺寸
+ * 永不同步（实机 512/655 永不修复）。调用方应先解析为真实 `MindMapNode`
+ * （如视图层用 `findNodeByDom`）。
+ */
+export function refreshNodesCustomContent(
+	mindMap: MindMap | null,
+	nodes: readonly MindMapNode[],
+): void {
+	if (!mindMap || nodes.length === 0) {
+		return;
+	}
+	for (const node of nodes) {
+		try {
+			const target = node as unknown as {
+				reRender?: (
+					keys: string[],
+					params: { ignoreUpdateCustomTextWidth: boolean },
+				) => void;
+			};
+			if (typeof target.reRender !== 'function') {
+				if (!refreshMissingReRenderWarned) {
+					refreshMissingReRenderWarned = true;
+					console.warn(
+						'MindMap Studio：节点不支持自绘重排（reRender 缺失），跳过尺寸同步',
+					);
+				}
+				continue;
+			}
+			target.reRender(['custom'], { ignoreUpdateCustomTextWidth: true });
+		} catch (error) {
+			console.error('重建节点自绘内容失败', error);
+		}
+	}
+	mindMap.render();
 }
 
 /**

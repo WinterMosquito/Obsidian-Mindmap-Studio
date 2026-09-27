@@ -13,11 +13,18 @@
 import { type EventRef, FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import { Language, t, tf } from '../core/i18n';
 import type { TranslationKey } from '../core/i18n';
-import { renderMathWithMathJax } from '../platform/math-jax';
+import {
+	getRenderedMathNode,
+	renderMathWithMathJax,
+} from '../platform/math-jax';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
-import type { MindMap } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import { notifyError } from '../core/errors';
-import { applyImageSizeCorrectionsToEngine } from '../engine/mindmap';
+import {
+	applyImageSizeCorrectionsToEngine,
+	findNodeByDom,
+	refreshNodesCustomContent,
+} from '../engine/mindmap';
 import {
 	collectImageSizeCorrections,
 	ensureDefaultImageSizes,
@@ -25,6 +32,7 @@ import {
 } from '../media/images-path';
 import { openAsMarkdown } from '../markdown/md-open';
 import { registerWikilinkInteractions } from './view-wikilink';
+import { registerCodeBlockInteractions } from './node-codeblock';
 import { buildInlineNodeContent } from './node-inline-content';
 import {
 	setupCanvasQuickCreate,
@@ -206,6 +214,36 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	private mdDocumentMode = false;
 
+	/**
+	 * 数学定稿（替换成功）后待同步尺寸的 **holder**（P4，2026-09-27；K88 修正）。
+	 *
+	 * ⚠ 为什么存 holder 而不是构建期捕获的 node：节点内容可能由引擎**预测量**
+	 * 路径构建（vendor 补丁 5 的轻量代理对象——只有 `nodeData`/`getData`，没有
+	 * `reRender`），A2 元素复用让同一内容进入真实节点 ⇒ 闭包里的 node 是代理 ⇒
+	 * `reRender?.()` 静默 no-op ⇒ 尺寸永不同步（实机复现：512px 外框 / 655px
+	 * 内容，29 次回调全部收到代理、永不修复）。故批次执行时经 `findNodeByDom`
+	 * 从 holder 反查**真实** MindMapNode 再重排。
+	 *
+	 * 合并到一次批量重排（`refreshNodesCustomContent`）：一次打开多个公式时
+	 * 每段都会定稿，逐个重排会各触发一次全树 render（本字段是性能护栏）。
+	 */
+	private pendingMathRemeasure: Set<HTMLElement> | null = null;
+
+	/**
+	 * 已成功解析并同步过的**真实节点**（**不清空**）。
+	 *
+	 * 用途：MathJax 字体是**分批**加载的（`document.fonts` 的 `loadingdone` 会
+	 * 多次触发）；首批就绪时的测量可能在后续批次变大——内容多的节点尤甚
+	 * （实机实测：655px 内容 / 512px 外框）。字体每就绪一批就再同步一次。
+	 */
+	private readonly mathRemeasureNodes = new Set<MindMapNode>();
+
+	/** 字体就绪监听只装一次（视图作用域，随 `register` 注销） */
+	private mathFontsHookInstalled = false;
+
+	/** 「定稿 holder 未能解析归属节点」告警去重（同一根因只提示一次） */
+	private mathRemeasureUnresolvedWarned = false;
+
 	/** 引擎实例（view-* 模块经 context 只读访问） */
 	get mindMap(): MindMap | null {
 		return this.engine.mindMap;
@@ -219,6 +257,92 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/** 当前文件是否为 .mindmap.md 文档模式（由文档加载锁定） */
 	isMdDocument(): boolean {
 		return this.mdDocumentMode;
+	}
+
+	/**
+	 * 登记「数学定稿后需重测该节点尺寸」（P4，2026-09-27；holder 入口见 K88）。
+	 *
+	 * 背景：引擎的内容测量是**同步**的（构建时按字面占位量高），而 MathJax 替换
+	 * 是**异步**的——不重测就会出现「块级公式只占一行高度、内容溢出」（用户实测）。
+	 * 定稿后重建该节点内容：此时产物缓存已命中（`buildMathElement` **同步**放置
+	 * 产物），引擎量到的是**真实宽高**。
+	 *
+	 * 同帧多段定稿合并为一次批量重排（`window.setTimeout(0)`；不用 rAF——后台/
+	 * 隐藏窗口会被节流）。
+	 */
+	private scheduleMathRemeasure(holder: HTMLElement): void {
+		if (!this.pendingMathRemeasure) {
+			this.pendingMathRemeasure = new Set<HTMLElement>();
+			window.setTimeout(() => {
+				const holders = this.pendingMathRemeasure;
+				this.pendingMathRemeasure = null;
+				this.flushMathRemeasure(holders ? Array.from(holders) : []);
+			}, 0);
+		}
+		this.pendingMathRemeasure.add(holder);
+		this.installMathFontsHook();
+	}
+
+	/**
+	 * 批次执行：holder → 真实 MindMapNode（`findNodeByDom`）→ 批量重排。
+	 *
+	 * 解析失败（holder 已脱离 / 引擎重建中）**显式告警一次**并跳过该段——
+	 * 静默跳过会让「尺寸不同步」以无痕方式退化（K85 ① 教训）。
+	 */
+	private flushMathRemeasure(holders: readonly HTMLElement[]): void {
+		const nodes: MindMapNode[] = [];
+		for (const holder of holders) {
+			const node = findNodeByDom(this.mindMap, holder);
+			if (!node) {
+				if (!this.mathRemeasureUnresolvedWarned) {
+					this.mathRemeasureUnresolvedWarned = true;
+					console.warn(
+						'MindMap Studio：数学节点尺寸同步未命中归属节点，内容可能被裁剪',
+					);
+				}
+				continue;
+			}
+			nodes.push(node);
+			this.mathRemeasureNodes.add(node);
+		}
+		if (nodes.length > 0) {
+			refreshNodesCustomContent(this.mindMap, nodes);
+		}
+	}
+
+	/**
+	 * 字体每就绪一批就把已同步的数学节点**再同步一次**：字体数据到位后同一
+	 * TeX 的产物会更高（多行内容尤甚），首批测量可能偏小。
+	 */
+	private remeasureSettledMathNodes(): void {
+		const nodes = Array.from(this.mathRemeasureNodes);
+		if (nodes.length > 0) {
+			refreshNodesCustomContent(this.mindMap, nodes);
+		}
+	}
+
+	/** 一次性装配字体就绪监听（`loadingdone` 会随字体分批多次触发） */
+	private installMathFontsHook(): void {
+		if (this.mathFontsHookInstalled) {
+			return;
+		}
+		this.mathFontsHookInstalled = true;
+		const fonts = (
+			window.document as unknown as {
+				fonts?: {
+					addEventListener?: (type: string, listener: () => void) => void;
+					removeEventListener?: (type: string, listener: () => void) => void;
+				};
+			}
+		).fonts;
+		if (!fonts?.addEventListener) {
+			return;
+		}
+		const onFontsLoaded = (): void => this.remeasureSettledMathNodes();
+		fonts.addEventListener('loadingdone', onFontsLoaded);
+		this.register(() => {
+			fonts.removeEventListener?.('loadingdone', onFontsLoaded);
+		});
 	}
 
 	constructor(leaf: WorkspaceLeaf, plugin: ViewPluginContext) {
@@ -281,10 +405,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 					// ——node-inline-content 不接触 Obsidian API（见 InlineContentOptions）
 					isResolvedLink: (linkpath) =>
 						isResolvedWikiLinkpath(this, linkpath),
-					// 行内数学 `$…$`：官方 loadMathJax 通道（platform/math-jax，
-					// 字面占位 + 异步替换，失败安全回落字面）
-					renderMath: (_doc, tex, holder) =>
-						renderMathWithMathJax(tex, holder),
+					// 数学（`$…$` / 单行 `$$…$$`）：官方 loadMathJax 通道
+					//（platform/math-jax，字面占位 + 异步替换，失败安全回落字面）
+					// 定稿回调（P4）：**携带 holder**——批次执行时经 findNodeByDom
+					// 解析真实节点再重排（构建期闭包可能持有预测量代理，见 K88）
+					renderMath: (_doc, tex, holder, display) =>
+						renderMathWithMathJax(tex, holder, display, (settledHolder) =>
+							this.scheduleMathRemeasure(settledHolder),
+						),
+					// 产物缓存：重建路径同步放置（引擎测到真实宽高，且无重排循环）
+					getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
 				});
 			},
 			onRootDataChanged: () => {
@@ -308,6 +438,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				setupPasteHandler(this);
 				setupContextMenu(this);
 				registerWikilinkInteractions(this);
+				// 节点内代码块的复制按钮（悬停显形 → 点击复制 → ✓ 反馈）
+				registerCodeBlockInteractions(this);
 				// 画布视口手势（Ctrl+滚轮缩放 / 滚轮平移 / 中键拖）：对齐官方 Canvas
 				setupViewportGestures(this);
 				// 双击画布空白 → 在根节点下新建（官方 Canvas「双击画布新建卡片」）

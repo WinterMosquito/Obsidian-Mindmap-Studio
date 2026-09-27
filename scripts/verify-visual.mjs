@@ -17,7 +17,8 @@
  *   ——合成的 click 事件经引擎 `node_click` 派发后，`event.target` 必须就是锚点本体
  *   且落在节点 group 内（= view-wikilink.findAnchorInNode 的两个前置判据），
  *   `data-href` 即锚点携带的原始 linkpath；`**重点**` 必须渲染为 `<strong>`；
- *   纯文本节点必须仍走引擎默认 SVG 文本；
+ *   纯文本节点必须仍走引擎默认 SVG 文本；围栏代码块渲染为 `.tmm-codeblock`
+ *   块级结构（pre 原文：信息行剥离、缩进保留；复制按钮点击与锚点同款命中契约）；
  * - 覆盖（导出保真）：导出 SVG（`map.getSvgData().svgHTML`）里自绘根元素 / 锚点 /
  *   轻标记元素必须带**内联样式**——引擎导出只注入自身 CSS 与 header/footer 的
  *   cssText，插件 styles.css 不在导出图里生效；
@@ -164,6 +165,34 @@ const SCENARIOS = [
 			mdDerivedText: '高亮 与 粗 与 *转义* 与 未解析的笔记',
 			mdRaw:
 				'==高亮== 与 __粗__ 与 \\*转义\\* 与 [[未解析的笔记]] %%备注%%',
+		},
+		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0 },
+	},
+	{
+		name: 'math',
+		label: '数学：行内 $…$ 与单行 $$…$$（display）——占位落在 foreignObject 内',
+		data: {
+			// 2026-09-27（G4）：数学段必须被自绘接管（引擎 SVG 文本恒为字面）。
+			// 单行 `$$…$$` 渲染为 display 数学；无头页没有真 MathJax（替换链路由
+			// tests/math-jax.test.ts 的假件与实机 CDP 断言覆盖），此处锁定
+			// 「识别 → 占位（与原文定界符同形）→ 接管」三段确定性行为。
+			text: '方程 $E=mc^2$、$x$ 与 $$y^2$$',
+			mdDerivedText: '方程 $E=mc^2$、$x$ 与 $$y^2$$',
+			mdRaw: '方程 $E=mc^2$、$x$ 与 $$y^2$$',
+		},
+		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0 },
+	},
+	{
+		name: 'codeblock',
+		label: '代码块：围栏块级轻量渲染（底色盒 / pre 原文 / 复制按钮）',
+		data: {
+			// 2026-09-28：围栏代码块必须被自绘接管（引擎 SVG 文本恒为字面围栏）。
+			// 无头页锁定「识别 → 结构（.tmm-codeblock + pre/code + 复制按钮）→
+			// 原文保真（信息行剥离、缩进保留）」；复制写剪贴板链路由
+			// tests/node-codeblock.test.ts 与视图层委托覆盖，此处不涉及剪贴板。
+			text: '示例\n```js\nconst a = 1;\n  echo hi\n```',
+			mdDerivedText: '示例\n```js\nconst a = 1;\n  echo hi\n```',
+			mdRaw: '示例\n```js\nconst a = 1;\n  echo hi\n```',
 		},
 		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0 },
 	},
@@ -372,6 +401,12 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		'\\',
 		'/',
 	);
+	const codeblockModule = join(
+		ROOT,
+		'src',
+		'features',
+		'node-codeblock.ts',
+	).replaceAll('\\', '/');
 	const serialized = JSON.stringify(
 		SCENARIOS.map(({ name, data }) => ({ name, data })),
 		null,
@@ -382,6 +417,7 @@ import { ensureDefaultImageSizes } from ${JSON.stringify(imagesPathModule)};
 import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
 import { buildInlineNodeContent, segmentCacheStats } from ${JSON.stringify(inlineContentModule)};
 import { gateNodeWidthHandles } from ${JSON.stringify(nodeWidthModule)};
+import { registerCodeBlockInteractions } from ${JSON.stringify(codeblockModule)};
 
 const scenarios = ${serialized};
 
@@ -847,6 +883,72 @@ window.setTimeout(() => {
 			? (syntaxHolder.querySelector('.mindmap-node-inline-content')?.textContent ??
 				'')
 			: '';
+		// 行内数学场景（2026-09-27）：占位 span 必须在 foreignObject 内、文本为字面
+		// $…$ 占位（识别 + 占位 + 接管三段；MathJax 替换链路由单测与实机断言覆盖）
+		const mathHolder = document.getElementById('map-math');
+		const mathSpans = mathHolder
+			? mathHolder.querySelectorAll('foreignObject .mindmap-node-inline-math')
+			: [];
+		// 代码块场景（2026-09-28）：块级结构 + 原文保真 + 复制按钮点击契约
+		const codeHolder = document.getElementById('map-codeblock');
+		const codeBlock = codeHolder
+			? codeHolder.querySelector('foreignObject .tmm-codeblock')
+			: null;
+		const codeCopyButton = codeBlock
+			? codeBlock.querySelector('.tmm-code-copy')
+			: null;
+		const codeMap = scenarioMaps.codeblock;
+		let codeClick = null;
+		// 复制端到端：桩剪贴板 + **真实视图层处理器**（node-codeblock 注册，与
+		// 生产 view.ts 同一入口）——点击按钮后捕获 writeText 实参，锁定
+		// 「复制内容 = 完整代码文本（不含围栏与信息行）」
+		let copiedCode = null;
+		try {
+			Object.defineProperty(navigator, 'clipboard', {
+				configurable: true,
+				value: {
+					writeText: async (text) => {
+						copiedCode = text;
+					},
+				},
+			});
+		} catch {
+			// 桩失败：复制断言降级跳过（copiedCode 保持 null）
+		}
+		if (codeMap && typeof codeMap.on === 'function') {
+			// 与锚点同款契约：合成 click 经引擎 node_click 派发后，event.target 必须
+			// 是按钮本体（视图层委托用 closest('.tmm-code-copy') 命中——这是
+			// 「非锚点元素能否穿透到真实 target」这一风险点的实测闸门）
+			codeMap.on('node_click', (node, event) => {
+				const target = event.target;
+				codeClick = {
+					isButton: target === codeCopyButton,
+					closestHit: !!(
+						target &&
+						target.closest &&
+						target.closest('.tmm-code-copy') === codeCopyButton
+					),
+				};
+			});
+			// 真实处理器注册（视图层委托的生产入口；视图桩只供 mindMap 与事件桥）
+			registerCodeBlockInteractions({
+				mindMap: codeMap,
+				engineEvents: { onEngine: (m, name, fn) => m.on(name, fn) },
+			});
+			if (codeCopyButton) {
+				codeCopyButton.dispatchEvent(
+					new MouseEvent('click', { bubbles: true }),
+				);
+			}
+			// 复制是异步链（click → node_click → clipboard.writeText）：延迟一拍
+			// 把捕获结果落到独立探针（dump-dom 在虚拟时间预算后读取）
+			window.setTimeout(() => {
+				const copyProbe = document.createElement('pre');
+				copyProbe.id = 'code-copy-probe';
+				copyProbe.textContent = JSON.stringify({ copied: copiedCode });
+				document.body.appendChild(copyProbe);
+			}, 50);
+		}
 		// 段落（多行）场景：README 承诺「段落里的链接同样可点」，此处实测
 		const paragraphHolder = document.getElementById('map-paragraph');
 		// 超长单行场景：必须被接管（长行交给引擎会二次复杂度卡死）
@@ -1003,6 +1105,29 @@ window.setTimeout(() => {
 				? syntaxHolder.querySelectorAll('foreignObject strong').length
 				: -1,
 			syntaxText,
+			// 行内数学（2026-09-27）：占位 span 数 + 字面占位文本 + 落在 foreignObject 内
+			mathInForeignObject: mathHolder
+				? insideForeignObject(
+						mathHolder.querySelector('.mindmap-node-inline-content'),
+					)
+				: null,
+			mathSpanCount: mathHolder ? mathSpans.length : -1,
+			mathSpanTexts: Array.from(mathSpans).map((el) => el.textContent),
+			// 代码块（2026-09-28）：容器/pre 原文/按钮落位 + 内联可见性写法
+			codeInForeignObject: insideForeignObject(codeBlock),
+			codeBlockCount: codeHolder
+				? codeHolder.querySelectorAll('foreignObject .tmm-codeblock').length
+				: -1,
+			codeText: codeBlock
+				? (codeBlock.querySelector('pre')
+						? codeBlock.querySelector('pre').textContent
+						: null)
+				: null,
+			codeCopyButtons: codeBlock
+				? codeBlock.querySelectorAll('.tmm-code-copy').length
+				: -1,
+			codeInlineOpacityVar: codeCopyButton ? codeCopyButton.style.opacity : null,
+			codeClick,
 			syntaxUnresolved: syntaxHolder
 				? syntaxHolder.querySelectorAll(
 						'foreignObject a.internal-link.is-unresolved',
@@ -3027,6 +3152,10 @@ function checkAnchor(dom) {
  *   它是用户报的「白屏 / 卡死后关闭」的成因（实测 +2.8s / 20k 字）；
  * - **段落（多行）节点**：`mdRaw` 是逐字原文，故段落里的链接同样渲染为可点文本
  *   （2 枚锚点）且保留多行结构（README 对外承诺，此处实测锁定）；
+ * - **代码块（2026-09-28）**：围栏段渲染为 `.tmm-codeblock`（pre/code 原文 +
+ *   复制按钮）：信息行剥离、缩进保留；按钮内联 opacity 走变量间接层
+ *   （`var(--tmm-code-copy-opacity, 0)`——屏上 hover 由 styles.css 置 1，
+ *   导出 SVG 无该文件 ⇒ 兜底 0 ⇒ 按钮隐身）；按钮点击与锚点同款命中契约；
  * - 对照：纯文本节点不得出现自绘锚点（未被接管，仍走引擎 SVG 文本）。
  */
 /**
@@ -3564,6 +3693,79 @@ function checkInline(dom) {
 	if (probe.inlineResolvedAnchors !== 1) {
 		failures.push(
 			`已解析链接被误标为未解析（inline 场景非未解析锚点 ${probe.inlineResolvedAnchors} ≠ 1）`,
+		);
+	}
+	// 行内数学（2026-09-27）：数学段必须被自绘接管（引擎 SVG 文本恒为字面 `$…$`），
+	// 且定界符回填进占位文本。MathJax 替换链路由 tests/math-jax.test.ts（假件）
+	// 与实机 CDP 断言覆盖——无头页没有真 MathJax，不在此断言替换产物。
+	if (probe.mathInForeignObject !== true) {
+		failures.push(
+			'含 `$…$` 的节点未进入 foreignObject（数学段未被接管 → 引擎按字面 SVG 文本渲染）',
+		);
+	}
+	if (probe.mathSpanCount !== 3) {
+		failures.push(
+			`数学占位 span 数 ${probe.mathSpanCount} ≠ 3（应有 $E=mc^2$、$x$ 与 $$y^2$$ 三段）`,
+		);
+	}
+	if (
+		JSON.stringify(probe.mathSpanTexts) !==
+		JSON.stringify(['$E=mc^2$', '$x$', '$$y^2$$'])
+	) {
+		failures.push(
+			`数学占位文本 ${JSON.stringify(probe.mathSpanTexts)} ≠ ["$E=mc^2$","$x$","$$y^2$$"]（定界符应回填进占位，单行块级与行内同形）`,
+		);
+	}
+	// 代码块（2026-09-28）：围栏段必须自绘接管为块级结构；信息行剥离、缩进逐字
+	// 保留；复制按钮落位且内联可见性走变量间接层（导出 SVG 无 styles.css ⇒ 隐身）；
+	// 按钮点击与锚点同款命中契约（非锚点元素的事件穿透实测闸门）
+	if (probe.codeInForeignObject !== true) {
+		failures.push(
+			'含围栏代码块的节点未进入 foreignObject（代码块未被接管 → 引擎按字面 SVG 文本渲染）',
+		);
+	}
+	if (probe.codeBlockCount !== 1) {
+		failures.push(
+			`代码块容器数 ${probe.codeBlockCount} ≠ 1（.tmm-codeblock）`,
+		);
+	}
+	if (probe.codeText !== 'const a = 1;\n  echo hi') {
+		failures.push(
+			`代码块原文 ${JSON.stringify(probe.codeText)} ≠ "const a = 1;\\n  echo hi"（信息行应剥离、缩进应保留）`,
+		);
+	}
+	if (probe.codeCopyButtons !== 1) {
+		failures.push(`复制按钮数 ${probe.codeCopyButtons} ≠ 1（.tmm-code-copy）`);
+	}
+	if (probe.codeInlineOpacityVar !== 'var(--tmm-code-copy-opacity, 0)') {
+		failures.push(
+			`复制按钮内联 opacity ${JSON.stringify(probe.codeInlineOpacityVar)} ≠ 变量间接层写法（导出隐身契约）`,
+		);
+	}
+	if (!probe.codeClick) {
+		failures.push('代码块复制按钮的点击模拟未收到 node_click（按钮不可点）');
+	} else {
+		if (!probe.codeClick.isButton) {
+			failures.push(
+				'node_click 的 event.target 不是复制按钮本体（视图层委托无法命中）',
+			);
+		}
+		if (!probe.codeClick.closestHit) {
+			failures.push('target.closest(".tmm-code-copy") 未命中按钮');
+		}
+	}
+	// 复制端到端：真实视图层处理器（node-codeblock 注册）+ 桩剪贴板——点击按钮
+	// 后 writeText 的实参必须 = **完整代码文本**（两行、不含围栏与信息行）；
+	// 这是「复制只得到第一行」这一用户实测问题的回归闸门
+	const { probe: copyProbe, failures: copyParseFailures } = readProbe(
+		dom,
+		'code-copy-probe',
+		'复制内容',
+	);
+	if (copyParseFailures) return copyParseFailures;
+	if (copyProbe.copied !== 'const a = 1;\n  echo hi') {
+		failures.push(
+			`复制内容 ${JSON.stringify(copyProbe.copied)} ≠ "const a = 1;\\n  echo hi"（应完整两行，不含围栏与信息行）`,
 		);
 	}
 	// 超长单行必须接管 + 截断：这条是「白屏/卡死」的直接守卫（引擎逐字符换行

@@ -2143,6 +2143,60 @@ describe('.mindmap.md 标记与新建正文', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 列表项围栏（2026-09-28：classifyLines 围栏状态感知列表项 + 空白续行并入前项）
+// ---------------------------------------------------------------------------
+describe('列表项围栏', () => {
+	const FENCE_DOC = [
+		'# H',
+		'',
+		'- ```js',
+		'  const a = 1;',
+		'  ```',
+		'',
+		'## 二',
+		'',
+		'- ```',
+		'  echo hi',
+		'  ```',
+	].join('\n');
+
+	it('结构：围栏列表项后的标题不被吞（此前闭合围栏被误判为新围栏的开始）', () => {
+		const tree = parseMdOutline(FENCE_DOC, '根').tree;
+		const h1 = tree.children[0]!;
+		expect(h1.data.text).toBe('H');
+		// H 下：一个代码块项 + ## 二 标题（修复前 ## 二 会被吞进围栏内容）
+		expect(h1.children.map((c) => String(c.data.mdType))).toEqual([
+			'list',
+			'heading',
+		]);
+		const h2 = h1.children[1]!;
+		expect(h2.data.text).toBe('二');
+		expect(h2.children.map((c) => String(c.data.mdType))).toEqual(['list']);
+		// mdRaw 逐字（信息行/围栏定界符原样，剥离发生在显示层；闭合围栏后的
+		// 空行按「空白续行并入前项」口径成为 mdRaw 尾随空行）
+		expect(String(h1.children[0]!.data.mdRaw)).toBe(
+			'```js\nconst a = 1;\n```\n',
+		);
+		// 末项后无空行（文档在此结束）→ mdRaw 不带尾随空行
+		expect(String(h2.children[0]!.data.mdRaw)).toBe('```\necho hi\n```');
+		// 无空文本节点（围栏后的空行并入前项 mdRaw，不再产空节点）
+		expect(textsOf(tree).some((t) => t.trim() === '')).toBe(false);
+	});
+
+	it('往返不动点：围栏列表项 + 章节间空行，两趟逐字相等', () => {
+		const { out1, out2 } = roundTrip(FENCE_DOC);
+		expect(out2, '列表项围栏往返不动点').toBe(out1);
+		// 围栏闭合与后续标题之间的空行保留（围栏相邻空行的既有保真口径）；
+		// 列表**前**的空行被吞属既有规范化（见「规范化」组的口径说明）
+		expect(out1).toContain('  ```\n\n## 二');
+		expect(out1).not.toContain('# H\n\n');
+		// 两个代码块的续行缩进逐字保留
+		expect(out1).toContain('- ```js\n  const a = 1;\n  ```');
+		expect(out1).toContain('- ```\n  echo hi\n  ```');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // plain 行保真：行首缩进与行尾空格都是 Markdown 语义
 //
 // 旧行为：`classifyLines` 把 plain 行 `trimEnd()` 后再 `trim()` 存入 mdRaw，
