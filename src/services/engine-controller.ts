@@ -405,8 +405,18 @@ export class EngineController {
 		}
 		// 深拷贝后重建：initMindMap 会先销毁旧引擎并原地改写 uid（ensureUniqueUids），
 		// 传活引用会在销毁期间被就地修改（依赖旧引擎不再回写该对象），存在隐患。
-		const data = structuredClone(this.mindMap.getData());
-		this.initMindMap(data);
+		//
+		// 异常防护（2026-09-28 加固）：深拷贝可能因不可克隆值抛 DataCloneError
+		//（异常数据或引擎内部形态变化）——与 initMindMap 内部同风格：记录并
+		// **保留现有引擎可用**，不让异常逃逸出设置应用路径（重建失败远好过
+		// 中断后续键的应用）。initMindMap 自身失败时由它内部处理（销毁+提示），
+		// 此处不会重复兜底。
+		try {
+			const data = structuredClone(this.mindMap.getData());
+			this.initMindMap(data);
+		} catch (error) {
+			console.error('重建引擎失败，保留当前实例', error);
+		}
 	}
 
 	/** 销毁引擎实例并清理其作用域的全部 DOM/引擎事件 */

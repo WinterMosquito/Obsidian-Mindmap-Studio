@@ -16,7 +16,10 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
-import { applyImageSizeCorrectionsToEngine } from '../src/engine/mindmap';
+import {
+	applyImageSizeCorrectionsToEngine,
+	findNodesByMathProducts,
+} from '../src/engine/mindmap';
 
 vi.mock('../vendor/simple-mind-map.cjs', () => ({
 	MindMap: class {},
@@ -276,5 +279,65 @@ describe('applyImageSizeCorrectionsToEngine（首帧后回灌）', () => {
 
 		expect(applied).toBe(0);
 		expect(liveData.imageSize).toBeUndefined();
+	});
+});
+
+describe('findNodesByMathProducts（按产物元素反查节点，K100）', () => {
+	/**
+	 * 节点桩：带 group 元素（提供 contains/closest 两个 API 面）。
+	 * @param owned 该节点的 group「包含」的 DOM 元素集合（模拟真实 contains）
+	 */
+	function nodeWithGroup(
+		data: Record<string, unknown>,
+		owned: readonly Element[],
+		svg?: { querySelectorAll: (selector: string) => Element[] },
+		children: MindMapNode[] = [],
+	): MindMapNode {
+		const groupEl = {
+			contains: (el: Element) => owned.includes(el),
+			closest: (selector: string) =>
+				selector === 'svg' ? (svg ?? null) : null,
+		};
+		return {
+			getData: (key?: string) => (key === undefined ? data : data[key]),
+			children,
+			group: { node: groupEl },
+		} as unknown as MindMapNode;
+	}
+
+	it('按产物元素反查：命中的节点归一返回（同节点多产物去重）', () => {
+		const productA = {} as Element;
+		const productB = {} as Element;
+		const svg = {
+			querySelectorAll: () => [productA, productB],
+		};
+		const mathNode = nodeWithGroup({ text: 'math' }, [productA, productB]);
+		const plainNode = nodeWithGroup({ text: 'plain' }, []);
+		const root = nodeWithGroup({ text: 'root' }, [], svg, [
+			mathNode,
+			plainNode,
+		]);
+		const { mindMap } = fakeEngine(root);
+
+		expect(findNodesByMathProducts(mindMap)).toEqual([mathNode]);
+	});
+
+	it('产物不属于任何节点 group（已脱离）：返回空数组、不抛错', () => {
+		const orphan = {} as Element;
+		const svg = { querySelectorAll: () => [orphan] };
+		const root = nodeWithGroup({ text: 'root' }, [], svg, [
+			nodeWithGroup({ text: 'a' }, []),
+		]);
+		const { mindMap } = fakeEngine(root);
+
+		expect(findNodesByMathProducts(mindMap)).toEqual([]);
+	});
+
+	it('渲染根缺失 / 根 group 无 svg 祖先：安全返回空数组', () => {
+		expect(findNodesByMathProducts(fakeEngine(null).mindMap)).toEqual([]);
+		// 根节点无 svg 祖先（closest 返回 null）
+		const noSvgRoot = nodeWithGroup({ text: 'root' }, []);
+		expect(findNodesByMathProducts(fakeEngine(noSvgRoot).mindMap)).toEqual([]);
+		expect(findNodesByMathProducts(null)).toEqual([]);
 	});
 });

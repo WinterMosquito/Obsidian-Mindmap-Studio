@@ -316,6 +316,11 @@ export function probeImageNaturalSize(
 			img.onerror = null;
 			if (value === null) {
 				cacheImageFail(url);
+				// 中止在途下载（超时/失败路径）：不解绑的话浏览器会继续把整张图
+				// 拉完，白占带宽与内存——图片多或外链大图时尤为明显。
+				// 用 removeAttribute 而非 `src=''`：后者在部分浏览器会以当前页面
+				// URL 再发一次请求，反成额外开销。成功路径无需中止（已解码完）。
+				img.removeAttribute('src');
 			}
 			resolve(value);
 		};
@@ -345,6 +350,17 @@ export function fitImageWithinMaxSide(
 	width: number,
 	height: number,
 ): { width: number; height: number } {
+	// 防御：非法输入（NaN/Infinity/非正）不得产出 NaN 尺寸——NaN 会污染节点
+	// 包围盒并让引擎布局计算异常。调用方已过滤（natural.width>0 等），此处
+	// 是导出纯函数的自身守卫，回退默认盒（与探测失败同口径）。
+	if (
+		!Number.isFinite(width) ||
+		!Number.isFinite(height) ||
+		width <= 0 ||
+		height <= 0
+	) {
+		return { width: IMAGE_WIDTH, height: IMAGE_HEIGHT };
+	}
 	const longest = Math.max(width, height);
 	if (longest <= IMAGE_MAX_SIDE_PX) {
 		return { width, height };

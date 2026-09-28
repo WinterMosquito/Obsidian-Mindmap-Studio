@@ -111,6 +111,16 @@ class FakeImage {
 		this.done = true;
 		this.onerror?.();
 	}
+
+	/** 失败/超时路径中止在途下载（实现用 removeAttribute 而非 `src=''`） */
+	srcRemoved = false;
+
+	removeAttribute(name: string): void {
+		if (name === 'src') {
+			this.srcRemoved = true;
+			this.src = '';
+		}
+	}
 }
 
 /**
@@ -330,6 +340,22 @@ describe('probeImageNaturalSize（自然尺寸探测与缓存，stub Image）', 
 		expect(isImageFailFresh(url)).toBe(true);
 	});
 
+	it('探测失败：中止在途下载（移除 src，不再拉完剩余字节）', async () => {
+		const pending = probeImageNaturalSize(probeUrl('abort.png'));
+		const img = lastImage();
+		img.emitError();
+		await expect(pending).resolves.toBeNull();
+		expect(img.srcRemoved, '失败后须移除 src 以中止下载').toBe(true);
+	});
+
+	it('探测成功：保留 src（已解码完成，无需中止）', async () => {
+		const pending = probeImageNaturalSize(probeUrl('keep-src.png'));
+		const img = lastImage();
+		img.emitLoad(200, 100);
+		await expect(pending).resolves.toEqual({ width: 200, height: 100 });
+		expect(img.srcRemoved).toBe(false);
+	});
+
 	it('探测成功缓存命中：不再重复解码，且返回副本（调用方改动不污染缓存）', async () => {
 		const url = probeUrl('cached.png');
 		const first = probeImageNaturalSize(url);
@@ -441,6 +467,18 @@ describe('fitImageWithinMaxSide（长边上限 480，K97 配套）', () => {
 	it('极端比例：短边最小 1px（取整不归零）', () => {
 		expect(fitImageWithinMaxSide(1, 2000)).toEqual({ width: 1, height: 480 });
 		expect(fitImageWithinMaxSide(2000, 1)).toEqual({ width: 480, height: 1 });
+	});
+
+	it('非法输入（NaN / Infinity / 非正）：回退默认盒，绝不产出 NaN 尺寸', () => {
+		// 纯函数自身守卫：NaN 会污染节点包围盒并让引擎布局计算异常
+		const fallback = { width: IMAGE_WIDTH, height: IMAGE_HEIGHT };
+		expect(fitImageWithinMaxSide(Number.NaN, 300)).toEqual(fallback);
+		expect(fitImageWithinMaxSide(300, Number.NaN)).toEqual(fallback);
+		expect(fitImageWithinMaxSide(Number.POSITIVE_INFINITY, 300)).toEqual(
+			fallback,
+		);
+		expect(fitImageWithinMaxSide(0, 300)).toEqual(fallback);
+		expect(fitImageWithinMaxSide(-5, 300)).toEqual(fallback);
 	});
 });
 

@@ -1027,6 +1027,41 @@ export function findNodeByDom(
 }
 
 /**
+ * 按**数学产物元素**反查所在渲染节点（K100）。
+ *
+ * 用途：数学替换定稿后 holder 可能已脱离 DOM——引擎在「定稿 → 批量重排」的
+ * 等待窗口内又发生了一次全树重渲染（如图片尺寸回灌，见 K96），占位 holder
+ * 随重建被丢弃，`findNodeByDom(holder)` 因此落空；而 **MathJax 产物**
+ * （`.mjx-container`）就在活 DOM 里，可据其反查节点。
+ *
+ * 实现：从渲染树**根节点的 group** 上溯到所属 `<svg>`（同一视图内所有节点
+ * DOM 的共同祖先，天然限定本视图、不受同页其它导图干扰），一次查询全部
+ * `.mjx-container` 再逐个 `findNodeByDom` 归一。只在 holder 解析失败的回退
+ * 路径调用（按需、一次、数学节点通常很少）。
+ */
+export function findNodesByMathProducts(
+	mindMap: MindMap | null,
+): MindMapNode[] {
+	const root = getRenderRoot(mindMap);
+	if (!mindMap || !root) {
+		return [];
+	}
+	const svg = getNodeGroupEl(root)?.closest('svg');
+	if (!svg) {
+		return [];
+	}
+	const out = new Set<MindMapNode>();
+	// Array.from：NodeList 在当前 lib 配置下不可直接迭代（TS2488）
+	for (const product of Array.from(svg.querySelectorAll('.mjx-container'))) {
+		const node = findNodeByDom(mindMap, product);
+		if (node) {
+			out.add(node);
+		}
+	}
+	return [...out];
+}
+
+/**
  * 自动整理：清除所有节点被自由拖拽后的自定义位置，
  * 重新按当前布局算法计算位置，使各主题以合理间距对齐摆放，
  * 最后适应画布（fit 全图：整体缩放居中，整理结果一览无余）。
