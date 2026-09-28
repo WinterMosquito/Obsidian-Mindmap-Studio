@@ -20,6 +20,7 @@ import {
 	isHttpUrl,
 	isHyperlinkProtocolUrl,
 	isRemoteOrDataUrl,
+	isSafeAnchorHref,
 	isSchemeUrl,
 	isUrlLikeText,
 	resourceUrlPathCandidates,
@@ -164,6 +165,33 @@ describe('isSchemeUrl', () => {
 		{ value: '', expected: false, why: '空串' },
 	])('isSchemeUrl($value) === $expected（$why）', ({ value, expected }) => {
 		expect(isSchemeUrl(value)).toBe(expected);
+	});
+});
+
+describe('isSafeAnchorHref（可写进 href 的安全协议白名单，K101）', () => {
+	it('安全协议放行：http/https/mailto/obsidian/file/ftp（大小写不敏感）', () => {
+		expect(isSafeAnchorHref('https://example.com/a?b=1#c')).toBe(true);
+		expect(isSafeAnchorHref('http://example.com')).toBe(true);
+		expect(isSafeAnchorHref('mailto:a@b.com')).toBe(true);
+		expect(isSafeAnchorHref('obsidian://open?x=1')).toBe(true);
+		expect(isSafeAnchorHref('file:///C:/a.pdf')).toBe(true);
+		expect(isSafeAnchorHref('HTTPS://EXAMPLE.COM')).toBe(true);
+		expect(isSafeAnchorHref('FTP://h/x')).toBe(true);
+	});
+
+	it('危险协议拒绝：javascript / data / vbscript（含大小写与前导空白变体）', () => {
+		// 节点文本来自 Markdown：`[点我](javascript:alert(1))` 会被解析成外部链接
+		expect(isSafeAnchorHref('javascript:alert(1)')).toBe(false);
+		expect(isSafeAnchorHref('JavaScript:alert(1)')).toBe(false);
+		expect(isSafeAnchorHref('  javascript:alert(1)')).toBe(false);
+		expect(isSafeAnchorHref('data:text/html;base64,PHNjcmlwdD4=')).toBe(false);
+		expect(isSafeAnchorHref('vbscript:msgbox(1)')).toBe(false);
+	});
+
+	it('无 scheme（相对地址 / 库内路径 / 空串）视为安全', () => {
+		expect(isSafeAnchorHref('folder/note.md')).toBe(true);
+		expect(isSafeAnchorHref('#heading')).toBe(true);
+		expect(isSafeAnchorHref('')).toBe(true);
 	});
 });
 

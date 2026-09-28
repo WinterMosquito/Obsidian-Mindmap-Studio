@@ -857,6 +857,23 @@ describe('buildInlineNodeContent（锚点属性契约：view-wikilink 识别的�
 		expect(attrsOf(anchor).has('data-href')).toBe(false);
 	});
 
+	it('危险协议外链：仍为 external-link 样式，但不写 href（K101 防御纵深）', () => {
+		// `scheme://` 形态会被判定为外部地址（`isSchemeUrl`），故这类链接会走进
+		// external 分支——把原文写进 href 后一旦被宿主按链接打开（中键/右键/
+		// Obsidian 外链委托）即成脚本执行面（Obsidian 运行在 Electron 上）。
+		// 样式与插件内点击分流都不变，只是不产出 href 属性。
+		//
+		// 注：不带 `//` 的 `javascript:alert(1)` 会被判为**库内** linkpath（走
+		// internal 分支、本就只写 data-href），故此处必须用 `//` 形态覆盖 external。
+		const node = fakeNode({ mdRaw: '[点我](javascript://alert(1))' });
+		const el = buildInlineNodeContent(node, asDocument(new FakeDocument()))!;
+		const anchor = childrenOf(el)[0] as FakeElement;
+		expect(anchor.className, 'scheme:// 形态按外部地址处理').toBe(
+			'external-link',
+		);
+		expect(attrsOf(anchor).has('href')).toBe(false);
+	});
+
 	it('一段一元素：文本与多枚锚点按序装配（多链接内联可点）', () => {
 		const node = fakeNode({ mdRaw: '[[A]] 与 [[B]] 结束' });
 		const el = buildInlineNodeContent(node, asDocument(new FakeDocument()))!;

@@ -61,7 +61,7 @@ import {
 } from '../core/constants';
 import { t } from '../core/i18n';
 import type { Language } from '../core/i18n';
-import { isSchemeUrl, isUrlLikeText } from '../domain/url';
+import { isSafeAnchorHref, isSchemeUrl, isUrlLikeText } from '../domain/url';
 import { tokenDisplay, tokenizeInline } from '../markdown/md-outline';
 import type { InlineToken } from '../markdown/md-outline';
 import type { NodeContentStyle } from '../engine/mindmap';
@@ -1274,7 +1274,14 @@ function buildAnchor(
 	} else {
 		Object.assign(anchor.style, EXTERNAL_LINK_STYLES);
 		anchor.className = 'external-link';
-		anchor.setAttribute('href', link);
+		// 安全（K101 防御纵深）：链接原文来自 Markdown，可能是
+		// `[点我](javascript:…)` / `data:` 这类危险协议——直接写进 href 后，一旦
+		// 宿主按链接打开（中键/右键新标签/Obsidian 外链委托）即成脚本执行面
+		//（Obsidian 运行在 Electron 上）。非安全协议仍按外链样式呈现，只是不设
+		// href：点击走 data-href 分流，插件侧已有协议过滤，功能不受影响。
+		if (isSafeAnchorHref(link)) {
+			anchor.setAttribute('href', link);
+		}
 	}
 	return anchor;
 }

@@ -40,6 +40,18 @@ const CSS_VARS_TO_EXPORT: readonly string[] = [
 ];
 
 /**
+ * 变量值安全校验（K99 加固，2026-09-28 复核发现）。
+ *
+ * 变量值来自**宿主主题**（用户可安装第三方主题与 CSS 片段，内容不受控），
+ * 若原样拼进 `svg { … }` 规则块，形如 `Arial} svg{opacity:0` 的值会**闭合
+ * 规则块并注入任意 CSS 规则** → 导出图被篡改（内容隐藏/错位等）。
+ * `textContent` 不会被解析为 HTML，故**无脚本执行面**；但样式注入成立，
+ * 因此注入前过滤：只放行不可能闭合块或引入新规则的字符。
+ * 不合法的值**跳过该变量**（导出回退内联兜底值，功能仍可用）。
+ */
+const SAFE_CSS_VALUE = /^[\w\s#'"(),.:/%!-]+$/;
+
+/**
  * 把宿主上实际生效的 CSS 变量注入克隆 SVG。
  *
  * @returns 原样返回传入的 svg.js 元素对象（引擎要求）；宿主环境不可用、
@@ -59,7 +71,11 @@ export function injectObsidianCssVarsIntoExportSvg(svgElement: unknown): unknown
 	const style = getComputedStyle(document.body);
 	const decls = CSS_VARS_TO_EXPORT.map((name) => {
 		const value = style.getPropertyValue(name).trim();
-		return value ? `${name}: ${value}` : null;
+		// 空值跳过；形态可疑（可能闭合规则块注入样式）同跳过——见 SAFE_CSS_VALUE
+		if (!value || !SAFE_CSS_VALUE.test(value)) {
+			return null;
+		}
+		return `${name}: ${value}`;
 	}).filter((line): line is string => line !== null);
 	if (decls.length === 0) {
 		return svgElement;

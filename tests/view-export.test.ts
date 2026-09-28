@@ -250,4 +250,27 @@ describe('injectObsidianCssVarsIntoExportSvg（导出 CSS 变量注入，K99）'
 		expect(injectObsidianCssVarsIntoExportSvg(malformedB)).toBe(malformedB);
 		expect(injectObsidianCssVarsIntoExportSvg(malformedC)).toBe(malformedC);
 	});
+
+	it('值含块闭合 / 注入字符（第三方主题可控值）：跳过该变量，不污染规则块', () => {
+		// K99 加固：变量值来自宿主主题（用户可装第三方主题与 CSS 片段）。
+		// 形如 `Inter} svg{opacity:0` 的值会闭合 `svg { … }` 并注入任意规则 →
+		// 导出图被篡改（内容隐藏等），故必须过滤。
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				({
+					'--font-interface': 'Inter} svg{opacity:0',
+					'--font-monospace': 'JetBrains Mono',
+					'--text-normal': '<script>alert(1)</script>',
+				})[name] ?? '',
+		}));
+		const { svgElement, injected } = makeSvgElementForVars();
+
+		injectObsidianCssVarsIntoExportSvg(svgElement);
+
+		// 只注入安全值：可疑值被丢弃（导出回退内联兜底值，功能仍可用）
+		expect(injected[0]!.textContent).toBe(
+			'svg { --font-monospace: JetBrains Mono; }',
+		);
+	});
 });

@@ -85,6 +85,38 @@ export function isSchemeUrl(value: string): boolean {
 }
 
 /**
+ * 可写进 `<a href>` 的**安全协议**白名单（防御纵深，K101）。
+ *
+ * 节点文本来自 Markdown，形如 `[点我](javascript:alert(1))` 会被解析成外部链接
+ * 段；把原文直接写进 `href` 后，一旦宿主按链接打开（中键、右键新标签、Obsidian
+ * 的外链委托）即成**脚本执行面**——Obsidian 运行在 Electron 上，`javascript:` /
+ * `data:` 这类协议并非只会「打不开」。故此处按白名单收敛，只放行无副作用的协议。
+ *
+ * 非安全协议**仍按外链样式呈现**，只是不设 `href`：点击由 `view-wikilink` 经
+ * `data-href` 分流，插件侧已有 `isHttpUrl` / `isHyperlinkProtocolUrl` 过滤，
+ * 功能不受影响（这只是第二道闸）。
+ */
+const SAFE_ANCHOR_PROTOCOLS = new Set([
+	'http:',
+	'https:',
+	'mailto:',
+	'ftp:',
+	'ftps:',
+	'obsidian:',
+	'file:',
+]);
+
+export function isSafeAnchorHref(value: string): boolean {
+	// 无 scheme（相对地址 / 库内路径 / 纯锚点）视为安全
+	const colon = value.indexOf(':');
+	if (colon <= 0) {
+		return true;
+	}
+	// 含 scheme：大小写不敏感比对白名单（`JavaScript:` 同拒）
+	return SAFE_ANCHOR_PROTOCOLS.has(value.slice(0, colon + 1).toLowerCase());
+}
+
+/**
  * 本地绝对路径 → `file:///` URL。
  *
  * 用途：Obsidian 拖入系统文件时，按住 `Ctrl`（Win/Linux）/`Option`（mac）会
