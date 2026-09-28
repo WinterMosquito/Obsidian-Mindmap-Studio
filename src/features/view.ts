@@ -13,6 +13,7 @@
 import { type EventRef, FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import { Language, t, tf } from '../core/i18n';
 import type { TranslationKey } from '../core/i18n';
+import { injectObsidianCssVarsIntoExportSvg } from '../platform/export-css-vars';
 import {
 	getRenderedMathNode,
 	injectMathStylesIntoExportSvg,
@@ -428,10 +429,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 					getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
 				});
 			},
-			// 导出 SVG 后处理链（按序应用）：MathJax 字形样式注入 → 复制按钮隐身。
-			// 后处理项分居 platform 与 features，services 层不依赖 features（K51），
-			// 故链在组合根装配后注入（见 EngineControllerDeps.exportSvgTransforms）。
+			// 导出 SVG 后处理链（按序应用）：Obsidian CSS 变量注入（字体度量
+			// 与屏上一致，修复多行节点/LaTeX 节点导出被裁）→ MathJax 字形样式
+			// 注入 → 复制按钮隐身。后处理项分居 platform 与 features，services
+			// 层不依赖 features（K51），故链在组合根装配后注入。
 			exportSvgTransforms: [
+				injectObsidianCssVarsIntoExportSvg,
 				injectMathStylesIntoExportSvg,
 				hideCopyButtonsInExportSvg,
 			],

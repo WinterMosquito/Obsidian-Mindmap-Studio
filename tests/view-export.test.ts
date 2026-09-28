@@ -29,6 +29,7 @@ vi.mock('../src/engine/mindmap', () => ({ exportMindMapPng: exportMock }));
 vi.mock('../src/core/errors', () => ({ notifyError: notifyErrorMock }));
 
 import { exportPNG } from '../src/features/view-export';
+import { injectObsidianCssVarsIntoExportSvg } from '../src/platform/export-css-vars';
 
 /** 下载锚点桩：createEl('a') 返回它，记录 href/download/click */
 const anchor = { href: '', download: '', click: vi.fn<() => void>() };
@@ -149,5 +150,104 @@ describe('exportPNG（导出为 PNG 文件）', () => {
 
 		await expect(exportPNG(view)).resolves.toBeUndefined();
 		expect(notifyErrorMock).toHaveBeenCalledWith('zh', 'export.pngFailed', error);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// K99：导出 SVG 的 Obsidian CSS 变量注入（修复导出 PNG 时多行节点/LaTeX 节点被裁）
+// ---------------------------------------------------------------------------
+
+/** 伪造 svg.js 元素形态（{ node, ownerDocument.win.createSvg }），捕获注入的样式 */
+function makeSvgElementForVars() {
+	const injected: { textContent: string }[] = [];
+	const styleEl = { textContent: '' };
+	const root = {
+		appendChild: vi.fn((child: { textContent: string }) => {
+			injected.push(child);
+		}),
+		// ownerDocument 在**原生节点**上（svgElement.node 的属性），与真实 DOM 同构
+		ownerDocument: {
+			win: { createSvg: vi.fn(() => styleEl) },
+		},
+	};
+	const svgElement = { node: root };
+	return { svgElement, root, injected };
+}
+
+describe('injectObsidianCssVarsIntoExportSvg（导出 CSS 变量注入，K99）', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('宿主变量有值：以 `svg { … }` 注入克隆 SVG 根并原样返回元素', () => {
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				({
+					'--font-interface': 'Inter, Noto Sans SC',
+					'--font-monospace': 'JetBrains Mono',
+					'--code-background': ' #f4f4f4 ',
+				})[name] ?? '',
+		}));
+		const { svgElement, injected } = makeSvgElementForVars();
+
+		const returned = injectObsidianCssVarsIntoExportSvg(svgElement);
+
+		expect(returned, '原样返回（引擎要求）').toBe(svgElement);
+		expect(injected).toHaveLength(1);
+		expect(injected[0]!.textContent).toBe(
+			'svg { --font-interface: Inter, Noto Sans SC; --font-monospace: JetBrains Mono; --code-background: #f4f4f4; }',
+		);
+	});
+
+	it('空白值变量跳过（不产出空声明）；其余变量照常注入', () => {
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				({ '--font-interface': 'Inter', '--font-text': '   ' })[name] ?? '',
+		}));
+		const { svgElement, injected } = makeSvgElementForVars();
+
+		injectObsidianCssVarsIntoExportSvg(svgElement);
+
+		expect(injected[0]!.textContent).toBe('svg { --font-interface: Inter; }');
+	});
+
+	it('宿主变量全部为空：不注入任何节点（安全 no-op）', () => {
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: () => '',
+		}));
+		const { svgElement, root } = makeSvgElementForVars();
+
+		injectObsidianCssVarsIntoExportSvg(svgElement);
+
+		expect(root.appendChild).not.toHaveBeenCalled();
+	});
+
+	it('宿主环境不可用（无 getComputedStyle / 无 document）：安全 no-op', () => {
+		const { svgElement, root } = makeSvgElementForVars();
+
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', undefined);
+		expect(injectObsidianCssVarsIntoExportSvg(svgElement)).toBe(svgElement);
+
+		vi.stubGlobal('document', undefined);
+		expect(injectObsidianCssVarsIntoExportSvg(svgElement)).toBe(svgElement);
+		expect(root.appendChild).not.toHaveBeenCalled();
+	});
+
+	it('svg 元素形态不符（缺 node / 无 appendChild）：安全 no-op', () => {
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: () => '--',
+		}));
+		const malformedA = null;
+		const malformedB = { node: null };
+		const malformedC = { node: { ownerDocument: undefined } };
+
+		expect(injectObsidianCssVarsIntoExportSvg(malformedA)).toBe(malformedA);
+		expect(injectObsidianCssVarsIntoExportSvg(malformedB)).toBe(malformedB);
+		expect(injectObsidianCssVarsIntoExportSvg(malformedC)).toBe(malformedC);
 	});
 });

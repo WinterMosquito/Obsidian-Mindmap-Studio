@@ -121,6 +121,9 @@ src/
     open-as-restore.ts # 「以思维导图打开」偏好恢复（active-leaf-change/file-open/启动多档延时）
     system-open.ts  #   系统默认应用打开库内文件（桌面端 shell.openPath）
     vault-prefs.ts  #   官方库级偏好读取（useMarkdownLinks / newLinkFormat；getConfig 内部接口）
+    export-css-vars.ts # 导出 SVG 的 Obsidian CSS 变量注入（K99）：取宿主实际生效值以
+                    #   <style> 注入克隆 SVG 根——修复「导出环境变量缺失 → 字体回退
+                    #   → 度量漂移 → foreignObject 固定高度裁切」（多行节点/LaTeX 节点）
     math-jax.ts     #   行内数学渲染（官方 loadMathJax 通道；**实机 1.13.7 的 MathJax 3.2.2
                     #   仅有 tex2chtml**，见 K85）；**就绪判据＝mjx-c 宽全 > 0（零宽而
                     #   ::before content 为空串的不可见操作符豁免，见 K90 ①）+ 自驱官方
@@ -1344,6 +1347,12 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   ④ **连带修复**：`markdown/links-split.ts` 的 `buildChildren` 显式标 `mdType:'list'` + `mdMarker:'-'`——拆出的链接子节点语义是「其下的列表项」，不标则会在标题上下文被 K98 升级成下一级标题（把「说明 + 链接」的父子关系写成标题并列）。
   ⑤ **验证**：`md-roundtrip.test.ts` 更新/新增 6 例（层级严格递进 `#`→`##`→`###`→`####`；边界＝6 级之下与列表内回落列表；空节点闭环；URL/双链合成；**纯标题兄弟→标题**、**含列表兄弟→跟随列表**、**纯列表文档不冒标题**）；`save-pipeline.test.ts` 约 20 处期望更新（`- A` → `# A`、根的直接子 → `#`、其子 → `##`）；全量 55 文件 **1700** 用例 + lint 全绿。
   ⑥ **补充（用户批准的设计改进，同日）**：**新建节点跟随兄弟风格**——同层存在**列表型兄弟**（`mdType:'list'`，或未标注但选了列表标记）时写列表；否则按层级写标题。动机：**纯列表文档**（无标题、通篇列表）里新建原本会冒出 `# 一级标题`、与既有风格违和；补充后这类文档新建 → 继续列表，标题树里新建 → 照旧 `#`/`##`（K98 主规则不变）。实现：`siblingsFollowList(frame.children)` 加进标题分支条件（当前待写节点自身不命中判定——无 mdMarker，无需排除）。
+
+- [K99] **修复「导出 PNG 部分节点内容被裁」：导出 SVG 注入 Obsidian CSS 变量（2026-09-28，用户截图实测）**
+  ① **症状**：导出 PNG 中**多行文字节点第二行被切半**、LaTeX 节点文字不全；屏上渲染正常。
+  ② **根因**：自绘节点内容用文档级 CSS 变量定字体（`var(--font-interface, sans-serif)` / `--font-monospace` / `--code-background` / 链接三态色等，`node-inline-content.ts` CONTENT_STYLES 为唯一来源）；**导出时克隆 SVG 处于独立渲染环境（data URL → img），文档级样式表不在其中 → 变量未定义 → 回退内联兜底值 `sans-serif`**——字体度量与屏上不同 → 换行点漂移、行高变化 → 内容超出 foreignObject 固定高度被裁。
+  ③ **修复**（新文件 `platform/export-css-vars.ts`）：`injectObsidianCssVarsIntoExportSvg`——导出时从 `getComputedStyle(document.body)` 取**宿主实际生效值**（白名单 15 个：字体三件 / mono / code 背景+正文 / 链接四态 + accent / text-normal/muted/highlight-bg/icon-color），以 `<style>svg { --x: y; }</style>` 注入克隆 SVG 根（自定义属性沿后代继承，foreignObject 内 HTML 生效）；空值跳过、全部为空/环境不可用/形态不符时安全 no-op。与 `injectMathStylesIntoExportSvg` 同模式（只改克隆 SVG），接入组合根 `exportSvgTransforms` 链首。
+  ④ **验证**：`tests/view-export.test.ts` +6 例（注入格式/空白跳过/全空 no-op/环境不可用/形态不符矩阵）；全量 55 文件 **1705** 用例；lint 0 警告。
 
 ## 新增功能检查清单
 
