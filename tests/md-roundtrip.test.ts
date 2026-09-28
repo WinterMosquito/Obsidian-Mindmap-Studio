@@ -254,9 +254,12 @@ describe('解析结构', () => {
 		expect(r.tree.children[0]!.data.mdType).toBe('list');
 	});
 
-	it('空标题（`#`/`# `）保留为空文本节点；空列表项（`- `）退化为 plain 段落', () => {
-		// 2026-09-25 起：空标题不再丢弃（零丢失口径，与空列表项退化 plain 对齐）；
-		// 引擎对空文本节点有既有先例（图片独占 / URL icon-only 子节点）。
+	it('空标题（`#`/`# `）与空列表项（`- `）均保留为空文本节点', () => {
+		// 2026-09-25 起：空标题不再丢弃（零丢失口径）；引擎对空文本节点有既有先例
+		// （图片独占 / URL icon-only 子节点）。
+		// 2026-09-28（方案 B / K93）：空列表项从「退化 plain（显示 `-`）」改为
+		// **保留空 list 节点**——新建节点默认空文本后 `- ` 是正常落盘形态，
+		// 由此 `-` 脏节点（重新解析生成）一并消失。
 		for (const line of ['#', '# ']) {
 			const children = parseMdOutline(`${line}\n`, '根').tree.children;
 			expect(children, `\`${line}\` 保留为空 heading 节点`).toHaveLength(1);
@@ -267,13 +270,20 @@ describe('解析结构', () => {
 		expect(roundTrip('#\n').out1, '`#` 归一为 `# `').toBe('# ');
 		expect(roundTrip('# \n').out1, '`# ` 原样回写').toBe('# ');
 		expect(roundTrip('# \n').out2, '第二趟不动点').toBe('# ');
-		// `- ` 行 trimEnd 后是 `-`，不再满足 LIST_RE（要求标记后有空白+内容）→ 落为 plain 段落。
-		// 锁定现状（用户不会写该形态，但空列表行不得被静默当链接/列表处理）。
+		// `- `（marker 后有空白、无内容）→ 空 list 节点（判据走 trimEnd 前的
+		// rawLine：`line` 已 trimEnd 成裸 `-`，不满足 LIST_RE）；序列化输出 `- `。
 		const bare = parseMdOutline('- \n', '根').tree.children;
 		expect(bare).toHaveLength(1);
-		expect(bare[0]!.data.mdType).toBe('plain');
-		expect(bare[0]!.data.text, '节点显示文本 trim').toBe('-');
+		expect(bare[0]!.data.mdType).toBe('list');
+		expect(bare[0]!.data.text, '空列表项显示文本为空').toBe('');
 		expect(roundTrip('- \n').out1, '原文（含行尾空格）逐字回写').toBe('- ');
+		expect(roundTrip('- \n').out2, '第二趟不动点').toBe('- ');
+		// 裸 `-`（marker 后无空白）不是列表项（CommonMark 口径）→ 仍落 plain：
+		// 「显示文本为 `-`」是它唯一的合法来源（此前 `- ` 也走这条，故有脏节点）
+		const naked = parseMdOutline('-\n', '根').tree.children;
+		expect(naked).toHaveLength(1);
+		expect(naked[0]!.data.mdType).toBe('plain');
+		expect(naked[0]!.data.text).toBe('-');
 	});
 
 	it('`#标题`（无空格）不匹配标题行 → 落为 plain 段落节点（与 CommonMark/Obsidian 一致）', () => {
@@ -627,19 +637,85 @@ describe('编辑合成', () => {
 		expect(serializeMdBody(tree, null)).toBe('# 新标题');
 	});
 
-	it('新建节点（无 mdType/mdRaw）默认按 `- ` 输出，保留 mdMarker', () => {
-		const tree: MNode = parseMdOutline('# R\n', '根').tree;
+	it('新建节点在纯标题兄弟下按层级写标题（K98）', () => {
+		const tree: MNode = parseMdOutline('# R\n\n## 兄弟标题\n', '根').tree;
+		// 该层兄弟均为 heading（无列表项）→ 标题风格 → 按层级写 `##`
 		tree.children[0]!.children.push({ data: { text: '新节点' }, children: [] });
+		expect(serializeMdBody(tree, null)).toBe(
+			['# R', '', '## 兄弟标题', '', '## 新节点'].join('\n'),
+		);
+	});
+
+	it('新建节点跟随兄弟风格：同层含列表项 → 写列表（K98 补充）', () => {
+		const tree: MNode = parseMdOutline('# R\n\n- 已有项\n', '根').tree;
+		// 该层已有 list 兄弟 → 跟随列表（而非按层级写标题）
+		tree.children[0]!.children.push({ data: { text: '新节点' }, children: [] });
+		// 显式列表标记的新节点本来就走列表，此处一并锁定
 		tree.children[0]!.children.push({
 			data: { text: '星号项', mdMarker: '*' },
 			children: [],
 		});
-		tree.children[0]!.children.push({
-			data: { text: '有序项', mdMarker: 'ordered' },
+		expect(serializeMdBody(tree, null)).toBe(
+			['# R', '- 已有项', '- 新节点', '* 星号项'].join('\n'),
+		);
+	});
+
+	it('纯列表文档（根下无标题）新建节点跟随列表：不再冒出 `#` 标题（K98 补充的动机）', () => {
+		const tree: MNode = parseMdOutline('- A\n- B\n', '根').tree;
+		tree.children.push({ data: { text: '新节点' }, children: [] });
+		expect(serializeMdBody(tree, null)).toBe(
+			['- A', '- B', '- 新节点'].join('\n'),
+		);
+	});
+
+	it('新建**空**节点（无 mdType/mdRaw，K93/K98）→ 标题上下文写 `## ` → 重解析为空 heading（闭环不动点）', () => {
+		// 用户场景：新建节点默认空文本（K93）。标题上下文（# R 之下）按层级输出
+		// `## `；重解析为空 heading 节点（不再退化成显示 `-` 的 plain 节点）；
+		// 再序列化为不动点——空标题往返由「前缀携带尾随空格」保证（见解析侧注释）。
+		const tree: MNode = parseMdOutline('# R\n', '根').tree;
+		tree.children[0]!.children.push({ data: { text: '' }, children: [] });
+		const out1 = serializeMdBody(tree, null);
+		expect(out1).toBe(['# R', '', '## '].join('\n'));
+
+		const reparsed = parseMdOutline(`${out1}\n`, '根').tree;
+		const empty = reparsed.children[0]!.children[0]!;
+		expect(empty.data.mdType, '空项重解析为 heading').toBe('heading');
+		expect(empty.data.mdLevel, '层级 = 2（# R 之下）').toBe(2);
+		expect(empty.data.text, '显示文本为空').toBe('');
+		expect(serializeMdBody(reparsed, null), '第二趟不动点').toBe(out1);
+	});
+
+	it('K98：新建节点层级严格递进 # → ## → ### → ####（与解析侧「#~###### ⇄ 第 1~6 层」对称）', () => {
+		const tree: MNode = parseMdOutline('# L1\n', '根').tree;
+		const l1 = tree.children[0]!;
+		l1.children.push({ data: { text: 'L2' }, children: [] });
+		const l2 = l1.children[0]!;
+		l2.children.push({ data: { text: 'L3' }, children: [] });
+		const l3 = l2.children[0]!;
+		l3.children.push({ data: { text: 'L4' }, children: [] });
+		expect(serializeMdBody(tree, null)).toBe(
+			['# L1', '', '## L2', '', '### L3', '', '#### L4'].join('\n'),
+		);
+	});
+
+	it('K98 边界：6 级标题之下新建 → 列表；列表项下新建 → 列表（不撕裂文档结构）', () => {
+		// 6 级标题之下：标题已无级可降 → 列表（缩进降级法）；list 分支不补块
+		// 分隔空行（与 heading 的 pushBlock 不同），故直接续在标题行后
+		const deep: MNode = parseMdOutline('###### L6\n', '根').tree;
+		deep.children[0]!.children.push({ data: { text: '更深' }, children: [] });
+		expect(serializeMdBody(deep, null)).toBe(
+			['###### L6', '- 更深'].join('\n'),
+		);
+
+		// 列表项之下：保持列表（标题写进列表中间会把后续列表项卷进标题区）
+		const inList: MNode = parseMdOutline('# R\n\n- 项\n', '根').tree;
+		inList.children[0]!.children[0]!.children.push({
+			data: { text: '子项' },
 			children: [],
 		});
-		expect(serializeMdBody(tree, null)).toBe(
-			['# R', '- 新节点', '* 星号项', '1. 有序项'].join('\n'),
+		// 空行由 pushBlock（heading/plain 分支）补，list 行直接续写
+		expect(serializeMdBody(inList, null)).toBe(
+			['# R', '- 项', '  - 子项'].join('\n'),
 		);
 	});
 
@@ -1057,7 +1133,8 @@ describe('嵌入尺寸参数', () => {
 	it('加载期自动校正的尺寸不回写：用户没动过的行不得凭空多出 |宽度', () => {
 		const md = '- ![[a.png]]';
 		const { tree, data } = firstChild(md + '\n');
-		// walkCorrectImageSizesByAspect 无参分支的效果：custom:true（精确渲染）+ 自动标记
+		// 手工构造「自动校正标记」形态（K97 前加载期会产出；读取侧兼容，
+		// 序列化须跳过尺寸回写）
 		data.imageSize = { width: 184, height: 120, custom: true };
 		data.mdImageAutoSize = true;
 		expect(serializeMdBody(tree, null), '逐字回写原文').toBe(md);
@@ -1284,7 +1361,7 @@ describe('URL icon-only 与附件/文档双链', () => {
 			children: [],
 		});
 		const out = serializeMdBody(synth, null);
-		expect(out).toBe(['# R', '- [笔记](<folder/a(b).md>)'].join('\n'));
+		expect(out).toBe(['# R', '', '## [笔记](<folder/a(b).md>)'].join('\n'));
 		const back: MNode = parseMdOutline(out, '根').tree;
 		expect(
 			back.children[0]!.children[0]!.data.hyperlink,
@@ -1299,7 +1376,7 @@ describe('URL icon-only 与附件/文档双链', () => {
 			children: [],
 		});
 		const out = serializeMdBody(tree, null);
-		expect(out).toBe(['# R', '- <https://example.com>'].join('\n'));
+		expect(out).toBe(['# R', '', '## <https://example.com>'].join('\n'));
 		expect(out).not.toContain('<<');
 	});
 
@@ -1486,7 +1563,7 @@ describe('URL icon-only 与附件/文档双链', () => {
 	it('外链 md 图片带尺寸：合成仍写 `![alt|宽](url)`，不得退化成 wikilink', () => {
 		const md = '- ![截图|300](https://x.com/a.png)';
 		const { tree, data } = firstChild(md + '\n');
-		// 加载期 walkCorrectImageSizesByAspect 对带参节点写入的等价状态
+		// 加载期 walkImageSizeCorrections 对带参节点写入的等价状态（K97 后仅此类节点参与）
 		data.imageSize = { custom: true, width: 300, height: 200 };
 		const out = serializeMdBody(tree, null);
 		expect(out).toBe(md);

@@ -6,7 +6,7 @@
 import { App } from 'obsidian';
 import { ENGINE_COMMANDS, getNodeDataString } from '../engine/mindmap';
 import {
-	createAspectSetNodeImageOptions,
+	createNaturalSizeSetNodeImageOptions,
 	createSetNodeImageOptions,
 } from '../media/images-path';
 import { resolvePathToFile } from '../links/links-resolve';
@@ -106,7 +106,7 @@ export async function applyNodeImage(
 	const { display, mdTarget } = normalizeImageReference(url, view.app);
 	const engine = view.mindMap;
 	if (!engine) return;
-	const options = await createAspectSetNodeImageOptions(display);
+	const options = await createNaturalSizeSetNodeImageOptions(display);
 	// 探测尺寸期间可能换文件/重建引擎：旧节点已不在新树上
 	if (view.mindMap !== engine) return;
 	engine.execCommand(ENGINE_COMMANDS.SET_NODE_IMAGE, node, options);

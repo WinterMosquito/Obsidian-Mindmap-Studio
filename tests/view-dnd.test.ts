@@ -69,7 +69,7 @@ const h = vi.hoisted(() => ({
 	extractDroppedFileNames: vi.fn<(dataTransfer: DataTransfer) => string[]>(),
 	getActiveNode: vi.fn<(mindMap: MindMap | null) => MindMapNode | null>(),
 	getRenderRoot: vi.fn<(mindMap: MindMap | null) => MindMapNode | null>(),
-	createAspectSetNodeImageOptions: vi.fn<
+	createNaturalSizeSetNodeImageOptions: vi.fn<
 		(url: string | null) => Promise<{
 			url: string;
 			title: string;
@@ -176,8 +176,8 @@ vi.mock('../src/links/links-resolve', () => ({
 // 图片尺寸探测要真实解码（Node 下 Image 不可用）：以固定尺寸桩替换，
 // 用来断言 imageSize 三个字段确实来自探测结果而非写死。
 vi.mock('../src/media/images-path', () => ({
-	createAspectSetNodeImageOptions: (url: string | null) =>
-		h.createAspectSetNodeImageOptions(url),
+	createNaturalSizeSetNodeImageOptions: (url: string | null) =>
+		h.createNaturalSizeSetNodeImageOptions(url),
 }));
 
 /** 引擎插入命令名（与 vi.mock 提供的常量表一致） */
@@ -1508,7 +1508,7 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 			'app://vault/attachments/a.png',
 		);
 		// 其余各建一个承载图片的子节点（图片独占语义：无文本 + 引擎渲染字段）
-		expect(h.createAspectSetNodeImageOptions).toHaveBeenCalledWith(
+		expect(h.createNaturalSizeSetNodeImageOptions).toHaveBeenCalledWith(
 			'app://vault/attachments/b.png',
 		);
 		expect(execCommand).toHaveBeenCalledTimes(1);
@@ -1648,7 +1648,7 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 			importImageFailed(ZH, 'null'),
 		]);
 		expect(h.applyNodeImage).not.toHaveBeenCalled();
-		expect(h.createAspectSetNodeImageOptions).not.toHaveBeenCalled();
+		expect(h.createNaturalSizeSetNodeImageOptions).not.toHaveBeenCalled();
 		expect(execCommand).not.toHaveBeenCalled();
 	});
 
@@ -1675,7 +1675,7 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 
 		expect(preventDefault).toHaveBeenCalledTimes(1);
 		expect(h.applyNodeImage).not.toHaveBeenCalled();
-		expect(h.createAspectSetNodeImageOptions).not.toHaveBeenCalled();
+		expect(h.createNaturalSizeSetNodeImageOptions).not.toHaveBeenCalled();
 		expect(execCommand).not.toHaveBeenCalled();
 		// 只保留「正在导入」：写入被放弃后不再给任何结果提示
 		expect(h.noticeCalls).toEqual([importingToVault(ZH, 1)]);
@@ -1704,7 +1704,7 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 					path: 'attachments/b.png',
 				}),
 			);
-		h.createAspectSetNodeImageOptions.mockImplementation(async (url) => {
+		h.createNaturalSizeSetNodeImageOptions.mockImplementation(async (url) => {
 			// 探测是异步的（真实实现要解码图片）：期间换引擎 → 父节点已不在新树上
 			mutable.mindMap = { execCommand } as unknown as MindMap;
 			return {
@@ -1725,7 +1725,7 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 
 		// 首张（挂所选节点）已写入，第二张因引擎变更被放弃
 		expect(h.applyNodeImage).toHaveBeenCalledTimes(1);
-		expect(h.createAspectSetNodeImageOptions).toHaveBeenCalledTimes(1);
+		expect(h.createNaturalSizeSetNodeImageOptions).toHaveBeenCalledTimes(1);
 		expect(execCommand).not.toHaveBeenCalled();
 		expect(h.noticeCalls).toEqual([
 			importingToVault(ZH, 2),
@@ -1781,7 +1781,7 @@ function resetHarnessMocks(): void {
 	h.extractDroppedFileNames.mockReset();
 	h.getActiveNode.mockReset();
 	h.getRenderRoot.mockReset();
-	h.createAspectSetNodeImageOptions.mockReset();
+	h.createNaturalSizeSetNodeImageOptions.mockReset();
 
 	h.resolveDroppedFile.mockReturnValue(null);
 	h.extractDroppedFileNames.mockReturnValue([]);
@@ -1789,7 +1789,7 @@ function resetHarnessMocks(): void {
 	h.getRenderRoot.mockReturnValue(null);
 	h.saveImageToVault.mockResolvedValue(null);
 	h.saveAttachmentToVault.mockResolvedValue(null);
-	h.createAspectSetNodeImageOptions.mockImplementation((url) =>
+	h.createNaturalSizeSetNodeImageOptions.mockImplementation((url) =>
 		Promise.resolve({
 			url: url ?? '',
 			title: ASPECT_TITLE,

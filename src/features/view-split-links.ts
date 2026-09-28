@@ -10,11 +10,8 @@
  *   （整批一条历史，一次 `Ctrl+Z` 回到拆分前）。
  */
 import { Notice } from 'obsidian';
-import {
-	isEditingText,
-	replaceMindMapData,
-	setNodeText,
-} from '../engine/mindmap';
+import { replaceMindMapData, setNodeText } from '../engine/mindmap';
+import { isAnyNodeEditing } from './node-inline-editor';
 import {
 	planSplitLinks,
 	splitAllLinksInTree,
@@ -127,7 +124,7 @@ export function autoSplitNode(view: MindMapViewContext, node: MindMapNode): numb
 		return 0;
 	}
 	const mindMap = view.mindMap;
-	if (!mindMap || isEditingText(mindMap)) {
+	if (!mindMap || isAnyNodeEditing(mindMap)) {
 		return 0;
 	}
 	const data = node.getData() as MdNodeData;
@@ -189,7 +186,7 @@ export function runAutoSplitCheck(view: MindMapViewContext): void {
 	const candidates = [...entry.nodes];
 	entry.nodes.clear();
 	for (const node of candidates) {
-		if (isEditingText(engine)) {
+		if (isAnyNodeEditing(engine)) {
 			entry.nodes.add(node);
 			continue;
 		}

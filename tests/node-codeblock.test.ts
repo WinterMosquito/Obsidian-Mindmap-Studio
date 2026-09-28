@@ -13,7 +13,10 @@ import {
 	CODE_BLOCK_CLASS,
 	CODE_COPY_CLASS,
 } from '../src/features/node-inline-content';
-import { resolveCodeCopyTarget } from '../src/features/node-codeblock';
+import {
+	hideCopyButtonsInExportSvg,
+	resolveCodeCopyTarget,
+} from '../src/features/node-codeblock';
 
 /** Element / HTMLElement 的公共桩类（stubGlobal 后 instanceof 判定成立） */
 class StubElement {}
@@ -105,5 +108,28 @@ describe('resolveCodeCopyTarget（点击目标 → 复制按钮 + 文本）', ()
 		);
 		expect(resolved).not.toBeNull();
 		expect(resolved?.text).toBe('');
+	});
+
+	describe('hideCopyButtonsInExportSvg（导出图隐身，第五轮）', () => {
+		it('克隆 SVG 内的复制按钮内联 opacity 置 0，并原样返回同一对象', () => {
+			// 桩 style 为普通对象：实现用 Object.assign 整体写入（合规写法，
+			// 见 HIDDEN_BUTTON_STYLE 注释），故直接断言属性值
+			const button = { style: {} as Record<string, string> };
+			const svg = {
+				node: {
+					querySelectorAll: (selector: string) =>
+						selector === `.${CODE_COPY_CLASS}` ? [button] : [],
+				},
+			};
+			expect(hideCopyButtonsInExportSvg(svg)).toBe(svg);
+			expect(button.style).toEqual({ opacity: '0' });
+		});
+
+		it('形态不符（无 node / 无 querySelectorAll）：安全 no-op 原样返回', () => {
+			const bare = {};
+			expect(hideCopyButtonsInExportSvg(bare)).toBe(bare);
+			const half = { node: {} };
+			expect(hideCopyButtonsInExportSvg(half)).toBe(half);
+		});
 	});
 });

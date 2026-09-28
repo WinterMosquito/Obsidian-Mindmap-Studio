@@ -24,6 +24,30 @@ const CODE_BLOCK_SELECTOR = `.${CODE_BLOCK_CLASS}`;
 const COPIED_FEEDBACK_MS = 1200;
 
 /**
+ * ✓ 反馈态的内联样式（撤 mask / 撤底色 / 成功色 / 居中字号）。
+ *
+ * **为什么仍是内联**：外观 100% 内联 + 零 styles.css 依赖是本文件的既有外观
+ * 契约（styles.css 新鲜度不可控，见 K91），故不改为 CSS 类。
+ *
+ * **为什么用 `Object.assign`**：`obsidianmd/no-static-styles-assignment` 只
+ * 放行「非字面量直赋」形态（逐条 `el.style.X = '字面量'` / `setProperty(k, 字面量)`
+ * 均报错），且 `eslint-comments/no-restricted-disable` 禁止用 disable 注释豁免
+ * obsidianmd/* 规则。`Object.assign(el.style, 表)` 是 `node-inline-content` 构建期
+ * 样式（CODE_COPY_BUTTON_STYLES）的同款写法，语义与逐条赋值完全一致。
+ */
+const COPIED_FEEDBACK_STYLES: Partial<CSSStyleDeclaration> = {
+	maskImage: 'none',
+	backgroundColor: 'transparent',
+	color: 'var(--text-success, var(--text-accent))',
+	fontSize: '12px',
+	lineHeight: '20px',
+	textAlign: 'center',
+};
+
+/** 导出图内复制按钮的隐身样式（内联 opacity 0，写法理由同上） */
+const HIDDEN_BUTTON_STYLE: Partial<CSSStyleDeclaration> = { opacity: '0' };
+
+/**
  * 从点击目标解析「复制按钮 + 复制文本」；非按钮目标返回 null。
  *
  * 复制文本**优先读构建期写入的 `data-code`**（buildCodeBlockElement 在构建时
@@ -72,11 +96,9 @@ async function copyText(button: HTMLElement, text: string): Promise<boolean> {
 }
 
 /**
- * ✓ 反馈：置字形 + `is-copied` 类 + **外观直改内联样式**（2026-09-28 第四轮：
- * 不依赖 styles.css 新鲜度——用户实机长期滞留旧版 CSS，只写在类规则里的
- * 「撤 mask/撤底色/成功色」会不生效）。进反馈前快照 `style` 属性原文，到点
- * **逐字还原**（等于回到构建期内联态）；引擎中途重建节点则 WeakMap 到点
- * 空转，无泄漏面。
+ * ✓ 反馈：置字形 + `is-copied` 类 + **外观直改内联样式**（不依赖 styles.css
+ * 新鲜度，类规则在本机不可靠）。进反馈前快照 `style` 属性原文，到点**逐字
+ * 还原**（回到构建期内联态）；引擎中途重建节点则 WeakMap 到点空转，无泄漏。
  */
 function showCopiedFeedback(button: HTMLElement): void {
 	const win = button.ownerDocument?.defaultView;
@@ -90,13 +112,9 @@ function showCopiedFeedback(button: HTMLElement): void {
 	const previousStyle = button.getAttribute('style');
 	button.textContent = '✓';
 	button.classList.add('is-copied');
-	// 撤图标 mask/填充 → ✓ 字形可见；成功色与字号对齐 styles.css 的 is-copied 口径
-	button.style.setProperty('mask-image', 'none');
-	button.style.backgroundColor = 'transparent';
-	button.style.color = 'var(--text-success, var(--text-accent))';
-	button.style.fontSize = '12px';
-	button.style.lineHeight = '20px';
-	button.style.textAlign = 'center';
+	// 撤图标 mask/填充 → ✓ 字形可见；成功色/字号对齐 Obsidian 的反馈口径
+	// （整体 Object.assign 写入，写法理由见 COPIED_FEEDBACK_STYLES 注释）
+	Object.assign(button.style, COPIED_FEEDBACK_STYLES);
 	const timer = win.setTimeout(() => {
 		feedbackTimers.delete(button);
 		button.textContent = '';
@@ -108,6 +126,39 @@ function showCopiedFeedback(button: HTMLElement): void {
 		}
 	}, COPIED_FEEDBACK_MS);
 	feedbackTimers.set(button, timer);
+}
+
+/**
+ * **导出图隐身复制按钮**：挂到引擎 `handleExportSvg` 钩子（与
+ * `injectMathStylesIntoExportSvg` 组合，见 engine-controller），在克隆 SVG
+ * 里把按钮内联 opacity 置 0——隐身必须**显式**实现，不依赖 styles.css。
+ *
+ * `svgElement` 为 @svgdotjs/svg.js 元素对象（原生节点在 `.node`，访问口径同
+ * `injectMathStylesIntoExportSvg`）；形态不符时原样返回（安全 no-op）。
+ */
+export function hideCopyButtonsInExportSvg(svgElement: unknown): unknown {
+	const root = (svgElement as { node?: Element } | null)?.node;
+	if (!root) {
+		return svgElement;
+	}
+	let buttons: Element[];
+	try {
+		// 直接调用 + 异常兜底（形态不符 → TypeError → 原样返回）。勿改回
+		// `typeof root.querySelectorAll !== 'function'` 这类**方法引用**形态：
+		// 它会命中 DOM lib 的 deprecated 重载签名
+		// （HTMLElementDeprecatedTagNameMap），触发 no-deprecated 告警；
+		// try/catch 写法与 platform/math-jax 的查询形态同款。
+		buttons = Array.from(root.querySelectorAll(COPY_BUTTON_SELECTOR));
+	} catch {
+		return svgElement;
+	}
+	for (const button of buttons) {
+		const style = (button as HTMLElement).style;
+		if (style) {
+			Object.assign(style, HIDDEN_BUTTON_STYLE);
+		}
+	}
+	return svgElement;
 }
 
 /**

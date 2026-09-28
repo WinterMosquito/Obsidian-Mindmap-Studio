@@ -16,7 +16,7 @@ import {
 	TouchEvent,
 } from '../../vendor/simple-mind-map.cjs';
 import { getThemeConfig, isDarkTheme, getDocIconColor } from './mindmap-theme';
-import { t, type Language } from '../core/i18n';
+import type { Language } from '../core/i18n';
 import { walkTree } from '../domain/tree';
 import { docWikiLinkDisplay, type WikiAliasSource } from '../domain/wiki-display';
 import {
@@ -116,7 +116,7 @@ export interface CreateMindMapOptions {
 	 * 用途：把只存在于**文档级**的样式注入导出 SVG——MathJax CHTML 的逐字符
 	 * 字形依赖 `<style id="MJX-CHTML-styles">` 的 `mjx-c…::before` 规则，
 	 * 而引擎导出只注入自身 CSS，导致导出图中数学元素无内容、渲染为空白
-	 * （2026-09-27 用户实测：导出 PNG 里 `$E=mc^2$` 节点空白）。
+	 * （用户实测：导出 PNG 里 `$E=mc^2$` 节点空白）。
 	 *
 	 * `svg` 为 @svgdotjs/svg.js 元素对象（原生节点在 `.node`）。
 	 */
@@ -321,11 +321,12 @@ export function createMindMap(
 				// 画布中心，故视口必须在首次布局落地时立即应用（engine-controller
 				// 的 node_tree_render_end 处理），否则会先亮「根居中」再跳
 				fit: false,
-				defaultInsertSecondLevelNodeText: t(options.lang, 'default.secondLevel'),
-				defaultInsertBelowSecondLevelNodeText: t(
-					options.lang,
-					'default.belowSecondLevel',
-				),
+				// 新建节点默认**空文本**（2026-09-28 方案 B，K93）：占位文字会干扰
+				// 「新建即输入」（此前为 i18n 的「节点」/「子节点」）；空节点由引擎
+				// 渲染为空框（含最小尺寸），配合插入路径 openEdit=true（新建即进入
+				// 编辑 + 全选）体验完整。
+				defaultInsertSecondLevelNodeText: '',
+				defaultInsertBelowSecondLevelNodeText: '',
 				openPerformance: performanceEnabled,
 				performanceConfig: { ...PERFORMANCE_CONFIG },
 				enableFreeDrag: options.enableDrag,
@@ -387,7 +388,7 @@ export function createMindMap(
 					: null,
 			},
 			{
-				// 打开分片渲染（2026-09-25 性能轮方案 B，补丁 6）：把 `_render` 整树
+				// 打开分片渲染（性能轮方案 B，补丁 6）：把 `_render` 整树
 				// 渲染接入引擎既有 async 通道（每子节点一个宏任务），打开/重建大图时
 				// 消除 1s 级 UI 冻结。显式传 renderAsync 优先（bench 对照用），否则按
 				// 节点数阈值判据。字段未入 d.cts，经 Object.assign 注入（同
@@ -691,7 +692,7 @@ export function centerContentAtFullScale(mindMap: MindMap | null): void {
 				mindMap.view?.setScale(1, size.width / 2, size.height / 2);
 			}
 		};
-		// 包围盒口径分两路（2026-09-20 性能轮，见 K70）：
+		// 包围盒口径分两路（性能轮，见 K70）：
 		// - 性能模式：**数据层几何并集**（全树、零 DOM）——旧实现先 forceLoadNode
 		//   把整树**同步**装配进 DOM 再测 rbox，且打开窗口内被多轮触发（首帧/
 		//   重入/兜底/图片回灌），是用户实测「多节点打开卡顿严重」的主因；
@@ -796,7 +797,7 @@ interface DataLayerNode {
 /**
  * 内容包围盒（**数据层**：渲染树全树节点的布局几何并集，布局坐标系）。
  *
- * 存在理由（K70，2026-09-20 用户实测「多节点打开卡顿严重、加载很久」）：
+ * 存在理由（K70，用户实测「多节点打开卡顿严重、加载很久」）：
  * 性能模式下视口外节点被引擎回收出 DOM，`draw.rbox()` 只覆盖可见子集 ⇒
  * 旧实现必须 `forceLoadNode()` 把整树**同步**装配进 DOM 再测量（vendor 的
  * forceLoadNode 是同步递归 render），且打开窗口内被多轮触发（首帧渲染结束、
@@ -1388,7 +1389,7 @@ let refreshMissingReRenderWarned = false;
 /**
  * **批量**重建多个节点的自绘内容（同 `refreshNodeCustomContent` 语义）。
  *
- * 用于「数学异步替换定稿后同步节点尺寸」（P4，2026-09-27）：含数学的节点可能
+ * 用于「数学异步替换定稿后同步节点尺寸」（P4）：含数学的节点可能
  * 在同一帧内成批定稿（一次打开多个公式），若逐个走 `refreshNodeCustomContent`
  * 会各触发一次**全树** `render()`。此处逐节点 `reRender(['custom'])`、
  * **最后一次** `render()`——N 个节点 1 次重排。
@@ -1500,7 +1501,11 @@ export function previewNodeImageSize(
  * （`ImageSizeCorrection`），此处按同形声明以免 engine → media 反向依赖。
  */
 export interface ImageSizeCorrectionEntry {
-	/** 树节点 data 对象**引用**：按对象身份匹配引擎节点（引擎节点 data 即树 data） */
+	/**
+	 * 树节点 data 对象**引用**。注意：**引擎节点持有的是包装/拷贝数据，与树 data
+	 * 非同一对象**（2026-09-28 真实引擎实测 `identitySame=false`）——身份通道只在
+	 * 引擎直接持有树 data 的场景命中；真实路径靠 `uid` 回退通道（见下）。
+	 */
 	data: Record<string, unknown>;
 	/** 探测时的图片地址（写回前比对，图片已换则丢弃该条） */
 	image: string;
@@ -1514,10 +1519,15 @@ export interface ImageSizeCorrectionEntry {
 /**
  * 把图片尺寸校正回灌到引擎（**首帧之后**调用，见 K 记录：加载期探测不再挡首帧）。
  *
- * 匹配用**对象身份**（`node.getData() === correction.data`）+ `image` 字段比对：
- * - 加载期 uid 可能尚未分配（`ensureUniqueUids` 在引擎创建时才跑），不能按 uid；
- * - 引擎重建（设置刷新/换文件）后身份自然落空 ⇒ 陈旧条目静默丢弃，
- *   不会把尺寸盖到别的节点上。
+ * 匹配**双通道**（两条都要过 `image` 字段比对：用户已换图则丢弃）：
+ * ① **对象身份**（`node.getData() === correction.data`）——引擎直接持有树 data 时命中；
+ * ② **uid 回退**（`data.uid === correction.data.uid`，非空才用）——引擎对节点数据
+ *    做包装/拷贝时命中。**真实路径实测走这条**（2026-09-28：`identitySame=false`，
+ *    此前只有身份通道，校正因此从未生效——图片全停在默认尺寸）。
+ *
+ * uid 在**回灌时**必然已分配：`ensureUniqueUids` 在引擎创建前同步跑完（此前
+ * 「uid 尚未分配」只约束**探测期间**的写回定位，不约束回灌）；引擎重建（设置
+ * 刷新/换文件）后 uid 匹配落空 ⇒ 陈旧条目静默丢弃，不会把尺寸盖到别的节点上。
  *
  * 有实际改动才 `render()` 一次（局部重建由引擎按数据变更自行判定）；
  * 值相同的条目不写，避免无谓重绘与序列化惊动。
@@ -1534,14 +1544,27 @@ export function applyImageSizeCorrectionsToEngine(
 		return 0;
 	}
 	const byData = new Map<Record<string, unknown>, ImageSizeCorrectionEntry>();
+	const byUid = new Map<string, ImageSizeCorrectionEntry>();
 	for (const correction of corrections) {
 		byData.set(correction.data, correction);
+		const uid = correction.data.uid;
+		if (typeof uid === 'string' && uid) {
+			byUid.set(uid, correction);
+		}
 	}
 	let applied = 0;
 	walkTree(root, (node) => {
 		const data = node.getData() as Record<string, unknown> | undefined;
-		const correction = data ? byData.get(data) : undefined;
-		if (!data || !correction) {
+		if (!data) {
+			return;
+		}
+		// 双通道：对象身份优先（引擎直接持树 data），uid 回退（引擎拷贝包装）
+		let correction = byData.get(data);
+		if (!correction) {
+			const uid = data.uid;
+			correction = typeof uid === 'string' && uid ? byUid.get(uid) : undefined;
+		}
+		if (!correction) {
 			return;
 		}
 		// 身份命中还不够：用户可能已经换过图片，旧尺寸不能盖上去

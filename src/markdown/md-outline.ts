@@ -466,7 +466,8 @@ export function buildInlineData(raw: string): InlineData {
 					data.mdLinkStyle = 'wiki';
 				} else {
 					// 双链指向文档：不写 hyperlink——引擎会为任何 hyperlink 渲染
-					// 原生链接图标，与自绘文档页图标（mindmap.ts 前缀内容）双显。
+					// 原生链接图标，与自绘文档页图标（mindmap.ts 前缀内容）双显
+					//（图标仅未接管节点可见；自绘节点链接为主题链接色文本、无图标）。
 					// 链接本体存 mdWikiLinkpath，由文档图标承接点击
 					data.mdWikiLinkpath = formatWikilink(
 						tok.target,
@@ -792,10 +793,11 @@ function classifyLines(body: string): ParsedLine[] {
 		const h = line.match(HEADING_RE);
 		if (h) {
 			const text = (h[2] ?? '').trim();
-			// 空标题（`#` / `# `）保留为空文本节点（2026-09-25，与「空列表项退化
-			// plain」的零丢失口径对齐）：此前丢弃会让该行在保存后消失。引擎对空
-			// 文本节点有既有先例（图片独占 / URL icon-only 子节点），序列化经
-			// 前缀 `#×N ` 合成输出 `## `（尾随空格由前缀携带），往返为不动点。
+			// 空标题（`#` / `# `）保留为空文本节点（2026-09-25，零丢失口径；空列表项
+			// 自 2026-09-28 起同样保留为空 list 节点，见下方 emptyList 分支）：此前
+			// 丢弃会让该行在保存后消失。引擎对空文本节点有既有先例（图片独占 /
+			// URL icon-only 子节点），序列化经前缀 `#×N ` 合成输出 `## `
+			//（尾随空格由前缀携带），往返为不动点。
 			out.push({ kind: 'heading', indent: 0, text, level: h[1]!.length });
 			continue;
 		}
@@ -823,6 +825,24 @@ function classifyLines(body: string): ParsedLine[] {
 					}
 				}
 			}
+			continue;
+		}
+		// 空列表项（marker 后有空白、无内容：`- ` / `1. `）：保留为**空 list 节点**
+		// （2026-09-28 方案 B，K93）。判据必须用 **trimEnd 前的 rawLine**：上方
+		// `const line = rawLine.trimEnd()` 已去掉行尾空白，`line` 里的 `- ` 只剩裸
+		// `-`（CommonMark 口径「marker 后无空白不是列表项」，裸 `-` 仍落 plain）；
+		// 不看 rawLine 就无法与裸 marker 区分（LIST_RE 也因此匹配不到空项）。
+		// 空文本节点在链路上有既有先例（空标题 / 图片独占 / URL icon-only）；
+		// 序列化按 marker + 空内容输出 `- ` ⇒ 往返为不动点
+		//（docs/markdown-mindmap-standard.md §3.6 白名单 #6）。
+		const emptyList = rawLine.match(/^(\s*)([-*+]|\d+\.)[ \t]+$/);
+		if (emptyList) {
+			out.push({
+				kind: 'list',
+				indent: emptyList[1]!.length,
+				text: '',
+				marker: /^\d+\.$/.test(emptyList[2]!) ? 'ordered' : emptyList[2],
+			});
 			continue;
 		}
 		out.push({

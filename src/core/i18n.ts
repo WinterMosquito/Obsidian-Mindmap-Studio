@@ -38,7 +38,6 @@ const ZH = {
 	'nodeTextTruncated':
 		'节点文本过长，此处仅显示开头部分；完整内容仍保存在文件中，双击节点可查看或编辑',
 	'codeBlock.copy': '复制代码',
-	'codeBlock.copied': '已复制',
 	'rename.titleConflict': '已存在同名文件，无法按中心节点重命名',
 	'rename.titleFailed': '按中心节点重命名文件失败',
 
@@ -65,6 +64,7 @@ const ZH = {
 
 	// ===== 右键菜单 =====
 	'menu.editText': '编辑文本',
+	'menu.editTextModal': '在弹窗中编辑',
 	'menu.addChild': '添加子节点',
 	'menu.addSibling': '添加同级节点',
 	'menu.copyNode': '复制节点',
@@ -240,8 +240,6 @@ const ZH = {
 	'default.tabHint': 'Tab：添加子节点',
 	'default.enterHint': 'Enter：添加同级节点',
 	'default.fileNamePrefix': '思维导图',
-	'default.secondLevel': '节点',
-	'default.belowSecondLevel': '子节点',
 } as const;
 
 /** 英文字典（key → English） */
@@ -266,7 +264,6 @@ const EN: Record<TranslationKey, string> = {
 	'nodeTextTruncated':
 		'Node text is too long, so only the beginning is shown here; the full text is kept in the file (double-click the node to view or edit it).',
 	'codeBlock.copy': 'Copy code',
-	'codeBlock.copied': 'Copied',
 	'rename.titleConflict': 'A file with that name already exists; cannot rename by central node',
 	'rename.titleFailed': 'Failed to rename the file by its central node',
 
@@ -293,6 +290,7 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 右键菜单 =====
 	'menu.editText': 'Edit text',
+	'menu.editTextModal': 'Edit in dialog',
 	'menu.addChild': 'Add child node',
 	'menu.addSibling': 'Add sibling node',
 	'menu.copyNode': 'Copy node',
@@ -472,8 +470,6 @@ const EN: Record<TranslationKey, string> = {
 	'default.tabHint': 'Tab: add a child node',
 	'default.enterHint': 'Enter: add a sibling node',
 	'default.fileNamePrefix': 'MindMap',
-	'default.secondLevel': 'Node',
-	'default.belowSecondLevel': 'Child node',
 };
 
 /** 合法翻译 key（由 ZH 字典的 key 集合派生，编译期类型检查） */

@@ -23,7 +23,7 @@ import { Keymap } from 'obsidian';
 import { HOVER_LINK_EVENT, VIEW_TYPE } from '../core/constants';
 import { formatWikilink, wikilinkLinkpath } from '../domain/wikilink';
 import { getNodeDataString, getNodeGroupEl } from '../engine/mindmap';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { HyperlinkOpenMode, MindMapViewContext } from './view-context';
 
 /** 悬停防抖（与附件预览共用状态字段，互斥触发） */
@@ -193,14 +193,36 @@ function hyperlinkOpenMode(event: MouseEvent): HyperlinkOpenMode | null {
 /** 锚点选择器（节点内自绘锚点与引擎原生锚点共用） */
 const ANCHOR_SELECTOR = 'a.internal-link, a.external-link, a[href]';
 
-/** 注册 wikilink 的悬停预览与点击跳转（initMindMap 内调用一次） */
+/**
+ * 注册 wikilink 的悬停预览与点击跳转（initMindMap 内调用一次）。
+ *
+ * 编排壳：四个注册块各自独立（点击跳转 / 节点悬停 / 画布锚点悬停 / 中键），
+ * 逐个下移为私有函数——纯移动，注册顺序与内容不变。
+ */
 export function registerWikilinkInteractions(view: MindMapViewContext): void {
-	if (!view.mindMap) {
+	const mindMap = view.mindMap;
+	if (!mindMap) {
 		return;
 	}
-
 	// 链接点击跳转（引擎 node_click 携带原始事件）
-	view.engineEvents.onEngine(view.mindMap, 'node_click', (...args: unknown[]) => {
+	registerNodeClickNavigation(view, mindMap);
+	// 悬停节点（引擎事件）→ 页面预览
+	registerNodeHoverPreview(view, mindMap);
+	const canvasEl = view.canvasEl;
+	if (canvasEl) {
+		// 节点内锚点之间的移动：画布委托 mouseover 补齐「锚点优先」级
+		registerCanvasAnchorHover(view, canvasEl);
+		// 中键点击链接 → 新标签打开
+		registerCanvasAuxClick(view, canvasEl);
+	}
+}
+
+/** 链接点击跳转（引擎 node_click 携带原始事件） */
+function registerNodeClickNavigation(
+	view: MindMapViewContext,
+	mindMap: MindMap,
+): void {
+	view.engineEvents.onEngine(mindMap, 'node_click', (...args: unknown[]) => {
 		const node = args[0] as MindMapNode | undefined;
 		const event = args[1] as MouseEvent | undefined;
 		if (!node || !event) {
@@ -236,10 +258,15 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 		event.stopPropagation();
 		view.openHyperlink(link);
 	});
+}
 
-	// 悬停节点（引擎事件）→ 页面预览
+/** 悬停节点（引擎事件）→ 页面预览 */
+function registerNodeHoverPreview(
+	view: MindMapViewContext,
+	mindMap: MindMap,
+): void {
 	view.engineEvents.onEngine(
-		view.mindMap,
+		mindMap,
 		'node_mouseenter',
 		(...args: unknown[]) => {
 			const node = args[0] as MindMapNode | undefined;
@@ -282,13 +309,20 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 			triggerHoverPreview(view, targetEl, linktext, event);
 		},
 	);
+}
 
-	if (view.canvasEl) {
-		// 节点内锚点之间的移动：引擎只在「进入节点」时发 node_mouseenter，指针在
-		// 节点**内部**从节点体移到某枚锚点、或从一枚锚点移到另一枚，都不会重新触发
-		// → 画布委托 mouseover 补齐「锚点优先」这一级（目标识别与点击路径同源：
-		// `anchorLinktext` → `resolveAnchorLink`；非库内目标交回节点级，不重复处理）。
-		view.engineEvents.onDom(view.canvasEl, 'mouseover', (event) => {
+/**
+ * 节点内锚点之间的移动（画布 mouseover 委托）：引擎只在「进入节点」时发
+ * node_mouseenter，指针在节点**内部**从节点体移到某枚锚点、或从一枚锚点移到
+ * 另一枚，都不会重新触发 → 画布委托 mouseover 补齐「锚点优先」这一级
+ * （目标识别与点击路径同源：`anchorLinktext` → `resolveAnchorLink`；
+ * 非库内目标交回节点级，不重复处理）。
+ */
+function registerCanvasAnchorHover(
+	view: MindMapViewContext,
+	canvasEl: HTMLElement,
+): void {
+	view.engineEvents.onDom(canvasEl, 'mouseover', (event) => {
 			if (event.buttons) {
 				return;
 			}
@@ -306,10 +340,18 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 			}
 			triggerHoverPreview(view, anchor, linktext, event);
 		});
-		// 中键点击链接 → 新标签打开（Obsidian 应用行为：阅读视图里中键即新标签；
-		// 官方帮助未单列该键位，行为随应用）。走 auxclick（中键不触发 click），
-		// 仅命中锚点时接管，其余区域交回引擎（避免破坏中键平移）。
-		view.engineEvents.onDom(view.canvasEl, 'auxclick', (event) => {
+}
+
+/**
+ * 中键点击链接 → 新标签打开（画布 auxclick）：Obsidian 应用行为（阅读视图里
+ * 中键即新标签；官方帮助未单列该键位，行为随应用）。走 auxclick（中键不触发
+ * click），仅命中锚点时接管，其余区域交回引擎（避免破坏中键平移）。
+ */
+function registerCanvasAuxClick(
+	view: MindMapViewContext,
+	canvasEl: HTMLElement,
+): void {
+	view.engineEvents.onDom(canvasEl, 'auxclick', (event) => {
 			if (event.button !== 1) {
 				return;
 			}
@@ -329,7 +371,6 @@ export function registerWikilinkInteractions(view: MindMapViewContext): void {
 			event.stopPropagation();
 			view.openHyperlink(link, 'tab');
 		});
-	}
 }
 
 /**

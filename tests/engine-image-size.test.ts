@@ -2,14 +2,17 @@
  * 图片尺寸校正**回灌引擎**的回归（`applyImageSizeCorrectionsToEngine`）。
  *
  * 为什么单独立文件：这是「加载期探测不再挡首帧」的另一半——探测在首帧前起步、
- * 结果在引擎就绪后回灌。回灌必须满足三条硬约束，本文件逐条断言：
- * ① **对象身份匹配**（`node.getData() === correction.data`）：加载期 uid 可能尚未
- *    分配（`ensureUniqueUids` 在引擎创建时才跑），按 uid 找会写空；
- * ② **image 地址比对**：用户已换过图片时旧尺寸不得盖上去；
+ * 结果在引擎就绪后回灌。回灌必须满足四条硬约束，本文件逐条断言：
+ * ① **匹配双通道**：对象身份（`node.getData() === correction.data`）优先、
+ *    **uid 回退**兜底——真实引擎对树 data 做**包装/拷贝**（2026-09-28 探针实测
+ *    `identitySame=false`），身份通道在真实路径落空，靠 uid 命中；uid 在回灌时
+ *    必然已分配（`ensureUniqueUids` 在引擎创建前同步跑完）；
+ * ② **image 地址比对**：用户已换过图片时旧尺寸不得盖上去（两通道都要过）；
  * ③ **值相同不写、有改动才 render 一次**：避免无谓重绘（这是本项优化的收益来源，
  *    回灌本身不能变成新的卡顿源）。
  *
- * vendor cjs 以 vi.mock 桩替代（只验防腐层的匹配与写入，不需要真实引擎）。
+ * vendor cjs 以 vi.mock 桩替代（只验防腐层的匹配与写入，不需要真实引擎；
+ * 「引擎节点 data 可独立于树 data」的桩形态见 uid 用例——这正是真实引擎行为）。
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
@@ -179,5 +182,99 @@ describe('applyImageSizeCorrectionsToEngine（首帧后回灌）', () => {
 			]),
 		).toBe(0);
 		expect(render).not.toHaveBeenCalled();
+	});
+
+	it('引擎包装数据（与树 data 非同一对象、同 uid）：按 uid 回退通道命中', () => {
+		// 真实引擎对树 data 做包装/拷贝（2026-09-28 探针实测 identitySame=false）：
+		// 引擎节点持有的对象 ≠ 树 data，但 uid 一致——生产路径靠这条通道命中
+		const treeData: Record<string, unknown> = {
+			uid: 'img-wrap-1',
+			text: '',
+			image: 'app://img/wrap.png',
+		};
+		const engineData: Record<string, unknown> = { ...treeData };
+		expect(engineData).not.toBe(treeData);
+		const { mindMap, render } = fakeEngine(
+			fakeNode({ text: 'root' }, [fakeNode(engineData)]),
+		);
+
+		const applied = applyImageSizeCorrectionsToEngine(mindMap, [
+			{
+				data: treeData,
+				image: 'app://img/wrap.png',
+				width: 600,
+				height: 120,
+				custom: true,
+				autoSize: true,
+			},
+		]);
+
+		expect(applied, '身份不成立 → 应靠 uid 命中').toBe(1);
+		expect(engineData.imageSize).toEqual({
+			width: 600,
+			height: 120,
+			custom: true,
+		});
+		expect(engineData.mdImageAutoSize).toBe(true);
+		expect(render).toHaveBeenCalledTimes(1);
+	});
+
+	it('uid 相同但 image 已换：uid 通道同样过 image 守卫、丢弃不写', () => {
+		const treeData: Record<string, unknown> = {
+			uid: 'img-wrap-2',
+			text: '',
+			image: 'app://img/old.png',
+		};
+		const engineData: Record<string, unknown> = {
+			uid: 'img-wrap-2',
+			text: '',
+			image: 'app://img/new.png',
+		};
+		const { mindMap, render } = fakeEngine(
+			fakeNode({ text: 'root' }, [fakeNode(engineData)]),
+		);
+
+		const applied = applyImageSizeCorrectionsToEngine(mindMap, [
+			{
+				data: treeData,
+				image: 'app://img/old.png',
+				width: 600,
+				height: 120,
+				custom: true,
+				autoSize: true,
+			},
+		]);
+
+		expect(applied).toBe(0);
+		expect(engineData.imageSize).toBeUndefined();
+		expect(render).not.toHaveBeenCalled();
+	});
+
+	it('双通道均落空（无 uid 且非同一对象）：静默丢弃', () => {
+		const staleTreeData: Record<string, unknown> = {
+			text: '',
+			image: 'app://img/legacy.png',
+		};
+		const liveData: Record<string, unknown> = {
+			text: '',
+			image: 'app://img/legacy.png',
+		};
+		const { mindMap } = fakeEngine(
+			fakeNode({ text: 'root' }, [fakeNode(liveData)]),
+		);
+
+		const applied = applyImageSizeCorrectionsToEngine(mindMap, [
+			{
+				data: staleTreeData,
+				image: 'app://img/legacy.png',
+				width: 120,
+				height: 40,
+				custom: true,
+				autoSize: true,
+			},
+		]);
+
+		expect(applied).toBe(0);
+		expect(liveData.imageSize).toBeUndefined();
 	});
 });

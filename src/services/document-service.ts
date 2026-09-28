@@ -52,8 +52,8 @@ export class DocumentService {
 		const parsed = parseMdOutline(content, rootName);
 		const tree = parsed.tree;
 		// 图片：库内路径/外链 → 资源地址（mdImageTarget 保留原目标串，供回写）。
-		// 图片尺寸不在此归一：视图加载走 walkCorrectImageSizesByAspect（按原始
-		// 比例，探测失败自动回退固定尺寸）。
+		// 图片尺寸不在此归一：视图加载走 walkImageSizeCorrections（K97：未设置
+		// 尺寸的图一律保持默认大小；带官方参数时按参数，仅宽时探测原始比例补高）。
 		walkResolveImagePaths(tree, this.app);
 		return {
 			tree,

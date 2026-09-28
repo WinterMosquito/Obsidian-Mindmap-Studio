@@ -15,7 +15,7 @@ import {
 	MAX_IMAGE_SIZE_MB,
 } from '../core/constants';
 import { saveAttachmentToVault, saveImageToVault } from '../media/images-save';
-import { createAspectSetNodeImageOptions } from '../media/images-path';
+import { createNaturalSizeSetNodeImageOptions } from '../media/images-path';
 import { notifyError } from '../core/errors';
 import {
 	extractDroppedFileNames,
@@ -556,7 +556,7 @@ async function insertImageChildNode(
 	if (!engine) {
 		return;
 	}
-	const options = await createAspectSetNodeImageOptions(url);
+	const options = await createNaturalSizeSetNodeImageOptions(url);
 	// 探测尺寸期间可能换文件/重建引擎：父节点已不在新树上
 	if (view.mindMap !== engine) {
 		return;

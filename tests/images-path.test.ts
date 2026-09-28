@@ -16,17 +16,17 @@ import {
 	applyImageSizeCorrectionsToTree,
 	cacheImageFail,
 	collectImageSizeCorrections,
-	computeAspectImageSize,
+	createNaturalSizeSetNodeImageOptions,
 	ensureDefaultImageSizes,
-	createAspectSetNodeImageOptions,
 	createSetNodeImageOptions,
+	fitImageWithinMaxSide,
 	IMAGE_FAIL_TTL_MS,
 	type ImageSizeCacheStore,
 	isExternalUrl,
 	isImageFailFresh,
 	probeImageNaturalSize,
 	resolveImagePath,
-	walkCorrectImageSizesByAspect,
+	walkImageSizeCorrections,
 	walkResolveImagePaths,
 } from '../src/media/images-path';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
@@ -310,41 +310,10 @@ describe('createSetNodeImageOptions（统一固定尺寸）', () => {
 	});
 });
 
-describe('computeAspectImageSize（按原始比例，stub Image）', () => {
+describe('probeImageNaturalSize（自然尺寸探测与缓存，stub Image）', () => {
 	beforeEach(stubImage);
 	afterEach(() => {
 		vi.unstubAllGlobals();
-	});
-
-	it('探测成功：高度统一、宽度按比例取整（custom:true 不裁切）', async () => {
-		const pending = computeAspectImageSize(probeUrl('wide.png'));
-		lastImage().emitLoad(240, 120);
-		await expect(pending).resolves.toEqual({
-			width: Math.round((IMAGE_HEIGHT * 240) / 120),
-			height: IMAGE_HEIGHT,
-			custom: true,
-		});
-	});
-
-	it('自定义目标高度：宽度按同一原始比例换算', async () => {
-		const pending = computeAspectImageSize(probeUrl('tall.png'), 60);
-		lastImage().emitLoad(100, 400);
-		await expect(pending).resolves.toEqual({
-			width: Math.round((60 * 100) / 400),
-			height: 60,
-			custom: true,
-		});
-	});
-
-	it('探测失败回退固定宽度 + 目标高度（custom:false，由引擎自行约束）', async () => {
-		const pending = computeAspectImageSize(probeUrl('broken.png'), 60);
-		lastImage().emitError();
-		// 回退宽度恒为 IMAGE_WIDTH（不随 targetHeight 缩放），高度取目标高度
-		await expect(pending).resolves.toEqual({
-			width: IMAGE_WIDTH,
-			height: 60,
-			custom: false,
-		});
 	});
 
 	it('空地址直接判定失败：不创建 Image', async () => {
@@ -434,39 +403,82 @@ describe('computeAspectImageSize（按原始比例，stub Image）', () => {
 	});
 });
 
-describe('createAspectSetNodeImageOptions（按比例的统一选项）', () => {
+describe('fitImageWithinMaxSide（长边上限 480，K97 配套）', () => {
+	it('长边未超限：原样返回（含用户既有样张，不受影响）', () => {
+		// 样张：300×60 与 350×377 —— 上线后这些图必须保持原尺寸
+		expect(fitImageWithinMaxSide(300, 60)).toEqual({ width: 300, height: 60 });
+		expect(fitImageWithinMaxSide(350, 377)).toEqual({
+			width: 350,
+			height: 377,
+		});
+		// 恰好等于上限：不缩
+		expect(fitImageWithinMaxSide(480, 10)).toEqual({ width: 480, height: 10 });
+	});
+
+	it('宽度超限（横图）：按长边等比缩到上限', () => {
+		// 2000×600（10:3）→ 长边 480：480×144
+		expect(fitImageWithinMaxSide(2000, 600)).toEqual({
+			width: 480,
+			height: 144,
+		});
+	});
+
+	it('高度超限（竖长图）：同样按长边等比缩', () => {
+		// 400×3000 → 长边 480：64×480
+		expect(fitImageWithinMaxSide(400, 3000)).toEqual({
+			width: 64,
+			height: 480,
+		});
+	});
+
+	it('正方形超限：两边同为上限', () => {
+		expect(fitImageWithinMaxSide(1000, 1000)).toEqual({
+			width: 480,
+			height: 480,
+		});
+	});
+
+	it('极端比例：短边最小 1px（取整不归零）', () => {
+		expect(fitImageWithinMaxSide(1, 2000)).toEqual({ width: 1, height: 480 });
+		expect(fitImageWithinMaxSide(2000, 1)).toEqual({ width: 480, height: 1 });
+	});
+});
+
+describe('createNaturalSizeSetNodeImageOptions（按图片原始大小，K97）', () => {
 	beforeEach(stubImage);
 	afterEach(() => {
 		vi.unstubAllGlobals();
 	});
 
 	it('空引用复用固定清除参数（不探测）', async () => {
-		await expect(createAspectSetNodeImageOptions(null)).resolves.toEqual(
+		await expect(createNaturalSizeSetNodeImageOptions(null)).resolves.toEqual(
 			createSetNodeImageOptions(null),
 		);
-		await expect(createAspectSetNodeImageOptions('')).resolves.toEqual(
+		await expect(createNaturalSizeSetNodeImageOptions('')).resolves.toEqual(
 			createSetNodeImageOptions(null),
 		);
 		expect(FakeImage.instances).toHaveLength(0);
 	});
 
-	it('非空引用：按原始比例给尺寸，探测失败时回退固定尺寸', async () => {
-		const okUrl = probeUrl('options-ok.png');
-		const okPending = createAspectSetNodeImageOptions(okUrl);
-		lastImage().emitLoad(200, 400);
-		await expect(okPending).resolves.toEqual({
-			url: okUrl,
+	it('非空引用：探测并采用自然尺寸（1:1，custom:true）', async () => {
+		const url = probeUrl('options-natural.png');
+		const pending = createNaturalSizeSetNodeImageOptions(url);
+		lastImage().emitLoad(300, 100);
+		await expect(pending).resolves.toEqual({
+			url,
 			title: '',
-			width: Math.round((IMAGE_HEIGHT * 200) / 400),
-			height: IMAGE_HEIGHT,
+			width: 300,
+			height: 100,
 			custom: true,
 		});
+	});
 
-		const badUrl = probeUrl('options-bad.png');
-		const badPending = createAspectSetNodeImageOptions(badUrl);
+	it('探测失败（图片不可达）：回退默认盒（custom:false，引擎自行约束）', async () => {
+		const url = probeUrl('options-broken.png');
+		const pending = createNaturalSizeSetNodeImageOptions(url);
 		lastImage().emitError();
-		await expect(badPending).resolves.toEqual({
-			url: badUrl,
+		await expect(pending).resolves.toEqual({
+			url,
 			title: '',
 			width: IMAGE_WIDTH,
 			height: IMAGE_HEIGHT,
@@ -475,25 +487,55 @@ describe('createAspectSetNodeImageOptions（按比例的统一选项）', () => 
 	});
 });
 
-describe('walkCorrectImageSizesByAspect（树级校正）', () => {
+describe('walkImageSizeCorrections（树级校正）', () => {
 	beforeEach(stubImage);
 	afterEach(() => {
 		vi.unstubAllGlobals();
 	});
 
-	it('无尺寸参数的节点：统一高度 + 按原始比例补宽', async () => {
+	it('无尺寸参数的节点：按图片原始大小（1:1）校正 + 自动标记（K97）', async () => {
 		const tree = node({ text: '', image: probeUrl('plain.png') });
-		const pending = walkCorrectImageSizesByAspect(tree);
-		lastImage().emitLoad(300, 100);
+		const pending = walkImageSizeCorrections(tree);
+		lastImage().emitLoad(320, 90);
 		await expect(pending).resolves.toBe(true);
 		expect(tree.data.imageSize).toEqual({
-			width: Math.round((IMAGE_HEIGHT * 300) / 100),
-			height: IMAGE_HEIGHT,
+			width: 320,
+			height: 90,
 			custom: true,
 		});
-		// 显示用尺寸：打自动校正标记，序列化据此**不**回写 `|宽度`
-		//（用户没动过的行不得凭空多出尺寸参数）
+		// 显示口径（非用户意图）：打自动标记，序列化不回写 `|宽度`
 		expect(dataOf(tree).mdImageAutoSize).toBe(true);
+	});
+
+	it('未设置尺寸且超长边（2000×600）：缩到长边 480 并标自动标记（K97 上限）', async () => {
+		const tree = node({ text: '', image: probeUrl('huge.png') });
+		const pending = walkImageSizeCorrections(tree);
+		lastImage().emitLoad(2000, 600);
+		await expect(pending).resolves.toBe(true);
+		expect(tree.data.imageSize).toEqual({
+			width: 480,
+			height: 144,
+			custom: true,
+		});
+		// 缩放后仍属自动尺寸：序列化不回写
+		expect(dataOf(tree).mdImageAutoSize).toBe(true);
+	});
+
+	it('显式尺寸参数不受上限约束（![[图|2000]] 照做，用户意图优先）', async () => {
+		const tree = node({
+			text: '',
+			image: probeUrl('md-huge.png'),
+			mdImageWidth: 2000,
+			mdImageHeight: 600,
+		});
+		await expect(walkImageSizeCorrections(tree)).resolves.toBe(true);
+		expect(tree.data.imageSize).toEqual({
+			width: 2000,
+			height: 600,
+			custom: true,
+		});
+		// 参数路径不标自动校正（回写须保留参数）
+		expect(dataOf(tree).mdImageAutoSize).toBeUndefined();
 	});
 
 	it('无参数但已有 custom 尺寸的节点：不覆盖也不探测（拖拽调宽的尺寸是用户意图）', async () => {
@@ -502,7 +544,7 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 			image: probeUrl('custom.png'),
 			imageSize: { width: 999, height: 111, custom: true },
 		});
-		await expect(walkCorrectImageSizesByAspect(tree)).resolves.toBe(false);
+		await expect(walkImageSizeCorrections(tree)).resolves.toBe(false);
 		expect(FakeImage.instances).toHaveLength(0);
 		expect(tree.data.imageSize).toEqual({
 			width: 999,
@@ -513,7 +555,7 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 
 	it('无图片的纯文本节点不参与校正', async () => {
 		const tree = node({ text: 'root' }, [node({ text: 'leaf' })]);
-		await expect(walkCorrectImageSizesByAspect(tree)).resolves.toBe(false);
+		await expect(walkImageSizeCorrections(tree)).resolves.toBe(false);
 		expect(FakeImage.instances).toHaveLength(0);
 	});
 
@@ -528,19 +570,19 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 		expect(corrections).toHaveLength(1);
 		expect(corrections[0]).toMatchObject({
 			image: probeUrl('two-step.png'),
-			width: Math.round((IMAGE_HEIGHT * 300) / 100),
-			height: IMAGE_HEIGHT,
+			width: 300,
+			height: 100,
 			custom: true,
 			autoSize: true,
 		});
-		// 条目持有 data **对象引用**（跨引擎重建后按对象身份回灌，不依赖 uid）
+		// 条目持有 data **对象引用**（回灌按对象身份优先、uid 回退定位，见 K96）
 		expect(corrections[0]?.data).toBe(tree.data);
 
 		// 写回阶段：值不同 → 写入并报改动
 		expect(applyImageSizeCorrectionsToTree(corrections)).toBe(true);
 		expect(tree.data.imageSize).toEqual({
-			width: Math.round((IMAGE_HEIGHT * 300) / 100),
-			height: IMAGE_HEIGHT,
+			width: 300,
+			height: 100,
 			custom: true,
 		});
 		expect(dataOf(tree).mdImageAutoSize).toBe(true);
@@ -573,7 +615,7 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 			mdImageTarget: '图.png',
 			mdImageWidth: 300,
 		});
-		const pending = walkCorrectImageSizesByAspect(tree);
+		const pending = walkImageSizeCorrections(tree);
 		// 原始 300x100（3:1）→ 高 = 300 × 100/300 = 100
 		lastImage().emitLoad(300, 100);
 		await expect(pending).resolves.toBe(true);
@@ -593,7 +635,7 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 			mdImageWidth: 120,
 			mdImageHeight: 80,
 		});
-		await expect(walkCorrectImageSizesByAspect(tree)).resolves.toBe(true);
+		await expect(walkImageSizeCorrections(tree)).resolves.toBe(true);
 		expect(tree.data.imageSize).toEqual({
 			width: 120,
 			height: 80,
@@ -608,7 +650,7 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 			image: probeUrl('md-fail.png'),
 			mdImageWidth: 300,
 		});
-		const pending = walkCorrectImageSizesByAspect(tree);
+		const pending = walkImageSizeCorrections(tree);
 		lastImage().emitError();
 		await expect(pending).resolves.toBe(true);
 		expect(tree.data.imageSize).toEqual({
@@ -625,7 +667,7 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 			mdImageWidth: 300,
 			mdImageHeight: 0,
 		});
-		await expect(walkCorrectImageSizesByAspect(tree)).resolves.toBe(true);
+		await expect(walkImageSizeCorrections(tree)).resolves.toBe(true);
 		expect(tree.data.imageSize).toEqual({
 			width: 300,
 			height: 0,
@@ -643,7 +685,7 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 			mdImageHeight: 80,
 			imageSize: { width: 120, height: 80, custom: true },
 		});
-		await expect(walkCorrectImageSizesByAspect(tree)).resolves.toBe(false);
+		await expect(walkImageSizeCorrections(tree)).resolves.toBe(false);
 		expect(tree.data.imageSize).toEqual({
 			width: 120,
 			height: 80,
@@ -656,7 +698,7 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 			node({ text: `n${i}`, image: probeUrl(`conc-${i}.png`) }),
 		);
 		const tree = node({ text: 'root' }, children);
-		const pending = walkCorrectImageSizesByAspect(tree);
+		const pending = walkImageSizeCorrections(tree);
 		// 同步派发阶段只允许 6 个探测在途（IMAGE_PROBE_CONCURRENCY）
 		expect(FakeImage.instances).toHaveLength(6);
 
@@ -666,8 +708,8 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 		expect(FakeImage.instances).toHaveLength(8);
 		for (const child of children) {
 			expect(child.data.imageSize).toEqual({
-				width: Math.round((IMAGE_HEIGHT * 300) / 100),
-				height: IMAGE_HEIGHT,
+				width: 300,
+				height: 100,
 				custom: true,
 			});
 		}
@@ -675,13 +717,13 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 
 	it('重复校正命中尺寸缓存：同一导图再次打开不再解码', async () => {
 		const tree = node({ text: '', image: probeUrl('reopen.png') });
-		const first = walkCorrectImageSizesByAspect(tree);
+		const first = walkImageSizeCorrections(tree);
 		lastImage().emitLoad(300, 100);
 		await expect(first).resolves.toBe(true);
 		const created = FakeImage.instances.length;
 
-		// 第二次：尺寸已一致 → 既不新建 Image 也不报告变更
-		await expect(walkCorrectImageSizesByAspect(tree)).resolves.toBe(false);
+		// 第二次：探测命中自然尺寸缓存（不新建 Image）、尺寸已一致 → 不报告变更
+		await expect(walkImageSizeCorrections(tree)).resolves.toBe(false);
 		expect(FakeImage.instances).toHaveLength(created);
 	});
 
@@ -695,7 +737,7 @@ describe('walkCorrectImageSizesByAspect（树级校正）', () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 		try {
 			const tree = node({ text: '', image: probeUrl('throws.png') });
-			await expect(walkCorrectImageSizesByAspect(tree)).resolves.toBe(false);
+			await expect(walkImageSizeCorrections(tree)).resolves.toBe(false);
 			expect(tree.data.imageSize).toBeUndefined();
 			expect(warn).toHaveBeenCalledTimes(1);
 			expect(String(warn.mock.calls[0]?.[0])).toContain('1 个节点探测失败');

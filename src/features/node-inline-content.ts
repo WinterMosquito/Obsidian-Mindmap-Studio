@@ -38,7 +38,8 @@
  *   对齐 Obsidian 阅读视图；三类图标体系仍服务未接管的节点）；
  * - 自绘节点无 `_textData`，引擎编辑框对其静默 no-op（`isUseCustomNodeContent()`
  *   守卫）→ 编辑入口由插件兜底：双击 / 右键「编辑文本」/ F2 走
- *   `features/view-node-actions.editNodeText` → `ui/modal-text` 弹窗；
+ *   `features/view-node-actions.editNodeText` → **内联编辑器**
+ *   （`features/node-inline-editor`，见 K92）；弹窗（`ui/modal-text`）为备选入口；
  * - 轻标记**不跨行、嵌套一层**，覆盖 Obsidian 的行内四类 + 高亮与下划线式变体
  *   （`**粗**`/`__粗__`、`*斜*`/`_斜_`、`` `码` ``、`~~删~~`、`==高亮==`、
  *   `***粗斜***`）与官方「combine them」嵌套（`**粗 _斜_**`，见 Basic formatting
@@ -94,7 +95,11 @@ const CONTENT_STYLES: Partial<CSSStyleDeclaration> = {
 	wordBreak: 'break-word',
 };
 
-/** 库内锚点样式（主题变量 + 字面量兜底：导出图内没有主题变量上下文） */
+/**
+ * 库内锚点样式（主题变量 + 字面量兜底：导出图内没有主题变量上下文）。
+ * 这就是**导图内链接的可见形态**：主题链接色的超链接字体（默认蓝色系）、
+ * 无图标、无下划线（2026-09-28 用户实测口径）。
+ */
 const INTERNAL_LINK_STYLES: Partial<CSSStyleDeclaration> = {
 	color: 'var(--link-color, var(--text-accent, #7f6df2))',
 	textDecoration: 'none',
@@ -183,18 +188,11 @@ const CODE_BLOCK_PRE_STYLES: Partial<CSSStyleDeclaration> = {
 };
 
 /**
- * 复制按钮：**结构与外观全部内联**（绝对定位、不参与测宽），可见性用**变量间接层**：
- *
- * `opacity: var(--tmm-code-copy-opacity, 0)` —— 屏上 hover 时由 styles.css 在
- * 容器上把该变量置 1；导出 SVG 不带 styles.css ⇒ 变量未定义 ⇒ 兜底 0 ⇒ 按钮
- * **天然不出现在导出图**。
- *
- * **图标形状/填充/颜色也内联**（2026-09-28 第四轮，前三轮教训）：用户实机
- * styles.css 长期滞留旧版（v2 特征在而颜色更新从未生效），任何只写在类规则里的
- * 外观都不可靠 ⇒ mask 形状、currentColor 填充、基色全部进内联，按钮外观**零
- * styles.css 依赖**。基色取 `--icon-color`（**Obsidian 原生图标按钮的取色变量**，
- * 主题可独立于 --text-muted 定义它）→ `--text-muted` → 官方默认灰，三级兜底；
- * 内联优先级高于任何非 !important 类规则，旧 styles.css 也压不住。
+ * 复制按钮：外观 **100% 内联**（形状 mask / 填充 currentColor / 圆角）——
+ * styles.css 类规则口径在本机曾被证实不可靠，外观不得依赖它；基色取
+ * `--icon-color`（Obsidian 原生图标按钮变量）→ `--text-muted` → 默认灰兜底。
+ * 屏上恒显（不写 opacity）；**导出图隐身**由 `handleExportSvg` 钩子
+ * （`node-codeblock.hideCopyButtonsInExportSvg`）显式置 0。
  */
 const CODE_COPY_BUTTON_STYLES: Partial<CSSStyleDeclaration> & Record<string, string> = {
 	position: 'absolute',
@@ -204,8 +202,8 @@ const CODE_COPY_BUTTON_STYLES: Partial<CSSStyleDeclaration> & Record<string, str
 	height: '20px',
 	padding: '0',
 	border: 'none',
+	borderRadius: '4px',
 	cursor: 'pointer',
-	opacity: 'var(--tmm-code-copy-opacity, 0)',
 	color: 'var(--icon-color, var(--text-muted, #666666))',
 	backgroundColor: 'currentColor',
 	maskImage:
@@ -271,7 +269,7 @@ export interface InlineContentOptions {
 	/**
 	 * 所有**含文字的纯文本节点**也接管（缺省 false = 保持原型行为）。
 	 *
-	 * 生产经设置 `settings.selfDrawPlainNodes` 注入（默认开，2026-09-25）。
+	 * 生产经设置 `settings.selfDrawPlainNodes` 注入（默认开）。
 	 * 理由（实测）：引擎对**不自绘**节点做逐字符文本测宽
 	 *（`nodeCreateContents.createTextNode` 的逐字符循环 + 每字符一次强制
 	 * `getBBox`，实测 ~0.13ms/字符）——这是**打开大图的成本绝对主体**；
@@ -370,7 +368,7 @@ const ESCAPABLE_CLASS = /[*_~=`#|\\$]/.source;
  * - `mathBlock`：`$$…$$`（display / 块级数学）——内容**可跨行、可含单个 `$`**
  *   （开 `$$` 找**最近**的 `$$` 闭合，对齐 Obsidian 阅读视图实测口径，见 K89：
  *   `$$` 独占行的三行块 / 多行 vmatrix / `$$$x$$$`（tex = `$x`）都按此解析）；
- *   开定界符后的空格/制表/换行**不阻断**配对（2026-09-27 B1：Obsidian 对
+ *   开定界符后的空格/制表/换行**不阻断**配对（B1：Obsidian 对
  *   `$$ x=1 $$` 照常渲染为公式，去掉此前的「紧跟空格按字面」守卫——用户实测
  *   该守卫让 `$$ f(x)=…` 整段不进数学通道，块内 `\\` 还被转义分支吃成单 `\`）；
  * - `math`：行内 `$…$`——内容不跨行、不含 `$`，开侧仍拒绝紧空白（价签口径）。
@@ -580,7 +578,7 @@ const INLINE_COMMENT_RE = /%%[\s\S]*?%%/;
  *
  * **只作用于散文文本**：代码块 / 数学段的空白是内容（缩进、对齐），必须原文
  * 保留——故本归一化**下沉到 splitMarkedText 的各分支**（空白 prose 与标记体），
- * 而不是切分前对全文预归一（那是 2026-09-28 前的旧序，会把代码缩进压扁）。
+ * 而不是切分前对全文预归一（那是 旧序，会把代码缩进压扁）。
  */
 function normalizeSpaces(value: string): string {
 	return value.replace(/[ \t]{2,}/g, ' ');
@@ -724,7 +722,7 @@ function buildInlineSegmentsUncached(raw: string): InlineSegment[] {
 		}
 		// 轻标记在文本段内部切分（标记符不进显示文本，原文由 mdRaw 保真）。
 		// ⚠ 这里**不做**连续空格归一：归一化已下沉到 splitMarkedText 的 prose
-		// 分支——预归一化会波及其中的代码块/数学段（缩进被压扁，2026-09-28 修）
+		// 分支——预归一化会波及其中的代码块/数学段（缩进被压扁，已修）
 		for (const piece of splitMarkedText(text)) {
 			segments.push({
 				kind: 'text',
@@ -809,7 +807,7 @@ function isLinkEmbed(tok: InlineToken): boolean {
  *
  * **代码块段（block）例外**：只裁边缘**空行**（`\n`），不裁空格/制表——首行前
  * 的缩进与行内对齐是代码内容（```` ```js ```` 块首行常以缩进开头；`^\s+` 会
- * 把 4 空格缩进连同换行一起吞掉，2026-09-28 修）。
+ * 把 4 空格缩进连同换行一起吞掉，已修）。
  */
 function trimEdges(segments: InlineSegment[]): InlineSegment[] {
 	const leadingPattern = (segment: InlineSegment): RegExp =>
@@ -925,7 +923,7 @@ function resolveSelfDrawSource(
 	//    它们的正确显示同样只有自绘能做到（数学要挂 MathJax 产物）。注释仅在
 	//    **去掉后仍有可见内容**时才算（否则会渲染出空节点，比原样显示注释更糟，
 	//    故让引擎按字面显示）；数学以字面占位、异步替换，无该风险。
-	// ④ （2026-09-25）`selfDrawPlain` 开启时**任意含文字的纯文本节点**也接管：
+	// ④ `selfDrawPlain` 开启时**任意含文字的纯文本节点**也接管：
 	//    引擎对不自绘节点做逐字符文本测宽（~0.13ms/字符），是打开大图的成本
 	//    绝对主体；接管后引擎在 createNodeData 提前 return、测量全跳过
 	//    （5000 节点实测 8.6s → 1.36s）。代价见 InlineContentOptions.selfDrawPlain。
@@ -940,7 +938,7 @@ function resolveSelfDrawSource(
 	return { raw, segments: entry.segments, overlong };
 }
 
-// 注（2026-09-25）：曾导出 `shouldSelfDrawNode`（静态判定「将被自绘接管」）供
+// 注：曾导出 `shouldSelfDrawNode`（静态判定「将被自绘接管」）供
 // 宽度手柄门禁消费；`selfDrawPlain` 引入后判定依赖**调用期选项**，且门禁改用
 // 更直接的运行时事实（`engine/mindmap.isCustomNodeContent` = 节点是否真的有
 // 自绘内容），该静态判定不再有生产消费方，已删除。自绘/不接管的判据单一来源

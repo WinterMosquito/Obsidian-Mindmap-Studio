@@ -19,6 +19,9 @@
  *   `data-href` 即锚点携带的原始 linkpath；`**重点**` 必须渲染为 `<strong>`；
  *   纯文本节点必须仍走引擎默认 SVG 文本；围栏代码块渲染为 `.tmm-codeblock`
  *   块级结构（pre 原文：信息行剥离、缩进保留；复制按钮点击与锚点同款命中契约）；
+ * - 覆盖（内联编辑，K92）：自绘节点主入口（覆盖层 textarea）的真实 DOM 装配——
+ *   打开即有实际几何（节点 group 屏幕矩形定位）、预填为原文（含 `[[ ]]` 语法，
+ *   走 `composeNodeContent`）、Enter 提交写回节点数据并恰好调度一次保存；
  * - 覆盖（导出保真）：导出 SVG（`map.getSvgData().svgHTML`）里自绘根元素 / 锚点 /
  *   轻标记元素必须带**内联样式**——引擎导出只注入自身 CSS 与 header/footer 的
  *   cssText，插件 styles.css 不在导出图里生效；
@@ -407,6 +410,12 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		'features',
 		'node-codeblock.ts',
 	).replaceAll('\\', '/');
+	const inlineEditorModule = join(
+		ROOT,
+		'src',
+		'features',
+		'node-inline-editor.ts',
+	).replaceAll('\\', '/');
 	const serialized = JSON.stringify(
 		SCENARIOS.map(({ name, data }) => ({ name, data })),
 		null,
@@ -418,6 +427,7 @@ import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
 import { buildInlineNodeContent, segmentCacheStats } from ${JSON.stringify(inlineContentModule)};
 import { gateNodeWidthHandles } from ${JSON.stringify(nodeWidthModule)};
 import { registerCodeBlockInteractions } from ${JSON.stringify(codeblockModule)};
+import { openNodeInlineEditor } from ${JSON.stringify(inlineEditorModule)};
 
 const scenarios = ${serialized};
 
@@ -949,6 +959,91 @@ window.setTimeout(() => {
 				document.body.appendChild(copyProbe);
 			}, 50);
 		}
+		// —— 内联编辑探针（K92）：覆盖层 textarea 的真实 DOM 装配与提交链路 ——
+		// 无头独有价值：定位（节点 group 屏幕矩形 → textarea 几何）、真实文档装配
+		// （doc.body.createEl）、Enter 提交（applyRawToNode → 节点数据 + 调度保存）。
+		// 场景取 inline（自绘节点）；结果延迟一拍落盘，避开异步链。
+		const inlineEditProbe = document.createElement('pre');
+		inlineEditProbe.id = 'inline-edit-probe';
+		document.body.appendChild(inlineEditProbe);
+		window.setTimeout(() => {
+			try {
+				const inlineMap = scenarioMaps.inline;
+				const inlineRoot =
+					inlineMap && inlineMap.renderer ? inlineMap.renderer.root : null;
+				// inline 场景为**单节点**（根即目标，mdRaw 在根上）；根若未被自绘
+				// 接管（异常形态）则回退首个子节点，避免探针因取错节点而空转
+				let inlineNode = inlineRoot;
+				if (inlineNode && !isCustomNodeContent(inlineNode)) {
+					inlineNode =
+						inlineNode.children && inlineNode.children[0]
+							? inlineNode.children[0]
+							: null;
+				}
+				if (!inlineMap || !inlineNode) {
+					inlineEditProbe.textContent = JSON.stringify({ opened: false });
+					return;
+				}
+				// Obsidian Elements API 的最小垫片：node-inline-editor 用
+				// doc.body.createEl 建 textarea（真实运行时由 core 注入，无头页自备）
+				if (typeof document.body.createEl !== 'function') {
+					document.body.createEl = function (tag, options) {
+						const el = document.createElement(tag);
+						if (options && options.cls) el.className = options.cls;
+						if (options && options.attr) {
+							for (const key of Object.keys(options.attr)) {
+								el.setAttribute(key, String(options.attr[key]));
+							}
+						}
+						this.appendChild(el);
+						return el;
+					};
+				}
+				// inline 场景数据是**手写最小集**（未带 mdType；真实解析产物总有）：
+				// 补 plain 让 composeNodeContent 走 rawOk 原文分支——否则
+				// 「链接已清除」检测（mdType 缺省 ≠ 'plain'）会判为已编辑而合成剥壳
+				const inlineData = inlineNode.getData();
+				if (inlineData && inlineData.mdType === undefined) {
+					inlineData.mdType = 'plain';
+				}
+				const saves = [];
+				openNodeInlineEditor(
+					{
+						mindMap: inlineMap,
+						engineEvents: { onEngine: (m, name, fn) => m.on(name, fn) },
+						viewEvents: {},
+						app: null,
+						lang: 'zh',
+						scheduleSave: () => saves.push(1),
+					},
+					inlineNode,
+				);
+				const editor = document.querySelector('.mindmap-node-inline-editor');
+				const box = editor ? editor.getBoundingClientRect() : null;
+				const positioned = !!box && box.width > 0 && box.height > 0;
+				const prefilled = editor ? editor.value : null;
+				let afterText = null;
+				let removed = false;
+				if (editor) {
+					editor.value = '内联改过的 [[笔记A]] 与 https://example.com';
+					editor.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+					);
+					afterText = inlineNode.getData('text');
+					removed = !document.querySelector('.mindmap-node-inline-editor');
+				}
+				inlineEditProbe.textContent = JSON.stringify({
+					opened: !!editor,
+					positioned,
+					prefilled,
+					afterText,
+					removed,
+					saves: saves.length,
+				});
+			} catch (error) {
+				inlineEditProbe.textContent = JSON.stringify({ error: String(error) });
+			}
+		}, 300);
 		// 段落（多行）场景：README 承诺「段落里的链接同样可点」，此处实测
 		const paragraphHolder = document.getElementById('map-paragraph');
 		// 超长单行场景：必须被接管（长行交给引擎会二次复杂度卡死）
@@ -1126,7 +1221,7 @@ window.setTimeout(() => {
 			codeCopyButtons: codeBlock
 				? codeBlock.querySelectorAll('.tmm-code-copy').length
 				: -1,
-			codeInlineOpacityVar: codeCopyButton ? codeCopyButton.style.opacity : null,
+			codeInlineMask: codeCopyButton ? codeCopyButton.style.maskImage : null,
 			codeClick,
 			syntaxUnresolved: syntaxHolder
 				? syntaxHolder.querySelectorAll(
@@ -1682,19 +1777,47 @@ window.setTimeout(() => {
 		report.filled = ensureDefaultImageSizes(tree);
 		const holder = makeHolder('map-image');
 		const map = createMindMap(holder, tree, options);
+		// 首帧前回灌（2026-09-28 view.ts 修复的引擎侧回归位）：root 未就绪时必须
+		// 静默返回 0——调用方据此**保留** pending、首帧后经 node_tree_render_end 补灌；
+		// 此前「先清空再回灌」会因此永久丢失校正（图片全停在默认固定尺寸）。
+		const preTree = makeTree();
+		ensureDefaultImageSizes(preTree);
+		const preMap = createMindMap(makeHolder('map-image-preready'), preTree, options);
+		report.preReadyRootNull = !preMap.renderer.root;
+		report.preReadyApplied = applyImageSizeCorrectionsToEngine(preMap, [
+			{
+				data: preTree.children[0].data,
+				image: DATA_URI,
+				width: 120,
+				height: 40,
+				custom: true,
+				autoSize: true,
+			},
+		]);
 		// 主组等首帧落地后再读 / 回灌（事件 + 轮询；此前固定 400ms，负载机器上
 		// renderer.root 仍为 null——2026-09-21 复查加固，见 whenMapReady）
 		whenMapReady(map, holder, () => {
 			try {
 				report.rawHasRoot = !!rawMap.renderer.root;
 				const node = map.renderer.root ? map.renderer.root.children[0] : null;
-				const data = node ? node.getData() : null;
+				const engineData = node ? node.getData() : null;
+				// 树 data 与引擎节点 data 的关系（K96）：真实路径实测**非同一对象**
+				// （引擎包装/拷贝），故回灌靠 uid 通道——这里把两个事实记录下来。
+				const treeData = tree.children[0].data;
+				report.identitySame = !!engineData && engineData === treeData;
+				report.uidSame =
+					!!engineData &&
+					typeof treeData.uid === 'string' &&
+					treeData.uid !== '' &&
+					engineData.uid === treeData.uid;
 				report.beforeWidth = sizeOf(holder, 'width');
 				report.beforeHeight = sizeOf(holder, 'height');
-				report.applied = data
+				// **生产同款**：correction 用树 data（此前用引擎 data 属「自匹配」，
+				// 掩盖了身份不匹配的真实缺陷；现在必须靠 uid 通道命中）
+				report.applied = engineData
 					? applyImageSizeCorrectionsToEngine(map, [
 							{
-								data,
+								data: treeData,
 								image: DATA_URI,
 								width: 120,
 								height: 40,
@@ -1709,14 +1832,60 @@ window.setTimeout(() => {
 					report.afterWidth = sizeOf(holder, 'width');
 					report.afterHeight = sizeOf(holder, 'height');
 					if (report.afterWidth === 120 || Date.now() > deadline) {
-						report.marked = !!(data && data.mdImageAutoSize === true);
-						imageProbe.textContent = JSON.stringify(report);
+						report.marked = !!(
+							engineData && engineData.mdImageAutoSize === true
+						);
+						// 端到端修复链路模拟（K96，2026-09-28）：复刻 view.ts 时序——
+						// 建图后立即回灌（root 未就绪 → 0，调用方保留 pending）→ 挂
+						// 首帧渲染完成事件补灌 → 轮询尺寸落地；并核对回灌的硬前提：
+						// 树 data 与引擎节点 data 同一对象（不同一则整套匹配失效）。
+						const fixTree = makeTree();
+						ensureDefaultImageSizes(fixTree);
+						const fixHolder = makeHolder('map-image-fixed');
+						const fixMap = createMindMap(fixHolder, fixTree, options);
+						const fixList = () => [
+							{
+								data: fixTree.children[0].data,
+								image: DATA_URI,
+								width: 120,
+								height: 40,
+								custom: true,
+								autoSize: true,
+							},
+						];
+						report.fixPreApplied = applyImageSizeCorrectionsToEngine(
+							fixMap,
+							fixList(),
+						);
+						const onFixRender = () => {
+							const applied = applyImageSizeCorrectionsToEngine(
+								fixMap,
+								fixList(),
+							);
+							if (applied > 0) {
+								report.fixOnReadyApplied = applied;
+								fixMap.off('node_tree_render_end', onFixRender);
+							}
+						};
+						fixMap.on('node_tree_render_end', onFixRender);
+						const waitFix = (fixDeadline) => {
+							report.fixAfterWidth = sizeOf(fixHolder, 'width');
+							if (
+								report.fixAfterWidth === 120 ||
+								Date.now() > fixDeadline
+							) {
+								imageProbe.textContent = JSON.stringify(report);
+								return;
+							}
+							window.setTimeout(() => waitFix(fixDeadline), 40);
+						};
+						window.setTimeout(() => waitFix(Date.now() + 1500), 60);
 						return;
 					}
 					window.setTimeout(() => waitApplied(deadline), 40);
-				};
-				window.setTimeout(() => waitApplied(Date.now() + 800), 60);
-				return;
+					};
+					window.setTimeout(() => waitApplied(Date.now() + 800), 60);
+					return;
 			} catch (error) {
 				report.error = String(error);
 			}
@@ -3153,9 +3322,9 @@ function checkAnchor(dom) {
  * - **段落（多行）节点**：`mdRaw` 是逐字原文，故段落里的链接同样渲染为可点文本
  *   （2 枚锚点）且保留多行结构（README 对外承诺，此处实测锁定）；
  * - **代码块（2026-09-28）**：围栏段渲染为 `.tmm-codeblock`（pre/code 原文 +
- *   复制按钮）：信息行剥离、缩进保留；按钮内联 opacity 走变量间接层
- *   （`var(--tmm-code-copy-opacity, 0)`——屏上 hover 由 styles.css 置 1，
- *   导出 SVG 无该文件 ⇒ 兜底 0 ⇒ 按钮隐身）；按钮点击与锚点同款命中契约；
+ *   复制按钮）：信息行剥离、缩进保留；按钮外观 100% 内联（mask/currentColor/
+ *   --icon-color 三级兜底基色，屏上恒显）；导出图隐身由 handleExportSvg 钩子
+ *   显式实现（hideCopyButtonsInExportSvg）；按钮点击与锚点同款命中契约；
  * - 对照：纯文本节点不得出现自绘锚点（未被接管，仍走引擎 SVG 文本）。
  */
 /**
@@ -3165,7 +3334,13 @@ function checkAnchor(dom) {
  * - 默认尺寸填充恰好命中 1 个图片节点（引擎硬要求：缺 imageSize 渲染链即断）；
  * - 回灌返回 1（对象身份命中且值有变化）；
  * - `<image>` 的 width/height **从默认尺寸变为 120×40**（渲染确实跟随数据写入）；
- * - 自动校正条目打上 `mdImageAutoSize` 标记（序列化据此不回写文件）。
+ * - 自动校正条目打上 `mdImageAutoSize` 标记（序列化据此不回写文件）；
+ * - **首帧前回灌返回 0**（root 未就绪 → 调用方保留 pending；2026-09-28 view.ts
+ *   修复的回归位，若本机建图同步完成渲染则不约束）；
+ * - **端到端修复链路**（K96）：建图后立即回灌（保留）+ 首帧渲染完成事件补灌
+ *   → 最终渲染宽度必须为 120；匹配硬前提是**树 data.uid === 引擎节点 data.uid**
+ *   （真实路径下对象身份不同一——引擎包装/拷贝，`identitySame` 预期 false，仅记录）；
+ * - 主组回灌用**树 data**（生产同款）且必须命中 1 条（证明 uid 通道有效）。
  * 对照组「不填默认值」只记录不断言（`rawHasRoot` 预期 false，留作证据）。
  */
 function checkImageCorrection(dom, diag) {
@@ -3195,8 +3370,34 @@ function checkImageCorrection(dom, diag) {
 	if (probe.marked !== true) {
 		failures.push('自动校正条目未打 mdImageAutoSize 标记（会被序列化回写文件）');
 	}
+	// 首帧前回灌（2026-09-28 view.ts 修复的回归位）：root 未就绪时必须静默
+	// 返回 0（调用方据此保留 pending、首帧后经 node_tree_render_end 补灌）。
+	// 若本机建图同步完成渲染（root 已就绪），该值可为 1——仅当 rootNull 为
+	// true 时才约束，避免机器差异误报。
+	if (typeof probe.preReadyRootNull !== 'boolean') {
+		failures.push('缺少 preReadyRootNull 探针数据（首帧前回归位未执行）');
+	} else if (probe.preReadyRootNull && probe.preReadyApplied !== 0) {
+		failures.push(
+			`首帧前回灌返回 ${probe.preReadyApplied} ≠ 0（root 未就绪时应保留、不消费）`,
+		);
+	}
+	// 端到端修复链路（K96）：真实路径的匹配靠 **uid 通道**（树 data 与引擎节点
+	// data 非同一对象，identitySame 预期 false，仅作记录）；fixAfterWidth 为
+	// 「建图后立即回灌（保留）→ 首帧渲染完成事件补灌」的最终渲染宽度。
+	if (typeof probe.uidSame !== 'boolean') {
+		failures.push('缺少 uidSame 探针数据（端到端修复链路未执行）');
+	} else if (probe.uidSame !== true) {
+		failures.push(
+			'树 data.uid 与引擎节点 data.uid 不一致：回灌 uid 匹配失效（图片尺寸永不生效）',
+		);
+	}
+	if (probe.fixAfterWidth !== 120) {
+		failures.push(
+			`修复链路模拟：补灌后渲染宽度 ${probe.fixAfterWidth} ≠ 120（端到端未生效）`,
+		);
+	}
 	diag.log(
-		`      ⓘ 回灌前 ${probe.beforeWidth}×${probe.beforeHeight} → 回灌后 ${probe.afterWidth}×${probe.afterHeight}；不填默认值的对照组 hasRoot=${probe.rawHasRoot}`,
+		`      ⓘ 回灌前 ${probe.beforeWidth}×${probe.beforeHeight} → 回灌后 ${probe.afterWidth}×${probe.afterHeight}；首帧前 rootNull=${probe.preReadyRootNull} applied=${probe.preReadyApplied}；修复链路 preApplied=${probe.fixPreApplied} onReadyApplied=${probe.fixOnReadyApplied} 终值宽=${probe.fixAfterWidth}；匹配 身份同一=${probe.identitySame} uid同一=${probe.uidSame}；不填默认值的对照组 hasRoot=${probe.rawHasRoot}`,
 	);
 	return failures;
 }
@@ -3737,9 +3938,9 @@ function checkInline(dom) {
 	if (probe.codeCopyButtons !== 1) {
 		failures.push(`复制按钮数 ${probe.codeCopyButtons} ≠ 1（.tmm-code-copy）`);
 	}
-	if (probe.codeInlineOpacityVar !== 'var(--tmm-code-copy-opacity, 0)') {
+	if (!String(probe.codeInlineMask ?? '').includes('data:image/svg+xml')) {
 		failures.push(
-			`复制按钮内联 opacity ${JSON.stringify(probe.codeInlineOpacityVar)} ≠ 变量间接层写法（导出隐身契约）`,
+			`复制按钮内联 mask ${JSON.stringify(probe.codeInlineMask)} ≠ 全内联图标写法（外观零 CSS 依赖契约）`,
 		);
 	}
 	if (!probe.codeClick) {
@@ -3879,6 +4080,49 @@ function checkInline(dom) {
 				`点击命中锚点的 data-href ${JSON.stringify(click.dataHref)} ≠ "笔记A"`,
 			);
 		}
+	}
+	return failures;
+}
+
+/**
+ * 校验内联编辑探针（`#inline-edit-probe`，K92）：覆盖层编辑器（自绘节点主入口）
+ * 的真实 DOM 装配与提交链路。
+ *
+ * 断言口径：编辑器打开即产出 `.mindmap-node-inline-editor` 且**有实际几何**
+ * （定位取节点 group 屏幕矩形）；预填 = `composeNodeContent`（原文，含 `[[ ]]`
+ * 语法）；Enter 提交后编辑器移除、节点 text 写回新值、scheduleSave 恰好一次。
+ */
+function checkInlineEdit(dom) {
+	const { probe, failures: parseFailures } = readProbe(
+		dom,
+		'inline-edit-probe',
+		'内联编辑',
+	);
+	if (parseFailures) return parseFailures;
+	const failures = [];
+	if (!probe.opened) {
+		failures.push('内联编辑器未打开（.mindmap-node-inline-editor 未出现）');
+		return failures;
+	}
+	if (!probe.positioned) {
+		failures.push('内联编辑器无实际几何（节点 group 矩形 → textarea 定位失败）');
+	}
+	if (!String(probe.prefilled || '').includes('[[笔记A]]')) {
+		failures.push(
+			'内联编辑器预填不是原文（应含 [[笔记A]] 语法），实际=' +
+				JSON.stringify(probe.prefilled),
+		);
+	}
+	if (!probe.removed) {
+		failures.push('Enter 提交后编辑器未移除');
+	}
+	if (!String(probe.afterText || '').includes('内联改过的')) {
+		failures.push(
+			'Enter 提交未写回节点数据，text=' + JSON.stringify(probe.afterText),
+		);
+	}
+	if (probe.saves !== 1) {
+		failures.push('提交应恰好调度一次保存，实际=' + String(probe.saves));
 	}
 	return failures;
 }
@@ -4104,6 +4348,15 @@ async function runChecks(dom, diag) {
 	);
 	for (const failure of inlineFailures) diag.log(`      - ${failure}`);
 	failed += inlineFailures.length;
+
+	// 内联编辑（K92）：覆盖层编辑器（自绘节点主入口）的 DOM 装配与提交链路
+	diag.log('  · inline 探针完成，进入 inline-edit 探针');
+	const inlineEditFailures = safe('inline-edit 探针', () => checkInlineEdit(dom));
+	diag.log(
+		`  ${inlineEditFailures.length === 0 ? '✓' : '✗'} inline-edit 内联编辑：覆盖层定位 × 原文预填 × Enter 提交写回`,
+	);
+	for (const failure of inlineEditFailures) diag.log(`      - ${failure}`);
+	failed += inlineEditFailures.length;
 
 	// DOM 规模：自绘节点的结构开销预算（防渲染路径悄悄加元素）
 	diag.log('  · inline 探针完成，进入 DOM 规模探针');

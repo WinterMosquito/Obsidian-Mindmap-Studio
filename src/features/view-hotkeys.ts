@@ -8,7 +8,8 @@
  *   仍吞键），见 handleEditNodeHotkey。
  */
 import { Platform, Scope } from 'obsidian';
-import { ENGINE_COMMANDS, getActiveNode, isEditingText } from '../engine/mindmap';
+import { ENGINE_COMMANDS, getActiveNode } from '../engine/mindmap';
+import { isAnyNodeEditing } from './node-inline-editor';
 import { deleteActiveNode, editNodeText } from './view-node-actions';
 import { fitToScreen, zoomToSelection } from './view-viewport';
 import type { ViewNodeEditContext } from './view-context';
@@ -118,7 +119,7 @@ function handleDeleteNodeHotkey(
 	if (!mindMap) {
 		return true;
 	}
-	if (isEditingText(mindMap)) {
+	if (isAnyNodeEditing(mindMap)) {
 		return true;
 	}
 	if (!getActiveNode(mindMap)) {
@@ -172,7 +173,7 @@ export function handleEditNodeHotkey(
 		evt.stopPropagation();
 		return false;
 	}
-	if (isEditingText(mindMap)) {
+	if (isAnyNodeEditing(mindMap)) {
 		evt.preventDefault();
 		evt.stopPropagation();
 		return false;

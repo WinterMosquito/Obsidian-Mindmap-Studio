@@ -53,11 +53,11 @@ export interface ViewEngineContext {
 
 /**
  * 节点文本编辑面（窄接口，K32）：编辑入口（右键「编辑文本」/ 双击 / F2）只需
- * 引擎实例 + 弹窗所需的应用与语言 + 保存调度——勿把整个装配面传进来。
+ * 引擎实例 + 编辑所需的应用与语言 + 保存调度——勿把整个装配面传进来。
  *
  * 存在理由：**自绘（富）节点**不能走引擎编辑框（见 `engine/mindmap.ts`
- * isCustomNodeContent），需插件侧弹窗兜底；编辑提交与引擎编辑走同一条写回路径
- * （`setNodeText` → data_change → scheduleSave）。
+ * isCustomNodeContent），需插件侧**内联编辑器**兜底（K92；弹窗为备选入口）；
+ * 引擎文本节点的提交走 `setNodeText` → data_change → scheduleSave。
  */
 export interface ViewNodeEditContext extends ViewEngineContext {
 	readonly app: App;

@@ -6,7 +6,7 @@
  * 全库查找索引原语在 file-lookup.ts（本模块不再持有）。
  */
 import { App } from 'obsidian';
-import { IMAGE_HEIGHT, IMAGE_WIDTH } from '../core/constants';
+import { IMAGE_HEIGHT, IMAGE_MAX_SIDE_PX, IMAGE_WIDTH } from '../core/constants';
 import { mapWithConcurrency } from '../core/concurrency';
 import {
 	isAppResourceUrl,
@@ -334,42 +334,62 @@ export function probeImageNaturalSize(
 }
 
 /**
- * 按图片自身宽高比计算展示尺寸：高度统一为 targetHeight（默认 IMAGE_HEIGHT），
- * 宽度 = 高度 × 原始宽高比（取整，最小 1px）。
- * 探测失败（外部图片无法加载等）时回退到固定尺寸（custom:false，引擎自行约束）。
+ * 按**长边上限**等比收窄尺寸（只缩不放；最小 1px）。
+ *
+ * 2026-09-28 用户裁决（K97 配套）：未设置尺寸的图按原始大小展示，但**长边
+ * 超过 `IMAGE_MAX_SIDE_PX` 时等比缩小**——一张 2000px 截图否则会把画布版面
+ * 压扁（节点是空间对象，同 `CODE_BLOCK_MAX_HEIGHT_PX` 的理由）。用户显式
+ * 尺寸参数（`![[图|2000]]`）**不经本函数**（用户意图优先）。
  */
-export async function computeAspectImageSize(
-	url: string,
-	targetHeight = IMAGE_HEIGHT,
-): Promise<{ width: number; height: number; custom: boolean }> {
-	const natural = await probeImageNaturalSize(url);
-	if (natural && natural.height > 0) {
-		return {
-			width: Math.max(
-				1,
-				Math.round((targetHeight * natural.width) / natural.height),
-			),
-			height: targetHeight,
-			custom: true,
-		};
+export function fitImageWithinMaxSide(
+	width: number,
+	height: number,
+): { width: number; height: number } {
+	const longest = Math.max(width, height);
+	if (longest <= IMAGE_MAX_SIDE_PX) {
+		return { width, height };
 	}
-	return { width: IMAGE_WIDTH, height: targetHeight, custom: false };
+	const scale = IMAGE_MAX_SIDE_PX / longest;
+	return {
+		width: Math.max(1, Math.round(width * scale)),
+		height: Math.max(1, Math.round(height * scale)),
+	};
 }
 
-/** 生成统一的 SET_NODE_IMAGE 参数：按图片原始比例、统一高度（custom:true 不裁切） */
-export async function createAspectSetNodeImageOptions(
+/**
+ * 生成统一的 SET_NODE_IMAGE 参数：**按图片原始大小（自然尺寸 1:1）**，
+ * `custom:true` ⇒ 引擎精确渲染（不按 imgMax 适配）。
+ *
+ * 2026-09-28 用户裁决（K97）：**未设置尺寸的图片一律按图片自身大小展示**——
+ * 「多大就多大」，不做统一高度、也不做比例缩放；**长边超过
+ * `IMAGE_MAX_SIDE_PX` 时等比缩小**（`fitImageWithinMaxSide`，只缩不放）；
+ * 插入/拖入的图片与未设置尺寸的图同口径（等价于 `![[图]]`），故走本入口。
+ * 探测失败（外链图离线等）回退 `IMAGE_WIDTH × IMAGE_HEIGHT` 默认盒
+ * （`custom:false`，引擎按 imgMax 约束、框内等比留白）。
+ */
+export async function createNaturalSizeSetNodeImageOptions(
 	url: string | null,
 ): Promise<SetNodeImageOptions> {
 	if (url === null || url === '') {
 		return createSetNodeImageOptions(null);
 	}
-	const size = await computeAspectImageSize(url);
+	const natural = await probeImageNaturalSize(url);
+	if (natural && natural.width > 0 && natural.height > 0) {
+		const fitted = fitImageWithinMaxSide(natural.width, natural.height);
+		return {
+			url,
+			title: '',
+			width: fitted.width,
+			height: fitted.height,
+			custom: true,
+		};
+	}
 	return {
 		url,
 		title: '',
-		width: size.width,
-		height: size.height,
-		custom: size.custom,
+		width: IMAGE_WIDTH,
+		height: IMAGE_HEIGHT,
+		custom: false,
 	};
 }
 
@@ -405,9 +425,11 @@ export function ensureDefaultImageSizes(tree: MindMapTreeNode): number {
 /**
  * 图片尺寸校正条目（**探测结果，不改树**）。
  *
- * `data` 是树节点 data 对象的**引用**：写回按对象身份定位（引擎节点的 data 与
- * 树 data 是同一对象），故无需 uid ——加载期 uid 尚未分配（`ensureUniqueUids` 在
- * 引擎创建时才跑），用 uid 做键会写空。
+ * `data` 是树节点 data 对象的**引用**：写回按「对象身份优先、uid 回退」双通道
+ * 定位——真实引擎对树 data 做**包装/拷贝**（2026-09-28 实测：引擎节点 data
+ * 与树 data 非同一对象），身份通道在真实路径落空，靠 uid 命中。探测期 uid
+ * 可能尚未分配（`ensureUniqueUids` 在引擎创建前才跑）——**回灌时**必然已分配，
+ * 故 uid 可作键（见 `engine/mindmap.applyImageSizeCorrectionsToEngine`）。
  * `image` 记录探测时的地址：写回前比对，图片已被用户换掉则丢弃该条。
  */
 export interface ImageSizeCorrection {
@@ -419,8 +441,10 @@ export interface ImageSizeCorrection {
 	/** 写进 `imageSize.custom`（引擎按值精确渲染；false 时引擎自行约束） */
 	custom: boolean;
 	/**
-	 * 自动按比例校正所得（vs 用户参数 `![[图|300]]`）：树侧须打
-	 * `mdImageAutoSize` 标记，序列化跳过尺寸回写——显示尺寸不是用户意图。
+	 * 自动尺寸所得（vs 用户参数 `![[图|300]]`，K97：未设置尺寸的图按图片原始
+	 * 大小展示）：树侧须打 `mdImageAutoSize` 标记，序列化**跳过尺寸回写**——
+	 * 「按原始大小展示」是显示口径、不是用户意图，回写会让用户从未动过的行
+	 * 凭空多出 `|宽度`。
 	 */
 	autoSize: boolean;
 }
@@ -428,11 +452,20 @@ export interface ImageSizeCorrection {
 /**
  * 探测树内图片节点的应展示尺寸（有界并发），**不写树**。
  *
- * 官方嵌入尺寸参数（mdImageWidth/mdImageHeight，来自 `![[图|300]]` /
- * `![[图|300x150]]` / `![alt|300](url)`）优先：
+ * **未设置尺寸的节点**（`![[图]]`）：**按图片原始大小（1:1 自然尺寸）**展示
+ * （2026-09-28 用户裁决 K97）——多大就多大，不做统一高度、不做比例缩放；
+ * 探测失败时保持默认盒、不产出条目。已有 `imageSize.custom`（用户拖宽）的
+ * 节点不覆盖（用户意图优先）。
+ *
+ * **设置了官方尺寸参数的节点**（mdImageWidth/mdImageHeight，来自
+ * `![[图|300]]` / `![[图|300x150]]` / `![alt|300](url)`）：
  * - 宽度恒取参数值；
  * - 高度取参数值；仅宽度时按原始比例补齐（探测失败回退统一高度）；
- * - 此类节点为 custom:true，不受默认校正影响（autoSize:false，无标记）。
+ * - 此类节点 autoSize:false（无 `mdImageAutoSize` 标记，回写须保留参数）。
+ *
+ * 自动尺寸条目（未设置参数的图）打 `autoSize:true` → 写树时标
+ * `mdImageAutoSize` → 序列化**跳过尺寸回写**（「按原始大小展示」是显示口径，
+ * 不是用户意图）。
  *
  * 拆出「探测」与「写回」两步是为了**加载路径**：探测不再串行挡在首帧前
  * （见 `features/view.ts` 的加载序列），首帧先用默认尺寸出画，探测完成后
@@ -476,14 +509,27 @@ export async function collectImageSizeCorrections(
 					}
 					size = { width, height, custom: true };
 				} else {
-					// 无参数：默认统一高度按原始比例（已有自定义尺寸不覆盖，防御）
+					// 未设置尺寸：**按图片原始大小（1:1 自然尺寸）**展示（K97 用户
+					// 裁决）；用户拖宽得到的 custom 尺寸是用户意图，不覆盖
 					if (data.imageSize?.custom) {
 						return;
 					}
-					size = await computeAspectImageSize(image);
-					// custom:true 才能让引擎按比例精确渲染（custom:false 会被引擎按
-					// imgMax 重新适配）；此时需打标记，避免序列化把它当拖拽结果回写
-					autoSize = size.custom;
+					const natural = await probeImageNaturalSize(image);
+					if (!natural || natural.width <= 0 || natural.height <= 0) {
+						// 探测失败：保持 ensureDefaultImageSizes 填的默认盒出画
+						return;
+					}
+					// 长边超上限时等比缩小（只缩不放），仍属自动尺寸（不回写）
+					const fitted = fitImageWithinMaxSide(
+						natural.width,
+						natural.height,
+					);
+					size = {
+						width: fitted.width,
+						height: fitted.height,
+						custom: true,
+					};
+					autoSize = true;
 				}
 				corrections.push({
 					data,
@@ -541,13 +587,14 @@ export function applyImageSizeCorrectionsToTree(
 }
 
 /**
- * 递归按图片原始比例校正树内所有图片尺寸（有界并发探测）。
- * 返回是否有修改；探测失败的图片保持默认尺寸。
+ * 递归校正树内图片的展示尺寸（有界并发探测）：未设置尺寸的按**图片原始大小**
+ * 展示、带官方尺寸参数的按参数（K97 用户裁决）。返回是否有修改；探测失败的
+ * 节点保持现值。
  *
  * 探测 + 写回两步的组合（探测实现见 `collectImageSizeCorrections`）；
  * **加载路径**请改用两步式（首帧不等待探测），见 `features/view.ts`。
  */
-export async function walkCorrectImageSizesByAspect(
+export async function walkImageSizeCorrections(
 	tree: MindMapTreeNode,
 ): Promise<boolean> {
 	const corrections = await collectImageSizeCorrections(tree);

@@ -16,7 +16,8 @@
  * `vi.mock('../src/engine/mindmap', …)` 替换为 spy：本文件只验证「何时调用、传什么参数」，
  * 引擎内部行为由 mindmap 自身的回归覆盖。F2 自 2026-09-14 起走**共用编辑入口**
  * （view-node-actions.editNodeText）：默认文本节点仍落 `startNodeTextEdit`（引擎编辑框），
- * 自绘（富）节点落插件弹窗（分支回归见 tests/view-node-actions.test.ts）。
+ * 自绘（富）节点落插件**内联编辑器**（2026-09-28 起，`features/node-inline-editor`；
+ * 弹窗收编为右键备选入口，编辑器内部行为由 tests/node-inline-editor.test.ts 覆盖）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform, Scope } from 'obsidian';
@@ -31,13 +32,16 @@ import {
 import {
 	fitMindMap,
 	getActiveNode,
-	getNodeDataString,
 	isCustomNodeContent,
 	isEditingText,
 	setNodeText,
 	startNodeTextEdit,
 } from '../src/engine/mindmap';
 import { openNodeTextModal } from '../src/ui/modal-text';
+import {
+	isAnyNodeEditing,
+	openNodeInlineEditor,
+} from '../src/features/node-inline-editor';
 
 vi.mock('../src/engine/mindmap', () => ({
 	// 与生产常量表同名同值（断言处用字面量核对转发目标）
@@ -62,7 +66,17 @@ vi.mock('../src/engine/mindmap', () => ({
 	zoomMindMapAt: vi.fn(),
 }));
 
-// 插件文本弹窗（自绘节点的编辑入口）在 Node 环境无法开窗，替换为 spy
+// 插件内联编辑器（自绘节点的编辑入口，2026-09-28 起）：本文件只验证「何时调用」，
+// 编辑器内部（定位/键盘/提交）由 tests/node-inline-editor.test.ts 与 verify:visual 覆盖
+vi.mock('../src/features/node-inline-editor', () => ({
+	isAnyNodeEditing: vi.fn(() => false),
+	isInlineNodeEditing: vi.fn(() => false),
+	openNodeInlineEditor: vi.fn(),
+	closeInlineEditor: vi.fn(),
+	applyRawNodeContent: vi.fn(),
+}));
+
+// 插件文本弹窗（**备选入口**：右键「在弹窗中编辑」）在 Node 环境无法开窗，替换为 spy
 vi.mock('../src/ui/modal-text', () => ({ openNodeTextModal: vi.fn() }));
 
 /**
@@ -192,6 +206,10 @@ describe('handleEditNodeHotkey（F2 编辑当前节点）', () => {
 		vi.mocked(isCustomNodeContent).mockReset().mockReturnValue(false);
 		vi.mocked(setNodeText).mockReset();
 		vi.mocked(openNodeTextModal).mockReset();
+		// 任一编辑通道判据（引擎编辑框 ∨ 内联编辑器）：默认 false，
+		// 用例按需开启（与其余 mock 同款显式重置，防跨用例泄漏）
+		vi.mocked(isAnyNodeEditing).mockReset().mockReturnValue(false);
+		vi.mocked(openNodeInlineEditor).mockReset();
 	});
 
 	it('有激活节点：触发文本编辑，并阻断默认行为与冒泡（避免引擎 F2 再开一次）', () => {
@@ -208,35 +226,20 @@ describe('handleEditNodeHotkey（F2 编辑当前节点）', () => {
 		expect(stopPropagation).toHaveBeenCalledTimes(1);
 	});
 
-	it('混排富节点：以**原文模式**开弹窗，提交走重解析写回（不再改显示文本）', async () => {
+	it('自绘（富）节点：走插件**内联编辑器**（覆盖层原文编辑，统一原文）', () => {
 		vi.mocked(getActiveNode).mockReturnValue(node);
 		vi.mocked(isCustomNodeContent).mockReturnValue(true);
-		vi.mocked(openNodeTextModal).mockResolvedValue('改过的 [[笔记A]] 与 https://x.com');
-		// spy 单独持有：unbound-method 规则不允许把对象方法摘下断言
-		const render = vi.fn();
-		const mindMap = { render } as unknown as MindMap;
+		const mindMap = {} as MindMap;
 		const view = fakeEngineView(mindMap);
 
 		expect(handleEditNodeHotkey(view, fakeKeyEvent().evt)).toBe(false);
 		expect(startNodeTextEdit, '不走引擎编辑框').not.toHaveBeenCalled();
-		await vi.waitFor(() => {
-			expect(openNodeTextModal).toHaveBeenCalledTimes(1);
-		});
-		// 原文模式（第四参）：rawMode + 预览（预览 = 与写回同一解析入口的显示文本）
-		const options = vi.mocked(openNodeTextModal).mock.calls[0]![3];
-		expect(options?.rawMode).toBe(true);
-		// 预览是**渲染器口径**：URL 显示为地址（不再「看不见」），双链剥壳
-		expect(options?.preview?.('见 [[笔记A]] 与 https://x.com')).toBe(
-			'见 笔记A 与 https://x.com',
-		);
-		await vi.waitFor(() => {
-			expect(view.scheduleSave).toHaveBeenCalledTimes(1);
-		});
-		expect(setNodeText, '原文模式不经别名通道').not.toHaveBeenCalled();
-		expect(render).toHaveBeenCalled();
+		expect(openNodeInlineEditor).toHaveBeenCalledTimes(1);
+		expect(openNodeInlineEditor).toHaveBeenCalledWith(view, node);
+		expect(openNodeTextModal, '内联为准，弹窗仅备选入口').not.toHaveBeenCalled();
 	});
 
-	it('纯链接节点：仍走**别名模式**（编辑文本 = 改别名，K6 不变）', async () => {
+	it('纯链接节点：同样走内联编辑器（统一原文，无别名分流）', () => {
 		const pure = {
 			getData: () => ({
 				text: '笔记A',
@@ -248,35 +251,27 @@ describe('handleEditNodeHotkey（F2 编辑当前节点）', () => {
 		} as unknown as MindMapNode;
 		vi.mocked(getActiveNode).mockReturnValue(pure);
 		vi.mocked(isCustomNodeContent).mockReturnValue(true);
-		vi.mocked(getNodeDataString).mockReturnValue('笔记A');
-		vi.mocked(openNodeTextModal).mockResolvedValue('新别名');
-		const mindMap = {} as MindMap;
-		const view = fakeEngineView(mindMap);
-
-		expect(handleEditNodeHotkey(view, fakeKeyEvent().evt)).toBe(false);
-		await vi.waitFor(() => {
-			expect(openNodeTextModal).toHaveBeenCalledTimes(1);
-		});
-		const call = vi.mocked(openNodeTextModal).mock.calls[0]!;
-		expect(call[1], '别名模式预填 = 节点文本（= 别名）').toBe('笔记A');
-		expect(call[3]?.rawMode, '别名模式不带 rawMode').toBeUndefined();
-		await vi.waitFor(() => {
-			expect(setNodeText).toHaveBeenCalledWith(mindMap, pure, '新别名');
-		});
-	});
-
-	it('自绘节点取消编辑（弹窗返回 null）：不写回、不触发保存', async () => {
-		vi.mocked(getActiveNode).mockReturnValue(node);
-		vi.mocked(isCustomNodeContent).mockReturnValue(true);
-		vi.mocked(openNodeTextModal).mockResolvedValue(null);
 		const view = fakeEngineView({} as MindMap);
 
 		expect(handleEditNodeHotkey(view, fakeKeyEvent().evt)).toBe(false);
-		await vi.waitFor(() => {
-			expect(openNodeTextModal).toHaveBeenCalledTimes(1);
-		});
-		expect(setNodeText).not.toHaveBeenCalled();
-		expect(view.scheduleSave).not.toHaveBeenCalled();
+		expect(openNodeInlineEditor).toHaveBeenCalledWith(view, pure);
+		expect(openNodeTextModal, '别名模式只保留在弹窗备选入口').not.toHaveBeenCalled();
+		expect(setNodeText, '不再走别名通道').not.toHaveBeenCalled();
+	});
+
+	it('任一编辑通道进行中（isAnyNodeEditing）：吞键但不重开编辑器', () => {
+		vi.mocked(getActiveNode).mockReturnValue(node);
+		vi.mocked(isAnyNodeEditing).mockReturnValue(true);
+		const { evt, preventDefault, stopPropagation } = fakeKeyEvent();
+
+		expect(handleEditNodeHotkey(fakeEngineView({} as MindMap), evt)).toBe(false);
+		// 编辑中：吞键（防引擎 F2 再开一次），但不重开任何编辑器
+		expect(preventDefault).toHaveBeenCalledTimes(1);
+		expect(stopPropagation).toHaveBeenCalledTimes(1);
+		expect(openNodeInlineEditor).not.toHaveBeenCalled();
+		expect(startNodeTextEdit).not.toHaveBeenCalled();
+		// 还原默认值：本文件其余用例依赖 isAnyNodeEditing 默认 false
+		vi.mocked(isAnyNodeEditing).mockReturnValue(false);
 	});
 
 	it('无激活节点：F2 交回 Obsidian（官方语义 = 重命名当前文件）', () => {
@@ -303,8 +298,8 @@ describe('handleEditNodeHotkey（F2 编辑当前节点）', () => {
 		expect(stopPropagation).toHaveBeenCalledTimes(2);
 	});
 
-	it('已在编辑文本：不重复触发（避免 hide/show 闪烁丢光标），但仍吞键', () => {
-		vi.mocked(isEditingText).mockReturnValue(true);
+	it('已在编辑文本（任一通道）：不重复触发（避免 hide/show 闪烁丢光标），但仍吞键', () => {
+		vi.mocked(isAnyNodeEditing).mockReturnValue(true);
 		vi.mocked(getActiveNode).mockReturnValue(node);
 		const { evt, preventDefault, stopPropagation } = fakeKeyEvent();
 
@@ -316,10 +311,10 @@ describe('handleEditNodeHotkey（F2 编辑当前节点）', () => {
 		expect(stopPropagation).toHaveBeenCalledTimes(1);
 	});
 
-	it('isEditingText 拿到的是本视图的引擎实例', () => {
+	it('编辑态判据拿到的是本视图的引擎实例（isAnyNodeEditing）', () => {
 		const mindMap = { id: 'mm' } as unknown as MindMap;
 		handleEditNodeHotkey(fakeEngineView(mindMap), fakeKeyEvent().evt);
-		expect(isEditingText).toHaveBeenCalledWith(mindMap);
+		expect(isAnyNodeEditing).toHaveBeenCalledWith(mindMap);
 	});
 
 	/** 文本输入类目标：F2 交回输入框与核心（让位） */
@@ -373,8 +368,8 @@ describe('handleEditNodeHotkey（F2 编辑当前节点）', () => {
 		// 第一次接管并开编辑
 		expect(handleEditNodeHotkey(fakeEngineView(mindMap), first.evt)).toBe(false);
 		expect(startNodeTextEdit).toHaveBeenCalledTimes(1);
-		// 第二次：引擎已处于编辑态（isEditingText 返回 true）→ 不重复触发
-		vi.mocked(isEditingText).mockReturnValue(true);
+		// 第二次：已处于编辑态（isAnyNodeEditing 返回 true）→ 不重复触发
+		vi.mocked(isAnyNodeEditing).mockReturnValue(true);
 		expect(handleEditNodeHotkey(fakeEngineView(mindMap), second.evt)).toBe(false);
 		expect(startNodeTextEdit).toHaveBeenCalledTimes(1);
 		expect(second.preventDefault).toHaveBeenCalledTimes(1);
@@ -415,6 +410,8 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 		vi.mocked(isCustomNodeContent).mockReset().mockReturnValue(false);
 		vi.mocked(setNodeText).mockReset();
 		vi.mocked(openNodeTextModal).mockReset();
+		vi.mocked(isAnyNodeEditing).mockReset().mockReturnValue(false);
+		vi.mocked(openNodeInlineEditor).mockReset();
 	});
 
 	it('视图无作用域时自行创建（否则 scope?.register 静默失效）并注册 9 个快捷键', () => {

@@ -196,7 +196,7 @@ describe('SavePipeline.schedule（防抖自动保存）', () => {
 		expect(h.modify).toHaveBeenCalledTimes(1);
 		// 写盘目标是视图当前文件本身，内容是当前树的序列化结果
 		expect(h.modify.mock.calls[0]?.[0]).toBe(h.file);
-		expect(h.written[0]).toBe('- A\n');
+		expect(h.written[0]).toBe('# A\n');
 	});
 
 	it('窗口内重复 schedule 重置计时，只落盘一次', async () => {
@@ -256,7 +256,7 @@ describe('SavePipeline.save（写盘内容与守卫）', () => {
 
 		await h.pipeline.save();
 
-		expect(h.written).toEqual(['---\ntitle: demo\n---\n- A\n  - A1\n']);
+		expect(h.written).toEqual(['---\ntitle: demo\n---\n# A\n\n## A1\n']);
 		expect(h.written[0]).not.toContain('Root');
 	});
 
@@ -265,20 +265,20 @@ describe('SavePipeline.save（写盘内容与守卫）', () => {
 			getFrontmatterFor: () => '---\ntitle: demo\n---\n',
 		});
 		await h.pipeline.save();
-		expect(h.written[0]).toBe('---\ntitle: demo\n---\n- A\n');
+		expect(h.written[0]).toBe('---\ntitle: demo\n---\n# A\n');
 		expect(h.written[0]).not.toContain('---\n\n');
 	});
 
 	it('无 frontmatter 时只写大纲', async () => {
 		const h = makeHarness();
 		await h.pipeline.save();
-		expect(h.written[0]).toBe('- A\n');
+		expect(h.written[0]).toBe('# A\n');
 	});
 
 	it('文件头只有 BOM 时不补换行（不把 BOM 单独变成一行）', async () => {
 		const h = makeHarness({ getFrontmatterFor: () => UTF8_BOM });
 		await h.pipeline.save();
-		expect(h.written).toEqual([`${UTF8_BOM}- A\n`]);
+		expect(h.written).toEqual([`${UTF8_BOM}# A\n`]);
 	});
 
 	it('写盘时以磁盘当前 frontmatter 为准：视图打开期间的属性改动不被旧快照覆盖', async () => {
@@ -294,7 +294,7 @@ describe('SavePipeline.save（写盘内容与守卫）', () => {
 		await h.pipeline.save();
 
 		expect(h.written, '文件头取磁盘当前值，正文仍取导图').toEqual([
-			'---\nstatus: 新\n---\n- A\n',
+			'---\nstatus: 新\n---\n# A\n',
 		]);
 	});
 
@@ -306,7 +306,7 @@ describe('SavePipeline.save（写盘内容与守卫）', () => {
 
 		await h.pipeline.save();
 
-		expect(h.written).toEqual(['- A\n']);
+		expect(h.written).toEqual(['# A\n']);
 	});
 
 	it('空树（根无子节点）写出的正文仅剩 frontmatter，仍保证尾随换行', async () => {
@@ -339,7 +339,7 @@ describe('SavePipeline.save（写盘内容与守卫）', () => {
 		// 快照恢复后仍能保存（saveInProgress 已在 finally 中复位）
 		h.setTree(node('Root', [node('B')]));
 		await h.pipeline.save();
-		expect(h.written).toEqual(['- B\n']);
+		expect(h.written).toEqual(['# B\n']);
 	});
 });
 
@@ -366,7 +366,7 @@ describe('SavePipeline 写入中再次触发（排空语义）', () => {
 		await flushMicrotasks();
 		// 首写完成后立刻补写最新快照（新增的 B 已在正文里）
 		expect(h.modify).toHaveBeenCalledTimes(2);
-		expect(h.written).toEqual(['- A\n', '- A\n- B\n']);
+		expect(h.written).toEqual(['# A\n', '# A\n\n# B\n']);
 
 		h.release(1);
 		await Promise.all([first, second]);
@@ -379,7 +379,7 @@ describe('SavePipeline 写入中再次触发（排空语义）', () => {
 		h.gate(3);
 		const first = h.pipeline.save();
 		await flushMicrotasks();
-		expect(h.written).toEqual(['- A\n']);
+		expect(h.written).toEqual(['# A\n']);
 
 		// 第一轮写入期间触发 → 待写快照 = B
 		h.setTree(node('Root', [node('B')]));
@@ -388,7 +388,7 @@ describe('SavePipeline 写入中再次触发（排空语义）', () => {
 
 		h.release(0);
 		await flushMicrotasks();
-		expect(h.written).toEqual(['- A\n', '- B\n']);
+		expect(h.written).toEqual(['# A\n', '# B\n']);
 
 		// 第二轮写入仍在途时再次编辑并触发 → 第三轮写最新快照 C
 		h.setTree(node('Root', [node('C')]));
@@ -398,7 +398,7 @@ describe('SavePipeline 写入中再次触发（排空语义）', () => {
 
 		h.release(1);
 		await flushMicrotasks();
-		expect(h.written).toEqual(['- A\n', '- B\n', '- C\n']);
+		expect(h.written).toEqual(['# A\n', '# B\n', '# C\n']);
 
 		h.release(2);
 		await Promise.all([first, second, third]);
@@ -422,7 +422,7 @@ describe('SavePipeline 写入中再次触发（排空语义）', () => {
 		await flushMicrotasks();
 
 		expect(h.modify).toHaveBeenCalledTimes(2);
-		expect(h.written[1]).toBe('- 最后编辑\n');
+		expect(h.written[1]).toBe('# 最后编辑\n');
 
 		h.release(1);
 		await first;
@@ -440,7 +440,7 @@ describe('SavePipeline 写入中再次触发（排空语义）', () => {
 		// 排空后 saveInProgress/待写标记均已复位：下一次 save 立即正常入队
 		await h.pipeline.save();
 		expect(h.modify).toHaveBeenCalledTimes(2);
-		expect(h.written).toEqual(['- A\n', '- A\n']);
+		expect(h.written).toEqual(['# A\n', '# A\n']);
 	});
 });
 
@@ -466,7 +466,7 @@ describe('SavePipeline 写盘失败（onSaveError）', () => {
 		// saveInProgress 已复位 → 重试从头再来
 		await h.pipeline.save();
 		expect(h.modify).toHaveBeenCalledTimes(2);
-		expect(h.written).toEqual(['- A\n']);
+		expect(h.written).toEqual(['# A\n']);
 	});
 
 	it('失败时清空待写状态：不沿错误链补写陈旧快照', async () => {
@@ -520,7 +520,7 @@ describe('SavePipeline 写盘失败（onSaveError）', () => {
 		h.setTree(node('Root', [node('恢复')]));
 		await h.pipeline.save();
 		expect(h.modify).toHaveBeenCalledTimes(3);
-		expect(h.written[2]).toBe('- 恢复\n');
+		expect(h.written[2]).toBe('# 恢复\n');
 	});
 });
 
@@ -539,7 +539,7 @@ describe('SavePipeline 写盘归属（换文件期间的排空）', () => {
 		h.gate(2);
 		const first = h.pipeline.save(); // A 首写（挂起）
 		await flushMicrotasks();
-		expect(h.written).toEqual(['- A\n']);
+		expect(h.written).toEqual(['# A\n']);
 
 		// 换文件：this.file 与引擎都已交班给 B（getSnapshotFor(A) 随即为 null）
 		const b = h.addFile(B_PATH);
@@ -557,8 +557,8 @@ describe('SavePipeline 写盘归属（换文件期间的排空）', () => {
 
 		// 两趟都落在 A：首写原文 + 兜底快照补写；B 的内容从未落到 A
 		expect(h.writes).toEqual([
-			{ path: FILE_PATH, content: '- A\n' },
-			{ path: FILE_PATH, content: '- A-child\n' },
+			{ path: FILE_PATH, content: '# A\n' },
+			{ path: FILE_PATH, content: '# A-child\n' },
 		]);
 		expect(h.written.some((content) => content.includes('B-child'))).toBe(
 			false,
@@ -586,8 +586,8 @@ describe('SavePipeline 写盘归属（换文件期间的排空）', () => {
 		await flushMicrotasks();
 		// A 的一轮收尾后 B 才入队（B 取自己的当前快照）
 		expect(h.writes).toEqual([
-			{ path: FILE_PATH, content: '- A\n' },
-			{ path: B_PATH, content: '- B-child\n' },
+			{ path: FILE_PATH, content: '# A\n' },
+			{ path: B_PATH, content: '# B-child\n' },
 		]);
 
 		h.release(1);
@@ -623,7 +623,7 @@ describe('SavePipeline 写盘归属（换文件期间的排空）', () => {
 
 		expect(h.writes[1]).toEqual({
 			path: FILE_PATH,
-			content: '---\ntitle: A\n---\n- A-child\n',
+			content: '---\ntitle: A\n---\n# A-child\n',
 		});
 		expect(h.written.some((content) => content.includes('title: B'))).toBe(
 			false,
@@ -637,7 +637,7 @@ describe('SavePipeline 写盘归属（换文件期间的排空）', () => {
 describe('SavePipeline.save（无差异写盘跳过）', () => {
 	it('文件当前内容与将要写入的内容一致时不写盘（mtime/元数据缓存零惊动）', async () => {
 		// 典型场景：「自动整理」只清拖拽坐标，Markdown 文本一字未变
-		const cachedRead = vi.fn(async () => '- A\n');
+		const cachedRead = vi.fn(async () => '# A\n');
 		const h = makeHarness({}, { cachedRead });
 
 		await h.pipeline.save();
@@ -654,7 +654,7 @@ describe('SavePipeline.save（无差异写盘跳过）', () => {
 		await h.pipeline.save();
 
 		expect(h.modify).toHaveBeenCalledTimes(1);
-		expect(h.written[0]).toBe('- A\n');
+		expect(h.written[0]).toBe('# A\n');
 	});
 
 	it('cachedRead 抛错时回退写盘（fail-open：绝不因读失败而丢写）', async () => {
@@ -678,7 +678,7 @@ describe('SavePipeline.save（无差异写盘跳过）', () => {
 	});
 
 	it('跳过写盘后管线状态复位：内容随后变化仍能正常写盘', async () => {
-		let content = '- A\n';
+		let content = '# A\n';
 		const cachedRead = vi.fn(async () => content);
 		const h = makeHarness({}, { cachedRead });
 
@@ -688,6 +688,6 @@ describe('SavePipeline.save（无差异写盘跳过）', () => {
 		content = '- 旧版本\n';
 		await h.pipeline.save();
 		expect(h.modify).toHaveBeenCalledTimes(1);
-		expect(h.written[0]).toBe('- A\n');
+		expect(h.written[0]).toBe('# A\n');
 	});
 });

@@ -31,8 +31,20 @@ const COMMAND_IDS = [
 	'mindmap-back-to-markdown',
 ] as const;
 
-/** 注册全部命令面板命令（onload 时调用一次；文案取注册时的语言） */
+/**
+ * 注册全部命令面板命令（onload 时调用一次；文案取注册时的语言）。
+ *
+ * 编排壳：按类别分组注册（创建 / 视图 / 导出与文档模式）——纯移动，
+ * 调用顺序 = 拆分前的注册顺序，各条命令内容不变。
+ */
 export function registerCommands(plugin: IPluginCommandsHost): void {
+	registerCreateCommands(plugin);
+	registerViewCommands(plugin);
+	registerDocumentCommands(plugin);
+}
+
+/** 创建类：新建导图 / 在当前文件夹新建 */
+function registerCreateCommands(plugin: IPluginCommandsHost): void {
 	plugin.addCommand({
 		id: 'create-new-mindmap',
 		name: t(plugin.settings.language, 'command.createMindMap'),
@@ -59,7 +71,10 @@ export function registerCommands(plugin: IPluginCommandsHost): void {
 			return true;
 		},
 	});
+}
 
+/** 视图类：搜索节点 / 适应画布 / 整理 / 批量拆分混排双链 */
+function registerViewCommands(plugin: IPluginCommandsHost): void {
 	plugin.addCommand({
 		id: 'search-mindmap-nodes',
 		name: t(plugin.settings.language, 'command.searchNodes'),
@@ -124,7 +139,10 @@ export function registerCommands(plugin: IPluginCommandsHost): void {
 			return true;
 		},
 	});
+}
 
+/** 导出与 md 文档模式：导出 PNG / md 打开为导图 / 切回 Markdown */
+function registerDocumentCommands(plugin: IPluginCommandsHost): void {
 	plugin.addCommand({
 		id: 'mindmap-export-png',
 		name: t(plugin.settings.language, 'command.exportPng'),

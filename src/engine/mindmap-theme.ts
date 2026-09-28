@@ -186,8 +186,14 @@ function buildThemeConfig(
 
 /**
  * 思维导图视图的主题配置。
- * imgMaxWidth/imgMaxHeight 使用统一的固定图片尺寸，
- * 保证所有图片等高且完整呈现在子主题框架内。
+ *
+ * imgMaxWidth/imgMaxHeight（= 默认盒 `IMAGE_WIDTH × IMAGE_HEIGHT`）：**引擎侧
+ * 兜底约束**，只作用于 `imageSize.custom:false` 的图（首帧兜底
+ * `ensureDefaultImageSizes`、探测失败回退）——`nodeCreateContents.getImgShowSize`
+ * 对 `custom:false` **必然读取**这两个值，故**不可删除**（传 undefined 的行为在
+ * vendor 未定义）；自然尺寸/参数尺寸路径均走 `custom:true`、完全绕过它
+ * （2026-09-28 K97：未设置尺寸按图片原始大小展示、长边超 `IMAGE_MAX_SIDE_PX`
+ * 等比缩，见 `media/images-path.fitImageWithinMaxSide`）。
  * lineStyle = 偏好解析结果（auto 时随布局，见 resolveLineStyle）。
  */
 export function getThemeConfig(

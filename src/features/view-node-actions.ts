@@ -24,13 +24,7 @@ import { fileLookupIndex } from '../links/file-lookup';
 import { resolvePathToFile } from '../links/links-resolve';
 import { t } from '../core/i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
-import { applyRawToNode } from '../markdown/md-line-write';
 import { composeNodeContent, isPureLinkNode } from '../markdown/md-serialize';
-import {
-	ensureDefaultImageSizes,
-	resolveImagePath,
-	walkCorrectImageSizesByAspect,
-} from '../media/images-path';
 
 import {
 	formatLinkPath,
@@ -42,6 +36,10 @@ import {
 } from '../domain/wikilink';
 import { preferredLinkPathFormat, prefersMarkdownLinks } from '../platform/vault-prefs';
 import { inlineContentPreview } from './node-inline-content';
+import {
+	applyRawNodeContent,
+	openNodeInlineEditor,
+} from './node-inline-editor';
 import { requireActiveNode, insertChildNodeWithData } from './view-common';
 import type { MdNodeData } from '../core/node-data';
 import type { MindMapNode, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
@@ -101,7 +99,9 @@ function appendLinkChild(
 
 /**
  * 文档双链：写 mdWikiLinkpath 通道（**不写**引擎 hyperlink）——引擎会为任何
- * hyperlink 渲染原生链接图标，而文档双链应显示自绘文档页图标（见 mindmap.ts）。
+ * hyperlink 渲染原生链接图标，而文档双链应显示自绘文档页图标（见 mindmap.ts；
+ * 该图标仅出现在**未被自绘接管**的节点上——自绘（富）节点无任何图标，
+ * 其链接以**主题链接色的超链接字体**呈现，见 node-inline-content 锚点样式）。
  * 与解析侧（md-outline 的 wiki 分支）保持同一通道，避免"文件里的链接有文档图标、
  * 拖入/弹窗新建的却是原生链条图标"的不一致。
  *
@@ -500,19 +500,20 @@ export function removeNodeText(view: MindMapViewContext, node: MindMapNode): voi
 }
 
 /**
- * 在指定父节点下新建一个节点（占位名，双击/F2 可改名）。
+ * 在指定父节点下新建一个节点（**空文本**，立即进入编辑；双击/F2 可再编辑）。
  *
  * 双击画布空白（官方 Canvas「双击画布新建卡片」，`en/Plugins/Canvas.md`）与
  * 空白处右键「新建节点」的共用实现；父节点由调用方给出（双击空白/空白右键
  * 统一挂根节点下——层级语义下「空白处」没有更近的挂靠点）。
+ *
+ * 2026-09-28（方案 B / K93）：新建节点不再带占位文字（此前为 `menu.newNode`
+ * 的「新建节点」），并以 `openEdit` 立即进入引擎编辑框——新建即可直接输入。
  */
 export function createChildNodeBelow(
 	view: MindMapViewContext,
 	parent: MindMapNode,
 ): void {
-	insertChildNodeWithData(view, parent, {
-		text: t(view.lang, 'menu.newNode'),
-	});
+	insertChildNodeWithData(view, parent, { text: '' }, { openEdit: true });
 }
 
 /**
@@ -546,25 +547,46 @@ export function setupCanvasQuickCreate(view: MindMapViewContext): void {
 /**
  * 编辑节点文本（右键「编辑文本」/ 双击 / F2 的**共用入口**）。
  *
- * 三种节点三条通道：
+ * 两条通道（2026-09-28 用户裁决方案 A）：
  * - **默认 SVG 文本节点** → 引擎编辑框（原位内联编辑，`startNodeTextEdit`）；
- * - **纯链接节点**（整行一个链接/图片，文本即其显示名）→ 弹窗**别名模式**：
- *   编辑 `data.text`，提交经 `setNodeText`（纯双链节点即改别名，见 K6）；
- * - **其余自绘（富）节点** → 弹窗**原文模式**：编辑**文件里的那一行**（双链语法、
- *   URL、轻标记全部可见可改），提交重解析写回（`md-line-write.applyRawToNode`）。
- *   此前一律给别名视图 → 混排节点的语法不可见、外链（icon-only）连影子都没有，
- *   用户无从修改（2026-09-15 实测反馈）。
+ * - **自绘（富）节点**（含纯链接节点）→ 插件**内联原文编辑器**
+ *   （`features/node-inline-editor`：覆盖层 textarea 编辑**文件里那一行**；
+ *   双击进入 / 点击外部结束 / Esc 停止并保留）——**统一原文、无别名分流**。
  *
- * 引擎编辑框对自绘节点静默 no-op（`textEdit.show()` 的 `isUseCustomNodeContent()`
- * 守卫），不兜底就等于「双击没反应」。
+ * 弹窗保留为**备选入口**（右键「在弹窗中编辑」，见 `editNodeTextInModal`：
+ * 别名模式与实时预览仍只在弹窗提供）；引擎编辑框对自绘节点静默 no-op
+ * （`textEdit.show()` 的 `isUseCustomNodeContent()` 守卫），不接管就等于
+ * 「双击没反应」。
  */
 export function editNodeText(view: ViewNodeEditContext, node: MindMapNode): void {
-	const mindMap = view.mindMap;
-	if (!mindMap) {
+	if (!view.mindMap) {
 		return;
 	}
 	if (!isCustomNodeContent(node)) {
-		startNodeTextEdit(mindMap, node);
+		startNodeTextEdit(view.mindMap, node);
+		return;
+	}
+	openNodeInlineEditor(view, node);
+}
+
+/**
+ * 弹窗编辑（**备选入口**：右键「在弹窗中编辑」）——保留自绘节点的两种模式：
+ * - **纯链接节点**（整行一个链接/图片，文本即其显示名）→ **别名模式**：
+ *   编辑 `data.text`，提交经 `setNodeText`（纯双链节点即改别名，见 K6）；
+ * - **其余自绘（富）节点** → **原文模式**：编辑文件里那一行 + 实时预览，
+ *   提交 `applyRawNodeContent`（与内联编辑器共用同一提交入口，见
+ *   `features/node-inline-editor`）。
+ *
+ * 历史：2026-09-15 起自绘节点一律走本弹窗（此前给别名视图 → 混排节点的语法
+ * 不可见、外链 icon-only 连影子都没有）；2026-09-28 内联编辑器上线后收编为
+ * 备选入口（复杂原文/别名与多行细调场景）。
+ */
+export function editNodeTextInModal(
+	view: ViewNodeEditContext,
+	node: MindMapNode,
+): void {
+	const mindMap = view.mindMap;
+	if (!mindMap) {
 		return;
 	}
 	const data = node.getData() as MdNodeData;
@@ -600,41 +622,11 @@ export function editNodeText(view: ViewNodeEditContext, node: MindMapNode): void
 }
 
 /**
- * 原文模式提交：重解析写入 + 图片地址/尺寸校正 + 重渲染 + 保存。
- *
- * 图片：原文里可能新增/更换了引用 —— 库内路径须换成资源地址（与加载期同一入口
- * `resolveImagePath`），尺寸按原始比例校正（异步探测，完成后补一次渲染，与
- * view.ts 的加载流程同款）。无图片时（绝大多数）不做任何额外工作。
- */
-function applyRawNodeContent(
-	view: ViewNodeEditContext,
-	node: MindMapNode,
-	raw: string,
-): void {
-	const data = node.getData() as MdNodeData;
-	applyRawToNode(data, raw);
-	if (typeof data.image === 'string' && data.image) {
-		data.image = resolveImagePath(data.image, view.app);
-		// 引擎硬要求 image 节点必有 imageSize（缺失即解构抛错、渲染链中断）：
-		// 原本无图的节点被编辑成图片时没有旧值可沿用，先填默认值再渲染，
-		// 异步校正随后按比例修正（ensureDefaultImageSizes 注释有 vendor 证据）
-		ensureDefaultImageSizes({ data, children: [] });
-		void walkCorrectImageSizesByAspect({ data, children: [] }).then(() => {
-			markNodeNeedLayout(node);
-			view.mindMap?.render();
-		});
-	}
-	markNodeNeedLayout(node);
-	view.mindMap?.render();
-	view.scheduleSave();
-}
-
-/**
  * 自绘节点的双击编辑兜底（引擎 `node_dblclick` 的补充路径）。
  *
  * 引擎双路径对自绘节点都不可用（编辑框静默 no-op），故在视图侧订阅
- * `node_dblclick`：命中自绘节点即弹插件文本弹窗。默认文本节点不受影响
- * ——引擎照常进入编辑框，本监听直接返回。
+ * `node_dblclick`：命中自绘节点即打开**内联编辑器**（K92）。默认文本节点
+ * 不受影响——引擎照常进入编辑框，本监听直接返回。
  */
 export function setupNodeTextEditFallback(view: ViewNodeEditContext): void {
 	if (!view.mindMap) {

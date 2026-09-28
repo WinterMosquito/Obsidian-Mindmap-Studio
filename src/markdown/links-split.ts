@@ -299,7 +299,14 @@ function buildChildren(
 		seen.add(parts.linkpath);
 		const name = visibleNameOf(tok, rawLink);
 		const embed = rawLink.startsWith('!');
-		const data: Record<string, unknown> = {};
+		// 拆出的子节点是**列表项**（父为 heading 时写在标题之下的列表区），显式标
+		// `mdType/list` + 默认 `-` 标记：不标则被序列化按「未标注新建节点」处理，
+		// 在标题上下文会被升级成下一级标题（K98），把「说明 + 链接」的父子关系
+		// 写成标题并列——拆分的语义是「抽出的链接写成其下的列表项」。
+		const data: Record<string, unknown> = {
+			mdType: 'list',
+			mdMarker: '-',
+		};
 		if (wikilinkTargetIsAttachment(parts.linkpath)) {
 			// 附件通道（回形针图标）——与解析侧同字段；嵌入不占文本
 			data.text = embed ? '' : name;

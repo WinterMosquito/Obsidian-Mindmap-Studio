@@ -448,59 +448,12 @@
   text-decoration: underline;
 }
 
-/* 代码块复制按钮（块级代码段，node-inline-content.buildCodeBlockElement）：
-   结构/配色/滚动全部**内联**（导出保真，见上方 section 说明）；此处只有屏幕装饰。
-   · **常显**（对齐 Obsidian 阅读视图：复制按钮一直在，悬停增强）——基础透明度
-     0.55 由容器变量承载；按钮内联 opacity 走 var(--tmm-code-copy-opacity, 0)，
-     变量能穿透内联声明（无需 !important）；导出 SVG 不带本文件 ⇒ 变量未定义
-     ⇒ 兜底 0 ⇒ 按钮在导出图里不可见。
-   · 图标用 mask + background-color: currentColor。**颜色口径（2026-09-28 两轮
-     实测校准）**：纯 `var(--text-muted)` 在画布 foreignObject 子树内取不到值
-     （用户实测两版图标都是浅色——变量未定义时 color 回退到继承值 = 节点文字
-     色，浅色主题节点文字偏浅 → 观感近白）。故改为 **var + 具体色兜底 +
-     !important**（取到变量 = 跟随主题；取不到 = 官方默认灰；!important 顶开
-     主题对 button 的通配着色），并按 body.theme-dark 分支给兜底值。
-     is-copied 态同步 !important（否则被基态压住），撤 mask、字形换成功色。 */
-.tmm-codeblock {
-  --tmm-code-copy-opacity: 0.55;
-}
-
-.tmm-codeblock:hover,
-.tmm-codeblock:focus-within {
-  --tmm-code-copy-opacity: 1;
-}
-
-.tmm-code-copy {
-  background-color: currentColor;
-  color: var(--text-muted, #666666) !important;
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2' ry='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E");
-  mask-repeat: no-repeat;
-  mask-position: center;
-  mask-size: 14px;
-  border-radius: 4px;
-  transition: opacity 0.12s ease, color 0.12s ease;
-}
-
-.tmm-code-copy:hover {
-  color: var(--text-normal, #1f1f1f) !important;
-}
-
-.theme-dark .tmm-code-copy {
-  color: var(--text-muted, #999999) !important;
-}
-
-.theme-dark .tmm-code-copy:hover {
-  color: var(--text-normal, #ececec) !important;
-}
-
-.tmm-code-copy.is-copied {
-  background-color: transparent;
-  color: var(--text-success, var(--text-accent)) !important;
-  font-size: 12px;
-  line-height: 20px;
-  text-align: center;
-  mask-image: none;
-}
+/* 代码块复制按钮（块级代码段）：**外观 100% 内联**于
+   node-inline-content 的 CODE_COPY_BUTTON_STYLES（形状 mask / currentColor
+   填充 / --icon-color 三级兜底基色 / 圆角——用户实机 styles.css 曾长期滞留
+   旧版，类规则口径不可靠）；屏上恒显，**导出图隐身**由引擎 handleExportSvg
+   钩子显式实现（features/node-codeblock.hideCopyButtonsInExportSvg）。
+   本文件不再持有任何按钮规则（2026-09-28 第五轮，原「变量间接层」退役）。 */
 
 /* ========== 节点文本弹窗（自绘节点的编辑入口，ui/modal-text.ts） ========== */
 /* 编辑的是**写回文件的那份文本**（可含 [[双链]] 等语法），等宽更易读 */

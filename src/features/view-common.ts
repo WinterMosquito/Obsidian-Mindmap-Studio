@@ -30,11 +30,17 @@ export function requireActiveNode(view: ViewNodeEditContext): MindMapNode | null
  * 统一约定 `appointNodes = [parent]`（不依赖激活列表——引擎在 appointNodes 与
  * 激活列表均为空时直接 return，空数组会静默失效）与 `isActive: false`
  * （新节点不抢激活态）。父节点/引擎缺失时返回 false（调用方据此决定是否提示）。
+ *
+ * `options.openEdit = true`（**新建节点**场景，2026-09-28 方案 B / K93）：引擎按
+ * `inserting` 路径处理——渲染后**强制激活**新节点并打开引擎编辑框（编辑框对空
+ * 文本同样可用，新建即可直接输入）。其余调用方（拖入/粘贴/拆分/Alt 拖复制）
+ * 保持缺省 false：不抢激活态、不打断当前操作。
  */
 export function insertChildNodeWithData(
 	view: MindMapViewContext,
 	parent: MindMapNode | null,
 	data: Record<string, unknown>,
+	options: { openEdit?: boolean } = {},
 ): boolean {
 	if (!parent) {
 		return false;
@@ -43,9 +49,14 @@ export function insertChildNodeWithData(
 	if (!engine) {
 		return false;
 	}
-	engine.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE, false, [parent], {
-		...data,
-		isActive: false,
-	});
+	engine.execCommand(
+		ENGINE_COMMANDS.INSERT_CHILD_NODE,
+		options.openEdit === true,
+		[parent],
+		{
+			...data,
+			isActive: false,
+		},
+	);
 	return true;
 }

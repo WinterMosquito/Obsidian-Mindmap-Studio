@@ -23,13 +23,26 @@ import {
 import { t } from '../core/i18n';
 import type { MindMapViewContext } from './view-context';
 
-/** 构建工具栏（左：编辑/插入；中：布局；右：画布/导入导出） */
+/**
+ * 构建工具栏（左：编辑/插入；中：布局；右：画布/导入导出）。
+ *
+ * 编排壳：三个分组各自独立构建、按原序调用——纯移动，DOM 创建顺序不变。
+ */
 export function buildToolbar(view: MindMapViewContext): void {
-	if (!view.toolbarEl) {
+	const toolbar = view.toolbarEl;
+	if (!toolbar) {
 		return;
 	}
-	const toolbar = view.toolbarEl;
+	buildToolbarLeftGroup(view, toolbar);
+	buildToolbarCenterGroup(view, toolbar);
+	buildToolbarRightGroup(view, toolbar);
+}
 
+/** 左组：编辑/插入（md 文档模式返回入口 → 节点增删 → 撤销重做 → 整理 → 搜索/链接/图片） */
+function buildToolbarLeftGroup(
+	view: MindMapViewContext,
+	toolbar: HTMLElement,
+): void {
 	const leftGroup = toolbar.createDiv('mindmap-toolbar-group');
 	// md 文档模式（.mindmap.md）：提供返回 Markdown 编辑/阅读的入口
 	if (view.isMdDocument()) {
@@ -73,7 +86,13 @@ export function buildToolbar(view: MindMapViewContext): void {
 	createToolButton(leftGroup, t(view.lang, 'toolbar.insertImage'), 'image', () => {
 		void addImageToActiveNode(view);
 	});
+}
 
+/** 中组：布局与连线样式下拉（连线选项面随布局重建，见 syncLineStyleOptions） */
+function buildToolbarCenterGroup(
+	view: MindMapViewContext,
+	toolbar: HTMLElement,
+): void {
 	const centerGroup = toolbar.createDiv(
 		'mindmap-toolbar-group mindmap-toolbar-center',
 	);
@@ -113,7 +132,13 @@ export function buildToolbar(view: MindMapViewContext): void {
 			view.applyLineStyle(view.lineStyleSelect.value);
 		}
 	};
+}
 
+/** 右组：画布控制与导出（顺序左→右：重置缩放 → 适应画布 → 放大 → 缩小 → 导出） */
+function buildToolbarRightGroup(
+	view: MindMapViewContext,
+	toolbar: HTMLElement,
+): void {
 	const rightGroup = toolbar.createDiv(
 		'mindmap-toolbar-group mindmap-toolbar-right',
 	);

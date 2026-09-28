@@ -33,7 +33,6 @@ import {
 	replaceMindMapData,
 } from '../engine/mindmap';
 import { shouldEnablePerformanceMode } from '../core/constants';
-import { injectMathStylesIntoExportSvg } from '../platform/math-jax';
 import type { NodeContentStyle } from '../engine/mindmap';
 import { ensureUniqueUids } from '../markdown/markdown';
 import { nodeReferenceMatches } from '../core/node-data';
@@ -92,6 +91,16 @@ export interface EngineControllerDeps {
 				lang: Language,
 		  ) => HTMLElement | null)
 		| null;
+	/**
+	 * 导出 SVG 后处理链（组合根按序注入）：引擎导出 PNG/SVG/PDF 时对**克隆的**
+	 * SVG 依次调用（前一项返回值即后一项入参）。
+	 *
+	 * 为什么注入而非本层 import：后处理项分居两层——`platform/math-jax`
+	 * （MathJax 字形样式注入，在 services 许可集内）与 `features/node-codeblock`
+	 * （复制按钮隐身，**不在** services 许可集内，K51 依赖矩阵）。故由组合根
+	 * 装配后注入，本控制器只负责按序应用；缺省/空链 = 不注册导出钩子。
+	 */
+	exportSvgTransforms?: ReadonlyArray<(svg: unknown) => unknown> | null;
 	/** 根数据变更（→ 防抖保存 + 状态栏计数 + 标题重命名调度） */
 	onRootDataChanged(): void;
 	/**
@@ -252,6 +261,8 @@ export class EngineController {
 			const options = this.deps.getSetupOptions();
 			/** 节点内联内容渲染器（缺省 = 不开启引擎自绘节点内容通道） */
 			const nodeContentRenderer = this.deps.createNodeContent ?? null;
+			/** 导出 SVG 后处理链（组合根注入，按序应用；空链 = 不注册钩子） */
+			const exportSvgTransforms = this.deps.exportSvgTransforms ?? [];
 			this.mindMap = createMindMap(canvasEl, tree, {
 				layout: options.layout,
 				lineStyle: options.lineStyle,
@@ -268,10 +279,19 @@ export class EngineController {
 					? (node, doc, style, lang) =>
 							nodeContentRenderer(node, doc, style, lang)
 					: null,
-				// 导出 SVG 后处理（方案 B，2026-09-27）：把 MathJax CHTML 逐字符
+				// 导出 SVG 后处理链（组合根注入，按序应用）：MathJax CHTML 逐字符
 				// 样式注入克隆 SVG——否则导出图中 `<mjx-c>` 无 `::before` 字形规则、
-				// 渲染为空白（用户导出 PNG 实测）。模块级函数无 this 语义，直接传引用
-				handleExportSvg: injectMathStylesIntoExportSvg,
+				// 渲染为空白（用户导出 PNG 实测）；随后复制按钮隐身
+				// （styles.css 图标规则删除后，「变量间接层」隐式隐身机制退役）。
+				// services 层不直接依赖 features（K51），链在 view.ts 装配后注入。
+				handleExportSvg:
+					exportSvgTransforms.length > 0
+						? (svg: unknown) =>
+								exportSvgTransforms.reduce<unknown>(
+									(acc, transform) => transform(acc),
+									svg,
+								)
+						: null,
 			});
 			this.engineEvents.onEngine(this.mindMap, 'data_change', () => {
 				this.deps.onRootDataChanged();

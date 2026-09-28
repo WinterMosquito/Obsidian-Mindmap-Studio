@@ -19,6 +19,7 @@ import {
 	createChildNodeBelow,
 	deleteActiveNode,
 	editNodeText,
+	editNodeTextInModal,
 	pasteNodeAsChild,
 	removeNodeImage,
 	removeNodeText,
@@ -128,8 +129,14 @@ function showNodeContextMenu(
 		item
 			.setTitle(t(view.lang, 'menu.editText'))
 			.setIcon('pencil')
-			// 共用入口：默认文本节点走引擎编辑框，自绘（富）节点走插件文本弹窗
+			// 共用入口：默认文本节点走引擎编辑框，自绘（富）节点走**内联编辑器**
 			.onClick(() => editNodeText(view, node)),
+	);
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'menu.editTextModal'))
+			// 备选入口：自绘节点的弹窗编辑（别名模式 / 原文模式 + 实时预览）
+			.onClick(() => editNodeTextInModal(view, node)),
 	);
 	menu.addItem((item) =>
 		item

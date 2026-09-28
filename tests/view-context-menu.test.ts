@@ -117,6 +117,7 @@ const {
 	getNodeDataStringMock,
 	startNodeTextEditMock,
 	editNodeTextMock,
+	editNodeTextInModalMock,
 	clearNodeHyperlinkMock,
 	copyNodeMock,
 	pasteNodeAsChildMock,
@@ -134,6 +135,7 @@ const {
 	getNodeDataStringMock: vi.fn<(node: unknown, key: string) => string>(),
 	startNodeTextEditMock: vi.fn<(mindMap: unknown, node: unknown) => void>(),
 	editNodeTextMock: vi.fn<(view: unknown, node: unknown) => void>(),
+	editNodeTextInModalMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	clearNodeHyperlinkMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	copyNodeMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	pasteNodeAsChildMock: vi.fn<(view: unknown, node: unknown) => void>(),
@@ -166,8 +168,10 @@ vi.mock('../src/features/view-node-actions', () => ({
 	clearNodeHyperlink: clearNodeHyperlinkMock,
 	copyNode: copyNodeMock,
 	deleteActiveNode: deleteActiveNodeMock,
-	// 编辑文本的共用入口（默认节点走引擎编辑框、自绘节点走插件弹窗）
+	// 编辑文本的共用入口（默认节点走引擎编辑框、自绘节点走插件内联编辑器）
 	editNodeText: editNodeTextMock,
+	// 弹窗编辑的备选入口（右键「在弹窗中编辑」）
+	editNodeTextInModal: editNodeTextInModalMock,
 	pasteNodeAsChild: pasteNodeAsChildMock,
 	removeNodeImage: removeNodeImageMock,
 	removeNodeText: removeNodeTextMock,
@@ -420,7 +424,12 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 	 * 文案经 t() 取真值。
 	 */
 	const G = {
-		edit: [zh('menu.editText'), zh('menu.addChild'), zh('menu.addSibling')],
+		edit: [
+			zh('menu.editText'),
+			zh('menu.editTextModal'),
+			zh('menu.addChild'),
+			zh('menu.addSibling'),
+		],
 		clip: [zh('menu.copyNode'), zh('menu.pasteAsChild')],
 		link: [zh('menu.addLink')],
 		/** 有链接时追加的链接类动作（对齐 Obsidian 阅读视图的链接右键） */
@@ -662,16 +671,26 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		expect(menu.item(zh('menu.deleteNode')).icon).toBe('trash-2');
 	});
 
-	it('编辑文本：委托共用编辑入口 editNodeText(视图, 节点)（默认节点→引擎框、自绘节点→弹窗）', () => {
+	it('编辑文本：委托共用编辑入口 editNodeText(视图, 节点)（默认节点→引擎框、自绘节点→内联编辑器）', () => {
 		const node = fakeNode({ text: '主题' });
 		const { menu, view, execCommand } = openNodeMenu(node);
 		menu.click(zh('menu.editText'));
 		expect(editNodeTextMock).toHaveBeenCalledTimes(1);
 		expect(editNodeTextMock).toHaveBeenCalledWith(view, node);
 		// 引擎无 ENTER_TEXT_EDIT 命令：文本编辑只能经官方 node_dblclick 事件进入
-		// （默认文本节点）或插件弹窗（自绘节点）——菜单层不再直接碰引擎
+		// （默认文本节点）或插件内联编辑器（自绘节点）——菜单层不再直接碰引擎
 		expect(startNodeTextEditMock).not.toHaveBeenCalled();
 		expect(execCommand).not.toHaveBeenCalled();
+	});
+
+	it('在弹窗中编辑（备选入口）：委托 editNodeTextInModal(视图, 节点)', () => {
+		const node = fakeNode({ text: '主题' });
+		const { menu, view } = openNodeMenu(node);
+		menu.click(zh('menu.editTextModal'));
+		expect(editNodeTextInModalMock).toHaveBeenCalledTimes(1);
+		expect(editNodeTextInModalMock).toHaveBeenCalledWith(view, node);
+		// 两个入口相互独立：弹窗项不触发内联入口
+		expect(editNodeTextMock).not.toHaveBeenCalled();
 	});
 
 	it('添加子/同级节点：直接发引擎命令，不带额外参数', () => {

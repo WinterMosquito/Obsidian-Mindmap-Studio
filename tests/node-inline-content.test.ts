@@ -660,8 +660,11 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect(attrsOf(button).get('data-code')).toBe('echo hi');
 		// 原生悬停提示（零依赖近似 Obsidian 的 tooltip）
 		expect(attrsOf(button).get('title')).toBe('复制代码');
-		// 按钮可见性走变量间接层（屏上 hover 由 styles.css 置 1；导出无该文件 → 兜底 0 → 隐身）
-		expect(styleOf(button).opacity).toBe('var(--tmm-code-copy-opacity, 0)');
+		// 可见性口径（第五轮）：屏上**恒显**（构建器不再写 opacity = 默认 1）；
+		// 导出图隐身由 handleExportSvg 钩子显式实现（hideCopyButtonsInExportSvg，
+		// 见 node-codeblock.test.ts 的导出隐身用例）——变量间接层已退役
+		expect(styleOf(button).opacity).toBeUndefined();
+		expect(styleOf(button).borderRadius).toBe('4px');
 		// 图标外观**全内联**（2026-09-28 第四轮校准）：颜色取 Obsidian 原生图标
 		// 变量 --icon-color（主题可独立于 --text-muted 定义），两级回退后到官方
 		// 默认灰；形状 mask 与填充 currentColor 同样内联——按钮外观零 styles.css

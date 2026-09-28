@@ -13,6 +13,9 @@
  * - 删除：根节点拒绝提示 + uid 异常时按对象身份兜底强制清除；
  * - 剪贴板：WeakMap 按视图隔离、深拷贝、粘贴剥离 uid/isActive、未指定父节点挂根；
  * - 自兜错误：内部异常转成用户可见 Notice（工具栏/菜单以 void 调用，不能外抛）。
+ * - 弹窗备选入口（editNodeTextInModal，2026-09-28 收编）：纯链接节点 → 别名模式
+ *   （提交经 setNodeText，纯双链节点即改别名，见 K6）；其余富节点 → 原文模式
+ *   （预填 composeNodeContent 的「下次写盘那一行」，提交值未变则不写盘）。
  *
  * mindmap 防腐层与弹窗/解析模块以 stub 替换：本文件只验证 view-node-actions
  * 自己的编排。Notice 断言用 `t(lang, key)` 取真实文案，手写字符串会让测试与实现脱钩。
@@ -33,6 +36,7 @@ import {
 	clearNodeHyperlink,
 	copyNode,
 	deleteActiveNode,
+	editNodeTextInModal,
 	pasteNodeAsChild,
 	removeNodeImage,
 	removeNodeText,
@@ -53,6 +57,8 @@ const {
 	resolveMock,
 	setImageOptionsMock,
 	aspectImageOptionsMock,
+	openNodeModalMock,
+	applyRawMock,
 } = vi.hoisted(() => ({
 	noticeCalls: [] as string[],
 	// 命令名取值与 src/engine/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的 token
@@ -76,6 +82,9 @@ const {
 	resolveMock: vi.fn<(...args: unknown[]) => unknown>(),
 	setImageOptionsMock: vi.fn<(...args: unknown[]) => unknown>(),
 	aspectImageOptionsMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+	// 弹窗备选入口的预填/返回值由用例控制；原文模式写回路径为独立 spy
+	openNodeModalMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+	applyRawMock: vi.fn<(...args: unknown[]) => void>(),
 }));
 
 vi.mock('obsidian', async (importOriginal) => {
@@ -129,6 +138,25 @@ vi.mock('../src/ui/modal-image', () => ({
 		openImageMock(...args),
 }));
 
+// 弹窗备选入口（右键「在弹窗中编辑」）在 Node 环境无法开窗：替换为 spy，
+// 预填值与提交值由用例控制（openNodeModalMock）
+vi.mock('../src/ui/modal-text', () => ({
+	openNodeTextModal: (...args: unknown[]): Promise<unknown> =>
+		openNodeModalMock(...args),
+}));
+
+// 内联编辑器（自绘节点的主编辑入口）非本文件关注点：仅桩掉导入面，
+// 原文模式的写回经 applyRawMock 断言（编辑器内部行为由
+// tests/node-inline-editor.test.ts 覆盖）
+vi.mock('../src/features/node-inline-editor', () => ({
+	isAnyNodeEditing: vi.fn(() => false),
+	isInlineNodeEditing: vi.fn(() => false),
+	resolveInlineEditKey: vi.fn(() => 'none'),
+	openNodeInlineEditor: vi.fn(),
+	closeInlineEditor: vi.fn(),
+	applyRawNodeContent: (...args: unknown[]): void => applyRawMock(...args),
+}));
+
 // 库内解析结果由用例决定：未解析（null）= 按目标串扩展名判定；
 // 返回 TFile 形态对象 = 按真实扩展名判定。真实现依赖全库索引，与编排无关。
 vi.mock('../src/links/links-resolve', () => ({
@@ -143,7 +171,7 @@ vi.mock('../src/media/images-path', async (importOriginal) => {
 		...actual,
 		createSetNodeImageOptions: (...args: unknown[]): unknown =>
 			setImageOptionsMock(...args),
-		createAspectSetNodeImageOptions: (...args: unknown[]): Promise<unknown> =>
+		createNaturalSizeSetNodeImageOptions: (...args: unknown[]): Promise<unknown> =>
 			aspectImageOptionsMock(...args),
 	};
 });
@@ -1462,5 +1490,116 @@ describe('图片操作（re-export 契约与自兜错误）', () => {
 		expect(noticeCalls).toEqual([`${zh('common.insertImageFailed')}boom`]);
 		expect(errorSpy).toHaveBeenCalledWith('插入图片失败', expect.any(Error));
 		errorSpy.mockRestore();
+	});
+});
+
+/** 排空 microtask 队列：弹窗 promise 链的写回发生在 then 回调中 */
+async function flushAsync(): Promise<void> {
+	await Promise.resolve();
+	await Promise.resolve();
+}
+
+/**
+ * 弹窗备选入口（editNodeTextInModal）：自绘节点的**别名 / 原文**双模式分流
+ * 与两道「不写盘」守卫（取消、原文未改动）。内联编辑器是自绘节点的主入口
+ * （分流见 view-hotkeys 用例），本组只锁弹窗这条备选通道的编排契约。
+ */
+describe('editNodeTextInModal（弹窗备选入口）', () => {
+	/** 纯链接节点桩（文本即链接显示名，isPureLinkNode = true） */
+	const pureLinkNode = () =>
+		fakeNode({
+			data: {
+				text: '笔记A',
+				mdDerivedText: '笔记A',
+				mdWikiLinkpath: '[[笔记A]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '笔记A',
+			},
+		});
+
+	/** 富节点桩（混排链接，非纯 token）：未编辑（rawOk）→ 预填 mdRaw 原文 */
+	const richNode = () =>
+		fakeNode({
+			data: {
+				text: '说明 [[链接]]',
+				mdDerivedText: '说明 [[链接]]',
+				mdRaw: '说明 [[链接]]',
+			},
+		});
+
+	it('纯链接节点 → 别名模式：提交经 setNodeText（纯双链节点即改别名，K6）并调度保存', async () => {
+		const node = pureLinkNode();
+		const { view, raw, scheduleSave } = makeView();
+		openNodeModalMock.mockResolvedValue('新名');
+
+		editNodeTextInModal(view, node);
+		await flushAsync();
+
+		// 别名模式：不传第 4 参（rawMode 缺省），弹窗行为与历史一致
+		expect(openNodeModalMock).toHaveBeenCalledWith(view.app, '笔记A', 'zh');
+		expect(setNodeTextMock).toHaveBeenCalledWith(raw.mindMap, node, '新名');
+		expect(scheduleSave).toHaveBeenCalledTimes(1);
+		expect(applyRawMock, '别名模式不走原文写回').not.toHaveBeenCalled();
+	});
+
+	it('别名模式取消（null）：不触碰引擎、不调度保存', async () => {
+		const node = pureLinkNode();
+		const { view, scheduleSave } = makeView();
+		openNodeModalMock.mockResolvedValue(null);
+
+		editNodeTextInModal(view, node);
+		await flushAsync();
+
+		expect(openNodeModalMock, '弹窗照常打开（取消发生在用户侧）').toHaveBeenCalledTimes(1);
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('其余富节点 → 原文模式：预填「下次写盘那一行」+ 实时预览，改动经 applyRawNodeContent 写回', async () => {
+		const node = richNode();
+		const { view } = makeView();
+		openNodeModalMock.mockResolvedValue('改后 [[链接]]');
+
+		editNodeTextInModal(view, node);
+		await flushAsync();
+
+		const [appArg, rawArg, langArg, optionsArg] = callArgs(openNodeModalMock);
+		expect(appArg).toBe(view.app);
+		expect(rawArg, '未编辑（rawOk）→ 预填 mdRaw 原文').toBe('说明 [[链接]]');
+		expect(langArg).toBe('zh');
+		const options = optionsArg as {
+			rawMode?: boolean;
+			preview?: (value: string) => string;
+		};
+		expect(options.rawMode, '原文模式').toBe(true);
+		expect(typeof options.preview, '实时预览随选项传入').toBe('function');
+		expect(applyRawMock).toHaveBeenCalledWith(view, node, '改后 [[链接]]');
+		expect(setNodeTextMock, '原文模式不改别名通道').not.toHaveBeenCalled();
+	});
+
+	it('原文模式未改动（提交值 === 预填原文）：不写盘、不重渲染', async () => {
+		const node = richNode();
+		const { view } = makeView();
+		// 提交值取弹窗收到的预填值原样（用户打开后直接确认）
+		openNodeModalMock.mockImplementation(
+			(_app: unknown, prefill: unknown) => Promise.resolve(prefill),
+		);
+
+		editNodeTextInModal(view, node);
+		await flushAsync();
+
+		expect(
+			applyRawMock,
+			'未改动不写盘（避免无意义的保存与重渲染）',
+		).not.toHaveBeenCalled();
+	});
+
+	it('引擎未就绪（mindMap 为 null）：不打开弹窗', () => {
+		const node = pureLinkNode();
+		const { view } = makeView({ withEngine: false });
+
+		editNodeTextInModal(view, node);
+
+		expect(openNodeModalMock).not.toHaveBeenCalled();
 	});
 });

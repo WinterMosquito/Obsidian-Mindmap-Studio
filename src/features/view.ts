@@ -15,6 +15,7 @@ import { Language, t, tf } from '../core/i18n';
 import type { TranslationKey } from '../core/i18n';
 import {
 	getRenderedMathNode,
+	injectMathStylesIntoExportSvg,
 	renderMathWithMathJax,
 } from '../platform/math-jax';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
@@ -23,6 +24,7 @@ import { notifyError } from '../core/errors';
 import {
 	applyImageSizeCorrectionsToEngine,
 	findNodeByDom,
+	getRenderRoot,
 	refreshNodesCustomContent,
 } from '../engine/mindmap';
 import {
@@ -32,7 +34,14 @@ import {
 } from '../media/images-path';
 import { openAsMarkdown } from '../markdown/md-open';
 import { registerWikilinkInteractions } from './view-wikilink';
-import { registerCodeBlockInteractions } from './node-codeblock';
+import {
+	closeInlineEditor,
+	isInlineNodeEditing,
+} from './node-inline-editor';
+import {
+	hideCopyButtonsInExportSvg,
+	registerCodeBlockInteractions,
+} from './node-codeblock';
 import { buildInlineNodeContent } from './node-inline-content';
 import {
 	setupCanvasQuickCreate,
@@ -215,7 +224,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	private mdDocumentMode = false;
 
 	/**
-	 * 数学定稿（替换成功）后待同步尺寸的 **holder**（P4，2026-09-27；K88 修正）。
+	 * 数学定稿（替换成功）后待同步尺寸的 **holder**（P4，K88 修正）。
 	 *
 	 * ⚠ 为什么存 holder 而不是构建期捕获的 node：节点内容可能由引擎**预测量**
 	 * 路径构建（vendor 补丁 5 的轻量代理对象——只有 `nodeData`/`getData`，没有
@@ -260,7 +269,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
-	 * 登记「数学定稿后需重测该节点尺寸」（P4，2026-09-27；holder 入口见 K88）。
+	 * 登记「数学定稿后需重测该节点尺寸」（P4，holder 入口见 K88）。
 	 *
 	 * 背景：引擎的内容测量是**同步**的（构建时按字面占位量高），而 MathJax 替换
 	 * 是**异步**的——不重测就会出现「块级公式只占一行高度、内容溢出」（用户实测）。
@@ -370,7 +379,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.titleRenamer = new TitleRenamer({
 			app: this.app,
 			getFile: () => this.file,
-			isEditingText: () => this.engine.isEditingText(),
+			// 任一编辑通道进行中（引擎编辑框 ∨ 插件内联编辑器）都视为「仍在编辑」
+			isEditingText: () =>
+				this.engine.isEditingText() || isInlineNodeEditing(this.mindMap),
 			getRootText: () => this.engine.getRootText(),
 			lang: this.lang,
 		});
@@ -417,6 +428,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 					getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
 				});
 			},
+			// 导出 SVG 后处理链（按序应用）：MathJax 字形样式注入 → 复制按钮隐身。
+			// 后处理项分居 platform 与 features，services 层不依赖 features（K51），
+			// 故链在组合根装配后注入（见 EngineControllerDeps.exportSvgTransforms）。
+			exportSvgTransforms: [
+				injectMathStylesIntoExportSvg,
+				hideCopyButtonsInExportSvg,
+			],
 			onRootDataChanged: () => {
 				this.scheduleSave();
 				updateStatusBar(this);
@@ -564,6 +582,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.cancelPendingInit();
 		this.savePipeline.cancelTimer();
 		this.titleRenamer.cancel();
+		// 内联编辑会话必须先提交（用户输入落节点数据 + scheduleSave），
+		// 否则随后的写盘拿不到刚输入的内容（引擎随后销毁）
+		closeInlineEditor(this);
 		// 先保存当前视口，再写盘正文（引擎随后销毁）
 		this.engine.persistViewport();
 		// 显式传入本文件与**本文件**的树快照（同步抓取，不受后续 await 影响）：
@@ -617,16 +638,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				this.leaf.getViewState().state?.mdBackMode,
 			);
 			const tree = doc.tree;
-			// 按图片原始宽高比校正尺寸（统一高度、宽度按比例）。
+			// 图片尺寸（2026-09-28 用户裁决 K97）：**未设置尺寸的图片一律按默认
+			// 大小展示**（IMAGE_WIDTH×IMAGE_HEIGHT，框内等比留白不变形），只有
+			// 官方尺寸参数 `![[图|300]]` 的节点才按参数定尺寸——取消此前的
+			// 「按原始比例自适应」（会让不同图片在导图中大小各异）。因此绝大多数
+			// 图片节点**完全不探测**，加载期无解码开销。
 			//
-			// **探测不再挡在首帧前**（2026-09-16 优化）：此前 `await` 在首帧之前，
-			// 冷缓存时打开「图片多」的文档要串行等 ceil(图数/6) 批解码（单张超时
-			// 2500ms），首帧因此被推迟；现起步探测（不与首帧串行）→ 首帧先按默认
-			// 尺寸出画 → 探测完成后按「data 对象身份 + image 地址」回灌并重渲染一次
-			// （只影响尺寸确实变了的图片节点）。代价是尺寸可能在图片加载后就位时
-			// 跳一下（原先靠阻塞首帧规避）。
-			// 既有不变式不变：自动校正的尺寸打 mdImageAutoSize 标记、**不回写文件**
-			// （官方参数 `![[图|300]]` 的节点仍按参数定尺寸）。
+			// 带参节点的探测仍不挡在首帧前（2026-09-16 优化）：起步探测（不与首帧
+			// 串行）→ 首帧先按默认尺寸出画 → 探测完成后按「对象身份 + uid」双通道
+			// 回灌并重渲染一次（只影响尺寸确实变了的图片节点，见 K96）。
+			// 不变式：参数节点 custom:true 精确渲染；`mdImageAutoSize` 标记不回写
+			// 文件（存量兼容，K97 后不再产出新标记）。
 			//
 			// 先同步填**默认尺寸**（引擎硬要求：`getImgShowSize` 对缺失的 imageSize
 			// 直接解构抛错、整图渲染中断——旧流程靠「探测先于引擎」隐式兜底，
@@ -644,6 +666,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			});
 			// 上一帧若尚未执行（快速切换文件），先取消，避免旧树被渲染
 			this.cancelPendingInit();
+			// 引擎即将重建：先提交内联编辑（节点对象随重建失效，输入不能丢）
+			closeInlineEditor(this);
 			this.pendingInitRaf = this.containerEl.win.requestAnimationFrame(
 				() => {
 					this.pendingInitRaf = null;
@@ -679,10 +703,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/**
 	 * 回灌挂起的图片尺寸校正（首帧后）。
 	 *
-	 * 两条调用路径合起来覆盖「探测先完成 / 引擎先就绪」：
-	 * 探测完成时（`collectImageSizeCorrections().then`）与引擎创建完成时
-	 * （`onEngineReady`）各调一次，谁在后面谁生效。引擎重建（设置刷新/换文件）
-	 * 后 data 对象不再同一 ⇒ 身份匹配落空，不会盖错节点。
+	 * 三条调用路径合起来覆盖全部时序（谁最后就绪谁生效）：
+	 * ① 探测完成时（`collectImageSizeCorrections().then`）；
+	 * ② 引擎创建完成时（`onEngineReady`）；
+	 * ③ 首帧渲染完成时（`onEngineReady` 注册的 `node_tree_render_end` 监听）。
+	 *
+	 * **root 未就绪（首帧渲染异步，中间态 `renderer.root` 为 null）时不消费**：
+	 * 保留 pending 交给后续触发点重试。2026-09-28 修复——此前「先清空再回灌」
+	 * 在 root 未就绪时把校正**永久丢失**（`applyImageSizeCorrectionsToEngine`
+	 * 对 null root 静默返回 0），表现为所有图片节点停在默认 200×120 固定外框、
+	 * 宽度不随图片比例变化。
+	 * 引擎重建（设置刷新/换文件）后 data 对象不再同一 ⇒ 身份匹配落空，不会盖错节点。
 	 *
 	 * @returns 是否实际回灌。真实尺寸替换默认尺寸会改动节点包围盒，
 	 *   调用方据此排补居中——否则首帧居中会停在旧包围盒上（打开即偏移）。
@@ -690,7 +721,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	private applyPendingImageCorrections(): boolean {
 		const corrections = this.pendingImageCorrections;
 		const mindMap = this.mindMap;
-		if (!corrections || corrections.length === 0 || !mindMap) {
+		if (
+			!corrections ||
+			corrections.length === 0 ||
+			!mindMap ||
+			!getRenderRoot(mindMap)
+		) {
 			return false;
 		}
 		this.pendingImageCorrections = null;
@@ -704,6 +740,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 回灌改动节点尺寸 → 内容包围盒变化，排补居中修正默认视口
 		if (this.applyPendingImageCorrections()) {
 			this.engine.scheduleViewportRecenter();
+		}
+		// 首帧渲染通常晚于引擎创建（Render 异步：root 在渲染回调前为 null）
+		// → 上面那次会保留 pending，这里挂首次渲染完成事件补灌（2026-09-28 修复）。
+		// 回调幂等（pending 为空时立即返回），绑定走 engineEvents 随引擎销毁清理。
+		const mindMap = this.mindMap;
+		if (mindMap) {
+			this.engineEvents.onEngine(mindMap, 'node_tree_render_end', () => {
+				if (this.applyPendingImageCorrections()) {
+					this.engine.scheduleViewportRecenter();
+				}
+			});
 		}
 		if (this.layoutSelect) {
 			this.layoutSelect.value = layout;
@@ -935,6 +982,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		teardownImageResize(this);
 		// 挂起装配信号：关闭后到达的 onLoadFile 等待下一次 onOpen（原轮询语义）
 		this.whenReady = new Promise(() => {});
+		// 内联编辑会话提交（同 onUnloadFile：输入必须先落数据再写盘）
+		closeInlineEditor(this);
 		this.engine.persistViewport();
 		await this.savePipeline.save();
 		// 视图级注册的**对称回收**：`onClose` 不触发 Component 卸载，而

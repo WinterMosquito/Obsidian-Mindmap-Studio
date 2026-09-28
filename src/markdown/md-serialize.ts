@@ -11,7 +11,10 @@
  *   而不是「新文本 + 行尾链接」；判定与边界见 domain/wiki-display.ts 的
  *   editedWikilinkAlias（纯判定在 domain，回写与图标 tooltip 共用同一入口）。
  * - heading → `#×N 文本`；list → 缩进 + 标记 + 文本（ordered 重排编号 1..n）；
- *   plain → 原样多行文本；新用户节点（无 mdType/mdRaw）按 '-' 输出；
+ *   plain → 原样多行文本；**新用户节点（无 mdType/mdRaw）按层级回写**——位于
+ *   标题上下文且第 1~6 层 → `#×级别 文本`（与解析侧「#~###### ⇄ 第 1~6 层」
+ *   严格对称，K98）；列表/段落上下文或 6 级之下 → `-` 输出（显式 mdMarker 的
+ *   新节点尊重用户选择、同样走列表）；
  * - 列表项多行文本（续行）非首行补 2 空格缩进，保证可再解析为续行。
  */
 
@@ -818,20 +821,49 @@ export function serializeMdBody(
 		index: number;
 		listIndent: number;
 		orderedCount: number;
+		/**
+		 * 标题上下文级别（K98）：`0` = 根（其子可为 1 级标题）、`1..6` = 当前所处
+		 * 标题级别、`null` = 已不可标题化（祖先链上有 list/plain，或已到 6 级
+		 * 标题之下）——未标注（新建）节点据此决定回写形态。
+		 */
+		headingLevel: number | null;
 	}
+
+	/**
+	 * 该层是否存在**列表型兄弟**（`mdType:'list'`，或未标注但显式选了列表标记）——
+	 * 新建节点据此「跟随兄弟风格」（K98 补充）：是则写列表，使**纯列表文档**
+	 * 中新建节点不再冒出 `#` 标题；否则按层级写标题（标题树场景，K98 主规则）。
+	 */
+	const siblingsFollowList = (
+		children: readonly MindMapTreeNode[],
+	): boolean =>
+		children.some((sib) => {
+			const data: MdNodeData = sib.data ?? {};
+			if (data.mdType === 'list') {
+				return true;
+			}
+			// 未标注但显式选了列表标记的（用户新建的列表项）同样算列表风格；
+			// 当前待写节点自身不命中（它没有 mdMarker），无需排除
+			return data.mdType === undefined && data.mdMarker !== undefined;
+		});
 
 	/**
 	 * 显式栈替代递归：树深度由内容（缩进可任意深、可作者构造）决定，
 	 * 递归实现在超深层级上会触发 RangeError 栈溢出导致保存崩溃。
 	 * 语义与递归等价：先序输出，orderedCount/缩进按层独立。
 	 */
-	const walkChildren = (parent: MindMapTreeNode, listIndent: number): void => {
+	const walkChildren = (
+		parent: MindMapTreeNode,
+		listIndent: number,
+		headingLevel: number | null,
+	): void => {
 		const stack: SerializeFrame[] = [
 			{
 				children: parent.children ?? [],
 				index: 0,
 				listIndent,
 				orderedCount: 0,
+				headingLevel,
 			},
 		];
 		while (stack.length > 0) {
@@ -853,6 +885,8 @@ export function serializeMdBody(
 					index: 0,
 					listIndent: 0,
 					orderedCount: 0,
+					// 6 级之下已无标题可降级 → 其下新建节点走列表分支
+					headingLevel: level < 6 ? level : null,
 				});
 				continue;
 			}
@@ -867,10 +901,35 @@ export function serializeMdBody(
 					index: 0,
 					listIndent: frame.listIndent,
 					orderedCount: 0,
+					// 段落之下不可标题化（标题写进段落中间会撕裂段落结构）
+					headingLevel: null,
 				});
 				continue;
 			}
-			// list 或未标注（新建）节点 → 列表行
+			// 未标注（新建）节点：**按层级回写为 Markdown 标题**（K98）——第 1~6 层
+			// → `#`×级别，与解析侧「#~###### → 第 1~6 层」严格对称；已到 6 级之下、
+			// 或祖先链上有 list/plain（标题会撕裂列表/段落结构）→ 落入下方列表分支；
+			// 显式选了列表标记（mdMarker）的新节点尊重用户选择；**同层已有列表型
+			// 兄弟时跟随列表**（纯列表文档不冒出标题，K98 补充）。
+			if (
+				!type &&
+				data.mdMarker === undefined &&
+				frame.headingLevel !== null &&
+				!siblingsFollowList(frame.children)
+			) {
+				const level = frame.headingLevel + 1;
+				frame.orderedCount = 0;
+				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', '', app));
+				stack.push({
+					children: child.children ?? [],
+					index: 0,
+					listIndent: 0,
+					orderedCount: 0,
+					headingLevel: level < 6 ? level : null,
+				});
+				continue;
+			}
+			// list 或未标注（新建，位于列表/段落上下文或 6 级之下）节点 → 列表行
 			const marker =
 				data.mdMarker === 'ordered'
 					? `${frame.orderedCount + 1}.`
@@ -884,10 +943,11 @@ export function serializeMdBody(
 				index: 0,
 				listIndent: frame.listIndent + 1,
 				orderedCount: 0,
+				headingLevel: null,
 			});
 		}
 	};
 
-	walkChildren(tree, 0);
+	walkChildren(tree, 0, 0);
 	return out.join('\n');
 }

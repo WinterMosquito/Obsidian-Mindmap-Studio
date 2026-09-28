@@ -6,8 +6,8 @@
  * `![[图.png|300]]` / `![[图.png|300x150]]` / `![alt|300](url)`——
  * 不落 data.json。链路：拖拽改 engine data.imageSize（custom:true）→
  * 结束时 scheduleSave → 序列化 rawOk 尺寸特征不符 → 合成回写 `|宽度`；
- * 加载时解析参数（mdImageWidth/Height）→ walkCorrectImageSizesByAspect
- * 按原始比例补齐高度。
+ * 加载时解析参数（mdImageWidth/Height）→ walkImageSizeCorrections
+ * 按参数定尺寸（仅宽时探测原始比例补齐高度；K97 后未设置尺寸的图不参与）。
  *
  * 设计要点：
  * - 无常驻监听：hover（node_img_mouseenter/mouseleave）驱动手柄显隐，

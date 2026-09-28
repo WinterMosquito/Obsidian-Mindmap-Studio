@@ -12,9 +12,9 @@
  * - **挂载后补替换**：holder 未连接时产物入队、随后帧重试（见 pumpPending）。
  *   引擎「首帧前预测量 + 元素复用」（vendor BUILD.md 补丁 5 / A2）会在**尚未
  *   挂载**的状态下走本函数的构建链；若替换只尝试一次就放弃，这类节点会永久
- *   停在字面占位（2026-09-27 实机复验：MathJax 热加载时"关闭再打开文件"必现，
+ *   停在字面占位（实机复验：MathJax 热加载时"关闭再打开文件"必现，
  *   冷加载时因 await 期间元素已挂载而侥幸成功——两条路径都要正确）。
- * - **样式就绪：flush 驱动 + 精确就绪判据**（2026-09-27 三段实测 + S0.5 双环境定稿）：
+ * - **样式就绪：flush 驱动 + 精确就绪判据**（三段实测 + S0.5 双环境定稿）：
  *   ① CHTML 的逐字符规则（`mjx-c.…::before { content; padding }`）只在样式表
  *   **flush**（官方 `finishRenderMath()`）时写入——未 flush 的产物「**非零但塌缩**」
  *   （实测：`mjx-c` 宽度全为 0；`14×20` vs flush 后 `130×20`；高度 114 vs 171）。
@@ -24,7 +24,7 @@
  *   完成后重试全部待定段。
  *   ② **就绪判据**：产物内**全部 `mjx-c` 宽度 > 0**（实测：未 flush 11/11 为 0、
  *   flush 后 0/11 为 0）；无 `mjx-c` 的产物形态退回「宽高皆 > 0」保守判定。
- *   例外（2026-09-27 实测补）：零宽但 `::before` content 为**空串**的字符是
+ *   例外（实测补）：零宽但 `::before` content 为**空串**的字符是
  *   MathJax 的不可见操作符（U+2061 函数应用等，设计上恒零宽），视为就绪——
  *   否则含 `\sin/\cos/\log…` 的公式永不就绪、重试耗尽退字面（用户实机复现）。
  *   未就绪的产物**在同一同步块内撤回为字面**——浏览器不绘制中间态，不存在
@@ -39,12 +39,12 @@
  *   字面，不要看不出原因的空白。
  *   ⚠ **不要**调用 `MathJax.startup.document.updateDocument()` 去"补"样式：实测它
  *   会把用户环境里完整的样式表（15380 字节、含字形规则）重写为 MathJax 内部快照
- *   （6858 字节、无字形规则），反而抹掉字形（2026-09-27 因此回滚过一次部署）。
+ *   （6858 字节、无字形规则），反而抹掉字形（因此回滚过一次部署）。
  *   官方 `finishRenderMath()` 已在本机与隔离实例双环境实测**只增不减**（S0.5）。
  * - 已知边界：导出 PNG/SVG 走离屏克隆时序；克隆时尚未就绪的段在导出图中显示为
  *   字面 `$…$`（屏上视图不受影响；已就绪段由导出样式注入保证可见）。
  *
- * **MathJax 面（2026-09-27 实机取证修正）**：Obsidian 1.13.7 经 `loadMathJax()`
+ * **MathJax 面（实机取证修正）**：Obsidian 1.13.7 经 `loadMathJax()`
  * 注入的 MathJax 3.2.2 是 **CHTML 组件**，只暴露 `tex2chtml` / `tex2chtmlPromise`，
  * **没有 `tex2svg`**——而旧实现唯一调用的正是 `tex2svg`（实机恒为 undefined）：
  * 替换永不发生、数学永久停在字面占位，且被「占位即回退」静默吞掉（单测注入
@@ -81,7 +81,7 @@ const MATH_CONTAINER_CLASS = MATH_RENDERED_HOLDER_CLASS;
 /**
  * 产物模板缓存：`I:`/`B:` + TeX → 已渲染产物节点（复用时 `cloneNode`）。
  *
- * 用途（P4 尺寸同步，2026-09-27）：引擎的离屏测量是**同步**的，而 MathJax 替换
+ * 用途（P4 尺寸同步）：引擎的离屏测量是**同步**的，而 MathJax 替换
  * 是**异步**的——首次渲染必然「按字面占位测量」。替换定稿后由视图层触发该节点
  * 重建，重建时本缓存已命中 ⇒ **同步**放入产物 ⇒ 引擎量到**真实宽高**；且因
  * 不再触发异步替换，重建不会再回调重排（无循环，见 refreshNodesCustomContent）。
@@ -160,7 +160,7 @@ let renderApiMissingWarned = false;
 /**
  * MathJax 已就绪但没有任何可用渲染方法：显式告警一次。
  *
- * 教训（2026-09-27）：此前该情形静默保留字面占位，实机 API 假设错误因此长期
+ * 教训：此前该情形静默保留字面占位，实机 API 假设错误因此长期
  * 不可见（单测与视觉闸门都触不到真 MathJax）。告警让这类失效**可被发现**。
  */
 function warnRenderApiMissing(): void {
@@ -190,7 +190,7 @@ const CHTML_STYLES_ID = 'MJX-CHTML-styles';
  * ⚠ `textContent` 与 CSSOM 是**两套视图**：MathJax 的逐字符字形规则
  * （`mjx-c.mjx-c1D438.TEX-I::before { content: "E"; … }`）是渲染时经
  * `sheet.insertRule()` **动态插入**的，**不出现在 `textContent` 里**——
- * 2026-09-27 实测：仅按 textContent 注入导出 SVG 时，基础/间距段与
+ * 实测：仅按 textContent 注入导出 SVG 时，基础/间距段与
  * `@font-face` 都在、`::before` 规则**全丢**（导出图里数学仍不可见）。
  * 必须从 `sheet.cssRules` 序列化（`rule.cssText`）才能拿到全部规则。
  *
@@ -224,14 +224,14 @@ function readMathJaxCss(): string {
  * （位置/尺寸由 per-char 规则的 em `padding` 保证，公式结构仍然正确）。
  *
  * ⚠ MathJax 的声明形态是 `@font-face /* 0 *&#47; {`（带序号注释）——大括号前
- * 必须容忍任意字符（`[^{]*`），否则剥离静默失效（2026-09-27 实测踩坑）。
+ * 必须容忍任意字符（`[^{]*`），否则剥离静默失效（实测踩坑）。
  */
 export function stripFontFaceRules(css: string): string {
 	return css.replace(/@font-face[^{]*\{[^}]*\}/g, '');
 }
 
 /**
- * 导出 SVG 后处理（方案 B，2026-09-27 用户确认）：把 MathJax CHTML 样式表
+ * 导出 SVG 后处理（方案 B，用户确认）：把 MathJax CHTML 样式表
  * 注入克隆 SVG，使导出图中数学**可见**（此前为空白）。
  *
  * 背景：CHTML 字形靠 `<style id="MJX-CHTML-styles">` 的逐字符规则
@@ -273,7 +273,7 @@ export function injectMathStylesIntoExportSvg(svgElement: unknown): unknown {
 }
 
 /**
- * 产物就绪判定（2026-09-27 S0.5 实测锁定）：产物内**全部 `mjx-c` 宽度 > 0**。
+ * 产物就绪判定（S0.5 实测锁定）：产物内**全部 `mjx-c` 宽度 > 0**。
  *
  * 依据：CHTML 的字符宽度来自逐字符规则的 em `padding`，规则只在样式表 flush
  * 时写入——未 flush 时全为 0、产物「非零但塌缩」（实测：未 flush `14×20` 且
@@ -282,7 +282,7 @@ export function injectMathStylesIntoExportSvg(svgElement: unknown): unknown {
  * 一类实机症状的根因）。无 `mjx-c` 的产物形态（异常/空公式）退回「宽高皆 > 0」
  * 保守判定。
  *
- * 例外（2026-09-27 用户实机复现 + 无头 MathJax 3.2.2 取证）：MathJax 会在命名
+ * 例外（用户实机复现 + 无头 MathJax 3.2.2 取证）：MathJax 会在命名
  * 函数与其参数之间插入**不可见操作符**（`\sin x` → U+2061 函数应用符，
  * U+2062/2063 同理）——其逐字符规则 content 为**空串**、宽度设计上恒为 0，
  * flush 前后都不变。对这类字符按「全部 > 0」判定会**永久不就绪**（3 轮 flush
@@ -428,7 +428,7 @@ function schedulePumpForPending(): void {
 }
 
 /**
- * 字体面说明（2026-09-27 定稿）：**不设字体就绪重试**——字形的显示是渐进式的，
+ * 字体面说明（定稿）：**不设字体就绪重试**——字形的显示是渐进式的，
  * 产物 DOM 一旦到位，字体数据到达即自动显形，无需任何重试动作；渲染前的
  * `ensureMathFonts()`（2.5s 上限）已消除绝大部分「产物在而字形空」的窗口。
  * 重试机制只服务于两种**可检测**成因：规则未 flush（见 isProductReady）与
@@ -540,7 +540,7 @@ let mathFontsPromise: Promise<void> | null = null;
  * 对应字形——系统回退字体**渲染不出来**（用户控制台可见 Chromium 干预日志
  *「Slow network … Fallback font will be used: MathJax_Math-Italic.woff」，src 为
  * 本地 `app://obsidian.md/lib/mathjax/...`）。不等字体就替换，会经历一段
- * 「产物已在 DOM 但视觉空白」的窗口期（2026-09-27 用户实机截图空白的主因）。
+ * 「产物已在 DOM 但视觉空白」的窗口期（用户实机截图空白的主因）。
  */
 function ensureMathFonts(): Promise<void> {
 	if (!mathFontsPromise) {
