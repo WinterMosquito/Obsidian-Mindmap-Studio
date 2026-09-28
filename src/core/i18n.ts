@@ -84,6 +84,7 @@ const ZH = {
 	// ===== 通用提示/通知 =====
 	'common.mindMap': '思维导图',
 	'common.notLoaded': '思维导图尚未加载',
+	'common.mindMapAlreadyOpen': '该导图已在其他标签页打开，已切换到该标签页',
 	'common.arrangeDone': '已整理思维导图',
 	'common.arrangeFailed': '无法整理思维导图',
 	'common.noMatch': '没有匹配的节点',
@@ -309,6 +310,8 @@ const EN: Record<TranslationKey, string> = {
 	// ===== 通用提示/通知 =====
 	'common.mindMap': 'Mind map',
 	'common.notLoaded': 'Mind map not loaded yet',
+	'common.mindMapAlreadyOpen':
+		'This mind map is already open in another tab — switched to it',
 	'common.arrangeDone': 'Mind map arranged',
 	'common.arrangeFailed': 'Could not arrange the mind map',
 	'common.noMatch': 'No matches',

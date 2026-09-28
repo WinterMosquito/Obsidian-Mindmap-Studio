@@ -25,6 +25,7 @@ import { notifyError } from '../core/errors';
 import {
 	applyImageSizeCorrectionsToEngine,
 	findNodeByDom,
+	findNodesByMathProducts,
 	getRenderRoot,
 	refreshNodesCustomContent,
 } from '../engine/mindmap';
@@ -300,20 +301,42 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 静默跳过会让「尺寸不同步」以无痕方式退化（K85 ① 教训）。
 	 */
 	private flushMathRemeasure(holders: readonly HTMLElement[]): void {
+		// 批量窗口（setTimeout）内视图可能已关闭、引擎已销毁：此时既无重测目标，
+		// 也不该再走回退并打「未命中」告警（关闭视图时刷误导日志）——静默结束。
+		if (!this.mindMap) {
+			return;
+		}
 		const nodes: MindMapNode[] = [];
+		let unresolved = 0;
 		for (const holder of holders) {
 			const node = findNodeByDom(this.mindMap, holder);
 			if (!node) {
-				if (!this.mathRemeasureUnresolvedWarned) {
-					this.mathRemeasureUnresolvedWarned = true;
-					console.warn(
-						'MindMap Studio：数学节点尺寸同步未命中归属节点，内容可能被裁剪',
-					);
-				}
+				unresolved++;
 				continue;
 			}
 			nodes.push(node);
 			this.mathRemeasureNodes.add(node);
+		}
+		if (unresolved > 0) {
+			// holder 已脱离：引擎在「定稿 → 本轮批量」的等待窗口内又重渲染了一次
+			//（典型：图片尺寸回灌 K96 的补灌触发全树重建），占位 holder 随重建被
+			// 丢弃。改按**产物元素**反查（`.mjx-container` 就在活 DOM 里）——
+			// K100 修复：此前直接跳过，这些节点的尺寸会停在「字面期」测量，表现为
+			// 外框与内容不符（用户实测：含公式节点外框错位、自动整理后才恢复）。
+			for (const node of findNodesByMathProducts(this.mindMap)) {
+				if (nodes.includes(node)) {
+					continue;
+				}
+				nodes.push(node);
+				this.mathRemeasureNodes.add(node);
+			}
+			// 兜底仍未命中才告警（一次性）——静默跳过会让问题无痕退化（K85 教训）
+			if (nodes.length === 0 && !this.mathRemeasureUnresolvedWarned) {
+				this.mathRemeasureUnresolvedWarned = true;
+				console.warn(
+					'MindMap Studio：数学节点尺寸同步未能定位归属节点，内容可能被裁剪',
+				);
+			}
 		}
 		if (nodes.length > 0) {
 			refreshNodesCustomContent(this.mindMap, nodes);
@@ -549,6 +572,35 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	override async onLoadFile(file: TFile): Promise<void> {
+		// P0 同文件互斥（2026-09-28 加固）：同一 .mindmap.md 只允许一个
+		// MindMapView 持有引擎——两实例各自独立引擎 + 独立保存管线，防抖窗口
+		// 交错时**后写覆盖先写**（保存互踩、丢编辑）。Obsidian 允许同一文件
+		// 多标签（Ctrl+点击新开、重启后布局恢复都会走到这里）。
+		// 处理：提示 + 激活既有 leaf，本 leaf 延迟摘除（onLoadFile 内同步
+		// detach 会与装载流程竞争）；未初始化即摘除的空实例，其 onClose 各步
+		// （persistViewport/getDataSnapshot/destroyInstance）均有空守卫，安全。
+		const duplicateLeaf = this.app.workspace
+			.getLeavesOfType(VIEW_TYPE)
+			.find((leaf) => {
+				const other = leaf.view;
+				return (
+					other instanceof MindMapView &&
+					other !== this &&
+					(other.loadingFilePath ?? other.file?.path) === file.path
+				);
+			});
+		if (duplicateLeaf) {
+			new Notice(t(this.lang, 'common.mindMapAlreadyOpen'));
+			void this.app.workspace.revealLeaf(duplicateLeaf);
+			window.setTimeout(() => {
+				try {
+					this.leaf.detach();
+				} catch {
+					// 摘除失败（leaf 已被外部关闭等）：保留空态即可
+				}
+			}, 0);
+			return;
+		}
 		// 等待装配完成（onOpen 尚未执行时挂起，替代原 10ms 轮询）。
 		// 10s 超时降级：正常装配毫秒级完成；超时表示 onOpen 未 resolveReady
 		// （异常路径/极端情形），继续加载但 DOM 可能不完整。
@@ -598,6 +650,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 挂起的图片尺寸校正属于本文件：文件已卸载，丢弃（引擎随后销毁，
 		// 回灌会落空，留着只会在新文件上误判）
 		this.pendingImageCorrections = null;
+		// 数学重测节点同属本引擎：随引擎销毁一并丢弃（否则跨文件累积持有旧节点）
+		this.mathRemeasureNodes.clear();
 		// 文件切换后允许再次加载同一路径（新会话）。仅清理「仍属于本次卸载」的
 		// 标记：await 期间可能已开始加载新文件（onLoadFile），无条件置空会把
 		// 新加载的代际标记抹掉，其 rAF 守卫随即判为过期 → 导图不渲染。
@@ -739,6 +793,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	/** 引擎就绪收尾：同步布局/连线样式选择器；md 模式重建工具栏补返回按钮 */
 	private onEngineReady(layout: string, lineStyle: string): void {
+		// 数学重测集合换新：引擎（重）建后节点对象全部是新实例，旧引用已随上一
+		// 个引擎销毁而失效——不清则 ① 旧节点被长期持有（换文件/设置刷新累积成
+		// 内存泄漏）；② 字体钩子会对**已销毁**的节点调重测（2026-09-28 复核修复）。
+		// 只清集合、不触发任何重排（K88 禁止全树重排的约束不变）。
+		this.mathRemeasureNodes.clear();
 		// 图片尺寸校正回灌（探测在首帧前起步；引擎此刻才存在时在此落地）。
 		// 回灌改动节点尺寸 → 内容包围盒变化，排补居中修正默认视口
 		if (this.applyPendingImageCorrections()) {
@@ -1006,6 +1065,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.scope = null;
 		// 清理视图生命周期作用域的事件（搜索输入框 input/keydown 等）
 		this.viewEvents.destroy();
+		// 数学重测节点随引擎销毁丢弃：视图关闭后不再有任何重测目标，
+		// 留着会一直持有已销毁的节点对象（同 onUnloadFile / onEngineReady）
+		this.mathRemeasureNodes.clear();
 		this.engine.destroyInstance();
 		// 清空状态栏后，若仍有其他打开的思维导图视图则恢复其计数
 		//（状态栏为插件级共享元素，本视图关闭不应清空其他视图的计数）。
