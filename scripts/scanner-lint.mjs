@@ -276,12 +276,47 @@ function npmCliCommand(tool) {
 	return null;
 }
 
+/**
+ * 剥离子进程环境里 npm 注入的 `allow-scripts`（`npm_config_allow_scripts`）。
+ *
+ * 为什么必须剥：`npm run lint:scanner` 启动本脚本时，npm 会把**当前 npm 配置**
+ * 以 `npm_config_*` 环境变量注入脚本进程——开发机的用户级 `~/.npmrc` 里若有
+ * `allow-scripts=…` 白名单（实测：IDE/沙箱工具注入），该值就经 env 层进入我们
+ * 再启动的子 npm；npm 11.9+ 的 `resolveAllowScripts` 把「CLI/env 层提供的
+ * allow-scripts」在 project-scoped install 中**直接判错**：
+ *
+ *   npm error code EALLOWSCRIPTS
+ *   npm error --allow-scripts is not allowed in project-scoped installs.
+ *
+ * 注意 `--userconfig`（隔离配置文件）**隔离不掉 env**——这条正是此前
+ * 「沙箱环境 EALLOWSCRIPTS」的残留通道（2026-09-29 实测复现：手动执行成功、
+ * `npm run` 下失败，二者唯一差异即该 env 变量）。
+ *
+ * 白名单本身不需要经 env 传递：安装目录的 `package.json` 已显式声明
+ * `allowScripts: {}`（合法的 project 层来源，见 ensureScannerDeps）。
+ * Windows 环境变量名大小写不敏感，故按键名正则整体匹配。
+ */
+function stripNpmAllowScriptsEnv(env) {
+	const cleaned = { ...env };
+	for (const key of Object.keys(cleaned)) {
+		if (/^npm_config_allow[-_]scripts$/i.test(key)) {
+			delete cleaned[key];
+		}
+	}
+	return cleaned;
+}
+
 function runTool(tool, args, options) {
 	const cli = npmCliCommand(tool);
+	// 所有 npm/npx 子进程统一走净化后的环境（见 stripNpmAllowScriptsEnv）
+	const cleanOptions = {
+		...(options ?? {}),
+		env: stripNpmAllowScriptsEnv(options?.env ?? process.env),
+	};
 	if (cli) {
-		return exec(cli.bin, [...cli.prefixArgs, ...args], options);
+		return exec(cli.bin, [...cli.prefixArgs, ...args], cleanOptions);
 	}
-	return exec(tool, args, { ...options, shell: process.platform === 'win32' });
+	return exec(tool, args, { ...cleanOptions, shell: process.platform === 'win32' });
 }
 
 async function ensureScannerDeps() {
@@ -294,13 +329,28 @@ async function ensureScannerDeps() {
 	mkdirSync(DEPS_DIR, { recursive: true });
 	writeFileSync(
 		join(DEPS_DIR, 'package.json'),
-		JSON.stringify({ name: 'obsidian-scanner-lint', private: true, dependencies: SCANNER_DEPS }),
+		JSON.stringify({
+			name: 'obsidian-scanner-lint',
+			private: true,
+			dependencies: SCANNER_DEPS,
+			// npm 11.9+ 安全策略（2026-09-29 实测 npm 11.17.0 / Node 24）：project-scoped
+			// install 中 `allow-scripts` 配置**不允许**来自 user/global 配置——本机
+			// `~/.npmrc` 被开发环境注入了 `allow-scripts=<白名单>`，`--userconfig`
+			// 隔离不掉，`npm install` 直接以 EALLOWSCRIPTS 失败（release.yml 的
+			// lint:scanner 步骤会整条红）。规范要求的落点是项目的 `allowScripts`
+			// 字段：声明空对象＝不允许任何依赖运行安装脚本，语义与 `.npmrc` 的
+			// `ignore-scripts=true`（下一条）一致；三个依赖均为纯 JS，无原生构建。
+			allowScripts: {},
+		}),
 		'utf8',
 	);
-	// 空 userconfig：隔离开发机的用户级 npm 配置（勿依赖本机配置的具体内容）。
-	// --ignore-scripts：三个依赖均为纯 JS（无原生构建步骤），跳过更稳。
+	// userconfig：隔离开发机的用户级 npm 配置（勿依赖本机配置的具体内容），
+	// 只保留脚本自己的设置。
+	// `ignore-scripts=true` 写进 `.npmrc` 而不用命令行 `--ignore-scripts`：后者在
+	// npm 11.9+ 的 project-scoped install 中同样被拒（EALLOWSCRIPTS）；文件形式对
+	// 新旧 npm 均生效（三个依赖均为纯 JS，跳过脚本更稳）。
 	const emptyUserConfig = join(DEPS_DIR, '.npmrc');
-	writeFileSync(emptyUserConfig, '', 'utf8');
+	writeFileSync(emptyUserConfig, 'ignore-scripts=true\n', 'utf8');
 	// 安装重试（CI 网络抖动防护，2026-09-25）：registry 请求偶发失败会让本脚本
 	// 以非 0 退出、把 lint.yml 的 Node 24 矩阵整条拉红（release.yml 同步骤同提交
 	// 却通过 = 瞬时性失败的实证）。最多 3 次、指数退避；npm install 幂等，
@@ -310,8 +360,13 @@ async function ensureScannerDeps() {
 		try {
 			await runTool(
 				'npm',
-				['install', '--prefix', DEPS_DIR, '--userconfig', emptyUserConfig, '--no-fund', '--no-audit', '--ignore-scripts'],
-				{ cwd: ROOT, maxBuffer: 32 * 1024 * 1024 },
+				// `ignore-scripts` 经 .npmrc 传递（见上；命令行形式在 npm 11.9+ 被拒）
+				['install', '--prefix', DEPS_DIR, '--userconfig', emptyUserConfig, '--no-fund', '--no-audit'],
+				// cwd 取**安装目录**：让 npm 的项目层配置（project `.npmrc` 与
+				// `package.json#allowScripts`，即 `allow-scripts` 白名单的合法
+				// 来源，见 npm `resolve-allow-scripts` 的层级说明）落在隔离目录
+				// 内，不读仓库根的项目配置（`--prefix` 已指向同一目录，二者一致）。
+				{ cwd: DEPS_DIR, maxBuffer: 32 * 1024 * 1024 },
 			);
 			return;
 		} catch (error) {
@@ -359,7 +414,8 @@ async function main() {
 		? exec(process.execPath, [eslintJs, ...eslintArgs], {
 				cwd: ROOT,
 				maxBuffer: 128 * 1024 * 1024,
-				env: { ...process.env, NODE_PATH: nodePath },
+				// 同样剥离 npm 注入的 allow-scripts（eslint 经项目插件链也可能连锁调 npm）
+				env: stripNpmAllowScriptsEnv({ ...process.env, NODE_PATH: nodePath }),
 			})
 		: runTool('npx', ['--prefix', DEPS_DIR, 'eslint', ...eslintArgs], {
 				cwd: ROOT,

@@ -1,6 +1,6 @@
 [中文](#cn-v0.1.5) | [English](#en-v0.1.5)
 
-0.1.5 聚焦**内容渲染、编辑体验与结构保真**：新增节点内代码块渲染与复制按钮、自绘节点内联编辑器、空节点保留；链接呈现统一为主题链接色；图片按自身原始大小展示（长边 480 封顶）并修复尺寸校正从未生效的缺陷；新建节点按层级回写为 Markdown 标题；数学通道三处实证修复。无破坏性变更。
+0.1.5 聚焦**内容渲染、编辑体验与结构保真**：新增节点内代码块渲染与复制按钮、自绘节点内联编辑器、空节点保留；链接呈现统一为主题链接色；图片按自身原始大小展示（长边 480 封顶）并修复尺寸校正从未生效的缺陷；新建节点按层级回写为 Markdown 标题；数学通道三处实证修复。此外，本轮把**导出 PNG 的保真度**（与屏上渲染一致）和**编辑/保存通道的可靠性**（中心主题改名、混排双链自动拆分、外部修改保护、重复打开保护）一并收紧。无破坏性变更。
 
 <h3 id="cn-v0.1.5">新增</h3>
 
@@ -18,6 +18,13 @@
 
 * **图片尺寸校正从未生效**：引擎对树数据做包装拷贝导致回灌匹配永远落空（所有图片停在默认尺寸）；改为双通道匹配（身份 + uid）并新增首帧渲染完成补灌
 * **数学通道**：含 `\sin` 等命名函数的公式不再退回字面（不可见操作符 U+2061 不再误判）；`$$ … $$` 开侧带空格正常进块级渲染、块内 `\\` 保真；孤立 `$` 与反引号配对边界与官方逐条一致（不修改）
+* **首次渲染时公式节点的尺寸**：含行内/块级公式的节点首帧尺寸不再与最终尺寸不一致（按产物元素反查重排）
+* **导出 PNG 与屏上渲染不一致（多轮修复，最终收敛）**：依次修复「多行节点第二行被裁」「LaTeX 节点文字不全」「临界节点换行后被裁」「数学节点末行文字压到节点底边框」——导出 SVG 注入宿主实际生效的字体/颜色变量（度量与屏上一致）、变量值校验改为结构性字符校验（放行中文环境字体栈）、导出侧 foreignObject 保留几何余量（宽 +12 / 高 +20）、导出侧数学容器按屏上实测高度钉扎
+* **中心主题改名不重命名文件**：默认渲染下编辑中心主题后文件未随之改名；现改为重命名 `新名字.mindmap.md`，并由 Obsidian 原生更新链接与反链
+* **编辑混排节点不自动拆分双链**：节点同时含「描述文字 + 文档/附件链接」时，编辑后未自动把链接拆为子节点（批量命令却正常）；现已与批量行为一致（图片与外链仍留在原节点）
+* **同一导图重复打开**：同一 `.mindmap.md` 在多个标签页打开会互相覆盖保存、丢失编辑；现在第二个标签会提示并让位，只保留一个编辑实例
+* **外部修改保护**：导图被外部改动（同步盘/其它窗口）时，自动保存会跳过并提示一次，避免覆盖他处改动；连续写盘失败达到阈值会挂起自动保存并提示（手动保存不受影响）
+* **外链安全**：节点内链接仅允许安全协议（`http/https/mailto/ftp(s)/obsidian/file`），`javascript:` 等危险写法不会被写成可点击链接
 
 <h3>性能</h3>
 
@@ -25,13 +32,14 @@
 
 <h3>工程</h3>
 
-* 测试全量 55 文件 / 1700 例（0.1.4 为 49 / 1578）；verify:visual 探针扩展至数学、代码块、图片回灌与层级回写场景
+* 测试全量 57 文件 / 1739 例（0.1.4 为 49 / 1578）；verify:visual 探针扩展至数学、代码块、图片回灌与层级回写场景
 
 <h3>兼容性说明</h3>
 
 * 需要 Obsidian 1.13.0+，仅桌面端；`.mindmap.md` 格式、命令 ID 与设置项未变
 * 请同时更新 `main.js` 与 `styles.css`（复制按钮外观已内联，仅更新 main.js 亦可，双更新避免旧样式残留）
 * 图片 480px 长边上限为固定值；缩放只影响显示、不回写文件
+* 同一 `.mindmap.md` 只保留一个导图编辑实例：在第二个标签页再打开会提示并让位（避免保存互踩、丢失编辑）
 
 ---
 
@@ -51,6 +59,13 @@
 
 * **Image size correction never worked**: the engine wraps tree data so identity-based write-back never matched (all images stuck at the default size); now dual-channel matching (identity + uid) plus a first-frame flush path
 * **Math pipeline**: formulas with `\sin` etc. no longer fall back to literal text (invisible operator U+2061 no longer misjudged); `$$ … $$` with a leading space renders as a block and `\\` is preserved; the lone-`$`/backtick pairing boundary matches the official behavior case by case (left as-is)
+* **First-frame size of math nodes**: nodes containing inline/block formulas no longer render at a size that differs from the settled one (re-measure by product elements)
+* **Exported PNG no longer diverges from the on-screen render (multi-round fix)**: fixes "second line of a multi-line node clipped", "LaTeX node text incomplete", "borderline node clipped after re-wrap" and "last text line of a math node crossing the bottom border" — the export SVG now gets the host's effective font/color variables injected (same metrics as on screen), the variable-value guard rejects only structural characters (so CJK font stacks pass), foreignObjects keep a geometry margin (width +12 / height +20), and math containers are pinned to their measured on-screen height
+* **Renaming the central topic did not rename the file**: with the default rendering, editing the central topic left the file untouched; it now renames to `NewName.mindmap.md`, with Obsidian updating links and backlinks natively
+* **Editing a mixed node did not auto-split links**: a node mixing "description text + document/attachment links" kept its links after editing (while the batch command worked); editing now behaves like the batch command (images and external URLs stay put)
+* **Opening the same map twice**: opening one `.mindmap.md` in several tabs could overwrite each other's saves and lose edits; the second tab now shows a notice and steps aside so a single editing instance remains
+* **External-change protection**: when the map is modified outside Obsidian (sync folder / another window) auto-save is skipped with a one-time notice instead of overwriting; after repeated write failures auto-save is suspended with a notice (manual save still works)
+* **Link safety**: in-node links are limited to safe protocols (`http/https/mailto/ftp(s)/obsidian/file`); `javascript:` and similar are never written as clickable links
 
 <h3>Performance</h3>
 
@@ -58,10 +73,11 @@
 
 <h3>Engineering</h3>
 
-* The full suite is 55 files / 1700 cases (0.1.4: 49/1578); verify:visual probes extended to math, code blocks, image write-back and level write-back
+* The full suite is 57 files / 1739 cases (0.1.4: 49/1578); verify:visual probes extended to math, code blocks, image write-back and level write-back
 
 <h3>Compatibility notes</h3>
 
 * Requires Obsidian 1.13.0+, desktop only; the `.mindmap.md` format, command IDs and settings are unchanged
 * Update both `main.js` and `styles.css` (the copy-button appearance is inlined, so main.js alone works; updating both avoids stale styles)
 * The 480px image long-edge cap is fixed; scaling affects display only and is never written back
+* Only one mind-map editing instance per `.mindmap.md`: opening the same file in a second tab shows a notice and steps aside (prevents conflicting saves and lost edits)

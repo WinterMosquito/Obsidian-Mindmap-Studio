@@ -12,9 +12,13 @@
  * 2. `manifest.json` 的 `version` 必须出现在 `versions.json` 中；
  * 3. **当前**版本的值必须等于 `manifest.json` 的 `minAppVersion`
  *    （历史版本的值可以合法地更低，故**不**要求全表一致）；
- * 4. `README.md` 存在且非空。
+ * 4. `README.md` 存在且非空；
+ * 5. **License**：缺失/空 = error、识别不出 OSI 许可 = warning
+ *    （分级对齐官方 `obsidian-workflows` 的 repo-checks：
+ *    "error if missing, warn if non-OSI"，见其 README「What It Checks」）。
  *
- * 退出码：0 = 全部通过；1 = 任一检查失败（打印 `::error::` 供 Actions 标注）。
+ * 退出码：0 = 全部通过（warning 不阻断）；1 = 任一 error（打印 `::error::`
+ * 供 Actions 标注；warning 打印 `::warning::`）。
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -23,8 +27,26 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SEMVER = /^\d+\.\d+\.\d+$/;
 
+/**
+ * License 文件的候选文件名（按优先级）。
+ * 官方 repo-checks 只在仓库根找 license 文件；常见命名都接受（含 `.md`/`.txt`
+ * 与 `COPYING`——GNU 系项目的传统命名）。
+ */
+const LICENSE_FILES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'COPYING'];
+
+/**
+ * OSI 许可关键词（宽松识别：命中任一即视为 OSI 许可）。
+ * 只做「是不是 OSI 许可」的粗判（官方该检查也只是 warn 级），不做全文比对——
+ * 逐字比对会随各项目措辞差异大量误报。
+ */
+const OSI_LICENSE_HINT =
+	/\b(MIT|Apache|BSD|GPL|LGPL|AGPL|MPL|ISC|Unlicense|Zlib|EPL|Artistic|0BSD|MS-PL|BSL)\b/i;
+
 /** @type {string[]} */
 const errors = [];
+
+/** @type {string[]} */
+const warnings = [];
 
 /** 读取并解析仓库根下的 JSON；失败时记录错误并返回 null */
 function readJson(relativePath) {
@@ -89,6 +111,41 @@ try {
 	errors.push('README.md 不存在或不可读');
 }
 
+// ---- License（对齐官方 repo-checks：缺失 = error，非 OSI = warn）----
+// 为什么必须有：发布资产里带 LICENSE（见 release.yml），缺了它既不满足官方
+// 校验，也让 vendored 代码（simple-mind-map 及其依赖）的分发许可声明无处可依。
+const licenseFile = LICENSE_FILES.find((name) => {
+	try {
+		return readFileSync(join(ROOT, name), 'utf8').trim().length > 0;
+	} catch {
+		return false;
+	}
+});
+
+if (licenseFile === undefined) {
+	errors.push(
+		`未找到 License 文件（根目录需有其一：${LICENSE_FILES.join(' / ')}，且内容非空）`,
+	);
+} else {
+	try {
+		const text = readFileSync(join(ROOT, licenseFile), 'utf8');
+		// 只看前若干行：许可名通常出现在文件头（正文里出现关键词不足以证明）
+		const head = text.slice(0, 2000);
+		if (!OSI_LICENSE_HINT.test(head)) {
+			warnings.push(
+				`${licenseFile} 未识别出 OSI 许可（社区目录对非 OSI 许可会告警）；` +
+					'如确为 OSI 许可，请确认文件头含许可名称',
+			);
+		}
+	} catch (error) {
+		errors.push(`${licenseFile} 读取失败：${error.message}`);
+	}
+}
+
+for (const message of warnings) {
+	console.warn(`::warning::${message}`);
+}
+
 if (errors.length > 0) {
 	for (const message of errors) {
 		console.error(`::error::${message}`);
@@ -98,5 +155,6 @@ if (errors.length > 0) {
 
 console.log(
 	`release metadata OK：versions.json ${String(Object.keys(versions ?? {}).length)} 条，` +
-		`manifest.version ${String(manifest?.version)}（minAppVersion ${String(manifest?.minAppVersion)}）`,
+		`manifest.version ${String(manifest?.version)}（minAppVersion ${String(manifest?.minAppVersion)}），` +
+		`License ${licenseFile ?? '缺失'}${warnings.length > 0 ? `（${String(warnings.length)} 条告警）` : ''}`,
 );
