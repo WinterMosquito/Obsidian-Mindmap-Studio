@@ -184,6 +184,7 @@ function makeEngineEventsStub() {
 
 function makeView(mindMap: MindMap | null) {
 	const engineEvents = makeEngineEventsStub();
+	const notifyNodeContentCommitted = vi.fn();
 	const view = {
 		mindMap,
 		engineEvents,
@@ -191,8 +192,10 @@ function makeView(mindMap: MindMap | null) {
 		app: {},
 		lang: 'zh',
 		scheduleSave: vi.fn(),
+		// K108：提交后必须通知视图（中心主题改名 / 自动拆分 / 节点计数）
+		notifyNodeContentCommitted,
 	} as unknown as ViewNodeEditContext;
-	return { view, engineEvents };
+	return { view, engineEvents, notifyNodeContentCommitted };
 }
 
 /** 节点桩：getData 返回同一引用（写入可断言） */
@@ -232,11 +235,21 @@ function openSession() {
 	const mindMap = { render } as unknown as MindMap;
 	const doc = makeDocStub();
 	getNodeGroupElMock.mockReturnValue(makeGroupStub(doc));
-	const { view, engineEvents } = makeView(mindMap);
+	const { view, engineEvents, notifyNodeContentCommitted } = makeView(mindMap);
 	const data: Record<string, unknown> = { text: '旧' };
 	const node = makeNode(data);
 	openNodeInlineEditor(view, node);
-	return { mindMap, render, doc, view, engineEvents, data, node, el: lastEl(doc) };
+	return {
+		mindMap,
+		render,
+		doc,
+		view,
+		engineEvents,
+		data,
+		node,
+		el: lastEl(doc),
+		notifyNodeContentCommitted,
+	};
 }
 
 beforeEach(() => {
@@ -366,6 +379,27 @@ describe('内联编辑会话（打开 / 提交 / 关闭）', () => {
 		closeInlineEditor(view);
 		expect(data.text).toBe('关闭时提交');
 		expect(isInlineNodeEditing(mindMap)).toBe(false);
+	});
+
+	it('K108 提交通知：提交后通知视图（中心主题改名 / 自动拆分 / 节点计数）', () => {
+		// 回归：插件侧编辑通道不走引擎命令，不派发 data_change /
+		// node_text_edit_change；若不显式通知，中心主题改名文件与「编辑后
+		// 自动拆分混排双链」在默认自绘渲染下静默失效（实机定位）。
+		const { view, node, el, notifyNodeContentCommitted } = openSession();
+		el.value = '混排 [[笔记]] 尾巴';
+		closeInlineEditor(view);
+
+		expect(notifyNodeContentCommitted).toHaveBeenCalledTimes(1);
+		expect(notifyNodeContentCommitted).toHaveBeenCalledWith(node);
+	});
+
+	it('K108 提交通知：值未变（无改动提交）不通知视图', () => {
+		const { view, el, notifyNodeContentCommitted } = openSession();
+		// 与打开时的初值保持一致（会话的 initialValue 即此刻的框内值）
+		const unchanged = el.value;
+		el.value = unchanged;
+		closeInlineEditor(view);
+		expect(notifyNodeContentCommitted).not.toHaveBeenCalled();
 	});
 
 	it('重复打开（同一引擎）：先提交既有会话（对齐引擎「先结束当前编辑」）', () => {

@@ -115,11 +115,19 @@ export function splitAllLinksInDocument(view: MindMapViewContext): void {
  * 携带节点、编辑期累积），**不是检查时刻的激活节点**——编辑提交后快速切换激活
  * 也不漏拆（2026-09-13 严格化）；`text !== mdDerivedText` 仍是最终判据（双保险）。
  *
+ * **例外**：插件侧编辑通道（内联编辑器 / 弹窗原文模式）提交的节点走 `force`
+ * ——该通道重解析原文时同步刷新 `mdDerivedText`，上述判据恒不成立（K108），
+ * 直接凭「本次确实被编辑」拆分。
+ *
  * 幂等：拆分后父节点不再含可抽链接、子节点是纯链接节点，再触发即 no-op。
  *
  * @returns 新增子节点数量（0 = 未拆分）
  */
-export function autoSplitNode(view: MindMapViewContext, node: MindMapNode): number {
+export function autoSplitNode(
+	view: MindMapViewContext,
+	node: MindMapNode,
+	options: { force?: boolean } = {},
+): number {
 	if (!view.plugin.settings.autoSplitMixedLinks) {
 		return 0;
 	}
@@ -129,8 +137,9 @@ export function autoSplitNode(view: MindMapViewContext, node: MindMapNode): numb
 	}
 	const data = node.getData() as MdNodeData;
 	if (
-		typeof data.mdDerivedText !== 'string' ||
-		data.text === data.mdDerivedText
+		!options.force &&
+		(typeof data.mdDerivedText !== 'string' ||
+			data.text === data.mdDerivedText)
 	) {
 		return 0;
 	}
@@ -143,16 +152,33 @@ export function autoSplitNode(view: MindMapViewContext, node: MindMapNode): numb
  * `engine` 记录候选集所属的引擎实例：120ms 检查窗口内换文件/重载会重建引擎，
  * 旧引擎的节点不属于当前文档（对游离节点执行拆分会产生失义的引擎命令），
  * 故换代时整体丢弃。
+ *
+ * `forced` 是候选集的子集：来自**插件侧编辑通道**（内联编辑器 / 弹窗原文模式）
+ * 提交的节点——该通道重解析原文时会同步刷新 `mdDerivedText`，令
+ * 「`text !== mdDerivedText`」这条判据恒不成立（K108），故对它们显式放行。
  */
 const autoSplitCandidates = new WeakMap<
 	MindMapViewContext,
-	{ engine: MindMap; nodes: Set<MindMapNode> }
+	{ engine: MindMap; nodes: Set<MindMapNode>; forced: Set<MindMapNode> }
 >();
+
+/** 候选捕获选项 */
+export interface CaptureAutoSplitOptions {
+	/**
+	 * 提交来自插件侧编辑通道（内联编辑器 / 弹窗原文模式）。
+	 *
+	 * 这两条通道经 `applyRawNodeContent` 重解析原文，**会把 `mdDerivedText`
+	 * 一并刷新**；而引擎编辑框只改 `text`，快照保持解析期的值。故只有后者
+	 * 能用「`text !== mdDerivedText`」判断「用户编辑过」，前者必须显式放行。
+	 */
+	pluginChannel?: boolean;
+}
 
 /** 记录「被编辑过」的候选节点（引擎 node_text_edit_change 携带节点，编辑期累积） */
 export function captureAutoSplitCandidate(
 	view: MindMapViewContext,
 	node: MindMapNode,
+	options: CaptureAutoSplitOptions = {},
 ): void {
 	const engine = view.mindMap;
 	if (!engine) {
@@ -161,10 +187,13 @@ export function captureAutoSplitCandidate(
 	let entry = autoSplitCandidates.get(view);
 	if (!entry || entry.engine !== engine) {
 		// 引擎换代（换文件/重载）：旧候选不属于当前文档，先整体丢弃
-		entry = { engine, nodes: new Set() };
+		entry = { engine, nodes: new Set(), forced: new Set() };
 		autoSplitCandidates.set(view, entry);
 	}
 	entry.nodes.add(node);
+	if (options.pluginChannel) {
+		entry.forced.add(node);
+	}
 }
 
 /**
@@ -184,12 +213,18 @@ export function runAutoSplitCheck(view: MindMapViewContext): void {
 		return;
 	}
 	const candidates = [...entry.nodes];
+	const forced = new Set(entry.forced);
 	entry.nodes.clear();
+	entry.forced.clear();
 	for (const node of candidates) {
 		if (isAnyNodeEditing(engine)) {
+			// 仍在编辑：连通道标记一起保留，等下一次检查（不丢候选）
 			entry.nodes.add(node);
+			if (forced.has(node)) {
+				entry.forced.add(node);
+			}
 			continue;
 		}
-		autoSplitNode(view, node);
+		autoSplitNode(view, node, { force: forced.has(node) });
 	}
 }

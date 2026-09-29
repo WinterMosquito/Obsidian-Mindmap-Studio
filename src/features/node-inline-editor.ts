@@ -331,10 +331,16 @@ function commitSession(
 }
 
 /**
- * 原文模式提交：重解析写入 + 图片地址/尺寸校正 + 重渲染 + 保存。
+ * 原文模式提交：重解析写入 + 图片地址/尺寸校正 + 重渲染 + 保存 + 提交通知。
  *
  * 内联编辑器与弹窗原文模式**共用本入口**（搬迁自 view-node-actions，
  * 弹窗分支 import 本函数——避免两个模块互相 import 成环）。
+ *
+ * 提交通知（`notifyNodeContentCommitted`，K108）：本入口不改引擎命令通道，
+ * 故不派发 `data_change` / `node_text_edit_change`；而中心主题改名文件与
+ * 「编辑后自动拆分混排双链」都挂在引擎事件上。提交后显式通知视图补齐编排，
+ * 使插件侧两条编辑通道与引擎编辑框行为一致（在此之前这两项功能在默认自绘
+ * 渲染下静默失效）。
  *
  * 图片：原文里可能新增/更换了引用 —— 库内路径须换成资源地址（与加载期同一入口
  * `resolveImagePath`）；尺寸先填默认值（K97：未设置尺寸一律默认大小），带官方
@@ -364,4 +370,8 @@ export function applyRawNodeContent(
 	markNodeNeedLayout(node);
 	view.mindMap?.render();
 	view.scheduleSave();
+	// K108：补齐引擎命令通道才会派发的后续编排（中心主题改名文件 /
+	// 编辑后自动拆分混排双链 / 节点计数）——必须在渲染与保存之后，
+	// 与引擎编辑框提交同序。
+	view.notifyNodeContentCommitted(node);
 }

@@ -322,6 +322,29 @@ describe('findNodesByMathProducts（按产物元素反查节点，K100）', () =
 		expect(findNodesByMathProducts(mindMap)).toEqual([mathNode]);
 	});
 
+	it('产物选择器同时覆盖我方 holder 类与 CHTML 容器（K104 回归位）', () => {
+		// MathJax 走 tex2svg 的环境产物是 <svg>、没有 .mjx-container：
+		// 若选择器只认容器类，产物反查必然 0 命中（用户实测告警「未能定位
+		// 归属节点」，首帧公式尺寸不同步）。holder 类名不受替换影响，必须带上。
+		const seen: string[] = [];
+		const product = {} as Element;
+		const svg = {
+			querySelectorAll: (selector: string) => {
+				seen.push(selector);
+				return [product];
+			},
+		};
+		const root = nodeWithGroup({ text: 'root' }, [], svg, [
+			nodeWithGroup({ text: 'math' }, [product]),
+		]);
+		const { mindMap } = fakeEngine(root);
+
+		expect(findNodesByMathProducts(mindMap)).toHaveLength(1);
+		expect(seen[0], '选择器须含我方 holder 类').toContain(
+			'.mindmap-node-inline-math',
+		);
+	});
+
 	it('产物不属于任何节点 group（已脱离）：返回空数组、不抛错', () => {
 		const orphan = {} as Element;
 		const svg = { querySelectorAll: () => [orphan] };

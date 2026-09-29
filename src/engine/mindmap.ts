@@ -1031,13 +1031,20 @@ export function findNodeByDom(
  *
  * 用途：数学替换定稿后 holder 可能已脱离 DOM——引擎在「定稿 → 批量重排」的
  * 等待窗口内又发生了一次全树重渲染（如图片尺寸回灌，见 K96），占位 holder
- * 随重建被丢弃，`findNodeByDom(holder)` 因此落空；而 **MathJax 产物**
- * （`.mjx-container`）就在活 DOM 里，可据其反查节点。
+ * 随重建被丢弃，`findNodeByDom(holder)` 因此落空；而**活 DOM 中的数学元素**
+ * 可据其反查节点——选择器取**双通道**：我方 holder 类
+ * （`.mindmap-node-inline-math`，替换后保留、与产物输出形态无关）∪
+ * `.mjx-container`（CHTML 产物容器，兼容兜底）。
+ *
+ * ⚠ K104 修正：此前只查 `.mjx-container`——MathJax 走 **tex2svg** 的环境
+ * （产物为 `<svg>`、无该容器类）反查 0 命中，回退整体失效（用户实测：首帧
+ * 公式节点尺寸不同步 + 告警「未能定位归属节点」；重开时产物缓存命中、构建期
+ * 同步放置，故表现为「仅首次失败」）。
  *
  * 实现：从渲染树**根节点的 group** 上溯到所属 `<svg>`（同一视图内所有节点
- * DOM 的共同祖先，天然限定本视图、不受同页其它导图干扰），一次查询全部
- * `.mjx-container` 再逐个 `findNodeByDom` 归一。只在 holder 解析失败的回退
- * 路径调用（按需、一次、数学节点通常很少）。
+ * DOM 的共同祖先，天然限定本视图、不受同页其它导图干扰），一次查询后逐个
+ * `findNodeByDom` 归一。只在 holder 解析失败的回退路径调用（按需、一次、
+ * 数学节点通常很少）。
  */
 export function findNodesByMathProducts(
 	mindMap: MindMap | null,
@@ -1051,8 +1058,17 @@ export function findNodesByMathProducts(
 		return [];
 	}
 	const out = new Set<MindMapNode>();
-	// Array.from：NodeList 在当前 lib 配置下不可直接迭代（TS2488）
-	for (const product of Array.from(svg.querySelectorAll('.mjx-container'))) {
+	// 选择器**双通道**（K104）：`.mindmap-node-inline-math` 是**我方 holder 类**
+	//（MathJax 替换后仍保留，与产物输出形态无关）∪ `.mjx-container`（CHTML
+	// 产物容器，兼容兜底）。
+	// ⚠ 此前只匹配 `.mjx-container`：MathJax 走 **tex2svg** 的环境（产物为
+	// `<svg>`、无该容器类）反查 0 命中 → 回退整体失效 → 首帧公式节点尺寸
+	// 不同步（用户实测：告警「未能定位归属节点」+ 公式区域缺失；重开时产物
+	// 缓存命中、构建期同步放置，故正常）。holder 类名不受替换影响，是稳定锚点。
+	const products = Array.from(
+		svg.querySelectorAll('.mindmap-node-inline-math, .mjx-container'),
+	);
+	for (const product of products) {
 		const node = findNodeByDom(mindMap, product);
 		if (node) {
 			out.add(node);

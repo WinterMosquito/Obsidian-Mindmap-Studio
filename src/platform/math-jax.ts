@@ -272,6 +272,158 @@ export function injectMathStylesIntoExportSvg(svgElement: unknown): unknown {
 	return svgElement;
 }
 
+/** MathJax CHTML 产物根：定位按**标签名**（class 是 `MathJax`，类选择器不可靠） */
+const MJX_CONTAINER_SELECTOR = 'mjx-container';
+
+/**
+ * 收集主文档中可与导出克隆配对的 `mjx-container`（数量必须与克隆一致才返回；
+ * 候选限定 `<svg>` 内，见 isInsideSvg）。
+ *
+ * 精确域优先（`.mindmap-canvas-container` = 本插件画布——多视图/阅读视图里的
+ * 数学不会混入计数）；域内数量不符时退回全文计数；仍不符返回空数组（调用方
+ * no-op，宁可不修也不错配）。`doc` 取克隆的属主文档（popout 兼容）。
+ */
+function listLiveMathContainers(doc: Document, expectCount: number): Element[] {
+	const scopes = [
+		`.mindmap-canvas-container ${MJX_CONTAINER_SELECTOR}`,
+		MJX_CONTAINER_SELECTOR,
+	];
+	for (const scope of scopes) {
+		try {
+			const list = Array.from(doc.querySelectorAll(scope)).filter(isInsideSvg);
+			if (list.length === expectCount) {
+				return list;
+			}
+		} catch {
+			// 宿主查询不可用：尝试下一域
+		}
+	}
+	return [];
+}
+
+/**
+ * 候选必须位于 `<svg>` 内。
+ *
+ * 引擎的离屏**测量容器**挂在画布容器下（`<svg>` 外）、内含一份内容克隆
+ * （带 mjx-container）——实机配对曾因此「实机 8 vs 克隆 7」全链 no-op（导出
+ * 字节与修复前完全一致，误导"修复无效"）；只保留 svg 内候选即恢复一一配对。
+ */
+function isInsideSvg(el: Element): boolean {
+	try {
+		return el.closest('svg') !== null;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 读取实机 `mjx-container` 的**布局高度**（剔除画布缩放）。
+ *
+ * 屏上 `getBoundingClientRect` 为缩放后的屏幕像素；用元素自身
+ * `rect.width / offsetWidth` 推导画布缩放并回除（`offsetWidth` 不含祖先
+ * 变换）。元素自身不可推导（未渲染 / `offsetWidth` 为 0）时退回节点内容块
+ * 归一；仍不可得返回 null（调用方跳过该元素，保持自然高度）。
+ */
+function measureMathContainerLayoutHeight(el: Element): number | null {
+	try {
+		const rect = el.getBoundingClientRect();
+		if (!(rect.width > 0) || !(rect.height > 0)) {
+			return null;
+		}
+		const ownWidth = (el as { offsetWidth?: number }).offsetWidth ?? 0;
+		if (ownWidth > 0) {
+			return (rect.height * ownWidth) / rect.width;
+		}
+		const host = el.closest('.mindmap-node-inline-content');
+		if (!host) {
+			return null;
+		}
+		const hostRect = host.getBoundingClientRect();
+		const hostWidth = (host as { offsetWidth?: number }).offsetWidth ?? 0;
+		if (hostWidth > 0 && hostRect.width > 0) {
+			return (rect.height * hostWidth) / hostRect.width;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 导出 SVG 后处理（K107）：把克隆内每个 `mjx-container` 的 height 钉为
+ * **主文档对应容器的实测高度**，使导出纵向流与屏上一致。
+ *
+ * 背景（2026-09-29 实机像素取证）：导出渲染环境（`<img>` 解码的独立文档）
+ * 里 MJX 字体不可用，回退字体度量把 `mjx-container` 盒子撑大（实测屏上
+ * 31.24px → 导出 ~56.3px，≈1.8 倍）——数学所在行的行盒随之变高，**其下方
+ * 文字整体下移 ~8px**，长数学节点末行文字压到节点底边框线（用户实拍：
+ * "（无裁切、无空洞）"被底边穿过）。K106 的 FO 余量只解决"被裁切"，不解决
+ * 这种"纵向流漂移"；`line-height` / `display` / `vertical-align` 覆盖实测
+ * 无效（对照实验 v3/v4/v8），仅"钉高度"命中（v7：文字带 [87.3, 100.3] →
+ * [78.3, 91.3]，与屏上重合）。数学字形自身仍可能越过自身盒底 ~5px——
+ * 落在数学与文字之间的行间隙内，无碰撞、无视觉影响。
+ *
+ * 修法：克隆内 `mjx-container` 与主文档同名元素**按文档序一一配对**（克隆
+ * 深拷贝保持文档序；实机候选**限定 `<svg>` 内**——引擎离屏测量容器挂在
+ * svg 外、其内容克隆的 mjx 不参与，否则计数永不相等、全链 no-op），把实测
+ * 高度（屏幕像素 ÷ 画布缩放 = 布局像素）以内联 `height: Npx !important`
+ * 钉入克隆。
+ *
+ * 安全边界：形态不符 / 无 `mjx-container` → 原样返回；配对数量不符（多视图
+ * 等无法可靠配对）→ no-op；单元素实测不可用 → 跳过该元素、其余照常。
+ *
+ * 接线：`exportSvgTransforms` 链（紧随 `injectMathStylesIntoExportSvg`）。
+ *
+ * @returns 原样返回传入的 svg.js 元素对象（引擎要求）。
+ */
+export function pinMathContainerHeightsInExportSvg(
+	svgElement: unknown,
+): unknown {
+	const root = (svgElement as { node?: Element } | null)?.node;
+	if (!root) {
+		return svgElement;
+	}
+	let cloneList: Element[];
+	try {
+		cloneList = Array.from(root.querySelectorAll(MJX_CONTAINER_SELECTOR));
+	} catch {
+		return svgElement;
+	}
+	if (cloneList.length === 0) {
+		return svgElement;
+	}
+	const doc = (root as { ownerDocument?: Document }).ownerDocument;
+	if (!doc) {
+		return svgElement;
+	}
+	const liveList = listLiveMathContainers(doc, cloneList.length);
+	if (liveList.length !== cloneList.length) {
+		return svgElement;
+	}
+	for (let i = 0; i < cloneList.length; i += 1) {
+		const live = liveList[i];
+		if (!live) {
+			continue; // 长度守卫已保证配对；此处为 noUncheckedIndexedAccess 的类型层防御
+		}
+		const height = measureMathContainerLayoutHeight(live);
+		if (height === null) {
+			continue;
+		}
+		try {
+			// 直接调用 + 异常兜底（形态不符 → TypeError → 跳过该元素），与
+			// export-foreign-object-padding 的查询形态同款写法
+			(cloneList[i] as { style?: CSSStyleDeclaration }).style?.setProperty(
+				'height',
+				`${Math.round(height * 100) / 100}px`,
+				'important',
+			);
+		} catch {
+			continue;
+		}
+	}
+	return svgElement;
+}
+
 /**
  * 产物就绪判定（S0.5 实测锁定）：产物内**全部 `mjx-c` 宽度 > 0**。
  *

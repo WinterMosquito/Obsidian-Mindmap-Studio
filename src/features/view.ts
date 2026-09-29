@@ -14,9 +14,11 @@ import { type EventRef, FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian'
 import { Language, t, tf } from '../core/i18n';
 import type { TranslationKey } from '../core/i18n';
 import { injectObsidianCssVarsIntoExportSvg } from '../platform/export-css-vars';
+import { padForeignObjectsForExport } from '../platform/export-foreign-object-padding';
 import {
 	getRenderedMathNode,
 	injectMathStylesIntoExportSvg,
+	pinMathContainerHeightsInExportSvg,
 	renderMathWithMathJax,
 } from '../platform/math-jax';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
@@ -249,6 +251,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	private readonly mathRemeasureNodes = new Set<MindMapNode>();
 
+	/**
+	 * 「引擎渲染窗口」内解析失败的数学 holder（K104）：`Renderer._render` 期间
+	 * `renderer.root` 被置 null（见 K67 记录），此时 `findNodeByDom` 与产物
+	 * 反查**必然**双双落空——属预期中间态。暂存到 `node_tree_render_end`
+	 * （root 已回填）重试，不在当时告警。
+	 */
+	private deferredMathHolders: Set<HTMLElement> | null = null;
+	/** 暂存 holders 只重试一次：仍失败才告警（既防静默退化，也防反复重试） */
+	private deferredMathRetried = false;
+
 	/** 字体就绪监听只装一次（视图作用域，随 `register` 注销） */
 	private mathFontsHookInstalled = false;
 
@@ -307,22 +319,20 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			return;
 		}
 		const nodes: MindMapNode[] = [];
-		let unresolved = 0;
+		const unresolvedHolders: HTMLElement[] = [];
 		for (const holder of holders) {
 			const node = findNodeByDom(this.mindMap, holder);
 			if (!node) {
-				unresolved++;
+				unresolvedHolders.push(holder);
 				continue;
 			}
 			nodes.push(node);
 			this.mathRemeasureNodes.add(node);
 		}
-		if (unresolved > 0) {
-			// holder 已脱离：引擎在「定稿 → 本轮批量」的等待窗口内又重渲染了一次
-			//（典型：图片尺寸回灌 K96 的补灌触发全树重建），占位 holder 随重建被
-			// 丢弃。改按**产物元素**反查（`.mjx-container` 就在活 DOM 里）——
-			// K100 修复：此前直接跳过，这些节点的尺寸会停在「字面期」测量，表现为
-			// 外框与内容不符（用户实测：含公式节点外框错位、自动整理后才恢复）。
+		if (unresolvedHolders.length > 0) {
+			// 反查一（K100/K104）：holder 可能已随引擎重渲染脱离（图片回灌 K96 的
+			// 补灌触发全树重建），改按**产物元素**反查——选择器双通道覆盖我方
+			// holder 类与 CHTML 容器（见 findNodesByMathProducts）。
 			for (const node of findNodesByMathProducts(this.mindMap)) {
 				if (nodes.includes(node)) {
 					continue;
@@ -330,17 +340,46 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				nodes.push(node);
 				this.mathRemeasureNodes.add(node);
 			}
-			// 兜底仍未命中才告警（一次性）——静默跳过会让问题无痕退化（K85 教训）
-			if (nodes.length === 0 && !this.mathRemeasureUnresolvedWarned) {
-				this.mathRemeasureUnresolvedWarned = true;
-				console.warn(
-					'MindMap Studio：数学节点尺寸同步未能定位归属节点，内容可能被裁剪',
-				);
+			if (nodes.length === 0) {
+				if (!this.deferredMathRetried) {
+					// 全部落空且尚未重试：**大概率是引擎渲染窗口**——`Renderer._render`
+					// 期间 `renderer.root` 为 null（K67），两条解析路径必然全空。
+					// 暂存 holders，等 node_tree_render_end（root 回填）重试，不告警。
+					this.deferredMathHolders = new Set(unresolvedHolders);
+					return;
+				}
+				// 重试后仍全空：真的定位不到 → 告警一次（静默跳过会让问题无痕退化）
+				if (!this.mathRemeasureUnresolvedWarned) {
+					this.mathRemeasureUnresolvedWarned = true;
+					console.warn(
+						'MindMap Studio：数学节点尺寸同步未能定位归属节点，内容可能被裁剪',
+					);
+				}
 			}
 		}
+		// 本轮有命中（或无需重试）：清暂存与重试标记
+		this.deferredMathHolders = null;
+		this.deferredMathRetried = false;
 		if (nodes.length > 0) {
 			refreshNodesCustomContent(this.mindMap, nodes);
 		}
+	}
+
+	/**
+	 * 渲染完成后重试「渲染窗口内未解析的数学 holder」（K104）。
+	 *
+	 * `node_tree_render_end` 时 `renderer.root` 已回填，两条解析路径恢复可用；
+	 * 只重试**一次**（`deferredMathRetried`）——仍失败由 `flushMathRemeasure`
+	 * 告警，避免「重排 → 渲染 → 再重排」的循环。
+	 */
+	private retryDeferredMathRemeasure(): void {
+		const pending = this.deferredMathHolders;
+		if (!pending || pending.size === 0 || !this.mindMap) {
+			return;
+		}
+		this.deferredMathHolders = null;
+		this.deferredMathRetried = true;
+		this.flushMathRemeasure(Array.from(pending));
 	}
 
 	/**
@@ -460,13 +499,20 @@ export class MindMapView extends FileView implements MindMapViewContext {
 					getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
 				});
 			},
-			// 导出 SVG 后处理链（按序应用）：Obsidian CSS 变量注入（字体度量
-			// 与屏上一致，修复多行节点/LaTeX 节点导出被裁）→ MathJax 字形样式
-			// 注入 → 复制按钮隐身。后处理项分居 platform 与 features，services
-			// 层不依赖 features（K51），故链在组合根装配后注入。
+			// 导出 SVG 后处理链（按序应用）：foreignObject 几何余量（几何校正
+			// 最先落地——`<img>` 解码环境与主文档存在 ~2px 级文本度量偏差，
+			// 临界节点会换行被裁，加宽/加高兜底，见 K106）→ Obsidian CSS 变量
+			// 注入（字体度量与屏上一致，修复多行节点/LaTeX 节点导出被裁）→
+			// MathJax 字形样式注入 → 数学容器高度钉扎（K107——导出环境 MJX
+			// 字体缺失使容器盒子膨胀 ~1.8 倍、下方文字下移压到节点底边框线，
+			// 钉为屏上实测高度使纵向流一致）→ 复制按钮隐身。后处理项分居
+			// platform 与 features，services 层不依赖 features（K51），故链在
+			// 组合根装配后注入。
 			exportSvgTransforms: [
+				padForeignObjectsForExport,
 				injectObsidianCssVarsIntoExportSvg,
 				injectMathStylesIntoExportSvg,
+				pinMathContainerHeightsInExportSvg,
 				hideCopyButtonsInExportSvg,
 			],
 			onRootDataChanged: () => {
@@ -820,6 +866,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				if (this.applyPendingImageCorrections()) {
 					this.engine.scheduleViewportRecenter();
 				}
+				// 渲染完成后重试「渲染窗口内未解析的数学 holder」（K104）：
+				// 此刻 renderer.root 已回填，holder 与产物两条解析路径恢复可用
+				this.retryDeferredMathRemeasure();
 			});
 		}
 		if (this.layoutSelect) {
@@ -908,6 +957,30 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/** 安排一次防抖自动保存（view-toolbar.ts / view-node-actions.ts 等外部模块调用） */
 	scheduleSave(): void {
 		this.savePipeline.schedule();
+	}
+
+	/**
+	 * 插件侧编辑通道（内联编辑器 / 弹窗原文模式）提交完成通知（K108）。
+	 *
+	 * 这两条通道经 `applyRawNodeContent` 直接改节点 data 后 render，**不走引擎
+	 * 命令**，故不派发 `data_change` / `node_text_edit_change`——而视图的后续
+	 * 编排（保存、节点计数、中心主题改名文件、编辑后自动拆分混排双链）全部
+	 * 挂在这两个引擎事件上。此前缺这一步，导致**默认自绘渲染下中心主题改名
+	 * 与自动拆分静默失效**（实机：改了中心主题但文件不重命名；混排节点编辑后
+	 * 不拆出子节点，而批量命令正常）。
+	 *
+	 * 与引擎事件回调逐条对齐（`onRootDataChanged` / `onNodeTextEdited` /
+	 * `onDataChanged`），保证两条编辑通道与引擎编辑框行为一致。
+	 */
+	notifyNodeContentCommitted(node: MindMapNode): void {
+		this.scheduleSave();
+		updateStatusBar(this);
+		this.titleRenamer.schedule();
+		// 候选先入集、再延后一拍检查（与引擎 data_change 路径同序）：
+		// runAutoSplitCheck 只处理候选集，顺序颠倒会漏拆本次编辑。
+		// pluginChannel：本通道同步刷新 mdDerivedText，须显式放行拆分判据
+		captureAutoSplitCandidate(this, node, { pluginChannel: true });
+		this.scheduleAutoSplitCheck();
 	}
 
 	/**

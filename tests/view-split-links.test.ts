@@ -125,6 +125,20 @@ describe('autoSplitNode：自动拆分判定', () => {
 		expect(execCommandMock).not.toHaveBeenCalled();
 	});
 
+	it('K108 force（插件侧编辑通道）：text === mdDerivedText 也拆分', () => {
+		// 回归：内联编辑器 / 弹窗原文模式重解析原文时会同步刷新
+		// mdDerivedText，令「text !== mdDerivedText」判据恒不成立——此前
+		// 默认自绘渲染下编辑混排节点**永不自动拆分**（批量命令却正常）。
+		const { view } = makeHarness();
+		const node = dataNode('- 关于 [[冬天]] 和 [[秋天]] 的问题\n');
+		// 模拟插件侧提交：text 与刷新后的 mdDerivedText 相同
+		const data = node.getData() as Record<string, unknown>;
+		data.mdDerivedText = data.text;
+
+		expect(autoSplitNode(view, node, { force: true })).toBe(2);
+		expect(execCommandMock).toHaveBeenCalledTimes(2);
+	});
+
 	it('编辑框仍开着 → no-op（延迟窗口内用户又在编辑）', () => {
 		const { view } = makeHarness();
 		const node = dataNode('- 关于 [[冬天]] 和 [[秋天]] 的问题\n');

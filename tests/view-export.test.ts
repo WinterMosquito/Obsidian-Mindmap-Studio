@@ -155,6 +155,7 @@ describe('exportPNG（导出为 PNG 文件）', () => {
 
 // ---------------------------------------------------------------------------
 // K99：导出 SVG 的 Obsidian CSS 变量注入（修复导出 PNG 时多行节点/LaTeX 节点被裁）
+// K105：值校验从 ASCII 白名单重写为结构性字符拒绝（Unicode 字体名不再被误杀）
 // ---------------------------------------------------------------------------
 
 /** 伪造 svg.js 元素形态（{ node, ownerDocument.win.createSvg }），捕获注入的样式 */
@@ -174,7 +175,7 @@ function makeSvgElementForVars() {
 	return { svgElement, root, injected };
 }
 
-describe('injectObsidianCssVarsIntoExportSvg（导出 CSS 变量注入，K99）', () => {
+describe('injectObsidianCssVarsIntoExportSvg（导出 CSS 变量注入，K99/K105）', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 	});
@@ -271,6 +272,65 @@ describe('injectObsidianCssVarsIntoExportSvg（导出 CSS 变量注入，K99）'
 		// 只注入安全值：可疑值被丢弃（导出回退内联兜底值，功能仍可用）
 		expect(injected[0]!.textContent).toBe(
 			'svg { --font-monospace: JetBrains Mono; }',
+		);
+	});
+
+	it('Unicode 字体名放行：非 ASCII（中文 / PUA）不再被跳过（K105）', () => {
+		// 2026-09-29 实机诊断：中文环境字体栈含非 ASCII（`'??'` 为控制台降级显示），
+		// K99 的 ASCII 白名单把 `--font-interface` / `--font-text` / `--font-monospace`
+		// 全部拒绝 → 导出图字体回退默认字体、多行节点被裁。K105 改为拒绝结构性字符、
+		// Unicode 一律放行——本用例即该回归。
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				({
+					'--font-interface': `"HarmonyOS Sans", "HarmonyOS Sans SC", '霞鹜文楷', ui-sans-serif, sans-serif`,
+					'--font-monospace': `'\uE000\uE001', monospace`,
+				})[name] ?? '',
+		}));
+		const { svgElement, injected } = makeSvgElementForVars();
+
+		injectObsidianCssVarsIntoExportSvg(svgElement);
+
+		expect(injected[0]!.textContent).toBe(
+			`svg { --font-interface: "HarmonyOS Sans", "HarmonyOS Sans SC", '霞鹜文楷', ui-sans-serif, sans-serif; --font-monospace: '\uE000\uE001', monospace; }`,
+		);
+	});
+
+	it('值含控制字符（换行）或反斜杠转义：跳过该变量（K105 结构性拒绝）', () => {
+		// `\` 可经 CSS 转义重构 `}`（如 `\7d`），换行属控制字符——都不允许；
+		// 同批安全值照常注入（证明是「按值过滤」而非整批放弃）。
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				({
+					'--font-interface': 'Inter,\nsans-serif',
+					'--font-monospace': '\\7d',
+					'--text-normal': '#333',
+				})[name] ?? '',
+		}));
+		const { svgElement, injected } = makeSvgElementForVars();
+
+		injectObsidianCssVarsIntoExportSvg(svgElement);
+
+		expect(injected[0]!.textContent).toBe('svg { --text-normal: #333; }');
+	});
+
+	it('值超长（> 1000 字符）跳过；恰好 1000 通过（K105 长度防线）', () => {
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				({
+					'--font-interface': 'A'.repeat(1001),
+					'--font-text': 'B'.repeat(1000),
+				})[name] ?? '',
+		}));
+		const { svgElement, injected } = makeSvgElementForVars();
+
+		injectObsidianCssVarsIntoExportSvg(svgElement);
+
+		expect(injected[0]!.textContent).toBe(
+			`svg { --font-text: ${'B'.repeat(1000)}; }`,
 		);
 	});
 });

@@ -124,6 +124,8 @@ src/
     export-css-vars.ts # 导出 SVG 的 Obsidian CSS 变量注入（K99）：取宿主实际生效值以
                     #   <style> 注入克隆 SVG 根——修复「导出环境变量缺失 → 字体回退
                     #   → 度量漂移 → foreignObject 固定高度裁切」（多行节点/LaTeX 节点）
+    export-foreign-object-padding.ts # 导出 SVG 的 foreignObject 几何余量（K106）：宽 +12/高 +20——
+                    #   兜底 `<img>` 解码环境与主文档的 ~2px 文本度量偏差（临界节点换行被裁）
     math-jax.ts     #   行内数学渲染（官方 loadMathJax 通道；**实机 1.13.7 的 MathJax 3.2.2
                     #   仅有 tex2chtml**，见 K85）；**就绪判据＝mjx-c 宽全 > 0（零宽而
                     #   ::before content 为空串的不可见操作符豁免，见 K90 ①）+ 自驱官方
@@ -255,6 +257,10 @@ tests/
                        #   保存 null 与「保存期间引擎换代」守卫、失败转用户提示）
   view-export.test.ts  # PNG 导出（结果三态分流：Blob → 延迟回收对象 URL / data URL 直下 /
                        #   null 不下载；倍率与文件名（basename，缺省 mindmap）透传；失败转提示）
+  export-fo-padding.test.ts # 导出 foreignObject 几何余量（K106：全 FO 宽 +12/高 +20、原样返回、
+                       #   非法尺寸跳过、无 FO / 形态不符 no-op）
+  math-jax-export-pin.test.ts # 导出数学容器高度钉扎（K107：数量一致时逐钉 height（画布缩放归一 /
+                       #   2 位小数 / !important）、域优先与全文退回、数量不符与形态不符 no-op、单元素不可测跳过）
   language-refresh.test.ts # 语言切换刷新（t/tf、语言下拉项、状态栏文案、命令标签刷新）
   view-wikilink.test.ts # 链接交互（点击分流/三通道取值（文档·附件·外链）/悬停预览去重、触发面与弹窗锚定尺寸）
   view-hotkeys.test.ts  # 视图内快捷键（F2 编辑当前节点：吞键/让位/去重）
@@ -1386,6 +1392,45 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   ③ **实现**：`SavePipelineDeps` 增可选回调 `onExternalChange(file)` / `onAutoSaveSuspended()`（view.ts 接 `notifyError`，新 i18n 键 `save.externalChangeSkipped` / `save.autoSuspended` 中英）；`save(file?, treeHint?, opts?)` 增 `checkExternal`。
   ④ **验证**：`tests/save-pipeline.test.ts` +4 例（外部改动跳过且只提示一次 / 显式保存不检测且基线更新 / 连续失败挂起→显式成功解除 / 成功清零计数），全量 55 文件 **1720** 用例 + lint + knip 全绿。
   ⑤ **教训**：①测试桩的 `cachedRead` 必须随 `modify` **联动更新**——否则「写盘后磁盘内容」不变，外部改动检测会被自己的写入误触发（真实 vault 语义：写入即更新读取缓存）；②`gate/fail` 按**索引**操作累积 gates 数组，串行队列下多轮 gate 必须逐个 await 后再操作，否则索引错位直接挂起——多轮写盘失败场景用 `mockRejectedValueOnce` 按次序消耗更稳。
+
+- [K104] **修复「首帧公式节点尺寸不同步」：产物反查选择器补我方 holder 类（2026-09-28 用户实测 + 控制台探针定位）**
+  ① **症状**：含「文字 + `$$…$$` 同行」数学的节点**首帧渲染时公式区域缺失**（行内 `$…$` 与独占行 `$$…$$` 正常），**重开文档恢复正常**；控制台告警「数学节点尺寸同步未能定位归属节点，内容可能被裁剪」。
+  ② **诊断**（用户按指引执行控制台探针，7 个 holder 全部命中）：`已渲染=true`（替换确实发生）、**`有产物`（`.mjx-container`）= false**、`字形`（`mjx-c`）= 50/112/20/100/70/20/120（非零）、**`零宽字形 = 0`**（规则已 flush、度量正常）、holder 尺寸正常。
+  ③ **根因**：该环境 MathJax 走 **`tex2svg`**（产物为 `<svg>`，**没有 `.mjx-container` 容器类**），而 K100 的产物反查**只匹配 `.mjx-container`** → 首帧 holder 随引擎重渲染脱离（K96 图片回灌）后，`findNodeByDom(holder)` 与产物反查**双双失败** → 重排被跳过 + 告警 → 尺寸不同步。「仅首次失败」的机制：重开时产物缓存命中、**构建期同步放置**，完全不走异步替换与重排链。
+  ④ **修复**：`engine/mindmap.findNodesByMathProducts` 选择器改**双通道** `.mindmap-node-inline-math, .mjx-container`——前者是**我方 holder 类**（替换后仍保留、与 MathJax 输出形态无关，稳定锚点），后者兼容 CHTML 环境。
+  ⑤ **验证**：`tests/engine-image-size.test.ts` +1 例（**断言选择器含 holder 类**，防止被改回只认容器类）；全量 55 文件 **1721** 用例 + lint 全绿。
+  ⑥ **教训**：反查/定位类逻辑**不要依赖第三方输出的 DOM 形态**（MathJax 有 CHTML/SVG 两条输出路径，DOM 形态不同）——必须锚定**自己写入的类名/属性**；「仅首次失败、重开恢复」是**异步链路 vs 缓存同步路径**差异的强信号，优先查「缓存命中时会跳过哪一步」。
+  ⑦ **第二层修复（同日追加，用户 `innerHTML` 诊断驱动）**：产物经查**完全正常**（`<mjx-container class="MathJax" jax="CHTML">`、宽 49.9px、`mindmap-inline-math` 类齐全）而告警仍在 → 真因是**引擎渲染窗口**：`Renderer._render` 期间 `renderer.root` 被**置 null**（K67 已记录该中间态），此时 `findNodeByDom` 与产物反查**必然双双落空**——此前被误判为「定位失败」：告警 + **永久跳过**该批重排。修复：`flushMathRemeasure` 在「全部落空且尚未重试」时**暂存 holders**（`deferredMathHolders`）且**不告警**，由 `node_tree_render_end`（root 已回填）调 `retryDeferredMathRemeasure` **重试一次**；重试仍失败才告警（防静默退化），成功后清暂存与标记（防「重排→渲染→再重排」循环）。**教训**：解析失败要先区分「**目标真失效**」与「**引擎处于中间态**」——后者应延迟重试而非告警。
+
+- [K105] **修复「导出 PNG 字体回退默认字体、多行节点被裁（残余）」：K99 值校验从 ASCII 白名单重写为结构性字符拒绝（2026-09-29 用户截图 + 控制台诊断）**
+  ① **症状**：导出 PNG 中部分多行节点文字被裁（第二行只露上半截），**导出图字体与屏上不一致、回退为默认字体**（用户实机比对确认）；屏上渲染正常。
+  ② **根因**：K99 的值校验为正向字符白名单 `/^[\w\s#'"(),.:/%!-]+$/`，其中 `\w` 只匹配 ASCII——**中文环境字体栈含非 ASCII 字体名**（控制台诊断实据：`--font-interface` = `"HarmonyOS Sans", "HarmonyOS Sans SC", '??', …`，`'??'` 为非 ASCII 字符的控制台降级显示；`--font-text` / `--font-monospace` 同形态，三者白名单校验均 `false`）→ **三个字体变量全部被静默跳过** → 导出环境变量未定义 → 回退 `sans-serif` → 换行点漂移、内容超出 foreignObject 被裁（与 K99 修复前同症状，成因在过滤层而非注入层）。字符枚举白名单对「合法但非 ASCII」的值天然漏杀。
+  ③ **修复**：`platform/export-css-vars.ts` 校验改为**拒绝结构性字符**（CSS 注入的唯一载体）——`UNSAFE_CSS_VALUE_CHARS = /[{};\\<>&@]/`（`{}` 闭合/开启规则块、`;` 结束声明、`\` 转义重构如 `\7d` 生成 `}`、`<>&` 标记构造、`@` at-规则）＋控制字符（码点 `< 0x20` / `0x7F`，含换行/制表）＋长度上限 1000（防超长值放大注入体积）；其余（中文 / PUA / emoji / 任意 Unicode）**全部放行**。控制字符不用正则表达（字符类控制字符范围触发 `no-control-regex`，该规则意图拦截编码事故、此处是有意过滤；项目不引入 eslint-disable，故以码点判断落实现）。
+  ④ **验证**：`tests/view-export.test.ts` +3 例（Unicode 字体名中文/PUA 放行 / 控制字符与反斜杠拒绝且同批安全值照常注入 / 超长拒 + 恰好 1000 通过），既有「`}` 闭合与 `<script>` 拒绝」用例保持通过；全量 55 文件 **1724** 用例 + build + lint(0 警告) + knip 全绿。
+  ⑤ **待实机复验**：重载后导出对比——若字体与屏上一致即闭环；**若仍不一致但已变化**（如回退 Segoe UI / 系统字体而非此前默认形态）→ 屏上生效字体为 @font-face 本体（诊断第 2 项：文档注册 `Inter` / `"Source Code Pro"` / `'??'` 等），`<img>` 解码的 SVG 独立文档访问不到主文档 @font-face，需第二阶段修复（font-face 规则注入，可行性待探针；本项不预设方案）。
+
+- [K106] **修复「导出 PNG 临界节点仍被裁（K105 残余）」：导出侧 foreignObject 几何余量（2026-09-29 CLI 实机全链路定位）**
+  ① **症状**：K105 后重载导出仍有个别节点文字被裁（"6.1 块级公式（`$$` 独占行、三行形态）"第二行"态）"只露上沿）；**字体已与屏上一致**；屏上渲染正常。
+  ② **定位（CLI `obsidian eval` 实机）**：a) **变体扫描**（同内容 + 同变量注入、`<img>` 解码后数墨迹带）：`--font-monospace` 长栈=2 行，去掉或替换为 `monospace`=1 行，`--font-interface` 无关；b) **环境对照**：同内容在主文档真实 foreignObject 渲染 **1 行**、在 `<img>` 解码路径渲染 **2 行**——**跨环境文本度量偏差 ~2px 实锤**（内容/变量/字体全相同）；c) **排除**：@font-face 注入（`'??'` 是**空壳 @font-face 无 src**、屏上实际命中系统字体 Cascadia Mono）、`text-spacing-trim` 等文档级属性注入、UI 关键字剔除/替换（`"Cascadia Mono"` 单独注入亦 2 行）；d) **修复验证**：FO 宽 +2/+4/+6/+8px 均恢复 1 行。
+  ③ **修复**（新文件 `platform/export-foreign-object-padding.ts`）：`padForeignObjectsForExport`——遍历克隆 SVG 全部 `foreignObject`，**宽 +12px**（覆盖实测偏差分布上界——轻量节点 ~2px、标点密集长文本行可达 ~12px，同日二次实机修订自初版 +4）+ **高 +20px**（≈1 行行高，"换行也不裁"兜底）；只改尺寸不动 x/y；尺寸非法跳过、无 FO/形态不符安全 no-op、原样返回同一对象；接线组合根 `exportSvgTransforms` **链首**。DOM 遍历遵循项目既有纪律（`Array.from` + try/catch，勿用方法引用形态——会命中 DOM lib deprecated 重载、触发 no-deprecated，同 `node-codeblock.ts` 注释）。
+  ④ **取舍**：加宽后内容右端 < 节点形状右缘（余量在形状内部消耗）→ 不溢出形状；不换行时零视觉差异；屏上恰好临界换行的极少数节点导出可能少一行（罕见，优于缺字）；极端节点"多一行但完整"（优于"缺半行"）。
+  ⑤ **验证**：`tests/export-fo-padding.test.ts` +4 例（加量+原样返回 / 非法尺寸跳过且其余照常 / 无 FO no-op / 形态不符矩阵）；**CLI 实机复验**：构建部署到 vault → `obsidian vault="O" plugin:reload` → 重建视图 → 导出目标节点图 → **"6.1"节点恢复完整单行** ✓；全量 56 文件 **1728** 用例 + build + lint(0 警告) + knip 全绿。
+  ⑥ **教训**：①「屏上正常、导出异常」的终极定位器是**同内容跨环境对照**（主文档真实 FR vs `<img>` 解码），而非逐属性猜测；②凡"依赖屏上测量固定尺寸 + 导出重建布局"的架构都需评估**几何余量兜底**；③**CLI 命令的目标 vault 默认是"最近聚焦"**——多 vault 环境必须 `vault=<名>` 显式定向（本次曾误发到另一 vault）；④`obsidian eval` 传参用 `code='…'`（PowerShell 单引号）+ JS 双引号，`\"` 组合会静默破坏传参。
+
+- [K107] **修复「导出 PNG 数学节点末行文字压到节点底边框线（K106 残余）」：导出侧数学容器高度钉扎（2026-09-29 CLI 实机像素取证）**
+  ① **症状**：K106 后导出仍有个别节点异常——长数学节点（块级公式 + 说明文字）**末行文字下缘被节点底部边框线穿过**（用户实拍"（无裁切、无空洞）"；屏上渲染正常）。像素扫描实据：导出图中文字墨迹底部 = 底边框线位置（间隙 0），屏上同节点底部余量 +5px；K106 后**横向**已达标（"）"右间隙 24.5px），异常全在**纵向**。
+  ② **机制（导出环境对照实验锁定）**：导出渲染环境（`<img>` 解码独立文档）里 MJX 字体不可用，回退字体度量把 `mjx-container` 盒子撑大（实测屏上 31.24px → 导出 ~56.3px，≈1.8 倍）→ 数学所在行行盒变高 → **下方文字整体下移 ~8px**（同图左侧纯文本节点无此现象 ⇒ 漂移源自数学块）。7 变体扫描：`line-height:0` / `display:inline-block` / `vertical-align: top|bottom` 覆盖均无效或过头，**仅"钉 height = 屏上实测值"命中**（文字带 [87.3, 100.3] → [78.3, 91.3]）。
+  ③ **修复**（`platform/math-jax.ts` 新增 `pinMathContainerHeightsInExportSvg`，接入 `exportSvgTransforms` 链紧随 `injectMathStylesIntoExportSvg`）：克隆内 `mjx-container` 与主文档同名元素**按文档序一一配对**，把实测高度（屏幕像素 ÷ 画布缩放 = 布局像素，元素自身 `rect.width/offsetWidth` 归一）以内联 `height: Npx !important` 钉入克隆；数学字形仍可能越过自身盒底 ~5px——落在数学与文字之间的行间隙内（实测 23.5px），无碰撞。
+  ④ **配对守卫（含一次实机误判）**：候选**限定 `<svg>` 内**——引擎的离屏测量容器挂在画布容器下（svg 外）且内含内容克隆（带 mjx-container），首版未过滤导致「实机 8 vs 克隆 7」计数不符 → 全链 no-op（导出字节与修复前完全一致，一度误判"修复无效"）；过滤后 7 vs 7 配对成功。单元素实测不可用跳过、数量不符/形态不符/无 mjx 一律 no-op；属主文档取克隆 `ownerDocument`（popout 兼容）；查询域优先 `.mindmap-canvas-container` 退回全文。
+  ⑤ **验证**：`tests/math-jax-export-pin.test.ts` +8 例（配对钉扎与缩放归一 / 域优先与全文退回 / svg 外候选排除 / 数量不符零写入 / 单元素不可测跳过 / 无 mjx no-op / 形态不符矩阵 / style 缺失兜底）；全量 57 文件 **1736** 用例 + build + lint(0 警告) + knip 全绿；**CLI 实机复验**（部署 → `plugin:reload` → 重建视图 → 导出目标子树）：文字带 **[87..97.5] → [78..91]**（与屏上位置重合）、与底边框间隙 **6.5px**、越界 0、数学形状位置不变；导出 PNG 字节 42824 → 46053（证明钉扎确实进入导出链路）。
+  ⑥ **教训**：①「屏上正常、导出异常」类问题的度量必须在**导出环境**内做（同节点多变体对照），屏上/主文档内测量不能替代；②几何余量（K106）解决"被裁"，**"纵向流漂移"必须钉住参与布局的盒子尺寸**——环境级字体缺失会让尺寸自洽的布局整体漂移；③**配对类实现要先枚举"同名元素的所有宿主"**（引擎离屏测量容器即典型暗桩）；计数守卫会静默 no-op，"输出未变化（字节/hash 完全一致）"应作为修复未生效的第一判据。
+
+- [K108] **修复「默认自绘渲染下：编辑中心主题不重命名文件 + 编辑混排节点不自动拆分双链」：插件侧编辑通道补齐"提交后编排"（2026-09-29 CLI 实机功能验收定位）**
+  ① **症状**：CLI 建图逐个功能验收时发现两项 README 承诺功能**静默失效**——a) 双击中心主题改名（如改为 `K108-已改名`），节点文本已变但**文件不重命名**；b) 编辑混排节点 `- 说明文字 [[校验]] 尾巴`，**不自动拆出链接子节点**，而批量命令「拆分全文混合链接」正常。两者均无报错（控制台 `dev:errors` 为空）。
+  ② **机制（两层根因，实机取证）**：视图的全部后续编排挂在**引擎事件**上——`data_change` → `onRootDataChanged`（scheduleSave + 节点计数 + `TitleRenamer.schedule`）、`onDataChanged` → `scheduleAutoSplitCheck`、`node_text_edit_change` → `captureAutoSplitCandidate`。而自绘（富）节点的编辑走**插件侧内联编辑器**（K92 起为主入口，弹窗原文模式同一收口 `applyRawNodeContent`）：它**直接改 data + `render()`，不走引擎命令**，故两个事件都不派发 → a) 改名永不调度（对照实验：手动 `setData` 触发一次 `data_change` 后文件**立即**改名，证明 TitleRenamer 本身可用）；b) 候选集为空 → 拆分 no-op。**第二层**：即使补上通知仍不拆分——`autoSplitNode` 的判据 `text !== mdDerivedText` 在原文提交路径下**恒不成立**（`applyRawToNode` 重解析原文时会同步刷新 `mdDerivedText`；引擎编辑框只改 `text`，快照才留在解析期）。
+  ③ **修复**（方案对比后取"经视图回调补齐"，拒绝"features 直发引擎事件"以免破坏 `engine/mindmap.ts` 唯一防腐收口）：a) `ViewNodeEditContext` 新增 `notifyNodeContentCommitted(node)`（`MindMapViewContext` 同步具备），`view.ts` 实现为「scheduleSave + 计数刷新 + `titleRenamer.schedule()` + 捕获拆分候选 + 调度拆分检查」，由 `applyRawNodeContent` 在 render 后调用（一次覆盖内联与弹窗两条通道）；b) `captureAutoSplitCandidate(view, node, { pluginChannel: true })` 记入候选集的 `forced` 子集，`autoSplitNode(view, node, { force })` 对该子集**放行 `mdDerivedText` 判据**。
+  ④ **验证**：`tests/node-inline-editor.test.ts` +2 例（提交后通知视图且携带节点 / 无改动提交不通知）、`tests/view-split-links.test.ts` +1 例（force 下 `text === mdDerivedText` 也拆分）；全量 57 文件 **1739** 用例 + build + lint(0 警告) + knip 全绿；**CLI 实机复验**（部署 → `plugin:reload` → 重建视图）：中心主题改名 → 文件重命名为 `K108-已改名.mindmap.md`、混排节点编辑 → 自动拆出子节点 `校验` 且落盘 `  - [[校验]]`、普通编辑保存与批量命令（幂等提示"没有可拆分的混排双链"）与状态栏计数回归正常。
+  ⑤ **教训**：①**窄接口新增成员必须同步到 `MindMapViewContext`**——装配面多处把 context 透传给编辑入口（`editNodeText` 等），只加子接口会让整片调用点 TS2345；②测试桩用 `as unknown as` **断言不补运行时成员**，新增"必调方法"会让桩报 `is not a function`（本次 5 例同时失败），补桩要与改接口同步；③**"引擎事件驱动编排"架构下，任何绕过引擎命令的新通道都必须显式复刻编排回调**，否则功能静默失效（无异常、无日志）；④判据类守卫（如"是否编辑过"）要按**通道**复核：不同通道对元数据快照的影响不同（原文重解析会刷新快照，纯 text 写入不会）。
 
 ## 新增功能检查清单
 

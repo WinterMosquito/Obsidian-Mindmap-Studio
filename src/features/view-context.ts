@@ -9,7 +9,7 @@
  * - MindMapView 结构化实现（implements），无运行时改动。
  */
 import type { App, TFile, WorkspaceLeaf } from 'obsidian';
-import type { MindMap } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { EventBinder } from '../core/event-binder';
 import type { Language } from '../core/i18n';
 import type { StatusBarService } from '../services/status-bar';
@@ -68,6 +68,19 @@ export interface ViewNodeEditContext extends ViewEngineContext {
 	 * unbound-method（视图侧实现为方法，方法对函数属性可赋值）。
 	 */
 	scheduleSave: () => void;
+	/**
+	 * 插件侧编辑通道（内联编辑器 / 弹窗原文模式）提交后通知视图：
+	 * 这两条通道**直接改节点 data 后 render**，不走引擎命令，因此**不会派发
+	 * `data_change` / `node_text_edit_change`**——而视图的全部后续编排都挂在
+	 * 这两个引擎事件上（`EngineController.onRootDataChanged` /
+	 * `onDataChanged` / `onNodeTextEdited`）。缺了它，中心主题改名文件
+	 * （TitleRenamer）与「编辑后自动拆分混排双链」在默认自绘渲染下**静默失效**
+	 * （2026-09-29 实机定位，K108）。
+	 *
+	 * 本回调是上述编排的**等价入口**：提交成功后由 `applyRawNodeContent`
+	 * （两条通道的共用收口）调用一次，语义与引擎编辑框提交完全一致。
+	 */
+	notifyNodeContentCommitted: (node: MindMapNode) => void;
 }
 
 /**
@@ -115,6 +128,12 @@ export interface MindMapViewContext extends ViewEngineContext, ViewDomContext {
 	// ---- 行为 ----
 	/** 调度防抖保存（data 变更后调用） */
 	scheduleSave(): void;
+	/**
+	 * 节点内容提交完成通知（编辑面成员，见 `ViewNodeEditContext`）。
+	 * 装配面须同时具备本成员：右键菜单/工具栏等持有 `MindMapViewContext`
+	 * 的调用点会把它透传给编辑入口（`editNodeText` 等，参数类型是编辑面）。
+	 */
+	notifyNodeContentCommitted(node: MindMapNode): void;
 	/** 打开节点超链接（wiki / http / 库内路径 / 库外 file:// 绝对路径） */
 	openHyperlink(link: string, mode?: HyperlinkOpenMode): void;
 	/** 当前文件是否为 .mindmap.md（渲染层模式） */
