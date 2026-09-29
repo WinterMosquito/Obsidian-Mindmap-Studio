@@ -89,6 +89,8 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 - Unedited lines are written back **verbatim** (frontmatter preserved; blank lines between paragraphs and standalone `---` separators are normalised); editing a **pure wikilink** node (the whole line is one wikilink) edits its **alias**, written back as `[[note|new alias]]` (clearing the text drops the alias and keeps the link; nodes that mix text and a link still round-trip as "text + link").
 - Layout, viewport and "open as" are kept per file in the plugin `data.json`; node image sizes go into the note itself as official embed syntax (`![[img|300]]`).
 - Editing the **central node** renames the `.mindmap.md` (Obsidian updates links/backlinks).
+- Only **one** mind-map editing instance per `.mindmap.md`: opening the same file in a second tab shows a notice and hands the view back, so two copies can never overwrite each other's saves.
+- If the file is changed **outside** Obsidian (sync folder, another window), auto-save skips that round with a one-time notice instead of overwriting the other change; after repeated write failures auto-save is suspended with a notice (manual save still works).
 - Config is local; no telemetry, and the plugin makes **no network requests** — nothing is sent anywhere.
 - **Files outside the vault** are only ever touched when *you* ask for it: an absolute `file:///` link (created by holding `Ctrl`/`Option` while dropping a file) is handed to your system's default app when you click it. The plugin does not read, copy or upload those files.
 
