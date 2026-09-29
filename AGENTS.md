@@ -1472,6 +1472,17 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 3. 附加 `main.js`、`manifest.json`、`styles.css`，以及 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`（`.github/workflows/release.yml` 自动构建并创建草稿 Release；许可声明必须随副本分发，见 K84）。
 4. 新增版本补 `docs/release-notes-<tag>.md`（中英双语）——`release.yml` 取该文件作 Release 说明，缺失则回退自动生成。
 
+### 提交信息与 Actions 命名约定（2026-09-29 起）
+
+GitHub 的提交列表与 Actions 列表**只显示提交标题 / run 名称**（正文在列表里不展示），故：
+
+- **提交标题极简**，一眼可辨，不留长描述：
+  - 发布提交 = **纯版本号**（如 `0.1.5`）；
+  - 功能 / 修复 / 加固 = **`K<编号>`**（可跟极短辨识名，如 `K108 编辑通道提交后编排`）；
+  - 文档 / 工程 = `docs K109` / `chore K109`。
+- 详细说明写在标题下、空行之后的**正文**里；正文可长（列表不显示），标题必须短。
+- **Actions 运行名称**由 workflow 的 `run-name` 决定：`release.yml` → 版本号（`${{ github.ref_name }}`），`lint.yml` → 分支名（同表达式）——不再显示提交信息。
+
 ## 安全与合规
 
 - 默认本地/离线运行；无遥测、不上传 vault 内容。

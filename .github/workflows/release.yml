@@ -1,5 +1,9 @@
 name: Release Obsidian plugin
 
+# Actions 列表标题只显示版本号（tag 名），不显示触发它的提交信息——
+# 发布提交的信息可以很长，但列表里只需一眼认出是哪个版本。
+run-name: ${{ github.ref_name }}
+
 on:
     push:
         tags:

@@ -1,5 +1,8 @@
 name: Node.js build
 
+# Actions 列表标题只显示分支名（不显示提交信息，避免长标题刷屏）。
+run-name: ${{ github.ref_name }}
+
 on:
     push:
         branches: ['**']
