@@ -399,6 +399,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			onSaveError: (error) => {
 				notifyError(this.lang, 'save.failed', error);
 			},
+			// P1a：自动保存检测到外部修改 → 提示跳过（不覆盖他处改动）
+			onExternalChange: (file) => {
+				notifyError(this.lang, 'save.externalChangeSkipped', file.path);
+			},
+			// P1b：连续失败挂起自动保存 → 一次性提示（显式保存不受影响）
+			onAutoSaveSuspended: () => {
+				notifyError(this.lang, 'save.autoSuspended', '');
+			},
 		});
 		this.titleRenamer = new TitleRenamer({
 			app: this.app,

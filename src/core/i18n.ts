@@ -226,6 +226,10 @@ const ZH = {
 
 	// ===== 保存 =====
 	'save.failed': '保存思维导图失败：',
+	'save.externalChangeSkipped':
+		'文件在外部被修改（同步盘/其它窗口），本次自动保存已跳过以避免覆盖；确认以导图内容为准后请手动保存：',
+	'save.autoSuspended':
+		'连续自动保存失败，已暂停自动保存；编辑内容仍在内存中，修复问题后请手动保存',
 	'save.pluginDataFailed': '写入插件配置失败：',
 
 	// ===== 图片保存 =====
@@ -457,6 +461,10 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 保存 =====
 	'save.failed': 'Failed to save mind map: ',
+	'save.externalChangeSkipped':
+		'The file was modified externally (sync drive/another window); auto-save was skipped to avoid overwriting. If the mind map content is the one to keep, save manually: ',
+	'save.autoSuspended':
+		'Auto-save suspended after repeated failures; your edits are still in memory — save manually once the problem is fixed',
 	'save.pluginDataFailed': 'Failed to write plugin config: ',
 
 	// ===== 图片保存 =====

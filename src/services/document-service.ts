@@ -16,7 +16,11 @@
  * 或让旧文件丢掉 frontmatter。
  */
 import { App, TFile } from 'obsidian';
-import { stripMindMapStem, AUTO_SAVE_DEBOUNCE_MS } from '../core/constants';
+import {
+	stripMindMapStem,
+	AUTO_SAVE_DEBOUNCE_MS,
+	SAVE_FAILURE_SUSPEND_THRESHOLD,
+} from '../core/constants';
 import { createDebouncer, createSerialQueue } from '../core/concurrency';
 import { parseMdOutline, splitFrontmatter, UTF8_BOM } from '../markdown/md-outline';
 import { serializeMdBody } from '../markdown/md-serialize';
@@ -85,6 +89,18 @@ export interface SavePipelineDeps {
 	isAutoSave(): boolean;
 	/** 写盘失败回调（视图据此弹用户可见提示；缺省仅 console.error） */
 	onSaveError?(error: unknown): void;
+	/**
+	 * 检测到**外部修改**时的回调（P1a，仅自动保存路径触发）：自动保存绝不
+	 * 覆盖他处改动（同步盘/其它窗口/手动编辑），跳过本轮写盘并提示用户。
+	 * 每个文件路径只提示一次（后续静默跳过，防告警疲劳），用户显式保存
+	 * （手动命令/卸载路径）不带检测，成功后恢复正常。
+	 */
+	onExternalChange?(file: TFile): void;
+	/**
+	 * 连续写盘失败达到阈值、自动保存被挂起时的回调（P1b）：挂起后
+	 * `schedule()` 不再排程（防告警疲劳），显式 save 不受影响，一次成功即恢复。
+	 */
+	onAutoSaveSuspended?(): void;
 }
 
 const SAVE_DELAY_MS = AUTO_SAVE_DEBOUNCE_MS;
@@ -113,16 +129,33 @@ export class SavePipeline {
 	private drainFile: TFile | null = null;
 	/** 最近一次写盘任务（写入中再触发时，await 它即等价于等排空） */
 	private activeSave: Promise<void> = Promise.resolve();
+	/**
+	 * 「路径 → 上次写盘落地的完整内容」基线（P1a 外部改动检测）：自动保存
+	 * 写盘前比对磁盘当前内容，不一致即说明有外部修改（同步盘/其它窗口/
+	 * 手动编辑）。显式保存（命令/卸载路径）不检测，成功后同样更新基线。
+	 */
+	private readonly lastWritten = new Map<string, string>();
+	/** 已就「外部修改」提示过的文件：每路径只提示一次（防告警疲劳） */
+	private readonly externalConflictNotified = new Set<string>();
+	/** 连续写盘失败次数（P1b）：成功一次即清零 */
+	private consecutiveSaveFailures = 0;
+	/** 连续失败达阈值后挂起自动保存（schedule 不再排程；显式 save 不受影响） */
+	private autoSaveSuspended = false;
 
 	constructor(private readonly deps: SavePipelineDeps) {}
 
 	/** 安排一次防抖自动保存（view-toolbar / view-node-actions 等外部模块调用） */
 	schedule(): void {
+		// P1b 连续失败降级：挂起后不再排程（防告警疲劳）；显式 save 仍可用，
+		// 一次成功即解除挂起（见写盘成功路径）。
+		if (this.autoSaveSuspended) {
+			return;
+		}
 		if (!this.deps.isAutoSave() || !this.deps.getFile()) {
 			return;
 		}
 		this.debouncer.schedule(() => {
-			void this.save();
+			void this.save(undefined, undefined, { checkExternal: true });
 		});
 	}
 
@@ -140,7 +173,14 @@ export class SavePipeline {
 	 * @param treeHint 调用方对**该文件**的树快照（卸载时同步抓取）。引擎已交班/
 	 *                销毁导致活快照取不到时用它兜底，保证最后一批编辑不丢。
 	 */
-	async save(file?: TFile, treeHint?: MindMapTreeNode | null): Promise<void> {
+	async save(
+		file?: TFile,
+		treeHint?: MindMapTreeNode | null,
+		opts?: { checkExternal?: boolean },
+	): Promise<void> {
+		// 外部改动检测仅自动保存开启（P1a）：显式保存（命令/卸载路径）视为
+		// 知情决策——卸载时哪怕外部改过也必须落盘，否则丢编辑。
+		const checkExternal = opts?.checkExternal ?? false;
 		const target = file ?? this.deps.getFile();
 		if (!target) {
 			return;
@@ -187,6 +227,24 @@ export class SavePipeline {
 				) {
 					try {
 						const current = await this.readCurrentContent(target);
+						// P1a 外部改动检测（仅自动保存）：磁盘当前内容与我们上次写出的
+						// 基线不一致（且确有基线）→ 文件被外部修改（同步盘/其它窗口/
+						// 手动编辑）。自动保存**绝不覆盖**他人改动：跳过本轮（同失败
+						// 路径复位），每路径只提示一次；用户显式保存不受此限。
+						if (checkExternal && current !== null) {
+							const baseline = this.lastWritten.get(target.path);
+							if (baseline !== undefined && current !== baseline) {
+								if (!this.externalConflictNotified.has(target.path)) {
+									this.externalConflictNotified.add(target.path);
+									this.deps.onExternalChange?.(target);
+								}
+								this.savePending = false;
+								this.pendingTree = null;
+								this.pendingFile = null;
+								tree = null;
+								break;
+							}
+						}
 						// 文件头以**磁盘当前内容**为准：视图打开期间用户可在属性面板、
 						// 其它窗格甚至其它设备（同步）改属性，而插件只持有加载时的快照——
 						// 直接回贴会把那些改动抹掉（表现为「偶有笔记属性丢失」）。
@@ -204,6 +262,12 @@ export class SavePipeline {
 						if (current !== content) {
 							await this.deps.app.vault.modify(target, content);
 						}
+						// P1a：本轮内容成为该文件的新基线（无差异跳过同样更新——磁盘
+						// 内容与本轮序列化结果等价）；P1b：一次成功即清零失败计数并
+						// 解除自动保存挂起（显式保存成功同样恢复）。
+						this.lastWritten.set(target.path, content);
+						this.consecutiveSaveFailures = 0;
+						this.autoSaveSuspended = false;
 					} catch (error) {
 						// 保存失败通常是磁盘满/权限，重试无意义；立即复位排空状态
 						// 让下一次 scheduleSave 从头再来，而不是沿着这条错误链继续。
@@ -213,6 +277,16 @@ export class SavePipeline {
 						this.pendingTree = null;
 						this.pendingFile = null;
 						tree = null;
+						// P1b：连续失败达阈值 → 挂起自动保存（一次性提示），显式
+						// 保存不受影响；任何一次成功都会解除挂起并清零计数。
+						this.consecutiveSaveFailures++;
+						if (
+							!this.autoSaveSuspended &&
+							this.consecutiveSaveFailures >= SAVE_FAILURE_SUSPEND_THRESHOLD
+						) {
+							this.autoSaveSuspended = true;
+							this.deps.onAutoSaveSuspended?.();
+						}
 						break;
 					}
 					if (!this.savePending) {

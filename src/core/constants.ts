@@ -353,6 +353,12 @@ export const SETTINGS_APPLY_DEBOUNCE_MS = 250;
  */
 export const AUTO_SAVE_DEBOUNCE_MS = 800;
 /**
+ * 连续自动保存失败达到该次数后**挂起自动保存**（P1b 降级）：
+ * 磁盘满/权限类失败重试无意义，继续每次弹错只会造成告警疲劳；
+ * 显式保存（命令/卸载路径）不受影响，一次成功即解除挂起。
+ */
+export const SAVE_FAILURE_SUSPEND_THRESHOLD = 3;
+/**
  * 引擎数据变更后「自动拆分混排双链」检查的延后一拍（毫秒）。
  * 文本编辑提交与数据写入可能在同一轮事件里，立刻检查会读到编辑框尚未收起的
  * 中间态（isEditingText 仍为真）；延后很短一瞬让引擎先完成收尾。

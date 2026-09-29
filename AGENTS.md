@@ -1380,6 +1380,13 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   ④ **验证**：build / lint / 全量 1716 用例 / `verify:visual` 全绿；**多 leaf 场景需实机复验**——双标签打开同一文件应提示并切换到既有标签、DevTools 中不出现第二个引擎实例。
   ⑤ **教训**：文件视图类插件的「全局唯一资源」（此处=文件写权限）必须在**装载入口**做实例互斥，不能依赖用户不这么操作；`FileView` 生命周期里 detach 必须**异步**且带兜底。
 
+- [K103] **保存管线两项 P1 加固（2026-09-28 多轮健壮性方案落地）**
+  ① **P1a 外部改动检测**：自动保存写盘前比对「磁盘当前内容（`cachedRead`）」与「上次写盘基线（`lastWritten`，按路径）」——不一致即文件被外部修改（同步盘/其它窗口/手动编辑），自动保存**绝不覆盖他人改动**：跳过本轮写盘（同失败路径复位），每路径**只提示一次**（`externalConflictNotified`，防告警疲劳）；**显式保存（命令/卸载路径）不带检测**——卸载时哪怕外部改过也必须落盘（丢编辑比覆盖更糟），显式成功后基线随之更新、自动保存恢复正常。`schedule()` 是唯一开启检测的入口（`{checkExternal: true}`）。
+  ② **P1b 连续失败降级**：写盘失败计数连续累加（成功一次即清零），达 `SAVE_FAILURE_SUSPEND_THRESHOLD=3` 挂起自动保存（`schedule()` 不再排程，防告警疲劳），一次性 Notice（`save.autoSuspended`）；显式保存不受影响，任何一次成功即解除挂起。
+  ③ **实现**：`SavePipelineDeps` 增可选回调 `onExternalChange(file)` / `onAutoSaveSuspended()`（view.ts 接 `notifyError`，新 i18n 键 `save.externalChangeSkipped` / `save.autoSuspended` 中英）；`save(file?, treeHint?, opts?)` 增 `checkExternal`。
+  ④ **验证**：`tests/save-pipeline.test.ts` +4 例（外部改动跳过且只提示一次 / 显式保存不检测且基线更新 / 连续失败挂起→显式成功解除 / 成功清零计数），全量 55 文件 **1720** 用例 + lint + knip 全绿。
+  ⑤ **教训**：①测试桩的 `cachedRead` 必须随 `modify` **联动更新**——否则「写盘后磁盘内容」不变，外部改动检测会被自己的写入误触发（真实 vault 语义：写入即更新读取缓存）；②`gate/fail` 按**索引**操作累积 gates 数组，串行队列下多轮 gate 必须逐个 await 后再操作，否则索引错位直接挂起——多轮写盘失败场景用 `mockRejectedValueOnce` 按次序消耗更稳。
+
 ## 新增功能检查清单
 
 按以下顺序自检（先官方 API，再自研；先收口，再实现）：

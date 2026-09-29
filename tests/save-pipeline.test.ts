@@ -58,6 +58,10 @@ interface Harness {
 	/** 每次写盘的「目标文件 + 正文」（跨文件用例断言写盘归属） */
 	writes: { path: string; content: string }[];
 	onSaveError: ReturnType<typeof vi.fn>;
+	/** P1a：外部修改回调（自动保存跳过写盘时触发） */
+	onExternalChange: ReturnType<typeof vi.fn>;
+	/** P1b：自动保存挂起回调（连续失败达阈值时触发一次） */
+	onAutoSaveSuspended: ReturnType<typeof vi.fn>;
 	file: TFile;
 	setTree(tree: MindMapTreeNode | null): void;
 	setFile(file: TFile | null): void;
@@ -124,6 +128,8 @@ function makeHarness(
 	});
 
 	const onSaveError = vi.fn();
+	const onExternalChange = vi.fn();
+	const onAutoSaveSuspended = vi.fn();
 	const deps: SavePipelineDeps = {
 		app,
 		getFile: () => currentFile,
@@ -133,6 +139,8 @@ function makeHarness(
 		getFrontmatterFor: (f) => frontmatters.get(f.path) ?? null,
 		isAutoSave: () => true,
 		onSaveError,
+		onExternalChange,
+		onAutoSaveSuspended,
 		...overrides,
 	};
 
@@ -142,6 +150,8 @@ function makeHarness(
 		written,
 		writes,
 		onSaveError,
+		onExternalChange,
+		onAutoSaveSuspended,
 		file,
 		setTree: (t) => {
 			if (currentFile) {
@@ -689,5 +699,94 @@ describe('SavePipeline.save（无差异写盘跳过）', () => {
 		await h.pipeline.save();
 		expect(h.modify).toHaveBeenCalledTimes(1);
 		expect(h.written[0]).toBe('# A\n');
+	});
+});
+
+describe('P1a/P1b：外部改动检测与连续失败降级', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('自动保存检测到外部修改：跳过写盘并提示一次，重复触发不刷屏', async () => {
+		// 首次自动保存（无基线 → 照常写盘）：建立「上次写盘内容」基线
+		const cachedRead = vi.fn(async () => '- Root\n- A\n');
+		const h = makeHarness({}, { cachedRead });
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		const baselineWrites = h.modify.mock.calls.length;
+		expect(baselineWrites).toBeGreaterThan(0);
+
+		// 模拟外部修改（同步盘/其它窗口改了正文）
+		cachedRead.mockResolvedValue('# 别人改过的内容\n');
+
+		// 自动保存：检测到外部改动 → 跳过写盘 + 提示一次
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.modify).toHaveBeenCalledTimes(baselineWrites);
+		expect(h.onExternalChange).toHaveBeenCalledTimes(1);
+
+		// 后续自动保存继续静默跳过（不重复提示、绝不覆盖）
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.modify).toHaveBeenCalledTimes(baselineWrites);
+		expect(h.onExternalChange).toHaveBeenCalledTimes(1);
+	});
+
+	it('显式保存不做外部检测（知情决策），成功后基线更新、自动保存恢复正常', async () => {
+		// 磁盘内容桩：cachedRead 返回当前磁盘内容，modify 真实更新它
+		//（与真实 vault 语义一致——否则写盘后读到的仍是旧内容，误判外部改动）
+		let disk = '- Root\n- A\n';
+		const cachedRead = vi.fn(async () => disk);
+		const h = makeHarness({}, { cachedRead });
+		h.modify.mockImplementation(async (_target: TFile, content: string) => {
+			disk = content;
+		});
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+
+		// 模拟外部修改
+		disk = '# 别人改过的内容\n';
+		// 显式保存（不带 checkExternal）：照常写盘——卸载路径丢不起编辑
+		await h.pipeline.save();
+		expect(h.onExternalChange).not.toHaveBeenCalled();
+		expect(h.modify).toHaveBeenCalledTimes(2);
+
+		// 基线已随显式保存更新：后续自动保存恢复正常
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.onExternalChange).not.toHaveBeenCalled();
+	});
+
+	it('连续失败达阈值挂起自动保存（一次性提示），显式保存成功后解除', async () => {
+		const h = makeHarness();
+		// mockRejectedValueOnce 按调用次序消耗，避开 gates 索引累积的坑
+		h.modify
+			.mockRejectedValueOnce(new Error('disk full'))
+			.mockRejectedValueOnce(new Error('disk full'))
+			.mockRejectedValueOnce(new Error('disk full'));
+		await h.pipeline.save();
+		await h.pipeline.save();
+		await h.pipeline.save();
+		expect(h.onAutoSaveSuspended).toHaveBeenCalledTimes(1);
+
+		// 挂起后 schedule 不再排程：防抖到点也不产生新的写盘调用
+		vi.useFakeTimers();
+		h.pipeline.schedule();
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS + 50);
+		expect(h.modify).toHaveBeenCalledTimes(3); // 只有此前 3 次 gated 失败
+		vi.useRealTimers();
+
+		// 显式保存成功 → 解除挂起；之后再失败需重新计满阈值才挂起
+		await h.pipeline.save();
+		expect(h.modify).toHaveBeenCalledTimes(4);
+		h.modify.mockRejectedValueOnce(new Error('disk full'));
+		await h.pipeline.save();
+		expect(h.onAutoSaveSuspended).toHaveBeenCalledTimes(1);
+	});
+
+	it('失败后一次成功即清零计数：未达阈值不挂起', async () => {
+		const h = makeHarness();
+		h.modify.mockRejectedValueOnce(new Error('disk full'));
+		await h.pipeline.save();
+		await h.pipeline.save(); // 成功 → 计数清零
+
+		h.modify.mockRejectedValueOnce(new Error('disk full'));
+		await h.pipeline.save();
+		expect(h.onAutoSaveSuspended).not.toHaveBeenCalled();
 	});
 });
