@@ -1472,7 +1472,7 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 3. 附加 `main.js`、`manifest.json`、`styles.css`，以及 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`（`.github/workflows/release.yml` 自动构建并创建草稿 Release；许可声明必须随副本分发，见 K84）。
 4. 新增版本补 `docs/release-notes-<tag>.md`（中英双语）——`release.yml` 取该文件作 Release 说明，缺失则回退自动生成。
 
-### 提交信息与 Actions 命名约定（2026-09-29 起）
+### 提交信息与 Actions 命名约定
 
 GitHub 的提交列表与 Actions 列表**只显示提交标题 / run 名称**（正文在列表里不展示），故：
 
