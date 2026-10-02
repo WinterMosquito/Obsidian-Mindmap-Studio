@@ -11,6 +11,9 @@ node_modules
 # vitest coverage report
 coverage/
 
+# vitest 失败快照 / 输出重定向产物（诊断用，勿入库）
+vitest-out*.txt
+
 # verify:visual 的诊断日志（--log-dir 产物，仅 CI 归档用，不入库）
 verify-visual-logs/
 
