@@ -101,6 +101,10 @@ src/
                     #   重建行内字段（链接/图片/台账）⇒ 未编辑态 ⇒ 保存逐字写回用户输入
     links-split.ts  #   混排双链拆分纯逻辑（方案生成/批量改写/写回字段）；规则与产品决策
                     #   见文件头契约；视图侧执行在 features/view-split-links.ts
+    links-rename.ts #   文件重命名后的引用更新（**字段 + 渲染源**双层）：links-tree 字段改写之后，
+                    #   对未编辑且 mdRaw 仍含旧目标的节点，按解析侧同一扫描器定位旧链接 token
+                    #   并以同一改写规则重写，经 buildInlineData 重建 text/mdRaw/mdDerivedText/
+                    #   mdSegments——通道字段保留字段层结果（attachmentUrl 资源地址不照搬解析态）
   media/            # L1 图片与附件
     images-path.ts  #   图片地址→资源地址（经统一解析入口）、外部地址判断、尺寸校正
     images-save.ts  #   图片入库（走 concurrency 串行队列）、文件名清理
@@ -218,6 +222,7 @@ tests/
   file-lookup.test.ts  # 全库文件索引原语（缓存/失效/多形态地址命中）
   links-resolve.test.ts # 统一解析入口（按形态路由与兜底）
   links-tree.test.ts   # 树内引用更新（重命名/清除两模式）
+  links-rename.test.ts # 重命名渲染源重建（字段+mdRaw 双层；别名/区块/嵌入附件/md 形态/幂等/回收站）
   links-split.test.ts  # 混排双链拆分（真实解析→方案→真实序列化；图片/外链保留、去重、幂等、未编辑不动）
   find-node-by-dom.test.ts # 引擎节点 DOM → 节点实例（右键命中）
   node-text-edit.test.ts # 右键「编辑文本」入口（延后一宏任务 emit node_dblclick、isInserting=false）

@@ -36,10 +36,8 @@ import { shouldEnablePerformanceMode } from '../core/constants';
 import type { NodeContentStyle } from '../engine/mindmap';
 import { ensureUniqueUids } from '../markdown/markdown';
 import { nodeReferenceMatches } from '../core/node-data';
-import {
-	removeReferencesOnDelete,
-	updateReferencesOnRename,
-} from '../links/links-tree';
+import { removeReferencesOnDelete } from '../links/links-tree';
+import { renameReferencesInTree } from '../markdown/links-rename';
 import { walkTree } from '../domain/tree';
 import { EventBinder } from '../core/event-binder';
 import { t } from '../core/i18n';
@@ -697,7 +695,7 @@ export class EngineController {
 			return false;
 		}
 		const tree = this.mindMap.getData();
-		if (updateReferencesOnRename(tree, file, oldPath, this.deps.app)) {
+		if (renameReferencesInTree(tree, file, oldPath, this.deps.app)) {
 			// 保留撤销历史（引擎 setData 会清空历史 → 之后 Ctrl+Z 永久失效）
 			replaceMindMapData(this.mindMap, tree);
 			return true;

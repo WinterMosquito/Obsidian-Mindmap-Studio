@@ -797,6 +797,11 @@ describe('库内文件拖入：分发分支', () => {
 					...(isEmbeddableAttachmentExtension(extension)
 						? { mdEmbed: true }
 						: {}),
+					// 行级元数据补齐：附件节点原文 = 纯（嵌入）双链 token（渲染立即出锚点）
+					...(isEmbeddableAttachmentExtension(extension)
+						? { mdRaw: `![[docs/${name}]]` }
+						: { mdRaw: `[[docs/${name}]]` }),
+					mdDerivedText: name,
 					isActive: false,
 				},
 			);
@@ -947,6 +952,9 @@ describe('库内文件拖入：分发分支', () => {
 					mdWikiLinkpath: formatWikilink(target),
 					mdLinkStyle: 'wiki',
 					mdLinkText: target,
+					// 行级元数据补齐：文档链接节点原文 = 双链 token（渲染立即出锚点）
+					mdRaw: formatWikilink(target),
+					mdDerivedText: target,
 					isActive: false,
 				},
 			);

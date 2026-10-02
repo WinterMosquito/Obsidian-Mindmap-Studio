@@ -40,7 +40,7 @@ import {
 	applyRawNodeContent,
 	openNodeInlineEditor,
 } from './node-inline-editor';
-import { requireActiveNode, insertChildNodeWithData } from './view-common';
+import { requireActiveNode, insertChildNodeWithData, applyInlineRawMeta } from './view-common';
 import type { MdNodeData } from '../core/node-data';
 import type { MindMapNode, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
 import type {
@@ -140,6 +140,9 @@ export function applyDocWikiLink(
 	data.mdWikiLinkpath = link;
 	data.mdLinkStyle = 'wiki';
 	data.mdLinkText = display;
+	// 覆盖为纯双链承载：行级元数据一并重算（旧 mdRaw 已不代表节点内容），否则
+	// 渲染源回落 data.text，链接要等重解析才出现（2026-10-02 实机复现）
+	applyInlineRawMeta(data, display, true);
 	markNodeNeedLayout(node);
 	// 纯双链化：可见文本覆盖节点文字（本路径仅「完全空白」节点可达，见 hasAnyContent）
 	if (display) {
@@ -269,6 +272,12 @@ export function applyNodeAttachment(
 	delete data.hyperlinkTitle;
 	delete data.mdWikiLinkpath;
 	delete data.mdLinkText;
+	// 覆盖为附件承载：行级元数据一并重算（同 applyDocWikiLink 覆盖分支）
+	applyInlineRawMeta(
+		data,
+		typeof data.attachmentName === 'string' ? data.attachmentName : '',
+		true,
+	);
 	markNodeNeedLayout(node);
 	// 纯双链化：覆盖节点文字为文件名（仅「完全空白」节点可达；与根节点下新建分支同款 text）
 	// 渲染口径同 applyDocWikiLink：有文本时由 setNodeText 内部完成，无文本才自行重绘
@@ -314,7 +323,10 @@ export function applyMdLink(
 		});
 		return;
 	}
-	// 与「添加链接」的 URL 分支同一命令（引擎同时维护 hyperlink 与图标状态）
+	// 与「添加链接」的 URL 分支同一命令（引擎同时维护 hyperlink 与图标状态）；
+	// 字段先直写（与 setNodeText 同款「先改数据再走命令」）：合成/序列化读的是
+	// data 字段，不能依赖引擎命令是否回填
+	data.hyperlink = url;
 	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, url);
 	data.mdLinkStyle = 'md';
 	data.mdLinkText = label;
@@ -326,6 +338,8 @@ export function applyMdLink(
 	delete data.mdAttachmentLinkpath;
 	delete data.mdEmbed;
 	delete data.mdEmbedPipe;
+	// 覆盖为链接承载：行级元数据一并重算（同 applyDocWikiLink 覆盖分支）
+	applyInlineRawMeta(data, label, true);
 	markNodeNeedLayout(node);
 	if (label) {
 		// 有文本：渲染由 setNodeText 内部完成（见 applyDocWikiLink 说明）；
@@ -474,7 +488,12 @@ async function performAddLink(view: MindMapViewContext): Promise<void> {
 		});
 		return;
 	}
-	// 完全空白节点：覆盖为 URL 链接（仅图标——URL 本体不进节点文本）
+	// 完全空白节点：覆盖为 URL 链接。字段直写 + 行级元数据补齐（与 applyMdLink
+	// 覆盖分支同口径）：空文本 URL 节点的原文 = autolink `<url>`，写入即自绘为
+	// 可点文本——与「URL 建为子节点」路径及重解析后的呈现一致（方案 B：URL
+	// 还原为可点文本）；URL 本体仍不进 data.text（节点文本字段保持空）
+	data.hyperlink = result.link;
+	applyInlineRawMeta(data, '', true);
 	markNodeNeedLayout(node);
 	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, result.link);
 	view.scheduleSave();

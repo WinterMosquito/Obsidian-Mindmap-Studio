@@ -17,7 +17,7 @@
  *   restoreOrFitViewport「有保存视口优先恢复，否则默认 100% + 内容包围盒居中」。
  *
  * 引擎本体（vendor bundle）不在 Node 下加载，故 vi.mock('../src/engine/mindmap')
- * 桩掉防腐封装面；引用更新真实实现涉及 Obsidian 库 API，同样桩掉 links-tree，
+ * 桩掉防腐封装面；引用更新真实实现涉及 Obsidian 库 API，同样桩掉 links-rename，
  * 以便精确控制「有无变更」这一分支。真实 needle 匹配（node-data）不复刻，
  * 用真实模块，避免断言与被测逻辑同源失真。
  */
@@ -48,14 +48,18 @@ const mocks = vi.hoisted(() => {
 		// 整树替换入口（保留撤销历史）：引用更新经它落数据，勿退回引擎 setData
 		// ——后者会 clearHistory，导致此后 Ctrl+Z 永久失效
 		replaceMindMapData: vi.fn(),
-		updateReferencesOnRename: vi.fn(),
+		renameReferencesInTree: vi.fn(),
 		removeReferencesOnDelete: vi.fn(),
 	};
 });
 
 vi.mock('../src/engine/mindmap', () => mocks);
+// 引用更新入口 = markdown 层的「字段 + 渲染源」双层包装（links-rename）：
+// 它内部再调 links-tree 的字段改写，这里整体桩掉以控制「有无变更」分支
+vi.mock('../src/markdown/links-rename', () => ({
+	renameReferencesInTree: mocks.renameReferencesInTree,
+}));
 vi.mock('../src/links/links-tree', () => ({
-	updateReferencesOnRename: mocks.updateReferencesOnRename,
 	removeReferencesOnDelete: mocks.removeReferencesOnDelete,
 }));
 
@@ -334,8 +338,8 @@ beforeEach(() => {
 	mocks.isDarkTheme.mockReturnValue(false);
 	mocks.isEditingText.mockReset();
 	mocks.isEditingText.mockReturnValue(false);
-	mocks.updateReferencesOnRename.mockReset();
-	mocks.updateReferencesOnRename.mockReturnValue(true);
+	mocks.renameReferencesInTree.mockReset();
+	mocks.renameReferencesInTree.mockReturnValue(true);
 	mocks.removeReferencesOnDelete.mockReset();
 	mocks.removeReferencesOnDelete.mockReturnValue(true);
 	mocks.createMindMap.mockReset();
@@ -870,7 +874,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 		expect(h.controller.updateReferencesOnRename(h.file!, 'notes/old.png')).toBe(
 			false,
 		);
-		expect(mocks.updateReferencesOnRename).not.toHaveBeenCalled();
+		expect(mocks.renameReferencesInTree).not.toHaveBeenCalled();
 		expect(h.engines[0]!.getData).not.toHaveBeenCalled();
 	});
 
@@ -888,7 +892,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 		expect(changed).toBe(false);
 		// 预检确实执行过（遍历渲染树取过数据），只是未命中
 		expect(mocks.getRenderRoot).toHaveBeenCalledTimes(1);
-		expect(mocks.updateReferencesOnRename).not.toHaveBeenCalled();
+		expect(mocks.renameReferencesInTree).not.toHaveBeenCalled();
 		expect(h.engines[0]!.getData).not.toHaveBeenCalled();
 		expect(mocks.replaceMindMapData).not.toHaveBeenCalled();
 	});
@@ -907,7 +911,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 			true,
 		);
 
-		expect(mocks.updateReferencesOnRename).toHaveBeenCalledWith(
+		expect(mocks.renameReferencesInTree).toHaveBeenCalledWith(
 			tree,
 			file,
 			'notes/old.png',
@@ -924,7 +928,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 		mocks.getRenderRoot.mockReturnValue(
 			renderNode({ hyperlink: '[[notes/old]]' }),
 		);
-		mocks.updateReferencesOnRename.mockReturnValue(false);
+		mocks.renameReferencesInTree.mockReturnValue(false);
 
 		const changed = h.controller.updateReferencesOnRename(
 			makeFile('notes/new.md'),
@@ -932,7 +936,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 		);
 
 		expect(changed).toBe(false);
-		expect(mocks.updateReferencesOnRename).toHaveBeenCalledTimes(1);
+		expect(mocks.renameReferencesInTree).toHaveBeenCalledTimes(1);
 		expect(mocks.replaceMindMapData).not.toHaveBeenCalled();
 	});
 
@@ -948,11 +952,11 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 
 		for (const ref of cases) {
 			mocks.getRenderRoot.mockReturnValue(renderNode({ image: ref }));
-			mocks.updateReferencesOnRename.mockClear();
+			mocks.renameReferencesInTree.mockClear();
 			expect(
 				h.controller.updateReferencesOnRename(file, 'notes/old note.md'),
 			).toBe(true);
-			expect(mocks.updateReferencesOnRename).toHaveBeenCalledTimes(1);
+			expect(mocks.renameReferencesInTree).toHaveBeenCalledTimes(1);
 		}
 	});
 
@@ -989,7 +993,7 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 		expect(changed).toBe(false);
 		expect(mocks.getRenderRoot).toHaveBeenCalledTimes(1);
 		expect(h.engines[0]!.getData).not.toHaveBeenCalled();
-		expect(mocks.updateReferencesOnRename).not.toHaveBeenCalled();
+		expect(mocks.renameReferencesInTree).not.toHaveBeenCalled();
 	});
 
 	it('删除引用同样经预检：无关文件零拷贝跳过', () => {

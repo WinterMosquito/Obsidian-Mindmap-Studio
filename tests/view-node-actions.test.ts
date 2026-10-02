@@ -491,15 +491,20 @@ describe('addLinkToActiveNode：链接通道分流（表驱动）', () => {
 		expect(scheduleSave).toHaveBeenCalled();
 
 		if (testCase.channel === 'hyperlink') {
-			// URL 只挂超链接图标：写引擎字段、清掉可能残留的文档双链通道
+			// URL 覆盖空白节点：hyperlink 字段直写（数据自含）+ 引擎命令维护图标状态
 			expect(callArgs(execCommand)).toEqual([
 				ENGINE.SET_NODE_HYPERLINK,
 				node,
 				testCase.link,
 			]);
+			expect(data.hyperlink).toBe(testCase.link);
 			expect(data.mdWikiLinkpath).toBeUndefined();
 			expect(data.mdLinkText).toBeUndefined();
-			// 「仅图标」：节点文本不被 URL 污染，也不需要本地重绘
+			// 行级元数据补齐：空文本 URL 节点的原文 = autolink `<url>`
+			//（与「URL 建为子节点」/粘贴路径及重解析后的呈现同口径）
+			expect(data.mdRaw).toBe(`<${testCase.link}>`);
+			expect(data.mdDerivedText).toBe('');
+			// 节点文本不被 URL 污染，也不需要本地重绘
 			expect(setNodeTextMock).not.toHaveBeenCalled();
 			expect(render).not.toHaveBeenCalled();
 			return;
@@ -598,6 +603,9 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 				mdWikiLinkpath: '[[新笔记]]',
 				mdLinkStyle: 'wiki',
 				mdLinkText: '新笔记',
+				// 行级元数据补齐：新子节点立即按原文渲染出锚点（不再等重解析）
+				mdRaw: '[[新笔记]]',
+				mdDerivedText: '新笔记',
 				isActive: false,
 			},
 		]);
@@ -625,6 +633,8 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 				mdWikiLinkpath: '[[新笔记]]',
 				mdLinkStyle: 'wiki',
 				mdLinkText: '新笔记',
+				mdRaw: '[[新笔记]]',
+				mdDerivedText: '新笔记',
 				isActive: false,
 			},
 		]);
@@ -651,6 +661,9 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 				mdLinkStyle: 'md',
 				mdLinkText: 'https://new.example.com',
 				hyperlinkTitle: 'https://new.example.com',
+				// URL 子节点（无显示名）的原文形态是 autolink；重解析亦得同形
+				mdRaw: '<https://new.example.com>',
+				mdDerivedText: '',
 				isActive: false,
 			},
 		]);
@@ -677,6 +690,8 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 				mdLinkStyle: 'md',
 				mdLinkText: 'https://new.example.com',
 				hyperlinkTitle: 'https://new.example.com',
+				mdRaw: '<https://new.example.com>',
+				mdDerivedText: '',
 				isActive: false,
 			},
 		]);
@@ -703,6 +718,8 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 				mdLinkStyle: 'md',
 				mdLinkText: 'https://example.com',
 				hyperlinkTitle: 'https://example.com',
+				mdRaw: '<https://example.com>',
+				mdDerivedText: '',
 				isActive: false,
 			},
 		]);
@@ -726,6 +743,8 @@ describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
 				mdWikiLinkpath: '[[笔记]]',
 				mdLinkStyle: 'wiki',
 				mdLinkText: '笔记',
+				mdRaw: '[[笔记]]',
+				mdDerivedText: '笔记',
 				isActive: false,
 			},
 		]);
@@ -846,6 +865,10 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		expect(data.mdLinkStyle).toBe('md');
 		expect(data.mdLinkText, '显示名 = 别名').toBe('别名');
 		expect(data.mdWikiLinkpath, '不写双链通道字段').toBeUndefined();
+		// md 形态行的原文一并补齐（hyperlink 字段直写 + 行级元数据重算）
+		expect(data.hyperlink).toBe('folder/笔记.md');
+		expect(data.mdRaw).toBe('[别名](folder/笔记.md)');
+		expect(data.mdDerivedText).toBe('别名');
 		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '别名');
 	});
 
@@ -858,6 +881,9 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		const data = dataOf(node);
 		expect(data.mdWikiLinkpath).toBe('[[folder/笔记]]');
 		expect(data.hyperlink).toBeUndefined();
+		// 行级元数据同步补齐（渲染源 / rawOk 未编辑判定的共同前提）
+		expect(data.mdRaw).toBe('[[folder/笔记]]');
+		expect(data.mdDerivedText).toBe('笔记');
 	});
 
 	it('applyDocWikiLink（完全空白节点）：覆盖为纯双链节点（便捷路径保留）', () => {
@@ -870,9 +896,25 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		expect(data.mdWikiLinkpath).toBe('[[笔记|别名]]');
 		expect(data.mdLinkStyle).toBe('wiki');
 		expect(data.mdLinkText).toBe('别名');
+		// 行级元数据同步补齐（渲染源 / rawOk 未编辑判定的共同前提）
+		expect(data.mdRaw).toBe('[[笔记|别名]]');
+		expect(data.mdDerivedText).toBe('别名');
 		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '别名');
 		expect(execCommand, '空白节点不建子节点').not.toHaveBeenCalled();
 		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyDocWikiLink（空白节点 + 显式 label ≠ 链接显示名）：mdRaw 合成为别名形态', () => {
+		const node = fakeNode();
+		const { view } = makeView();
+
+		applyDocWikiLink(view, node, '[[笔记]]', '自定义名');
+
+		const data = dataOf(node);
+		// 纯双链语义「节点文本即别名」：原文行 = [[目标|文本]]（别名改写走
+		// editedWikilinkAlias 权威闸门，经 composeNodeContent 唯一来源合成）
+		expect(data.mdRaw).toBe('[[笔记|自定义名]]');
+		expect(data.mdDerivedText).toBe('自定义名');
 	});
 
 	it('applyDocWikiLink（节点有链接）：链接建为子节点，原字段与文字不动（R4 修订）', () => {
@@ -895,6 +937,8 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 				mdWikiLinkpath: '[[笔记|别名]]',
 				mdLinkStyle: 'wiki',
 				mdLinkText: '别名',
+				mdRaw: '[[笔记|别名]]',
+				mdDerivedText: '别名',
 				isActive: false,
 			},
 		]);
@@ -931,6 +975,8 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 				mdWikiLinkpath: '[[笔记]]',
 				mdLinkStyle: 'wiki',
 				mdLinkText: '笔记',
+				mdRaw: '[[笔记]]',
+				mdDerivedText: '笔记',
 				isActive: false,
 			},
 		]);
@@ -954,6 +1000,8 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 				mdWikiLinkpath: '[[笔记]]',
 				mdLinkStyle: 'wiki',
 				mdLinkText: '',
+				mdRaw: '[[笔记]]',
+				mdDerivedText: '',
 				isActive: false,
 			},
 		]);
@@ -991,6 +1039,9 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 				mdLinkStyle: 'wiki',
 				// PDF 可嵌入 → 写嵌入语法 `![[报告.pdf]]`（与 Obsidian 拖放一致）
 				mdEmbed: true,
+				// 附件嵌入的原文 = 纯嵌入 token（此前合成会退化成「文本 + 尾链」重复）
+				mdRaw: '![[附件/报告.pdf]]',
+				mdDerivedText: '报告.pdf',
 				isActive: false,
 			},
 		]);
@@ -1039,6 +1090,9 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 				mdLinkStyle: 'md',
 				mdLinkText: 'a b.pdf',
 				hyperlinkTitle: 'file:///D:/a%20b.pdf',
+				// 带显示名的 md 链接原文 = `[名](url)`（无原始空格/括号不加尖括号）
+				mdRaw: '[a b.pdf](file:///D:/a%20b.pdf)',
+				mdDerivedText: 'a b.pdf',
 				isActive: false,
 			},
 		]);
@@ -1073,6 +1127,9 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		expect(data.attachmentUrl).toBe('app://local/附件/归档.zip');
 		// 不可嵌入 ⇒ 无 mdEmbed：回写为 `[[归档.zip]]`（Obsidian 对这类文件也只插链接）
 		expect(data.mdEmbed).toBeUndefined();
+		// 行级元数据同步补齐：原文 = 纯双链 token
+		expect(data.mdRaw).toBe('[[附件/归档.zip]]');
+		expect(data.mdDerivedText).toBe('归档.zip');
 	});
 
 	it('applyNodeAttachment（完全空白节点）：覆盖为附件链接（便捷路径保留）', () => {
@@ -1089,6 +1146,9 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 		expect(data.mdAttachmentLinkpath).toBe('附件/报告.pdf');
 		// PDF 可嵌入 → 嵌入语法（保存后文件里是 `![[报告.pdf]]`）
 		expect(data.mdEmbed).toBe(true);
+		// 行级元数据同步补齐：原文 = 纯嵌入 token（不再是「文本 + 尾链」重复形态）
+		expect(data.mdRaw).toBe('![[附件/报告.pdf]]');
+		expect(data.mdDerivedText).toBe('报告.pdf');
 		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '报告.pdf');
 		expect(execCommand, '空白节点不建子节点').not.toHaveBeenCalled();
 		expect(scheduleSave).toHaveBeenCalled();
@@ -1115,6 +1175,8 @@ describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () =>
 				mdAttachmentLinkpath: '附件/报告.pdf',
 				mdLinkStyle: 'wiki',
 				mdEmbed: true,
+				mdRaw: '![[附件/报告.pdf]]',
+				mdDerivedText: '报告.pdf',
 				isActive: false,
 			},
 		]);

@@ -26,8 +26,11 @@ type ReferenceUpdateMode = 'rename' | 'clear';
 
 /**
  * 待匹配的旧引用形态集合：资源地址与 [[链接]] 两种载体各一组。
+ *
+ * 导出供 markdown 层的渲染源重建（links-rename）复用——字段改写与 mdRaw token
+ * 改写必须用同一组待匹配形态，否则两处命中集漂移。
  */
-interface ReferenceTargets {
+export interface ReferenceTargets {
 	/** 资源地址的路径形态：相等或后缀匹配即命中 */
 	readonly urlPaths: readonly string[];
 	/** 资源地址的文件名形态：地址最后一段精确匹配（含 URL 编码形态） */
@@ -42,12 +45,12 @@ function stripMd(path: string): string {
 }
 
 /** 文件是否位于库内回收站 */
-function isTrashedPath(path: string): boolean {
+export function isTrashedPath(path: string): boolean {
 	return path === TRASH_DIR || path.startsWith(`${TRASH_DIR}/`);
 }
 
 /** 重命名场景：以旧路径/旧名派生待匹配形态（含当前名兜底历史数据） */
-function renameTargets(oldPath: string, file: TFile): ReferenceTargets {
+export function renameTargets(oldPath: string, file: TFile): ReferenceTargets {
 	const oldLastSegment = oldPath.split('/').pop() ?? '';
 	return {
 		urlPaths: [oldPath, stripMd(oldPath)],
@@ -139,6 +142,33 @@ function extensionOfPath(path: string): string {
 	const name = path.split('/').pop() ?? '';
 	const dot = name.lastIndexOf('.');
 	return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
+/**
+ * md 链接形态目标（`目录/笔记.md`）的重写：命中本次被重命名的文件 → 返回新
+ * 目标串（按需补回扩展名）；未命中返回 null。
+ *
+ * 与上方 hyperlink 字段分支共用同一实现——字段改写与 mdRaw token 改写（markdown
+ * 层 links-rename）必须产出**同一个新目标**，故抽为本函数，勿在调用方再抄一份。
+ */
+export function renamedMdLinkDest(
+	dest: string,
+	file: TFile,
+	oldPath: string,
+): string | null {
+	if (!mdTargetRenamed(dest, file, oldPath)) {
+		return null;
+	}
+	const renamed = renamedWikilink(
+		parseWikilink(`[[${dest}]]`)!,
+		file,
+		oldPath,
+	);
+	const inner = renamed.slice(2, -2);
+	const extension = extensionOfPath(dest);
+	return extension && !inner.toLowerCase().endsWith(`.${extension}`)
+		? `${inner}.${extension}`
+		: inner;
 }
 
 /**
@@ -234,8 +264,11 @@ function vaultFolder(path: string): string {
  * `b/note` 这类仍可解析的短路径，不必擅自扩写）。
  *
  * 文件名：只有 `.md` 可省略扩展名（Obsidian 语义），canvas/base 必须带扩展名。
+ *
+ * 导出供 markdown 层的渲染源重建（links-rename）复用——mdRaw 里的旧链接 token
+ * 与通道字段必须改写成**同一个新形态**。
  */
-function renamedWikilink(
+export function renamedWikilink(
 	parts: WikilinkParts,
 	file: TFile,
 	oldPath: string,
@@ -327,6 +360,10 @@ function updateReferences(
 				if (mode === 'rename' && !trashed) {
 					node.data.attachmentUrl = replacementUrl;
 					node.data.attachmentName = file.name;
+					// 回写权威字段同步更新：serialize 的 rawOk 以它为特征串、合成时
+					// 以它重建 wikilink——漏改会让重命名后的保存写回**旧路径**
+					//（2026-10-02 复查发现，与 F2 渲染源过期同类）
+					node.data.mdAttachmentLinkpath = file.path;
 					changed = true;
 				} else if (!node.children || node.children.length === 0) {
 					// 删除 / 回收站：**整条删除**（引用 + 节点内的可见文字），
@@ -355,25 +392,15 @@ function updateReferences(
 					node.data.hyperlink = renamedWikilink(parts, file, previousPath);
 					changed = true;
 				}
-			} else if (
-				!parts &&
-				mdTargetRenamed(node.data.hyperlink, file, previousPath)
-			) {
+			} else if (!parts) {
 				// md 链接形态 `[显示名](路径.md)`：官方关闭「使用 \[\[Wikilinks\]\]」后
 				// 新链接就是这种形态（2026-09-15 对齐官方偏好），重命名必须同样改写，
 				// 否则这类链接在重命名后失效（此前只认 `[[…]]` 形态）。
-				const renamed = renamedWikilink(
-					parseWikilink(`[[${node.data.hyperlink}]]`)!,
-					file,
-					previousPath,
-				);
-				const inner = renamed.slice(2, -2);
-				const extension = extensionOfPath(node.data.hyperlink);
-				node.data.hyperlink =
-					extension && !inner.toLowerCase().endsWith(`.${extension}`)
-						? `${inner}.${extension}`
-						: inner;
-				changed = true;
+				const renamed = renamedMdLinkDest(node.data.hyperlink, file, previousPath);
+				if (renamed !== null) {
+					node.data.hyperlink = renamed;
+					changed = true;
+				}
 			}
 		}
 		// 文档双链通道（非引擎字段，引擎类型未声明故为 any）：与 hyperlink
