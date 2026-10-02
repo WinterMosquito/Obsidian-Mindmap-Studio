@@ -1250,4 +1250,30 @@ describe('段序列缓存：LRU 淘汰（渲染热点不被「预览洪水」冲
 		expect(stats.max).toBe(max);
 		expect(stats.size).toBe(max);
 	});
+
+	/**
+	 * 字符预算封顶（2026-10-02）：条目数上限对长行键失效——512 条 × 20k 字符
+	 * 最坏 ≈20MB 常驻。两条不变式：① 超长单条（> 单条上限）不缓存；② 大量长键
+	 * 下键字符总量不超预算（LRU 继续按字符量淘汰）。
+	 */
+	it('字符预算封顶：超长单条不入缓存；大量长键下总字符不超预算', () => {
+		const { maxChars } = segmentCacheStats();
+		expect(maxChars).toBeGreaterThan(0);
+
+		// ① 超长单条（约 40k 字符 > 单条上限）：size 不增
+		const before = segmentCacheStats().size;
+		buildInlineSegments(`${'超长填充'.repeat(10_000)} [[尾]]`);
+		expect(
+			segmentCacheStats().size,
+			'超长单条不得入缓存（一条就会挤掉大量短行热点）',
+		).toBe(before);
+
+		// ② 大量长键（每条约 1k 字符）：总字符被预算封顶（含逐条淘汰）
+		for (let i = 0; i < 2000; i++) {
+			buildInlineSegments(`${'填充文字'.repeat(250)} [[键${i}]]`);
+		}
+		const stats = segmentCacheStats();
+		expect(stats.chars).toBeLessThanOrEqual(maxChars);
+		expect(stats.size).toBeLessThanOrEqual(stats.max);
+	});
 });

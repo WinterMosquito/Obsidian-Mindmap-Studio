@@ -87,6 +87,49 @@ function hasAnyContent(data: MdNodeData): boolean {
 	return false;
 }
 
+/**
+ * 覆盖分支的公共清理：链接类字段一律清空。
+ *
+ * `hasAnyContent` 只认「文字 / 图片 / 三通道有效值 / 额外 token」——「移除引用」
+ * 后残留的 `mdAttachmentLinkpath` / `mdEmbed` / `mdLinkText` 等不算内容，节点仍
+ * 走**覆盖**路径；不清会让回写凭空多出旧引用。此前五处覆盖分支各持一份清理
+ * 清单、逐步漂移（2026-10-02 收敛为并集：applyAttachmentLink 漏步、applyMdLink
+ * 与 URL 分支的残渣清理差异都在此收口）。
+ */
+function purgeLinkChannels(data: MdNodeData): void {
+	delete data.hyperlink;
+	delete data.hyperlinkTitle;
+	delete data.mdWikiLinkpath;
+	delete data.mdLinkText;
+	delete data.attachmentUrl;
+	delete data.attachmentName;
+	delete data.mdAttachmentLinkpath;
+	delete data.mdEmbed;
+	delete data.mdEmbedPipe;
+}
+
+/**
+ * 覆盖写入的公共中段：行级元数据重算（`mdRaw`/`mdDerivedText`）→ 布局标记 →
+ * 文本落地。有文本时渲染由 `setNodeText` 内部完成（见 applyDocWikiLink 说明，
+ * 本模块不得再补一次）；无文本且 `rerenderWhenEmpty` 时自行重绘——引擎命令
+ * （SET_NODE_HYPERLINK）自带重绘的路径传 false，避免重复渲染。
+ */
+function applyChannelOverwriteText(
+	view: MindMapViewContext,
+	node: MindMapNode,
+	data: MdNodeData,
+	text: string,
+	rerenderWhenEmpty: boolean,
+): void {
+	applyInlineRawMeta(data, text, true);
+	markNodeNeedLayout(node);
+	if (text) {
+		applyNodeText(view, node, text);
+	} else if (rerenderWhenEmpty) {
+		view.mindMap?.render();
+	}
+}
+
 /** R4 修订：把链接作为子节点挂到节点下（父节点原样不动） */
 function appendLinkChild(
 	view: MindMapViewContext,
@@ -135,23 +178,13 @@ export function applyDocWikiLink(
 		});
 		return;
 	}
-	delete data.hyperlink;
-	delete data.hyperlinkTitle;
+	purgeLinkChannels(data);
 	data.mdWikiLinkpath = link;
 	data.mdLinkStyle = 'wiki';
 	data.mdLinkText = display;
 	// 覆盖为纯双链承载：行级元数据一并重算（旧 mdRaw 已不代表节点内容），否则
 	// 渲染源回落 data.text，链接要等重解析才出现（2026-10-02 实机复现）
-	applyInlineRawMeta(data, display, true);
-	markNodeNeedLayout(node);
-	// 纯双链化：可见文本覆盖节点文字（本路径仅「完全空白」节点可达，见 hasAnyContent）
-	if (display) {
-		applyNodeText(view, node, display);
-	} else {
-		// 无文本可写：链接字段已就地改写，需自行重绘一次（有文本时渲染由
-		// setNodeText 内部完成——它在 markNodeNeedLayout 之后执行，一次覆盖两处）
-		view.mindMap?.render();
-	}
+	applyChannelOverwriteText(view, node, data, display, true);
 	view.scheduleSave();
 }
 
@@ -258,6 +291,7 @@ export function applyNodeAttachment(
 		});
 		return;
 	}
+	purgeLinkChannels(data);
 	data.attachmentUrl = view.app.vault.getResourcePath(file);
 	data.attachmentName = file.name;
 	// 回写用完整库内路径（basename 会被 Obsidian 去掉扩展名，无法定位附件）
@@ -265,27 +299,10 @@ export function applyNodeAttachment(
 	data.mdLinkStyle = 'wiki';
 	if (embed) {
 		data.mdEmbed = true;
-	} else {
-		delete data.mdEmbed;
 	}
-	delete data.hyperlink;
-	delete data.hyperlinkTitle;
-	delete data.mdWikiLinkpath;
-	delete data.mdLinkText;
-	// 覆盖为附件承载：行级元数据一并重算（同 applyDocWikiLink 覆盖分支）
-	applyInlineRawMeta(
-		data,
-		typeof data.attachmentName === 'string' ? data.attachmentName : '',
-		true,
-	);
-	markNodeNeedLayout(node);
+	// 覆盖为附件承载：行级元数据一并重算（同 applyDocWikiLink 覆盖分支）；
 	// 纯双链化：覆盖节点文字为文件名（仅「完全空白」节点可达；与根节点下新建分支同款 text）
-	// 渲染口径同 applyDocWikiLink：有文本时由 setNodeText 内部完成，无文本才自行重绘
-	if (data.attachmentName) {
-		applyNodeText(view, node, data.attachmentName);
-	} else {
-		view.mindMap?.render();
-	}
+	applyChannelOverwriteText(view, node, data, file.name, true);
 	view.scheduleSave();
 }
 
@@ -325,27 +342,17 @@ export function applyMdLink(
 	}
 	// 与「添加链接」的 URL 分支同一命令（引擎同时维护 hyperlink 与图标状态）；
 	// 字段先直写（与 setNodeText 同款「先改数据再走命令」）：合成/序列化读的是
-	// data 字段，不能依赖引擎命令是否回填
+	// data 字段，不能依赖引擎命令是否回填。其余通道的残留字段（`hasAnyContent`
+	// 不把它们算作内容，故本分支可能带残渣）由 purgeLinkChannels 统一清空
+	//（md-line-write 的先清后填是解析侧的同一约束）
+	purgeLinkChannels(data);
 	data.hyperlink = url;
 	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, url);
 	data.mdLinkStyle = 'md';
 	data.mdLinkText = label;
-	// 其余通道的残留字段（`hasAnyContent` 不把它们算作内容，故本分支可能带残渣）：
-	// 不清会让回写凭空多出旧引用（md-line-write 的先清后填是解析侧的同一约束）
-	delete data.mdWikiLinkpath;
-	delete data.attachmentUrl;
-	delete data.attachmentName;
-	delete data.mdAttachmentLinkpath;
-	delete data.mdEmbed;
-	delete data.mdEmbedPipe;
-	// 覆盖为链接承载：行级元数据一并重算（同 applyDocWikiLink 覆盖分支）
-	applyInlineRawMeta(data, label, true);
-	markNodeNeedLayout(node);
-	if (label) {
-		// 有文本：渲染由 setNodeText 内部完成（见 applyDocWikiLink 说明）；
-		// 无文本时上面那条 SET_NODE_HYPERLINK 命令自带重绘（引擎 setNodeDataRender）
-		applyNodeText(view, node, label);
-	}
+	// 覆盖为链接承载：行级元数据一并重算（同 applyDocWikiLink 覆盖分支）；
+	// 无文本时的重绘由上面那条 SET_NODE_HYPERLINK 命令承担（setNodeDataRender）
+	applyChannelOverwriteText(view, node, data, label, false);
 	view.scheduleSave();
 }
 
@@ -381,21 +388,14 @@ function applyAttachmentLink(
 		});
 		return;
 	}
-	delete data.hyperlink;
-	delete data.hyperlinkTitle;
-	delete data.mdWikiLinkpath;
+	purgeLinkChannels(data);
 	data.attachmentUrl = linkpath;
 	data.attachmentName = name;
 	data.mdAttachmentLinkpath = linkpath;
 	data.mdLinkStyle = 'wiki';
-	markNodeNeedLayout(node);
-	// 纯双链化：可见名覆盖节点文字（本路径仅「完全空白」节点可达，见 hasAnyContent）
-	// 渲染口径同 applyDocWikiLink：有文本时由 setNodeText 内部完成，无文本才自行重绘
-	if (name) {
-		applyNodeText(view, node, name);
-	} else {
-		view.mindMap?.render();
-	}
+	// 覆盖为附件承载：行级元数据一并重算（2026-10-02 与其余四条覆盖路径同口径；
+	// 此前漏步 → 空白节点只显示纯文本、锚点要等重解析才出现）
+	applyChannelOverwriteText(view, node, data, name, true);
 	view.scheduleSave();
 }
 
@@ -492,9 +492,9 @@ async function performAddLink(view: MindMapViewContext): Promise<void> {
 	// 覆盖分支同口径）：空文本 URL 节点的原文 = autolink `<url>`，写入即自绘为
 	// 可点文本——与「URL 建为子节点」路径及重解析后的呈现一致（方案 B：URL
 	// 还原为可点文本）；URL 本体仍不进 data.text（节点文本字段保持空）
+	purgeLinkChannels(data);
 	data.hyperlink = result.link;
-	applyInlineRawMeta(data, '', true);
-	markNodeNeedLayout(node);
+	applyChannelOverwriteText(view, node, data, '', false);
 	view.mindMap?.execCommand(ENGINE_COMMANDS.SET_NODE_HYPERLINK, node, result.link);
 	view.scheduleSave();
 }

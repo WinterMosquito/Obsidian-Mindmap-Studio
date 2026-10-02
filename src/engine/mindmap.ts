@@ -157,7 +157,7 @@ const HISTORY_MIN_COUNT = 30;
  * 属 vendor 内部；见 K66）。
  *
  * 导出供 `--perf` 内存轮断言「预算确实应用」与 `tests/engine-history-limit.test.ts`
- * 使用；生产路径只经 `createMindMap` 调用。
+ * 使用；生产路径经 `createMindMap`（创建期）与 `syncHistoryLimit`（会话内）调用。
  */
 export function resolveHistoryLimit(nodeCount: number): number {
 	const perSnapshot = Math.max(1, nodeCount) * HISTORY_SNAPSHOT_BYTES_PER_NODE;
@@ -166,6 +166,35 @@ export function resolveHistoryLimit(nodeCount: number): number {
 		HISTORY_DEFAULT_MAX_COUNT,
 		Math.max(HISTORY_MIN_COUNT, affordable),
 	);
+}
+
+/**
+ * 会话内同步命令历史上限：按**当前**渲染树节点数重算（`resolveHistoryLimit`）。
+ *
+ * 创建期只按「打开那一刻」的节点数反推一次——会话内长大的图（连续编辑 / 粘贴 /
+ * 拖入）会让 30MB 预算逐步失效：从空图长到 1000 节点仍保留 500 条 ⇒ 最坏
+ * ≈192MB（K65 口径 ≈384B/节点/条，预算本应 30MB）。反向（图变小）不重算只是
+ * 撤销深度偏浅，一并覆盖。**下调上限不会立刻裁剪已存历史**（引擎只在 push
+ * 时 shift 越过上限的条目），渐进收敛即可；与当前值相同则完全不动
+ * （maxHistoryCount 是 opt 活引用，直接读取比较）。
+ *
+ * 消费方：EngineController 的 data_change 通道（已按节流窗口去重），勿逐命令调用。
+ */
+export function syncHistoryLimit(mindMap: MindMap): void {
+	const root = getRenderRoot(mindMap);
+	if (!root) {
+		return;
+	}
+	const limit = resolveHistoryLimit(countTreeNodes(root));
+	if (mindMap.opt?.maxHistoryCount === limit) {
+		return;
+	}
+	try {
+		mindMap.updateConfig({ maxHistoryCount: limit });
+	} catch (error) {
+		// 引擎中间态（重建窗口）可能拒绝更新：历史预算属尽力而为，不中断事件链
+		console.error('同步命令历史上限失败', error);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -587,9 +616,19 @@ function syncCanvasGeometry(mindMap: MindMap): void {
  *
  * 引擎 view.fit() 基于可见节点的 SVG 包围盒（rbox）计算缩放；性能模式下
  * 视口外节点已被引擎移除出 DOM（removeNodeWhenOutCanvas），直接 fit 只会
- * 适配「可见子集」，大图会适配错位。故先 forceLoadNode 强制渲染全部节点
- * （引擎导出路径 getSvgData 同款做法），再 fit；fit 后引擎会按新视口自动
- * 回收视口外节点，虚拟渲染继续生效。
+ * 适配「可见子集」。旧实现先 forceLoadNode 强制渲染全部节点（5000 节点
+ * ≈1.1s **同步**装配，K70 实测）再 fit——「自动整理 / 切布局」可重复触发，
+ * 是大图上的 1s 级冻结。
+ *
+ * 现改为**数据层 fit**（2026-10-02，K70 残留消除；与 `centerContentAtFullScale`
+ * 同族）：用渲染树布局几何并集算目标缩放与居中平移，零 DOM 装配。语义与 vendor
+ * `View.fit` 对齐：`fitPadding`（默认 50）、缩放上限 1、**三种 flag 下内容中心
+ * 均落在画布中心**（推导：flag1/2/3 的最终中心均为 `p + (E-2p)/2 = E/2`——故
+ * 复刻按中心对齐即可，无需分支）；差异仅在于用**实时容器**而非缓存 `elRect`
+ * 换算（方向为「更正确」，同 K64 既有修订）。
+ *
+ * 数据层几何不可得（渲染树未就绪）时回退旧路径（forceLoadNode + fit）。
+ * 常规模式行为不变（DOM 全量在，vendor fit 的 rbox 口径含描边，更精确）。
  */
 export function fitMindMap(mindMap: MindMap | null): void {
 	if (!mindMap) {
@@ -600,12 +639,67 @@ export function fitMindMap(mindMap: MindMap | null): void {
 		// onResize 尚未触发，不同步会按旧画布尺寸适配）
 		syncCanvasGeometry(mindMap);
 		if (mindMap.opt?.openPerformance) {
+			if (fitPerformanceMindMapFromData(mindMap)) {
+				return;
+			}
+			// 数据层几何不可得：回退全量装配（旧路径）
 			mindMap.renderer.forceLoadNode?.();
 		}
 		mindMap.view?.fit();
 	} catch (error) {
 		console.error('适应画布失败', error);
 	}
+}
+
+/**
+ * 数据层 fit（性能模式专用）：返回是否已处理（false = 调用方回退旧路径）。
+ *
+ * - 目标缩放 = `min(1, 可用宽/盒宽, 可用高/盒高)`（等价 vendor fit 的 flag 1/2/3）；
+ * - 平移 = 内容中心 → 画布中心（见 fitMindMap 的中心推导）；
+ * - `setScale` **不传锚点**（vendor fit 同款：只改 scale、位移不变），随之读新
+ *   变换再算平移；
+ * - **零调用短路**：缩放已对齐时不发 `setScale`、中心已在 ε 内时不发
+ *   `translateXY`——两者都无条件 emit `view_data_change`，性能模式下每次
+ *   都是一轮分片整树渲染（K70）。
+ */
+function fitPerformanceMindMapFromData(mindMap: MindMap): boolean {
+	const size = getCanvasSize(mindMap);
+	const box = measureContentBoxFromData(mindMap);
+	const current = readDrawTransform(mindMap);
+	if (!size || !box || !current || box.width <= 0 || box.height <= 0) {
+		return false;
+	}
+	const padding = Number(mindMap.opt?.fitPadding ?? 0) || 0;
+	const availableWidth = Math.max(1, size.width - padding * 2);
+	const availableHeight = Math.max(1, size.height - padding * 2);
+	const targetScale = Math.min(
+		1,
+		availableWidth / box.width,
+		availableHeight / box.height,
+	);
+	const scaleAligned = Math.abs(current.scaleX - targetScale) < 1e-6;
+	if (!scaleAligned) {
+		mindMap.view?.setScale(targetScale);
+	}
+	const after = scaleAligned ? current : readDrawTransform(mindMap);
+	if (!after) {
+		return false; // 变换读取异常：交给调用方回退（旧路径会重新装配，至少功能可用）
+	}
+	const centerX = (box.x + box.width / 2) * after.scaleX + after.translateX;
+	const centerY = (box.y + box.height / 2) * after.scaleY + after.translateY;
+	const dx = size.width / 2 - centerX;
+	const dy = size.height / 2 - centerY;
+	if (
+		Math.abs(dx) < VIEW_CENTER_EPSILON &&
+		Math.abs(dy) < VIEW_CENTER_EPSILON
+	) {
+		// 已在目标态：零调用。scaleAligned 为假（仅 setScale 过）时同样不发
+		// 白平移——ε 内的 translateXY 引擎虽 no-op，但不带条件地 emit
+		// view_data_change（性能模式下 = 又一次分片整树渲染窗口，K70）
+		return true;
+	}
+	mindMap.view?.translateXY(dx, dy);
+	return true;
 }
 
 /**
@@ -1513,38 +1607,39 @@ export function setNodeImageSize(
 }
 
 /**
- * 帧内**预览**写入节点图片尺寸：只改节点数据 + 重绘，**不进历史、不派发
- * `data_change`**。
+ * 帧内**预览**节点图片尺寸：直写渲染中 `<image>` 的 `width/height`。
  *
- * 为什么不能逐帧走命令（vendor `simple-mind-map.cjs` 实测）：
- * `Command.exec` 末尾是
- * `if (['BACK','FORWARD','SET_NODE_ACTIVE','CLEAR_ACTIVE_NODE'].includes(cmd)) return; this.addHistory()`，
- * 而 `addHistory()` 会 `getCopyData()`（**整树深拷贝**）+ `JSON.stringify` 比对
- * 后 `emit('data_change')`。拖拽调宽每过一个步长就写一次 ⇒
- * ① 每 8px 一条历史（撤销被切碎）；② 每次变动都触发视图的自动保存调度
- * （`data_change` → `scheduleSave`，防抖被反复重启，慢拖时落盘好几次）与状态栏/
- * 标题重算；③ 全树深拷贝 + 序列化比对正是「拖动卡顿」的主要开销。
- * 数据写入与命令**完全等价**（引擎命令本体就是
- * `Object.keys(data).forEach(k => node.nodeData.data[k] = data[k])`），故帧内直接
- * 改数据、收尾再用 `setNodeImageSize` 记一条历史即可。
+ * 为什么不下沉到引擎数据（2026-10-02 重构）：旧实现是「改 `data.imageSize` +
+ * `mindMap.render()`」——每次写入都是**整树**重排，rAF 合帧只能把频率压到
+ * 「每帧一次」，大图拖动仍持续卡顿。改直写与引擎渲染**同源**的 SVG 属性
+ * （vendor `nodeCreateContents`：`new SVGImage().size(...imgSize)`，用户单位 =
+ * content px）后：① 不动数据、不进历史、不派发 `data_change`；② 不触发整树
+ * 重排（只重绘图片本身）；③ 节点外框与兄弟布局延后到收尾的那一次
+ * `setNodeImageSize`（一条历史、一次布局落地）。
+ *
+ * 直写值会被任何一次引擎 render 覆盖回数据值——帧内不修改数据（数据在收尾
+ * 才写），不存在「渲染拉回旧尺寸」的竞态；节点不在 DOM（性能模式视口外）
+ * 或图片元素缺失时静默跳过，由收尾提交兜底。
+ *
+ * @param node 引擎节点：直写目标为自绘 `node_img` 组内的 `<image>`（不经
+ *             引擎实例——本函数只碰 DOM，不写数据、不渲染）。
  */
 export function previewNodeImageSize(
-	mindMap: MindMap,
 	node: MindMapNode,
 	width: number,
 	height: number,
 ): void {
 	try {
-		const data = node.getData() as Record<string, unknown> | undefined;
-		if (!data) {
+		const group = getNodeGroupEl(node);
+		const imageEl = group?.querySelector('image');
+		if (!(imageEl instanceof SVGImageElement)) {
 			return;
 		}
-		data.imageSize = { width, height, custom: true };
+		imageEl.setAttribute('width', String(width));
+		imageEl.setAttribute('height', String(height));
 	} catch (error) {
 		console.error('预览节点图片尺寸失败', error);
-		return;
 	}
-	mindMap.render();
 }
 
 /**

@@ -31,7 +31,9 @@ import {
 	isDarkTheme,
 	isEditingText,
 	replaceMindMapData,
+	syncHistoryLimit,
 } from '../engine/mindmap';
+import { createThrottler } from '../core/concurrency';
 import { shouldEnablePerformanceMode } from '../core/constants';
 import type { NodeContentStyle } from '../engine/mindmap';
 import { ensureUniqueUids } from '../markdown/markdown';
@@ -133,6 +135,31 @@ const VIEWPORT_RESTORE_DELAY_MS = 150;
  * 必须大于 VIEWPORT_RESTORE_DELAY_MS：补居中要在默认视口设置之后才判定签名。
  */
 const VIEWPORT_RECENTER_DELAY_MS = 200;
+/**
+ * 命令历史上限会话内同步的节流窗口（毫秒）：`data_change` 在连续编辑/拖拽下
+ * 高频（引擎 addHistory 自带 100ms 防抖），逐次全树计数没必要；窗口只限制
+ * 计数频率，跨过档位才会真正 `updateConfig`（见 syncHistoryLimit）。
+ */
+const HISTORY_LIMIT_SYNC_THROTTLE_MS = 1000;
+
+/**
+ * 视口签名（scale|x|y）：非对象 / 非有限值返回 null。
+ * savedView.state（data.json 持久化值）与实时视口（getTransformData）共用口径，
+ * 供「已在目标视口上则跳过重复 setTransformData」的幂等判定（见 restoreOrFitViewport）。
+ */
+function transformSignatureOf(state: unknown): string | null {
+	if (!state || typeof state !== 'object') {
+		return null;
+	}
+	const s = state as { scale?: unknown; x?: unknown; y?: unknown };
+	const scale = Number(s.scale);
+	const x = Number(s.x);
+	const y = Number(s.y);
+	if (!Number.isFinite(scale) || !Number.isFinite(x) || !Number.isFinite(y)) {
+		return null;
+	}
+	return `${scale}|${x}|${y}`;
+}
 
 export class EngineController {
 	/** 引擎实例作用域的事件绑定器（initMindMap 时注册，destroy 一次性清理） */
@@ -181,6 +208,10 @@ export class EngineController {
 	 * （首帧重算、落界校验回退、补居中），绝不覆盖用户的缩放/平移。
 	 */
 	private restoredSavedViewport = false;
+	/** 命令历史上限同步的节流器（随引擎生命周期，销毁时取消） */
+	private readonly historyLimitThrottler = createThrottler(
+		HISTORY_LIMIT_SYNC_THROTTLE_MS,
+	);
 
 	constructor(private readonly deps: EngineControllerDeps) {}
 
@@ -294,6 +325,14 @@ export class EngineController {
 			this.engineEvents.onEngine(this.mindMap, 'data_change', () => {
 				this.deps.onRootDataChanged();
 				this.deps.onDataChanged();
+				// 会话内长大的图要让 30MB 历史上限预算随当前节点数收敛（创建期
+				// 只反推一次；从空图长到 1000 节点仍留 500 条 ⇒ 最坏 ≈192MB）。
+				// 节流 1s：data_change 高频，且跨档位才会真正 updateConfig。
+				this.historyLimitThrottler.run(() => {
+					if (this.mindMap) {
+						syncHistoryLimit(this.mindMap);
+					}
+				});
 			});
 			// 编辑框输入/粘贴：payload 含节点（data_change 不带节点，无法识别
 			// 「哪个节点被编辑」）——自动拆分的候选捕获源（防腐：此处取 payload 节点）
@@ -401,17 +440,18 @@ export class EngineController {
 		if (!this.mindMap) {
 			return;
 		}
-		// 深拷贝后重建：initMindMap 会先销毁旧引擎并原地改写 uid（ensureUniqueUids），
-		// 传活引用会在销毁期间被就地修改（依赖旧引擎不再回写该对象），存在隐患。
+		// 数据来源：引擎 `getData()` **本身已是深拷贝**（`command.getCopyData()`
+		// → `copyRenderTree` + `simpleDeepClone`，契约由 tests/vendor-contract.test.ts
+		// 钉住），initMindMap 内部还会再克隆一次（`handleData`）——2026-10-02 删除了
+		// 此前的第三份 `structuredClone`（其注释声称「防传活引用被就地修改」，该论据
+		// 在当前 vendor 行为下不成立；一轮重建原为 3 次全树拷贝）。
 		//
-		// 异常防护（2026-09-28 加固）：深拷贝可能因不可克隆值抛 DataCloneError
-		//（异常数据或引擎内部形态变化）——与 initMindMap 内部同风格：记录并
+		// 异常防护（2026-09-28 加固，保留）：与 initMindMap 内部同风格——记录并
 		// **保留现有引擎可用**，不让异常逃逸出设置应用路径（重建失败远好过
 		// 中断后续键的应用）。initMindMap 自身失败时由它内部处理（销毁+提示），
 		// 此处不会重复兜底。
 		try {
-			const data = structuredClone(this.mindMap.getData());
-			this.initMindMap(data);
+			this.initMindMap(this.mindMap.getData());
 		} catch (error) {
 			console.error('重建引擎失败，保留当前实例', error);
 		}
@@ -422,6 +462,7 @@ export class EngineController {
 		this.disconnectInitObserver();
 		this.cancelViewportTimer();
 		this.cancelRecenterTimer();
+		this.historyLimitThrottler.cancel();
 		this.defaultViewSignature = null;
 		this.initialViewportRecalcBudget = 0;
 		this.restoredSavedViewport = false;
@@ -596,6 +637,22 @@ export class EngineController {
 		const savedView = this.deps.viewState.getView(file.path);
 		try {
 			if (savedView) {
+				// 幂等短路（2026-10-02）：本函数在打开窗口至少被调两次（布局落地
+				// 事件 + 150ms 兜底），而 setTransformData **无条件** emit
+				// view_data_change——性能模式下该事件触发分片整树渲染（K70④ 给
+				// center 分支加过同款短路，savedView 分支此前缺失）。签名
+				// （scale|x|y）一致 = 当前已在保存视口上：只维持「恢复态」标记。
+				const savedSignature = transformSignatureOf(
+					(savedView as { state?: unknown }).state,
+				);
+				if (
+					savedSignature !== null &&
+					savedSignature === this.viewSignature()
+				) {
+					this.defaultViewSignature = null;
+					this.restoredSavedViewport = true;
+					return;
+				}
 				mindMap.view.setTransformData(savedView);
 				// 保存的变换按当时的容器/内容记录：尺寸大改或内容布局变化后
 				// 恢复它可能把内容推出画布（打开即空白）。明确判定不可见时
@@ -659,22 +716,9 @@ export class EngineController {
 			return null;
 		}
 		try {
-			const state = mindMap.view.getTransformData().state as unknown as {
-				scale?: unknown;
-				x?: unknown;
-				y?: unknown;
-			};
-			const scale = Number(state.scale);
-			const x = Number(state.x);
-			const y = Number(state.y);
-			if (
-				!Number.isFinite(scale) ||
-				!Number.isFinite(x) ||
-				!Number.isFinite(y)
-			) {
-				return null;
-			}
-			return `${scale}|${x}|${y}`;
+			return transformSignatureOf(
+				(mindMap.view.getTransformData() as { state?: unknown }).state,
+			);
 		} catch (error) {
 			console.warn('读取视口签名失败', error);
 			return null;

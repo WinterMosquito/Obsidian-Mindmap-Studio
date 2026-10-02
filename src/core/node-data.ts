@@ -14,9 +14,9 @@ import type { MdNodeMeta } from '../domain/md-meta';
  * ## 先认准是哪个 `getData()`：两者语义**相反**（vendor 0.14.0-fix.3 实测）
  * - `Node.getData()`（单节点）＝ **活引用**：
  *   `getData(t){return t?this.nodeData.data[t]:this.nodeData.data}`。
- *   就地改写即改引擎数据——帧内图片尺寸预览（`engine/mindmap.previewNodeImageSize`）、
- *   `delete data.mdImageAutoSize` 这类「清标记」都依赖它。**不可当快照保存**：
- *   渲染期间同一对象仍在变。
+ *   就地改写即改引擎数据——`delete data.mdImageAutoSize` 这类「清标记」与
+ *   各覆盖写入路径（view-node-actions / links-tree）的字段改写都依赖它。
+ *   **不可当快照保存**：渲染期间同一对象仍在变。
  * - `MindMap.getData()`（整树）＝ **深拷贝**：
  *   `getData(){let e=this.command.getCopyData(), …}`（另外补 `uid`/`smmVersion`）。
  *   `splitAllLinks` 之类「改树后整树回灌」的路径依赖这个拷贝。

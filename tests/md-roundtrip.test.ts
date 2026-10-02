@@ -18,6 +18,7 @@
  * src/services/view-state.ts、src/domain/{md-meta,wikilink}.ts、src/core/constants.ts。
  */
 import { describe, expect, it, vi } from 'vitest';
+import { App, TFile } from 'obsidian';
 import { parseMdOutline } from '../src/markdown/md-outline';
 import { serializeMdBody } from '../src/markdown/md-serialize';
 import {
@@ -776,6 +777,37 @@ describe('编辑合成', () => {
 // ---------------------------------------------------------------------------
 // 五、rawOk「未编辑检测」分支矩阵（md-serialize 的数据无损性核心启发式）
 // ---------------------------------------------------------------------------
+/**
+ * 最小 fake App（rawOk 引用等价用例用）：路径直查 + basename 链接解析 +
+ * 资源地址回读（`app://local/` 前缀）——覆盖 resolvePathToFile 的直解与
+ * 官方 getFirstLinkpathDest 轨，不铺索引兜底面。
+ */
+function makeVaultApp(files: TFile[]): App {
+	const byPath = new Map(files.map((f) => [f.path, f] as const));
+	const byName = new Map(files.map((f) => [f.name, f] as const));
+	return Object.assign(new App(), {
+		vault: {
+			getFiles: (): TFile[] => files,
+			getFileByPath: (path: string): TFile | null => byPath.get(path) ?? null,
+			getResourcePath: (file: TFile): string => `app://local/${file.path}`,
+		},
+		metadataCache: {
+			getFirstLinkpathDest: (linkpath: string): TFile | null =>
+				byPath.get(linkpath) ?? byName.get(linkpath) ?? null,
+		},
+	});
+}
+
+function makeTFile(path: string): TFile {
+	const name = path.split('/').pop() ?? path;
+	return Object.assign(new TFile(), {
+		path,
+		name,
+		basename: name.replace(/\.[^.]+$/, ''),
+		extension: name.split('.').pop() ?? '',
+	});
+}
+
 describe('rawOk 未编辑检测分支矩阵', () => {
 	it('① 文本被编辑（text ≠ mdDerivedText）→ 合成，旧 mdRaw 不再回写', () => {
 		const { tree, data } = firstChild('- [[目标]] 原文\n');
@@ -859,6 +891,56 @@ describe('rawOk 未编辑检测分支矩阵', () => {
 		expect(data.mdImageWidth).toBe(300);
 		data.imageSize = { width: 250, height: 125, custom: true };
 		expect(serializeMdBody(tree, null)).toBe('- ![[a.png|250]]');
+	});
+
+	it('⑪ 子文件夹图片裸名引用（加载期已转资源地址）→ 解析等价视为未编辑，逐字回写', () => {
+		const { tree, data } = firstChild('- ![[a.png]]\n');
+		expect(data.image, '解析：image 存原文裸名').toBe('a.png');
+		// 模拟加载期 walkResolveImagePaths：库内路径 → 资源地址（可逆标准步）
+		data.image = 'app://local/附件/a.png';
+		const app = makeVaultApp([makeTFile('附件/a.png')]);
+		// 修复前：特征串用「反查库内路径」（附件/a.png）在 raw（裸名）中不命中
+		// → 误判「图已变更」→ 合成把引用扩写成 ![[附件/a.png]]
+		expect(serializeMdBody(tree, app)).toBe('- ![[a.png]]');
+	});
+
+	it('⑫ md 图片带自定义尺寸（尺寸未变，尖括号路径）→ 逐字回写，不再尾插漂移', () => {
+		const md = '- 看图 ![截图|480](<目录 带空格.png>) 完\n';
+		const { tree, data } = firstChild(md);
+		expect(data.image, '解析：图片目标原样保留（含 <>，回写靠它保真）').toBe(
+			'<目录 带空格.png>',
+		);
+		expect(data.mdImageWidth).toBe(480);
+		// 模拟拖宽后的显示尺寸（与原文一致；md 形态尺寸在 alt 位）
+		data.imageSize = { width: 480, height: 100, custom: true };
+		// 修复前：尺寸特征拼成「路径|480」，md 形态里目标与尺寸不相邻 → 恒不命中
+		// → 合成且图片 token 尾插 → 「看图 带空格.png 完 ![截图|480](…)」
+		expect(serializeMdBody(tree, null)).toBe(md.trimEnd());
+	});
+
+	it('⑬ md 链接的尖括号目标（含空格路径）→ 逐字回写', () => {
+		const md = '- 见 [设计稿](<目录 带空格.md>) 完\n';
+		const { tree } = firstChild(md);
+		expect(serializeMdBody(tree, null), '不再走合成（避免每次保存重复合成）').toBe(
+			md.trimEnd(),
+		);
+	});
+
+	it('⑭ 换图后（raw 仍是旧图引用）→ 必须合成，新图不被旧 mdRaw 覆盖', () => {
+		const { tree, data } = firstChild('- ![[old.png]]\n');
+		// 模拟 applyNodeImage：image 换新资源地址、mdImageTarget 同步新路径
+		data.image = 'app://local/新图.png';
+		data.mdImageTarget = '新图.png';
+		const app = makeVaultApp([makeTFile('新图.png')]);
+		expect(serializeMdBody(tree, app)).toBe('- ![[新图.png]]');
+	});
+
+	it('⑮ 图片文件重命名后（字段已更新、raw 仍是旧引用）→ 合成写新路径', () => {
+		const { tree, data } = firstChild('- ![[old.png]]\n');
+		// 模拟 links-tree 重命名：image 更新为新资源地址（库中已无 old.png）
+		data.image = 'app://local/附件/new.png';
+		const app = makeVaultApp([makeTFile('附件/new.png')]);
+		expect(serializeMdBody(tree, app)).toBe('- ![[附件/new.png]]');
 	});
 });
 

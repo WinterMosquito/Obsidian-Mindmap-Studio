@@ -393,6 +393,8 @@ interface LinkChannelCase {
 	 * 已解析到库内文件时会按官方「New link format」取路径（默认最短路径）。
 	 */
 	written?: string;
+	/** 覆盖写入后应补齐的行级原文（applyInlineRawMeta 产出，渲染源/rawOk 共同前提） */
+	mdRaw: string;
 }
 
 const LINK_CHANNEL_CASES: LinkChannelCase[] = [
@@ -402,6 +404,7 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		resolved: null,
 		channel: 'wiki',
 		display: '新笔记',
+		mdRaw: '[[新笔记]]',
 	},
 	{
 		name: '文档双链带别名 → 可见名取别名',
@@ -409,6 +412,7 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		resolved: null,
 		channel: 'wiki',
 		display: '别名',
+		mdRaw: '[[笔记|别名]]',
 	},
 	{
 		name: '带区块引用且已解析到库内 .md → mdWikiLinkpath',
@@ -420,6 +424,7 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		written: '[[笔记#小节]]',
 		// 可见文本取 linkpath 末段（区块引用保留在文本里），解析才用去掉 # 的 target
 		display: '笔记#小节',
+		mdRaw: '[[笔记#小节]]',
 	},
 	{
 		name: '附件双链（[[报告.pdf]]）→ attachmentUrl（回形针）',
@@ -428,6 +433,7 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		channel: 'attachment',
 		display: '报告.pdf',
 		url: '报告.pdf',
+		mdRaw: '[[报告.pdf]]',
 	},
 	{
 		name: '附件双链带别名 → 回形针标题与节点文本都用别名',
@@ -436,6 +442,7 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		channel: 'attachment',
 		display: '说明',
 		url: '报告.pdf',
+		mdRaw: '[[报告.pdf|说明]]',
 	},
 	{
 		name: '无扩展名目标但库内实际是图片：按真实扩展名走附件通道',
@@ -444,6 +451,7 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		channel: 'attachment',
 		display: '插图',
 		url: '插图',
+		mdRaw: '[[插图]]',
 	},
 	{
 		name: '库内路径（非双链）→ attachmentUrl，目标取整串路径',
@@ -452,6 +460,7 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		channel: 'attachment',
 		display: '图.png',
 		url: 'assets/图.png',
+		mdRaw: '[[assets/图.png]]',
 	},
 	{
 		name: 'http 外链 → 引擎 hyperlink（原生链接图标）',
@@ -459,6 +468,8 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		resolved: null,
 		channel: 'hyperlink',
 		display: '',
+		// hyperlink 分支的 mdRaw 断言在下方动态构造（`<url>`）；此处仅为类型完整
+		mdRaw: '<https://example.com/a>',
 	},
 	{
 		name: 'obsidian:// 协议链接 → 引擎 hyperlink',
@@ -466,6 +477,7 @@ const LINK_CHANNEL_CASES: LinkChannelCase[] = [
 		resolved: null,
 		channel: 'hyperlink',
 		display: '',
+		mdRaw: '<obsidian://open?vault=v&file=n>',
 	},
 ];
 
@@ -535,7 +547,12 @@ describe('addLinkToActiveNode：链接通道分流（表驱动）', () => {
 			expect(data.attachmentName).toBe(testCase.display);
 			expect(data.mdWikiLinkpath).toBeUndefined();
 		}
-	});
+		// 覆盖分支的行级元数据（渲染源与 rawOk 逐字回写的共同前提）：五条通道
+		// 写入路径必须同口径补齐——applyAttachmentLink 曾在 R4 修订与 2026-10-02
+		// 行级元数据修复中两度漏步，本断言防第三次
+		expect(data.mdRaw).toBe(testCase.mdRaw);
+		expect(data.mdDerivedText).toBe(testCase.display);
+		});
 });
 
 describe('addLinkToActiveNode：库内解析入参', () => {

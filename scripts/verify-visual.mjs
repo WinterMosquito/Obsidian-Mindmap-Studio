@@ -421,7 +421,7 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		null,
 		'\t',
 	);
-	return `import { applyImageSizeCorrectionsToEngine, applyPerformanceMode, centerContentAtFullScale, countTreeNodes, createMindMap, HISTORY_BUDGET_BYTES, isCustomNodeContent, previewNodeImageSize, refreshNodeCustomContent, replaceMindMapData, resetZoom, resolveHistoryLimit, setNodeImageSize, setNodeText } from ${JSON.stringify(mindmapModule)};
+	return `import { applyImageSizeCorrectionsToEngine, applyPerformanceMode, centerContentAtFullScale, countTreeNodes, createMindMap, fitMindMap, HISTORY_BUDGET_BYTES, isCustomNodeContent, previewNodeImageSize, refreshNodeCustomContent, replaceMindMapData, resetZoom, resolveHistoryLimit, setNodeImageSize, setNodeText } from ${JSON.stringify(mindmapModule)};
 import { ensureDefaultImageSizes } from ${JSON.stringify(imagesPathModule)};
 import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
 import { buildInlineNodeContent, segmentCacheStats } from ${JSON.stringify(inlineContentModule)};
@@ -677,6 +677,29 @@ const runPerfBoxProbe = () => {
 					(dataBox.y + dataBox.height / 2) * transform.scaleY + transform.translateY,
 				]
 			: null;
+		// fit 数据层改造（2026-10-02）：性能模式不再 forceLoadNode 全树装配——
+		// 目标缩放 ≤1、内容中心落画布中心；第二次调用零 view_data_change（幂等短路）
+		let fitViewChanges = 0;
+		const countViewChange = () => {
+			fitViewChanges++;
+		};
+		perfBoxMap.on('view_data_change', countViewChange);
+		fitMindMap(perfBoxMap);
+		const afterFitDom = domCount();
+		const fitTransform = perfBoxMap.draw.transform();
+		const fitDataBox = collectDataBox(perfBoxMap.renderer.root);
+		const fitCenter = fitDataBox
+			? [
+					(fitDataBox.x + fitDataBox.width / 2) * fitTransform.scaleX + fitTransform.translateX,
+					(fitDataBox.y + fitDataBox.height / 2) * fitTransform.scaleY + fitTransform.translateY,
+				]
+			: null;
+		const firstFitChanges = fitViewChanges;
+		fitMindMap(perfBoxMap);
+		const fitIdempotent = fitViewChanges === firstFitChanges;
+		if (typeof perfBoxMap.off === 'function') {
+			perfBoxMap.off('view_data_change', countViewChange);
+		}
 		// 对照：DOM 全量盒（forceLoadNode + rbox）放最后测，避免污染上面的裁剪计数
 		perfBoxMap.renderer.forceLoadNode();
 		const allDom = domCount();
@@ -691,6 +714,12 @@ const runPerfBoxProbe = () => {
 			contentCenter: contentCenter
 				? [Math.round(contentCenter[0]), Math.round(contentCenter[1])]
 				: null,
+			afterFitDom,
+			fitScale: Math.round(fitTransform.scaleX * 1000) / 1000,
+			fitCenter: fitCenter
+				? [Math.round(fitCenter[0]), Math.round(fitCenter[1])]
+				: null,
+			fitIdempotent,
 			canvasCenter: [
 				Math.round(canvasRect.width / 2),
 				Math.round(canvasRect.height / 2),
@@ -698,7 +727,12 @@ const runPerfBoxProbe = () => {
 			dataBox: dataBox
 				? { width: Math.round(dataBox.width), height: Math.round(dataBox.height) }
 				: null,
-			domBox: { width: Math.round(rbox.width), height: Math.round(rbox.height) },
+			// DOM 盒按 fit 后的 scale 归一为 1:1 布局尺寸（rbox 含当前变换；
+			// fit 段已改变缩放，若不归一对比的是屏幕尺寸——2026-10-02 修正口径）
+			domBox: {
+				width: Math.round(rbox.width / fitTransform.scaleX),
+				height: Math.round(rbox.height / fitTransform.scaleY),
+			},
 		});
 	} catch (error) {
 		perfBoxProbe.textContent = JSON.stringify({ error: String(error) });
@@ -2091,7 +2125,7 @@ window.setTimeout(() => {
 				() =>
 					measure(
 						'previewNodeImageSize',
-						() => previewNodeImageSize(map, pick('re-l-'), 100, 30),
+						() => previewNodeImageSize(pick('re-l-'), 100, 30),
 						() =>
 							measure(
 								'refreshNodeCustomContent',
@@ -2182,12 +2216,12 @@ window.setTimeout(() => {
 	renderEcoProbe.textContent = JSON.stringify(report);
 }, 1500);
 
-// —— 调宽写入通道探针：帧内预览不上历史、不派发 data_change；收尾提交各一次 ——
+// —— 调宽写入通道探针：帧内 DOM 直写不触引擎；收尾提交各一次 ——
 // 用户实测「图片拖动大小时保存好几次 + 卡顿」的守卫：引擎 Command.exec 对非
 // 白名单命令一律 addHistory()（整树 getCopyData + JSON.stringify 比对）并
 // emit('data_change') ⇒ 视图层 scheduleSave / 状态栏 / 标题重算都被逐帧触发。
-// 故帧内只走 previewNodeImageSize（同款数据写入，不记历史），收尾一次
-// setNodeImageSize。
+// 故帧内走 previewNodeImageSize（2026-10-02 起为 DOM 直写 <image> 属性，
+// 不写数据、不重绘、不记历史），收尾一次 setNodeImageSize。
 const historyProbe = document.createElement('pre');
 historyProbe.id = 'history-probe';
 document.body.appendChild(historyProbe);
@@ -2202,16 +2236,26 @@ window.setTimeout(() => {
 		holder.style.width = '600px';
 		holder.style.height = '300px';
 		document.body.appendChild(holder);
-		const map = createMindMap(
-			holder,
-			{
-				data: { text: 'h-root', uid: 'h-root' },
-				children: [
-					{ data: { text: 'h-child', uid: 'h-child' }, children: [] },
-				],
-			},
-			options,
-		);
+		const tree = {
+			data: { text: 'h-root', uid: 'h-root' },
+			children: [
+				{
+					// 直写预览的目标是渲染中的 <image>：节点须先挂一张图
+					//（1×1 GIF data URI，与 image/render-eco 探针同款）
+					data: {
+						text: 'h-child',
+						uid: 'h-child',
+						image:
+							'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+					},
+					children: [],
+				},
+			],
+		};
+		// 「有 image 无 imageSize」直接建图会让引擎渲染链抛错（image 探针的
+		// 对照组已记录该行为）——先按生产加载路径填默认尺寸再建图
+		ensureDefaultImageSizes(tree);
+		const map = createMindMap(holder, tree, options);
 		let dataChange = 0;
 		map.on('data_change', () => {
 			dataChange++;
@@ -2219,11 +2263,8 @@ window.setTimeout(() => {
 		// 历史写入是**防抖**的（引擎构造函数把 addHistory 包成 100ms 延迟，
 		// addHistoryTime 默认 100）→ 读数必须等窗口过去，否则恒为 0
 		const AFTER_HISTORY_WINDOW_MS = 320;
-		window.setTimeout(() => {
-			const node =
-				map.renderer && map.renderer.root
-					? map.renderer.root.children[0]
-					: null;
+		/** 读数主体：帧内直写 → 等历史窗口 → 收尾提交 → 再等窗口 → 结算 */
+		const runProbe = (node) => {
 			// 历史数组会被引擎**整体重建**（addHistory 里 this.history =
 			// this.history.slice(...)），必须每次现取，缓存引用会读到旧数组
 			const historyLength = () => {
@@ -2236,25 +2277,55 @@ window.setTimeout(() => {
 			// data_change 基线取在这里：建图时的初始历史（addHistoryOnInit）已在
 			// 上面的等待窗口里落地，不该算进拖动阶段
 			const changeBefore = dataChange;
-			// ① 拖动中的 6 帧（每帧都超过合并步长）：等窗口后仍必须零增长
+			// 直写前的数据基线（默认尺寸，数值快照——getData 是活引用）
+			const baseline = node ? node.getData() : null;
+			report.framesBaselineWidth =
+				baseline && baseline.imageSize ? baseline.imageSize.width : null;
+			// ① 拖动中的 6 帧（DOM 直写预览）：等窗口后历史/派发仍必须零增长
 			for (let i = 1; i <= 6; i++) {
-				previewNodeImageSize(map, node, 40 + i * 8, 40 + i * 8);
+				previewNodeImageSize(node, 40 + i * 8, 40 + i * 8);
 			}
+			// 直写目标：渲染中的 <image>（最后一帧 88 应落在 width 属性上）
+			const imgEl = holder.querySelector('image');
+			report.hasImageEl = !!imgEl;
+			report.framesDomWidth = imgEl
+				? Number(imgEl.getAttribute('width'))
+				: null;
+			// 帧内不得写引擎数据（数据只在收尾提交）：与直写前的基线（默认尺寸，
+			// 数值快照——getData 是活引用，缓存对象会读到就地改写后的值）比对
 			const data = node ? node.getData() : null;
-			report.framesWrittenWidth =
+			report.framesDataImageSize =
 				data && data.imageSize ? data.imageSize.width : null;
 			window.setTimeout(() => {
 				report.framesHistoryDelta = historyLength() - before;
 				report.framesDataChange = dataChange - changeBefore;
 				// ② 收尾提交一次（应记一条历史、派发一次 data_change）
-				setNodeImageSize(map, node, 200, 200);
+				if (node) {
+					setNodeImageSize(map, node, 200, 200);
+				}
 				window.setTimeout(() => {
 					report.commitHistoryDelta = historyLength() - before;
 					report.commitDataChange = dataChange - changeBefore;
 					historyProbe.textContent = JSON.stringify(report);
 				}, AFTER_HISTORY_WINDOW_MS);
 			}, AFTER_HISTORY_WINDOW_MS);
-		}, 250);
+		};
+		// 渲染就绪轮询（图片节点使首帧链条变长：固定延时在负载机上会读到
+		// renderer.root 尚为 null 的中间态——与 perf/image/count 探针同款
+		// 加固；上限 20×100ms，超时也进入读数，让断言以真实读数失败而非静默）
+		let readyAttempts = 0;
+		const waitForRoot = () => {
+			readyAttempts++;
+			const root = map.renderer ? map.renderer.root : null;
+			const node = root ? root.children[0] : null;
+			const imgEl = holder.querySelector('image');
+			if ((!node || !imgEl) && readyAttempts < 20) {
+				window.setTimeout(waitForRoot, 100);
+				return;
+			}
+			runProbe(node);
+		};
+		waitForRoot();
 		return;
 	} catch (error) {
 		report.error = String(error);
@@ -3250,6 +3321,33 @@ function checkPerfBox(dom) {
 	) {
 		failures.push(`内容中心 (${cx},${cy}) 未居中于画布中心 (${wx},${wy})`);
 	}
+	// fit 数据层改造（2026-10-02）：不装配全量 DOM / 缩放 ≤1 / 居中 / 幂等短路
+	if (!(probe.afterFitDom < probe.total * 0.5)) {
+		failures.push(
+			`fit 后 DOM ${probe.afterFitDom}/${probe.total}：fitMindMap 装配了全量节点（应走数据层 fit）`,
+		);
+	}
+	if (typeof probe.fitScale !== 'number' || probe.fitScale > 1.001) {
+		failures.push(`fit 缩放 ${probe.fitScale} 越界（fit 不放大，应 ≤ 1）`);
+	} else if (probe.fitScale >= 1) {
+		failures.push(
+			`fit 缩放 ${probe.fitScale} 未收敛（本图内容大于视口，应 < 1）`,
+		);
+	}
+	const [fx, fy] = probe.fitCenter ?? [];
+	if (
+		typeof fx !== 'number' ||
+		typeof fy !== 'number' ||
+		Math.abs(fx - wx) > 2 ||
+		Math.abs(fy - wy) > 2
+	) {
+		failures.push(`fit 后内容中心 (${fx},${fy}) 未居中于画布中心 (${wx},${wy})`);
+	}
+	if (probe.fitIdempotent !== true) {
+		failures.push(
+			'fit 幂等失效：第二次调用仍派发 view_data_change（性能模式下白触发分片渲染）',
+		);
+	}
 	const dataWidth = probe.dataBox?.width;
 	const dataHeight = probe.dataBox?.height;
 	const domWidth = probe.domBox?.width;
@@ -3633,7 +3731,6 @@ function checkRenderEco(dom, diag) {
 	// + 裸 updateConfig 两个对照（引擎 forceLoadNode 自带的一次）
 	const exactlyOne = [
 		'setNodeImageSize',
-		'previewNodeImageSize',
 		'refreshNodeCustomContent',
 		'replaceMindMapData',
 		'applyPerformanceModeOff',
@@ -3648,6 +3745,20 @@ function checkRenderEco(dom, diag) {
 		if (probe[label] !== 1) {
 			failures.push(
 				`${label}：一次动作的布局落地为 ${probe[label]} 次（应恰好 1 次）`,
+			);
+		}
+	}
+	// 帧内 DOM 直写（2026-10-02 起）：只改 <image> 属性、不经引擎渲染
+	// ⇒ 布局落地应为 0 次（旧实现「改数据 + 整树 render」在此为 1 次）
+	const exactlyZero = ['previewNodeImageSize'];
+	for (const label of exactlyZero) {
+		if (probe[label + 'Error']) {
+			failures.push(`${label}：动作抛错 ${probe[label + 'Error']}`);
+			continue;
+		}
+		if (probe[label] !== 0) {
+			failures.push(
+				`${label}：DOM 直写不应触发布局落地（实测 ${probe[label]} 次，应为 0）`,
 			);
 		}
 	}
@@ -3681,12 +3792,12 @@ function checkRenderEco(dom, diag) {
 }
 
 /**
- * 校验调宽写入通道探针（`#history-probe`）：帧内不得产生历史/保存调度。
+ * 校验调宽写入通道探针（`#history-probe`）：帧内 DOM 直写不得触碰引擎历史/派发。
  *
  * 断言口径：
- * - 6 帧预览写入后历史**零增长**、`data_change` **零次**（否则每次拖拽都触发
- *   视图的自动保存调度与状态栏/标题重算——用户实测「保存好几次 + 卡顿」）；
- * - 帧内数据确实生效（写入宽度 = 最后一帧请求值）；
+ * - 6 帧 DOM 直写预览后历史**零增长**、`data_change` **零次**（否则每次拖拽
+ *   都触发视图的自动保存调度与状态栏/标题重算——用户实测「保存好几次 + 卡顿」）；
+ * - 帧内直写确实生效（`<image>` 宽度 = 最后一帧请求值），且**不写引擎数据**；
  * - 收尾一次提交：历史 **+1**、`data_change` **1 次**（一次拖动一条历史，
  *   一次 Ctrl+Z 撤回整次调宽；一次保存调度）。
  */
@@ -3716,9 +3827,19 @@ function checkHistory(dom) {
 			`帧内预览触发了 ${probe.framesDataChange} 次 data_change（自动保存被逐帧调度 = 保存好几次 + 卡顿）`,
 		);
 	}
-	if (probe.framesWrittenWidth !== 88) {
+	if (probe.hasImageEl !== true) {
 		failures.push(
-			`帧内数据未生效：写入宽度 ${probe.framesWrittenWidth} ≠ 88（最后一帧请求值）`,
+			'探针环境异常（节点 <image> 元素取不到，DOM 直写无法观测）',
+		);
+	}
+	if (probe.framesDomWidth !== 88) {
+		failures.push(
+			`帧内 DOM 直写未生效：<image> 宽度 ${probe.framesDomWidth} ≠ 88（最后一帧请求值）`,
+		);
+	}
+	if (probe.framesDataImageSize !== probe.framesBaselineWidth) {
+		failures.push(
+			`帧内不应写引擎数据：data.imageSize.width ${probe.framesDataImageSize} ≠ 基线 ${probe.framesBaselineWidth}（应只在收尾提交）`,
 		);
 	}
 	if (probe.commitHistoryDelta !== 1) {
@@ -5082,9 +5203,19 @@ function checkLongSessionMemory({ control, load, edits, diag }) {
 	const failures = [];
 	const fmtMb = (bytes) =>
 		typeof bytes === 'number' ? `${(bytes / 1048576).toFixed(1)}MB` : 'n/a';
+	const fmtSegments = (segments) => {
+		if (!segments) {
+			return 'n/a';
+		}
+		const chars =
+			typeof segments.chars === 'number'
+				? ` / ${segments.chars} 字符（预算 ${String(segments.maxChars)}）`
+				: '';
+		return `${segments.size} 项（上限 ${String(segments.max)}）${chars}`;
+	};
 	const fmt = (mem) =>
 		mem
-			? `DOM ${mem.elements}（测量 ${mem.measureEls}）/ 堆 ${fmtMb(mem.heapBytes)} / 历史 ${String(mem.historyCount)} 条 ${fmtMb(mem.historyBytes)}（上限 ${String(mem.historyCap)}）/ 段缓存 ${mem.segments.size}（上限 ${mem.segments.max}）`
+			? `DOM ${mem.elements}（测量 ${mem.measureEls}）/ 堆 ${fmtMb(mem.heapBytes)} / 历史 ${String(mem.historyCount)} 条 ${fmtMb(mem.historyBytes)}（上限 ${String(mem.historyCap)}）/ 段缓存 ${fmtSegments(mem.segments)}`
 			: 'n/a';
 	diag.log('      ⓘ 长会话内存（500 节点 / 非性能模式，强制 GC 后采样）');
 	if (control) diag.log(`         空跑 settle 后：${fmt(control.after)}`);
@@ -5137,6 +5268,16 @@ function checkLongSessionMemory({ control, load, edits, diag }) {
 	if (after.segments && after.segments.size > after.segments.max) {
 		failures.push(
 			`段序列缓存 ${after.segments.size} 项超过上限 ${after.segments.max}（LRU 淘汰失效）`,
+		);
+	}
+	if (
+		after.segments &&
+		typeof after.segments.chars === 'number' &&
+		typeof after.segments.maxChars === 'number' &&
+		after.segments.chars > after.segments.maxChars
+	) {
+		failures.push(
+			`段序列缓存键字符总量 ${after.segments.chars} 超预算 ${after.segments.maxChars}（字符维度淘汰失效）`,
 		);
 	}
 	// —— 预算不变式（K66）：上限 = 30MB 预算反推值；满仓时确被裁剪到该值且堆在预算内 ——

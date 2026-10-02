@@ -50,6 +50,8 @@ const mocks = vi.hoisted(() => {
 		replaceMindMapData: vi.fn(),
 		renameReferencesInTree: vi.fn(),
 		removeReferencesOnDelete: vi.fn(),
+		// data_change 通道的命令历史上限同步（会话内长大的图收敛到 30MB 预算）
+		syncHistoryLimit: vi.fn(),
 	};
 });
 
@@ -342,6 +344,7 @@ beforeEach(() => {
 	mocks.renameReferencesInTree.mockReturnValue(true);
 	mocks.removeReferencesOnDelete.mockReset();
 	mocks.removeReferencesOnDelete.mockReturnValue(true);
+	mocks.syncHistoryLimit.mockReset();
 	mocks.createMindMap.mockReset();
 	mocks.createMindMap.mockImplementation(() => {
 		const engine = makeEngineStub();
@@ -776,6 +779,20 @@ describe('EngineController 引擎事件转发', () => {
 		expect(h.deps.onRootDataChanged).toHaveBeenCalledTimes(2);
 	});
 
+	it('data_change → 命令历史上限同步（节流窗口内只跑一次，作用于当前引擎）', () => {
+		const h = readyHarness();
+		const engine = h.engines[0]!;
+
+		fireEngineEvent(engine, 'data_change');
+		fireEngineEvent(engine, 'data_change');
+
+		expect(
+			mocks.syncHistoryLimit,
+			'首次立即执行、窗口内合并（data_change 高频）',
+		).toHaveBeenCalledTimes(1);
+		expect(mocks.syncHistoryLimit).toHaveBeenCalledWith(engine);
+	});
+
 	it('node_text_edit_change 取 payload.node 转发；缺参/畸形 payload 静默忽略', () => {
 		const h = readyHarness();
 		const engine = h.engines[0]!;
@@ -1038,22 +1055,32 @@ describe('EngineController 引用更新预检（零拷贝短路）', () => {
 // ---------------------------------------------------------------------------
 
 describe('EngineController.refresh（引擎重建）', () => {
-	it('深拷贝当前树后重建：新数据对象（含嵌套节点不复用引用）', () => {
+	it('重建走 getData 结果：深拷贝由引擎侧保证（vendor-contract 钉住），本层不再二次克隆', () => {
 		const h = buildHarness();
 		h.canvas.width = 800;
 		h.canvas.height = 600;
 		const tree = makeTree('Root', [makeTree('Child')]);
 		h.controller.initMindMap(tree);
 		const firstEngine = h.engines[0]!;
-		firstEngine.getData.mockReturnValue(tree);
+		// 引擎 getData() 已返回深拷贝（真实引擎：command.getCopyData →
+		// copyRenderTree + simpleDeepClone；契约见 tests/vendor-contract.test.ts
+		// 的「MindMap.getData() 返回拷贝」）。本层只透传——2026-10-02 删除了此前的
+		// 第三份 structuredClone（一轮重建原为 3 次全树拷贝，且原注释「防传活引用
+		// 被就地修改」的论据在当前 vendor 行为下不成立）
+		const engineData = makeTree('Root', [makeTree('Child')]);
+		firstEngine.getData.mockReturnValue(engineData);
 
 		h.controller.refresh();
 
 		expect(mocks.createMindMap).toHaveBeenCalledTimes(2);
 		const rebuilt = mocks.createMindMap.mock.calls[1]![1] as MindMapTreeNode;
-		expect(rebuilt).not.toBe(tree);
-		expect(rebuilt.children[0]).not.toBe(tree.children[0]);
-		expect(rebuilt).toEqual(tree);
+		expect(rebuilt, '透传 getData（深拷贝责任在引擎侧，vendor-contract 钉住）').toBe(
+			engineData,
+		);
+		// 结构等价即可（uid 由 initMindMap 的 ensureUniqueUids 在建图时补写，
+		// 与起始树的 uid 不必相同——本用例的契约是「透传」而非「逐字节克隆」）
+		expect(rebuilt.data.text).toBe('Root');
+		expect(rebuilt.children[0]?.data.text).toBe('Child');
 		// 旧实例先销毁再建新的（同一挂载容器不能有两个引擎）
 		expect(mocks.destroyMindMap).toHaveBeenCalledWith(firstEngine);
 		expect(h.deps.setupFeatures).toHaveBeenCalledTimes(2);
@@ -1215,6 +1242,46 @@ describe('EngineController 视口持久化与恢复', () => {
 		// 再布局落地：用户自己的视口不再被重复应用（不覆盖缩放/平移）
 		fireEngineEvent(h.engines[0]!, 'node_tree_render_end');
 		expect(h.engines[0]!.view.setTransformData).toHaveBeenCalledTimes(1);
+	});
+
+	it('有保存视口时：150ms 兜底不重复 setTransformData（签名幂等，防性能模式多余分片渲染）', () => {
+		vi.useFakeTimers();
+		const h = buildHarness();
+		h.canvas.width = 800;
+		h.canvas.height = 600;
+		const saved = {
+			transform: { x: 9, y: 8, scale: 1.5 },
+			state: { scale: 1.5, x: 9, y: 8 },
+		};
+		h.viewState.hydrate({
+			viewState: { [h.file!.path]: { layout: 'mindMap', view: saved } },
+		});
+
+		h.controller.initMindMap(makeTree('Root'));
+		// 模拟引擎语义：setTransformData 前当前变换是默认值（不一致 → 首次
+		// 必须应用）；应用后当前变换 = 保存值（签名一致 → 兜底必须短路）。
+		// setTransformData 无条件 emit view_data_change，性能模式下每次都是
+		// 一轮分片整树渲染——幂等短路的收益点
+		const engine = h.engines[0]!;
+		let applied = false;
+		engine.view.setTransformData.mockImplementation(() => {
+			applied = true;
+		});
+		engine.view.getTransformData.mockImplementation(() => ({
+			transform: { x: 9, y: 8, scale: 1.5 },
+			state: applied
+				? { scale: 1.5, x: 9, y: 8 }
+				: { scale: 1, x: 0, y: 0 },
+		}));
+
+		fireEngineEvent(engine, 'node_tree_render_end');
+		expect(engine.view.setTransformData).toHaveBeenCalledTimes(1);
+
+		vi.advanceTimersByTime(150);
+		expect(
+			engine.view.setTransformData,
+			'已在保存视口上：兜底调用被签名短路拦截',
+		).toHaveBeenCalledTimes(1);
 	});
 
 	it('保存视口的键按文件路径隔离（换文件后不回退到其它文件的视口）', () => {

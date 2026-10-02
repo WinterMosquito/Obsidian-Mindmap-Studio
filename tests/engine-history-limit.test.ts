@@ -16,7 +16,9 @@ import {
 	HISTORY_BUDGET_BYTES,
 	HISTORY_SNAPSHOT_BYTES_PER_NODE,
 	resolveHistoryLimit,
+	syncHistoryLimit,
 } from '../src/engine/mindmap';
+import type { MindMap } from '../vendor/simple-mind-map.cjs';
 
 vi.mock('../vendor/simple-mind-map.cjs', () => ({
 	MindMap: class {},
@@ -79,5 +81,67 @@ describe('resolveHistoryLimit：命令历史上限按内存预算反推', () => 
 		// 退化输入不产生 0 / 负数 / NaN
 		expect(resolveHistoryLimit(0)).toBe(ENGINE_DEFAULT_LIMIT);
 		expect(resolveHistoryLimit(-5)).toBe(ENGINE_DEFAULT_LIMIT);
+	});
+});
+
+describe('syncHistoryLimit：会话内按当前节点数同步上限（图长大 ⇒ 预算不失效）', () => {
+	/** 宽树构造：root + (nodeCount-1) 个子节点（countTreeNodes 计全部） */
+	function treeOf(nodeCount: number): { children: { children: never[] }[] } {
+		return {
+			children: Array.from({ length: Math.max(0, nodeCount - 1) }, () => ({
+				children: [] as never[],
+			})),
+		};
+	}
+
+	/** 极简引擎桩：只铺 syncHistoryLimit 触达的面（renderer.root / opt / updateConfig） */
+	function engineOf(nodeCount: number, currentLimit: number) {
+		const updateConfig = vi.fn<(config: Record<string, unknown>) => void>();
+		const engine = {
+			renderer: { root: treeOf(nodeCount) },
+			opt: { maxHistoryCount: currentLimit },
+			updateConfig,
+		} as unknown as MindMap;
+		return { engine, updateConfig };
+	}
+
+	it('图在会话内长大：上限按当前节点数下调（创建期的 500 条 → 1000 节点的预算值）', () => {
+		const { engine, updateConfig } = engineOf(1000, ENGINE_DEFAULT_LIMIT);
+		syncHistoryLimit(engine);
+		expect(updateConfig).toHaveBeenCalledExactlyOnceWith({
+			maxHistoryCount: resolveHistoryLimit(1000),
+		});
+	});
+
+	it('已在目标值：不触碰 updateConfig（maxHistoryCount 是 opt 活引用，直接比较）', () => {
+		const target = resolveHistoryLimit(1000);
+		const { engine, updateConfig } = engineOf(1000, target);
+		syncHistoryLimit(engine);
+		expect(updateConfig).not.toHaveBeenCalled();
+	});
+
+	it('渲染根缺失（引擎中间态/未就绪）：静默跳过', () => {
+		const updateConfig = vi.fn();
+		const engine = {
+			renderer: { root: null },
+			opt: {},
+			updateConfig,
+		} as unknown as MindMap;
+		syncHistoryLimit(engine);
+		expect(updateConfig).not.toHaveBeenCalled();
+	});
+
+	it('updateConfig 抛错（引擎中间态）：吞错不中断 data_change 事件链', () => {
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const engine = {
+			renderer: { root: treeOf(1000) },
+			opt: { maxHistoryCount: ENGINE_DEFAULT_LIMIT },
+			updateConfig: vi.fn(() => {
+				throw new Error('中间态');
+			}),
+		} as unknown as MindMap;
+		expect(() => syncHistoryLimit(engine)).not.toThrow();
+		expect(errorSpy).toHaveBeenCalled();
+		errorSpy.mockRestore();
 	});
 });

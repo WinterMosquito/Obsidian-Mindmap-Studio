@@ -187,9 +187,11 @@ src/
                     #   applyRawToNode（与弹窗原文模式同一写回入口）；双击 / F2 /
                     #   右键「编辑文本」共用入口；弹窗（ui/modal-text）收编为备选入口；
                     #   isAnyNodeEditing 为统一编辑态判据（热键/自动拆分/标题重命名让位）
-    image-resize.ts # 节点图片拖拽调宽：hover 手柄 + 等比缩放（SET_NODE_DATA imageSize
-                    #   custom:true + render），持久化走 Obsidian 官方嵌入尺寸语法——
-                    #   结束时 scheduleSave，序列化合成回写 `|宽度`（不落 data.json）
+    image-resize.ts # 节点图片拖拽调宽：hover 手柄 + 等比缩放；帧内直写渲染中
+                    #   <image> 宽度（DOM 通道，不动引擎数据/不进历史），收尾一次走
+                    #   SET_NODE_DATA（一条历史 + 布局归位），持久化走 Obsidian 官方
+                    #   嵌入尺寸语法——结束时 scheduleSave，序列化合成回写 `|宽度`
+                    #   （不落 data.json）
     drag-target.ts  # 拖拽换父辅助：优化「拖动节点重新链接」的识别范围——引擎原生
                     #   判定要求指针精确落在目标矩形内，本模块在拖拽期间（仅拖拽中，
                     #   node_dragging 起会话、mouseup/node_dragend 收）以「节点中心为
@@ -298,7 +300,7 @@ docs/
 | `src/features/view.ts` | 996 | 视图 Controller：**第 6 步拆分后的纯编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；业务已全部外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。再拆会把「生命周期编排顺序集中可见」这一收口点摊到多文件 |
 | `src/services/engine-controller.ts` | 763 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。与 `mindmap.ts` **同性质**——拆开即把私有访问面摊开，故同样必须豁免 |
 | `src/media/images-path.ts` | 555 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一），**从 images.ts 拆出**的产物；导出函数共享同一套路径与尺寸不变式，再拆会摊成跨文件的隐式协议 |
-| `src/features/image-resize.ts` | 445 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链（无常驻监听、按帧重建元素、手势独占），拆开会让状态机与 DOM 手柄跨文件失配 |
+| `src/features/image-resize.ts` | 416 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链（无常驻监听、帧内 DOM 直写、手势独占），拆开会让状态机与 DOM 手柄跨文件失配 |
 | `src/features/drag-target.ts` | 382 | 单一算法收口（拖拽落点仲裁）：两类锚点（节点中心／兄弟间隙中点）必须共用同一套「按指针距离最近仲裁 + 引擎三态让位」规则，拆开会让锚点判定与视觉高亮口径漂移 |
 | `src/features/view-node-actions.ts` | 728 | 节点操作（链接/文本/剪贴板/删除）的**共用入口**——工具栏与右键菜单同调；图片操作已拆至 `view-image-actions.ts` 并由本文件 re-export，此处是剩余语义相关操作集，再拆会让两个菜单的调用面分叉 |
 | `src/features/view-dnd.ts` | 575 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配 |
@@ -518,7 +520,7 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 
 ### 引擎行为、视口与布局
 
-- [K15] 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动），**自动整理后走「适应画布」**（`arrangeMindMap` 的 RESET_LAYOUT 延时回调 → `fitMindMap`：性能模式下先 `forceLoadNode` 再 `fit`，按全图包围盒适配）。首帧窗口内的三个坑（陈旧容器几何 / 根节点居中中间态 / 图片回灌改动包围盒）见 K64。
+- [K15] 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动），**自动整理后走「适应画布」**（`arrangeMindMap` 的 RESET_LAYOUT 延时回调 → `fitMindMap`：性能模式走**数据层 fit**（布局几何并集算缩放与居中，零 DOM 装配，2026-10-02，见 K110 ⑥）；常规模式沿用引擎 `view.fit()`）。首帧窗口内的三个坑（陈旧容器几何 / 根节点居中中间态 / 图片回灌改动包围盒）见 K64。
 - [K16] **连线样式（偏好 + 布局联动）**：六种布局中**四种为直线**——组织结构图经 `lineStyle: 'straight'`
   生效（引擎为该布局实现三态 `renderLine` 分派：curve 曲线 / direct 直连 / straight 正交折线，
   三态仅对逻辑结构图/思维导图/组织结构图可见效果）；目录组织图/时间轴/鱼骨图**布局类本身即直线
@@ -566,7 +568,7 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 - [K26g] **性能三条硬规则**（2026-09-16 优化轮）：① **缓存淘汰用 LRU，禁止「满了整表清空」**——`node-inline-content` 的段序列缓存曾被编辑弹窗的实时预览（每个键入都是新键）整表刷空，此后每次渲染全部重 tokenize（命中率归零）；改 LRU（命中删后重插 → 队尾；超限淘汰最旧一条）后热点条目在洪水下仍命中（回归：`tests/node-inline-content.test.ts` 的 LRU 用例）。② **同一行原文只解析一次**：`md-outline.flushPlain` 曾对 plain 块首行解析两遍（一遍取显示文本、一遍取图片字段），现复用首行结果。③ **设置变更应用到视图必须防抖**（`SETTINGS_APPLY_DEBOUNCE_MS = 250`）：需要重建的键一轮 = 每个打开的视图**销毁并重建引擎 + 全量重渲染 + 工具栏重建**（2026-09-17 起按键差集分流——主题原地生效、默认布局/默认连线样式跳过，见 K59），而 `LIVE_REFRESH_SETTING_KEYS` 含滑块（性能阈值 step 100）——不防抖拖一次滑块重建几十轮（回归：`tests/settings-persist.test.ts` 的「19 档只应用一次」+ `onunload` 丢弃挂起）。
 - [K26h] **引擎图片节点必须有 `imageSize`，任何「先渲染后校正」的路径都要先 `ensureDefaultImageSizes`**（vendor 0.14.0-fix.3 实测）：`createImgNode → getImgShowSize` 直接解构 `data.imageSize`（`let {custom,width,height} = getData('imageSize')`），缺字段即 TypeError、**该节点的渲染链中断**（无头实测：一图缺失 ⇒ 整图 `renderer.root` 为空，对照组在 verify:visual 的 image 探针）。解析器**不产** `imageSize`（`md-outline.PLAIN_IMAGE_FIELDS` 只含 image/mdImage*），旧流程靠「加载期探测在引擎创建前完成」隐式兜底；2026-09-16 起加载路径改为「探测**不**挡首帧」（`collectImageSizeCorrections` 起步于首帧前、`applyImageSizeCorrectionsToEngine` 首帧后按 **data 对象身份 + image 地址**回灌并重渲染一次），以及「把文本节点编辑成图片」（`applyRawNodeContent`）同样属于先渲染后校正——两处都必须先同步填默认值（O(n) 指针遍历，不探测不等加载）。**为什么不能用 uid 回灌**：加载期 uid 尚未分配（`ensureUniqueUids` 在引擎创建时才跑）。回归：`tests/images-path.test.ts`（默认填充幂等）、`tests/engine-image-size.test.ts`（身份/换图/同值/陈旧守卫）、image 探针（渲染尺寸确实随回灌变化）。
 - [K26i] **自绘接管面不回收——其成本模型已被探针钉死**（2026-09-17 量化轮）：两棵同形状 31 节点地图实测 ⇒ ① DOM 元素 8.2（引擎文本）vs 7.5（自绘）/节点，**自绘更轻**（接管后引擎跳过 text/image/icon/hyperlink/tag/note/prefix/postfix 全部默认内容）；② **空 render 构建器调用 0 次**——拖动/缩放期间引擎只改 transform，**不重建节点内容**；③ 改一个节点文本 ⇒ **恰好 1 次**构建器调用。故真实成本是「每次内容重建 ≈ 每节点 1 次构建器 + 引擎 1 次离屏测宽」，**按编辑数线性、不按帧**；收窄接管面（纯单链接节点交回引擎 SVG 文本）换不来帧级收益，却要吃图标体系 / 编辑入口 / 锚点契约的用户可见回退 ⇒ **不回收**。剩余的自绘专属开销只有引擎对 custom content 的离屏测宽（vendor 内部，外部不可跳过）。⚠️ 测不到的坑：`--virtual-time-budget` 虚拟化时钟（耗时断言恒无意义），且 `render()` 经 rAF 调度 ⇒ 计数类测量必须等 settle 再读（同步读恒为 0 是**异步假象**——别拿它当「没发生」的证据）。回归锁定：perf 探针断言（idle 构建器 0 / 改文本恰好 1 / DOM 预算）。
-- [K26e] **高频拖拽类写入不得逐帧走 `execCommand`**（vendor 0.14.0-fix.3 实测）：引擎 `Command.exec` 末尾是 `if (['BACK','FORWARD','SET_NODE_ACTIVE','CLEAR_ACTIVE_NODE'].includes(cmd)) return; this.addHistory()`，而 `addHistory()`（被 `addHistoryTime` 默认 **100ms 防抖**包装）会 `getCopyData()`（**整树深拷贝**）+ `JSON.stringify` 比对后 `emit('data_change')` ⇒ 逐帧走命令 = ① 拖动被切成多条历史（撤销要按很多次）；② 每次变动都触发视图的 `scheduleSave`（800ms 防抖被反复重启 ⇒ 用户实测「保存好几次」）、状态栏与标题重算；③ 全树深拷贝 + 序列化比对正是「拖动卡顿」的主要开销。修法（图片调宽为例）：**帧内只改数据 + 重绘**（`engine/mindmap.previewNodeImageSize`——与命令本体等价：引擎 `setNodeData` 就是 `Object.keys(e).forEach(k => node.nodeData.data[k] = e[k])`），**收尾一次**走命令（一条历史、一次保存调度，一次 Ctrl+Z 撤回整次拖动）。收尾判据必须是「**与起始值有净变化**」而非「与最后一帧值不同」——最后一帧往往就是最终值，按后者处理整次拖动将完全进不了历史。回归：`tests/feature-teardown.test.ts`（帧内不 execCommand / 收尾恰好一次 / 拖回原尺寸不提交）+ `verify:visual` 的 history 探针（真实引擎：帧内 0 历史 0 data_change、收尾各 1；负向自检可复现旧行为）。
+- [K26e] **高频拖拽类写入不得逐帧走 `execCommand`**（vendor 0.14.0-fix.3 实测）：引擎 `Command.exec` 末尾是 `if (['BACK','FORWARD','SET_NODE_ACTIVE','CLEAR_ACTIVE_NODE'].includes(cmd)) return; this.addHistory()`，而 `addHistory()`（被 `addHistoryTime` 默认 **100ms 防抖**包装）会 `getCopyData()`（**整树深拷贝**）+ `JSON.stringify` 比对后 `emit('data_change')` ⇒ 逐帧走命令 = ① 拖动被切成多条历史（撤销要按很多次）；② 每次变动都触发视图的 `scheduleSave`（800ms 防抖被反复重启 ⇒ 用户实测「保存好几次」）、状态栏与标题重算；③ 全树深拷贝 + 序列化比对正是「拖动卡顿」的主要开销。修法（图片调宽为例）：**帧内 DOM 直写**（`engine/mindmap.previewNodeImageSize` 直写渲染中 `<image>` 的 `width/height`——与引擎渲染同源属性、用户单位 content px；**2026-10-02 二次重构**：旧的「改数据 + 整树 `render()`」在 rAF 合帧下仍是**每帧一次全树重排**，大图拖动持续卡顿），**收尾一次**走命令（一条历史、一次保存调度、一次布局归位，一次 Ctrl+Z 撤回整次拖动）。收尾判据必须是「**与起始值有净变化**」而非「与最后一帧值不同」——最后一帧往往就是最终值，按后者处理整次拖动将完全进不了历史。回归：`tests/feature-teardown.test.ts`（帧内只直写 DOM：属性落值 / 数据未动 / 不渲染 / 不 execCommand；收尾恰好一次 / 拖回原尺寸不提交）+ `verify:visual` 的 history 探针（真实引擎：帧内 `<image>` 宽度＝最后一帧请求值、数据保持基线、0 历史 0 data_change；收尾各 1）。
 - [K26c] **画布滚轮与中键拖由引擎实现，插件不得再注册同名手势**（vendor 0.14.0-fix.3 实测）：滚轮监听在 `mindMap.el` 上且**先 `stopPropagation()`** → 容器级 wheel 监听收不到事件（重复实现＝死代码）；中键拖走 event 模块 `which===2 → isMiddleMousedown` → `drag` → View 平移，mousemove/mouseup 挂在 `window`（拖出画布仍跟手），插件若另按 pointer 事件平移会与引擎的**绝对定位**平移互相覆盖、且 `pointerleave` 让手势半途断掉。官方 Canvas 语义即引擎默认值 + `createMindMap` 显式钉住：`mousewheelAction: 'move'`（滚轮平移）、`disableMouseWheelZoom: false`（`Ctrl/Cmd+滚轮` 以指针为锚缩放）。插件只做引擎没有的两件事：抑制浏览器原生**中键自动滚动**（容器 `mousedown` button===1 → preventDefault，冒泡晚于引擎 el 上的 mousedown，不干扰引擎中键状态）、`Shift+1`/`Shift+2`（键在 view-hotkeys，实现 `fitToScreen`/`zoomToSelection`）。回归锁定：`tests/view-viewport.test.ts`（只注册一条 mousedown）+ `tests/vendor-contract.test.ts`（引擎必须保住 stopPropagation/Ctrl 缩放/middle-drag 三处形态）+ `tests/view-hotkeys.test.ts`（Shift+1/2 在输入框内让位，避免打 `!`/`@` 触发缩放）。
 - [K27] 引擎 vendor 文件不可手工编辑；升级时用官方源码重新打包并替换（流程见 `vendor/BUILD.md`）；
   `styles.css` 只含本插件样式——**不再有 vendor 段**（引擎 dist CSS 全是 Quill 富文本样式，
@@ -822,6 +824,12 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   500）；② 编辑数 > 上限 ⇒ `historyCount === 上限`（满仓逐条裁剪，不多不少）；③ 此时快照堆 ≈
   `historyBytes × 2`（UTF-16 确定性换算，无平台噪声）≤ 预算。回归：`tests/engine-history-limit.test.ts`
   （预算兑现 / 单调不增 / 边界与地板 / 实测对照值 163 与 40）。
+  **（2026-10-02 补）会话内同步**：创建期只按「打开那一刻」的节点数反推一次，长会话内长大的图
+  （粘贴 / 连续编辑 / 拖入）会让预算逐步失效——从空图长到 1000 节点仍留 500 条 ⇒ 最坏 ≈192MB。
+  现 `engine/mindmap.syncHistoryLimit(mindMap)` 在 `EngineController` 的 `data_change` 通道上按 **1s 节流**
+  重算（值未变不动 `opt`；下调不会立刻裁剪已存历史，引擎 push 时才 shift，渐进收敛即可）。
+  回归：`tests/engine-history-limit.test.ts`（下调 / 等值跳过 / root 缺失 / 抛错吞掉）+
+  `tests/engine-controller.test.ts`（data_change → 节流窗口内恰好一次）。
 - [K67] **「自动整理」的渲染窗口竞态：RESET_LAYOUT 落在 root 暂缺的异步布局窗口内必抛错（2026-09-17，用户实测；承 K26h）**：
   实测 `自动整理失败 TypeError: Cannot set properties of null (setting 'customLeft')`，栈为
   `Renderer.resetLayout → 树遍历 → 回调首行`。根因是三段拼合：① `Renderer.render` 把 `_render` 排进
@@ -855,8 +863,12 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   ⑤ **自绘接管判定随段序列缓存**（`node-inline-content.segmentEntryOf`）：`hasRichSegments` / `needsHiddenSyntax`
   是只依赖原文的纯函数，原每次节点内容重建都重扫 3 个正则 + 段遍历，现与段序列同条目（LRU 512 与
   `segmentCacheStats` 口径不变；`isResolvedLink` 仍在每次构建时求值、不进缓存——它依赖库状态）。
-  **明确不改**：「拖宽每 8px 提交一次全树 `render()`」（P5，`previewNodeImageSize`）维持现状——浪费在 vendor
-  渲染器内部（K58/K61 已量化），插件侧改动的 ROI 判据是「能否减少 render 次数」而非单次更快。
+  ⑥ **（2026-10-02 补，推翻 P5 旧决策）「拖宽帧内全树 render」已消除**：`previewNodeImageSize` 从
+  「改数据 + 整树 `render()`」改为**直写渲染中 `<image>` 的 width/height**——帧内引擎渲染 **0 次**
+  （render-eco 探针「预览 0」），节点外框与兄弟布局由收尾一次 `setNodeImageSize` 归位。旧「明确不改」
+  的理由（浪费在 vendor 内部、ROI 判据是减少 render 次数）在「直写可把帧内 render 降到 0」成立后反转。
+  DOM 生效由 `tests/feature-teardown.test.ts`（帧内 `<image>` 属性 + 数据未动）与 history 探针钉住；
+  调用方须保证节点在 DOM（性能模式视口外节点静默跳过，收尾提交兜底）。
   回归锁定：`tests/file-lookup.test.ts`（增量补建 / 幂等 / 无缓存 no-op / 节流窗口 / basename 计数与回落）、
   `tests/feature-helpers.test.ts`（就地版与返回值版逐例一致）。
 
@@ -905,11 +917,13 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   零 DOM 装配、O(n) 纯计算；平移量 = 画布中心 −（布局中心 × scale + translate）（引擎
   `getNodePosInClient` 同口径）。数据层几何不可得（`renderer.root` 缺失等中间态）回退原 DOM 测量路径，
   **不补 forceLoadNode**（此时 rbox 多半同样不可得，静默降级）。常规模式（非性能）行为不变（rbox 精确）。
-  **`fitMindMap` 仍 forceLoadNode**：引擎 `view.fit()` 内部基于 rbox，替换需复刻 fit 的 padding/边界
-  语义（风险大于收益），且它是用户主动动作（适应画布/自动整理）而非常驻打开路径。
+  **`fitMindMap` 曾仍 forceLoadNode**（**2026-10-02 已消除**，见 K110 ⑥：性能模式改为**数据层 fit**
+  ——目标缩放 `min(1, 可用宽/盒宽, 可用高/盒高)` + 内容中心落画布中心，与 vendor `View.fit` 的
+  flag 1/2/3 同式同果（三 flag 的最终中心均为画布中心）；数据层几何不可得时回退旧路径）。
   ③ **探针**（`verify:visual` 的 `perf-box`，121 节点 > 阈值 100 + 800×300 视口）：钉住「节点 DOM 数
   在居中前后均 < 总数 50%（不装配全量）」「内容中心 = 画布中心 ±2px」「数据层盒与 DOM
-  全量盒尺寸差 ≤ 8px」。**规模刻意取刚过阈值的最小量**：探针在共享页面里跑，图越大其分片渲染任务链
+  全量盒尺寸差 ≤ 8px」；**2026-10-02 扩**：`fitMindMap` 后 DOM 仍 < 50%（数据层 fit 不装配）+
+  fit 缩放 ∈ (0,1] + fit 后内容仍居中 + 第二次调用零 `view_data_change`（幂等短路）。**规模刻意取刚过阈值的最小量**：探针在共享页面里跑，图越大其分片渲染任务链
   （`view_data_change` 后每子节点一个 setTimeout）越长——2026-09-20 实测 641 节点版本把其余探针的读取
   窗口推后，连锁失败 **43 项**（dump 里场景已渲染、探针读取时尚未：自绘内容是探针之后才创建的）。
   ④ **打开窗口内的重复调用幂等短路**（承 ① 的「多轮触发」）：`centerContentAtFullScale` 现于
@@ -1449,6 +1463,36 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   ⑤ **发布说明**（`docs/release-notes-0.1.5.md`）：补入本轮用户可见变化（导出 PNG 保真四类裁切/压线、中心主题改名、混排双链自动拆分、重复打开让位、外部修改保护、首帧公式尺寸、外链协议白名单），测试基线 55 文件/1700 例 → 57 文件/1739 例，兼容性说明补「同一 `.mindmap.md` 仅保留一个编辑实例」。
   ⑥ **验证**：清缓存后 `lint:scanner` 全新安装 352 包并**通过**；`check:release` 三场景（MIT / 非 OSI / 缺失）行为正确且仓库 `LICENSE` 按原样恢复；`build` + 57 文件 1739 用例 + `lint`(0 警告) + `lint:css` + `check:dead-code` + `verify:visual` 全绿。
   ⑦ **教训**：①**`npm run` 注入的 `npm_config_*` 环境变量是「配置隔离」的暗桩**——只清 userconfig 文件不够，子进程 env 也要净化；②npm 11.9+ 把 `allow-scripts` 的**来源层**写进了语义（CLI/env 一律拒绝、project 层才合法），跨 npm 版本的脚本必须按「落点合规」而非「结果等价」来写；③发布元数据护栏按官方 repo-checks 的**分级**补齐（error/warn 分明），别把 warn 面升成 error 面。
+
+- [K110] **性能轮（2026-10-02，量化驱动的取舍与瘦身）**：起点是性能画像实测——**渲染与编辑路径已收敛**
+  （`--perf`：单次编辑 ≈4.2ms@500 节点、每动作 1 次布局落地、300 次编辑 DOM 无泄漏、历史 163 条 14.8MB ≤ 30MB 预算），
+  故本轮只改「有实测支撑」的项，并在 ⑧ 记录**六项经量化后明确不实施**的决策数据（防后人重复投入）。
+  ① **INLINE_RE 入口短路**（`md-outline.tokenizeInline`）：四个必要子串全缺（`]]`/`](`/`<`/URL 协议前缀）
+  ⇒ 直接空返——第二备选 `[^\]]*` 在「大量 `[` 起点但无闭合」的长行上逐起点回退（单行最坏 O(n²)，此前
+  可秒级阻塞打开/保存）；实测病态行 21000 字符 **0.13ms**、token 密集行 20000 字符/2000 token 0.37ms。
+  ② **保存视口幂等短路**（`engine-controller.restoreOrFitViewport`，承 K70④ 家族）：`setTransformData` 无条件
+  emit `view_data_change`（性能模式 = 一轮分片整树渲染），而 150ms 兜底会二次调用——按 `scale|x|y` 签名比较，
+  已在保存视口上则零调用（`transformSignatureOf` 与 `viewSignature` 共用口径）。
+  ③ **segmentCache 字符预算**（`node-inline-content`）：条目数上限（512）对长行键失效（最坏 ≈20MB 常驻、
+  顺序全量重建下 LRU 命中率≈0，`--perf` 实测 512/512 满仓）——加 `SEGMENT_CACHE_MAX_CHARS = 1M` 总预算 +
+  单条 > 32k 字符不缓存；`segmentCacheStats` 增 `chars/maxChars`，探针加字符维度断言（防退化为只按条目数）。
+  ④ **createNodeContent 选项实例化**（`view.ts`）：内容只依赖视图与设置 ⇒ 选项对象 + 4 闭包改为**实例级一次**
+  （`inlineContentOptions`；此前每节点重建 ≈2 万临时闭包 @5000 节点），唯一会话中可变项 `selfDrawPlain` 每次构建就地覆盖。
+  ⑤ **siblingsFollowList 按层惰性**（`md-serialize.SerializeFrame.followList`）：同层 k 个未标注节点从各自
+  扫整层 O(k²) 降为按层一次。
+  ⑥ **fitMindMap 数据层化**（`engine/mindmap.fitPerformanceMindMapFromData`，K70 残留消除）：性能模式不再
+  `forceLoadNode` 全树同步装配（5000 节点 ≈1.1s，K70 口径）——目标缩放 `min(1, 可用宽/盒宽, 可用高/盒高)`、
+  平移 = 内容中心 → 画布中心（**推导**：vendor fit 三 flag 的最终中心均为 `p + (E-2p)/2 = E/2`，故无需分支；
+  `setScale` 不传锚 = 位移不变，随之读新变换算平移；`fitPadding` 默认 50）；已在目标态零调用。
+  ⑦ **refresh 删冗余 structuredClone**（`engine-controller`）：引擎 `getData()` 已是深拷贝（`vendor-contract` 已钉），
+  一轮重建由 3 次全树拷贝降为 2 次。
+  ⑧ **量化后明确不实施**（决策数据，阈值定 200ms）：整树序列化 5000 节点仅 **4.4ms**（未编辑）/ 6.3ms（10% 编辑）
+  / 14.2ms（全图带自定义尺寸·最坏）⇒ 序列化惰性上下文、增量序列化、Web Worker 均**收益不足不立项**；
+  links-rename 一次 ≈15ms 且属低频库事件 ⇒ 预筛不做；math-jax 泵单轮 < 10ms 且 `isProductReady` 天然短路
+  （未就绪态首枚即返）⇒ 抽样/切片不做；drag-target 每帧 ≈1–3ms（已有 2026-09-18 预筛）⇒ 合并遍历收益 < 1ms 不做。
+  ⑨ **回归**：`tests/md-inline.test.ts`（短路语义 2 例）、`node-inline-content.test.ts`（字符预算 1 例）、
+  `engine-controller.test.ts`（视口幂等 1 例）；`verify:visual` 的 perf-box 探针扩 4 条 fit 断言、history 探针
+  改 DOM 直写口径（联动更新见 K26e 与 K68 性能轮的 ⑥ 段）；`--perf` 轮段缓存读数带字符维度。
 
 ## 新增功能检查清单
 

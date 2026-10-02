@@ -26,6 +26,7 @@ import {
 	isRenderableImageTarget,
 } from '../core/constants';
 import { resolvePathToFile } from '../links/links-resolve';
+import { tokenizeInline } from './md-outline';
 import {
 	formatEmbedWikilink,
 	formatWikilink,
@@ -39,6 +40,13 @@ import type { MdNodeData } from '../core/node-data';
 /** 链接目标是否需要尖括号包裹（含空格/括号/<>/\，否则会破坏 `(…)` 闭合） */
 function needsDestBraces(dest: string): boolean {
 	return /[\s()<>\\]/.test(dest);
+}
+
+/** 目标/地址的 `<>` 包裹剥壳（md 链接与图片目标都可能写作 `<路径 带空格>`） */
+function stripAngleBrackets(value: string): string {
+	return value.startsWith('<') && value.endsWith('>')
+		? value.slice(1, -1)
+		: value;
 }
 
 /**
@@ -225,6 +233,62 @@ function rawHasImageFeature(raw: string, feature: string): boolean {
 }
 
 /**
+ * 当前图片是否已被 mdRaw 引用（rawOk 的图片判定）。
+ *
+ * 引用等价形态（此前只认「字段字面量出现在 raw」，两类合法写法被误判
+ * 「已变更」→ 未编辑行每次保存都被重写）：
+ * ① 与节点字段（资源地址 / 库内路径 / 外链原文）字面一致（允许 `<>` 包裹差异）；
+ * ② 库内不同写法（裸名 / 相对路径）：经统一解析入口指向当前图片**同一文件**；
+ * 带自定义尺寸（customImageWidth）时还要求命中 token 的尺寸参数与之一致——
+ * 两形态统一按 `token.sizeWidth` 判定（md 形态尺寸在 alt 位，「目标|宽度」
+ * 字符串拼接不到目标之后，此前恒判「已变更」→ md 图片合成尾插 → 文本重复）。
+ */
+function rawImageMatches(
+	data: MdNodeData,
+	raw: string,
+	app: App | null,
+): boolean {
+	const rawImage = typeof data.image === 'string' ? data.image : '';
+	const vaultPath = imageVaultPath(data, app);
+	const candidates: string[] = [];
+	if (rawImage) {
+		candidates.push(rawImage);
+	}
+	if (vaultPath && vaultPath !== rawImage) {
+		candidates.push(vaultPath);
+	}
+	if (candidates.length === 0) {
+		return true; // 字段异常（外层已拦截空 image）：不拦截
+	}
+	const width = customImageWidth(data);
+	// 快路径：字段字面量已出现（覆盖绝大多数节点，避免逐行 tokenize）
+	if (width === null && candidates.some((c) => rawHasImageFeature(raw, c))) {
+		return true;
+	}
+	const isCurrent = (target: string): boolean => {
+		const bare = stripAngleBrackets(target);
+		if (candidates.some((c) => stripAngleBrackets(c) === bare)) {
+			return true;
+		}
+		// 库内不同写法：解析到与当前图片同一文件即视为同一引用
+		return (
+			app !== null &&
+			!!vaultPath &&
+			resolvePathToFile(bare, app)?.path === vaultPath
+		);
+	};
+	for (const token of tokenizeInline(raw)) {
+		if (token.kind !== 'wikiImg' && token.kind !== 'mdImg') {
+			continue;
+		}
+		if ((width === null || token.sizeWidth === width) && isCurrent(token.target)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
  * mdRaw 中是否已含该链接引用。
  * URL 类特征按原文出现判断（裸 URL / `<url>` / `[text](url)` 均合法）；
  * 库内双链/附件按 `[[…]]` 边界匹配——此前用裸子串，节点文本恰好含同名串时
@@ -242,6 +306,38 @@ function rawHasLinkFeature(raw: string, feature: string): boolean {
 		raw.includes(`](${feature})`) ||
 		raw.includes(`](${feature} `)
 	);
+}
+
+/** wiki 目标的锚点（`#区块` / `^块`）不属于目标特征（与 wikilinkLinkpath 同口径） */
+function stripWikiAnchor(target: string): string {
+	return target.replace(/[#^][\s\S]*$/, '');
+}
+
+/**
+ * mdRaw 中是否已含该链接目标（rawOk 的链接判定）。
+ *
+ * 快路径为字符串形态（覆盖 `[[目标]]` / `[名](目标)` / 裸 URL 等常规写法）；
+ * 更少见的合法形态经 tokenize 兜底：md 链接的 `<路径 带空格>` 尖括号包裹
+ * （解析侧剥壳、回写保留，此前字符串判据对 `](<目标>)` 恒不命中 → 未编辑行
+ * 每次保存都走合成）；wiki 目标的 `#区块` / `^块` 锚点按同口径剥离后比较。
+ */
+function rawLinkMatches(raw: string, feature: string): boolean {
+	if (isSchemeUrl(feature)) {
+		return raw.includes(feature);
+	}
+	if (rawHasLinkFeature(raw, feature)) {
+		return true;
+	}
+	return tokenizeInline(raw).some((token) => {
+		if (token.kind !== 'wiki' && token.kind !== 'mdLink') {
+			return false;
+		}
+		const target = stripAngleBrackets(token.target);
+		if (token.kind === 'mdLink') {
+			return target === stripAngleBrackets(feature);
+		}
+		return stripWikiAnchor(target) === stripWikiAnchor(feature);
+	});
 }
 
 /** 链接 token 的目标特征串（与 mdRaw 比对 / token 排序用） */
@@ -466,20 +562,11 @@ function rawOk(
 		return false;
 	}
 	if (data.image !== undefined && data.image !== null && data.image !== '') {
-		// 当前图片特征（库内路径或外链原文）须已存在于 mdRaw。
-		// 带自定义尺寸时特征含官方尺寸参数（`|宽度`）——尺寸被拖拽调整过
-		// （或 mdRaw 尚无尺寸参数）即判定已变更，走合成回写新尺寸。
-		// 终界检查（后随 `]` 或 `x`）：避免 `|30` 误匹配 `|300x150` 的前缀。
-		const rawImage = typeof data.image === 'string' ? data.image : null;
-		const feature = imageVaultPath(data, app) ?? rawImage;
-		const width = customImageWidth(data);
-		if (feature && width !== null) {
-			const sized = `${feature}|${width}`;
-			if (!raw.includes(`${sized}]`) && !raw.includes(`${sized}x`)) {
-				return false; // 图新增/更换/调整尺寸，需合成
-			}
-		} else if (feature && !rawHasImageFeature(raw, feature)) {
-			return false; // 图新增/更换，需合成
+		// 当前图片须已被 mdRaw 引用、且（带自定义尺寸时）尺寸参数一致。
+		// 等价形态与尺寸判定集中在 rawImageMatches（裸名引用 / md 图片尺寸在
+		// alt 位 / 尖括号路径都按 token 判定），本处不再自行拼字符串。
+		if (!rawImageMatches(data, raw, app)) {
+			return false; // 图新增/更换/调整尺寸，需合成
 		}
 	}
 	const hyperlink = typeof data.hyperlink === 'string' ? data.hyperlink : '';
@@ -489,7 +576,7 @@ function rawOk(
 		typeof data.mdWikiLinkpath === 'string' ? data.mdWikiLinkpath : '';
 	if (hyperlink) {
 		const feature = hyperlinkFeature(hyperlink);
-		if (feature && !rawHasLinkFeature(raw, feature)) {
+		if (feature && !rawLinkMatches(raw, feature)) {
 			return false; // 链接新增/更新，需合成
 		}
 	} else if (attachUrl) {
@@ -501,7 +588,7 @@ function rawOk(
 				: attachUrl;
 		if (
 			feature &&
-			!rawHasLinkFeature(raw, feature) &&
+			!rawLinkMatches(raw, feature) &&
 			!rawHasImageFeature(raw, feature)
 		) {
 			return false; // 附件链接新增/更新，需合成
@@ -509,7 +596,7 @@ function rawOk(
 	} else if (wikiLink) {
 		// 文档双链通道：取目标特征串（去别名）与 mdRaw 比对，与 hyperlink 同口径
 		const feature = hyperlinkFeature(wikiLink);
-		if (feature && !rawHasLinkFeature(raw, feature)) {
+		if (feature && !rawLinkMatches(raw, feature)) {
 			return false; // 文档链接新增/更新，需合成
 		}
 	} else if (data.mdType !== 'plain') {
@@ -827,6 +914,12 @@ export function serializeMdBody(
 		 * 标题之下）——未标注（新建）节点据此决定回写形态。
 		 */
 		headingLevel: number | null;
+		/**
+		 * 该层「存在列表型兄弟」的惰性缓存（`undefined` = 未计算）：同层 k 个未
+		 * 标注节点此前各自扫一遍整层 ⇒ O(k²)；层内 children 在序列化期间不变，
+		 * 按层算一次即可（2026-10-02）。
+		 */
+		followList?: boolean;
 	}
 
 	/**
@@ -846,6 +939,14 @@ export function serializeMdBody(
 			// 当前待写节点自身不命中（它没有 mdMarker），无需排除
 			return data.mdType === undefined && data.mdMarker !== undefined;
 		});
+
+	/** 层内「存在列表型兄弟」的惰性取值：结果挂 frame，同层只扫一次（O(k²)→O(k)） */
+	const frameFollowList = (frame: SerializeFrame): boolean => {
+		if (frame.followList === undefined) {
+			frame.followList = siblingsFollowList(frame.children);
+		}
+		return frame.followList;
+	};
 
 	/**
 	 * 显式栈替代递归：树深度由内容（缩进可任意深、可作者构造）决定，
@@ -915,7 +1016,7 @@ export function serializeMdBody(
 				!type &&
 				data.mdMarker === undefined &&
 				frame.headingLevel !== null &&
-				!siblingsFollowList(frame.children)
+				!frameFollowList(frame)
 			) {
 				const level = frame.headingLevel + 1;
 				frame.orderedCount = 0;

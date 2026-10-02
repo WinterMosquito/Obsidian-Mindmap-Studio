@@ -21,6 +21,7 @@ import {
 	pinMathContainerHeightsInExportSvg,
 	renderMathWithMathJax,
 } from '../platform/math-jax';
+import { createThrottler } from '../core/concurrency';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import { notifyError } from '../core/errors';
@@ -46,7 +47,10 @@ import {
 	hideCopyButtonsInExportSvg,
 	registerCodeBlockInteractions,
 } from './node-codeblock';
-import { buildInlineNodeContent } from './node-inline-content';
+import {
+	buildInlineNodeContent,
+	type InlineContentOptions,
+} from './node-inline-content';
 import {
 	setupCanvasQuickCreate,
 	setupNodeTextEditFallback,
@@ -97,6 +101,13 @@ import {
 
 /** 视图装配完成信号超时（毫秒）：正常 onOpen 会 resolve；超时表示装配未完成，降级继续加载 */
 const READY_TIMEOUT_MS = 10_000;
+
+/**
+ * resize 节流窗口（毫秒）：拖动窗口边框 / 侧栏分隔条期间 resize 高频触发，
+ * 而引擎 `resize()` 只要画布宽高变化即整树 `render()`（vendor 只有重入保护，
+ * 无事件级合并）——限流到至多每窗口一次、尾随保证最后尺寸落地。
+ */
+const RESIZE_THROTTLE_MS = 100;
 
 /**
  * 可在**不重建引擎**的前提下完成刷新的 LIVE_REFRESH 键（键集合由 `settings.ts`
@@ -207,6 +218,29 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 视图关闭必须清理：回调会操作引擎与节点数据。
 	 */
 	private autoSplitTimer: number | null = null;
+
+	/**
+	 * resize 节流器（见 RESIZE_THROTTLE_MS）：窗口/侧栏拖动的连续尺寸变化合并到
+	 * 每窗口至多一次整树重排；onClose 取消（视图关闭后不再触碰引擎）。
+	 */
+	private readonly resizeThrottler = createThrottler(RESIZE_THROTTLE_MS);
+
+	/**
+	 * 内联内容构建选项（**视图实例级一次**，2026-10-02）：内容只依赖视图与设置，
+	 * 与 node/doc/style 无关——此前每个节点内容重建都新建对象 + 4 个闭包
+	 * （5000 节点打开 ≈ 2 万临时闭包，恰在打开路径上）。箭头闭包捕获实例 this
+	 * （属性读取延迟到调用），无字段初始化顺序问题；唯一与设置相关且会话中可变
+	 * 的 `selfDrawPlain` 由 `createNodeContent` **每次构建时就地覆盖**（见该处）。
+	 */
+	private readonly inlineContentOptions: InlineContentOptions = {
+		selfDrawPlain: false,
+		isResolvedLink: (linkpath) => isResolvedWikiLinkpath(this, linkpath),
+		renderMath: (_doc, tex, holder, display) =>
+			renderMathWithMathJax(tex, holder, display, (settledHolder) =>
+				this.scheduleMathRemeasure(settledHolder),
+			),
+		getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
+	};
 
 	/**
 	 * .mindmap.md 文档模式（B3 显式切换）：文件本质是 Markdown，用导图视图
@@ -479,25 +513,21 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// 宽度手柄门禁（幂等）：纯文本/含图节点上的拖宽手柄是死的
 				// （引擎文本路径不认 customTextWidth），只留在自绘节点上
 				gateNodeWidthHandles(node);
-				return buildInlineNodeContent(node, doc, style, lang, {
-					// 文本节点快速渲染（设置项，默认开）：全部含文字节点自绘，
-					// 跳过引擎逐字符测宽——打开大图的成本主体（实测 6.3 倍，见设置项注释）
-					selfDrawPlain: this.plugin.settings.selfDrawPlainNodes,
-					// 未解析的库内链接弱化显示（对齐 Obsidian 阅读视图）：解析器在此注入
-					// ——node-inline-content 不接触 Obsidian API（见 InlineContentOptions）
-					isResolvedLink: (linkpath) =>
-						isResolvedWikiLinkpath(this, linkpath),
-					// 数学（`$…$` / 单行 `$$…$$`）：官方 loadMathJax 通道
-					//（platform/math-jax，字面占位 + 异步替换，失败安全回落字面）
-					// 定稿回调（P4）：**携带 holder**——批次执行时经 findNodeByDom
-					// 解析真实节点再重排（构建期闭包可能持有预测量代理，见 K88）
-					renderMath: (_doc, tex, holder, display) =>
-						renderMathWithMathJax(tex, holder, display, (settledHolder) =>
-							this.scheduleMathRemeasure(settledHolder),
-						),
-					// 产物缓存：重建路径同步放置（引擎测到真实宽高，且无重排循环）
-					getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
-				});
+				// 选项对象与闭包见 inlineContentOptions（实例级一次构造；
+				// 其中 isResolvedLink 注入未解析链接弱化、renderMath 走官方
+				// loadMathJax 通道并携带定稿回调——批次执行时经 findNodeByDom
+				// 解析真实节点再重排，构建期闭包可能持有预测量代理，见 K88）。
+				// `selfDrawPlain` 是唯一与设置相关且会话中可变的项：就地覆盖
+				// （构建为同步路径，无并发窗口）
+				this.inlineContentOptions.selfDrawPlain =
+					this.plugin.settings.selfDrawPlainNodes;
+				return buildInlineNodeContent(
+					node,
+					doc,
+					style,
+					lang,
+					this.inlineContentOptions,
+				);
 			},
 			// 导出 SVG 后处理链（按序应用）：foreignObject 几何余量（几何校正
 			// 最先落地——`<img>` 解码环境与主文档存在 ~2px 级文本度量偏差，
@@ -1116,6 +1146,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.loadingFilePath = null;
 		this.savePipeline.cancelTimer();
 		this.cancelAutoSplitCheck();
+		this.resizeThrottler.cancel();
 		this.titleRenamer.cancel();
 		cancelStatusBarUpdate(this);
 		// 交互会话收尾（拖拽换父 / 图片调宽）：会话期间的临时 window 监听
@@ -1162,6 +1193,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	override onResize(): void {
-		this.engine.resize();
+		// 首次立即执行、窗口内合并 + 尾随（最后尺寸必然落地）：拖动窗口/侧栏期间
+		// 不再是每个 resize 事件一次整树 render（见 RESIZE_THROTTLE_MS）
+		this.resizeThrottler.run(() => this.engine.resize());
 	}
 }

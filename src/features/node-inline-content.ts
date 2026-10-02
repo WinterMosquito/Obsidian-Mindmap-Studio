@@ -638,7 +638,22 @@ interface SegmentCacheEntry {
  * 上限用于防御极端输入（大文件里大量互不相同的长行）导致无界增长。
  */
 const segmentCache = new Map<string, SegmentCacheEntry>();
+/** 条目数上限（防无界增长；与字符预算双重约束） */
 const SEGMENT_CACHE_MAX = 512;
+/**
+ * 总字符预算（2026-10-02）：条目数上限对「长行键」失效——512 条 × 20k 字符
+ * 最坏 ≈20MB（UTF-16）常驻，而数千节点的**顺序全量重建**让 LRU 命中率≈0
+ * （--perf 实测 512/512 满仓）。加字符维度后：短行仍按条目数正常复用，
+ * 长行由总预算封顶。
+ */
+const SEGMENT_CACHE_MAX_CHARS = 1_000_000;
+/**
+ * 单条缓存上限（字符）：超过不缓存——超长行的复用场景（同一行反复重建）
+ * 罕见，且一条就会挤掉大量短行热点。
+ */
+const SEGMENT_CACHE_SINGLE_MAX_CHARS = 32_000;
+/** 当前缓存键的字符总量（与 segmentCache 同步增量维护） */
+let segmentCacheChars = 0;
 
 /**
  * 取（或构建）该原文的缓存条目：段序列与接管判定**一次算出、共享同一缓存**。
@@ -658,17 +673,25 @@ function segmentEntryOf(raw: string): SegmentCacheEntry {
 		rich: hasRichSegments(segments),
 		hidden: needsHiddenSyntax(raw, segments),
 	};
-	// 淘汰最旧的一条（而非整表清空）：热点条目已由上方命中路径持续刷新到队尾，
-	// 被淘汰的只会是长期未命中的键
-	if (segmentCache.size >= SEGMENT_CACHE_MAX) {
-		// `IteratorResult` 已把 `.next().value` 定到 `string | undefined`，无需断言。
-		// （原此处有 `as string | undefined`，理由是旧的「被推定为 any」判断，已失效。）
-		const oldest = segmentCache.keys().next().value;
-		if (oldest !== undefined) {
+	// 超长单条不入缓存（预算守卫：一条就会挤掉大量短行热点，且复用场景罕见）
+	if (raw.length <= SEGMENT_CACHE_SINGLE_MAX_CHARS) {
+		// 淘汰最旧的一条（而非整表清空）：热点条目已由上方命中路径持续刷新到队尾，
+		// 被淘汰的只会是长期未命中的键。双重约束：条目数 + 字符总预算。
+		while (
+			segmentCache.size >= SEGMENT_CACHE_MAX ||
+			segmentCacheChars + raw.length > SEGMENT_CACHE_MAX_CHARS
+		) {
+			// `IteratorResult` 已把 `.next().value` 定到 `string | undefined`，无需断言。
+			const oldest = segmentCache.keys().next().value;
+			if (oldest === undefined) {
+				break;
+			}
 			segmentCache.delete(oldest);
+			segmentCacheChars -= oldest.length;
 		}
+		segmentCache.set(raw, entry);
+		segmentCacheChars += raw.length;
 	}
-	segmentCache.set(raw, entry);
 	return entry;
 }
 
@@ -700,16 +723,27 @@ export function buildInlineSegments(raw: string): readonly InlineSegment[] {
 }
 
 /**
- * 段序列缓存现状（`{ size, max }`）。
+ * 段序列缓存现状（条目数 + 字符总量双维度）。
  *
  * 存在的理由：缓存是**长会话内存**的一个观测点——编辑弹窗的实时预览会以
- * 「每个键入一个新键」冲刷它（见上方 LRU 注释），而它唯一的结构不变式是
- * 「规模不超过 `SEGMENT_CACHE_MAX`」。该不变式原本只能靠代码审查，现由单测
- * （`tests/node-inline-content.test.ts` 的「规模封顶」例）与 `verify:visual --perf`
- * 的负载块在**真实渲染路径**上直接读。生产代码不读它。
+ * 「每个键入一个新键」冲刷它（见上方 LRU 注释），结构不变式是
+ * 「条目数 ≤ `SEGMENT_CACHE_MAX` 且键字符总量 ≤ `SEGMENT_CACHE_MAX_CHARS`」。
+ * 该不变式原本只能靠代码审查，现由单测（`tests/node-inline-content.test.ts`
+ * 的「规模封顶」「字符预算封顶」例）与 `verify:visual --perf` 的负载块在
+ * **真实渲染路径**上直接读。生产代码不读它。
  */
-export function segmentCacheStats(): { size: number; max: number } {
-	return { size: segmentCache.size, max: SEGMENT_CACHE_MAX };
+export function segmentCacheStats(): {
+	size: number;
+	max: number;
+	chars: number;
+	maxChars: number;
+} {
+	return {
+		size: segmentCache.size,
+		max: SEGMENT_CACHE_MAX,
+		chars: segmentCacheChars,
+		maxChars: SEGMENT_CACHE_MAX_CHARS,
+	};
 }
 
 /** 段序列构建本体（无缓存；缓存包装见 buildInlineSegments） */

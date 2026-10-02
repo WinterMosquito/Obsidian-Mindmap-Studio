@@ -20,6 +20,26 @@ import {
 	tokenizeInline,
 } from '../src/markdown/md-outline';
 
+describe('tokenizeInline — 入口短路（防长行正则回溯）', () => {
+	// 2026-10-02：INLINE_RE 第二备选的 `[^\]]*` 在「大量 `[` 起点但无闭合」
+	// 的长行上逐起点回退 ⇒ 单行最坏 O(n²)，而本函数被解析 / 序列化 / 改名 /
+	// 拆分共用且在打开与保存路径同步执行。入口短路要求四个必要子串之一存在
+	// （`]]` / `](` / `<` / URL 协议前缀），否则直接空返——本用例锁「短路不得
+	// 改变输出」（含孤立 `[` 的普通正文行必须仍返回空数组）。
+	it('含孤立 `[`（无 `]]`/`](`/`<`/URL）→ 空数组，不进正则', () => {
+		expect(tokenizeInline('数组 [0] 与 [1] 说明')).toEqual([]);
+		expect(tokenizeInline('[[[ 未闭合的连续方括号')).toEqual([]);
+		expect(tokenizeInline('[某标题]')).toEqual([]);
+	});
+
+	it('四类必要子串任一命中 → 仍正常产出 token（短路不误杀）', () => {
+		expect(tokenizeInline('[[笔记]]')).toHaveLength(1);
+		expect(tokenizeInline('[名](笔记.md)')).toHaveLength(1);
+		expect(tokenizeInline('<https://x.com/a>')).toHaveLength(1);
+		expect(tokenizeInline('见 https://x.com/a')).toHaveLength(1);
+	});
+});
+
 describe('tokenizeInline — wikilink', () => {
 	it('[[笔记]] → 完整 token（label 空串，位置为切片语义）', () => {
 		expect(tokenizeInline('[[笔记]]')).toEqual([

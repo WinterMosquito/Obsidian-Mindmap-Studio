@@ -134,7 +134,28 @@ const BARE_URL_TRAILING_RE = /[.,;:!?)\]}>'"]+$/;
 /** 裸 URL 分支的捕获组下标（INLINE_RE 第 9 组） */
 const BARE_URL_GROUP = 9;
 
+/** 裸 URL 协议前缀（入口短路用；与 INLINE_RE 第 9 组的协议面一致） */
+const BARE_URL_PREFIX_RE = /(?:https?:\/\/|ftp:\/\/|obsidian:\/\/)/;
+
 export function tokenizeInline(raw: string): InlineToken[] {
+	// **入口短路**：五个分支各自的必要子串全缺 → 不可能有任何 token，直接空返。
+	//
+	// 为什么必须短路（2026-10-02）：INLINE_RE 第二备选 `\[([^\]]*)\]\(…` 的
+	// `[^\]]*` 在「大量 `[` 起点但无 `](` 闭合」的长行上会逐起点全量回退 ⇒
+	// 单行最坏 O(n²)；而本函数被解析 / 序列化 / 改名 / 拆分共用，且都在打开与
+	// 保存路径**同步**执行——5 万字符的病态行可达秒级阻塞。短路后绝大多数
+	// 普通正文行（含孤立 `[`）不再进入正则。
+	//
+	// 完备性：wiki/wikiImg 需 `]]`；mdLink/mdImg 需 `](`；autolink 需 `<`；
+	// 裸 URL 需协议前缀——四者皆无即无 token（`[` 本身不成 token）。
+	if (
+		!raw.includes(']]') &&
+		!raw.includes('](') &&
+		!raw.includes('<') &&
+		!BARE_URL_PREFIX_RE.test(raw)
+	) {
+		return [];
+	}
 	const out: InlineToken[] = [];
 	INLINE_RE.lastIndex = 0;
 	let m: RegExpExecArray | null;

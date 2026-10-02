@@ -195,9 +195,10 @@ describe('vendor 契约：画布导航手势（由引擎实现，插件不得重
 
 describe('vendor 契约：两种 getData() 的语义（活引用 vs 深拷贝）', () => {
 	// 为什么钉死：插件里有两条互相依赖相反语义的路径——
-	// ① `Node.getData()` 返回**活引用**：帧内图片尺寸预览（previewNodeImageSize）
-	//    与清标记（delete data.mdImageAutoSize）都是**就地改写**，若引擎改成返回
-	//    拷贝，这些操作会静默变成 no-op（画面不跟手、尺寸不回写）；
+	// ① `Node.getData()` 返回**活引用**：清标记（收尾提交的
+	//    `delete data.mdImageAutoSize`）与各覆盖写入路径的就地字段改写
+	//    （view-node-actions / links-tree 等）都依赖它，若引擎改成返回拷贝，
+	//    这些操作会静默变成 no-op（尺寸不回写、引用更新丢失）；
 	// ② `MindMap.getData()` 返回**深拷贝**：批量拆分（splitAllLinks）先改树再整树
 	//    回灌，若变成活引用，改动会直接写进引擎渲染树而绕过渲染/历史。
 	it('Node.getData() 返回活引用（不经拷贝）', () => {
