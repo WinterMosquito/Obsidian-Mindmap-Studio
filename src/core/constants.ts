@@ -115,7 +115,8 @@ const IMAGE_EXTENSIONS = [
 
 /**
  * 音频/视频扩展基表：Obsidian 桌面端没有音频/视频的标签页视图。
- * 「可链接附件」与「系统媒体」两个清单的公共部分（派生避免逐字重复）。
+ * 「可链接附件」与「系统媒体」两份清单已于 2026-09-15 删除（附件口径收敛到
+ * `domain/wikilink.wikilinkTargetIsAttachment`），此处仅作派生基表保留。
  */
 const AUDIO_VIDEO_EXTENSIONS = [
 	// 音频
