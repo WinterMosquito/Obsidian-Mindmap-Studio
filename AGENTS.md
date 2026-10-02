@@ -279,7 +279,6 @@ tests/
   mocks/obsidian.ts    # obsidian 最小 mock（vitest alias，包本身无运行时 JS）
 docs/
   markdown-mindmap-standard.md  # Markdown ↔ 思维导图映射规则（权威标准）
-  engine-upstream-patch-proposal.md # 引擎上游补丁建议（打开大图瓶颈：逐字符文本测量；实测数据 + 根因 + 补丁方案，见 K72）
   release-notes-<tag>.md        # 各版本发布说明（中英双语；release.yml 按 tag 取用，缺失回退自动生成）
 ```
 
@@ -293,29 +292,30 @@ docs/
 
 | 文件 | 行数 | 豁免理由 |
 |---|---|---|
-| `src/engine/mindmap.ts` | 1878 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。拆开等于把私有访问面摊到多个文件，耦合面反而变大——**这一条是必须豁免的，拆分即违约** |
-| `src/markdown/md-serialize.ts` | 893 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆） |
-| `src/markdown/md-outline.ts` | 1024 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移 |
-| `src/core/i18n.ts` | 504 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
-| `src/features/view.ts` | 996 | 视图 Controller：**第 6 步拆分后的纯编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；业务已全部外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。再拆会把「生命周期编排顺序集中可见」这一收口点摊到多文件 |
-| `src/services/engine-controller.ts` | 763 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。与 `mindmap.ts` **同性质**——拆开即把私有访问面摊开，故同样必须豁免 |
-| `src/media/images-path.ts` | 555 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一），**从 images.ts 拆出**的产物；导出函数共享同一套路径与尺寸不变式，再拆会摊成跨文件的隐式协议 |
-| `src/features/image-resize.ts` | 416 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链（无常驻监听、帧内 DOM 直写、手势独占），拆开会让状态机与 DOM 手柄跨文件失配 |
+| `src/engine/mindmap.ts` | 2046 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。拆开等于把私有访问面摊到多个文件，耦合面反而变大——**这一条是必须豁免的，拆分即违约** |
+| `src/markdown/md-serialize.ts` | 1054 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆） |
+| `src/markdown/md-outline.ts` | 1046 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移 |
+| `src/core/i18n.ts` | 515 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
+| `src/features/view.ts` | 1200 | 视图 Controller：**第 6 步拆分后的纯编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；业务已全部外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。再拆会把「生命周期编排顺序集中可见」这一收口点摊到多文件 |
+| `src/services/engine-controller.ts` | 815 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。与 `mindmap.ts` **同性质**——拆开即把私有访问面摊开，故同样必须豁免 |
+| `src/media/images-path.ts` | 618 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一），**从 images.ts 拆出**的产物；导出函数共享同一套路径与尺寸不变式，再拆会摊成跨文件的隐式协议 |
+| `src/features/image-resize.ts` | 411 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链（无常驻监听、帧内 DOM 直写、手势独占），拆开会让状态机与 DOM 手柄跨文件失配 |
 | `src/features/drag-target.ts` | 382 | 单一算法收口（拖拽落点仲裁）：两类锚点（节点中心／兄弟间隙中点）必须共用同一套「按指针距离最近仲裁 + 引擎三态让位」规则，拆开会让锚点判定与视觉高亮口径漂移 |
-| `src/features/view-node-actions.ts` | 728 | 节点操作（链接/文本/剪贴板/删除）的**共用入口**——工具栏与右键菜单同调；图片操作已拆至 `view-image-actions.ts` 并由本文件 re-export，此处是剩余语义相关操作集，再拆会让两个菜单的调用面分叉 |
+| `src/features/view-node-actions.ts` | 749 | 节点操作（链接/文本/剪贴板/删除）的**共用入口**——工具栏与右键菜单同调；图片操作已拆至 `view-image-actions.ts` 并由本文件 re-export，此处是剩余语义相关操作集，再拆会让两个菜单的调用面分叉 |
 | `src/features/view-dnd.ts` | 575 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配 |
 | `src/main.ts` | 351 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。业务逻辑已全部外置（见文件头），拆开 onload 会破坏「装配顺序集中可见」的可读性收益；当前超线 51 行 |
-| `src/markdown/links-split.ts` | 479 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。与 `md-outline` / `md-serialize` 同性质 |
-| `src/core/constants.ts` | 432 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件，互有基表派生；「可链接附件」「系统媒体」两份白名单已于 2026-09-15 删除——附件口径收敛到 `domain/wikilink.wikilinkTargetIsAttachment`）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音 |
+| `src/markdown/links-split.ts` | 486 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。与 `md-outline` / `md-serialize` 同性质 |
+| `src/core/constants.ts` | 451 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件，互有基表派生；「可链接附件」「系统媒体」两份白名单已于 2026-09-15 删除——附件口径收敛到 `domain/wikilink.wikilinkTargetIsAttachment`）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音 |
 | `src/settings.ts` | 375 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。`sanitizeSettings` 被 data.json 加载与面板写回共用（已在「代码结构」清单登记） |
-| `src/features/node-inline-content.ts` | 1282 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分）→ HTML（锚点契约 + **内联样式常量**）。三份东西互为契约——样式常量即导出保真契约（K53 ⑤，引擎导出不注入插件 CSS）、锚点属性即 `view-wikilink` 的识别契约（K53 ③）——拆开会让「显示名口径 / 样式来源 / 锚点形态」跨文件漂移；文件的复杂度全部来自这三个契约的**取值表**（段类型 × 标记 × 样式），不是职责堆叠 |
+| `src/features/node-inline-content.ts` | 1327 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分）→ HTML（锚点契约 + **内联样式常量**）。三份东西互为契约——样式常量即导出保真契约（K53 ⑤，引擎导出不注入插件 CSS）、锚点属性即 `view-wikilink` 的识别契约（K53 ③）——拆开会让「显示名口径 / 样式来源 / 锚点形态」跨文件漂移；文件的复杂度全部来自这三个契约的**取值表**（段类型 × 标记 × 样式），不是职责堆叠 |
 | `src/features/view-wikilink.ts` | 411 | 链接交互**单一关注点**：**点击路径**的锚点识别（`findAnchorInNode` / `resolveAnchorLink`）与**悬停预览**（两级：锚点优先 + 节点级 `nodeLink` 三通道 + `hover-link` 事件）同在一处，还有中键 `auxclick`；把悬停拆出去会让「链接怎么取、锚点取哪个目标」出现第二份实现——正是本文件当初拆出（原在 view.ts）要消除的问题。两条预览路径**都不预检目标是否存在**（交核心判断，见 K21） |
-| `src/platform/math-jax.ts` | 661 | 数学渲染通道**单一落点**（全插件唯一 import `obsidian` 的数学实现）：产品形态是「字面占位 → 异步替换 → 就绪判据（全部 `mjx-c` 宽 > 0 + 不可见操作符 U+2061 豁免，K90）→ flush 合并调度 → 产物缓存 / 重排通知 → 失败退字面」，再加导出 SVG 样式注入——屏上渲染与导出注入共享同一套就绪口径；拆开会让该口径跨文件漂移（它正是 K90 三轮实机实测的产物） |
-| `src/links/links-tree.ts` | 437 | 树内引用更新**单一遍历实现**：rename / clear 两模式共享待匹配形态派生（资源地址 + [[链接]] 双载体、回收站退化、跨文件夹移动取新位置、非 .md 文档带扩展名）与写回规则；拆开会让「重命名改写」与「删除清理」两条路径的匹配口径漂移 |
+| `src/platform/math-jax.ts` | 813 | 数学渲染通道**单一落点**（全插件唯一 import `obsidian` 的数学实现）：产品形态是「字面占位 → 异步替换 → 就绪判据（全部 `mjx-c` 宽 > 0 + 不可见操作符 U+2061 豁免，K90）→ flush 合并调度 → 产物缓存 / 重排通知 → 失败退字面」，再加导出 SVG 样式注入——屏上渲染与导出注入共享同一套就绪口径；拆开会让该口径跨文件漂移（它正是 K90 三轮实机实测的产物） |
+| `src/links/links-tree.ts` | 464 | 树内引用更新**单一遍历实现**：rename / clear 两模式共享待匹配形态派生（资源地址 + [[链接]] 双载体、回收站退化、跨文件夹移动取新位置、非 .md 文档带扩展名）与写回规则；拆开会让「重命名改写」与「删除清理」两条路径的匹配口径漂移 |
 | `src/links/links-resolve.ts` | 351 | 「任意地址形态 → TFile」的**统一解析入口**：远程拒绝 → `obsidian://` → 资源地址 → 路径直查 → `file://` 剥离 → 官方 `getFirstLinkpathDest` → 索引兜底——形态路由的**分支顺序本身即契约**（新增规则只改这一处）；拆开会重新引入本文件当初拆出要收敛的「双轨并存、覆盖形态互有盲区」问题 |
-| `src/features/node-inline-editor.ts` | 364 | 节点内联编辑的**单一会话收口**（K92）：覆盖层定位与跟随（`scale` / `node_tree_render_end` 重定位）、键盘语义表、点击外部与 `mousewheel` 提交、会话所属引擎守卫、提交写回（`applyRawNodeContent`）共享同一套「会话 → 值 → 落数据」不变式；拆开会让定位跟随与提交守卫跨文件失配 |
+| `src/features/node-inline-editor.ts` | 377 | 节点内联编辑的**单一会话收口**（K92）：覆盖层定位与跟随（`scale` / `node_tree_render_end` 重定位）、键盘语义表、点击外部与 `mousewheel` 提交、会话所属引擎守卫、提交写回（`applyRawNodeContent`）共享同一套「会话 → 值 → 落数据」不变式；拆开会让定位跟随与提交守卫跨文件失配 |
+| `src/services/document-service.ts` | 365 | md 文档读写数据面：**读**（`DocumentService.load` → `parseMdOutline` + `walkResolveImagePaths`）与**写**（`SavePipeline` → 防抖调度 + 串行排空 + 卸载快照兜底 + 无差异跳过 + P1a 外部改动检测 / P1b 连续失败挂起）成对。二者共享文件头声明的**归属不变式**（一次写盘的目标文件与其内容必须属于同一个文件：`getSnapshotFor(file)`/`getFrontmatterFor(file)` 按文件取、排空期不读活引用、`drainFile` 锁定本轮归属）——拆开会把这条跨对象不变式切成跨文件隐式协议，代价高于行数收益（K50 收口唯一） |
 
-行数为 **2026-09-28 快照**（死代码审计、lint 合规化、K92/K93 与「函数内纯移动拆分」轮后按 `Get-Content` 行数重测：`mindmap.ts` 1878、`node-inline-content.ts` 1282、`md-outline.ts` 1024、`view.ts` 996、`md-serialize.ts` 893、`engine-controller.ts` 763、`view-node-actions.ts` 728、`math-jax.ts` 661、`view-dnd.ts` 575、`images-path.ts` 555、`i18n.ts` 504、`links-split.ts` 479、`image-resize.ts` 445、`links-tree.ts` 437、`constants.ts` 432、`view-wikilink.ts` 411、`drag-target.ts` 382、`settings.ts` 375、`node-inline-editor.ts` 364、`main.ts` 351、`links-resolve.ts` 351；全部 **21 个超限文件均已登记理由**，其中 `math-jax.ts` / `links-tree.ts` / `links-resolve.ts` / `node-inline-editor.ts` 分属此前各批补登记），仅供参考；判定以「是否已在表内登记理由」为准，不以数字为准。
+行数基准为 **2026-09-28 快照**，其后按实测逐批更新（**2026-10-02 全量重测**并补登记 `document-service.ts`；死代码审计、lint 合规化、K92/K93 与「函数内纯移动拆分」轮后按 `Get-Content` 行数重测：`mindmap.ts` 2046、`node-inline-content.ts` 1327、`md-outline.ts` 1046、`view.ts` 1200、`md-serialize.ts` 1054、`engine-controller.ts` 815、`view-node-actions.ts` 749、`math-jax.ts` 813、`view-dnd.ts` 575、`images-path.ts` 618、`i18n.ts` 515、`links-split.ts` 486、`image-resize.ts` 411、`links-tree.ts` 464、`constants.ts` 451、`view-wikilink.ts` 411、`drag-target.ts` 382、`settings.ts` 375、`node-inline-editor.ts` 377、`main.ts` 351、`links-resolve.ts` 351、`document-service.ts` 365；全部 **22 个超限文件均已登记理由**，其中 `math-jax.ts` / `links-tree.ts` / `links-resolve.ts` / `node-inline-editor.ts` / `document-service.ts` 分属各批补登记），仅供参考；判定以「是否已在表内登记理由」为准，不以数字为准。
 
 **函数内拆分口径（2026-09-28「批次 2」逐行评估裁决）**：超长函数（>90 行）能否拆，判据同文件级——「拆会不会把契约摊开」，而非行数。① **不拆**（判定/优先级链形态：分支**顺序即契约**、注释与状态流集中可见；拆分需 `continue`→`return` 转换或引入 ctx/闭包状态，属机械改写而非提取）——`md-outline.buildInlineData`（220 行）/ `md-outline.classifyLines`（174）/ `node-inline-content.splitMarkedText`（111）/ `drag-target.handleMove`（105）。② **拆**（纯移动：块间独立、签名统一、零共享可变状态）——2026-09-28 已完成：`view-wikilink.registerWikilinkInteractions`（137 → 编排壳 + 点击/悬停/画布锚点悬停/中键四个注册函数）、`view-toolbar.buildToolbar`（114 → 编排壳 + 左/中/右三组构建）、`commands.registerCommands`（145 → 编排壳 + 创建/视图/导出与文档三组）。**重跑函数级评估前先读本节**，避免重复论证。
 
@@ -945,8 +945,9 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   ② **根因**（vendor 内部，插件不可改）：`nodeCreateContents.createTextNode` 逐字符换行循环
   （每字符一次 `measureText` + O(L²) 字符串重建）+ `measureText` 每字符一次「克隆 → 挂 body →
   `getBBox()` 强制布局 → 移除」（svg.js retry 路径）；发生在**渲染期节点构造**，早于
-  `MindMapNode.render` 的性能模式门——`openPerformance` 裁剪不掉它。上游补丁建议（快路径 +
-  canvas measureText + 缓存）见 `docs/engine-upstream-patch-proposal.md`。
+  `MindMapNode.render` 的性能模式门——`openPerformance` 裁剪不掉它。**上游补丁建议（快路径 +
+  canvas measureText + 缓存）未入库**（原提案文档已不在仓库）：根因分析见本条，插件侧以 ③ 的
+  自绘接管规避。
   ③ **插件侧规避（已实施）**：`settings.selfDrawPlainNodes`（默认开）——所有含文字节点经
   `node-inline-content` 自绘接管，引擎 `createNodeData` 提前 return、测量全跳过；**边界**：空文本 /
   含图 / 隐藏后无可见内容（纯空白、整行注释）不接管（否则渲染空节点或丢图片/图标）；

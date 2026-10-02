@@ -44,8 +44,12 @@ export interface MindMapStudioSettings {
 	performanceThreshold: number;
 	/**
 	 * 文本节点快速渲染：**所有含文字的节点**由插件自绘渲染，跳过引擎的
-	 * 逐字符文本测宽——实测它是打开大图的成本主体（0.13ms/字符；5000 节点
-	 * 全自绘 1.36s vs 引擎文本 8.6s，见 `docs/engine-upstream-patch-proposal.md`）。
+	 * 逐字符文本测宽——实测它是打开大图的成本主体（0.13ms/字符）。
+	 *
+	 * ⚠ **不要在注释里写死秒数**：该值随引擎逐版本优化多次变化（K72 记录的
+	 * 5000 节点全自绘 1.36s 已被 K74~K77 优化取代），写死会与实机脱节。
+	 * 数据与机器可复现命令见 AGENTS.md K72：
+	 * `npm run verify:visual -- --require-chrome --bench-open`。
 	 * 代价：双击节点改用弹窗编辑（引擎内联编辑框对自绘节点静默 no-op）。
 	 * **仅对之后打开的文件生效**（不在 LIVE_REFRESH_SETTING_KEYS，见 K62 路由表）。
 	 */
