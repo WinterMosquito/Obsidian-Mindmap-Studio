@@ -941,11 +941,18 @@ export function parseMdOutline(
 			isIndentedCodeLine(first.raw) || !firstLineData
 				? {}
 				: pickImageMeta(firstLineData);
+		// `text` 与 `mdDerivedText` 在**解析期恒等**（两者都取自 derived），
+		// 差异只出现在用户编辑之后：`text` 变、`mdDerivedText` 保留为解析快照
+		// （`editedWikilinkAlias` 等闸门正是靠这个不等判定「被编辑过」，
+		// 见 domain/md-meta.ts 契约）。故这里 join 一次复用同一字符串，
+		// 避免同一份内容拼两遍（大文档的段落节点是逐个 flushPlain，此处省的是
+		// 每段的第二次 O(n) 拼接）。
+		const derivedText = derived.join('\n');
 		const node: MindMapTreeNode = {
 			data: {
-				text: derived.join('\n'),
+				text: derivedText,
 				mdRaw: raw,
-				mdDerivedText: derived.join('\n'),
+				mdDerivedText: derivedText,
 				mdType: 'plain',
 				...imageMeta,
 			},

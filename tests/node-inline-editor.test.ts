@@ -20,17 +20,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 import type { ViewNodeEditContext } from '../src/features/view-context';
 
-const { getNodeGroupElMock, isEditingTextMock, markNodeNeedLayoutMock, applyRawToNodeMock } =
-	vi.hoisted(() => ({
-		getNodeGroupElMock: vi.fn(),
-		isEditingTextMock: vi.fn(() => false),
-		markNodeNeedLayoutMock: vi.fn(),
-		applyRawToNodeMock: vi.fn(
-			(data: Record<string, unknown>, raw: string): void => {
-				data.text = raw;
-			},
-		),
-	}));
+const {
+	getNodeGroupElMock,
+	isEditingTextMock,
+	markNodeNeedLayoutMock,
+	applyRawToNodeMock,
+	walkImageSizeCorrectionsMock,
+	resolveImagePathMock,
+	ensureDefaultImageSizesMock,
+} = vi.hoisted(() => ({
+	getNodeGroupElMock: vi.fn(),
+	isEditingTextMock: vi.fn(() => false),
+	markNodeNeedLayoutMock: vi.fn(),
+	applyRawToNodeMock: vi.fn(
+		(data: Record<string, unknown>, raw: string): void => {
+			data.text = raw;
+		},
+	),
+	// 默认 resolve；用例按需 mockRejectedValueOnce 注入探测失败
+	walkImageSizeCorrectionsMock: vi.fn(() => Promise.resolve()),
+	resolveImagePathMock: vi.fn((path: string) => path),
+	ensureDefaultImageSizesMock: vi.fn(),
+}));
 
 vi.mock('../src/engine/mindmap', () => ({
 	getNodeGroupEl: getNodeGroupElMock,
@@ -47,12 +58,13 @@ vi.mock('../src/markdown/md-line-write', () => ({
 }));
 
 vi.mock('../src/media/images-path', () => ({
-	ensureDefaultImageSizes: vi.fn(),
-	resolveImagePath: vi.fn((path: string) => path),
-	walkImageSizeCorrections: vi.fn(() => Promise.resolve()),
+	ensureDefaultImageSizes: ensureDefaultImageSizesMock,
+	resolveImagePath: resolveImagePathMock,
+	walkImageSizeCorrections: walkImageSizeCorrectionsMock,
 }));
 
 import {
+	applyRawNodeContent,
 	closeInlineEditor,
 	isAnyNodeEditing,
 	isInlineNodeEditing,
@@ -258,11 +270,20 @@ beforeEach(() => {
 	applyRawToNodeMock.mockImplementation((data: Record<string, unknown>, raw: string) => {
 		data.text = raw;
 	});
+	// 探测默认成功；失败用例用 mockRejectedValueOnce 单次覆盖
+	walkImageSizeCorrectionsMock.mockImplementation(() => Promise.resolve());
 });
 
 afterEach(() => {
 	vi.clearAllMocks();
 });
+
+/** 排空微任务链：让 .then/.catch 回调落地（探测链是 fire-and-forget，需显式等待） */
+async function flushMicrotasks(times = 5): Promise<void> {
+	for (let i = 0; i < times; i++) {
+		await Promise.resolve();
+	}
+}
 
 describe('resolveInlineEditKey（按键 → 动作判定表）', () => {
 	it('Enter / Mod+Enter / Tab / Escape = 提交（Esc 为「停止并保留」）', () => {
@@ -435,5 +456,88 @@ describe('isAnyNodeEditing（统一编辑态判据）', () => {
 		expect(isAnyNodeEditing(mindMap)).toBe(true);
 		expect(isAnyNodeEditing(null)).toBe(false);
 		expect(isInlineNodeEditing(null)).toBe(false);
+	});
+});
+
+/**
+ * `applyRawNodeContent`：弹窗/内联的**原文写回入口**（2026-10-04 代码审查补齐）。
+ *
+ * 此前该导出函数**无任何直接用例**（`tests/` 侧只覆盖 `resolveInlineEditKey`、
+ * 会话生命周期与 `isAnyNodeEditing`），而它是 K108 的关键编排点——末尾漏掉
+ * `notifyNodeContentCommitted` 会让「中心主题改名文件 / 编辑后自动拆分混排双链 /
+ * 节点计数」三条后续编排静默失效（该通道不走引擎命令、不派发 `data_change`）。
+ *
+ * 本组锁三件事：① 基础编排（写回 → 重排 → 渲染 → 保存 → 通知）的**顺序与次数**；
+ * ② 图片面只在**有 image 字段**时探测，且成功后补一次重排；③ **探测失败降级**——
+ * 抛错不得变成未处理拒绝，也不得影响写回/渲染/保存（K97：未设尺寸＝默认大小即
+ * 安全终态，失败只需留痕）。
+ */
+describe('applyRawNodeContent（原文写回 + 图片尺寸探测降级）', () => {
+	/** 图片节点桩：data 带 image 字段（触发图片面分支） */
+	function imageNode(image = 'old.png') {
+		return makeNode({ text: '旧', image });
+	}
+
+	it('无 image 字段：只做写回 → 重排 → 渲染 → 保存 → K108 通知，不触发探测', () => {
+		const render = vi.fn();
+		const { view, notifyNodeContentCommitted } = makeView({
+			render,
+		} as unknown as MindMap);
+		const node = makeNode({ text: '旧' });
+
+		applyRawNodeContent(view, node, '新原文');
+
+		expect(applyRawToNodeMock, '原文整体重建').toHaveBeenCalledWith(
+			expect.anything(),
+			'新原文',
+		);
+		expect(walkImageSizeCorrectionsMock, '无图即不探测').not.toHaveBeenCalled();
+		expect(markNodeNeedLayoutMock).toHaveBeenCalledWith(node);
+		expect(render, '末尾那一次渲染').toHaveBeenCalledTimes(1);
+		expect(view.scheduleSave).toHaveBeenCalledTimes(1);
+		expect(notifyNodeContentCommitted, 'K108：三条后续编排依赖它').toHaveBeenCalledWith(
+			node,
+		);
+	});
+
+	it('有 image 字段：解析地址 + 填默认尺寸 + 探测成功后补一次重排（共两次渲染）', async () => {
+		const render = vi.fn();
+		const { view } = makeView({ render } as unknown as MindMap);
+		const node = imageNode();
+
+		applyRawNodeContent(view, node, '新原文');
+		await flushMicrotasks();
+
+		expect(
+			resolveImagePathMock,
+			'图片地址经统一解析入口（第二参为 app，用于解析库相对路径）',
+		).toHaveBeenCalledWith('old.png', view.app);
+		expect(ensureDefaultImageSizesMock, '引擎硬要求 image 必有 imageSize').toHaveBeenCalled();
+		expect(walkImageSizeCorrectionsMock).toHaveBeenCalledTimes(1);
+		expect(render, '探测补一次 + 末尾一次').toHaveBeenCalledTimes(2);
+		expect(markNodeNeedLayoutMock, '探测成功也补一次重排').toHaveBeenCalledTimes(2);
+	});
+
+	it('探测失败：降级为 console.warn，不产生未处理拒绝，且写回/保存/通知不受影响', async () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const render = vi.fn();
+		const { view, notifyNodeContentCommitted } = makeView({
+			render,
+		} as unknown as MindMap);
+		const node = imageNode();
+		walkImageSizeCorrectionsMock.mockRejectedValueOnce(new Error('probe boom'));
+
+		// 关键：返回 undefined 而非 reject —— 证明降级真的接住了
+		expect(applyRawNodeContent(view, node, '新原文')).toBeUndefined();
+		await expect(flushMicrotasks()).resolves.toBeUndefined();
+
+		expect(warnSpy, '失败必须留痕（静默跳过会让问题无痕退化）').toHaveBeenCalledWith(
+			'图片尺寸探测失败，保持默认尺寸',
+			expect.any(Error),
+		);
+		expect(render, '探测补渲染被跳过，只剩末尾那一次').toHaveBeenCalledTimes(1);
+		expect(view.scheduleSave, '写回不受探测失败影响').toHaveBeenCalledTimes(1);
+		expect(notifyNodeContentCommitted, 'K108 通知不受影响').toHaveBeenCalledWith(node);
+		warnSpy.mockRestore();
 	});
 });

@@ -600,44 +600,51 @@ export function editNodeText(view: ViewNodeEditContext, node: MindMapNode): void
  * 不可见、外链 icon-only 连影子都没有）；2026-09-28 内联编辑器上线后收编为
  * 备选入口（复杂原文/别名与多行细调场景）。
  */
-export function editNodeTextInModal(
+export async function editNodeTextInModal(
 	view: ViewNodeEditContext,
 	node: MindMapNode,
-): void {
+): Promise<void> {
 	const mindMap = view.mindMap;
 	if (!mindMap) {
 		return;
 	}
-	const data = node.getData() as MdNodeData;
-	// 纯链接节点：别名语义（与序列化的纯 token 判定同源，见 isPureLinkNode）
-	if (isPureLinkNode(data)) {
-		void openNodeTextModal(
-			view.app,
-			getNodeDataString(node, 'text'),
-			view.lang,
-		).then((value) => {
+	// 自兜错误：本函数由右键菜单 `.onClick(() => editNodeTextInModal(...))` 调用
+	// （返回值不 await，故不能靠调用方挂 .catch），失败在此转成用户可见提示——
+	// 与 addLinkToActiveNode / view-paste / view-export 同一约定（见 K50 收口唯一）。
+	// 用户主动点了「在弹窗中编辑」却毫无反应是最坏结果，不能只写 console。
+	try {
+		const data = node.getData() as MdNodeData;
+		// 纯链接节点：别名语义（与序列化的纯 token 判定同源，见 isPureLinkNode）
+		if (isPureLinkNode(data)) {
+			const value = await openNodeTextModal(
+				view.app,
+				getNodeDataString(node, 'text'),
+				view.lang,
+			);
 			if (value === null) {
 				return;
 			}
 			setNodeText(mindMap, node, value);
 			view.scheduleSave();
+			return;
+		}
+		// 其余富节点：编辑原文行；预填 = 下次写盘会写出的那一行（composeNodeContent）
+		const raw = composeNodeContent(data, view.app);
+		const value = await openNodeTextModal(view.app, raw, view.lang, {
+			rawMode: true,
+			// 预览用**渲染器同口径**（URL 显示为地址、轻标记剥壳、超长截断）——
+			// 与节点实际外观一致；引擎侧口径（URL icon-only）在这里会误导用户
+			preview: (value) => inlineContentPreview(value),
 		});
-		return;
-	}
-	// 其余富节点：编辑原文行；预填 = 下次写盘会写出的那一行（composeNodeContent）
-	const raw = composeNodeContent(data, view.app);
-	void openNodeTextModal(view.app, raw, view.lang, {
-		rawMode: true,
-		// 预览用**渲染器同口径**（URL 显示为地址、轻标记剥壳、超长截断）——
-		// 与节点实际外观一致；引擎侧口径（URL icon-only）在这里会误导用户
-		preview: (value) => inlineContentPreview(value),
-	}).then((value) => {
 		// 未改动不写盘（避免无意义的保存与重渲染）
 		if (value === null || value === raw) {
 			return;
 		}
 		applyRawNodeContent(view, node, value);
-	});
+	} catch (error) {
+		console.error('编辑节点文本失败', error);
+		notifyError(view.lang, 'common.editTextFailed', error);
+	}
 }
 
 /**

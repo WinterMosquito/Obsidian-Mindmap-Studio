@@ -90,6 +90,12 @@ function countSourceLines(absPath: string): number | null {
  * 任何既有断言的检查面内——2026-10-02 的审计发现 AGENTS.md 登记了一个
  * **并不存在**的 `docs/engine-upstream-patch-proposal.md`（且源码注释引用它），
  * 既有护栏在结构上抓不到，故补此条。
+ *
+ * 2026-10-04：字符类加 `/`（`[\w./-]+`），使**子目录**条目（`agents/architecture.md`
+ * 等）也纳入校验。此前 `[\w.-]+` 不匹配斜杠，`docs/agents/` 下的 4 份详录虽在
+ * `docs/` 段登记，却因「不匹配即 break」而**永远不会被检查**——AGENTS.md 指向
+ * 不存在的详录文件同样抓不到。改动只放宽正则的**匹配范围**（覆盖更广），
+ * 不放宽判定标准：`docExists` 仍逐一验证文件真实存在。
  */
 function collectDeclaredDocs(): string[] {
 	const lines = AGENTS_SOURCE.split('\n');
@@ -99,7 +105,7 @@ function collectDeclaredDocs(): string[] {
 		return names;
 	}
 	for (let i = start + 1; i < lines.length; i++) {
-		const match = /^\s\s([\w.-]+\.md)\s+#/.exec(lines[i] ?? '');
+		const match = /^\s\s([\w./-]+\.md)\s+#/.exec(lines[i] ?? '');
 		const name = match?.[1];
 		if (name === undefined) {
 			break;

@@ -76,7 +76,7 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 | Add an image | Select a node → **Add image** (from vault, clipboard, or a file) |
 | Attach by drag & drop | Drag **any vault file** from the file explorer onto a selected node — it becomes the node's link (completely empty node: text becomes the display name; a node with any existing content: a linked child node is created); dragging an image sets the node image. With nothing selected, a linked node is created under the root (images need a selected node) |
 | Drag files in from your system | **Select a node first**, then drop system files onto the canvas (otherwise a notice asks you to): images become the node image, other files are copied into the vault and attached by type (notes → wikilink, everything else → attachment; embeddable types are written as `![[report.pdf]]`). Hold **`Ctrl` (Win/Linux) / `Option` (mac)** to **skip the copy** and insert an absolute link `[file name](file:///…)` instead (wrapped in `<…>` only when the path contains spaces or brackets) |
-| Rearrange | Drag near another node's center to nest as its child; drag between two siblings to insert in between (the drop target highlights) |
+| Rearrange | Drag near another node's center to nest as its child; drag between two siblings to insert in between (the drop target highlights — override its colour with the CSS variable `--mm-drag-target-color`, defaults to orange) |
 | Resize a node image | Hover the image, drag its bottom-right handle (aspect ratio preserved) |
 | Make a node image-only | Clear the node's text: double-click → empty, or right-click → **Remove text** |
 | Clean the layout | Toolbar: **Auto arrange**, **Reset zoom (100%)**, **Fit to canvas**, zoom in/out |
@@ -85,18 +85,34 @@ Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a min
 | Export | Toolbar **Export PNG** |
 | Back to Markdown | **Switch to Markdown** (restores source/preview mode) |
 
+**Keyboard shortcuts (in the mind-map view)**
+
+| Keys | Action | When it is *not* intercepted |
+|---|---|---|
+| `Ctrl`/`Cmd`+`F` | Open the search box | — |
+| `Ctrl`/`Cmd`+`Z` | Undo | — |
+| `Ctrl`/`Cmd`+`Shift`+`Z` | Redo | — |
+| `Ctrl`+`Y` | Redo | Windows/Linux only — macOS leaves `Cmd`+`Y` alone |
+| `F2` | Edit the selected node | With **no node selected** F2 belongs to Obsidian (rename the file); inside a text input F2 is left alone |
+| `Delete` / `Backspace` | Delete the selected node | Inside a text input, while a node is being edited, or with no node selected |
+| `Shift`+`1` | Fit to canvas | Inside a text input |
+| `Shift`+`2` | Zoom to the selection (falls back to fit-to-canvas when nothing is selected) | Inside a text input |
+| `Tab` / `Enter` | Add a child / sibling node | Handled by the engine, not by the plugin |
+
+Undo/redo go through the engine's own history. Very large maps keep fewer undo steps, because the history is capped by a fixed memory budget rather than a fixed step count.
+
 ### 4) Saving & persistence
 - Unedited lines are written back **verbatim** (frontmatter preserved; blank lines between paragraphs and standalone `---` separators are normalised); editing a **pure wikilink** node (the whole line is one wikilink) edits its **alias**, written back as `[[note|new alias]]` (clearing the text drops the alias and keeps the link; nodes that mix text and a link still round-trip as "text + link").
 - Layout, viewport and "open as" are kept per file in the plugin `data.json`; node image sizes go into the note itself as official embed syntax (`![[img|300]]`).
 - Editing the **central node** renames the `.mindmap.md` (Obsidian updates links/backlinks).
-- Only **one** mind-map editing instance per `.mindmap.md`: opening the same file in a second tab shows a notice and hands the view back, so two copies can never overwrite each other's saves.
+- Only **one** mind-map editing instance per `.mindmap.md` (Obsidian itself lets you open the same file in as many tabs as you want): opening it in a second tab shows a notice and hands the view back, so two copies can never overwrite each other's saves. The note's reading view can still be open next to the mind map.
 - If the file is changed **outside** Obsidian (sync folder, another window), auto-save skips that round with a one-time notice instead of overwriting the other change; after repeated write failures auto-save is suspended with a notice (manual save still works).
 - Config is local; no telemetry, and the plugin makes **no network requests** — nothing is sent anywhere.
 - **Files outside the vault** are only ever touched when *you* ask for it: an absolute `file:///` link (created by holding `Ctrl`/`Option` while dropping a file) is handed to your system's default app when you click it. The plugin does not read, copy or upload those files.
 
 ### 5) Deliberate differences from Obsidian
 
-The mind-map view is a **third kind of view** (neither reading nor editing view), so a few interactions follow this view's semantics. All of them are registered (see `AGENTS.md` K56 ⑤):
+The mind-map view is a **third kind of view** (neither reading nor editing view), so a few interactions follow this view's semantics. All of them are registered (see `AGENTS.md` K56 ⑤; the second-tab and side-button rows are K102 / K111):
 
 | Item | Obsidian | This plugin |
 |---|---|---|
@@ -106,7 +122,8 @@ The mind-map view is a **third kind of view** (neither reading nor editing view)
 | `[[` suggestions | Inline suggestions in the editor | The source-line dialog is a plain textarea (no inline suggestions) → use the vault-file suggestions in the **Add link** dialog |
 | Backlinks / Outgoing links / Unlinked mentions panes | Core plugins | Not duplicated — Obsidian's own panes act on the current file and work while the mind-map view is open |
 | Clicking a non-renderable vault file (zip / docx / …) | Opens in the default system app | Same |
-| Mouse side-button back / forward | Follows the navigation history | Same: side buttons follow Obsidian's navigation history in the mind-map view; switching views is **not** a navigation point — back goes straight to the previous navigation point (usually the previous note). Use **Open as Markdown** to return to the note's Markdown view |
+| Same file in a second tab | Allowed — "open as many tabs as you want"; `Ctrl`+clicking a link to a file that is already open makes a new tab | A notice appears and the view is handed back to the existing tab: one mind-map editing instance per `.mindmap.md` (two instances = two engines + two save pipelines, whose interleaved saves lose edits). The note's reading view can still be open alongside |
+| Mouse side-button back / forward | Follows the navigation history | Same: side buttons follow Obsidian's navigation history in the mind-map view; switching views is **not** a navigation point — back goes straight to the previous navigation point (usually the previous note). Use **Switch to Markdown** (toolbar button or command palette), or **Open as Markdown** from the file context menu, to return to the note's Markdown view |
 
 The full Markdown ↔ mind-map mapping rules live in [`docs/markdown-mindmap-standard.md`](docs/markdown-mindmap-standard.md).
 

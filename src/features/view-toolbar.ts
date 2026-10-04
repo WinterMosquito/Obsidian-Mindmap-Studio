@@ -97,40 +97,43 @@ function buildToolbarCenterGroup(
 		'mindmap-toolbar-group mindmap-toolbar-center',
 	);
 	centerGroup.createSpan('mindmap-toolbar-label').setText(t(view.lang, 'toolbar.layout'));
-	view.layoutSelect = centerGroup.createEl('select', {
+	// 局部量持有 select：选项面与初值设置都用它（`view.layoutSelect` 只是暴露给
+	// 视图契约的引用，供外部读）。同函数内不混用非空断言与判空——`refreshToolbar`
+	// 重建时会重新执行本函数，闭包不会持有旧元素。
+	const layoutSelect = centerGroup.createEl('select', {
 		cls: 'mindmap-layout-select',
 	});
+	view.layoutSelect = layoutSelect;
 	LAYOUT_OPTIONS.forEach((option) => {
-		const optionEl = view.layoutSelect!.createEl('option');
+		const optionEl = layoutSelect.createEl('option');
 		optionEl.value = option.value;
 		optionEl.setText(t(view.lang, option.label));
 	});
-	view.layoutSelect.value = view.plugin.settings.defaultLayout;
-	view.layoutSelect.onchange = () => {
-		if (view.layoutSelect) {
-			// 布局持久化到视图状态存储（.mindmap.md 正文不写入布局）
-			view.applyLayout(view.layoutSelect.value);
-		}
+	layoutSelect.value = view.plugin.settings.defaultLayout;
+	layoutSelect.onchange = () => {
+		// 布局持久化到视图状态存储（.mindmap.md 正文不写入布局）
+		view.applyLayout(layoutSelect.value);
 	};
 
 	centerGroup.createDiv('mindmap-toolbar-separator');
 	centerGroup.createSpan('mindmap-toolbar-label').setText(
 		t(view.lang, 'toolbar.lineStyle'),
 	);
-	view.lineStyleSelect = centerGroup.createEl('select', {
+	// 视图契约引用照旧（`syncLineStyleOptions` 经 view 读它，且它可能在工具栏尚未
+	// 构建时就被调用——那里的判空是必要的）；本函数内一律用局部量，同上。
+	const lineStyleSelect = centerGroup.createEl('select', {
 		cls: 'mindmap-line-style-select',
 	});
+	view.lineStyleSelect = lineStyleSelect;
 	// 初始按全局默认布局构建选项面；引擎就绪后由 onEngineReady 按文件实际布局校正
 	syncLineStyleOptions(
 		view,
 		view.plugin.settings.defaultLayout,
 		view.plugin.settings.defaultLineStyle,
 	);
-	view.lineStyleSelect.onchange = () => {
-		if (view.lineStyleSelect) {
-			// 连线样式偏好持久化到视图状态存储（auto＝随布局；正文不写入）
-			view.applyLineStyle(view.lineStyleSelect.value);
-		}
+	lineStyleSelect.onchange = () => {
+		// 连线样式偏好持久化到视图状态存储（auto＝随布局；正文不写入）
+		view.applyLineStyle(lineStyleSelect.value);
 	};
 }
 

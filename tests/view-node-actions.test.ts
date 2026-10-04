@@ -1611,7 +1611,7 @@ describe('editNodeTextInModal（弹窗备选入口）', () => {
 		const { view, raw, scheduleSave } = makeView();
 		openNodeModalMock.mockResolvedValue('新名');
 
-		editNodeTextInModal(view, node);
+		await editNodeTextInModal(view, node);
 		await flushAsync();
 
 		// 别名模式：不传第 4 参（rawMode 缺省），弹窗行为与历史一致
@@ -1626,7 +1626,7 @@ describe('editNodeTextInModal（弹窗备选入口）', () => {
 		const { view, scheduleSave } = makeView();
 		openNodeModalMock.mockResolvedValue(null);
 
-		editNodeTextInModal(view, node);
+		await editNodeTextInModal(view, node);
 		await flushAsync();
 
 		expect(openNodeModalMock, '弹窗照常打开（取消发生在用户侧）').toHaveBeenCalledTimes(1);
@@ -1639,7 +1639,7 @@ describe('editNodeTextInModal（弹窗备选入口）', () => {
 		const { view } = makeView();
 		openNodeModalMock.mockResolvedValue('改后 [[链接]]');
 
-		editNodeTextInModal(view, node);
+		await editNodeTextInModal(view, node);
 		await flushAsync();
 
 		const [appArg, rawArg, langArg, optionsArg] = callArgs(openNodeModalMock);
@@ -1664,7 +1664,7 @@ describe('editNodeTextInModal（弹窗备选入口）', () => {
 			(_app: unknown, prefill: unknown) => Promise.resolve(prefill),
 		);
 
-		editNodeTextInModal(view, node);
+		await editNodeTextInModal(view, node);
 		await flushAsync();
 
 		expect(
@@ -1673,12 +1673,51 @@ describe('editNodeTextInModal（弹窗备选入口）', () => {
 		).not.toHaveBeenCalled();
 	});
 
-	it('引擎未就绪（mindMap 为 null）：不打开弹窗', () => {
+	it('引擎未就绪（mindMap 为 null）：不打开弹窗', async () => {
 		const node = pureLinkNode();
 		const { view } = makeView({ withEngine: false });
 
-		editNodeTextInModal(view, node);
+		await editNodeTextInModal(view, node);
 
 		expect(openNodeModalMock).not.toHaveBeenCalled();
+	});
+
+	/**
+	 * 弹窗 Promise 拒绝必须**自兜**成用户可见提示。
+	 * 调用点是右键菜单 `.onClick(() => editNodeTextInModal(...))`——返回值不被
+	 * await，故不能依赖调用方挂 `.catch`；此处拒绝若无兜底就是静默失败
+	 * （用户点了「在弹窗中编辑」却毫无反应）。两条模式都要覆盖：别名模式先
+	 * `setNodeText` 再保存、原文模式先 `applyRawNodeContent`，兜底须在两者之前。
+	 * 断言走本文件既有 Notice 桩（`noticeCalls` + `zh(key)` 真实文案，见文件头）。
+	 */
+	it('别名模式：弹窗 Promise 拒绝 → 用户可见提示，不产生未处理拒绝', async () => {
+		const node = pureLinkNode();
+		const { view, scheduleSave } = makeView();
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		openNodeModalMock.mockRejectedValue(new Error('boom'));
+
+		await expect(editNodeTextInModal(view, node)).resolves.toBeUndefined();
+
+		expect(noticeCalls, '编辑失败必须通知用户').toEqual([
+			`${zh('common.editTextFailed')}boom`,
+		]);
+		expect(errorSpy).toHaveBeenCalledWith('编辑节点文本失败', expect.any(Error));
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+		errorSpy.mockRestore();
+	});
+
+	it('原文模式：弹窗 Promise 拒绝 → 用户可见提示，不触碰写回通道', async () => {
+		const node = richNode();
+		const { view, scheduleSave } = makeView();
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		openNodeModalMock.mockRejectedValue(new Error('boom'));
+
+		await expect(editNodeTextInModal(view, node)).resolves.toBeUndefined();
+
+		expect(noticeCalls).toEqual([`${zh('common.editTextFailed')}boom`]);
+		expect(applyRawMock).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+		errorSpy.mockRestore();
 	});
 });

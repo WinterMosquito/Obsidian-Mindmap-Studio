@@ -362,10 +362,17 @@ export function applyRawNodeContent(
 		// 参数（![[图|300]]）时异步应用参数尺寸（ensureDefaultImageSizes 注释
 		// 有 vendor 证据）
 		ensureDefaultImageSizes({ data, children: [] });
-		void walkImageSizeCorrections({ data, children: [] }).then(() => {
-			markNodeNeedLayout(node);
-			view.mindMap?.render();
-		});
+		void walkImageSizeCorrections({ data, children: [] })
+			.then(() => {
+				markNodeNeedLayout(node);
+				view.mindMap?.render();
+			})
+			// 探测失败不致命：默认尺寸已由上行的 ensureDefaultImageSizes 填好，
+			// 且本函数末尾已有一次 markNodeNeedLayout + render —— 此处只需把错误
+			// 留痕，不能让它变成未处理拒绝（K97：未设尺寸＝默认大小即安全终态）。
+			.catch((error: unknown) => {
+				console.warn('图片尺寸探测失败，保持默认尺寸', error);
+			});
 	}
 	markNodeNeedLayout(node);
 	view.mindMap?.render();

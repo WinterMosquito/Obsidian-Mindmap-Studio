@@ -70,6 +70,30 @@
   --icon-size: 16px;
 }
 
+/*
+ * 图标尺寸自包含兜底（K112）：`.mindmap-tool-btn` 上那行 `--icon-size` 需由官方
+ * 全局规则 `svg.svg-icon { height/width: var(--icon-size) }`（obsidian app.css）消费
+ * 才生效，即依赖官方内部类名。实机实测（1.13.7）：两种写法渲染**逐项等效**（16px、
+ * stroke 1.75px 一致），故自身再写一遍尺寸——官方若改名该内部类，图标不会静默
+ * 跳回主题默认 18px。选择器特异性 (0,2,1) 高于官方规则的 (0,1,1)——**留一级余量**：
+ * 官方需把该规则提到 (0,3,1) 以上才会压过本规则，故不依赖样式加载顺序。
+ *
+ * 取值必须走 `var(--icon-size, 16px)` 而**不是**裸 `16px`：本规则特异性高于官方，
+ * 若写死值就会连官方的变量通道一起压掉——`--icon-size` 将彻底失效，K112 保留
+ * 变量的理由（跟随官方尺寸体系 / 允许用户或主题覆盖）随之失效。走 `var()` 则两种
+ * 失效路径都兜住：变量在位 → 跟随变量；官方改名致其不再消费而变量又被移除/置为
+ * 无效值 → 回落到本行的 16px（实测把 `--icon-size` 强制置 `initial` 即走此支）。
+ *
+ * 子选择器用 `> svg`：既匹配「按钮内唯一元素即该 svg」（实测为按钮直接子），又
+ * 避免将来按钮内加带 svg 的附属元素时被误伤。**代价**：若官方 `setIcon` 改为包一层
+ * `<span>`，本规则会与变量通道同时失效（退到主题默认 18px）——这与「改名内部类名」
+ * 同属 DOM/类名契约变更，届时按同一路径重新实测登记即可。
+ */
+.mindmap-toolbar .mindmap-tool-btn > svg {
+  width: var(--icon-size, 16px);
+  height: var(--icon-size, 16px);
+}
+
 .mindmap-tool-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-accent);

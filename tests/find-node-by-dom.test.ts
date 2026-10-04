@@ -12,7 +12,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
-import { findNodeByDom } from '../src/engine/mindmap';
+import { findNodeByDom, resolveNodesByDoms } from '../src/engine/mindmap';
 
 vi.mock('../vendor/simple-mind-map.cjs', () => ({
 	MindMap: class {},
@@ -29,14 +29,20 @@ vi.mock('../vendor/simple-mind-map.cjs', () => ({
 /** 最小元素桩：contains 沿 parent 链向上判定包含关系（对元素自身也返回 true） */
 interface FakeEl {
 	parent: FakeEl | null;
-	/** contains 被调用次数：用于断言「命中即终止整树遍历」 */
+	/**
+	 * `resolveNodesByDoms` 用的 DOM 标准属性（祖先链查表走它）。
+	 * 缺省与 `parent` 同值；可单独构造成「祖先链断裂」来验证回落分支。
+	 */
+	parentElement: FakeEl | null;
+	/** contains 被调用次数：用于断言「命中即终止整树遍历」与「批量反查不走全树 contains」 */
 	containsCalls: number;
 	contains(target: FakeEl): boolean;
 }
 
 function fakeEl(parent: FakeEl | null = null): FakeEl {
-	return {
+	const el: FakeEl = {
 		parent,
+		parentElement: parent,
 		containsCalls: 0,
 		contains(target: FakeEl): boolean {
 			this.containsCalls++;
@@ -50,6 +56,7 @@ function fakeEl(parent: FakeEl | null = null): FakeEl {
 			return false;
 		},
 	};
+	return el;
 }
 
 /** 渲染节点桩：group 元素 + children 树（walkTree 与 getNodeGroupEl 只用这两者） */
@@ -146,5 +153,151 @@ describe('findNodeByDom：group 身份匹配', () => {
 		expect(findNodeByDom(null, el)).toBeNull();
 		expect(findNodeByDom({ renderer: null } as unknown as MindMap, el)).toBeNull();
 		expect(findNodeByDom(asMindMap(null), el)).toBeNull();
+	});
+});
+
+/**
+ * `resolveNodesByDoms`（批量反查）：一次遍历 + 祖先链查表。
+ *
+ * 与上面 `findNodeByDom` 组的区别有两处，都是本组要锁死的契约：
+ * ① **逐位置对应** —— `els[i]` 的结果在 `[i]`，不去重、不改长度。调用方
+ *    （`view.flushMathRemeasure`）要靠「哪几个落空」决定是否走延后重试，
+ *    一旦去重或压缩就会把落空项吞掉。
+ * ② **全命中时不触达 `contains`** —— 这是复杂度改进本身的可观测证据：
+ *    祖先链查表不调 `contains`，故「全部命中」时各 group 的 `containsCalls`
+ *    恒为 0，而逐个 `findNodeByDom` 必然是 O(元素数 × 节点数) 次调用。
+ */
+describe('resolveNodesByDoms：批量反查（逐位置 + 祖先链查表）', () => {
+	/** 树：root → mid → leaf，各自有 group；返回节点与 group 便于断言 */
+	function tree3() {
+		const leafEl = fakeEl();
+		const midEl = fakeEl();
+		const rootEl = fakeEl();
+		const leaf = fakeNode(leafEl);
+		const mid = fakeNode(midEl, [leaf]);
+		const tree = fakeNode(rootEl, [mid]);
+		return { tree, rootEl, midEl, leafEl, leafNode: leaf, midNode: mid };
+	}
+
+	it('逐位置对应：同批不同节点的元素各自命中，顺序稳定', () => {
+		const { tree, rootEl, midEl, leafEl, leafNode, midNode } = tree3();
+
+		expect(
+			resolveNodesByDoms(asMindMap(tree), [
+				asEl(leafEl),
+				asEl(rootEl),
+				asEl(midEl),
+			]),
+		).toEqual([asNode(leafNode), asNode(tree), asNode(midNode)]);
+	});
+
+	it('重复元素不产生重复输出位（逐位置语义 ≠ 去重语义）', () => {
+		const { tree, leafEl, leafNode } = tree3();
+
+		// 两个位置都命中同一节点——结果数组仍是 2 项（不是 1 项）
+		expect(
+			resolveNodesByDoms(asMindMap(tree), [asEl(leafEl), asEl(leafEl)]),
+		).toEqual([asNode(leafNode), asNode(leafNode)]);
+	});
+
+	it('命中 group 自身与深层子元素（祖先链含自身）', () => {
+		const { tree, rootEl, leafEl, leafNode } = tree3();
+		// 深层子元素：parentElement 链一路向上到 rootEl
+		const deep = fakeEl(fakeEl(fakeEl(rootEl)));
+
+		expect(resolveNodesByDoms(asMindMap(tree), [asEl(rootEl)])[0]).toBe(
+			asNode(tree),
+		);
+		expect(resolveNodesByDoms(asMindMap(tree), [asEl(leafEl)])[0]).toBe(
+			asNode(leafNode),
+		);
+		expect(resolveNodesByDoms(asMindMap(tree), [asEl(deep)])[0]).toBe(
+			asNode(tree),
+		);
+	});
+
+	it('未命中的元素给出 null，且不阻断同批其它元素', () => {
+		const { tree, leafEl, leafNode } = tree3();
+		const orphan = fakeEl(); // 不在任何 group 祖先链上
+
+		const out = resolveNodesByDoms(asMindMap(tree), [
+			asEl(orphan),
+			asEl(leafEl),
+		]);
+		expect(out).toEqual([null, asNode(leafNode)]);
+	});
+
+	it('祖先链断裂但 group.contains 命中 → 回落 findNodeByDom 仍能反查（建表后树变动的兜底）', () => {
+		const { tree, leafEl, leafNode } = tree3();
+		// 模拟「group 元素被引擎换掉 / parentElement 链与 contains 语义脱钩」：
+		// 目标**不是** group 自身（否则查表第一步就命中，测不到回落），而是
+		// group 的后代——它的 `parentElement` 链在根处断裂，但 `parent` 链仍连通
+		// （contains 仍认它是后代）⇒ 只能靠回落分支捞回来。
+		const sub = fakeEl(leafEl);
+		sub.parentElement = null;
+
+		const out = resolveNodesByDoms(asMindMap(tree), [asEl(sub)]);
+		expect(out).toEqual([asNode(leafNode)]);
+		expect(leafEl.containsCalls, '确实走了 contains 回落').toBeGreaterThan(0);
+	});
+
+	it('全部命中时零 contains 调用（复杂度改进的可观测证据）', () => {
+		const { tree, rootEl, midEl, leafEl } = tree3();
+
+		resolveNodesByDoms(asMindMap(tree), [
+			asEl(rootEl),
+			asEl(midEl),
+			asEl(leafEl),
+		]);
+
+		// 逐个 findNodeByDom 至少会调 3 次（每元素至少一次 contains）
+		expect(rootEl.containsCalls).toBe(0);
+		expect(midEl.containsCalls).toBe(0);
+		expect(leafEl.containsCalls).toBe(0);
+	});
+
+	it('规模收益：元素数远大于节点数时，contains 调用不随元素数线性增长', () => {
+		// 3 个节点、300 个待反查元素（全部落在最深节点的 group 内）
+		const { tree, leafEl, midEl } = tree3();
+		const deep = fakeEl(fakeEl(leafEl)); // 挂在最深 group 内
+		const many = Array.from({ length: 300 }, () => asEl(deep));
+		// 混两个必然落空的元素，验证回落次数是常数级而非线性级
+		const withMisses = [...many, asEl(fakeEl()), asEl(fakeEl())];
+
+		resolveNodesByDoms(asMindMap(tree), withMisses);
+
+		// 回落只发生在两个落空元素上：每次 findNodeByDom 至多扫 3 个 group
+		expect(leafEl.containsCalls).toBeLessThanOrEqual(2 * 3);
+		expect(midEl.containsCalls).toBeLessThanOrEqual(2 * 3);
+	});
+
+	it('引擎 / 渲染树 / 根节点不可用时返回等长全 null（不改变长度契约）', () => {
+		const els = [asEl(fakeEl()), asEl(fakeEl())];
+
+		expect(resolveNodesByDoms(null, els)).toEqual([null, null]);
+		expect(
+			resolveNodesByDoms({ renderer: null } as unknown as MindMap, els),
+		).toEqual([null, null]);
+		expect(resolveNodesByDoms(asMindMap(null), els)).toEqual([null, null]);
+	});
+
+	it('空输入返回空数组', () => {
+		const { tree } = tree3();
+
+		expect(resolveNodesByDoms(asMindMap(tree), [])).toEqual([]);
+	});
+
+	it('group 缺失 / group.node 缺失的节点被跳过，不阻断其它元素', () => {
+		const childEl = fakeEl();
+		const tree = fakeNode(fakeEl(), [
+			fakeNode(null),
+			fakeNode(childEl, [], 'no-node'),
+			fakeNode(childEl),
+		]);
+		const hitNode = tree.children[2]!;
+
+		expect(resolveNodesByDoms(asMindMap(tree), [asEl(childEl)])).toEqual([
+			asNode(hitNode),
+		]);
 	});
 });

@@ -5,6 +5,7 @@
    参见插件 docs/configuration.md。 */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Linter } from 'eslint';
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import globals from 'globals';
 import { parser } from 'typescript-eslint';
@@ -74,6 +75,7 @@ const OFFICIAL_RESTRICTED_IMPORT_PATTERNS = [
    （./x）不受影响。组合根（main/commands/settings/creation）只能被组合根
    引用，下层引入口在此拦下。 */
 type ModuleGroup =
+	| 'domain'
 	| 'core'
 	| 'links'
 	| 'markdown'
@@ -84,6 +86,17 @@ type ModuleGroup =
 	| 'services'
 	| 'features';
 
+/**
+ * 「会被禁止跨组导入」的组清单 —— **有意不含 `domain`**。
+ *
+ * domain 是零依赖层（下方独立配置块约束它不得导入任何外部包），其余每一层都
+ * 允许依赖它，所以它永远不该出现在某组的 `forbidden` 里。若把它加进本清单，
+ * 会让 core/links/… 全部禁止导入 domain，与 K51 依赖矩阵正好相反。
+ *
+ * 它出现在 `ModuleGroup` 里是因为 `boundary()` 的两个形参都用该类型，且 9 个
+ * 边界块里有 8 个把 `'domain'` 列为 allowed（本文件纳入 tsc 后，
+ * 此前 `'domain'` 因不在联合类型中而完全逃过类型检查）。
+ */
 const ALL_GROUPS: ModuleGroup[] = [
 	'core',
 	'links',
@@ -98,8 +111,19 @@ const ALL_GROUPS: ModuleGroup[] = [
 
 const COMBO_ROOT_PATTERNS = ['../main', '../commands', '../settings', '../creation'];
 
-/** 生成一个模块组的边界块：allowed 之外的同层组与组合根一律禁止 */
-function boundary(group: ModuleGroup, allowed: ModuleGroup[]) {
+/**
+ * 生成一个模块组的边界块：allowed 之外的同层组与组合根一律禁止
+ *
+ * 返回值标注 `Linter.Config`：本文件纳入 `tsc --noEmit` 后，
+ * 不标注时 `rules` 里的 `['error', { patterns }]` 会被推断成
+ * `(string | { patterns })[]` 而非 `[Severity, ...unknown[]]` 元组，
+ * 导致展开进 `defineConfig([...])` 时报 TS2345。标注同时也让
+ * `patterns` 的元素形状真正被 ESLint 的 `RuleConfig` 检查。
+ */
+function boundary(
+	group: ModuleGroup,
+	allowed: ModuleGroup[],
+): Linter.Config {
 	const forbidden = ALL_GROUPS.filter((g) => g !== group && !allowed.includes(g));
 	const patterns = [
 		// 官方 7 条依赖禁令必须先接入：该规则是**替换**语义，
@@ -198,6 +222,15 @@ export default defineConfig(
 			parser,
 			parserOptions: {
 				extraFileExtensions: ['.json'],
+				// `manifest.json` 自 2026-10-04 起进入 `tsconfig.json`
+				// 的 `include`——为的是让 `tsc --noEmit` 拦下 JSON 语法错。但
+				// projectService 只对 TS 生效，JSON 走类型感知会报
+				// `Parsing error: ';' expected`。`obsidianmd/validate-manifest` 是纯
+				// schema 规则（必填键/类型/禁词/描述格式），不需要类型信息，故在此
+				// 显式关掉 projectService —— 这也一并替代了原先的
+				// `allowDefaultProject: ['manifest.json']`（退役见文件末尾配置块）。
+				projectService: false,
+				project: false,
 			},
 		},
 		rules: {
@@ -231,21 +264,19 @@ export default defineConfig(
 		},
 	},
 	{
+		// ⚠ `files` 限定不可省（2026-10-04 踩坑）：flat config 中**靠后的块
+		// 覆盖靠前的**。本块在 `manifest.json` 专属块（`validate-manifest`）之后，
+		// 若不限定 `files`，这里的 `projectService: true` 会覆盖掉前者的
+		// `projectService: false` —— projectService 只对 TS 生效，JSON 走类型感知
+		// 即报 `Parsing error: ';' expected`。限定为 TS 扩展名后，类型感知只作用于
+		// TS/MTS/CTS，JSON 与 LICENSE 各由自己的块单独处置。
+		files: ['**/*.ts', '**/*.mts', '**/*.cts'],
 		languageOptions: {
 			globals: {
 				...globals.browser,
 			},
 			parserOptions: {
-				projectService: {
-					allowDefaultProject: [
-						'eslint.config.mts',
-						'manifest.json',
-						// 项目自撰的 stylelint 配置（规则面照抄官方 scanner，
-						// 见该文件顶部说明）。模板照抄来的 esbuild.config.mjs /
-						// version-bump.mjs 走 globalIgnores，本文件不属那一类。
-						'stylelint.config.mjs',
-					],
-				},
+				projectService: true,
 				tsconfigRootDir: import.meta.dirname,
 				extraFileExtensions: ['.json'],
 			},

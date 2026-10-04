@@ -9,13 +9,40 @@
 		"noFallthroughCasesInSwitch": true,
 		"noUncheckedIndexedAccess": true,
 		"noImplicitOverride": true,
-		"moduleResolution": "node",
+		// 模块解析用 `bundler` 而非已弃用的 `node`(node10)：TS 6 起该选项报
+		// deprecation（TS 7 移除）。`bundler` 与本项目写法完全兼容——实测
+		// `tsc --noEmit` 0 错误，它同样允许无扩展名相对 import（`./concurrency`
+		// 而非 `./concurrency.js`），故 src/ 的 400+ 处 import 无需改动。
+		// 官方 sample-plugin 仍是 `node`（模板未跟进），本项目主动迁移。
+		// ⚠ 不要改回 `node`，也不要用 `ignoreDeprecations` 静音——后者在
+		// 当前锁定的 TypeScript 5.9.3 下会报 `TS5103: Invalid value`。
+		"moduleResolution": "bundler",
 		"isolatedModules": true,
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
 		"allowSyntheticDefaultImports": true,
 		"allowJs": true,
+		// .mjs 配置纳入类型门禁。`allowJs` 只让它们「被解析」，
+		// 不做语义检查——`checkJs` 才是语义那一半。官方 sample-plugin 的 tsconfig
+		// 只 include src（其配置面靠 ESLint 的 allowDefaultProject 兜），
+		// 本项目改为让 tsc 直接看住这三个文件（发布相关配置，字段写错要能拦住）。
+		"checkJs": true,
+		// 让 manifest.json 进入项目文件集：JSON 语法错误（尾逗号、非法字面量）
+		// 在 build 前置的 `tsc --noEmit` 即被拦下。
+		// 注：manifest 的**字段语义**（id/name/version 形状、versions.json 一致性）
+		// 由 scripts/check-release-metadata.mjs 与官方 scanner 负责——
+		// tsc 不做 schema 校验，两条门禁互补而非重复。
+		"resolveJsonModule": true,
 		"lib": ["ES2021", "DOM"]
 	},
-	"include": ["src/**/*.ts", "tests/**/*.ts", "vendor/**/*.d.cts"]
+	// scripts/** 与 version-bump.mjs 仍不在此列：它们是纯 Node 工具链脚本，
+	// 不参与插件打包也不进浏览器类型域（见 eslint.config.mts 的 globalIgnores）。
+	"include": [
+		"src/**/*.ts",
+		"tests/**/*.ts",
+		"vendor/**/*.d.cts",
+		"eslint.config.mts",
+		"stylelint.config.mjs",
+		"manifest.json"
+	]
 }

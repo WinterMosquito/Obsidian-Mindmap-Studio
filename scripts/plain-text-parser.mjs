@@ -10,7 +10,19 @@
  * AST 为 `body`/`comments` 均空的 `Program`，仅靠 tokens 承载文本。
  */
 
-/** @type {import('eslint').Parser.ParserModule} */
+/**
+ * 行级 token 的精确形状。
+ *
+ * 本文件随 `eslint.config.mts` 一并纳入 `tsc --noEmit`（checkJs）后，
+ * 此前 `Array<Record<string, unknown>>` 会让 `first.loc.start` 落在 `unknown` 上
+ * 而无法通过类型检查；这里给出精确 shape，token 自身的字段名也一并被门禁。
+ *
+ * @typedef {{ type: string, value: string, range: [number, number],
+ *   loc: { start: { line: number, column: number },
+ *          end: { line: number, column: number } } }} LineToken
+ */
+
+/** @type {import('eslint').Linter.Parser} */
 export const plainTextParser = {
 	meta: {
 		name: 'plain-text-parser',
@@ -35,12 +47,14 @@ export const plainTextParser = {
 parseForESLint(text) {
 	const lines = text.split('\n');
 
-	/** @type {Array<Record<string, unknown>>} */
+	/** @type {LineToken[]} */
 	const tokens = [];
 	let index = 0;
 
 	for (let i = 0; i < lines.length; i++) {
-		const raw = lines[i];
+		// `i` 恒在界内，兜底 `?? ''` 只是为了让类型在
+		// `noUncheckedIndexedAccess` 下收敛（值本身恒为字符串）。
+		const raw = lines[i] ?? '';
 		// CRLF 行尾剥掉 `\r`（LF 行 raw 不含 `\r`，行为与旧实现完全一致）。
 		const value = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
 		tokens.push({
@@ -56,25 +70,25 @@ parseForESLint(text) {
 		index += raw.length + 1; // raw 含 \r 时即「内容 + \r + \n」，偏移仍逐字节对齐
 	}
 
-		const first = tokens[0];
-		const last = tokens[tokens.length - 1];
+	const first = tokens[0];
+	const last = tokens[tokens.length - 1];
 
-		return {
-			ast: {
-				type: 'Program',
-				sourceType: 'script',
-				range: [0, text.length],
-				loc: {
-					// 官方此处直接索引 tokens[len-1]，空文本会抛 TypeError。
-					// `''.split('\n')` 恒返回 `['']`，所以这里实际取不到 undefined，
-					// 但保留兜底以免将来改成过滤空行的写法时踩坑。
-					start: first?.loc?.start ?? { line: 1, column: 0 },
-					end: last?.loc?.end ?? { line: 1, column: 0 },
-				},
-				body: [],
-				comments: [],
-				tokens,
+	return {
+		ast: {
+			type: 'Program',
+			sourceType: 'script',
+			range: [0, text.length],
+			loc: {
+				// 官方此处直接索引 tokens[len-1]，空文本会抛 TypeError。
+				// `''.split('\n')` 恒返回 `['']`，所以这里实际取不到 undefined，
+				// 但保留兜底以免将来改成过滤空行的写法时踩坑。
+				start: first?.loc.start ?? { line: 1, column: 0 },
+				end: last?.loc.end ?? { line: 1, column: 0 },
 			},
-		};
-	},
+			body: [],
+			comments: [],
+			tokens,
+		},
+	};
+},
 };

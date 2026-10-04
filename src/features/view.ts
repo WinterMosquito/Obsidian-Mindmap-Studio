@@ -27,8 +27,8 @@ import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import { notifyError } from '../core/errors';
 import {
 	applyImageSizeCorrectionsToEngine,
-	findNodeByDom,
 	findNodesByMathProducts,
+	resolveNodesByDoms,
 	getRenderRoot,
 	refreshNodesCustomContent,
 } from '../engine/mindmap';
@@ -341,7 +341,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
-	 * 批次执行：holder → 真实 MindMapNode（`findNodeByDom`）→ 批量重排。
+	 * 批次执行：holder → 真实 MindMapNode（`resolveNodesByDoms` 批量反查）→ 批量重排。
 	 *
 	 * 解析失败（holder 已脱离 / 引擎重建中）**显式告警一次**并跳过该段——
 	 * 静默跳过会让「尺寸不同步」以无痕方式退化（K85 ① 教训）。
@@ -354,8 +354,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 		const nodes: MindMapNode[] = [];
 		const unresolvedHolders: HTMLElement[] = [];
-		for (const holder of holders) {
-			const node = findNodeByDom(this.mindMap, holder);
+		// 批量反查：一次遍历建「group → 节点」表 + 逐 holder 沿祖先链
+		// 查表，取代逐 holder 全树 walkTree（O(holder 数 × 节点数)）。逐位置对应，
+		// 故「未命中」语义与原先逐个反查完全一致（落空的 holder 仍进
+		// unresolvedHolders，走下面「产物元素反查 / 延后重试」两条回退）。
+		const resolved = resolveNodesByDoms(this.mindMap, holders);
+		for (const [i, holder] of holders.entries()) {
+			const node = resolved[i] ?? null;
 			if (!node) {
 				unresolvedHolders.push(holder);
 				continue;
@@ -795,16 +800,30 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			// 直接解构抛错、整图渲染中断——旧流程靠「探测先于引擎」隐式兜底，
 			// 见 ensureDefaultImageSizes 注释）：O(n) 指针遍历，不探测不等加载。
 			ensureDefaultImageSizes(tree);
-			void collectImageSizeCorrections(tree).then((corrections) => {
-				// 加载期间文件已切换：丢弃过期结果
-				if (this.loadingFilePath !== file.path) {
-					return;
-				}
-				this.pendingImageCorrections = corrections;
-				if (this.applyPendingImageCorrections()) {
-					this.engine.scheduleViewportRecenter();
-				}
-			});
+			void collectImageSizeCorrections(tree)
+				.then((corrections) => {
+					// 加载期间文件已切换：丢弃过期结果
+					if (this.loadingFilePath !== file.path) {
+						return;
+					}
+					this.pendingImageCorrections = corrections;
+					if (this.applyPendingImageCorrections()) {
+						this.engine.scheduleViewportRecenter();
+					}
+				})
+				// 探测失败不致命：K97 语义下「未设尺寸＝按默认大小展示」本身即是
+				// 安全终态，探测只负责把「带官方尺寸参数」的节点校正到实际尺寸。
+				// 静默降级为默认尺寸即可，不打断加载、不打扰用户（错误仍留 console）。
+				//
+				// ⚠ 覆盖状态（2026-10-04 审查登记）：本降级分支**无直接单测**——
+				// `MindMapView` 本体（1100+ 行）依赖 DocumentService / EngineController /
+				// rAF / 十余个实例字段，仓库无 `tests/view.test.ts` 脚手架，为此新建的
+				// 成本远超收益。同一降级语义在 `node-inline-editor.applyRawNodeContent`
+				// 有等价用例锁定（含「移除 catch ⇒ 精确 1 例报红 + 产生未处理拒绝」的
+				// 负向自检），两处可互为参照。若将来补 `view.test.ts`，此处优先补。
+				.catch((error: unknown) => {
+					console.warn('图片尺寸探测失败，保持默认尺寸', error);
+				});
 			// 上一帧若尚未执行（快速切换文件），先取消，避免旧树被渲染
 			this.cancelPendingInit();
 			// 引擎即将重建：先提交内联编辑（节点对象随重建失效，输入不能丢）

@@ -1121,6 +1121,81 @@ export function findNodeByDom(
 }
 
 /**
+ * **批量**反查多个元素所在节点：一次遍历 + 祖先链查表。
+ *
+ * ## 为什么需要它
+ *
+ * `findNodeByDom` 每次调用都独立走一遍全树 `walkTree`，在「一批元素」场景下是
+ * O(元素数 × 节点数)：① `view.flushMathRemeasure` 逐个 holder 反查；②
+ * `findNodesByMathProducts` 逐个数学产物元素反查。二者都是**同一个渲染树**上的
+ * 批量查询，逐个全树遍历是纯浪费（公式节点多的大图上是平方级）。
+ *
+ * ## 为什么祖先链查表等价于 `contains`
+ *
+ * `Node.contains(el)` 为真 ⟺ `el` 是该节点的 DOM 后代（含自身）。而「后代」必然
+ * 在 `el.parentElement` 构成的祖先链上——所以**沿 el 的祖先链逐级查表**与全树
+ * `contains` 扫描在结果上等价：命中的是「最近的、已登记为某节点 group 的祖先」
+ * （与 `findNodeByDom` 的 `return false` 命中即停语义一致——先命中者在树上更浅，
+ * `walkTree` 先序遍历也是先命中更浅者）。
+ *
+ * ⚠ **等价性的前提**：`el` 与 `group` 处在**同一棵 DOM 树、其间无 shadow boundary
+ * 隔断**。跨越 shadow root 时 `parentElement` 链会在边界处断为 `null`，而
+ * `contains` 仍可能为真 ⇒ 查表必然落空并走下面的回落分支。本插件不产出 shadow
+ * DOM（自绘内容走 `foreignObject`，其 `parentElement` 链正常穿透到节点 group），
+ * 故该前提在当前代码面恒成立；此处的说明只是标明**若将来引入 shadow DOM，这条
+ * 快路径会退化为回落路径**（结果仍正确，只是失去 O(d) 优势）。
+ *
+ * ## 复杂度
+ *
+ * 一次 `walkTree` 建表 O(n)，每个元素 O(祖先链深度 d)。SVG 嵌套层级有限，d 通常
+ * < 20 ⇒ 总体 O(n + 元素数 × d)，取代 O(元素数 × n)。
+ *
+ * ## 正确性兜底
+ *
+ * 查表未命中的元素**逐个回落** `findNodeByDom`（全树 `contains` 扫）。这处理了
+ * 「group 元素在 `walkTree` 之后被引擎换掉」等建表后树变动的情形——宁可慢，不可错。
+ *
+ * **返回逐位置对应**（`els[i]` 的结果在 `[i]`），不去重、不改变长度：调用方要能
+ * 区分「命中」与「未命中」（`view.flushMathRemeasure` 正是据此把落空的 holder
+ * 存入待重试集合）。需要去重列表的调用方自行过滤。
+ *
+ * @param els 待反查元素（允许重复与已脱离 DOM 的元素）
+ * @returns 与 `els` 等长的数组，元素为命中节点或 `null`；引擎未就绪返回全 `null`
+ */
+export function resolveNodesByDoms(
+	mindMap: MindMap | null,
+	els: readonly Element[],
+): (MindMapNode | null)[] {
+	if (!mindMap?.renderer || els.length === 0) {
+		return els.map(() => null);
+	}
+	const root = mindMap.renderer.root;
+	if (!root) {
+		return els.map(() => null);
+	}
+	// 一次遍历建「group 元素 → 节点」表
+	const byGroup = new Map<Element, MindMapNode>();
+	walkTree(root, (node) => {
+		const group = getNodeGroupEl(node);
+		if (group) {
+			byGroup.set(group, node);
+		}
+		return undefined;
+	});
+	return els.map((el) => {
+		// contains 含自身，故从 el 自身起查
+		for (let cur: Element | null = el; cur; cur = cur.parentElement) {
+			const hit = byGroup.get(cur);
+			if (hit) {
+				return hit;
+			}
+		}
+		// 未命中 → 回落全树 contains（覆盖建表后树变动的情形）
+		return findNodeByDom(mindMap, el);
+	});
+}
+
+/**
  * 按**数学产物元素**反查所在渲染节点（K100）。
  *
  * 用途：数学替换定稿后 holder 可能已脱离 DOM——引擎在「定稿 → 批量重排」的
@@ -1151,7 +1226,6 @@ export function findNodesByMathProducts(
 	if (!svg) {
 		return [];
 	}
-	const out = new Set<MindMapNode>();
 	// 选择器**双通道**（K104）：`.mindmap-node-inline-math` 是**我方 holder 类**
 	//（MathJax 替换后仍保留，与产物输出形态无关）∪ `.mjx-container`（CHTML
 	// 产物容器，兼容兜底）。
@@ -1162,8 +1236,11 @@ export function findNodesByMathProducts(
 	const products = Array.from(
 		svg.querySelectorAll('.mindmap-node-inline-math, .mjx-container'),
 	);
-	for (const product of products) {
-		const node = findNodeByDom(mindMap, product);
+	// 批量反查：一次遍历建表 + 逐元素沿祖先链查表，取代逐元素全树
+	// walkTree（O(产物数 × 节点数)）。未命中元素由 resolveNodesByDoms 内部回落
+	// 全树扫描。去重后返回（同一节点可能同时命中 holder 与其产物容器）。
+	const out = new Set<MindMapNode>();
+	for (const node of resolveNodesByDoms(mindMap, products)) {
 		if (node) {
 			out.add(node);
 		}
