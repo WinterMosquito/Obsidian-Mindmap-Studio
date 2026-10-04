@@ -106,6 +106,7 @@ The mind-map view is a **third kind of view** (neither reading nor editing view)
 | `[[` suggestions | Inline suggestions in the editor | The source-line dialog is a plain textarea (no inline suggestions) → use the vault-file suggestions in the **Add link** dialog |
 | Backlinks / Outgoing links / Unlinked mentions panes | Core plugins | Not duplicated — Obsidian's own panes act on the current file and work while the mind-map view is open |
 | Clicking a non-renderable vault file (zip / docx / …) | Opens in the default system app | Same |
+| Mouse side-button back / forward | Follows the navigation history | Same: side buttons follow Obsidian's navigation history in the mind-map view; switching views is **not** a navigation point — back goes straight to the previous navigation point (usually the previous note). Use **Open as Markdown** to return to the note's Markdown view |
 
 The full Markdown ↔ mind-map mapping rules live in [`docs/markdown-mindmap-standard.md`](docs/markdown-mindmap-standard.md).
 

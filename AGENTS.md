@@ -123,6 +123,9 @@ src/
   platform/         # L1 Obsidian 平台集成
     vault-sync.ts   #   库事件同步单一入口（引用更新、索引失效；插件侧补充处理经 hooks 注入）
     open-as-restore.ts # 「以思维导图打开」偏好恢复（active-leaf-change/file-open/启动多档延时）
+    nav-history.ts  #   导航历史卫生（K111）：视图切换不是导航点——清理 leaf 历史里
+                    #   「尾部连续同文件段」内跨视图类型的冗余条目（侧键后退修复）；
+                    #   私有结构防御式访问，失败退化为修复前行为
     system-open.ts  #   系统默认应用打开库内文件（桌面端 shell.openPath）
     vault-prefs.ts  #   官方库级偏好读取（useMarkdownLinks / newLinkFormat；getConfig 内部接口）
     export-css-vars.ts # 导出 SVG 的 Obsidian CSS 变量注入（K99）：取宿主实际生效值以
@@ -247,6 +250,8 @@ tests/
   viewport.test.ts     # 视口几何（resetZoom 画布中心锚点 / 内容包围盒居中 / 自动整理后重置缩放）；
                        #   自动整理的渲染窗口守卫（root 暂缺延后执行 / 超上限放弃，K67）
   open-as-restore.test.ts # 「以思维导图打开」偏好恢复（多档延时/代际）
+  nav-history.test.ts  # 导航历史卫生（K111）：尾部连续同文件段内删除跨视图冗余 /
+                       #   目标态保留 / 跨段保护 / 形态异常降级（私有结构防御式）
   engine-refresh-nodes.test.ts # 批量自绘重建（refreshNodesCustomContent，P4 尺寸同步）：
                        #   逐节点 reRender(['custom']) + **恰好一次**全树 render；空态 no-op；
                        #   单节点抛错不中断其它节点（见 K86）
@@ -1494,6 +1499,31 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   ⑨ **回归**：`tests/md-inline.test.ts`（短路语义 2 例）、`node-inline-content.test.ts`（字符预算 1 例）、
   `engine-controller.test.ts`（视口幂等 1 例）；`verify:visual` 的 perf-box 探针扩 4 条 fit 断言、history 探针
   改 DOM 直写口径（联动更新见 K26e 与 K68 性能轮的 ⑥ 段）；`--perf` 轮段缓存读数带字符维度。
+
+- [K111] **修复「导图视图下鼠标侧键后退失效」（2026-10-04，CLI 实机全链路定位）**：Obsidian 的侧键链路＝window 冒泡
+  `mousedown`(button 3/4) → `window.history.back/forward`（官方启动时 `patchWindow` 挂到 HistoryHandler 栈顶：
+  workspace handler → `activeLeaf.history.back/forward()`）→ `Navigation.go(∓1)` → `setViewState` 恢复
+  （依据：`obsidian.asar/app.js` 1.13.7 实测提取）；插件与 vendor 引擎均不拦截该事件（vendor 零 `stopPropagation`，
+  合成 mousedown 走官方监听器完整复现）。缺陷根因在**导航历史被视图切换污染**：打开 .mindmap.md 会先后记录
+  「同文件 markdown 中间态 + 导图态」两条相邻历史，导图下后退第一步落在中间态上 →
+  `openAsPreferenceRestorer.autoSwitch` 立即切回导图 → `recordHistory` 重录 + `pushState` 清空 forwardHistory
+  ⇒ **净效果为零**（CLI 实测：后退后两个栈长度与视图均无变化；清理尾部 1 条同文件中间态后
+  back 即刻恢复正常）。导图态本身**照常记入**导航历史（实测栈内存在 `mindmap-view` 条目，
+  视图层无需干预 `ViewStateResult.history`；在 viewState 里传 `history: true` 无作用，状态去重
+  已覆盖）。修法＝**历史栈卫生**（方案 A，用户确认）：**视图切换不是导航点**（对齐官方单态
+  视图 Canvas/PDF）——
+  `openAsMindMap` / `openAsMarkdown` 落定后经 `setViewSwitchDoneHook`（`md-open` 依赖倒置，组合根 `main.ts`
+  注入）调用 `platform/nav-history.pruneViewSwitchNoise`：清理 leaf 的 back/forward 历史里「尾部连续同文件段」内
+  「视图类型 ≠ 目标类型」的冗余条目——异文件 / 形态异常条目即停（不跨段，保护被隔开的真实导航点）；
+  `leaf.history` 是私有结构（未公开 API），防御式访问 + 形态校验，失败静默降级为修复前行为
+  （file-creator.ts 同策略）。修复后语义：导图下侧键后退直达上一个导航点（通常上一文件）；
+  回本文件其他视图用「Switch to Markdown」。回归：`tests/nav-history.test.ts` 16 例
+  （单条 / 双条 / 切回方向 / 多条 / 跨段保护 / 幂等 / 形态异常 / 双栈 / getter 抛错，
+  外加 `md-open` 钩子接线 4 例：通知时机 / 目标类型参数 / 切换失败不通知 /
+  钩子抛错不误报「切换失败」）。**接线两处易错点**：通知必须在 `setViewState`
+  成功后的 try **之外**（否则钩子异常被误报成切换失败），且调用点仍兜一层
+  try（`notifyViewSwitchDone`）——文件菜单等 `void openAsMindMap(...)` 调用方无
+  catch，钩子抛错会变成未处理拒绝。
 
 ## 新增功能检查清单
 

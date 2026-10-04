@@ -25,6 +25,7 @@ import {
 	openAsMarkdown,
 	openAsMindMap,
 	setOpenAsPreferenceHook,
+	setViewSwitchDoneHook,
 } from './markdown/md-open';
 import {
 	addMindMapRibbonIcon,
@@ -42,6 +43,7 @@ import { ElementStatusBarService } from './services/status-bar';
 import type { StatusBarService } from './services/status-bar';
 import { updateStatusBar } from './features/view-status';
 import { injectIntoFileCreator } from './features/file-creator';
+import { pruneViewSwitchNoise } from './platform/nav-history';
 import { OpenAsPreferenceRestorer } from './platform/open-as-restore';
 
 export default class MindMapStudioPlugin extends Plugin {
@@ -120,6 +122,13 @@ export default class MindMapStudioPlugin extends Plugin {
 		// 「以思维导图打开」→ 记录打开方式偏好（双向：最后一次主动选择决定下次）
 		setOpenAsPreferenceHook((path) => {
 			this.viewState.setOpenAs(path, 'mindmap');
+		});
+
+		// 视图切换落定 → 导航历史卫生（K111）：清理 leaf 历史里同文件的跨视图
+		// 冗余条目（打开 .mindmap.md 会留下 markdown 中间态）；否则导图视图下
+		// 侧键后退落在中间态上又被偏好恢复切回，净效果为零（用户实测缺陷）。
+		setViewSwitchDoneHook((leaf, path, viewType) => {
+			pruneViewSwitchNoise(leaf, path, viewType);
 		});
 
 		this.registerView(VIEW_TYPE, (leaf) => new MindMapView(leaf, this));

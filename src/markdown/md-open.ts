@@ -20,6 +20,44 @@ export function setOpenAsPreferenceHook(
 	openAsPreferenceHook = hook;
 }
 
+/**
+ * 视图切换落定钩子（由组合根注入「导航历史卫生」，见 platform/nav-history，K111）：
+ * 打开 / 切回是**视图切换**而非导航点——把 leaf 历史里同文件的跨视图冗余条目
+ * 收敛掉；否则侧键后退会落在「同文件旧视图态」上又被偏好恢复逻辑切回，
+ * 净效果为零（用户实测：导图视图下侧键后退无反应）。
+ *
+ * 约定：钩子自带防御（实现内部吞错降级），故在切换成功后的**try 之外**调用——
+ * 钩子异常既不影响打开流程，也不会被误报成「切换视图失败」。
+ */
+let viewSwitchDoneHook:
+	| ((leaf: WorkspaceLeaf, filePath: string, viewType: string) => void)
+	| null = null;
+
+export function setViewSwitchDoneHook(
+	hook:
+		| ((leaf: WorkspaceLeaf, filePath: string, viewType: string) => void)
+		| null,
+): void {
+	viewSwitchDoneHook = hook;
+}
+
+/**
+ * 通知钩子（调用点兜底吞错）：钩子实现自带防御，但调用点仍兜一层——视图切换
+ * 已经落定，后处理异常既不能让 `void openAsMindMap(...)`（文件菜单等无 catch
+ * 的调用方）产生未处理拒绝，也不能被误报成「切换视图失败」（见 K111）。
+ */
+function notifyViewSwitchDone(
+	leaf: WorkspaceLeaf,
+	filePath: string,
+	viewType: string,
+): void {
+	try {
+		viewSwitchDoneHook?.(leaf, filePath, viewType);
+	} catch (error) {
+		console.debug('视图切换后处理失败:', filePath, error);
+	}
+}
+
 export function isMindMapMarkdownFile(
 	file: TFile | null | undefined,
 ): boolean {
@@ -48,7 +86,10 @@ export async function openAsMindMap(
 	} catch (error) {
 		// 叶子可能已被替换/分离：记录即可，避免 void 调用产生未处理拒绝
 		console.error('切换到思维导图视图失败:', error);
+		return;
 	}
+	// 落定后再清理：setViewState 完成时本次切换已记入导航历史（K111）
+	notifyViewSwitchDone(leaf, file.path, VIEW_TYPE);
 }
 
 /** 从导图视图切回 Markdown（mode: source 编辑 / preview 阅读） */
@@ -64,5 +105,8 @@ export async function openAsMarkdown(
 		});
 	} catch (error) {
 		console.error('切换到 Markdown 视图失败:', error);
+		return;
 	}
+	// 同 openAsMindMap：切回同样是视图切换，不构成导航点（K111）
+	notifyViewSwitchDone(leaf, file.path, CORE_VIEW_TYPE.MARKDOWN);
 }
