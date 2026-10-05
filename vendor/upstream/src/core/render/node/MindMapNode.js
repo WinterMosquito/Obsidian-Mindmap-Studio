@@ -68,6 +68,12 @@ class MindMapNode {
     // 自定义位置
     this.customLeft = opt.data.data.customLeft || undefined
     this.customTop = opt.data.data.customTop || undefined
+    // 子树纵向范围（自有补丁 11 · 2026-10-05）：本节点自身盒子与其全部后代
+    // 顶/底边界的并集区间 [__subLo, __subHi]。**布局收尾时自底向上记账一次**
+    // （见 getSubtreeVerticalExtent），渲染期只读不重算——若在渲染期算就等于
+    // 又做一遍 O(n) 遍历，剪枝收益会被完全抵消。
+    this.__subLo = this._top
+    this.__subHi = this._top + this.height
     // 是否正在拖拽中
     this.isDrag = false
     // 父节点
@@ -582,6 +588,48 @@ class MindMapNode {
     )
   }
 
+  //  子树纵向范围（自有补丁 11 · 2026-10-05）：自底向上记账 [__subLo, __subHi]。
+  //  为何不能用 node.height 近似（实测结论，别再改回）：
+  //  逻辑结构图把子节点在**右侧**纵向铺开，节点自身盒子只覆盖自己那一行——
+  //  实测 5002 节点（真实形态基准，深度 9 层）仅约 33% 的节点其自身盒子能容纳
+  //  整棵子树，最大溢出数万像素；`childrenAreaHeight2` 也**只是直接子节点区域**
+  //  高度而非子树跨度。两者直接当判据都会产生**假阴性**（漏渲染可见节点）。
+  //  范围必须在**布局收尾**自底向上算一次并缓存；渲染期只读。
+  getSubtreeVerticalExtent() {
+    let lo = this.top
+    let hi = this.top + this.height
+    const children = this.children
+    if (children) {
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i]
+        const cLo = child.getSubtreeVerticalExtent()
+        const cHi = child.__subHi
+        if (cLo < lo) {
+          lo = cLo
+        }
+        if (cHi > hi) {
+          hi = cHi
+        }
+      }
+    }
+    this.__subLo = lo
+    this.__subHi = hi
+    return lo
+  }
+
+  //  整棵子树是否**整体**落在视口（含 padding）之外——真则渲染递归可整棵跳过。
+  //  只比纵向：子节点在右侧展开，横向不可剪（父节点出视口不代表子节点出视口）；
+  //  纵向则必然成立——子树纵向范围按定义包含全部后代，范围不与视口相交
+  //  ⇒ 任何后代都不可能与视口相交。
+  //  判据与 checkIsInClient 同源：同一 draw.transform() 分解、同一 padding
+  //  （同源读 opt.performanceConfig.padding）、同一 height 语义。
+  subtreeOutOfClient(padding = 0) {
+    const { scaleY, translateY } = this.mindMap.draw.transform()
+    const top = this.__subLo * scaleY + translateY
+    const bottom = this.__subHi * scaleY + translateY
+    return bottom <= 0 - padding || top >= this.mindMap.height + padding
+  }
+
   // 重新渲染节点，即重新创建节点内容、计算节点大小、计算节点内容布局、更新展开收起按钮，概要及位置
   reRender(recreateTypes, opt) {
     const sizeChange = this.getSize(recreateTypes, opt)
@@ -643,6 +691,8 @@ class MindMapNode {
         })
         this.bindGroupEvent()
         this.nodeDraw.add(this.group)
+        // 【自有补丁 11】登记「当前在屏」：剪枝跳过子树后，靠这个集合做摘除核对
+        this.renderer.attachedNodes.add(this)
         this.layout()
         this.update(forceRender)
       } else {
@@ -653,6 +703,8 @@ class MindMapNode {
         // 本式即直接父判断（节点 group 在 nodeDraw 下平铺）。
         if (this.group.node.parentNode !== this.nodeDraw.node) {
           this.nodeDraw.add(this.group)
+          // 【自有补丁 11】同上：重新挂回画布即回到「在屏集合」
+          this.renderer.attachedNodes.add(this)
         }
         if (this.needLayout) {
           this.needLayout = false
@@ -670,6 +722,43 @@ class MindMapNode {
       this.children.length &&
       this.getData('expand') !== false
     ) {
+      // 【自有补丁 11 · 2026-10-05】性能模式下整棵子树纵向出视口 ⇒ 跳过其递归。
+      // 实测（5002 节点 · 真实形态基准 · 深度 9 层 · 视口内 46 可见节点）：
+      // 访问节点数 5002 → 110（**-97.8%**），判定自身耗时 0.1ms。
+      //
+      // 三条前置守卫（任一不满足即退回原「全树递归」行为）：
+      //   ① openPerformance —— 非性能模式渲染全部节点，本就无剪枝必要；
+      //   ② !forceRender —— 强制渲染（forceLoadNode / 首帧）语义是「无视可见性」；
+      //   ③ renderer.canPruneSubtree() —— **位置数据在布局之外被改写时**整体禁用
+      //      （失效钩子在 Render.setNodeData）：此时节点有效 top 已变而记账的
+      //      __subLo/__subHi 仍是旧数字，剪枝会漏渲染。
+      //      ⚠️ 不要改成「树内存在自定义坐标就禁用」：布局收尾后 top 已含自定义
+      //      坐标（getter 为 customTop || _top），范围本就是准的；那样会让
+      //      **自由拖拽过一次的用户永久失去 -91% 的收益**（实测过，已修正）。
+      //
+      // 摘除不在此处做：被跳过的子树里可能挂着**上一轮物化、现已出视口**的节点
+      // （removeSelf 只把 group 从 DOM 摘下、不置空 group，实测 5002 节点树有
+      // 3104 个此类脱离 DOM 的 group 对象）。统一由 renderer 在**每轮渲染入口**
+      // 调一次 reconcileOutOfClientNodes() 核对「当前在屏集合」（O(在屏数) ≈
+      // 数十项，不随树规模增长）——放在剪枝分支里会随命中次数重复扫描。
+      if (
+        openPerformance &&
+        !forceRender &&
+        !this.isRoot &&
+        this.renderer.canPruneSubtree() &&
+        this.subtreeOutOfClient(performanceConfig.padding)
+      ) {
+        // 【自有补丁 11 · 诊断】剪枝命中计数（覆盖率判据，见 Render.pruneStats）
+        const pruneStats = this.renderer.pruneStats
+        if (pruneStats) {
+          pruneStats.fired++
+          pruneStats.skippedSubtrees += this.children.length
+        }
+        // 本节点无子节点可渲染 ⇒ 必须恰好收尾一次，否则父链的 index 永不推进、
+        // 整树的 node_tree_render_end 永挂（isRendering 卡在 true ⇒ 后续渲染全废）
+        callback()
+        return
+      }
       let index = 0
       this.children.forEach(item => {
         const renderChild = () => {
@@ -715,6 +804,8 @@ class MindMapNode {
   removeSelf() {
     if (!this.group) return
     this.group.remove()
+    // 【自有补丁 11】离开画布即退出「在屏集合」（group 对象保留，可被重新挂回）
+    this.renderer.attachedNodes.delete(this)
     this.removeGeneralization()
   }
 
@@ -746,6 +837,8 @@ class MindMapNode {
     this.group.remove()
     this.removeGeneralization()
     this.group = null
+    // 【自有补丁 11】实例销毁 ⇒ 退出在屏集合（否则集合会持有已死节点）
+    this.renderer.attachedNodes.delete(this)
     this.style.onRemove()
   }
 

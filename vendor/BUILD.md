@@ -29,8 +29,8 @@
   （svg.js 横幅，`main.js` 同步保留）——逐库声明义务由 `vendor/THIRD-PARTY-NOTICES.md`
   承担（主载体），内联注释仅为补充佐证；其 §3 已按实测口径更新。
 
-**产物字节级身份**（2026-09-25 性能补丁 ×9 后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
-`ce3bbadd973a9cbbedcd65140394265f6f4ae73cf6c28b55a14f6425cd9d5f77`（411,297 B），
+**产物字节级身份**（2026-10-05 性能补丁 ×11 后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
+`07dc23d0ed9ffd231f516c21c8eb6201673d5331d787a32e0590d545381f69b2`（413,469 B），
 由 `tests/vendor-contract.test.ts` 断言。**重新打包后必须同步更新此处与该测试里的常量**——
 它是最外层护栏：其余契约断言（导出类 / 原型方法 / 命令名 / 事件名令牌）都只钉在
 **API 面**上，对字节改动无感。（缺口来源：本文件第 22 行要求「不可手工编辑」，
@@ -172,11 +172,161 @@ task 内无外部观察者 ⇒ `updateBrothers` 改为记账（子树根 + 累�
 **2255→1741ms**（含补丁 7 的复合改善）。几何正确性：`layout` 探针（六布局渲染 ×
 连线分派 × 根连线起点）+ 全部视觉探针 + 1578 测试全绿。
 
+**补丁 10｜`upstream/src/core/render/Render.js` · 视口可见集合未变时短路（性能模式视口重绘）**
+性能模式下 `view_data_change` 触发 `root.render(..., async=true)`——**每节点一个 `setTimeout(0)`
+的全树分片重绘**。该通道的语义只是「补挂新进入视口的节点、摘掉离开的」（`MindMapNode.render`
+的 `checkIsInClient` 分支），但 `view_data_change` 在平移/缩放/居中时**无条件** emit
+（`View.setTransformData` 无条件 emit）⇒ 每次视口操作都付一遍全树代价。
+**实机实测**（5001 节点 · Obsidian · 逻辑结构图 · `perf-5000` 合成基准）：
+单次触发全树重绘 **70.8ms**（A/B/B/A 三次 74.2 / 64.5 / 73.8ms；成本模型
+`≈31ms + 0.007ms × n`，500 / 5000 / 10000 三档拟合 ✓）；**移除监听对照**：平移 2 次 +
+缩放 1 次共 **0 次渲染事件**（收益上限）。改动：`onViewDataChange` 前加**可见集合签名**比较——
+判据与 `MindMapNode.checkIsInClient(padding)` 完全同式（同一 `draw.transform()` 分解 +
+同一 padding（与 render 同源读 `opt.performanceConfig.padding`）+ 同一宽高比较），
+仅把每节点重算的 `draw.transform()` 提到循环外（**签名计算 5001 节点 0.6ms** vs 朴素逐节点
+`checkIsInClient` **12.1ms**）；签名含 uid/left/top/width/height ⇒ 节点尺寸变化（图片/数学
+公式定稿）与树结构变化（折叠/增删）都会使签名失效；首帧 `lastViewportVisibleSignature === null`
+⇒ 必然渲染一次（冷路径不变）。
+**实机验证**（补丁后）：平移触发重绘 **70.8ms → 0.6ms**（零渲染事件，签名耗时 0.6~0.9ms）；
+可见集合真变化时（缩放 64→95 节点）仍正常重绘；`dev:errors` 无残留。
+**已知边界**（未处理，属后续项）：增量补挂路径未改——若可见集合变化且新进入的是**高层内部节点**，
+`root.render()` 仍递归其整棵子树（实测挂回带 5000 后代的节点 98.6ms，比全树重绘更慢）。
+
+**补丁 11｜`upstream/src/core/render/node/MindMapNode.js` + `Render.js` · 子树纵向范围剪枝**
+**立项依据**：性能模式的视口剔除是**叶子级**的——每轮渲染仍递归全树、逐节点问一次
+「在不在视口」，而视口内实际只有数十个节点。成本分解（500 节点 · A/B/B/A · 同会话）显示
+全渲染 2.16ms 中约 **60%（~1.3ms）是遍历本身的每节点记账开销**（函数调用 + 逐节点判定 +
+对象构造），`update()` 全树 0.69ms（32%）、`renderLine()` 全树 0.13ms（6%）。
+**因此「把某一处判定变便宜」的微优化无效**（见下方「已否决的假设」），唯一有效方向是
+**让遍历访问更少的节点**。
+
+**做法（三处改动）**：
+① **布局期自底向上记账**：新增 `MindMapNode.getSubtreeVerticalExtent()`，缓存本节点盒子与
+全部后代顶/底边界的并集区间 `[__subLo, __subHi]`；由 `Render._render` 在
+`doLayout` 回调内、`root.render()` 之前调用一次 `refreshSubtreeExtents()`（O(n)，
+实测 5002 节点 ≈1–2ms，布局本身 5ms 有余量）。**渲染期只读缓存不重算**——若在渲染期
+算就等于又做一遍 O(n)，收益被完全抵消。**视口变化路径（`onViewDataChange`）不重算**，
+直接复用 ⇒ 平移/缩放受益最大。
+② **渲染递归剪枝**：`MindMapNode.render()` 在进入子节点分支前判
+`subtreeOutOfClient(padding)`（与 `checkIsInClient` 同源：同一 `draw.transform()` 分解、
+同一 padding、同一 height 语义，**只比纵向**——子节点在右侧展开，横向不可剪：父节点出
+视口不代表子节点出视口；纵向则必然成立，因子树范围按定义包含全部后代）。命中则跳过整棵
+子树并**恰好收尾一次 `callback()`**（否则父链 `index` 永不推进、`node_tree_render_end`
+永挂、`isRendering` 卡死 ⇒ 后续渲染全废）。
+③ **在屏集合 + 摘除核对**：`removeSelf()` 只把 group 从 DOM 摘下、**不置空 group**
+（实测 5002 节点树有 3104 个此类脱离 DOM 的 group 对象），故剪枝跳过的子树里可能残留
+「上一轮物化、现已出视口」的节点。新增 `Render.attachedNodes`（只登记**在屏**节点，
+规模 ≈ 视口可见数 ≈ 数十项）：`render()` 的两处 `nodeDraw.add(group)` 登记、
+`removeSelf()`/`destroy()` 注销；**每轮渲染入口**（`_render` 的 doLayout 回调与
+`onViewDataChange`）各调一次 `reconcileOutOfClientNodes()` 统一核对，**只遍历该集合
+（O(在屏数)），不递归树**；该方法自带 `openPerformance` 门禁（非性能模式直接返回）。
+⚠️ 初版把这次核对放在**剪枝分支内**，实测每轮命中 76 次 ⇒ 冗余 76× 扫描在屏集合
+（每次都要 `checkIsInClient` → `draw.transform()`）；移到轮次入口后单轮渲染
+**2–3ms → 1ms**。
+
+**失效面（唯一需要提防的一种）**：位置数据在**布局之外**被改写 ⇒ 已记账范围失效
+（`top` getter 会返回新值而 `__subLo/__subHi` 仍是旧数字）。在数据写入唯一收口
+`Render.setNodeData` 加钩子：`data.customLeft/customTop` 存在即禁用剪枝，直到下一次
+布局重新记账再启用。
+**曾误设为「树内存在自定义坐标就整体禁用」并已修正**：布局收尾后 `top` 已含自定义坐标
+（getter 为 `customTop || _top`），范围本就是准的；若据此禁用，**自由拖拽过一次的用户会
+永久失去 -91% 的收益**。实测该修正后行为正确：位置写入 → `pruneSubtreeEnabled=false`
+→ 一次布局 → `true`。
+
+**实机实测**（Obsidian · Mindmap 库 · `real-5000.mindmap.md` · 5002 节点 · 深度 9 层 ·
+混合分支 3–8 · 783 长文本 + 225 wikilink 节点 · 视口 866×785 · 视口内 46–49 可见节点）：
+
+| 指标 | 剪枝前 | 剪枝后 | 变化 |
+| --- | --- | --- | --- |
+| 同步全树渲染遍历 | 34–38ms | **1ms** | **-97%** |
+| 折叠（`SET_NODE_EXPAND` false） | 173ms | **66ms** | **-62%** |
+| 访问节点数（按范围记账推算） | 5002 | **110** | **-97.8%** |
+| 每次渲染剪枝命中 | — | 76 次 | — |
+| 平移 20 次 | 0 次重绘 | 0 次重绘 | 补丁 10 已短路 |
+
+**正确性校验（实机，最强判据）**：按朴素全树 `checkIsInClient` 算出「几何上应可见」的
+uid 集合，与 `attachedNodes` 中实际挂在 DOM 上的 uid 集合逐一比对：
+**缺失 0 / 多余 1**，而**那 1 个恒为根节点**（引擎对根节点显式豁免剔除
+——`render()` 条件末位的 `|| this.isRoot`，滚动条插件依赖根节点计算）。已覆盖三种状态：
+① 静态（含已设自定义坐标的树）；② 平移 +42000px 后；③ 平移回来后。
+平移往返**无残留 DOM**（这正是把摘除核对移到轮次入口后必须复验的项——
+初版放在剪枝分支内，摘除时机与剪枝命中耦合）。`count` 探针
+（性能模式下渲染树结构完整、状态栏计数不漏计）与 `layout` 探针（六布局渲染 × 连线分派 ×
+根连线起点）全绿；1820 测试 / lint / 重打包字节可复现（`--check`）全通过。
+
+**诊断常驻**（沿用补丁 5 先例）：`window.__PRUNE_STATS__ = { fired, skippedSubtrees, enabled }`
+——覆盖率判据：`fired > 0` 说明剪枝真的在热路径上；`enabled=false` 说明被失效面正确禁用。
+
+**已否决的假设（2026-10-05 实测证伪，勿重做）｜`transform()` 读取器 memo 化（补丁 11 的前一版）**
+假设：「视口剔除判据 `checkIsInClient` 每节点每次渲染都调 `mindMap.draw.transform()`，
+而 svg.js 的读取器是重路径（`new Matrix(el).decompose()` → 读 DOM 属性 + 正则 split +
+逐段 Matrix 相乘 + 完整分解），故把它 memo 化应显著降低渲染遍历成本。」
+**证伪过程与结论**：实现 `patches/svg-transform-memo.js`（以原始 `transform` 属性字符串为键
+memo 分解结果，返回浅拷贝保持「每次全新对象」语义，作用域限本 bundle），并**新增专用探针
+`--perf-ops=perfrender`**（此前 harness 结构性测不到该项：剔除判据位于
+`forceRender || !openPerformance || checkIsInClient(...) || isRoot`，**非性能模式下被
+`!openPerformance` 短路在前，永不执行**，故 rendertick/rendernocb/rootrender 三个渲染类
+变体恒测不到它）。实测（500 节点 · A/B/B/A 取最小 · 同会话交替对照）：
+| 口径 | 无补丁 | 有补丁 |
+| --- | --- | --- |
+| `perfrender` 单次 | 1.23ms | 1.26ms |
+| `bench-open` 5000 / 10000 | 842 / 1413ms | 856 / 1388ms |
+覆盖率计数：**命中 157,393 / 未命中 3,589（97.7% 命中）**——补丁**确实**落在热路径上，
+却**零墙钟收益**。⇒ 成本不在 `transform()`：memo 只是把「解析+连乘+分解」换成了
+「一次 getAttribute + WeakMap 查表 + 12 字段对象展开」，两者量级相当。
+**成本分解实测**（500 节点，同口径）：全渲染 2.16ms = `update()` 全树 0.69ms（32%）
++ `renderLine()` 全树 0.13ms（6%）+ **遍历/判定/递归记账余量 ~1.3ms（~60%）**。
+**教训**：本项目的渲染瓶颈是 **O(n) 遍历本身的每节点记账开销**（函数调用 + 逐节点判定 +
+对象构造），**不是任何单一昂贵操作**——因此「把某一处变便宜」的微优化路线在此无效，
+唯一有效方向是**让遍历访问更少的节点**（即按子树范围剪枝，剪枝判据必须自底向上记账：
+`node.height` 实测仅能容纳 33% 子树、`childrenAreaHeight2` 仅为直接子区域高度，
+二者直接用作判据都会产生假阴性）。补丁文件已删除、产物字节已回退至 ×10 的
+`f51a257a…`（411,736 B），两处 sha256 常量同步复位。
+
+**已否决的假设（2026-10-05 实测证伪，勿重做）｜预测量按视口限定（补丁 12 / 13 两次尝试）**
+目标：让预测量只覆盖「会被渲染的节点」，而不是全树（实测 `built` 等于全树节点数：
+冷开 10001/10001；而性能模式下视口内仅数十节点）。**两次尝试均为净负收益，已全部回退。**
+假设：`preMeasureCustomContents` 为**全树**节点构建自绘内容并测量（实测
+`__PREMEASURE_STATS__` 的 `built` 等于全树节点数：冷开 10001/10001），而性能模式
+下视口内只渲染数十个节点（实测 5002 节点真实形态 46 个；`--bench-open` 三档 DOM
+`.smm-node` 均为 15~24）⇒ 99% 的构建与测量服务于本帧不会渲染的节点。
+且 `BENCH_VARIANT=no-content` 对照测得「内容构建+测量」占打开耗时 5000 节点 206ms(30%)、
+10000 节点 415ms(40%)。故实现为「`opt.openPerformance` 为真时**提前 return**」，
+并留 `opt.preMeasureInPerformance === false` 作 A/B 开关。
+**证伪**：跳过确实生效（实机读到 `built:0 / skipped:"openPerformance"`，`__MEASURE_STATS__`
+由「全量写入」变为 `hit 107883 / miss 61`），**但打开墙钟反而变慢**——`--bench-open`
+5000 节点 **703ms → 731ms**、10000 节点 **1044ms → 1077ms**、500 节点 388→390ms
+（500 节点本就低于性能阈值 1000 ⇒ 跳过不适用，读数应与基线一致，实测确如此，可作
+对照 sanity）。**净收益为负，故已回退**（产物字节回到补丁 11 的 `07dc23d0…`）。
+**两条实测教训（勿再据此推断）**：
+① **`no-content` 对照不等于「预测量成本」**——它把 `createNodeContent` 换成空 span，
+去掉的是**整条自绘内容管线**（含 foreignObject DOM 与测宽），而非仅预测量。
+我据此推断「预测量占 206ms 的主体」是**错的**。
+② **预测量的真正价值是「把 N 次强制 reflow 合并成 1 次」**：集中挂载后首读触发一次
+reflow、其余命中浏览器布局缓存。改成懒测量后，每次渲染一个视口外节点就是**一次独立
+强制 reflow**（实测 miss 61 次），单次成本足以抵消「少构建 5001 份内容」的收益。
+**第二次尝试（曾编号补丁 13）｜把预测量挪到 `doLayout` 之后 + 按视口限定**：按上一条的
+指引实现——引擎在 `Render._render` 的 `doLayout` 回调内、`root.render()` 之前触发
+`mindMap.__preMeasureHook`（插件侧安装，每实例一次），此时坐标已齐备，故可按
+`checkIsInClient(padding)` 筛选；**保留集中挂载 + 单次 reflow**（这是与补丁 12 的关键
+差别）。**仍然净负**：`--bench-open` 5000 节点 **703ms → 740ms**、10000 节点
+**1044ms → 1079ms**（500 节点低于性能阈值本就不适用，388→391ms 可作对照 sanity）。
+**失败原因已定位（诊断字段 `built/visited/scoped`）**：读数为
+`built=1 / visited=101（限定视口）`——只访问 101 个节点、只构建 **1** 份内容，
+而视口内实际有 15 个节点。**根因：钩子执行时视口变换尚未应用**（插件是在
+`node_tree_render_end` 里才 `centerContentAtFullScale`），此刻画布变换近似未设置
+⇒ 几乎所有节点被判为出视口 ⇒ **真正要渲染的节点反而没被预测量**，全部退化为懒测量
+（逐节点独立 reflow）⇒ 比全量更慢。
+**这是该优化路径上的第三个层级障碍**（① 构造期无坐标 → ② 整段跳过丢批量 reflow 优势
+→ ③ `doLayout` 时尚未应用视口变换）。**结论：在现有初始化时序下这条路走不通**；
+若仍要继续，需把预测量挪到「首帧渲染完成、视口变换已应用」之后（即首帧之后补测量），
+那意味着首批可见节点仍要经历一次懒测量，收益上限被进一步压缩——建议放弃该方向。
+
 **方法论备注**：以上收益均由 `verify:visual --perf --perf-ops=<变体>` 的真实墙钟差分
 （A/B/B/A 取最小，口径见脚本头注释）测得；页内时钟在 `--virtual-time-budget` 下被虚拟化，
-不可用于计时。变体全表：`edit / editnohist / idle / rendertick / rendernocb / rootrender /
-nodeupdate / noderenderline / nodedrawhas / layoutonly / themetick / rafonly / mutation /
-copy / stringify / compare / history`。
+不可用于计时。变体全表：`edit / editnohist / idle / rendertick / rendernocb / **perfrender** /
+rootrender / nodeupdate / noderenderline / nodedrawhas / **drag / draghover** / layoutonly /
+themetick / rafonly / mutation / copy / stringify / compare / history / undo / clockcheck`。
 
 ## fix.3 相对上游 0.14.0 的修订清单（权威，源码 diff）
 
@@ -282,4 +432,6 @@ copy / stringify / compare / history`。
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×6 | 补丁 6（打开分片渲染 = 激活引擎既有 async 通道）：专项审计（两窗口模型 / root 消费 12 处 / 重入与销毁竞态 / `isRendering` 读点全名单）通过后实施；**代价实测 +1.4%~+3.4%**（三规模，正确性指标全一致）——5000 节点打开主线程阻塞 **1137ms 单块 → 5000 个 ~0.2ms 块**；附销毁断链守卫；新增 `BENCH_RENDER_ASYNC` 对照通道与 `RENDER_ASYNC_NODE_THRESHOLD`（1000）；sha256/字节数同步（`8c0a6d83…` / 410,276 B） |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×7 | 补丁 7（拖宽监听器惰性注册 + 会话解绑）：5000 自绘节点 15000 个监听器（构造期注册、全库无解绑）→ 常态零全局监听；**A/B/B/A 交替对照：5000 节点打开 1327→1153ms（-174ms / -13%）**——该成本此前被 K77 误归入「引擎固有」；顺带修复「节点实例被 window 永久持有」的潜伏泄漏与每次 mousemove 10000 次空调用；sha256/字节数同步（`1e335f8f…` / 410,692 B） |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×9 | 补丁 8/9（布局平移字段快路径 + 延迟物化）：「固有」段第二战——`adjustTopValue` 实测 **293 万次子树平移**（节点数 584 倍）→ 记账 + O(n) 物化（几何逐字节等价）；5000 节点 **1161→1091ms（-6%）**、10000 节点 **2255→1741ms**；新增 `count-layout` 计数探针；sha256/字节数同步（`ce3bbadd…` / 411,297 B） |
+| 2026-10-05 | 0.14.0-fix.3 + 补丁 ×11 | 补丁 11（**子树纵向范围剪枝**）：先证伪了前一版方案（`transform()` memo，97.7% 命中却零收益，已回退并单列「已否决的假设」），据成本分解（遍历记账占 ~60%）改走「少访问节点」路线——布局期自底向上记账子树纵向范围（渲染期只读、视口路径不重算）+ 渲染递归整棵子树跳过（纵向可剪、横向不可剪）+ 在屏集合 `attachedNodes` 补做摘除核对（因 `removeSelf` 不置空 group）+ `setNodeData` 位置写入失效钩子（并修正「有自定义坐标即整体禁用」的过严设计）。实机 5002 节点真实形态基准：同步渲染遍历 **34–38ms → 2–3ms（-91%）**、折叠 **173ms → 66ms（-62%）**、访问节点数 5002 → 110（-97.8%）；正确性以「应见/实渲 uid 集合逐一比对」验证 **缺失 0 / 多余 0**；新增 `perfrender` 探针（填补 harness 结构性盲区：非性能模式下 `checkIsInClient` 被 `!openPerformance` 短路，既有渲染类变体测不到该项）；新增 `scripts/gen-perf-fixture.mjs` 真实形态基准生成器；诊断常驻 `__PRUNE_STATS__`；sha256/字节数同步（`07dc23d0…` / 413,469 B） |
+| 2026-10-05 | 0.14.0-fix.3 + 补丁 ×10 | 补丁 10（视口可见集合未变时短路）：性能模式 `view_data_change` 无条件触发的全树分片重绘，实机 5001 节点 **70.8ms/次 → 短路后 0.6ms**（仅签名计算，零渲染事件）；移除监听对照 **0 次**（收益上限）；可见集合真变化时仍正常重绘；签名与 `checkIsInClient` 同式 + transform 提出循环（0.6ms vs 朴素 12.1ms）；sha256/字节数同步（`f51a257a…` / 411,736 B） |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×9 | 许可声明口径修正（**无产物变更，sha256 不变**）：`THIRD-PARTY-NOTICES.md` §3 与本文档的「内联注释覆盖」表述改为**实测口径**——`--legal-comments=inline` 实际仅保留 **1 段**（svg.js 横幅，`main.js` 同），逐库声明义务由 `THIRD-PARTY-NOTICES.md` 承担（主载体）、内联注释仅为补充佐证；`.github/workflows/release.yml` 注释同步（原「0 命中」为 2026-09-17 审计时点口径）并移除指向已删审计文档的悬空引用 |

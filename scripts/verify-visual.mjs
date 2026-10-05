@@ -46,6 +46,7 @@
  *   npm run verify:visual -- --keep              # 保留临时目录（排查用）
  *   npm run verify:visual -- --log-dir <dir>     # 落盘诊断日志（CI 归档用）
  *   npm run verify:visual -- --bench-open        # 打开基准：500/5000/10000 节点「打开→可交互」真实墙钟基线（不断言）
+ *   npm run verify:visual -- --perf --perf-ops=perfrender  # **性能模式 ON** 下的同步全树重渲染（唯一能测到「视口剔除判据」的变体——非性能模式下 checkIsInClient 被 !openPerformance 短路，永不执行）
  *   npm run verify:visual -- --perf --perf-ops=copy   # 编辑帧成本分解：copy/stringify/compare/history（历史改造设计依据）
  *   CHROME_PATH=/path/to/chrome npm run verify:visual
  *
@@ -2554,11 +2555,18 @@ window.setTimeout(() => {
 		const nodes = () =>
 			map.renderer.root ? map.renderer.root.children : [];
 		let baseline = null;
+		// drag 变体的过程计数（其余变体保持 null；Node 侧仅在 ops==='drag' 时打印）
+		let dragStats = null;
 		const report = () => {
 			loadProbe.textContent = JSON.stringify({
 				nodes: NODES,
 				edits: EDITS,
 				done: true,
+				drag: dragStats,
+				// 补丁 11（子树剪枝）覆盖率判据：剪枝命中次数 / 被跳过的子树规模 /
+				// 当前是否启用。fired=0 说明剪枝没落在热路径上；或树呈「扫帚形」
+				// （叶子占绝大多数）时子树剪枝天然无效——见 vendor/BUILD.md 补丁 11。
+				prune: window.__PRUNE_STATS__ || null,
 				memory: MEMORY
 					? {
 							baseline,
@@ -2725,6 +2733,40 @@ window.setTimeout(() => {
 				tickOnce();
 				return;
 			}
+			//   perfrender（2026-10-05 新增，补丁 11 的判据专用探针）：
+			// **性能模式 ON** 下的同步全树重渲染。
+			// 为何必须独立成变体：视口剔除判据 checkIsInClient 位于
+			// MindMapNode.render 的条件里，而该条件是
+			//   forceRender || !openPerformance || checkIsInClient(...) || isRoot
+			// —— 非性能模式下 !openPerformance 短路在前，checkIsInClient 永不执行。
+			// 故既有全部渲染类变体（rendertick/rendernocb/rootrender，恒为非性能模式）
+			// 结构性地测不到「视口剔除判据」这项成本——补丁 11（子树剪枝）改的正是
+			// 这一带，用它们验证必然读数无差异（我曾据此得出过错误结论，勿重犯）。
+			// 本变体：先开性能模式并等裁剪落定，再连打 N 次同步 root.render
+			// （async=false ⇒ 全部落在同一个墙钟块内，便于「负载 − 空跑」差分）。
+			if (OPS === 'perfrender') {
+				applyPerformanceMode(map, true);
+				// 等性能模式的首次分片渲染落定（虚拟时间下等待不耗真实 CPU）
+				window.setTimeout(() => {
+					const root = map.renderer.root;
+					const prOnce = () => {
+						if (done >= EDITS) {
+							window.__PERF_SINK__ = 1;
+							report();
+							return;
+						}
+						if (root) {
+							root.render(() => {}, false, false);
+						}
+						window.setTimeout(() => {
+							done++;
+							prOnce();
+						}, ${PERF_WORKLOAD_EDIT_GAP_MS});
+					};
+					prOnce();
+				}, 1200);
+				return;
+			}
 			//   rootrender 仅 root.render(空回调)——节点渲染递归（含 renderLine+update）
 			//   nodeupdate 每轮对全部子节点调 update(true)——整树 update 总量微基准
 			//   noderenderline 每轮对全部子节点调 renderLine()——连线渲染总量微基准
@@ -2873,6 +2915,131 @@ window.setTimeout(() => {
 				rtOnce();
 				return;
 			}
+			if (OPS === 'drag') {
+				// 过程计数：确认「性能模式真的开了」「view_data_change 真的发了」
+				// 「全树重绘真的触发了」——否则墙钟差会因「什么都没发生」而失真
+				dragStats = { perfMode: false, moves: 0, viewChanges: 0, renders: 0 };
+				map.on('view_data_change', () => {
+					dragStats.viewChanges++;
+				});
+				map.on('node_tree_render_start', () => {
+					dragStats.renders++;
+				});
+				// 拖动视图（真实「持续平移」形态，2026-10-05 加入）：
+				// 同方向连拖 20 次（累积 800px）再换向 ⇒ 视口**真正跨越**节点
+				// 分布区 ⇒ 可见集合持续变化 ⇒ 每轮 view_data_change 都触发
+				// 全树分片重绘（补丁 10 的「可见集合未变则短路」在此不生效
+				// ——这正是实机手动拖动比原地往返测试更卡的原因）。
+				// 反例：若每次交替 ±200px，视口原地往返、可见集合不变，
+				// 300 次移动实测只触发 3 次重绘（2026-10-05 实测）。
+				// 必须**先开性能模式**：非性能模式下 Render.bindEvent 不注册
+				// view_data_change 监听（vendor Render.js:178-180），拖动只写
+				// transform，测不出任何渲染成本。
+				applyPerformanceMode(map, true);
+				window.setTimeout(() => {
+					dragStats.perfMode = Boolean(map.opt && map.opt.openPerformance);
+					const dragOnce = () => {
+						if (done >= EDITS) {
+							window.__PERF_SINK__ = 1;
+							report();
+							return;
+						}
+						const dir = Math.floor(done / 20) % 2 === 0 ? 1 : -1;
+						map.view.translateXY(dir * 40, 0);
+						dragStats.moves++;
+						window.setTimeout(() => {
+							done++;
+							dragOnce();
+						}, ${PERF_WORKLOAD_EDIT_GAP_MS});
+					};
+					dragOnce();
+				}, 300);
+				return;
+			}
+			if (OPS === 'draghover') {
+				// 拖动 + hover（2026-10-05 加入）：与 drag 完全同构的唯一差别是
+				// **每帧轮流对「当前在 DOM 里的节点」派发 mouseenter/mouseleave**。
+				// 动机：合成事件不触发浏览器 :hover 与 mouseenter（那是真实指针
+				// hit-testing 的产物），故 drag 变体测不到 hover 路径成本；而引擎的
+				// mouseenter 处理器（MindMapNode.bindGroupEvent）会调 showExpandBtn()
+				// → setTimeout(0) → renderExpandBtn()（SVG 元素增删 + 位置更新），
+				// 外加 .smm-node:hover .smm-hover-node{display:block} 的重绘。
+				// 对照：drag（无 hover）vs draghover（有 hover），差值即 hover 成本。
+				dragStats = {
+					perfMode: false,
+					moves: 0,
+					viewChanges: 0,
+					renders: 0,
+					hovers: 0,
+				};
+				map.on('view_data_change', () => {
+					dragStats.viewChanges++;
+				});
+				map.on('node_tree_render_start', () => {
+					dragStats.renders++;
+				});
+				map.on('node_mouseenter', () => {
+					dragStats.hovers++;
+				});
+				applyPerformanceMode(map, true);
+				window.setTimeout(() => {
+					dragStats.perfMode = Boolean(map.opt && map.opt.openPerformance);
+					let hovered = null;
+					const dragOnce = () => {
+						if (done >= EDITS) {
+							window.__PERF_SINK__ = 1;
+							report();
+							return;
+						}
+						const dir = Math.floor(done / 20) % 2 === 0 ? 1 : -1;
+						map.view.translateXY(dir * 40, 0);
+						dragStats.moves++;
+						// 收集当前在 DOM 里的节点（性能模式下即视口内 + padding 内）
+						const vis = [];
+						const root = map.renderer.root;
+						if (root) {
+							const walk = (n) => {
+								if (n.group && n.group.node && n.group.node.parentNode) {
+									vis.push(n);
+								}
+								const ch = n.children;
+								if (ch) {
+									for (let i = 0; i < ch.length; i++) {
+										walk(ch[i]);
+									}
+								}
+							};
+							walk(root);
+						}
+						if (vis.length > 0) {
+							const next = vis[done % vis.length];
+							if (
+								hovered &&
+								hovered !== next &&
+								hovered.group &&
+								hovered.group.node
+							) {
+								hovered.group.node.dispatchEvent(
+									new MouseEvent('mouseleave', { bubbles: false }),
+								);
+							}
+							if (next !== hovered && next.group && next.group.node) {
+								next.group.node.dispatchEvent(
+									new MouseEvent('mouseenter', { bubbles: false }),
+								);
+								dragStats.hovers++;
+								hovered = next;
+							}
+						}
+						window.setTimeout(() => {
+							done++;
+							dragOnce();
+						}, ${PERF_WORKLOAD_EDIT_GAP_MS});
+					};
+					dragOnce();
+				}, 300);
+				return;
+			}
 			if (OPS === 'editnohist' && map.command && map.command.pause) {
 				map.command.pause();
 			}
@@ -2905,7 +3072,7 @@ window.setTimeout(() => {
 // 真实墙钟模式（`--perf`）的负载参数
 // ---------------------------------------------------------------------------
 /** 负载图规模（= 默认 performanceThreshold，非性能模式 ⇒ 全部节点在 DOM，最坏形态） */
-const PERF_WORKLOAD_NODES = 500;
+const PERF_WORKLOAD_NODES = Number(process.env.PERF_WORKLOAD_NODES) || 500;
 /**
  * 默认编辑次数（每次 = 一次整树渲染 + 一条历史快照）。
  *
@@ -2931,11 +3098,14 @@ const PERF_OPS_VARIANTS = [
 	'idle',
 	'rendertick',
 	'rendernocb',
+	'perfrender',
 	'undo',
 	'rootrender',
 	'nodeupdate',
 	'noderenderline',
 	'nodedrawhas',
+	'drag',
+	'draghover',
 	'layoutonly',
 	'themetick',
 	'rafonly',
@@ -4688,6 +4858,21 @@ async function measureRealClockWorkload({
 		}
 		return [];
 	}
+	// drag 变体：先打印过程计数——墙钟差只有在「重绘真的发生」时才可归因
+	// （若 renders=0，说明短路生效或性能模式未开，差值无意义）
+	if (ops.indexOf('drag') === 0 && probe.drag) {
+		const d = probe.drag;
+		diag.log(
+			`      ⓘ drag 过程计数：性能模式=${d.perfMode}｜移动 ${d.moves} 次｜view_data_change ${d.viewChanges} 次｜全树重绘 ${d.renders} 次`,
+		);
+	}
+	// 补丁 11 覆盖率判据：剪枝是否真的落在热路径上
+	if (probe.prune) {
+		const p = probe.prune;
+		diag.log(
+			`      ⓘ 子树剪枝计数：命中 ${p.fired} 次｜跳过子树 ${p.skippedSubtrees} 个｜当前启用=${p.enabled}`,
+		);
+	}
 	const best = (list) => Math.min(...list);
 	const controlMs = best(samples.control);
 	const loadMs = best(samples.load);
@@ -4946,6 +5131,22 @@ const finish = (reason, centerOk) => {
 		truncated: document.querySelectorAll('[data-truncated]').length,
 		preMeasure: window.__PREMEASURE_STATS__ || null,
 		measureStats: window.__MEASURE_STATS__ || null,
+		// 补丁 11 覆盖率判据：剪枝是否真的在打开路径上生效。
+		// fired=0 的两种成因须靠 treeInteriorNodes 区分：① 性能模式未开
+		// （规模 < RENDER_ASYNC/性能阈值 1000）⇒ 本就无剪枝；② 树呈扫帚形
+		// （内部节点占比过低）⇒ 子树剪枝天然无效。
+		prune: window.__PRUNE_STATS__ || null,
+		treeInteriorNodes: (function() {
+			var total = 0;
+			var interior = 0;
+			(function w(n) {
+				total++;
+				var k = n.children ? n.children.length : 0;
+				if (k > 0) interior++;
+				if (k > 0) for (var i = 0; i < k; i++) w(n.children[i]);
+			})(map.renderer.root);
+			return { total: total, interior: interior };
+		})(),
 		layoutStats: window.__LAYOUT_STATS__ || null,
 	});
 };
@@ -5136,6 +5337,8 @@ async function measureOpenBench({ chromePath, workDir, diag }) {
 			preMeasure: probe.preMeasure ?? null,
 			measureStats: probe.measureStats ?? null,
 			layoutStats: probe.layoutStats ?? null,
+			prune: probe.prune ?? null,
+			treeInteriorNodes: probe.treeInteriorNodes ?? null,
 		});
 	}
 	if (failures.length > 0) return failures;
@@ -5150,8 +5353,15 @@ async function measureOpenBench({ chromePath, workDir, diag }) {
 	);
 	for (const row of rows) {
 		const delta = row.ms - base.ms;
+		const interior = row.treeInteriorNodes
+			? `${row.treeInteriorNodes.interior}/${row.treeInteriorNodes.total}`
+			: 'n/a';
+		const pm = row.preMeasure;
+		const pmLabel = pm
+			? `built=${pm.built}/visited=${pm.visited}${pm.scoped ? '(限定视口)' : ''}${pm.skipped ? ` skipped=${pm.skipped}` : ''}`
+			: 'n/a';
 		diag.log(
-			`         ${String(row.nodes).padStart(5)} 节点：${row.ms.toFixed(0)}ms（相对基线增量 ${delta >= 0 ? '+' : ''}${delta.toFixed(0)}ms）｜构造期=${row.constructMs}ms｜DOM .smm-node=${row.domNodes}｜自绘锚点=${row.anchors}｜截断=${row.truncated}`,
+			`         ${String(row.nodes).padStart(5)} 节点：${row.ms.toFixed(0)}ms（相对基线增量 ${delta >= 0 ? '+' : ''}${delta.toFixed(0)}ms）｜构造期=${row.constructMs}ms｜DOM .smm-node=${row.domNodes}｜自绘锚点=${row.anchors}｜截断=${row.truncated}｜剪枝命中=${row.prune ? row.prune.fired : 'n/a'}｜内部节点=${interior}｜预测量 ${pmLabel}`,
 		);
 		if (row.preMeasure) {
 			const pm = row.preMeasure;

@@ -110,6 +110,22 @@ class Render {
     this.highlightBoxNodeStyle = null
     // 上一次节点激活数据
     this.lastActiveNodeList = []
+    // 【自有补丁 11 · 2026-10-05】当前挂在画布上的节点集合。
+    // 剪枝整棵子树后，被跳过的子树里可能残留「上一轮物化、现已出视口」的节点
+    // （removeSelf 只把 group 从 DOM 摘下、不置空 group——实测 5002 节点树中
+    // 有 3104 个此类脱离 DOM 的 group 对象），必须在别处补做摘除。
+    // 本集合只登记**在屏**节点（规模 ≈ 视口内可见数，实测数十项），
+    // 故核对代价 O(在屏数)，**不随树规模增长**。
+    this.attachedNodes = new Set()
+    // 剪枝总开关：树内存在自由拖拽坐标（customLeft/customTop）时置 false
+    // （自由拖拽在布局之外改坐标，已记账的子树范围随即失效）
+    this.pruneSubtreeEnabled = true
+    // 诊断常驻（沿用补丁 5 的 __MEASURE_STATS__ 先例）：剪枝触发次数与被跳过
+    // 的子树规模，用于确认剪枝是否真的落在热路径上、量级是否与实测访问数一致。
+    this.pruneStats = { fired: 0, skippedSubtrees: 0, enabled: true }
+    if (typeof window !== 'undefined') {
+      window.__PRUNE_STATS__ = this.pruneStats
+    }
     // 布局
     this.setLayout()
     // 绑定事件
@@ -160,11 +176,68 @@ class Render {
       this.setRootNodeCenter()
     })
     // 性能模式
+    // 自有补丁（2026-10-05）｜视口可见集合未变时短路：
+    // `view_data_change` 在平移/缩放/居中时**无条件** emit（`setTransformData` 即无条件 emit），
+    // 而本回调的语义是「补挂新进入视口的节点、摘掉离开的」——若可见集合逐项相同，
+    // 这轮全树分片渲染（`root.render(..., async=true)`，每节点一个 setTimeout）是纯浪费。
+    // 实机实测（5001 节点 · Obsidian）：单次触发全树重绘 **70.8ms**（A/B/B/A 三次
+    // 74.2/64.5/73.8ms）；短路后 **0.6ms**；移除监听后平移+缩放共 **0 次**渲染事件（收益上限）。
+    // 判据与 `MindMapNode.checkIsInClient(padding)` 完全同式：同一 `draw.transform()` 分解、
+    // 同一 padding（与 render 同源读 `opt.performanceConfig.padding`）、同一宽高比较；
+    // 仅把每节点重算的 `draw.transform()` 提到循环外（实测 5001 节点签名计算 0.6ms
+    // vs 朴素逐节点 `checkIsInClient` 12.1ms）。签名含 uid/left/top/width/height，
+    // 故节点尺寸变化（图片/数学公式定稿）与树结构变化（折叠/增删）都会使签名失效。
+    // 冷路径不变：首帧 `lastViewportVisibleSignature === null` ⇒ 必然渲染一次。
+    let lastViewportVisibleSignature = null
+    const computeViewportVisibleSignature = () => {
+      const root = this.root
+      if (!root) {
+        return null
+      }
+      const {
+        scaleX,
+        scaleY,
+        translateX,
+        translateY
+      } = this.mindMap.draw.transform()
+      const width = this.mindMap.width
+      const height = this.mindMap.height
+      const padding = this.mindMap.opt.performanceConfig.padding
+      const parts = []
+      const walkNode = node => {
+        const nx = node.left * scaleX + translateX
+        const ny = node.top * scaleY + translateY
+        if (
+          nx + node.width > 0 - padding &&
+          ny + node.height > 0 - padding &&
+          nx < width + padding &&
+          ny < height + padding
+        ) {
+          parts.push(node.uid)
+        }
+        const children = node.children
+        if (children) {
+          for (let i = 0; i < children.length; i++) {
+            walkNode(children[i])
+          }
+        }
+      }
+      walkNode(root)
+      return parts.join('|')
+    }
     const onViewDataChange = throttle(() => {
       if (!this.renderTree) {
         return
       }
       if (this.root) {
+        const signature = computeViewportVisibleSignature()
+        if (signature !== null && signature === lastViewportVisibleSignature) {
+          return
+        }
+        lastViewportVisibleSignature = signature
+        // 【自有补丁 11】本轮渲染入口补做摘除核对（每轮一次；剪枝会跳过整棵子树，
+        // 被跳过子树里可能残留上一轮物化、现已出视口的节点）
+        this.reconcileOutOfClientNodes()
         this.mindMap.emit('node_tree_render_start')
         this.root.render(
           () => {
@@ -235,6 +308,72 @@ class Render {
       node.render(() => {
         this.mindMap.emit('node_tree_render_end')
       }, true)
+    }
+  }
+
+  // ==================== 自有补丁 11（2026-10-05）：子树剪枝 ====================
+  //  性能模式下，视口剔除此前是**叶子级**的：每轮渲染仍要递归全树、逐节点问一次
+  //  「在不在视口里」，而视口内实际只有数十个节点（实测 5002 节点真实形态基准：
+  //  5002 次判定 → 46 个可见）。成本分解（500 节点，A/B/B/A）显示其中约 60% 是
+  //  **遍历本身的每节点记账开销**，故「把某一处判定变便宜」的微优化无效
+  //  （svg.js transform() memo 实测 97.7% 命中、零墙钟收益，已回退并记入
+  //  vendor/BUILD.md「已否决的假设」）。唯一有效方向是**少访问节点**。
+  //
+  //  做法：布局收尾自底向上记账每个节点的子树纵向范围（MindMapNode.
+  //  getSubtreeVerticalExtent，O(n) 一次），渲染期据此整棵跳过。纵向可剪而
+  //  横向不可剪——子节点在右侧展开，父节点出视口不代表子节点出视口。
+  //
+  //  布局期一次记账（实测 5002 节点 ≈1–2ms，布局本身 5ms 有余量）；
+  //  视口变化路径（onViewDataChange）**不重算**，直接复用 ⇒ 平移/缩放受益最大。
+
+  //  是否允许剪枝（位置数据在布局之外被改写时为 false，见 setNodeData 失效钩子）
+  canPruneSubtree() {
+    return this.pruneSubtreeEnabled
+  }
+
+  //  布局收尾：自底向上记账子树纵向范围，随后**重新启用**剪枝。
+  //  为何布局后一律启用（不再按「是否存在自定义坐标」禁用）：
+  //  节点有效坐标由 getter `customTop || _top` 给出，即**布局已把自定义坐标
+  //  计入 `top`**，此处读到的 `top` 就是最终坐标 ⇒ 范围是准的。若改为「有自定义
+  //  坐标就禁用」，则**自由拖拽过一次的用户会永久失去剪枝收益**（直到清空坐标），
+  //  实测该收益为渲染遍历 -91%，代价过大。
+  //  真正的失效只有一种：布局之外改写了位置数据（见 setNodeData 的失效钩子）。
+  refreshSubtreeExtents() {
+    const root = this.root
+    if (!root) {
+      return
+    }
+    root.getSubtreeVerticalExtent()
+    this.pruneSubtreeEnabled = true
+    if (this.pruneStats) {
+      this.pruneStats.enabled = true
+    }
+  }
+
+  //  一轮渲染开始时补做「出视口节点」的摘除。
+  //  **每轮只跑一次**（曾放在剪枝分支里，实测每轮命中 76 次 ⇒ 冗余 76× 扫描
+  //  在屏集合；每次都要 `checkIsInClient` → `draw.transform()`）。
+  //  只遍历在屏集合（O(在屏数) ≈ 数十项，不随树规模增长），**不递归树**——
+  //  这正是剪枝省下的那部分。非性能模式直接返回：此时全部节点都该在画布上，
+  //  逐节点判定本就全为「可见」，跑它纯属浪费。
+  reconcileOutOfClientNodes() {
+    const set = this.attachedNodes
+    if (set.size === 0 || !this.mindMap.opt.openPerformance) {
+      return
+    }
+    const padding = this.mindMap.opt.performanceConfig.padding
+    // 快照后遍历：removeSelf 会 delete 集合元素
+    const list = Array.from(set)
+    for (let i = 0; i < list.length; i++) {
+      const node = list[i]
+      // 防御：group 已被销毁 / 已脱离 DOM ⇒ 仅清登记
+      if (!node.group || !node.group.node || !node.group.node.parentNode) {
+        set.delete(node)
+        continue
+      }
+      if (!node.checkIsInClient(padding)) {
+        node.removeSelf()
+      }
     }
   }
 
@@ -599,6 +738,13 @@ class Render {
       })
       // 更新根节点
       this.root = root
+      // 【自有补丁 11】布局收尾：自底向上记账子树纵向范围 + 判定剪枝开关。
+      // 必须在此处（root 就位后、渲染递归前）：渲染期只读缓存不再重算。
+      // 数据变更路径每轮一次 O(n)（实测 5002 节点 ≈1–2ms）；视口变化路径
+      // （onViewDataChange）不重算，直接复用 ⇒ 平移/缩放的收益不受此影响。
+      this.refreshSubtreeExtents()
+      // 【自有补丁 11】本轮渲染入口补做摘除核对（每轮一次；非性能模式内部直接返回）
+      this.reconcileOutOfClientNodes()
       // 渲染节点
       // 分片渲染（2026-09-25 自有补丁）：opt.renderAsync 为真时整树渲染让出
       // 主线程（MindMapNode.render 的 async 通道——每个子节点一个宏任务），
@@ -1988,6 +2134,19 @@ class Render {
 
   //  更新节点数据
   setNodeData(node, data) {
+    // 【自有补丁 11 · 失效钩子】位置数据在**布局之外**被改写时，已记账的子树
+    // 纵向范围随即失效（`top` getter 会返回新值，而 __subLo/__subHi 仍是旧数字）
+    // ⇒ 立即禁用剪枝，直到下一次布局重新记账（refreshSubtreeExtents）再启用。
+    // 这是剪枝唯一需要提防的失效面：SET_NODE_CUSTOM_POSITION 等命令只写数据、
+    // 不触发 render，若不置位就会「用旧范围剪掉新位置上的可见节点」。
+    if (this.pruneSubtreeEnabled && node) {
+      if (data.customLeft !== undefined || data.customTop !== undefined) {
+        this.pruneSubtreeEnabled = false
+        if (this.pruneStats) {
+          this.pruneStats.enabled = false
+        }
+      }
+    }
     Object.keys(data).forEach(key => {
       node.nodeData.data[key] = data[key]
     })
