@@ -934,6 +934,23 @@ window.setTimeout(() => {
 		const mathSpans = mathHolder
 			? mathHolder.querySelectorAll('foreignObject .mindmap-node-inline-math')
 			: [];
+		// K114 不变式取数：全文档「落在 foreignObject 内」的自绘内容盒，逐个量出
+		// 「内容底边 − foreignObject 底边」的溢出量（>0 即被 overflow:hidden 裁切）。
+		// 选择器刻意限定 foreignObject —— 引擎的离屏测量容器挂在画布容器下但**在
+		// svg 之外**，其克隆不参与渲染，量它会得到假阳性。
+		const allContentBoxes = Array.from(
+			document.querySelectorAll(
+				'foreignObject .mindmap-node-inline-content',
+			),
+		).map((box) => {
+			const fo = box.closest('foreignObject');
+			const dr = box.getBoundingClientRect();
+			const fr = fo.getBoundingClientRect();
+			return {
+				el: box,
+				overflowPx: Math.round((dr.bottom - fr.bottom) * 100) / 100,
+			};
+		});
 		// 代码块场景（2026-09-28）：块级结构 + 原文保真 + 复制按钮点击契约
 		const codeHolder = document.getElementById('map-codeblock');
 		const codeBlock = codeHolder
@@ -1242,7 +1259,22 @@ window.setTimeout(() => {
 					)
 				: null,
 			mathSpanCount: mathHolder ? mathSpans.length : -1,
-			mathSpanTexts: Array.from(mathSpans).map((el) => el.textContent),
+					mathSpanTexts: Array.from(mathSpans).map((el) => el.textContent),
+					// K114 离屏测量缓存键：无头环境**没有真 MathJax**（见 K85⑥：产物替换链
+					// 不在此环境发生），所以「字体渐进加载 → 宽度陈旧 → 裁切」这条触发路径
+					// 无法在此复现。此处固化的是**两条可判定的不变式**：
+					// ① 机制存在性——自绘内容根元素必须带字体代际标记（否则引擎测量缓存会在
+					//    字体状态变化后命中偏小旧宽度，见 core/measure-cache.ts 的耦合契约）；
+					// ② 宽度不变式——内容盒不得超出 foreignObject 底边（超出即会被
+					//    overflow:hidden 裁切；实测宽度差 4px 即可触发）。
+					customContentCount: allContentBoxes.length,
+					customContentFontEpochs: Array.from(
+								new Set(allContentBoxes.map((b) => b.el.getAttribute('data-mmx-f'))),
+							),
+							customContentMissingEpoch: allContentBoxes.filter(
+								(b) => !b.el.getAttribute('data-mmx-f'),
+							).length,
+					customContentOverflowPx: allContentBoxes.map((b) => b.overflowPx),
 			// 代码块（2026-09-28）：容器/pre 原文/按钮落位 + 内联可见性写法
 			codeInForeignObject: insideForeignObject(codeBlock),
 			codeBlockCount: codeHolder
@@ -4207,6 +4239,28 @@ function checkInline(dom) {
 		failures.push(
 			`数学占位文本 ${JSON.stringify(probe.mathSpanTexts)} ≠ ["$E=mc^2$","$x$","$$y^2$$"]（定界符应回填进占位，单行块级与行内同形）`,
 		);
+	}
+	// K114：自绘内容的离屏测量缓存键 + 宽度不变式（见 probe 取数处注释）
+	if (probe.customContentCount === 0) {
+		failures.push('K114：未取到任何自绘内容盒（探针失效，非产品问题）');
+	}
+	if (probe.customContentMissingEpoch > 0) {
+		failures.push(
+			`K114：${probe.customContentMissingEpoch}/${probe.customContentCount} 个自绘内容盒缺少字体代际标记 data-mmx-f——` +
+				'引擎的离屏测量缓存将以 outerHTML 为键命中偏小旧宽度，导致节点内容被 foreignObject 裁切' +
+				'（机制落点见 src/core/measure-cache.ts）',
+		);
+	}
+	{
+		const over = (probe.customContentOverflowPx || []).filter(
+			(px) => typeof px === 'number' && px > 0.5,
+		);
+		if (over.length > 0) {
+			failures.push(
+				`K114：${over.length}/${probe.customContentCount} 个自绘内容盒超出 foreignObject 底边` +
+					`（溢出量 ${JSON.stringify(over)} px，>0.5 即会被 overflow:hidden 裁切）`,
+			);
+		}
 	}
 	// 代码块（2026-09-28）：围栏段必须自绘接管为块级结构；信息行剥离、缩进逐字
 	// 保留；复制按钮落位且内联可见性走变量间接层（导出 SVG 无 styles.css ⇒ 隐身）；

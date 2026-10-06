@@ -660,11 +660,19 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect(attrsOf(button).get('data-code')).toBe('echo hi');
 		// 原生悬停提示（零依赖近似 Obsidian 的 tooltip）
 		expect(attrsOf(button).get('title')).toBe('复制代码');
-		// 可见性口径（第五轮）：屏上**恒显**（构建器不再写 opacity = 默认 1）；
-		// 导出图隐身由 handleExportSvg 钩子显式实现（hideCopyButtonsInExportSvg，
-		// 见 node-codeblock.test.ts 的导出隐身用例）——变量间接层已退役
+		// 可见性口径（K114b修订）：构建器**不写** opacity/display（默认恒显），
+		// 屏上「悬停才显形」由 styles.css 的
+		// `@media (hover:hover){ .tmm-codeblock:not(:hover) > .tmm-code-copy }` 承担
+		// ——与 Obsidian 原生同款（app.css:11854）。故本模块零监听、可无头单测，
+		// 而样式表缺失时退化回「恒显」（遮挡）而非「按钮消失」，降级方向安全。
+		// 契约由 node-codeblock.test.ts 的「styles.css 悬停规则」用例锁定。
 		expect(styleOf(button).opacity).toBeUndefined();
+		expect(styleOf(button).display).toBeUndefined();
 		expect(styleOf(button).borderRadius).toBe('4px');
+		// 定位用**逻辑属性**（K114b）：与原生 `inset-inline-end` 对齐，RTL 下镜像。
+		// 此前写物理 `right`，在 RTL 语言环境不翻转（与 styles.css 三处方向属性同类）。
+		expect(styleOf(button).insetInlineEnd).toBe('6px');
+		expect(styleOf(button).right).toBeUndefined();
 		// 图标外观**全内联**（2026-09-28 第四轮校准）：颜色取 Obsidian 原生图标
 		// 变量 --icon-color（主题可独立于 --text-muted 定义），两级回退后到官方
 		// 默认灰；形状 mask 与填充 currentColor 同样内联——按钮外观零 styles.css

@@ -7,7 +7,12 @@
  * 隔离策略：Node 环境没有 DOM 类，`Element`/`HTMLElement` 用同一基类桩出
  * （`instanceof` 判定因此成立）；元素桩只实现该函数实际访问的面
  * （closest / querySelector / textContent）。
+ *
+ * 另含一条**跨文件契约**用例：屏上「悬停才显形」的规则住在 `styles.css`
+ * （构建器零监听、零 hover 属性），删掉它会静默退回「按钮常显并压住首行」——
+ * 那是肉眼可见的退化，却没有任何单测会红。故在此读文件把该规则钉住。
  */
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	CODE_BLOCK_CLASS,
@@ -130,6 +135,45 @@ describe('resolveCodeCopyTarget（点击目标 → 复制按钮 + 文本）', ()
 			expect(hideCopyButtonsInExportSvg(bare)).toBe(bare);
 			const half = { node: {} };
 			expect(hideCopyButtonsInExportSvg(half)).toBe(half);
+		});
+
+		// 导出的 SVG **不含 styles.css** ⇒ 悬停规则不生效 ⇒ 按钮在导出图里是
+		// 「常显」态，本函数因此仍是必需的第二道保险（K114b 之后依旧）。
+		it('K114b：导出图隐身仍必需（悬停规则在 styles.css，导出图不含它）', () => {
+			const button = { style: {} as Record<string, string> };
+			const svg = {
+				node: {
+					querySelectorAll: (selector: string) =>
+						selector === `.${CODE_COPY_CLASS}` ? [button] : [],
+				},
+			};
+			hideCopyButtonsInExportSvg(svg);
+			expect(button.style).toEqual({ opacity: '0' });
+		});
+	});
+
+	describe('styles.css 悬停显形契约（K114b，跨文件）', () => {
+		/** 剥掉 CSS 注释：本文件注释里引用了原生选择器作对照，不过滤会误命中 */
+		const css = readFileSync(
+			new URL('../styles.css', import.meta.url),
+			'utf8',
+		).replace(/\/\*[\s\S]*?\*\//g, '');
+
+		it('悬停规则存在且用 display:none（对齐原生 app.css:11854）', () => {
+			expect(css).toContain('@media (hover: hover)');
+			expect(css).toMatch(
+				/\.tmm-codeblock:not\(:hover\)\s*>\s*\.tmm-code-copy\s*\{\s*display:\s*none;?\s*\}/,
+			);
+		});
+
+		it('hover 宿主是 codeblock 而非 pre（本插件按钮是 pre 的兄弟，非 pre 子元素）', () => {
+			// 原生是 `pre:not(:hover) > button`；若这里误抄成 pre，选择器永不命中
+			expect(css).toContain('.tmm-codeblock:not(:hover)');
+			expect(css).not.toMatch(/pre:not\(:hover\)/);
+		});
+
+		it('不用 opacity 做显隐（opacity 会拦截命中测试，需额外 pointer-events）', () => {
+			expect(css).not.toMatch(/\.tmm-code-copy[^{]*\{[^}]*opacity:\s*0/);
 		});
 	});
 });

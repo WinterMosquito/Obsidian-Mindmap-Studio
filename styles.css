@@ -37,7 +37,10 @@
 }
 
 .mindmap-toolbar-right {
-  margin-left: auto;
+  /* 逻辑属性：Obsidian 1.14.0 起工作区整体随 RTL 语言翻转（v1.14.md），
+     物理 margin-left 不会跟着翻。inline-start 在 LTR=左、RTL=右，
+     两向都把该分组推到 flex 行末端。 */
+  margin-inline-start: auto;
 }
 
 .mindmap-toolbar-separator {
@@ -50,7 +53,8 @@
 .mindmap-toolbar-label {
   font-size: 12px;
   color: var(--text-muted);
-  margin-right: 4px;
+  /* 同上：逻辑方向，随宿主 RTL 翻转 */
+  margin-inline-end: 4px;
 }
 
 /* 工具按钮 */
@@ -289,7 +293,8 @@
 .suggestion-item .note-path {
   font-size: 11px;
   color: var(--text-muted);
-  margin-left: auto;
+  /* 同上：逻辑方向，随宿主 RTL 翻转 */
+  margin-inline-start: auto;
 }
 
 /* ========== 节点编辑弹窗（name/link/note/image/style）========== */
@@ -475,9 +480,34 @@
 /* 代码块复制按钮（块级代码段）：**外观 100% 内联**于
    node-inline-content 的 CODE_COPY_BUTTON_STYLES（形状 mask / currentColor
    填充 / --icon-color 三级兜底基色 / 圆角——用户实机 styles.css 曾长期滞留
-   旧版，类规则口径不可靠）；屏上恒显，**导出图隐身**由引擎 handleExportSvg
-   钩子显式实现（features/node-codeblock.hideCopyButtonsInExportSvg）。
-   本文件不再持有任何按钮规则（2026-09-28 第五轮，原「变量间接层」退役）。 */
+   旧版，类规则口径不可靠）。
+
+   悬停显隐（2026-10-06 K114b）：按钮绝对定位在代码盒右上角，**常态会压住首行
+   约 2 个字符**（实测重叠 14×16px）。改为**悬停才显形**，对齐 Obsidian 原生
+   （app.css:11854 `.markdown-rendered pre:not(:hover) > button.copy-code-button
+   { display: none }`）——原生同样**不为按钮预留 padding**，靠 hover 避免常态遮挡。
+
+   为什么用 `@media (hover: hover)` 包裹（而不是「默认 display:none + hover 块
+   + @media(hover:none) 块」三段式）：
+   - 桌面（hover:hover）：`:not(:hover)` 隐藏 → 悬停显示；
+   - 触屏/移动（hover:none）：整条规则不生效 → **按钮常显**，无需另写降级块；
+   - 默认态仍留在内联 ⇒ 样式表未加载时**退化回改动前的遮挡**（而非「功能消失」），
+     降级方向安全。导出图不含 styles.css，按钮仍靠 hideCopyButtonsInExportSvg 隐身。
+
+   选择器宿主与原生不同：原生是 `pre > button`（按钮在 pre 内），本插件按钮是
+   `.tmm-codeblock` 的**兄弟**子元素（pre 之后追加），故 hover 目标是 block。
+
+   ⚠ **为何「外观内联」却在此加类规则，二者不矛盾**（K115，防误删）：
+   上面「类规则口径不可靠」的理由针对的是**外观**（形状/底色/圆角）——它必须 100%
+   内联，因为导出 SVG 只序列化元素自身、不含插件 styles.css，类规则在导出图里整体
+   失效。而本条规则管的是**显隐**：(a) 导出时按钮本就要被
+   `hideCopyButtonsInExportSvg` 显式隐身，不需要它；(b) 悬停是纯交互态，无导出语义。
+   换言之：**外观 = 必须内联（导出保真），显隐 = 必须走类表（屏上交互）**。 */
+@media (hover: hover) {
+  .tmm-codeblock:not(:hover) > .tmm-code-copy {
+    display: none;
+  }
+}
 
 /* ========== 节点文本弹窗（自绘节点的编辑入口，ui/modal-text.ts） ========== */
 /* 编辑的是**写回文件的那份文本**（可含 [[双链]] 等语法），等宽更易读 */

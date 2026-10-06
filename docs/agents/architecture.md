@@ -45,6 +45,8 @@ src/
     persistence.ts  #   data.json 写盘器（PluginDataWriter：串行队列 + 写前重读合并 + 吞错）
     node-data.ts    #   MdNodeData 黏合类型（引擎 MindMapNodeData + domain MdNodeMeta；
                     #   放 core 保持 domain 零依赖）
+    measure-cache.ts #   离屏测量缓存键：fontMeasureKey() 把字体代际编进自绘元素 outerHTML，
+                    #   使引擎按 outerHTML 缓存的测量结果在字体状态变化时必然 miss（K114）
   links/            # L1 链接与文件解析
     links-resolve.ts #   统一解析入口 resolvePathToFile：按形态路由（远程拒绝/obsidian:///
                     #   资源地址→索引/路径直查/file://→官方 getFirstLinkpathDest→索引兜底）
@@ -93,8 +95,11 @@ src/
     export-foreign-object-padding.ts # 导出 SVG 的 foreignObject 几何余量（K106）：宽 +12/高 +20——
                     #   兜底 `<img>` 解码环境与主文档的 ~2px 文本度量偏差（临界节点换行被裁）
     math-jax.ts     #   行内数学渲染（官方 loadMathJax 通道；**实机 1.13.7 的 MathJax 3.2.2
-                    #   仅有 tex2chtml**，见 K85）；**就绪判据＝mjx-c 宽全 > 0（零宽而
-                    #   ::before content 为空串的不可见操作符豁免，见 K90 ①）+ 自驱官方
+                    #   仅有 tex2chtml**，见 K85；**1.14+ 为 MathJax 4.1.3，tex2chtml
+                    #   仍在、tex2svg 仍缺，见 K113**）；**就绪判据＝mjx-c 宽全 > 0
+                    #   + 零宽豁免双形态（v3::before 空 content／v4 逐字符规则 padding
+                    #   全 0，按字符码查 #MJX-CHTML-styles 的 CSSOM 索引、按 flush 代际
+                    #   缓存；规则缺失=塌缩不放行），见 K90 ① / K113** + 自驱官方
                     #   flush（按批合并、完成后放行重试）**：未就绪同步撤回字面、塌缩产物
                     #   不入缓存（见 K87）；占位即回退 + API 面缺失告警一次 + 未挂载入队补
                     #   替换（K85 ②）；产物缓存/定稿回调（K86）；注入 node-inline-content）
@@ -207,10 +212,13 @@ tests/
                        #   重排→渲染→保存→K108 通知的次数与顺序、图片面仅在有 image
                        #   时探测、探测 reject 降级 console.warn 且不影响写回）
   math-jax.test.ts     # 行内数学渲染（platform/math-jax）：实机通道优先级（tex2chtml→tex2svg）、
-                       #   **就绪判据（mjx-c 宽全 > 0）/ 未就绪同步撤回 / flush 合并与放行
-                       #   重试 / 预算耗尽保留字面 + 告警 / 容器盒回退判定**（见 K87）；
-                       #   API 面缺失告警一次 / 抛错不上抛 / 未连接入队补替换 / 字体等待与拒绝
-                       #   不阻塞；P4 面：塌缩不入缓存、定稿回调恰好一次（见 K86）
+                        #   **就绪判据（mjx-c 宽全 > 0）/ 未就绪同步撤回 / flush 合并与放行
+                        #   重试 / 预算耗尽保留字面 + 告警 / 容器盒回退判定**（见 K87）；
+                        #   **零宽豁免双形态（v3 空 content／v4 零 padding 规则、字体类后缀
+                        #   容忍、padding 非全零与规则缺失仍不放行、索引按 flush 代际失效）**
+                        #   见 K113；
+                        #   API 面缺失告警一次 / 抛错不上抛 / 未连接入队补替换 / 字体等待与拒绝
+                        #   不阻塞；P4 面：塌缩不入缓存、定稿回调恰好一次（见 K86）
   viewport.test.ts     # 视口几何（resetZoom 画布中心锚点 / 内容包围盒居中 / 自动整理后重置缩放）；
                        #   自动整理的渲染窗口守卫（root 暂缺延后执行 / 超上限放弃，K67）
   open-as-restore.test.ts # 「以思维导图打开」偏好恢复（多档延时/代际）

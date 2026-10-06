@@ -9,6 +9,10 @@
  * - 通道优先级（`tex2chtml` → `tex2svg`）与替换语义（内容替换 + 类名）；
  * - **就绪判据**：产物内全部 `mjx-c` 宽 > 0（无 `mjx-c` 退回「宽高皆 > 0」）；
  *   未就绪 → **同步撤回字面**（无中间态）+ 待定重试；预算耗尽保留字面并告警；
+ * - **零宽豁免双形态**：MathJax ≤3.x 的空 `content` 规则／**MathJax 4.x 的
+ *   零 `padding` 规则**（K113：v4 的 `addCharStyles` 只写 padding、不再写 content，
+ *   `::before` 计算值为 `none`——只认空串会让含 U+2061/U+2062 的公式全量退字面）；
+ *   规则缺失 / padding 非全零 → 仍判未就绪（塌缩态不放行）；
  * - **flush 生命周期**：按批合并调用官方 `finishRenderMath`，完成后放行重试；
  *   就绪路径不驱动 flush；
  * - 失败面：API 面全缺时**告警一次**（跨节点去重）、渲染抛错不上抛、
@@ -31,13 +35,37 @@ vi.mock('obsidian', () => ({
 	finishRenderMath: finishRenderMathMock,
 }));
 
-/** 产物内 `mjx-c` 桩：就绪判据读取其宽度（全 > 0 = 逐字符规则已 flush） */
+/**
+ * 产物内 `mjx-c` 桩：就绪判据读取其宽度（全 > 0 = 逐字符规则已 flush）。
+ *
+ * `textContent` 是 **MathJax 4 判据面**（零宽豁免要按字符码查样式表规则）；
+ * 缺省即「无码点」→ 保守判未就绪，故既有只关心宽度的用例无需改动。
+ */
 interface FakeChar {
 	getBoundingClientRect(): { width: number };
+	textContent?: string;
 }
 
-function fakeChar(width: number): FakeChar {
-	return { getBoundingClientRect: () => ({ width }) };
+function fakeChar(width: number, textContent?: string): FakeChar {
+	return {
+		getBoundingClientRect: () => ({ width }),
+		...(textContent === undefined ? {} : { textContent }),
+	};
+}
+
+/**
+ * CHTML 样式表桩：按 CSSOM 规则文本提供逐字符规则（MathJax 4 判据读取面）。
+ *
+ * 传入**活数组**时可在测试中途 push，模拟「flush 后逐字符规则才落盘」。
+ */
+function stubChtmlStylesheet(rules: string[]): void {
+	vi.stubGlobal('document', {
+		getElementById: (id: string) =>
+			id === 'MJX-CHTML-styles'
+				? { id, sheet: { cssRules: rules.map((cssText) => ({ cssText })) } }
+				: null,
+		fonts: [],
+	});
 }
 
 /** 最小 holder 桩：只实现替换、待定调度与就绪判定实际访问的面 */
@@ -55,7 +83,7 @@ interface FakeHolder {
 	/** 就绪判定读取的 `mjx-c` 列表：空数组 → 退回容器盒判定（兼容箱型用例） */
 	querySelectorAll(selector: string): unknown[];
 	/** 运行中改字符宽度：模拟「flush 后逐字符规则到位」 */
-	setChars(widths: number[]): void;
+	setChars(widths: number[], texts?: (string | undefined)[]): void;
 	/** 就绪判定回退路径读取：宽高**任一为 0** 视为不可见 */
 	getBoundingClientRect(): { width: number; height: number };
 	/** 运行中改尺寸：模拟「容器盒尺寸恢复/塌缩」 */
@@ -103,8 +131,8 @@ function fakeHolder(
 		querySelectorAll(selector: string): unknown[] {
 			return selector === 'mjx-c' ? chars : [];
 		},
-		setChars(widths: number[]): void {
-			chars = widths.map(fakeChar);
+		setChars(widths: number[], texts?: (string | undefined)[]): void {
+			chars = widths.map((w, i) => fakeChar(w, texts?.[i]));
 		},
 		getBoundingClientRect(): { width: number; height: number } {
 			return { ...box };
@@ -545,6 +573,140 @@ describe('renderMathWithMathJax（实机 API 面回归）', () => {
 		expect(onSettled).toHaveBeenCalledTimes(1);
 		// 就绪路径不驱动 flush（与其他就绪用例同口径）
 		expect(finishRenderMathMock).not.toHaveBeenCalled();
+		expect(consoleWarnSpy).not.toHaveBeenCalled();
+	});
+
+	it('MathJax 4 形态：零宽字符规则 padding 全为 0 → 视为就绪（U+2061 一族，K113）', async () => {
+		// K113 根因回归：MathJax 4 的 `addCharStyles` **只写 padding、不再写 content**
+		// ⇒ `::before` 计算值为 `none`（旧判据恒 false）⇒ 含 U+2061/U+2062 的公式
+		// 3 轮 flush 重试耗尽 → 全量退字面 `$…$`。
+		stubChtmlStylesheet([
+			'mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }',
+			'mjx-c.mjx-c2061 { padding: 0px; }',
+		]);
+		vi.stubGlobal('getComputedStyle', (_el: unknown, pseudo: string) =>
+			pseudo === '::before' ? { content: 'none' } : {},
+		);
+		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		holder.setChars([5, 0], ['\u{1D438}', '\u2061']); // 末位零宽 = \sin 的函数应用符
+		const onSettled = vi.fn();
+		const { renderMathWithMathJax } = await loadModule();
+
+		renderMathWithMathJax(
+			'\\sin x',
+			holder as unknown as HTMLElement,
+			false,
+			onSettled,
+		);
+		await flush();
+
+		expect(holder.children).toHaveLength(1);
+		expect(holder.classList.added).toContain('mindmap-inline-math');
+		expect(onSettled).toHaveBeenCalledTimes(1);
+		// 就绪路径不驱动 flush（与其他就绪用例同口径）
+		expect(finishRenderMathMock).not.toHaveBeenCalled();
+		expect(consoleWarnSpy).not.toHaveBeenCalled();
+	});
+
+	it('MathJax 4 形态：选择器带字体类后缀（mjx-cXXXX.TEX-N）同样识别', async () => {
+		// MathJax `addCharStyles` 的选择器为 `"mjx-c"+charSelector+(o?"."+o:"")`，
+		// 字体类后缀可能出现——不得因后缀而漏判
+		stubChtmlStylesheet(['mjx-c.mjx-c2062.TEX-N { padding: 0px; }']);
+		vi.stubGlobal('getComputedStyle', (_el: unknown, pseudo: string) =>
+			pseudo === '::before' ? { content: 'none' } : {},
+		);
+		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		holder.setChars([0], ['\u2062']); // 隐式乘号
+		const { renderMathWithMathJax } = await loadModule();
+
+		renderMathWithMathJax('ab', holder as unknown as HTMLElement);
+		await flush();
+
+		expect(holder.children).toHaveLength(1);
+		expect(consoleWarnSpy).not.toHaveBeenCalled();
+	});
+
+	it('MathJax 4 形态：零宽字符规则 padding 非全零（可见字符塌缩）→ 仍判未就绪', async () => {
+		// 规则在、但声明了非零横向内边距 = 可见字符被塌缩 → 不得借豁免混入缓存
+		stubChtmlStylesheet([
+			'mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }',
+		]);
+		vi.stubGlobal('getComputedStyle', (_el: unknown, pseudo: string) =>
+			pseudo === '::before' ? { content: 'none' } : {},
+		);
+		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		holder.setChars([0], ['\u{1D438}']);
+		const { renderMathWithMathJax } = await loadModule();
+
+		renderMathWithMathJax('E=mc^2', holder as unknown as HTMLElement);
+		await flush();
+
+		expect(holder.children).toHaveLength(0);
+		expect(holder.textContent).toBe('$E=mc^2$');
+		expect(holder.classList.removed).toContain('mindmap-inline-math');
+
+		holder.setChars([5]); // 清理：放行待定段，避免定时器跨用例残留
+		await wait(150);
+	});
+
+	it('MathJax 4 形态：零宽字符规则缺失（尚未 typeset/未 flush）→ 仍判未就绪', async () => {
+		// 规则缺失是「塌缩」信号，绝不能当不可见豁免放行
+		stubChtmlStylesheet(['mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }']);
+		vi.stubGlobal('getComputedStyle', (_el: unknown, pseudo: string) =>
+			pseudo === '::before' ? { content: 'none' } : {},
+		);
+		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		holder.setChars([0], ['\u2061']); // 无对应规则
+		const { renderMathWithMathJax } = await loadModule();
+
+		renderMathWithMathJax('\\sin x', holder as unknown as HTMLElement);
+		await flush();
+
+		expect(holder.children).toHaveLength(0);
+		expect(holder.textContent).toBe('$\\sin x$');
+
+		holder.setChars([5]); // 清理：放行待定段，避免定时器跨用例残留
+		await wait(150);
+	});
+
+	it('规则索引按 flush 代际失效：flush 后落盘的零 padding 规则可放行', async () => {
+		const rules: string[] = [];
+		stubChtmlStylesheet(rules); // 初始无逐字符规则
+		vi.stubGlobal('getComputedStyle', (_el: unknown, pseudo: string) =>
+			pseudo === '::before' ? { content: 'none' } : {},
+		);
+		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		holder.setChars([5, 0], ['\u{1D438}', '\u2061']);
+		const onSettled = vi.fn();
+		const { renderMathWithMathJax } = await loadModule();
+
+		renderMathWithMathJax(
+			'\\sin x',
+			holder as unknown as HTMLElement,
+			false,
+			onSettled,
+		);
+		await flush();
+		// 规则缺失 → 未就绪：同步撤回到可见字面（无中间态）
+		expect(holder.children).toHaveLength(0);
+		expect(holder.textContent).toBe('$\\sin x$');
+		expect(onSettled).not.toHaveBeenCalled();
+
+		rules.push('mjx-c.mjx-c2061 { padding: 0px; }'); // 模拟 flush 写入逐字符规则
+		await wait(250); // flush 合并窗口 100ms + 泵 16ms
+
+		expect(holder.children).toHaveLength(1);
+		expect(onSettled).toHaveBeenCalledTimes(1);
 		expect(consoleWarnSpy).not.toHaveBeenCalled();
 	});
 

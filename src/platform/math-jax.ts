@@ -24,9 +24,11 @@
  *   完成后重试全部待定段。
  *   ② **就绪判据**：产物内**全部 `mjx-c` 宽度 > 0**（实测：未 flush 11/11 为 0、
  *   flush 后 0/11 为 0）；无 `mjx-c` 的产物形态退回「宽高皆 > 0」保守判定。
- *   例外（实测补）：零宽但 `::before` content 为**空串**的字符是
- *   MathJax 的不可见操作符（U+2061 函数应用等，设计上恒零宽），视为就绪——
- *   否则含 `\sin/\cos/\log…` 的公式永不就绪、重试耗尽退字面（用户实机复现）。
+ *   例外（实测补，**双形态**）：零宽字符分两种「设计上不可见」，均视为就绪——
+ *   MathJax ≤3.x：`::before` 的 content 为**空串**（U+2061函数应用等）；
+ *   MathJax 4.x：无 content 规则，改以**逐字符规则 `padding` 全为 0** 判定
+ *   （K113）。否则含 `\sin/\cos/\log…` 的公式永不就绪、重试耗尽退字面
+ *   （用户实机复现；v4 下这是**全量**公式的失效形态）。
  *   未就绪的产物**在同一同步块内撤回为字面**——浏览器不绘制中间态，不存在
  *   「先空白、后出现」的窗口；产物只在就绪后才**入缓存并通知定稿**（P4 重排）。
  *   ③ **字体**：产物用**私有区码点**（U+1D438 等）承载字形，只有 MathJax 自带
@@ -50,6 +52,18 @@
  * 替换永不发生、数学永久停在字面占位，且被「占位即回退」静默吞掉（单测注入
  * 假 MathJax 未覆盖该 API 面，视觉闸门也不含真 MathJax）。故渲染优先级改为：
  * `tex2chtml`（阅读视图同款 CHTML 通道）→ `tex2svg`（兼容回退）。
+ *
+ * **MathJax 4 面（1.14+ 实机取证，见 K113）**：`tex2chtml` 仍是官方通道（宿主
+ * `app.js` 自身即 `MathJax.tex2chtml(e,{display:t})`），`tex2svg` 依旧 absent；
+ * `#MJX-CHTML-styles` 与 24 条 `@font-face` 也都还在（导出注入链路未回归）。
+ * 但 **CHTML 逐字符规则的形态变了**——MathJax 4 的 `addCharStyles` 只写 `padding`、
+ * 不再写 `content`：可见字符是 `mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }`，
+ * 不可见操作符是 `mjx-c.mjx-c2061 { padding: 0px; }`，其 `::before` 计算值为 `none`
+ * （**不是** v3 的 `""`），且整张样式表再无任何 `content:""` 规则。
+ * ⇒ 仅认 `content === '""'` 的旧判据在 v4 **恒为 false**，含 U+2061/U+2062 的
+ * 公式（MathJax 为隐式乘法/函数应用自动插入，几乎所有公式）永久判未就绪 →
+ * 3 轮 flush 重试耗尽 → **退字面 `$…$`**。故豁免判据改为**双形态**
+ * （见 `isInvisibleCharByDesign`）。
  *
  * 产物形态提示：`<mjx-container class="MathJax" jax="CHTML">`——定位要按**标签
  * 名** `mjx-container`（class 是 `MathJax`，`.mjx-container` 类选择器匹配不到）。
@@ -434,13 +448,13 @@ export function pinMathContainerHeightsInExportSvg(
  * 一类实机症状的根因）。无 `mjx-c` 的产物形态（异常/空公式）退回「宽高皆 > 0」
  * 保守判定。
  *
- * 例外（用户实机复现 + 无头 MathJax 3.2.2 取证）：MathJax 会在命名
- * 函数与其参数之间插入**不可见操作符**（`\sin x` → U+2061 函数应用符，
- * U+2062/2063 同理）——其逐字符规则 content 为**空串**、宽度设计上恒为 0，
- * flush 前后都不变。对这类字符按「全部 > 0」判定会**永久不就绪**（3 轮 flush
- * 重试耗尽退字面 + 误告警「字体/样式未就绪」），故零宽字符按其 `::before`
- * content 分流：`""` = 显式空内容规则（不可见字符）→ 视为就绪；其余（含规则
- * 未落盘的 `none`）→ 仍未就绪（保留对「塌缩态」的检测力，不放行部分塌缩）。
+ * 例外（用户实机复现 + 无头 MathJax 3.2.2 取证 + K113 v4 取证）：MathJax 会在
+ * 命名函数与其参数之间插入**不可见操作符**（`\sin x` → U+2061 函数应用符，
+ * U+2062/2063 同理），宽度设计上恒为 0，flush 前后都不变。对这类字符按
+ * 「全部 > 0」判定会**永久不就绪**（3 轮 flush 重试耗尽退字面 + 误告警
+ * 「字体/样式未就绪」），故零宽字符交 `isInvisibleCharByDesign` 按**双形态**分流
+ * （v3 空 content 规则／v4 零 padding 规则）；两者皆不命中 → 仍未就绪（保留对
+ * 「塌缩态」的检测力，不放行部分塌缩）。
  */
 function isProductReady(holder: HTMLElement): boolean {
 	let chars: Element[] = [];
@@ -465,18 +479,96 @@ function isProductReady(holder: HTMLElement): boolean {
 }
 
 /**
- * 零宽字符是否为「设计上不可见」：其 `::before` 的 content 为**空串**（MathJax
- * 为 U+2061 等不可见操作符写入的显式空规则，flush 后可读）。`none`（规则未
- * 落盘，未 flush 的塌缩形态）与任何非空内容（字形规则在而宽度为 0 的异常态）
- * 都不算。判定环境不可用（单测桩无 getComputedStyle / 异常宿主）时按 false
+ * 「字符码（大写 hex） → 该字符逐字符规则的声明体」索引，**按 flush 代际缓存**。
+ *
+ * 用途：MathJax 4 的零宽「不可见操作符」判据（见 `isInvisibleCharByDesign`）。
+ * 规则形如 `mjx-c.mjx-c2061 { padding: 0px; }`；选择器**可能带字体类后缀**
+ * （MathJax `addCharStyles` 的 `"mjx-c"+charSelector+(o?"."+o:"")`），故后缀一并
+ * 容忍；`[noic]` / `:not(...)` 等派生变体不参与（要的是基规则）。
+ *
+ * ⚠ **规则缺失本身是信号**：未 flush / 该字符尚未 typeset 时规则不存在，此时
+ * 判据必须返回「未就绪」——否则会放行塌缩产物（历史上正是要防的形态）。索引读取
+ * 失败（宿主查询不可用 / 无样式表）同样留空，维持保守判定。
+ */
+let charRuleIndex: { generation: number; decl: Map<string, string> } | null = null;
+
+function readCharRuleIndex(): Map<string, string> {
+	if (charRuleIndex && charRuleIndex.generation === flushGeneration) {
+		return charRuleIndex.decl;
+	}
+	const decl = new Map<string, string>();
+	try {
+		const el =
+			typeof document === 'undefined'
+				? null
+				: (document.getElementById(CHTML_STYLES_ID) as HTMLStyleElement | null);
+		const sheet = el?.sheet;
+		if (sheet) {
+			for (const rule of Array.from(sheet.cssRules)) {
+				const m = /^mjx-c\.mjx-c([0-9a-f]+)(?:\.[\w-]+)?\s*\{([^}]*)\}$/i.exec(
+					rule.cssText,
+				);
+				if (m) {
+					decl.set((m[1] ?? '').toUpperCase(), m[2] ?? '');
+				}
+			}
+		}
+	} catch {
+		/* 宿主查询不可用：留空索引 */
+	}
+	charRuleIndex = { generation: flushGeneration, decl };
+	return decl;
+}
+
+/**
+ * 声明体中 `padding` 的各分量是否**全为 0**——MathJax 4 的零宽不可见操作符形态
+ * （`padding: 0px`）。可见字符恒有非零分量（实测 `padding: 0.68em 0.764em 0px 0px`
+ * / `0.367em 0.778em 0px 0px` / `0.442em 0.878em 0.011em 0px`），故该判据不误伤。
+ *
+ * 语义等价性（对照 MathJax 4 `padding([t,e,s],i=0){return [t,s+i,e,0].map(...)}`）：
+ * 四项为 `[左, 右+ic, 字宽, 0]`，**字宽为 0 且无内边距**的字符本就不占横向空间——
+ * 即「设计上不可见」，与 v3 的空 content 规则语义一致。
+ */
+function isZeroPaddingDecl(decl: string): boolean {
+	const m = /(?:^|;)\s*padding\s*:\s*([^;}]+)/i.exec(decl);
+	if (!m) {
+		return false;
+	}
+	const parts = (m[1] ?? '').trim().split(/\s+/);
+	return parts.length > 0 && parts.every((v) => /^0(?:px|em|rem|%)?$/.test(v));
+}
+
+/**
+ * 零宽字符是否为「设计上不可见」（U+2061 函数应用符、U+2062 隐式乘号等）。
+ *
+ * **双形态**（两代MathJax 的规则形态都保留，缺一即误判）：
+ * - **MathJax ≤ 3.x**：`::before` 的 content 为**空串**（显式空内容规则）。
+ * - **MathJax 4.x**：不再有任何 content 规则（实机：整表 0 条 `content:""`），
+ *   改以逐字符规则 **`padding` 全为 0** 判定（K113）。
+ *
+ * 其余一律 false：`none`（规则未落盘的塌缩态）、非空字形内容（字形规则在而宽度
+ * 为 0 的异常态）、`padding` 非全零（可见字符被塌缩）、规则缺失。
+ * 判定环境不可用（单测桩缺 getComputedStyle / 无样式表 / 异常宿主）时按 false
  * 处理，维持旧的保守行为。
  */
 function isInvisibleCharByDesign(char: Element): boolean {
 	try {
-		if (typeof getComputedStyle !== 'function') {
+		if (
+			typeof getComputedStyle === 'function' &&
+			getComputedStyle(char, '::before').content === '""'
+		) {
+			return true;
+		}
+	} catch {
+		/* 判定环境不可用：继续按 MathJax 4 形态判定 */
+	}
+	try {
+		const code = char.textContent?.codePointAt(0);
+		if (code === undefined) {
 			return false;
 		}
-		return getComputedStyle(char, '::before').content === '""';
+		const decl = readCharRuleIndex().get(code.toString(16).toUpperCase());
+		return decl !== undefined && isZeroPaddingDecl(decl);
 	} catch {
 		return false;
 	}

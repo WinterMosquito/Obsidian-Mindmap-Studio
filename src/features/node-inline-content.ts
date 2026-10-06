@@ -65,10 +65,32 @@ import { isSafeAnchorHref, isSchemeUrl, isUrlLikeText } from '../domain/url';
 import { tokenDisplay, tokenizeInline } from '../markdown/md-outline';
 import type { InlineToken } from '../markdown/md-outline';
 import type { NodeContentStyle } from '../engine/mindmap';
+import { fontMeasureKey } from '../core/measure-cache';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 
 /** 自绘节点内容的根类名（样式见 styles.css，测宽/断言按它定位） */
 export const NODE_INLINE_CONTENT_CLASS = 'mindmap-node-inline-content';
+
+/**
+ * 自绘内容根元素上的「字体代际」标记属性名（K114）。
+ *
+ * 引擎把离屏测量结果按元素 `outerHTML` 缓存（vendor 模块级 `St`，**键不含字体
+ * 状态**）。MathJax 字体渐进加载后内容自然宽会变而 `outerHTML` 不变 ⇒ 重测命中
+ * 偏小的旧宽度 ⇒ `foreignObject` 装不下换行后的内容（`overflow:hidden` 裁掉底部；
+ * 实测宽度差 4px 即触发、垂直溢出 17px）。把当前字体代际写进本属性后：字体状态
+ * 一变键就变 ⇒ 必然重测；字体状态不变键不变 ⇒ 缓存照常命中（零额外测量）。
+ *
+ * 该属性只落在**屏上渲染 DOM** 上：不进文件（正文由 `mdRaw` 逐字回写，见
+ * AGENTS.md 硬规则 4），导出 SVG 时只是一个不可见的 `data-*`，不影响样式或布局。
+ * 取值来源见 `core/measure-cache.ts`。
+ *
+ * ⚠ **属性名刻意取短**（K114 审查）：它进每个自绘节点的 `outerHTML`，也就是引擎
+ * 测量缓存键**与导出 SVG 的内容**。实测 `data-mmx-font-epoch`（19 字符）连同
+ * 值共 **31 字节/节点**，占小节点 `outerHTML` 的 **7.5%**、10000 节点 ≈ 310 KB。
+ * 缩到 `data-mmx-f`（10 字符）后降到 **22 字节/节点**（约 -29%）。改名前请先量
+ * 一次体积——这里的取舍是「可读性 vs 每节点字节数」，而后者会随导图规模线性放大。
+ */
+const FONT_EPOCH_ATTR = 'data-mmx-f';
 
 /**
  * 自绘内容的样式常量：**内联在元素上**，不依赖 styles.css 的类规则。
@@ -197,7 +219,9 @@ const CODE_BLOCK_PRE_STYLES: Partial<CSSStyleDeclaration> = {
 const CODE_COPY_BUTTON_STYLES: Partial<CSSStyleDeclaration> & Record<string, string> = {
 	position: 'absolute',
 	top: '6px',
-	right: '6px',
+	// 逻辑属性（K115）：Obsidian 原生用 `inset-inline-end: 0`（app.css:11857），
+	// 物理 `right` 在 RTL 语言下不镜像（与本轮 styles.css 的三处方向属性同类问题）。
+	insetInlineEnd: '6px',
 	width: '20px',
 	height: '20px',
 	padding: '0',
@@ -1137,6 +1161,11 @@ function buildContentElement(
 ): HTMLElement {
 	const box = doc.createElement('div');
 	box.className = NODE_INLINE_CONTENT_CLASS;
+	// K114：把字体状态编进 outerHTML —— 引擎的离屏测量缓存以 outerHTML 为键，
+	// 而 MathJax 字体渐进加载会让同一段公式的自然宽变化。写入当前字体代际后，
+	// 「字体状态变了」必然 cache miss ⇒ 引擎按当前真实字体重新测宽测高；
+	// 字体状态不变时键不变 ⇒ 缓存照常命中（零额外测量）。详见 core/measure-cache。
+	box.setAttribute(FONT_EPOCH_ATTR, fontMeasureKey());
 	// 结构/排版样式一律内联（导出保真，见 CONTENT_STYLES）
 	Object.assign(box.style, CONTENT_STYLES);
 	// 引擎拖宽后必须把宽度写到元素上（引擎自己的富文本节点同款写法）：
@@ -1206,8 +1235,14 @@ function buildTextElement(
 /**
  * 块级代码块段（围栏，`block` 标记）：轻量渲染 + Obsidian 同款复制按钮。
  *
- * 结构：`div.tmm-codeblock`（底色盒）>`button.tmm-code-copy`（绝对定位，
- * 悬停显隐见 CODE_COPY_BUTTON_STYLES）+ `pre > code`（原文：换行/缩进逐字）。
+ * 结构：`div.tmm-codeblock`（底色盒）>`button.tmm-code-copy`（绝对定位）+ `pre > code`
+ * （原文：换行/缩进逐字）。
+ *
+ * **三处分工，勿混**（K115）：本模块只产 DOM、**零监听**——显隐（悬停才出现）在
+ * `styles.css` 的 `@media (hover:hover){ .tmm-codeblock:not(:hover) > .tmm-code-copy }`；
+ * 点击（经引擎 `node_click` 委托）在 `features/node-codeblock.ts`；本表只管外观。
+ * 此前此处的「悬停显隐」注释指向 `CODE_COPY_BUTTON_STYLES`，而该表并无任何 hover
+ * 属性，属**悬空注释**（设计过但从未实现，K115 落地）。
  *
  * 「轻量」= 不载入 Prism、不做高亮：底色/等宽/滚动（样式见 CODE_BLOCK_*）；
  * **点击行为不在本函数**——视图层经引擎 `node_click` 委托命中选择器

@@ -185,9 +185,9 @@
   无 fileCreator 公共 API）；② `links/links-resolve.ts` 拖拽兜底 `dragManager`；
   ③ `system-open.ts` 桌面端 `require('electron').shell.openPath`（d.ts 无系统打开 API）；
   ④ `platform/math-jax.ts` 数学渲染面（d.ts 无等价）：`window.MathJax.tex2chtml/tex2svg`
-  直调 + `#MJX-CHTML-styles` 样式表读写（导出注入与就绪判定需要）——其中
-  `loadMathJax` / `finishRenderMath` 为官方 @public，渲染调用与 flush 均收口在本模块
-  （见 K85 / K87）。
+   直调 + `#MJX-CHTML-styles` 样式表读写（导出注入与就绪判定需要）——其中
+   `loadMathJax` / `finishRenderMath` 为官方 @public，渲染调用与 flush 均收口在本模块
+   （见 K85 / K87 / K113）。
   勿新增私有 API 触点；官方补齐后优先替换。
 - [K40] **版本基线**：`manifest.minAppVersion: 1.13.0`（比较基准）< 安装 typings `1.13.1`（`tsc`/lint
   的真实类型来源）< 官方最新 `1.13.2`（仅参照物）三者自洽。声明式设置的锚点
@@ -1093,3 +1093,127 @@
   均生效、缺省回落 `#f59e0b`；选**文档化**而非删除变量（已在 README 中英「拖拽换父」条目各登记一句）：
   默认行为不变、边际成本仅一行文档，且保留主题 / 用户覆盖的扩展性，删除则永久关闭该口子。
   **不加设置项**——一次性视觉偏好不值得进 `data.json`，CSS 变量本身即主题覆盖通道。
+- [K113] **修复「Obsidian 1.14 把 MathJax 3.2.2 换成 4.1.3 ⇒ 行内数学全量退回字面 `$…$`」：零宽豁免判据改为双形态（2026-10-06 CLI/CDP 实机取证 + 宿主包静态分析）**：
+  ① **根因（与配置/时序无关的静态铁证）**：读宿主 `app://obsidian.md/lib/mathjax/obsidian-mathjax.js`（1,139,224 字节）的
+  `addCharStyles` 实现为 `const c = { padding: this.padding(i,l) }; … t[a] = c`——MathJax 4 的逐字符规则
+  **只写 `padding`、不再写 `content`**；全包 `::before` 仅 2 处且均属 `mjx-linebox` 换行，与字符无关。实机样式表
+  印证：`mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }`、不可见操作符 `mjx-c.mjx-c2061 { padding: 0px; }`
+  （其 `::before` 计算值为 `none`），且整表**0 条** `content:""`。而 `isInvisibleCharByDesign` 只认
+  `content === '""'` ⇒ **恒 false** ⇒ 含 U+2061/U+2062 的公式（MathJax 为隐式乘法/函数应用自动插入，
+  `E=mc^2`、`\sin x` 实测均含）永久判未就绪 → 3 轮 flush 重试耗尽 → 保留字面 + 误告警
+  「数学产物不可见（字体/样式未就绪）」。按正确时序（渲染 → flush → 判定）实测 `E=mc^2` 几何完全正常
+  （`57.7×19.3`，可见字符宽全 > 0），**只有判据误判**。
+  ② **已排除的其余三项变更**（逐条查证，均与本插件无关）：`.HyperMD-math`——`src/` 无 CM6 /
+  `registerEditorExtension` / `HyperMD`（0 命中）；`SettingDefinitionItem#id`——12 条设置项名称互异
+  （12 个唯一 i18n key），`id` 仅用于区分同名兄弟项/重命名保引用，本插件二者皆无；新增
+  `--tooltip-`/`--notice-`/`--hotkey`/`--tab-inner-`/`--tab-container-` CSS 变量——`styles.css` 不涉及
+  tooltip/notice/hotkey/tab，已在用 `--background-primary`/`--text-muted` 等既有语义变量。
+  ③ **同版本未回归项（实测确认，勿重复排查）**：`tex2chtml` 仍在（宿主 `app.js` 自身即
+  `MathJax.tex2chtml(e,{display:t})`）、`tex2svg` 依旧 absent（与 1.13.7 同，非本次引入）；`#MJX-CHTML-styles`
+  id 未变（flush 时由 `chtmlStylesheet()` 创建）⇒ 导出注入（K100）链路完好；逐字符规则在 CSSOM 与
+  `textContent` 中均在、24 条 `@font-face` 仍在 ⇒ 导出 SVG 字形可见性与 `stripFontFaceRules` 不受影响；
+  字体族 `MJX-TEX-ZERO`/`MJX-BRK`/`MJX-TEX-N`（**v3 是 `MJXZERO`/`MJXTEX`**）仍匹配 `/MJX/i` ⇒
+  `ensureMathFonts` 无需改。**记档**：v4 的 `@font-face src` 改为**相对路径**
+  （`url("/lib/mathjax/tex-font/…")`，v3 是 `app://obsidian.md/…`）——当前导出链路会剥掉 `@font-face`，故无影响。
+  ④ **修法（判据双形态，两代都保留）**：`isInvisibleCharByDesign` 先查 v3 形态（空 `content`），未命中再按
+  字符码查其**逐字符规则**：`padding` 各分量全为 0 ⇒ 判为「设计上不可见」。索引从
+  `#MJX-CHTML-styles` 的 CSSOM 建（**按 flush 代际缓存**，每轮 flush 后规则会变，缓存必须随之失效），
+  选择器容忍字体类后缀（MathJax `addCharStyles` 的 `"mjx-c"+charSelector+(o?"."+o:"")`，本版本实测未出现但
+  源码允许）。**语义等价性**（对照 v4 `padding([t,e,s],i=0){return [t,s+i,e,0].map(…)}`）：四项为
+  `[左, 右+ic, 字宽, 0]`，**字宽为 0 且无内边距**的字符本就不占横向空间 ⇒ 与 v3 空 content 规则同义；
+  实测可见字符恒有非零分量（`0.68em 0.764em` / `0.367em 0.778em` / `0.442em 0.878em 0.011em`）⇒ 不误伤。
+  **规则缺失仍判未就绪**（未 flush / 尚未 typeset）——保留对塌缩态的检测力，这是该判据存在的原意。
+  ⑤ **为何不改用官方 `renderMath(source, display)`**：宿主内部 `hj` 函数本身就是
+  `MathJax.tex2chtml(e,{display:t})`，产物逐字节等价 ⇒ 就绪判据问题原样存在，**不解决问题**；且
+  K90② 已就同一问题做过逐字节等价验证并由用户裁决保留 `tex2chtml` 直调。
+  **为何不弃用判据、改以「flush 完成为唯一就绪信号」**：那会失去 S0.5 建立的塌缩保护（flush 失败时放入
+  不可见产物＝历史上「先空白后出现」事故的根因），属用保护换简洁，与该模块「占位即回退」的取向相悖。
+  ⑥ **实测坑（勿重犯）**：① `chtmlStylesheet()+append` **不是**官方 flush 的等价替身——宿主
+  `vj` 依赖模块级 `fj` 引用与 `dataset.change` 切换，沙箱里无法驱动，故「flush 后仍缺规则」的观察**不能**
+  当作判据缺陷的证据（我据此误判过一次，改用 CSSOM 规则判别式后复测通过）；② 批量同步测量会踩
+  字体渐进加载，**必须** `await document.fonts.ready` + `requestAnimationFrame` 双帧 + 延时再量，
+  否则可见字符也被瞬时量成 0 宽；③ 逐字符规则**必须从 CSSOM（`sheet.cssRules`）取**，且要匹配
+  `mjx-c.mjx-cXXXX`（两个类），漏掉第二个类会全量 `MISSING`。
+  ⑦ **落点与门禁**：仅 `src/platform/math-jax.ts`（判据 + 文件头「MathJax 面」注释）、
+  `tests/math-jax.test.ts`（+5 例：v4 零 padding 放行 / 字体类后缀 / padding 非全零仍不放行 /
+  规则缺失仍不放行 / 索引按 flush 代际失效）、本文与 `architecture.md` 描述、`AGENTS.md` 豁免表
+  行数（813 → 905）。`minAppVersion` **保持 1.13.0**（双形态使两代宿主都正确，不必抬高门槛）。
+  **无新增 `src/`/`tests/` 文件** ⇒ 代码结构索引无需变更。
+  ⑧ **实机验收（2026-10-06，Obsidian 已更新至 MathJax 4.1.3；证据链四段）**：
+  ① **门禁**：`npm run build` / `npm test`（60 文件 **1825 例**全绿）/ `npm run lint` /
+  `npm run check:dead-code` 全部 exit 0。② **静态**（已部署 `main.js` 逐字核对）：压缩后
+  `mm()`（代际缓存 + `/^mjx-c\.mjx-c([0-9a-f]+)(?:\.[\w-]+)?\s*\{([^}]*)\}$/i`）、
+  `fm()`（`/^0(?:px|em|rem|%)?$/`）、`gm()`（v3 分支 `::before` 空 `content` → v4 分支
+  码点查表）四要素齐全。③ **宿主原生运行期**（`obsidian restart` 清掉取证期注入 → 以宿主
+  **逐字配置**（含完整 `[+]` 24 包与全部 options）加载 → `\sin x+E=mc^2` → 官方 flush 等价）：
+  U+2061 / U+2062 的规则均为 `padding: 0px`，**旧判据 `false` / 新判据 `true`**，
+  `OLD_isProductReady:false` vs `NEW_isProductReady:true`，box `105.5×19.3` 几何正常。
+  ④ **端到端**（vault 新建 `math-verify.mindmap.md`，4 个含公式节点）：**8 个
+  `.mindmap-node-inline-math` 全部含 `mjx-container[jax="CHTML"]`**（`𝐸 =𝑚𝑐2` /
+  `sin⁡𝑥` / `cos⁡𝑥` / `√𝑎2+𝑏2` / `𝑎𝑏` / `∫10𝑥2𝑑𝑥`，宽高均非 0），
+  **画布内 `$` 字符数 = 0**，`dev:errors` 与 `dev:console level=warn` **均无输出**
+  （即未触发「数学产物不可见…已回退为字面显示」误告警），导图其余功能（图片/链接/工具栏/
+  布局连线控件）无回归。`math-verify.mindmap.md` **保留在 vault 作为回归夹具**。
+
+- [K114] **修复「MathJax 4 字体渐进加载 ⇒ 引擎离屏测量命中偏小旧宽度 ⇒ `foreignObject` 裁掉节点底部」：把字体代际编进测量缓存键**（2026-10-06 CLI/CDP 实机取证 + 宿主包静态分析 + 受控实验）：
+
+  ① **现象**：用户截图 `根式 $\sqrt{3+12}$` 节点第二行自底部被切。裁切层是 `foreignObject`（`overflow:hidden`），实测 `path.smm-node-shape` 29.83 / `foreignObject` 30.83，而 `div.mindmap-node-inline-content` 真实需要 **44.79** ⇒ 缺 13.96px。逐节点对照：`E=mc^2` 缺 11.72、`\sqrt{}` 缺 13.96、`\sin/\cos` 恰好 0、`\frac/\int` 富余 5.64（**富余掩盖了缺陷**，故不是所有公式都可见症状）。
+
+  ② **受控实验确立充要条件**（三组，事后全部还原）：把 `foreignObject` 宽度**人为改小 4px**（119→115）⇒ 内容高 28→**45**、垂直溢出 **+17**、裁切复现；改小 9px（110）同样溢出 17px；修正回 119 ⇒ 溢出 0。**结论：裁切 ⟺ `foreignObject` 宽度 < 内容自然宽**（差 4px 即触发，因换行使高度需求翻倍而 `foH` 不变）。
+
+  ③ **机制**（vendor 静态分析）：引擎 `measureCustomNodeContentSize`（`$l`）按**元素 `outerHTML`** 把测量结果缓存进 **vendor 模块级** `St` Map（16384 项 LRU，**键不含字体状态、不含引擎代际**）；预测量补丁（`Vr`）在 `document.fonts.status !== 'loaded'` 时**既不测量也不写缓存**（实机统计 `hit:5, queued:0, wrote:0, canCache:false`）。MathJax 字体渐进加载后自然宽变化而 `outerHTML` 不变 ⇒ 重测命中偏小旧宽度。`view.ts` 既有注释已承认「首批测量可能偏小」，但只针对**高度**，漏了**宽度变化会触发换行**这一放大器。
+
+  ④ **已排除的两个修法（勿重走）**：**`width:max-content`** —— 只是把垂直裁切换成**水平**裁切（实测 `hOver` 4px / 9px），**不是修复**；**`ignoreUpdateCustomTextWidth: false`** —— 会让内容自然宽覆盖用户拖拽设定的 `customTextWidth`，**破坏 K26d「拖左右边框改宽」**，出局。
+
+  ⑤ **第一版修法被实机证伪并废弃（K85 ① 教训的又一次复现）**：初版把「绕缓存标记」挂在 `refreshNodesCustomContent`（数学定稿后的重测入口）并逐出 `__preMeasuredContentMap` 条目强制重建。部署后实测 **`renderedWithMark: 0`** —— 插桩确认该路径在复现场景**根本不执行**（`[K114DBG]` 零输出），即修法挂在一条不会走的路径上，**静默 no-op**。根因：节点尺寸由引擎 `Vr` 预测量 + 常规 `getSize` 决定，不经该入口。**教训：修复点必须选「一定被走到」的位置，否则验证时只能靠"看起来没报错"判断成功。**
+
+  ⑥ **最终修法（无调用时机依赖）**：`core/measure-cache.ts` 的 `fontMeasureKey()` 返回 `<fonts.status>:<epoch>`，`epoch` 在每次 `loadingdone` 与 `fonts.ready` 时递增；`features/node-inline-content.buildContentElement` 把它写进根元素 `data-mmx-font-epoch`。于是**预测量元素与重测元素都携带正确 epoch**（两条路径都经 `customCreateNodeContent`），缓存自动按字体状态分区：字体状态不变 ⇒ 键不变 ⇒ **缓存照常命中（零额外测量）**；状态一变 ⇒ 键必变 ⇒ 必然重测。**不碰 vendor、不改布局语义、无私有触点。**
+
+  ⑦ **落点为何是 core**：唯一消费方是 features 的元素构建入口，但需要 `document.fonts`（features 单测是 node 环境）；走 `engine` 则 features 被拖入 vendor bundle 运行时依赖（实测导致 `node-inline-content.test.ts` / `node-codeblock.test.ts` 收集期 `document is not defined`），且 `node-inline-content.ts` 原本对 engine **只做 `import type`** 以守住该边界。
+
+  ⑧ **验收**：`build` / `test`（61 文件 **1835 例**）/ `lint` / `lint:css` / `check:dead-code` / `check:release` 全 exit 0；`verify:visual --require-chrome` 通过（含 `export`「自绘内容样式随导出 SVG 带出」与 `scale`「无测量垃圾」探针）。实机（部署后重启）：**5/5 渲染节点带最新字体代际**（修法前 0）、`foW == natW` 全部相等、垂直溢出 0 / 无裁切、`dev:errors` 空；预测量统计 `canCache:true` ⇒ 稳态仍多数命中缓存，**无性能回归**。新增 `data-*` 只落在屏上渲染 DOM，不进文件（正文由 `mdRaw` 逐字回写）。
+
+  ⑧.1 **代码审查后的三项加固（2026-10-06 同日）**：
+  ① **补明耦合契约**（`core/measure-cache.ts` 文件头）：本模块**只改缓存键、不重建元素、不触发重排**。「键变了」→「真被重测」之间还差**重建时机**，由既有 `features/view.ts` 的 `installMathFontsHook`（`document.fonts` `loadingdone` → `remeasureSettledMathNodes`）提供。**该钩子若被移除/改名，本修复会静默退化为 no-op**（键变但无人重建 ⇒ 旧宽度留存 ⇒ 裁切复现）——正是 ⑤ 那次no-op 的同款陷阱，必须留档。
+  ② **属性名缩短为 `data-mmx-f`**：它进每个自绘节点的 `outerHTML`，即引擎缓存键**与导出 SVG 内容**，成本随导图规模线性放大。实测 `data-mmx-font-epoch`（19 字符）连值共 **31 字节/节点**（占小节点 `outerHTML` 的 7.5%、10000 节点 ≈ 310 KB）→ 缩到 `data-mmx-f`（10 字符）后 **22 字节/节点（-29%）**。取舍是「可读性 vs 每节点字节数」，改名前后各量一次。
+  ③ **`verify:visual` 新增两条不变式断言**（math 场景）：**机制存在性**（自绘内容盒必须带字体代际标记）与**宽度不变式**（内容盒底边不得超出 `foreignObject` 底边 >0.5px）。⚠ 无头环境**无真 MathJax**（K85⑥ 盲区），「字体渐进加载 → 宽度陈旧」这条触发路径在此**不可复现**，故固化的是两条可判定的不全等式。实测取数非空：**37 个内容盒、`overflowPx` 全为 0、100% 带标记**（用翻转阈值的方式验过断言不是空过）。
+
+  ⑧.2 **实机验收的操作陷阱（如实记录，勿重踩）**：`obsidian open path=<导图>` 会**重建 leaf**，把已渲染好的导图打空（实测：重启后 `smd:5` 已渲染，一执行 `open` 即变 `smd:0` 且 `mindMap` 实例为 null，`onLoadFile` 不落地、无任何报错）。**正确姿势：重启 Obsidian 后直接测量，不要再 `open`**；否则会误判为功能缺陷。同类症状此前已用 A/B（把src 还原到 HEAD 重建、构建失败故 `main.js` 未变）证明与本改动无关。
+
+  ⑨ **未闭合项（如实记录）**：原始坏态依赖「预测量发生在字体未就绪窗口」的时序竞态，**本轮未能按需稳定复现**，故修复有效性由「机制 + 不变式（`foW == natW`、零裁切）」证明，而非「复现→治愈」证明。回归夹具 `math-verify.mindmap.md` 保留在 vault。
+
+- [K115] **修复「代码块复制按钮常态压住首行约 2 个字符」：改为悬停显形（对齐 Obsidian 原生）+ 定位改逻辑属性**（2026-10-06 用户截图 + 运行中 `app.css` 实测取证）：
+
+  ① **现象与量化**：复制按钮绝对定位在代码盒右上角（`top:6/right:6`，20×20），而代码盒 `padding` 是 `10px 12px`、`pre` 的 `padding-right` 实测 **0** ⇒ 按钮覆盖到距边 26px、pre 从 12px 起算 ⇒ **重叠约 14×16px（≈首行 2 个字符）**。实机`elementFromPoint` 确认落点即按钮，非误判。
+
+  ② **原生权威依据（运行中 `app.css`，非记忆）**：
+     `.markdown-rendered pre:not(:hover) > button.copy-code-button { display: none }`（11854）
+     与 `.markdown-rendered button.copy-code-button { position:absolute; top:0; inset-inline-end:0; … }`（11857）。
+     ⇒ 原生用 **`display:none`**（不占布局、不可聚焦、不参与命中测试）、**逻辑属性**、且**不为按钮预留任何 padding**——**原生同样允许遮挡**，靠 hover 才出现来避免常态遮挡。
+
+  ③ **否决的三个替代方案**：
+     - **外扩按钮 + 节点边框右移**：要**改变内容自然宽** ⇒ 换行变化 ⇒ **把 K114 刚修好的「`foreignObject` 宽度 ≠ 内容自然宽 ⇒ 裁切」风险请回来**，且导出图会留一条空白带（按钮已隐身但空间仍在）。**这是唯一会重新引入已修 bug 的方案**。
+     - **`pre` 加 `padding-inline-end` 预留**：只给首行预留会让后续行满宽 ⇒ **视觉不对称**；给全行预留则内容区变窄 ⇒ 可能增加换行（同上耦合）。
+     - **绝对定位到代码盒外侧**：**物理不可行**——`foreignObject` 是 `overflow:hidden`，移出内容盒即被裁。
+     - （附否决的变体：`opacity:0 + pointer-events:none`，不如 `display:none`——必须额外加 `pointer-events` 才不挡鼠标，且样式表失效时「透明但存在」= 功能失效，比遮挡更糟。）
+
+  ④ **落地形态（一石三鸟）**：
+     `@media (hover: hover) { .tmm-codeblock:not(:hover) > .tmm-code-copy { display: none; } }`
+     - 桌面（`hover:hover`）：`:not(:hover)` 隐藏 →悬停显示；
+     - 触屏/移动（`hover:none`）：**整条规则不生效 ⇒ 按钮常显**，无需另写降级块；
+     - **默认态仍留内联** ⇒ 样式表未加载时**退化回改动前的遮挡**（而非「功能消失」），降级方向安全。
+     另把 `CODE_COPY_BUTTON_STYLES` 的 `right:'6px'` 改为 **`insetInlineEnd:'6px'`**（对齐原生 `inset-inline-end`，修 RTL 不镜像）。
+
+  ⑤ **hover 宿主为何是 `.tmm-codeblock` 而非 `pre`**：原生按钮是 `pre` 的**子元素**，本插件按钮是 `.tmm-codeblock` 的**兄弟**子元素（`buildCodeBlockElement` 先 `appendChild(button)` 再 `appendChild(pre)`）⇒ 照抄原生的 `pre:not(:hover) > button` **永不命中**。已由契约测试锁住。
+
+  ⑥ **导出为何仍需 JS 隐身**：导出 SVG **不含 styles.css** ⇒ 悬停规则不生效 ⇒ 按钮在导出图里是常显态，`hideCopyButtonsInExportSvg`（`features/node-codeblock.ts`）**仍是必需的第二道保险**，未因本改动而变成冗余。
+
+  ⑦ **⚠ 已知行为变化（与原生一致，可接受）**：`showCopiedFeedback` 的 ✓ 反馈持续 1.2s，而按钮现在 hover 才显示 ⇒ **用户在 1.2s 内把指针移出代码块，✓ 立即不可见**（改动前恒显 ⇒ 一定可见）。
+
+  ⑧ **⚠ 已知盲区**：悬停行为**无法被自动化门禁覆盖**——`verify:visual` 的 `code` 探针用合成 `MouseEvent`，**绕过命中测试**（`display:none` 照样能触发）；`lint:css` 只验语法。防护依赖 ⑨ 的契约测试 + 实机 CDP `Input.dispatchMouseEvent` 手动验证（`mouseMoved` 可触发 `:hover`；但 `mousePressed/Released` 在本环境不送达，**故「真实鼠标点击」未能实机验证**，改用与探针同源的合成 click，覆盖同一 `node_click` 入口）。
+
+  ⑨ **门禁**：新增 4 条契约（`node-inline-content` 断言 `insetInlineEnd==='6px'` 且 `right===undefined`、`opacity`/`display` 均 `undefined`；`node-codeblock` 断言导出隐身仍必需 + **跨文件读 `styles.css`**（剥注释后）钉住悬停规则存在、用 `display:none`、宿主是 codeblock、且不用 opacity）。全量 `test` **1839 例**（61 文件）/ `build` / `lint` / `lint:css` / `check:dead-code` / `verify:visual --require-chrome` 全 exit 0。实机：常态 `display:none`、CDP hover 下 `display:flex`（20×20，距 pre 右缘 6px）、合成 click 后 600ms 出现 `✓` + `is-copied`、`dev:errors` 空；截图确认未悬停的代码块文本完整可见。
+
+  ⑩ **「外观内联却新增类规则」不矛盾**（防后人误删规则）：「类规则口径不可靠」针对**外观**（形状/底色/圆角）——必须 100% 内联，因导出 SVG 只序列化元素自身、不含插件 styles.css；本条规则管**显隐**——导出时按钮本就被 JS 显式隐身，且悬停是纯交互态、无导出语义。**外观 = 必须内联（导出保真），显隐 = 必须走类表（屏上交互）**。
+
+  ⑪ **导出体积的前瞻记录（本次刻意不做）**：`data-mmx-f`（K114，22 字节/节点）会随live DOM 进入导出 SVG。本轮**核实后决定不剥离**——`view-export.ts` 只有 `exportPNG`，SVG 是引擎栅格化后的**瞬时中间态**（`downloadBlob`/`downloadDataURL` 落的文件名是 `.png`），剥离对用户可见收益为零，却要新增一条导出 transform + 测试 + 索引登记，净负收益。**若将来新增 SVG/PDF 导出入口，须一并 `removeAttribute('data-mmx-f')`**（此时它才是实打实的体积与信息泄漏）。
