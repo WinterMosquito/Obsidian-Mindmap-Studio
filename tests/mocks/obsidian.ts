@@ -19,6 +19,14 @@ export class TFile {}
  * 真实语义（注入 MathJax 到主窗口）属交互行为，由各测试局部 vi.mock 覆写。
  */
 export async function loadMathJax(): Promise<void> {}
+/**
+ * loadPrism 桩：仅保证模块图可链接（platform/prism-code 具名导入）。
+ * 真实语义（把 Prism 注入 window）属交互行为，由 prism-code.test.ts 局部
+ * vi.mock + window.Prism 假件覆写。
+ */
+export async function loadPrism(): Promise<unknown> {
+	return {};
+}
 export class TFolder {}
 export class MarkdownView {}
 export class WorkspaceLeaf {}

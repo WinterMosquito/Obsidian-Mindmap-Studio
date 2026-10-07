@@ -56,8 +56,11 @@
  */
 import {
 	isRenderableImageTarget,
+	isIndentedCodeLine,
+	normalizeFenceLanguage,
 	MATH_RENDERED_HOLDER_CLASS,
 	CODE_BLOCK_MAX_HEIGHT_PX,
+	CODE_RENDERED_CLASS,
 } from '../core/constants';
 import { t } from '../core/i18n';
 import type { Language } from '../core/i18n';
@@ -180,9 +183,11 @@ export const CODE_COPY_CLASS = 'tmm-code-copy';
  * 块级代码块（围栏段）的**结构样式**：内联在元素上（导出保真，理由同
  * CONTENT_STYLES——插件 styles.css 不进导出 SVG，类规则在导出图里整体失效）。
  *
- * 视觉口径「轻量」= 对齐 Obsidian 阅读视图的**无高亮**形态：等宽 + 代码底色
- * （主题变量 + 字面量兜底，导出无色上下文时仍可读）+ 圆角 + 内边距；不做
- * Prism 高亮。滚动与上限见 CODE_BLOCK_PRE_STYLES / CODE_BLOCK_MAX_HEIGHT_PX。
+ * 视觉口径＝对齐 Obsidian 阅读视图：等宽 + 代码底色（主题变量 + 字面量兜底，
+ * 导出无色上下文时仍可读）+ 圆角 + 内边距；**语法高亮不在本表**——token 的
+ * 颜色由 `platform/prism-code` 探测宿主主题后**内联到每个 token 元素**（导出
+ * SVG 无 app.css，内联是唯一 WYSIWYG 口径）。滚动与上限见
+ * CODE_BLOCK_PRE_STYLES / CODE_BLOCK_MAX_HEIGHT_PX。
  */
 const CODE_BLOCK_STYLES: Partial<CSSStyleDeclaration> = {
 	position: 'relative',
@@ -338,6 +343,33 @@ export interface InlineContentOptions {
 	 * `platform/math-jax.getRenderedMathNode`（本模块不 import 该层）。
 	 */
 	getCachedMath?: (tex: string, display: boolean) => Node | null;
+	/**
+	 * **代码块 Prism 高亮**的注入（同 `renderMath` 的注入式纪律：生产实现 =
+	 * `platform/prism-code`，那里是唯一 import `obsidian` 的代码高亮实现）。
+	 *
+	 * 本模块先写**字面代码**（信息行已剥、缩进/空行逐字），实现方在`loadPrism()`
+	 * 就绪后把 holder 的子节点换成 token 元素。`lang` 已规范化为语言 id（空串 =
+	 * 无语言/未登记 → 实现方**跳过**并保留字面）。
+	 *
+	 * `onSettled`（定稿回调）由**组合根注入时绑定**（视图层拿它触发节点尺寸重测，
+	 * 同 `renderMath` 的注入形态），故本形参表里不出现——避免第二条回调通道。
+	 * 本模块**不自己找节点**：引擎预测量路径会给代理对象（见 math-jax 文件头）。
+	 */
+	renderCode?: (
+		doc: InlineContentDocument,
+		code: string,
+		lang: string,
+		holder: HTMLElement,
+	) => void;
+	/**
+	 * **已高亮产物查询**（可选，尺寸同步）：返回 token 子节点的克隆数组，未命中 null。
+	 *
+	 * 命中时 `buildCodeBlockElement` **同步**放置 token、不走 `renderCode`——引擎随后的
+	 * 离屏测量直接量到真实宽高（消除「按字面测量 → 替换后溢出」的窗口），且重建
+	 * 路径不再触发异步替换（无重排循环）。注入实现见
+	 * `platform/prism-code.getRenderedCodeNodes`（本模块不 import 该层）。
+	 */
+	getCachedCode?: (code: string, lang: string) => readonly Node[] | null;
 }
 
 /** 行内段：渲染节点内联内容的最小单元（纯数据，可单测） */
@@ -366,11 +398,21 @@ export interface InlineSegment {
 	display?: boolean;
 	/**
 	 * **围栏代码块**标记（仅 style === 'code' 且来自 fence 分支）：true = 块级
-	 * 轻量代码块（buildCodeBlockElement：底色盒 + 复制按钮），缺省 = 行内码
-	 * （`…` 单反引号）。与 `display` 同款纪律：**重建段对象时必须保留**，
+	 * 代码块（buildCodeBlockElement：底色盒 + 复制按钮 + Prism 高亮），缺省 =
+	 * 行内码（`` ` `` 单反引号）。与 `display` 同款纪律：**重建段对象时必须保留**，
 	 * 否则块级渲染会静默退化回行内码。
 	 */
 	block?: true;
+	/**
+	 * 围栏**信息行给出的语言 id**（仅 style === 'code' 且 block 标记）：已按
+	 * `core/constants.normalizeFenceLanguage` 白名单规范化（小写；不合规为空串）。
+	 *
+	 * 空串有两种含义，**都不高亮**、都保留字面：① 无信息行（``` ``` ``` /缩进式
+	 * 代码块）；② 信息行给了 Prism 未登记的语言码（用户可写任意语言码）。
+	 * 该字段进 `<code class="language-…">`（宿主/主题选择器口径）并传给
+	 * `platform/prism-code` 查语法。
+	 */
+	lang?: string;
 }
 
 /**
@@ -409,17 +451,23 @@ const MATH_SOURCE =
  * 行内语法的统一扫描正则（命名分组；备选顺序即优先级）。
  *
  * 1. `%%…%%` —— 注释（可跨行；未闭合不匹配 → 按字面显示）；
- * 2. 行内代码 —— 定界符为 1..n 个反引号、**同长度闭合**（CommonMark 语义：
+ * 2. 围栏代码块 —— 定界符 **3 个以上**的反引号**或波浪号**、**同字符同长度闭合**
+ *    （CommonMark + Obsidian 帮助：两种定界符皆可，4+ 反引号可嵌套代码块）；
+ *    排在行内码之前，否则 `` ```js `` 的首行会被行内码分支切碎。
+ *    ⚠ **口径必须与解析层一致**（`markdown/md-outline.classifyLines` 的
+ *    `^[ \t]{0,3}(`{3,}|~{3,})`）：此前本正则只认反引号，`~~~` 围栏的节点虽然
+ *    被正确解析成"围栏整体"，渲染时却退化成普通文本（解析/渲染两侧口径裂缝）；
+ * 3. 行内代码 —— 定界符为 1..n 个反引号、**同长度闭合**（CommonMark 语义：
  *    `` ``a`b`` `` 允许内容含更短的反引号串）；内容按字面，内部不解释标记/转义；
- * 3. 转义 `\<可转义字符>` —— 消费反斜杠、按字面显示该字符（字符集见 ESCAPABLE_CLASS）；
- * 4. 数学（`MATH_SOURCE`，**双美元写在单美元之前**——更长定界符优先）：
- *    4a. `$$…$$`（display / 块级，`mathBlock` 组；内容可跨行、可含单个 `$`——
+ * 4. 转义 `\<可转义字符>` —— 消费反斜杠、按字面显示该字符（字符集见 ESCAPABLE_CLASS）；
+ * 5. 数学（`MATH_SOURCE`，**双美元写在单美元之前**——更长定界符优先）：
+ *    5a. `$$…$$`（display / 块级，`mathBlock` 组；内容可跨行、可含单个 `$`——
  *    开 `$$` 找最近 `$$` 闭合，对齐 Obsidian 实测口径）；
- *    4b. 行内 `$…$`（`math` 组）。两支同口径：闭 `$` 前
+ *    5b. 行内 `$…$`（`math` 组）。两支同口径：闭 `$` 前
  *    不得是空白、后不得是数字（Obsidian 数学扩展口径，防止 `$5 与 $6` 价签误判）；
  *    排在标记类之前，`$a*b*c$` 内的 `*` 不会被当斜体；
- * 5. `***粗斜***` / `___粗斜___`（组合字形，单独一支）；
- * 6. `**粗**` / `__粗__`、`~~删~~`、`==高亮==`、`*斜*` / `_斜_`。
+ * 6. `***粗斜***` / `___粗斜___`（组合字形，单独一支）；
+ * 7. `**粗**` / `__粗__`、`~~删~~`、`==高亮==`、`*斜*` / `_斜_`。
  *
  * 两条与 CommonMark 对齐的取舍：
  * - 粗/斜/删/高亮要求定界符内首尾**非空白**（flanking 规则的最简形态）：
@@ -431,7 +479,7 @@ const MATH_SOURCE =
 const MARKUP_RE = new RegExp(
 	[
 		'(?<comment>%%[\\s\\S]*?%%)',
-		'(?<fence>```+)(?<fenceCode>[\\s\\S]*?)\\k<fence>',
+		'(?<fence>(?:`{3,}|~{3,}))(?<fenceCode>[\\s\\S]*?)\\k<fence>',
 		'(?<ticks>`+)(?<code>(?:[^`\\n]|`(?!\\k<ticks>))+?)\\k<ticks>',
 		'\\\\(?<escaped>' + ESCAPABLE_CLASS + ')',
 		MATH_SOURCE,
@@ -515,13 +563,22 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 		if (groups.comment !== undefined) {
 			// 注释：整段不进显示（连定界符一起吞掉）
 		} else if (groups.fenceCode !== undefined) {
-			// 多行围栏代码块（```+ … ``` 同长度闭合，可跨行）：**块级代码段**
-			// （block 标记 → buildCodeBlockElement：底色盒 + 复制按钮，轻量无高亮）。
-			// 首行信息行（```js）在段内剥掉——它不进显示与复制（splitFenceInfo）；
+			// 多行围栏代码块（``` *或* ~~~ 起止、3 个以上、同长度闭合，可跨行）：
+			// **块级代码段**（block 标记 → buildCodeBlockElement：底色盒 + 复制按钮
+			// + Prism 高亮）。首行信息行（```js）在段内剥掉——它不进显示与复制
+			//（splitFenceInfo），但**语言码要留下来**（`lang` 段字段 → language-xxx
+			// 类 → Prism 语法查找），否则高亮无从下手。
 			// 代码原文（缩进/空行）逐字保留（归一化不作用于本分支）。
 			// 同时使围栏内的 `$$` 被本分支先行消费、不被块级数学误配对（K89）
-			const { code } = splitFenceInfo(groups.fenceCode);
-			out.push({ kind: 'text', text: code, style: 'code', block: true });
+			const { lang, code } = splitFenceInfo(groups.fenceCode);
+			const language = normalizeFenceLanguage(lang);
+			out.push({
+				kind: 'text',
+				text: code,
+				style: 'code',
+				block: true,
+				...(language ? { lang: language } : {}),
+			});
 		} else if (groups.code !== undefined) {
 			// 行内码：逐字保留（连续空格是内容；阅读视图同为字面）
 			out.push({ kind: 'text', text: groups.code, style: 'code' });
@@ -627,6 +684,63 @@ function splitFenceInfo(fenceCode: string): { lang: string; code: string } {
 		lang: fenceCode.slice(0, nl).trim(),
 		code: fenceCode.slice(nl + 1),
 	};
+}
+
+/**
+ * 缩进式代码块的**显示文本**；不是缩进代码块则返回 null。
+ *
+ * 官方帮助「Basic formatting syntax §Code blocks」把Tab / 4 空格缩进块与围栏块
+ * 并列为代码块，但此前只有围栏块有视觉通道：缩进块在显示层被`trimEdges` /
+ * 派生 `text`剥掉前导缩进，渲染成一段普通文字（往返仍逐字正确，见
+ * `docs/markdown-mindmap-standard.md` 的缩进代码块条目）。
+ *
+ * 判据（CommonMark）：**首个非空行起**每行都是 `constants.isIndentedCodeLine`
+ * （≥4 空格或制表符）或空行，且至少有一行缩进。「首行必须缩进」对应
+ * 「缩进代码块不能中断段落」——否则正文里恰好每行都缩进的段落会被误判成代码。
+ *
+ * 显示文本按 CommonMark **剥离每行 4 空格 / 1 个制表符**（与阅读视图一致）：
+ * 只影响显示，回写仍走 `mdRaw`（AGENTS.md 硬规则 4）。
+ *
+ * 已知边界（**实机取证，勿当 bug 修**）：判据是**节点级**的——解析层
+ * `md-outline.classifyLines` **忽略围栏外空行**，故文档里连续的段落/围栏会被合并成
+ * **同一个 plain 节点**（实测：一个「标题 + 三段代码块」的文档 = 标题节点 + 一个
+ * 含全部内容的 plain 子节点）。于是「正文里夹一段缩进代码」的节点**不会**被整段判为
+ * 代码块，仍走普通文本渲染。要在这种情况下也支持，就得在渲染层重跑一遍围栏状态机
+ * 来保护围栏内缩进行 —— 那是第二份判定（AGENTS.md 硬规则 5），代价与漂移风险都高于
+ * 收益，故**明确不做**。实际覆盖到的是：**整个节点就是一段缩进代码**（把代码块粘进
+ * 一个空节点、或整个文件就是一段代码），这正是缩进式代码块在本插件树模型里的常见形态。
+ */
+function indentedCodeText(raw: string): string | null {
+	const lines = raw.split('\n');
+	let seenIndented = false;
+	for (const line of lines) {
+		if (line.trim() === '') {
+			continue;
+		}
+		if (!isIndentedCodeLine(line)) {
+			// 首个非空行不缩进 → 段落（可能后续行缩进，但那是段落内的续行）
+			return null;
+		}
+		seenIndented = true;
+	}
+	if (!seenIndented) {
+		return null;
+	}
+	// 首尾**换行**裁掉（与围栏块 `trimEdges` 的代码块分支同口径：只裁换行、
+	// 不裁行内空白——缩进是代码内容）。尾随空行来自原末尾的空行 split 产物。
+	return lines
+		.map(stripIndentedCodePrefix)
+		.join('\n')
+		.replace(/^\n+/, '')
+		.replace(/\n+$/, '');
+}
+
+/** 剥掉一行缩进代码的 4 空格 / 1 制表符前缀（CommonMark 缩进代码块规则） */
+function stripIndentedCodePrefix(line: string): string {
+	if (line.startsWith('\t')) {
+		return line.slice(1);
+	}
+	return line.startsWith('    ') ? line.slice(4) : line;
 }
 
 /**
@@ -772,6 +886,14 @@ export function segmentCacheStats(): {
 
 /** 段序列构建本体（无缓存；缓存包装见 buildInlineSegments） */
 function buildInlineSegmentsUncached(raw: string): InlineSegment[] {
+	// 缩进式代码块（CommonMark：≥4 空格 / 制表符起首）：整节点都是代码时走
+	// **与围栏块同一个**块级通道（buildCodeBlockElement：底色盒 + 复制按钮 +
+	// Prism 高亮——无语言码，故不高亮）。**必须在 token 化与 trimEdges 之前
+	// 判定**：那两步都会剥掉前导缩进（显示文本不带缩进），而缩进恰是代码内容。
+	const indented = indentedCodeText(raw);
+	if (indented !== null) {
+		return [{ kind: 'text', text: indented, style: 'code', block: true }];
+	}
 	const segments: InlineSegment[] = [];
 	let cursor = 0;
 	const pushText = (text: string): void => {
@@ -789,8 +911,9 @@ function buildInlineSegmentsUncached(raw: string): InlineSegment[] {
 				// display/block 只在对应段型上出现（重建段对象时必须保留，
 				// 否则 buildMathElement 拿到"行内形态"、块级代码退化为行内码）
 				...(piece.display ? { display: true } : {}),
-				...(piece.block ? { block: true } : {}),
-				...(piece.children ? { children: piece.children } : {}),
+									...(piece.block ? { block: true } : {}),
+									...(piece.lang ? { lang: piece.lang } : {}),
+									...(piece.children ? { children: piece.children } : {}),
 			});
 		}
 	};
@@ -1204,7 +1327,7 @@ function buildContentElement(
  * 文本段 → 节点：无样式 = 纯文本；带轻标记时包一层语义元素（视觉增强，
  * 不影响回写）。`children` 存在时递归构建内层（一层嵌套，见 MAX_MARKUP_DEPTH）；
  * `math` 样式走 `buildMathElement`（字面占位 + 注入的异步 MathJax 渲染）；
- * `code + block` 走 `buildCodeBlockElement`（块级轻量代码块 + 复制按钮）。
+ * `code + block` 走 `buildCodeBlockElement`（块级代码块 + 复制按钮 + Prism 高亮）。
  */
 function buildTextElement(
 	doc: InlineContentDocument,
@@ -1215,7 +1338,7 @@ function buildTextElement(
 		return buildMathElement(doc, segment, params.options);
 	}
 	if (segment.style === 'code' && segment.block === true) {
-		return buildCodeBlockElement(doc, segment, params.lang);
+		return buildCodeBlockElement(doc, segment, params.lang, params.options);
 	}
 	if (!segment.style) {
 		return doc.createTextNode(segment.text);
@@ -1244,15 +1367,19 @@ function buildTextElement(
  * 此前此处的「悬停显隐」注释指向 `CODE_COPY_BUTTON_STYLES`，而该表并无任何 hover
  * 属性，属**悬空注释**（设计过但从未实现，K115 落地）。
  *
- * 「轻量」= 不载入 Prism、不做高亮：底色/等宽/滚动（样式见 CODE_BLOCK_*）；
- * **点击行为不在本函数**——视图层经引擎 `node_click` 委托命中选择器
- * （features/node-codeblock.ts），本模块保持零 Obsidian 依赖、零监听、可单测。
+ * 「轻量」= **纯同步 DOM**：底色/等宽/滚动（样式见 CODE_BLOCK_*），**高亮不在
+ * 本函数**——先写与原文同形的字面代码（占位即回退态），token 元素由注入的
+ * `renderCode` 异步替换（同 buildMathElement 的字面占位纪律），生产实现见
+ * `platform/prism-code`。**点击行为也不在本函数**——视图层经引擎 `node_click`
+ * 委托命中选择器（features/node-codeblock.ts），本模块保持零 Obsidian 依赖、
+ * 零监听、可单测。
  * 复制内容 = `segment.text`（信息行已在 splitFenceInfo 剥离）。
  */
 function buildCodeBlockElement(
 	doc: InlineContentDocument,
 	segment: InlineSegment,
 	lang: Language,
+	options: InlineContentOptions,
 ): HTMLElement {
 	const block = doc.createElement('div');
 	block.className = CODE_BLOCK_CLASS;
@@ -1271,11 +1398,48 @@ function buildCodeBlockElement(
 	const pre = doc.createElement('pre');
 	Object.assign(pre.style, CODE_BLOCK_PRE_STYLES);
 	const code = doc.createElement('code');
+	// 语言类（宿主/主题与 Prism 的选择器口径，如 `.language-js`）：无语言码时
+	// 省略——不写空类，避免留下 `language-` 这种无意义钩子
+	const codeLang = segment.lang ?? '';
+	if (codeLang) {
+		code.className = `language-${codeLang}`;
+	}
 	code.appendChild(doc.createTextNode(segment.text));
+	placeCodeTokens(doc, code, segment.text, codeLang, options);
 	pre.appendChild(code);
 	block.appendChild(button);
 	block.appendChild(pre);
 	return block;
+}
+
+/**
+ * `<code>` 的 **token 元素放置**：产物缓存命中 → **同步**放置；未命中且有语言码
+ * → 交给注入的 `renderCode` 异步高亮（生产实现 `platform/prism-code`）。
+ *
+ * 与 `buildMathElement` 的缓存命中路径同款纪律（理由见其注释）：引擎的离屏测量
+ * 是**同步**的、缓存键是 `outerHTML`，同步放置 token 才能让引擎量到真实宽高，
+ * 且重建路径不再触发异步替换（无重排循环）。
+ *
+ * **无语言码直接返回**（保留字面）：无信息行的围栏块与缩进式代码块都没有语法可查，
+ * 空跑一次异步通道没有意义，也省掉每个缩进块一次 `loadPrism` 往返。
+ */
+function placeCodeTokens(
+	doc: InlineContentDocument,
+	code: HTMLElement,
+	codeText: string,
+	codeLang: string,
+	options: InlineContentOptions,
+): void {
+	const cached = options.getCachedCode?.(codeText, codeLang) ?? null;
+	if (cached && cached.length > 0) {
+		code.replaceChildren(...cached);
+		code.classList.add(CODE_RENDERED_CLASS);
+		return;
+	}
+	if (!codeLang) {
+		return;
+	}
+	options.renderCode?.(doc, codeText, codeLang, code);
 }
 
 /**

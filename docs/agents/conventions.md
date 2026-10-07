@@ -1,4 +1,4 @@
-# 关键约定 K1–K112（详录）
+# 关键约定 K1–K116（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -1215,5 +1215,19 @@
   ⑨ **门禁**：新增 4 条契约（`node-inline-content` 断言 `insetInlineEnd==='6px'` 且 `right===undefined`、`opacity`/`display` 均 `undefined`；`node-codeblock` 断言导出隐身仍必需 + **跨文件读 `styles.css`**（剥注释后）钉住悬停规则存在、用 `display:none`、宿主是 codeblock、且不用 opacity）。全量 `test` **1839 例**（61 文件）/ `build` / `lint` / `lint:css` / `check:dead-code` / `verify:visual --require-chrome` 全 exit 0。实机：常态 `display:none`、CDP hover 下 `display:flex`（20×20，距 pre 右缘 6px）、合成 click 后 600ms 出现 `✓` + `is-copied`、`dev:errors` 空；截图确认未悬停的代码块文本完整可见。
 
   ⑩ **「外观内联却新增类规则」不矛盾**（防后人误删规则）：「类规则口径不可靠」针对**外观**（形状/底色/圆角）——必须 100% 内联，因导出 SVG 只序列化元素自身、不含插件 styles.css；本条规则管**显隐**——导出时按钮本就被 JS 显式隐身，且悬停是纯交互态、无导出语义。**外观 = 必须内联（导出保真），显隐 = 必须走类表（屏上交互）**。
+
+- [K116] **代码块原生化：接官方 `loadPrism` 做语法高亮 + 补三处渲染缺口**（2026-10-06，官方帮助库与 `obsidian.d.ts` 取证 + 用户确认路径 A）：
+  ① **官方口径与路径选择**：Obsidian 帮助「Basic formatting syntax §Code blocks」明写**阅读视图用 Prism**、Source / Live Preview 不用。导图节点是阅读视图**同级的展示面** ⇒ `loadPrism()` 就是正路。**不选**「整段交回 `MarkdownRenderer.render`」：`registerMarkdownCodeBlockProcessor` 的官方 doc 明写 *"change how the document looks in reading mode"*（**只作用于阅读视图管线**），且 `MarkdownPreviewRenderer` **只有 register / unregister、没有读取/枚举已注册处理器的 API** ⇒ 想让 dataviewjs 一类第三方语言处理器生效只能整段交回宿主管线，代价是导出离屏克隆里没有该管线（必然退字面）、异步破坏「同步纯 DOM、零监听、可单测」契约（`node-inline-content` 模块头）。**已知取舍**：第三方语言处理器在导图节点里不生效（已与用户确认本批不做）。
+  ② **与 `platform/math-jax` 的差异必须成对阅读**：`Prism.tokenize` 是**同步纯函数**，产物就是 token 元素树 ⇒ 数学通道的**四件重活一件都不搬**：不搬字体就绪（无私有区码点）、不搬样式 flush（无塌缩态）、不搬就绪判据（无零宽字符）、不搬挂载后补替换队列（`tokenize` 不需要元素已挂载）。**只保留两件**：产物缓存（`getRenderedCodeNodes`，消除「按字面测量 → 替换后溢出」窗口）与定稿回调（换的是**尺寸同步机制**，不是数学专属，故复用 `scheduleMathRemeasure`）。
+  ③ **token 用 `tokenize` 而非 `highlight`**：`highlight()` 返回 HTML 字符串，回读需要 `innerHTML`（注入面 + DOM 解析）；`tokenize` 给原始 token 流，可逐字走 `createTextNode`，**全程零 innerHTML**。
+  ④ **颜色必须「探测 + 内联」**：token 配色来自宿主 `app.css` 的 `.token.<类型>` 规则，而导出 SVG **不含 app.css**（K91/K99 口径）⇒ 不内联则导出图「有 token、无颜色」。探针是 **holder 自身的浅克隆**（同标签同内联样式）挂 `document.body`，**两次读数取差值**：空类名读「继承色」→ token 类名读「主题色」，**相等即不内联**（否则会把继承色冻进内联 style：屏上看不出问题，但换主题后不再跟随阅读视图、且导出图固化了该色）。
+  ⑤ **主题切换走 `refreshPrismTokenColors`**（`view.ts` 已有的 `css-change` 钩子，**无条件调用**——明暗未变的主题切换同样改色）：清两张缓存 + **就地改写屏上 token 的内联色**（不重建节点：改色代价 O(节点数)，重建还要走引擎逐节点测宽）。产物缓存必须一起清，否则重建命中旧色克隆、而就地改写此时已跑完、救不回来。
+  ⑥ **顺带补的三处既有缺口**（本批同修）：**`~~~` 围栏渲染侧不识别**（解析层 `md-outline.classifyLines` 认 `` ` ``{3,} 与 `~`{3,}，渲染层 `MARKUP_RE` 只认反引号 ⇒ 波浪号围栏退化成普通文本；两侧口径裂缝）；**语言码此前被丢弃**（`splitFenceInfo` 返回的 `lang` 在调用点只解构 `code` ⇒ 无从高亮，现贯通为 `InlineSegment.lang` + `code.language-*`，白名单见 `core/constants.normalizeFenceLanguage`）；**缩进式代码块无视觉通道**（官方帮助把 Tab / 4 空格块与围栏块并列，此前在显示层被 `trimEdges` 剥掉缩进、渲染成普通文字；现按 CommonMark 走同一块级通道并剥 4 空格/1 制表符，**已知边界**：列表项内的缩进块拿不到缩进——解析层把列表续行的行首缩进剥掉了，故维持原样）。
+  ⑦ **门禁**：`tests/prism-code.test.ts`（20 例：`hasOwnProperty` 守卫 / 四种失败面保留字面 / 嵌套 token 与别名 / 颜色差值探测与正负缓存 / 产物 FIFO / 主题刷新 / popout 属主窗口 / 探针挂载宿主）+ `node-inline-content` 新增 14 例（语言类、缓存命中同步放置、无语言不空跑、缩进块通道与两条不误判）；`verify:visual` 的 `codeblock` 场景加两条断言（`code.language-js` 已就位 + **无 Obsidian 运行时时必须停在字面、不得渲染空白**）。
+
+  ⑨ **代码审查（2026-10-07）发现并修复的两个 Major**（评审把「全绿」判为「测试盲区」——两处都恰好落在 fake 桩测不出的事实上）：
+  - **颜色差值探测的基线取自错误继承链**（潜伏、主题相关）：基线原本在 `document.body` 上读，等于 `--text-normal`；而真实 `<code>` 继承的是 `.tmm-codeblock` 的内联 `color: var(--code-normal, …)`。在「`--code-normal ≠ --text-normal` 且该 token 类型未被主题着色」的主题上，**两次读数不等 ⇒ 把正文色误内联**（屏上偏色、换主题后不再跟随阅读视图、导出图固化该色）。实机证据：默认主题两者同为 `#222222`，故**该主题下不可见**——即「前提从未被证伪过」。修法：探针挂到 **holder 自身的父节点**（`context.parentElement`），与真实元素同继承链、`.markdown-*` 类作用域与自定义 CSS 片段全部生效；同一 task 内挂→读→移除（无绘制、无闪烁；vendor 无 `MutationObserver`，引擎不受影响）。同时给颜色缓存加**负缓存**（未着色类型的 `null` 也缓存，避免按节点数放大的重复探针）。
+  - **代码块挂在数学专属的尺寸同步流水线上，兜底与告警都不认它**：`flushMathRemeasure` 的反查兜底是 `findNodesByMathProducts`（选择器 `.mindmap-node-inline-math, .mjx-container`）。代码块 holder 随全树重建脱离时，兜底**捞不到它**；而只要图里存在数学节点，`nodes.length > 0` 就让**本批代码块被静默跳过、不重测也不告警**（foreignObject 仍是按字面量的尺寸 ⇒ K114 同类裁切）——正是 K85 ① 列为教训的失效模式。修法三件事：① `findNodesByMathProducts` → **`findNodesByContentProducts`**，选择器补第三通道 `.tmm-code-hl`；② 告警文案改中性（「自绘内容节点（公式/代码块）」）；③ `scheduleMathRemeasure` / `flushMathRemeasure` / `pendingMathRemeasure` / `mathRemeasureNodes` / `deferredMath*` / `retryDeferredMathRemeasure` / `remeasureSettledMathNodes` 全部改中性命名（`…Content…`），避免下一个接入者按名字误以为数学专属（`installMathFontsHook` / `mathFontsHookInstalled` 保持原名——它们确实只服务 MathJax 字体）。**兜底仍是过包含的**（K100 既有边界）：holder 彻底消失**且**其产物也不在活 DOM 时仍会被静默跳过，未改设计，已在代码注释登记。
+  - 顺带修：popout 窗口下 `window.Prism` 取不到（改按 holder 属主窗口反查，与 `math-jax` 的主窗口边界同款但零成本可修）、缩进块显示文本裁掉尾部换行（与围栏块 `trimEdges` 口径统一）、`prism-code.test.ts` 的 document 桩补类型（`FakeDocument`）。
 
   ⑪ **导出体积的前瞻记录（本次刻意不做）**：`data-mmx-f`（K114，22 字节/节点）会随live DOM 进入导出 SVG。本轮**核实后决定不剥离**——`view-export.ts` 只有 `exportPNG`，SVG 是引擎栅格化后的**瞬时中间态**（`downloadBlob`/`downloadDataURL` 落的文件名是 `.png`），剥离对用户可见收益为零，却要新增一条导出 transform + 测试 + 索引登记，净负收益。**若将来新增 SVG/PDF 导出入口，须一并 `removeAttribute('data-mmx-f')`**（此时它才是实打实的体积与信息泄漏）。

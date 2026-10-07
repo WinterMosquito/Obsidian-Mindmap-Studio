@@ -188,12 +188,15 @@ const SCENARIOS = [
 	},
 	{
 		name: 'codeblock',
-		label: '代码块：围栏块级轻量渲染（底色盒 / pre 原文 / 复制按钮）',
+		label: '代码块：围栏块级渲染（底色盒 / pre 原文 / 语言类 / 复制按钮）',
 		data: {
 			// 2026-09-28：围栏代码块必须被自绘接管（引擎 SVG 文本恒为字面围栏）。
 			// 无头页锁定「识别 → 结构（.tmm-codeblock + pre/code + 复制按钮）→
 			// 原文保真（信息行剥离、缩进保留）」；复制写剪贴板链路由
 			// tests/node-codeblock.test.ts 与视图层委托覆盖，此处不涉及剪贴板。
+			// 2026-10-06：新增语言类与「无运行时则停在字面」的断言（Prism 高亮需要
+			// Obsidian 的 loadPrism，头less 拿不到——token 元素本身由
+			// tests/prism-code.test.ts 的桩面覆盖）。
 			text: '示例\n```js\nconst a = 1;\n  echo hi\n```',
 			mdDerivedText: '示例\n```js\nconst a = 1;\n  echo hi\n```',
 			mdRaw: '示例\n```js\nconst a = 1;\n  echo hi\n```',
@@ -1289,6 +1292,16 @@ window.setTimeout(() => {
 				? codeBlock.querySelectorAll('.tmm-code-copy').length
 				: -1,
 			codeInlineMask: codeCopyButton ? codeCopyButton.style.maskImage : null,
+			// 语言类契约（2026-10-06）：围栏信息行必须落到 code.language-js
+			// ——它既是宿主主题/Prism 的选择器口径，也是 platform/prism-code 查语法的
+			// 依据。无头页**没有 Obsidian 运行时**（loadPrism 不可用），故这里断言的是
+			// 高亮**前**的字面形态：类名已就位、代码仍是字面（占位即回退，不空白）。
+			codeLanguageClass: codeBlock
+				? (codeBlock.querySelector('pre code')?.className ?? null)
+				: null,
+			codeTextNodeOnly: codeBlock
+				? (codeBlock.querySelector('pre code')?.childElementCount ?? -1)
+				: -1,
 			codeClick,
 			syntaxUnresolved: syntaxHolder
 				? syntaxHolder.querySelectorAll(
@@ -4286,6 +4299,18 @@ function checkInline(dom) {
 	if (!String(probe.codeInlineMask ?? '').includes('data:image/svg+xml')) {
 		failures.push(
 			`复制按钮内联 mask ${JSON.stringify(probe.codeInlineMask)} ≠ 全内联图标写法（外观零 CSS 依赖契约）`,
+		);
+	}
+	if (probe.codeLanguageClass !== 'language-js') {
+		failures.push(
+			`<code> 类名 ${JSON.stringify(probe.codeLanguageClass)} ≠ "language-js"（围栏信息行未贯通到语言类 → Prism 无从查语法）`,
+		);
+	}
+	// 无头页无 loadPrism：高亮必然停在字面（childElementCount=0 ⇒ 只有文本节点），
+	// 这正是「占位即回退」的期望形态——**不是**空白块
+	if (probe.codeTextNodeOnly !== 0) {
+		failures.push(
+			`无 Obsidian 运行时时 <code> 内出现 ${probe.codeTextNodeOnly} 个元素节点（应只有字面文本节点：高亮不可用时不得渲染空白）`,
 		);
 	}
 	if (!probe.codeClick) {

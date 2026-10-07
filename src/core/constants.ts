@@ -21,6 +21,27 @@ export const VIEW_TYPE = 'mindmap-view';
  * （此前两处各写字面值，值相同但无约束）。
  */
 export const MATH_RENDERED_HOLDER_CLASS = 'mindmap-inline-math';
+
+/**
+ * 代码块 `<code>` 的**已高亮标记类**。
+ *
+ * 与 `MATH_RENDERED_HOLDER_CLASS` 同款纪律（单一来源）：`platform/prism-code` 的
+ * 异步高亮路径与 `features/node-inline-content` 的**缓存命中同步放置路径**都写它，
+ * 两条路径都代表"已高亮"——主题、调试定位与断言选择器才有唯一依据。
+ *
+ * 只表示"子节点已是 token 元素"；**不代表有颜色**——语言未登记时高亮整体跳过，
+ * 类名同样会写（`<code>` 内是字面文本，与围栏未闭合时的既有口径一致）。
+ */
+export const CODE_RENDERED_CLASS = 'tmm-code-hl';
+
+/**
+ * Prism token 元素的类名（token 类型类由 Prism 决定，此处只固定**基类**）。
+ *
+ * 主题色由宿主 `app.css` 的 `.token.<类型>` 规则给出（与阅读视图同源）；本插件
+ * 另在 `platform/prism-code` 探测其计算色并**内联**到每个 token 元素上，使屏上与
+ * 导出 SVG（不含 styles.css）同色。
+ */
+export const PRISM_TOKEN_CLASS = 'token';
 /** Markdown 渲染模式（.mindmap.md）的完整后缀（含点） */
 export const MD_FILE_SUFFIX = '.mindmap.md';
 
@@ -181,6 +202,25 @@ export function isImageExtension(extension: string): boolean {
  */
 export function isIndentedCodeLine(rawLine: string): boolean {
 	return /^(?: {4,}|\t)/.test(rawLine);
+}
+
+/**
+ * 围栏信息行 → **Prism 语言 id**（规范化；不合规返回空串）。
+ *
+ * 信息行是自由文本（```` ```js title="a.js" ````、```` ``` js ````），而语言 id 会
+ * ① 拼进 `<code class="language-…">`（**类名不能是任意用户文本**）② 查
+ * `Prism.languages[id]`。故取**首个空白分隔词**并按白名单校验：
+ * - 只放行 `[A-Za-z][A-Za-z0-9+#._-]*`（覆盖 `js`/`ts`/`csharp`/`objectivec`/`c++`/
+ *   `f#`/`meson.build` 一类），一律小写（Prism 语法键为小写）；
+ * - 其余（含空串、`__proto__`、`constructor`、含空格/引号/尖括号者）→ 空串 =
+ *   不高亮（调用方保留字面显示，见`platform/prism-code` 的语法查找守卫）。
+ *
+ * 收口在 core：`features/node-inline-content`（建类名）与 `platform/prism-code`
+ * （查语法）必须同一口径，分写会漂移。
+ */
+export function normalizeFenceLanguage(info: string): string {
+	const token = info.trim().split(/\s+/, 1)[0] ?? '';
+	return /^[A-Za-z][A-Za-z0-9+#._-]*$/.test(token) ? token.toLowerCase() : '';
 }
 
 /** Obsidian 可渲染清单中的图片段：拖拽图片扩展 + Obsidian 额外支持的位图格式 */

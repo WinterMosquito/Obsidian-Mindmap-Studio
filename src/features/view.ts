@@ -21,13 +21,18 @@ import {
 	pinMathContainerHeightsInExportSvg,
 	renderMathWithMathJax,
 } from '../platform/math-jax';
+import {
+	getRenderedCodeNodes,
+	refreshPrismTokenColors,
+	renderCodeWithPrism,
+} from '../platform/prism-code';
 import { createThrottler } from '../core/concurrency';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import { notifyError } from '../core/errors';
 import {
 	applyImageSizeCorrectionsToEngine,
-	findNodesByMathProducts,
+	findNodesByContentProducts,
 	resolveNodesByDoms,
 	getRenderRoot,
 	refreshNodesCustomContent,
@@ -237,9 +242,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		isResolvedLink: (linkpath) => isResolvedWikiLinkpath(this, linkpath),
 		renderMath: (_doc, tex, holder, display) =>
 			renderMathWithMathJax(tex, holder, display, (settledHolder) =>
-				this.scheduleMathRemeasure(settledHolder),
+				this.scheduleContentRemeasure(settledHolder),
 			),
 		getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
+		// 代码块 Prism 高亮：与数学同款纪律——官方通道在platform 层、这里只注入；
+		// 定稿回调同样交给 scheduleContentRemeasure（换的是尺寸同步机制，不是数学
+		// 专属：它只做「按holder 反查真实节点 → 合并为一次批量重排」）
+		renderCode: (_doc, code, codeLang, holder) =>
+			renderCodeWithPrism(code, codeLang, holder, (settledHolder) =>
+				this.scheduleContentRemeasure(settledHolder),
+			),
+		getCachedCode: (code, codeLang) => getRenderedCodeNodes(code, codeLang),
 	};
 
 	/**
@@ -262,7 +275,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	private mdDocumentMode = false;
 
 	/**
-	 * 数学定稿（替换成功）后待同步尺寸的 **holder**（P4，K88 修正）。
+	 * **自绘内容定稿**（公式替换 / 代码块高亮）后待同步尺寸的 **holder**
+	 * （P4，K88 修正；2026-10-07 起含代码块，见 K116）。
 	 *
 	 * ⚠ 为什么存 holder 而不是构建期捕获的 node：节点内容可能由引擎**预测量**
 	 * 路径构建（vendor 补丁 5 的轻量代理对象——只有 `nodeData`/`getData`，没有
@@ -271,10 +285,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 内容，29 次回调全部收到代理、永不修复）。故批次执行时经 `findNodeByDom`
 	 * 从 holder 反查**真实** MindMapNode 再重排。
 	 *
-	 * 合并到一次批量重排（`refreshNodesCustomContent`）：一次打开多个公式时
+	 * 合并到一次批量重排（`refreshNodesCustomContent`）：一次打开多个公式/代码块时
 	 * 每段都会定稿，逐个重排会各触发一次全树 render（本字段是性能护栏）。
 	 */
-	private pendingMathRemeasure: Set<HTMLElement> | null = null;
+	private pendingContentRemeasure: Set<HTMLElement> | null = null;
 
 	/**
 	 * 已成功解析并同步过的**真实节点**（**不清空**）。
@@ -282,24 +296,25 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 用途：MathJax 字体是**分批**加载的（`document.fonts` 的 `loadingdone` 会
 	 * 多次触发）；首批就绪时的测量可能在后续批次变大——内容多的节点尤甚
 	 * （实机实测：655px 内容 / 512px 外框）。字体每就绪一批就再同步一次。
+	 * （代码块节点也会进入该集合：多一次重测无害，且避免两套并行集合。）
 	 */
-	private readonly mathRemeasureNodes = new Set<MindMapNode>();
+	private readonly contentRemeasureNodes = new Set<MindMapNode>();
 
 	/**
-	 * 「引擎渲染窗口」内解析失败的数学 holder（K104）：`Renderer._render` 期间
+	 * 「引擎渲染窗口」内解析失败的 holder（K104）：`Renderer._render` 期间
 	 * `renderer.root` 被置 null（见 K67 记录），此时 `findNodeByDom` 与产物
 	 * 反查**必然**双双落空——属预期中间态。暂存到 `node_tree_render_end`
 	 * （root 已回填）重试，不在当时告警。
 	 */
-	private deferredMathHolders: Set<HTMLElement> | null = null;
+	private deferredContentHolders: Set<HTMLElement> | null = null;
 	/** 暂存 holders 只重试一次：仍失败才告警（既防静默退化，也防反复重试） */
-	private deferredMathRetried = false;
+	private deferredContentRetried = false;
 
 	/** 字体就绪监听只装一次（视图作用域，随 `register` 注销） */
 	private mathFontsHookInstalled = false;
 
 	/** 「定稿 holder 未能解析归属节点」告警去重（同一根因只提示一次） */
-	private mathRemeasureUnresolvedWarned = false;
+	private contentRemeasureUnresolvedWarned = false;
 
 	/** 引擎实例（view-* 模块经 context 只读访问） */
 	get mindMap(): MindMap | null {
@@ -319,24 +334,25 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/**
 	 * 登记「数学定稿后需重测该节点尺寸」（P4，holder 入口见 K88）。
 	 *
-	 * 背景：引擎的内容测量是**同步**的（构建时按字面占位量高），而 MathJax 替换
-	 * 是**异步**的——不重测就会出现「块级公式只占一行高度、内容溢出」（用户实测）。
-	 * 定稿后重建该节点内容：此时产物缓存已命中（`buildMathElement` **同步**放置
-	 * 产物），引擎量到的是**真实宽高**。
+	 * 背景：引擎的内容测量是**同步**的（构建时按字面占位量高），而 MathJax 替换 /
+	 * Prism 高亮都是**异步**的——不重测就会出现「块级公式只占一行高度、内容溢出」
+	 * （用户实测）/「代码块按字面尺寸定框、替换后被裁」。定稿后重建该节点内容：此时
+	 * 产物缓存已命中（`buildMathElement` / `placeCodeTokens` **同步**放置产物），
+	 * 引擎量到的是**真实宽高**。
 	 *
 	 * 同帧多段定稿合并为一次批量重排（`window.setTimeout(0)`；不用 rAF——后台/
 	 * 隐藏窗口会被节流）。
 	 */
-	private scheduleMathRemeasure(holder: HTMLElement): void {
-		if (!this.pendingMathRemeasure) {
-			this.pendingMathRemeasure = new Set<HTMLElement>();
+	private scheduleContentRemeasure(holder: HTMLElement): void {
+		if (!this.pendingContentRemeasure) {
+			this.pendingContentRemeasure = new Set<HTMLElement>();
 			window.setTimeout(() => {
-				const holders = this.pendingMathRemeasure;
-				this.pendingMathRemeasure = null;
-				this.flushMathRemeasure(holders ? Array.from(holders) : []);
+				const holders = this.pendingContentRemeasure;
+				this.pendingContentRemeasure = null;
+				this.flushContentRemeasure(holders ? Array.from(holders) : []);
 			}, 0);
 		}
-		this.pendingMathRemeasure.add(holder);
+		this.pendingContentRemeasure.add(holder);
 		this.installMathFontsHook();
 	}
 
@@ -346,7 +362,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 解析失败（holder 已脱离 / 引擎重建中）**显式告警一次**并跳过该段——
 	 * 静默跳过会让「尺寸不同步」以无痕方式退化（K85 ① 教训）。
 	 */
-	private flushMathRemeasure(holders: readonly HTMLElement[]): void {
+	private flushContentRemeasure(holders: readonly HTMLElement[]): void {
 		// 批量窗口（setTimeout）内视图可能已关闭、引擎已销毁：此时既无重测目标，
 		// 也不该再走回退并打「未命中」告警（关闭视图时刷误导日志）——静默结束。
 		if (!this.mindMap) {
@@ -366,67 +382,71 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				continue;
 			}
 			nodes.push(node);
-			this.mathRemeasureNodes.add(node);
+			this.contentRemeasureNodes.add(node);
 		}
 		if (unresolvedHolders.length > 0) {
 			// 反查一（K100/K104）：holder 可能已随引擎重渲染脱离（图片回灌 K96 的
-			// 补灌触发全树重建），改按**产物元素**反查——选择器双通道覆盖我方
-			// holder 类与 CHTML 容器（见 findNodesByMathProducts）。
-			for (const node of findNodesByMathProducts(this.mindMap)) {
+			// 补灌触发全树重建），改按**产物元素**反查——选择器三通道覆盖我方
+			// 数学 holder 类、CHTML 容器与**代码块高亮 holder**（见
+			// findNodesByContentProducts；2026-10-07 审查修复：此前缺代码块通道，
+			// 且兜底「捞到别的数学节点」会让本批代码块静默跳过、不重测也不告警）。
+			// ⚠ 兜底是**过包含**的（返回全部产物所在节点）⇒ 若本批 holder 彻底消失
+			// 且其产物也不在活 DOM里，仍会被静默跳过（K100 既有边界，未改设计）。
+			for (const node of findNodesByContentProducts(this.mindMap)) {
 				if (nodes.includes(node)) {
 					continue;
 				}
 				nodes.push(node);
-				this.mathRemeasureNodes.add(node);
+				this.contentRemeasureNodes.add(node);
 			}
 			if (nodes.length === 0) {
-				if (!this.deferredMathRetried) {
+				if (!this.deferredContentRetried) {
 					// 全部落空且尚未重试：**大概率是引擎渲染窗口**——`Renderer._render`
 					// 期间 `renderer.root` 为 null（K67），两条解析路径必然全空。
 					// 暂存 holders，等 node_tree_render_end（root 回填）重试，不告警。
-					this.deferredMathHolders = new Set(unresolvedHolders);
+					this.deferredContentHolders = new Set(unresolvedHolders);
 					return;
 				}
 				// 重试后仍全空：真的定位不到 → 告警一次（静默跳过会让问题无痕退化）
-				if (!this.mathRemeasureUnresolvedWarned) {
-					this.mathRemeasureUnresolvedWarned = true;
+				if (!this.contentRemeasureUnresolvedWarned) {
+					this.contentRemeasureUnresolvedWarned = true;
 					console.warn(
-						'MindMap Studio：数学节点尺寸同步未能定位归属节点，内容可能被裁剪',
+						'MindMap Studio：自绘内容节点（公式/代码块）尺寸同步未能定位归属节点，内容可能被裁剪',
 					);
 				}
 			}
 		}
 		// 本轮有命中（或无需重试）：清暂存与重试标记
-		this.deferredMathHolders = null;
-		this.deferredMathRetried = false;
+		this.deferredContentHolders = null;
+		this.deferredContentRetried = false;
 		if (nodes.length > 0) {
 			refreshNodesCustomContent(this.mindMap, nodes);
 		}
 	}
 
 	/**
-	 * 渲染完成后重试「渲染窗口内未解析的数学 holder」（K104）。
+	 * 渲染完成后重试「渲染窗口内未解析的 holder」（K104）。
 	 *
 	 * `node_tree_render_end` 时 `renderer.root` 已回填，两条解析路径恢复可用；
-	 * 只重试**一次**（`deferredMathRetried`）——仍失败由 `flushMathRemeasure`
+	 * 只重试**一次**（`deferredContentRetried`）——仍失败由 `flushContentRemeasure`
 	 * 告警，避免「重排 → 渲染 → 再重排」的循环。
 	 */
-	private retryDeferredMathRemeasure(): void {
-		const pending = this.deferredMathHolders;
+	private retryDeferredContentRemeasure(): void {
+		const pending = this.deferredContentHolders;
 		if (!pending || pending.size === 0 || !this.mindMap) {
 			return;
 		}
-		this.deferredMathHolders = null;
-		this.deferredMathRetried = true;
-		this.flushMathRemeasure(Array.from(pending));
+		this.deferredContentHolders = null;
+		this.deferredContentRetried = true;
+		this.flushContentRemeasure(Array.from(pending));
 	}
 
 	/**
 	 * 字体每就绪一批就把已同步的数学节点**再同步一次**：字体数据到位后同一
 	 * TeX 的产物会更高（多行内容尤甚），首批测量可能偏小。
 	 */
-	private remeasureSettledMathNodes(): void {
-		const nodes = Array.from(this.mathRemeasureNodes);
+	private remeasureSettledContentNodes(): void {
+		const nodes = Array.from(this.contentRemeasureNodes);
 		if (nodes.length > 0) {
 			refreshNodesCustomContent(this.mindMap, nodes);
 		}
@@ -449,7 +469,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		if (!fonts?.addEventListener) {
 			return;
 		}
-		const onFontsLoaded = (): void => this.remeasureSettledMathNodes();
+		const onFontsLoaded = (): void => this.remeasureSettledContentNodes();
 		fonts.addEventListener('loadingdone', onFontsLoaded);
 		this.register(() => {
 			fonts.removeEventListener?.('loadingdone', onFontsLoaded);
@@ -626,6 +646,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.canvasEl = containerEl.createDiv('mindmap-canvas-container');
 
 		this.boundHandleCssChange = () => {
+			// 代码块 token 的内联色来自主题（探测后写入，导出 SVG 无 styles.css
+			// 也靠它，见 platform/prism-code）：换主题必须重探测+ 就地改写，否则
+			// 高亮代码块留着旧调色板。**无条件执行**——明暗未变的主题切换同样改色。
+			refreshPrismTokenColors(this.containerEl);
 			const dark = this.app.isDarkMode();
 			if (dark !== this.isDark) {
 				this.isDark = dark;
@@ -740,7 +764,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 回灌会落空，留着只会在新文件上误判）
 		this.pendingImageCorrections = null;
 		// 数学重测节点同属本引擎：随引擎销毁一并丢弃（否则跨文件累积持有旧节点）
-		this.mathRemeasureNodes.clear();
+		this.contentRemeasureNodes.clear();
 		// 文件切换后允许再次加载同一路径（新会话）。仅清理「仍属于本次卸载」的
 		// 标记：await 期间可能已开始加载新文件（onLoadFile），无条件置空会把
 		// 新加载的代际标记抹掉，其 rAF 守卫随即判为过期 → 导图不渲染。
@@ -900,7 +924,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 个引擎销毁而失效——不清则 ① 旧节点被长期持有（换文件/设置刷新累积成
 		// 内存泄漏）；② 字体钩子会对**已销毁**的节点调重测（2026-09-28 复核修复）。
 		// 只清集合、不触发任何重排（K88 禁止全树重排的约束不变）。
-		this.mathRemeasureNodes.clear();
+		this.contentRemeasureNodes.clear();
 		// 图片尺寸校正回灌（探测在首帧前起步；引擎此刻才存在时在此落地）。
 		// 回灌改动节点尺寸 → 内容包围盒变化，排补居中修正默认视口
 		if (this.applyPendingImageCorrections()) {
@@ -917,7 +941,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				}
 				// 渲染完成后重试「渲染窗口内未解析的数学 holder」（K104）：
 				// 此刻 renderer.root 已回填，holder 与产物两条解析路径恢复可用
-				this.retryDeferredMathRemeasure();
+				this.retryDeferredContentRemeasure();
 			});
 		}
 		if (this.layoutSelect) {
@@ -1198,7 +1222,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.viewEvents.destroy();
 		// 数学重测节点随引擎销毁丢弃：视图关闭后不再有任何重测目标，
 		// 留着会一直持有已销毁的节点对象（同 onUnloadFile / onEngineReady）
-		this.mathRemeasureNodes.clear();
+		this.contentRemeasureNodes.clear();
 		this.engine.destroyInstance();
 		// 清空状态栏后，若仍有其他打开的思维导图视图则恢复其计数
 		//（状态栏为插件级共享元素，本视图关闭不应清空其他视图的计数）。

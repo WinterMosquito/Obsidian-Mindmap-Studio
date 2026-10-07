@@ -70,6 +70,7 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 | 访问引擎内部形态 | `engine/mindmap.ts` 具名函数 | 防腐收口 |
 | 库内文件解析 | `links/links-resolve.resolvePathToFile` | **形态路由顺序即契约** |
 | 节点自绘内容 | `features/node-inline-content.ts` | 段序列 + 锚点属性契约 |
+| 节点内代码块 / 数学的**宿主侧渲染** | `platform/prism-code.ts` / `platform/math-jax.ts`（官方 `loadPrism` / `loadMathJax`） | 注入式：`node-inline-content` 只写字面占位 + 传参；**观感一律内联**（导出 SVG 不含 `styles.css`） |
 | DOM 事件监听 | `Component.register*` 或 `core/event-binder.ts` | 随生命周期自动摘除 |
 | 局部 UI 状态 | 视图实例字段 | 不持久化 |
 | 需跨会话的视图状态 | `data.json`（经 `core/persistence.ts`） | 布局/视口/打开方式按文件记 |
@@ -122,11 +123,11 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 **markdown/**（7）：`links-rename.ts` `links-split.ts` `markdown.ts` `md-line-write.ts` `md-open.ts` `md-outline.ts` `md-serialize.ts`
 **media/**（2）：`images-path.ts` `images-save.ts`
 **engine/**（2）：`mindmap-theme.ts` `mindmap.ts`
-**platform/**（8）：`export-css-vars.ts` `export-foreign-object-padding.ts` `math-jax.ts` `nav-history.ts` `open-as-restore.ts` `system-open.ts` `vault-prefs.ts` `vault-sync.ts`
+**platform/**（9）：`export-css-vars.ts` `export-foreign-object-padding.ts` `math-jax.ts` `nav-history.ts` `open-as-restore.ts` `prism-code.ts` `system-open.ts` `vault-prefs.ts` `vault-sync.ts`
 **ui/**（5）：`modal-common.ts` `modal-image.ts` `modal-link.ts` `modal-name.ts` `modal-text.ts`
 **services/**（4）：`document-service.ts` `engine-controller.ts` `status-bar.ts` `view-state.ts`
 **features/**（27）：`drag-target.ts` `file-creator.ts` `image-resize.ts` `node-codeblock.ts` `node-inline-content.ts` `node-inline-editor.ts` `view-common.ts` `view-context-menu.ts` `view-context.ts` `view-dnd.ts` `view-drag-duplicate.ts` `view-export.ts` `view-hotkeys.ts` `view-image-actions.ts` `view-image-fullscreen.ts` `view-link-navigator.ts` `view-node-actions.ts` `view-node-width.ts` `view-paste.ts` `view-search.ts` `view-split-links.ts` `view-status.ts` `view-title-renamer.ts` `view-toolbar.ts` `view-viewport.ts` `view-wikilink.ts` `view.ts`
-**tests/**（63）：`agents-md-sync.test.ts` `concurrency.test.ts` `constants.test.ts` `domain.test.ts` `engine-controller.test.ts` `engine-history-limit.test.ts` `engine-image-size.test.ts` `engine-refresh-nodes.test.ts` `event-binder.test.ts` `export-fo-padding.test.ts` `feature-helpers.test.ts` `feature-teardown.test.ts` `file-lookup.test.ts` `find-node-by-dom.test.ts` `images-path.test.ts` `language-refresh.test.ts` `links-rename.test.ts` `links-resolve.test.ts` `links-split.test.ts` `links-tree.test.ts` `math-jax-export-pin.test.ts` `math-jax.test.ts` `md-inline.test.ts` `md-line-write.test.ts` `md-roundtrip-property.test.ts` `md-roundtrip.test.ts` `measure-cache.test.ts` `mindmap-theme.test.ts` `mindmap-wiki-icon.test.ts` `modal-common.test.ts` `modal-input.test.ts` `nav-history.test.ts` `node-codeblock.test.ts` `node-inline-content.test.ts` `node-inline-editor.test.ts` `node-text-edit.test.ts` `obsidian.ts` `open-as-restore.test.ts` `pasted-name.test.ts` `persistence.test.ts` `plain-text-parser.test.ts` `save-pipeline.test.ts` `settings-persist.test.ts` `settings.test.ts` `setup.ts` `url.test.ts` `vendor-contract.test.ts` `view-context-menu.test.ts` `view-dnd.test.ts` `view-export.test.ts` `view-hotkeys.test.ts` `view-node-actions.test.ts` `view-node-width.test.ts` `view-paste.test.ts` `view-search.test.ts` `view-split-links.test.ts` `view-state.test.ts` `view-status.test.ts` `view-toolbar.test.ts` `view-viewport.test.ts` `view-wikilink.test.ts` `viewport.test.ts` `wiki-display.test.ts`
+**tests/**（64）：`agents-md-sync.test.ts` `concurrency.test.ts` `constants.test.ts` `domain.test.ts` `engine-controller.test.ts` `engine-history-limit.test.ts` `engine-image-size.test.ts` `engine-refresh-nodes.test.ts` `event-binder.test.ts` `export-fo-padding.test.ts` `feature-helpers.test.ts` `feature-teardown.test.ts` `file-lookup.test.ts` `find-node-by-dom.test.ts` `images-path.test.ts` `language-refresh.test.ts` `links-rename.test.ts` `links-resolve.test.ts` `links-split.test.ts` `links-tree.test.ts` `math-jax-export-pin.test.ts` `math-jax.test.ts` `md-inline.test.ts` `md-line-write.test.ts` `md-roundtrip-property.test.ts` `md-roundtrip.test.ts` `measure-cache.test.ts` `mindmap-theme.test.ts` `mindmap-wiki-icon.test.ts` `modal-common.test.ts` `modal-input.test.ts` `nav-history.test.ts` `node-codeblock.test.ts` `node-inline-content.test.ts` `node-inline-editor.test.ts` `node-text-edit.test.ts` `obsidian.ts` `open-as-restore.test.ts` `pasted-name.test.ts` `persistence.test.ts` `plain-text-parser.test.ts` `prism-code.test.ts` `save-pipeline.test.ts` `settings-persist.test.ts` `settings.test.ts` `setup.ts` `url.test.ts` `vendor-contract.test.ts` `view-context-menu.test.ts` `view-dnd.test.ts` `view-export.test.ts` `view-hotkeys.test.ts` `view-node-actions.test.ts` `view-node-width.test.ts` `view-paste.test.ts` `view-search.test.ts` `view-split-links.test.ts` `view-state.test.ts` `view-status.test.ts` `view-toolbar.test.ts` `view-viewport.test.ts` `view-wikilink.test.ts` `viewport.test.ts` `wiki-display.test.ts`
 
 ### 文件规模与豁免（超 300 行须登记；完整理由见 docs/agents/architecture.md）
 
@@ -137,11 +138,11 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 
 | 文件 | 行数 | 豁免理由（完整理由见 docs/agents/architecture.md） |
 |---|---|---|
-| `src/engine/mindmap.ts` | 2115 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。 |
+| `src/engine/mindmap.ts` | 2135 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。 |
 | `src/markdown/md-serialize.ts` | 1054 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。 |
 | `src/markdown/md-outline.ts` | 1046 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则。 |
 | `src/core/i18n.ts` | 517 | 纯词条表（无逻辑分支）。 |
-| `src/features/view.ts` | 1210 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。 |
+| `src/features/view.ts` | 1243 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。 |
 | `src/services/engine-controller.ts` | 815 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。 |
 | `src/media/images-path.ts` | 618 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一）。 |
 | `src/features/image-resize.ts` | 411 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链（无常驻监听、帧内 DOM 直写、手势独占）。 |
@@ -150,10 +151,11 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 | `src/features/view-dnd.ts` | 575 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配 |
 | `src/main.ts` | 360 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。 |
 | `src/markdown/links-split.ts` | 486 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。 |
-| `src/core/constants.ts` | 452 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件。 |
+| `src/core/constants.ts` | 492 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件）+ 代码块判定（缩进行 / 围栏语言码白名单 / 已渲染标记类）。 |
 | `src/settings.ts` | 379 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。 |
-| `src/features/node-inline-content.ts` | 1362 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分）→ HTML（锚点契约 + **内联样式常量**）。 |
+| `src/features/node-inline-content.ts` | 1526 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分 + 围栏/缩进代码块判定 + 语言码规范化）→ HTML（锚点契约 + **内联样式常量** + 代码块 token 的异步注入面）。 |
 | `src/features/view-wikilink.ts` | 411 | 链接交互**单一关注点**：**点击路径**的锚点识别（`findAnchorInNode` / `resolveAnchorLink`）与**悬停预览**（两级：锚点优先 + 节点级 `nodeLink` 三通道 + `hover-link` 事件）同在一处，还有中键 `auxclick`；把悬停拆出去会让「链接怎么取、锚点取哪个目标」出现第二份实现——正是本文件当初拆出（原在 view.ts）要消除的问题。 |
+| `src/platform/prism-code.ts` | 448 | 代码块语法高亮通道**单一落点**（全插件唯一 import `obsidian` 的代码高亮实现，`loadPrism`）：产品形态是「字面代码 → 异步 `Prism.tokenize` → token 元素（**不经 innerHTML**）→ 定稿（入产物缓存 + 通知重排）」；与数学通道的四点差异（tokenize 是同步纯函数，故**不搬**字体/flush/就绪判据/挂载补替换队列）必须成对阅读；token 颜色**探测宿主计算色后内联**（导出 SVG 无 app.css，K91/K99 口径）；主题切换走 `refreshPrismTokenColors`（清缓存 + 就地改色，不重建节点）。未登记语言 / `tokenize` 抛错 / 空产物一律保留字面（占位即回退）。 |
 | `src/platform/math-jax.ts` | 905 | 数学渲染通道**单一落点**（全插件唯一 import `obsidian` 的数学实现）：产品形态是「字面占位 → 异步替换 → 就绪判据（全部 `mjx-c` 宽 > 0 + **零宽豁免双形态**：v3 空 `content` 规则／v4 零 `padding` 规则，按字符码查 `#MJX-CHTML-styles` 的 CSSOM 索引、**按 flush 代际缓存**）→ 撤回字面 → 定稿（入缓存 + 通知重排）；**字体**（私有区码点，渐进渲染故不设重试）；**导出 SVG 后处理链**（样式注入 + `mjx-container` 高度钉定）。MathJax 3/4 两代规则形态均需兼容（K85 / K113）。 |
 | `src/links/links-tree.ts` | 464 | 树内引用更新**单一遍历实现**：rename / clear 两模式共享待匹配形态派生（资源地址 + [[链接]] 双载体、回收站退化、跨文件夹移动取新位置、非 .md 文档带扩展名）与写回规则；拆开会让「重命名改写」与「删除清理」两条路径的匹配口径漂移 |
 | `src/links/links-resolve.ts` | 351 | 「任意地址形态 → TFile」的**统一解析入口**：远程拒绝 → `obsidian://` → 资源地址 → 路径直查 → `file://` 剥离 → 官方 `getFirstLinkpathDest` → 索引兜底——形态路由的**分支顺序本身即契约**（新增规则只改这一处）；拆开会重新引入本文件当初拆出要收敛的「双轨并存、覆盖形态互有盲区」问题 |

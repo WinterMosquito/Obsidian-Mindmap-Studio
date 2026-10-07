@@ -1196,26 +1196,33 @@ export function resolveNodesByDoms(
 }
 
 /**
- * 按**数学产物元素**反查所在渲染节点（K100）。
+ * 按**自绘内容产物元素**反查所在渲染节点（K100；2026-10-07 起含代码块）。
  *
- * 用途：数学替换定稿后 holder 可能已脱离 DOM——引擎在「定稿 → 批量重排」的
- * 等待窗口内又发生了一次全树重渲染（如图片尺寸回灌，见 K96），占位 holder
- * 随重建被丢弃，`findNodeByDom(holder)` 因此落空；而**活 DOM 中的数学元素**
- * 可据其反查节点——选择器取**双通道**：我方 holder 类
- * （`.mindmap-node-inline-math`，替换后保留、与产物输出形态无关）∪
- * `.mjx-container`（CHTML 产物容器，兼容兜底）。
+ * 用途：**自绘内容替换/高亮定稿后** holder 可能已脱离 DOM——引擎在
+ * 「定稿 → 批量重排」的等待窗口内又发生了一次全树重渲染（如图片尺寸回灌，见
+ * K96），占位 holder 随重建被丢弃，`findNodeByDom(holder)` 因此落空；而**活 DOM
+ * 中的产物元素**可据其反查节点。选择器**三通道**：
+ * - `.mindmap-node-inline-math`：数学 holder 类（MathJax 替换后保留、与产物输出
+ *   形态无关，稳定锚点）；
+ * - `.mjx-container`：CHTML 产物容器（兼容兜底；MathJax 走 tex2svg 时无此类）；
+ * - `.tmm-code-hl`：代码块高亮 holder 类（K116 审查修复，见下）。
  *
  * ⚠ K104 修正：此前只查 `.mjx-container`——MathJax 走 **tex2svg** 的环境
  * （产物为 `<svg>`、无该容器类）反查 0 命中，回退整体失效（用户实测：首帧
  * 公式节点尺寸不同步 + 告警「未能定位归属节点」；重开时产物缓存命中、构建期
  * 同步放置，故表现为「仅首次失败」）。
  *
+ * ⚠ 2026-10-07 审查修复：代码块高亮定稿复用**同一条**尺寸同步流水线，此前本函数
+ * 只认数学产物 ⇒ 代码块 holder 落空时兜底捞不到它，而若地图里存在数学节点，
+ * `nodes.length > 0` 会让代码块**被静默跳过、不重测也不告警**（内容裁切且无痕，
+ * K85 ① 教训）。现补入 `.tmm-code-hl` 通道。
+ *
  * 实现：从渲染树**根节点的 group** 上溯到所属 `<svg>`（同一视图内所有节点
  * DOM 的共同祖先，天然限定本视图、不受同页其它导图干扰），一次查询后逐个
  * `findNodeByDom` 归一。只在 holder 解析失败的回退路径调用（按需、一次、
- * 数学节点通常很少）。
+ * 公式/代码块节点通常很少）。
  */
-export function findNodesByMathProducts(
+export function findNodesByContentProducts(
 	mindMap: MindMap | null,
 ): MindMapNode[] {
 	const root = getRenderRoot(mindMap);
@@ -1226,15 +1233,20 @@ export function findNodesByMathProducts(
 	if (!svg) {
 		return [];
 	}
-	// 选择器**双通道**（K104）：`.mindmap-node-inline-math` 是**我方 holder 类**
+	// 选择器**三通道**：`.mindmap-node-inline-math` 是**我方 holder 类**
 	//（MathJax 替换后仍保留，与产物输出形态无关）∪ `.mjx-container`（CHTML
-	// 产物容器，兼容兜底）。
+	// 产物容器，兼容兜底）∪ `.tmm-code-hl`（**代码块高亮 holder**，2026-10-07 审查
+	// 修复：代码块定稿回调复用同一条尺寸同步流水线，此前兜底只认数学 → holder 随
+	// 全树重建脱离时**静默跳过该代码块的重测**（foreignObject 仍是按字面量的尺寸
+	// ⇒ K114 同类裁切），且因「兜底捞到了别的数学节点」而不触发告警）。
 	// ⚠ 此前只匹配 `.mjx-container`：MathJax 走 **tex2svg** 的环境（产物为
 	// `<svg>`、无该容器类）反查 0 命中 → 回退整体失效 → 首帧公式节点尺寸
 	// 不同步（用户实测：告警「未能定位归属节点」+ 公式区域缺失；重开时产物
 	// 缓存命中、构建期同步放置，故正常）。holder 类名不受替换影响，是稳定锚点。
 	const products = Array.from(
-		svg.querySelectorAll('.mindmap-node-inline-math, .mjx-container'),
+		svg.querySelectorAll(
+			'.mindmap-node-inline-math, .mjx-container, .tmm-code-hl',
+		),
 	);
 	// 批量反查：一次遍历建表 + 逐元素沿祖先链查表，取代逐元素全树
 	// walkTree（O(产物数 × 节点数)）。未命中元素由 resolveNodesByDoms 内部回落

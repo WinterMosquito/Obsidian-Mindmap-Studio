@@ -303,10 +303,105 @@ describe('轻标记扩展（显示层，不回写）', () => {
 		expect(code?.text).toContain('E = mc^2');
 	});
 
-	it('围栏块段：block 标记 + 语言行剥离（`js` 不进显示/复制内容）', () => {
+	it('围栏块段：block 标记 + 语言行剥离（`js` 不进显示/复制内容，但**留在lang 字段**）', () => {
+		// lang 必须贯通到段上：高亮/语言类都靠它（此前被丢弃 ⇒ 无从高亮）
 		expect(buildInlineSegments('```js\nconst a = 1;\n```')).toEqual([
-			{ kind: 'text', text: 'const a = 1;', style: 'code', block: true },
+			{
+				kind: 'text',
+				text: 'const a = 1;',
+				style: 'code',
+				block: true,
+				lang: 'js',
+			},
 		]);
+	});
+
+	it('波浪号围栏（官方口径：反引号**或波浪号**皆可定界）：同样成块级代码段', () => {
+		// 回归：渲染侧正则此前只认反引号，~~~ 围栏退化成普通文本（解析/渲染口径裂缝）
+		expect(buildInlineSegments('~~~python\nprint(1)\n~~~')).toEqual([
+			{
+				kind: 'text',
+				text: 'print(1)',
+				style: 'code',
+				block: true,
+				lang: 'python',
+			},
+		]);
+	});
+
+	it('波浪号围栏 4 个定界符（官方嵌套口径：外层围栏字符数多于内层）', () => {
+		expect(buildInlineSegments('~~~~\n```js\nx\n```\n~~~~')).toEqual([
+			{
+				kind: 'text',
+				text: '```js\nx\n```',
+				style: 'code',
+				block: true,
+			},
+		]);
+	});
+
+	it('`~~删除~~` 不被误判成围栏（波浪号须3 个以上且成对闭合）', () => {
+		expect(buildInlineSegments('~~删除~~')).toEqual([
+			{ kind: 'text', text: '删除', style: 'strike' },
+		]);
+	});
+
+	it('信息行语言码白名单：小写化 + 非法值退回空串（类名不能是任意用户文本）', () => {
+		// 大写 → 小写（Prism 语法键为小写）；带空格/尖括号/原型链名 → 空串（不高亮）
+		expect(buildInlineSegments('```JS\nx\n```')[0]?.lang).toBe('js');
+		expect(buildInlineSegments('```js title="a.js"\nx\n```')[0]?.lang).toBe('js');
+		expect(buildInlineSegments('```<script>\nx\n```')[0]?.lang).toBeUndefined();
+		// `__proto__` 连白名单都进不去（首字符必须字母）；
+		// `constructor` 能进白名单（首字符是字母），但**不会**被当成语法 ——
+		// 第二道防线是 `platform/prism-code` 的 hasOwnProperty 守卫
+		expect(buildInlineSegments('```__proto__\nx\n```')[0]?.lang).toBeUndefined();
+		expect(buildInlineSegments('```constructor\nx\n```')[0]?.lang).toBe(
+			'constructor',
+		);
+		expect(buildInlineSegments('```\nx\n```')[0]?.lang).toBeUndefined();
+	});
+
+	it('缩进式代码块（≥4 空格）：成块级代码段、剥掉 4 空格缩进（CommonMark）', () => {
+		expect(buildInlineSegments('    const a = 1;\n    if (a) {}')).toEqual([
+			{
+				kind: 'text',
+				text: 'const a = 1;\nif (a) {}',
+				style: 'code',
+				block: true,
+			},
+		]);
+	});
+
+	it('缩进式代码块（制表符）：同样成块，剥 1 个制表符；内部空行保留', () => {
+		expect(buildInlineSegments('\tline1\n\n\tline2')).toEqual([
+			{
+				kind: 'text',
+				text: 'line1\n\nline2',
+				style: 'code',
+				block: true,
+			},
+		]);
+	});
+
+	it('缩进代码块内不做行内语义：`[[链接]]` 保持字面（对齐阅读视图：代码不被解析）', () => {
+		expect(buildInlineSegments('    see [[笔记A]]')).toEqual([
+			{ kind: 'text', text: 'see [[笔记A]]', style: 'code', block: true },
+		]);
+	});
+
+	it('首行不缩进 → 不误判为缩进代码块（CommonMark：缩进代码块不能中断段落）', () => {
+		// 段落 + 恰好缩进的续行：仍是普通文本（断言契约本身——不得成为代码段）
+		const segments = buildInlineSegments('正文：\n    续行缩进');
+		expect(segments.some((segment) => segment.style === 'code')).toBe(false);
+		expect(segments.map((segment) => segment.text).join('')).toContain(
+			'续行缩进',
+		);
+	});
+
+	it('首行缩进但夹着非缩进行 → 不误判（只有「全部行都缩进」才是代码块）', () => {
+		const segments = buildInlineSegments('    缩进\n不缩进');
+		expect(segments.some((segment) => segment.style === 'code')).toBe(false);
+		expect(segments.map((segment) => segment.text).join('')).toContain('不缩进');
 	});
 
 	it('围栏块段：缩进与空行逐字保留（归一化不波及代码段）', () => {
@@ -377,14 +472,35 @@ class FakeElement {
 	readonly style: Record<string, string> = {};
 	readonly children: unknown[] = [];
 	readonly attributes = new Map<string, string>();
+	/** classList 桩：真实 DOM 里classList.add 改的是 className，本桩只记录 token */
+	readonly classTokens = new Set<string>();
+	readonly classList = {
+		add: (token: string): void => {
+			this.classTokens.add(token);
+		},
+		remove: (token: string): void => {
+			this.classTokens.delete(token);
+		},
+		contains: (token: string): boolean => this.classTokens.has(token),
+	};
 
 	appendChild(child: unknown): unknown {
 		this.children.push(child);
 		return child;
 	}
 
+	/** 语义化替换子节点（真实 DOM 会连带清掉textContent；本桩只管 children） */
+	replaceChildren(...nodes: unknown[]): void {
+		this.children.length = 0;
+		this.children.push(...nodes);
+	}
+
 	setAttribute(name: string, value: string): void {
 		this.attributes.set(name, value);
+	}
+
+	getAttribute(name: string): string | null {
+		return this.attributes.get(name) ?? null;
 	}
 }
 
@@ -692,6 +808,115 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect(code.tagName).toBe('code');
 		// 文本节点桩：内容 = 代码原文（信息行已在段构建时剥离）
 		expect((childrenOf(code)[0] as { text: string }).text).toBe('echo hi');
+	});
+
+	it('围栏块：语言码写成 `<code class="language-js">`（主题/Prism 选择器口径）', () => {
+		const raw = '```js\necho hi\n```';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		const pre = childrenOf(block)[1] as FakeElement;
+		const code = childrenOf(pre)[0] as FakeElement;
+		expect(code.tagName).toBe('code');
+		expect(code.className).toBe('language-js');
+	});
+
+	it('围栏块无语言码：不写 language- 类、**不空跑**高亮通道', () => {
+		// 无语法可查 ⇒ 不必走一次异步 loadPrism（缩进式代码块同理）
+		const raw = '```\necho hi\n```';
+		const calls: string[] = [];
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{
+				renderCode: (_doc, _code, lang) => {
+					calls.push(lang);
+				},
+			},
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		const pre = childrenOf(block)[1] as FakeElement;
+		const code = childrenOf(pre)[0] as FakeElement;
+		expect(code.className).toBe('');
+		expect(calls).toEqual([]);
+	});
+
+	it('围栏块：产物缓存命中 → **同步**放置 token、不触发异步高亮', () => {
+		// 尺寸同步的关键路径：引擎离屏测量是同步的，异步放置会留下
+		// 「按字面测量 → 替换后溢出」的窗口（与数学通道同款纪律）
+		const raw = '```js\necho hi\n```';
+		const calls: string[] = [];
+		const tokenNode = new FakeElement();
+		tokenNode.tagName = 'span';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{
+				renderCode: (_doc, _code, lang) => {
+					calls.push(lang);
+				},
+				getCachedCode: (code, lang) =>
+					code === 'echo hi' && lang === 'js'
+						? ([tokenNode] as unknown as Node[])
+						: null,
+			},
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		const pre = childrenOf(block)[1] as FakeElement;
+		const code = childrenOf(pre)[0] as FakeElement;
+		expect(childrenOf(code)).toEqual([tokenNode]);
+		expect(code.classTokens.has('tmm-code-hl')).toBe(true);
+		expect(calls).toEqual([]);
+	});
+
+	it('围栏块：缓存未命中且有语言码 → 交注入的 renderCode（占位仍是字面）', () => {
+		const raw = '```js\necho hi\n```';
+		const calls: Array<{ code: string; lang: string }> = [];
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{
+				renderCode: (_doc, code, lang) => {
+					calls.push({ code, lang });
+				},
+				getCachedCode: () => null,
+			},
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		const pre = childrenOf(block)[1] as FakeElement;
+		const code = childrenOf(pre)[0] as FakeElement;
+		expect(calls).toEqual([{ code: 'echo hi', lang: 'js' }]);
+		// 占位即回退态：高亮未完成前显示字面代码（不空、不闪）
+		expect((childrenOf(code)[0] as FakeTextNode).text).toBe('echo hi');
+		expect(code.classTokens.has('tmm-code-hl')).toBe(false);
+	});
+
+	it('缩进式代码块：走同一块级通道（容器/复制按钮齐备、无 language 类）', () => {
+		const raw = '    const a = 1;\n    echo hi';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		expect(block.className).toBe('tmm-codeblock');
+		const [button, pre] = childrenOf(block) as FakeElement[];
+		expect(button?.className).toBe('tmm-code-copy');
+		// 复制内容 = 剥掉 4 空格缩进后的代码（CommonMark 显示口径）
+		expect(attrsOf(button).get('data-code')).toBe('const a = 1;\necho hi');
+		const code = childrenOf(pre!)[0] as FakeElement;
+		expect(code.className).toBe('');
 	});
 
 	it('围栏块：aria-label 随 lang（en）', () => {

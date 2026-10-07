@@ -18,7 +18,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 import {
 	applyImageSizeCorrectionsToEngine,
-	findNodesByMathProducts,
+	findNodesByContentProducts,
 } from '../src/engine/mindmap';
 
 vi.mock('../vendor/simple-mind-map.cjs', () => ({
@@ -282,7 +282,7 @@ describe('applyImageSizeCorrectionsToEngine（首帧后回灌）', () => {
 	});
 });
 
-describe('findNodesByMathProducts（按产物元素反查节点，K100）', () => {
+describe('findNodesByContentProducts（按产物元素反查节点，K100）', () => {
 	/**
 	 * 节点桩：带 group 元素（提供 contains/closest 两个 API 面）。
 	 * @param owned 该节点的 group「包含」的 DOM 元素集合（模拟真实 contains）
@@ -319,7 +319,7 @@ describe('findNodesByMathProducts（按产物元素反查节点，K100）', () =
 		]);
 		const { mindMap } = fakeEngine(root);
 
-		expect(findNodesByMathProducts(mindMap)).toEqual([mathNode]);
+		expect(findNodesByContentProducts(mindMap)).toEqual([mathNode]);
 	});
 
 	it('产物选择器同时覆盖我方 holder 类与 CHTML 容器（K104 回归位）', () => {
@@ -339,9 +339,16 @@ describe('findNodesByMathProducts（按产物元素反查节点，K100）', () =
 		]);
 		const { mindMap } = fakeEngine(root);
 
-		expect(findNodesByMathProducts(mindMap)).toHaveLength(1);
+		expect(findNodesByContentProducts(mindMap)).toHaveLength(1);
 		expect(seen[0], '选择器须含我方 holder 类').toContain(
 			'.mindmap-node-inline-math',
+		);
+		// 2026-10-07 审查修复（Major）：代码块高亮定稿复用同一条尺寸同步流水线，
+		// 兜底选择器此前**只认数学产物** ⇒ 代码块 holder 随全树重建脱离时，
+		// 若图里存在数学节点则`nodes.length > 0` 让代码块**静默跳过重测**
+		//（foreignObject 仍是按字面量的尺寸 ⇒ K114 同类裁切），且不触发告警。
+		expect(seen[0], '选择器须含代码块高亮 holder 类').toContain(
+			'.tmm-code-hl',
 		);
 	});
 
@@ -353,14 +360,14 @@ describe('findNodesByMathProducts（按产物元素反查节点，K100）', () =
 		]);
 		const { mindMap } = fakeEngine(root);
 
-		expect(findNodesByMathProducts(mindMap)).toEqual([]);
+		expect(findNodesByContentProducts(mindMap)).toEqual([]);
 	});
 
 	it('渲染根缺失 / 根 group 无 svg 祖先：安全返回空数组', () => {
-		expect(findNodesByMathProducts(fakeEngine(null).mindMap)).toEqual([]);
+		expect(findNodesByContentProducts(fakeEngine(null).mindMap)).toEqual([]);
 		// 根节点无 svg 祖先（closest 返回 null）
 		const noSvgRoot = nodeWithGroup({ text: 'root' }, []);
-		expect(findNodesByMathProducts(fakeEngine(noSvgRoot).mindMap)).toEqual([]);
-		expect(findNodesByMathProducts(null)).toEqual([]);
+		expect(findNodesByContentProducts(fakeEngine(noSvgRoot).mindMap)).toEqual([]);
+		expect(findNodesByContentProducts(null)).toEqual([]);
 	});
 });
