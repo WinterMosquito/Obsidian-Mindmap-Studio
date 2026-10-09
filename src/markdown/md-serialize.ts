@@ -417,6 +417,10 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 	// 官方嵌入尺寸参数：`|宽度`（仅宽、等比缩放）或 `|宽x高`（显式双参数，
 	// 见官方帮助「Embed files」`![[图|640x480]]` / `![alt|100x145](url)`）。
 	const sizeSuffix = embedLabelSuffix(data);
+	// `formatEmbedWikilink` 的管道参数**不含**前导 `|`，而 `embedLabelSuffix`
+	// 的返回值带（它同时供 `![alt|尺寸](url)` 直接后接）——故显式去前缀，
+	// 否则会写出 `![[a.png||250]]`（2026-10-07 回归实测）。
+	const pipe = sizeSuffix.startsWith('|') ? sizeSuffix.slice(1) : sizeSuffix;
 	// 外链 md 图片的 alt：官方语法 `![alt|宽x高](url)`，alt 与尺寸共存
 	const rawAlt = data.mdImageAlt;
 	const alt = typeof rawAlt === 'string' ? rawAlt : '';
@@ -441,15 +445,15 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 		return `![${alt}${imageSizeSuffix(data)}](${target || image})`;
 	}
 	if (target && image === target) {
-		return `![[${target}${sizeSuffix}]]`;
+		return formatEmbedWikilink(target, pipe);
 	}
 	if (app) {
 		const file = resolvePathToFile(image, app);
 		if (file) {
-			return `![[${file.path}${sizeSuffix}]]`;
+			return formatEmbedWikilink(file.path, pipe);
 		}
 	}
-	return `![[${image}${sizeSuffix}]]`;
+	return formatEmbedWikilink(image, pipe);
 }
 
 /** 图片当前库内路径（view 把 image 解析为资源地址后反查）；无则原样 */

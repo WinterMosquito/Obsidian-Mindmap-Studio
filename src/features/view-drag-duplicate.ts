@@ -20,6 +20,7 @@
  */
 import { ENGINE_COMMANDS } from '../engine/mindmap';
 import { insertChildNodeWithData } from './view-common';
+import { notifyError } from '../core/errors';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 
@@ -52,7 +53,11 @@ export function duplicateAfterAltDrag(
 		insertChildNodeWithData(view, newParent, copy);
 		view.scheduleSave();
 	} catch (error) {
+		// 用户可感：Alt 拖拽的副本会**静默丢失**（撤销已执行、插入失败 → 节点回到
+		// 原位且无任何痕迹），故必须提示；口径与 view-paste / view-dnd 的
+		// `console.error + notifyError` 对齐（AGENTS.md 决策表）。
 		console.error('Alt 拖拽复制失败', error);
+		notifyError(view.lang, 'common.duplicateFailed', error);
 	}
 }
 

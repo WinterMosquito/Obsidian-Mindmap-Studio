@@ -243,7 +243,22 @@ function hydrateSizeCache(): void {
 }
 
 let persistTimer: number | null = null;
-/** 防抖落盘（写入失败/配额不足都不影响功能，静默降级） */
+/**
+ * 延迟落盘（**第三种调度语义，勿与防抖/节流混用**，2026-10-07 标注）。
+ *
+ * 与 `core/concurrency` 两个原语的差别是**首调是否立即执行**：
+ * - `createDebouncer`：每次调用都**重置**窗口（尾沿延后）；
+ * - `createThrottler`：**首调立即执行**，窗口内只排一次尾随；
+ * - 本函数：**从不立即执行**，只在窗口空闲时排一次延迟写，且**不重置窗口**
+ *   （在途则跳过）。
+ *
+ * 之所以不用前两者：尺寸探测是逐图调用，若首调立即写盘，会在探测过程中把
+ * 半成品缓存写进localStorage（写放大人为放大）。
+ *
+ * **不丢数据**：到点时 `persistSizeCache()` 重新读取整份缓存的最新状态，
+ * 窗口内被跳过的那些变更会被这一次写盘一并带上。
+ * 写入失败/配额不足都不影响功能，静默降级。
+ */
 function schedulePersistSizeCache(): void {
 	if (persistTimer !== null || !cacheStore) {
 		return;

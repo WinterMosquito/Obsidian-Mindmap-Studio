@@ -38,6 +38,10 @@ import {
 	toCanvasPoint,
 } from '../engine/mindmap';
 import { duplicateAfterAltDrag } from './view-drag-duplicate';
+import {
+	startWindowDragSession,
+	type WindowDragSession,
+} from './drag-session';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 
@@ -74,11 +78,8 @@ interface AssistSession {
 	lentNode: MindMapNode | null;
 	/** 待判定指针事件（rAF 合帧期间被后续 move 覆盖，只保留最新） */
 	pendingEvent: MouseEvent | null;
-	rafId: number | null;
-	/** 画布所属窗口（popout 窗口里 mousemove/mouseup 不落在主窗口） */
-	win: Window;
-	moveListener: (event: MouseEvent) => void;
-	upListener: (event: MouseEvent) => void;
+	/** 窗口级拖拽会话（监听 + rAF 合帧 + 幂等收尾，见 features/drag-session） */
+	drag: WindowDragSession;
 }
 
 /** 每视图的会话状态（WeakMap：不进 context 契约） */
@@ -155,14 +156,10 @@ function endSession(view: MindMapViewContext): void {
 		return;
 	}
 	sessions.set(view, null);
-	if (session.rafId !== null) {
-		session.win.cancelAnimationFrame(session.rafId);
-		session.rafId = null;
-	}
 	session.pendingEvent = null;
 	setHighlight(session, null);
-	session.win.removeEventListener('mousemove', session.moveListener);
-	session.win.removeEventListener('mouseup', session.upListener);
+	// 撤监听 + 取消在途帧（幂等；陈旧帧不会落地）
+	session.drag.end();
 }
 
 /**
@@ -329,34 +326,39 @@ export function setupDragTargetAssist(view: MindMapViewContext): void {
 			excludeUids: collectExcludeUids(draggedNode),
 			lentNode: null,
 			pendingEvent: null,
-			rafId: null,
-			win: view.containerEl.win,
-			moveListener: (event: MouseEvent) => {
-				// Alt（mac: Option）状态按**最近一次移动**记：官方 Canvas 以松手时
-				// 的按键为准，拖拽中途按下/松开都按最后一次计
-				session.altHeld = event.altKey;
-				// rAF 合帧：两次渲染帧之间的高频 move 只保留最新一次判定——
-				// 判定是全树锚点重建（O(n)），按帧率而非事件频率计价
-				//（大图 + 高回报率鼠标下事件频率可达帧率的数倍）
-				session.pendingEvent = event;
-				if (session.rafId === null) {
-					session.rafId = session.win.requestAnimationFrame(() => {
-						session.rafId = null;
-						const pending = session.pendingEvent;
-						session.pendingEvent = null;
-						if (pending && sessions.get(view) === session) {
-							handleMove(view, session, pending);
-						}
-					});
-				}
-			},
-			upListener: () => {
-				endSession(view);
-			},
+			// 会话句柄在字面量内一次性创建 ⇒ `drag` 不存在「未赋值」状态（不用占位断言）。
+			// 回调引用下方 `session` 绑定：它们只在**被派发的事件**里运行，而事件不会在
+			// 同步注册过程中到达（`addEventListener` 只登记）⇒ 不存在 TDZ 窗口。
+			//
+			// 换父辅助**不夺事件**（capture 默认 false）：它只观察引擎已发出的
+			// node_dragging 与鼠标移动，不阻断引擎自己的容器级 mousemove。
+			// 监听挂在画布所属窗口上：popout 窗口里鼠标事件不落在主窗口。
+			drag: startWindowDragSession({
+				win: view.containerEl.win,
+				onMove: (event: MouseEvent) => {
+					// Alt（mac: Option）状态按**最近一次移动**记：官方 Canvas 以松手时
+					// 的按键为准，拖拽中途按下/松开都按最后一次计
+					session.altHeld = event.altKey;
+					// rAF 合帧：两次渲染帧之间的高频 move 只保留最新一次判定——
+					// 判定是全树锚点重建（O(n)），按帧率而非事件频率计价
+					//（大图 + 高回报率鼠标下事件频率可达帧率的数倍）
+					session.pendingEvent = event;
+					session.drag.scheduleFrame();
+				},
+				onFrame: () => {
+					const pending = session.pendingEvent;
+					session.pendingEvent = null;
+					// 会话已被换掉/收尾时不得判定（旧节点已不在当前引擎）
+					if (pending && sessions.get(view) === session) {
+						handleMove(view, session, pending);
+					}
+				},
+				onUp: () => {
+					endSession(view);
+				},
+			}),
 		};
 		sessions.set(view, session);
-		session.win.addEventListener('mousemove', session.moveListener);
-		session.win.addEventListener('mouseup', session.upListener);
 	});
 	// 引擎在 onMouseup 消费落点之后发出 node_dragend → 此处收尾安全
 	view.engineEvents.onEngine(mindMap, 'node_dragend', () => {

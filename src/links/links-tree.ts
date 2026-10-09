@@ -159,6 +159,12 @@ export function renamedMdLinkDest(
 	if (!mdTargetRenamed(dest, file, oldPath)) {
 		return null;
 	}
+	// 绕回自家 parser 解析是安全的（不必改直接构造 WikilinkParts）：
+	// 上游 mdTargetRenamed 已把 dest 限死在「去.md 后精确等于旧路径 / 旧名」的
+	// 干净路径上——它先 `if (!dest) return false`，且 Obsidian **禁止文件名含
+	// `|` `#`**（见 images-path / images-save 的非法字符表），故这里不存在
+	// 空串（parseWikilink 返回 null）或被重新解释成别名/区块的输入。
+	// 保持绕回是为了让「md 链接改写」与「双链改写」共用同一个 parser。
 	const renamed = renamedWikilink(
 		parseWikilink(`[[${dest}]]`)!,
 		file,

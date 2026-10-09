@@ -165,9 +165,18 @@ describe('drag-target 会话收尾（拖拽中途关闭视图）', () => {
 		expect(canvasWindow.removed.map((call) => call.listener)).toEqual(
 			canvasWindow.added.map((call) => call.listener),
 		);
+		// 换父辅助不夺事件（capture=false）：注册与摘除都必须是同款标志。
+		// 2026-10-07 起由 drag-session 原语**显式**传false（原实现省略第三参，
+		// 桩里记为 undefined）——`addEventListener(t, fn, false)` 与
+		// `addEventListener(t, fn)` 行为等价，故这是调用约定收敛，非行为变更。
 		expect(canvasWindow.removed.map((call) => call.capture)).toEqual([
-			undefined,
-			undefined,
+			false,
+			false,
+		]);
+		// 反向护栏：注册侧也必须是 false（不是 true，更不是 undefined）
+		expect(canvasWindow.added.map((call) => call.capture)).toEqual([
+			false,
+			false,
 		]);
 		expect(canvasWindow.listenerCount()).toBe(0);
 	});
@@ -179,7 +188,7 @@ describe('drag-target 会话收尾（拖拽中途关闭视图）', () => {
 
 		// 松手（window 层）
 		binder.fire('node_dragging', fakeNode('u1'));
-		const up = canvasWindow.listenerOf('mouseup');
+		const up = canvasWindow.listenerOf('mouseup', false);
 		expect(up).not.toBeNull();
 		up?.({});
 		expect(canvasWindow.listenerCount()).toBe(0);
@@ -247,7 +256,7 @@ describe('drag-target 会话收尾（拖拽中途关闭视图）', () => {
 		setupDragTargetAssist(view);
 		binder.fire('node_dragging', fakeNode('u1'));
 
-		const move = canvasWindow.listenerOf('mousemove');
+		const move = canvasWindow.listenerOf('mousemove', false);
 		move?.({ clientX: 10, clientY: 10 });
 		move?.({ clientX: 20, clientY: 20 });
 		// rAF 合帧：一帧内多次 mousemove 只排一次判定（大图按帧计价）
@@ -316,7 +325,7 @@ describe('drag-target 会话收尾（拖拽中途关闭视图）', () => {
 
 		binder.fire('node_dragging', fakeNode('u1'));
 		// 指针压到目标节点中心 (340, 120)：外借 overlapNode（挂为该节点子级）
-		canvasWindow.listenerOf('mousemove')?.({ clientX: 340, clientY: 120 });
+		canvasWindow.listenerOf('mousemove', false)?.({ clientX: 340, clientY: 120 });
 		canvasWindow.runFrame(0);
 		expect(drag.overlapNode).toBe(target);
 		expect(classList.add).toHaveBeenCalledWith('mindmap-drag-target');

@@ -23,9 +23,9 @@
  * 用户手输；渲染层负责把它显示成粗体（features/node-inline-content）。
  * @returns 新的内容（别名或原文，按模式）；取消/直接关闭返回 null
  */
-import { App, Modal } from 'obsidian';
+import { App } from 'obsidian';
 import { t, type Language } from '../core/i18n';
-import { createButton, createModalSettle } from './modal-common';
+import { createButton, openFormModal } from './modal-common';
 
 /** 弹窗模式选项（别名模式即缺省，行为与历史一致） */
 export interface NodeTextModalOptions {
@@ -41,72 +41,61 @@ export function openNodeTextModal(
 	lang: Language,
 	options: NodeTextModalOptions = {},
 ): Promise<string | null> {
-	return new Promise((resolve) => {
-		const modal = new Modal(app);
-		// settle 守卫 + onClose 兜底（createModalSettle）：点遮罩等非按钮路径关闭
-		// 时 Promise 也必然 resolve，避免调用方 await 永久挂起。
-		const settle = createModalSettle<string>(modal, resolve);
-		const rawMode = options.rawMode === true;
-		modal.titleEl.setText(
-			t(lang, rawMode ? 'modal.text.titleRaw' : 'modal.text.title'),
-		);
-		const root = modal.contentEl.createDiv('mindmap-text-editor');
+	const rawMode = options.rawMode === true;
+	return openFormModal<string>({
+		app,
+		title: t(lang, rawMode ? 'modal.text.titleRaw' : 'modal.text.title'),
+		rootCls: 'mindmap-text-editor',
+		build: ({ root, submit }) => {
+			root
+				.createDiv('mindmap-modal-muted-hint')
+				.setText(t(lang, rawMode ? 'modal.text.hintRaw' : 'modal.text.hint'));
 
-		root
-			.createDiv('mindmap-modal-muted-hint')
-			.setText(t(lang, rawMode ? 'modal.text.hintRaw' : 'modal.text.hint'));
+			const input = root.createEl('textarea', {
+				cls: 'mindmap-modal-input mindmap-modal-textarea',
+				attr: { rows: '4', spellcheck: 'false' },
+			});
+			input.value = defaultValue;
+			input.focus();
+			// 光标置于末尾（追加式编辑最常见），而非全选——避免误输入直接覆盖整段文本
+			input.setSelectionRange(defaultValue.length, defaultValue.length);
 
-		const input = root.createEl('textarea', {
-			cls: 'mindmap-modal-input mindmap-modal-textarea',
-			attr: { rows: '4', spellcheck: 'false' },
-		});
-		input.value = defaultValue;
-		input.focus();
-		// 光标置于末尾（追加式编辑最常见），而非全选——避免误输入直接覆盖整段文本
-		input.setSelectionRange(defaultValue.length, defaultValue.length);
+			// 原文模式的**实时预览**：语法 → 节点显示 的转换当场可见（不必先保存再猜；
+			// 也回答「URL 会不会丢」——预览由与写回同一解析入口（buildInlineData）产出）
+			const preview = rawMode ? options.preview : undefined;
+			if (preview) {
+				const previewEl = root.createDiv('mindmap-modal-muted-hint');
+				const update = (): void => {
+					previewEl.setText(
+						`${t(lang, 'modal.text.preview')}${preview(input.value)}`,
+					);
+				};
+				input.addEventListener('input', update);
+				update();
+			}
 
-		// 原文模式的**实时预览**：语法 → 节点显示 的转换当场可见（不必先保存再猜；
-		// 也回答「URL 会不会丢」——预览由与写回同一解析入口（buildInlineData）产出）
-		const preview = rawMode ? options.preview : undefined;
-		if (preview) {
-			const previewEl = root.createDiv('mindmap-modal-muted-hint');
-			const update = (): void => {
-				previewEl.setText(
-					`${t(lang, 'modal.text.preview')}${preview(input.value)}`,
-				);
+			const confirm = (): void => {
+				submit(input.value);
 			};
-			input.addEventListener('input', update);
-			update();
-		}
 
-		const confirm = (): void => {
-			// 先 settle 再 close：Modal.close() 会同步触发 onClose（兜底 settle(null)），
-			// 先 close 会把用户的输入当作取消（与 modal-name 同款坑）
-			settle(input.value);
-			modal.close();
-		};
+			input.addEventListener('keydown', (event) => {
+				if (event.key === 'Escape') {
+					event.preventDefault();
+					submit(null);
+					return;
+				}
+				if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+					event.preventDefault();
+					confirm();
+				}
+			});
 
-		input.addEventListener('keydown', (event) => {
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				settle(null);
-				modal.close();
-				return;
-			}
-			if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-				event.preventDefault();
-				confirm();
-			}
-		});
-
-		const buttons = root.createDiv();
-		buttons.addClass('mindmap-modal-action-row', 'mindmap-modal-action-row--mt');
-		createButton(buttons, t(lang, 'modal.cancel'), 'secondary', () => {
-			settle(null);
-			modal.close();
-		});
-		createButton(buttons, t(lang, 'modal.apply'), 'primary', confirm);
-
-		modal.open();
+			const buttons = root.createDiv();
+			buttons.addClass('mindmap-modal-action-row', 'mindmap-modal-action-row--mt');
+			createButton(buttons, t(lang, 'modal.cancel'), 'secondary', () => {
+				submit(null);
+			});
+			createButton(buttons, t(lang, 'modal.apply'), 'primary', confirm);
+		},
 	});
 }

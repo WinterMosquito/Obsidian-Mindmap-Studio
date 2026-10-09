@@ -36,6 +36,10 @@ import {
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MdNodeData } from '../core/node-data';
 import type { MindMapViewContext } from './view-context';
+import {
+	startWindowDragSession,
+	type WindowDragSession,
+} from './drag-session';
 
 /** 手柄像素尺寸（屏幕 px） */
 const HANDLE_SIZE_PX = 12;
@@ -60,7 +64,8 @@ interface ResizeSession {
 	latest: { width: number; height: number } | null;
 	/** 最近一次实际写入引擎的尺寸（相同/不足步长则跳过重渲染） */
 	applied: { width: number; height: number } | null;
-	rafId: number | null;
+	/** 窗口级拖拽会话（监听 + rAF 合帧 + 幂等收尾，见 features/drag-session） */
+	drag: WindowDragSession;
 	/**
 	 * 会话建立时的画布视口矩形（手柄定位的坐标系原点）。
 	 *
@@ -70,10 +75,6 @@ interface ResizeSession {
 	 * 会话内视作常量。
 	 */
 	canvasRect: DOMRect | null;
-	/** 画布所属窗口（popout 窗口里 mousemove/mouseup 不落在主窗口） */
-	win: Window;
-	moveListener: (event: MouseEvent) => void;
-	upListener: (event: MouseEvent) => void;
 }
 
 /** 每视图的模块状态（WeakMap：状态不进 context 契约） */
@@ -202,7 +203,6 @@ function commitFinalSize(
 
 /** 应用待应用尺寸（rAF 回调）：写引擎数据并跟随重定位手柄 */
 function applyPending(view: MindMapViewContext, session: ResizeSession): void {
-	session.rafId = null;
 	const pending = session.pending;
 	session.pending = null;
 	const mindMap = view.mindMap;
@@ -229,13 +229,8 @@ function endSession(view: MindMapViewContext): void {
 	if (!session) {
 		return;
 	}
-	if (session.rafId !== null) {
-		session.win.cancelAnimationFrame(session.rafId);
-		session.rafId = null;
-	}
-	// 移除时带同款 capture 标志（与注册匹配）
-	session.win.removeEventListener('mousemove', session.moveListener, true);
-	session.win.removeEventListener('mouseup', session.upListener, true);
+	// 撤监听 + 取消在途帧（幂等；capture 标志由原语按注册同款摘除）
+	session.drag.end();
 	// 补写最终尺寸并**把整次调宽记成一条历史**：
 	// - 帧内只做 DOM 直写预览（不动数据、不进历史、不派发 data_change）；
 	// - 收尾统一走一次引擎命令 → 一条历史（一次 Ctrl+Z 撤回整次调宽）+ 一次
@@ -295,37 +290,40 @@ function startSession(
 		pending: null,
 		latest: null,
 		applied: null,
-		rafId: null,
 		// 会话内画布矩形恒定（见 ResizeSession 注释）：只在这里读一次
 		canvasRect: view.canvasEl?.getBoundingClientRect() ?? null,
-		win: view.containerEl.win,
-		moveListener: (moveEvent: MouseEvent) => {
-			const current = getState(view).session;
-			if (!current) {
-				return;
-			}
-			// 捕获阶段阻断传播：调宽手势独占鼠标移动——引擎的容器级
-			// mousemove（Drag.onMousemove 等）在会话期间收不到事件，
-			// 杜绝缩放拖拽被节点拖拽逻辑串扰
-			moveEvent.stopPropagation();
-			current.pending = computeResizedSize(current, moveEvent.clientX);
-			current.latest = current.pending;
-			if (current.rafId === null) {
-				current.rafId = current.win.requestAnimationFrame(() =>
-					applyPending(view, current),
-				);
-			}
-		},
-		upListener: () => {
-			endSession(view);
-		},
+		// 会话句柄在字面量内一次性创建 ⇒ `drag` 不存在「未赋值」状态（不用占位断言）。
+		// 回调一律重新读 `getState(view).session`（不闭包捕获 session）⇒ 也不存在
+		// 「回调早于赋值」的窗口。
+		//
+		// 捕获阶段注册（先于引擎容器级监听执行，配合 onMove 内的 stopPropagation
+		// 形成手势独占；移除时由原语带同款 capture 标志）。挂在画布所属窗口上：
+		// popout 窗口里鼠标事件不落在主窗口，用全局 window 会完全收不到。
+		drag: startWindowDragSession({
+			win: view.containerEl.win,
+			capture: true,
+			onMove: (moveEvent: MouseEvent) => {
+				const current = getState(view).session;
+				if (!current) {
+					return;
+				}
+				moveEvent.stopPropagation();
+				current.pending = computeResizedSize(current, moveEvent.clientX);
+				current.latest = current.pending;
+				current.drag.scheduleFrame();
+			},
+			onFrame: () => {
+				const current = getState(view).session;
+				if (current) {
+					applyPending(view, current);
+				}
+			},
+			onUp: () => {
+				endSession(view);
+			},
+		}),
 	};
 	state.session = session;
-	// 捕获阶段注册（先于引擎容器级监听执行，配合上方 stopPropagation
-	// 形成手势独占；移除时须带同款 capture 标志）。挂在画布所属窗口上：
-	// popout 窗口里鼠标事件不落在主窗口，用全局 window 会完全收不到。
-	session.win.addEventListener('mousemove', session.moveListener, true);
-	session.win.addEventListener('mouseup', session.upListener, true);
 }
 
 /** 注册图片拖拽调宽（引擎就绪后随 setupFeatures 调用；随 engineEvents 销毁清理） */

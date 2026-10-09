@@ -704,7 +704,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			});
 		if (duplicateLeaf) {
 			new Notice(t(this.lang, 'common.mindMapAlreadyOpen'));
-			void this.app.workspace.revealLeaf(duplicateLeaf);
+			// 官方契约：revealLeaf 返回 Promise（obsidian.d.ts 明言「await 它以确保视图
+			// 已加载」），故挂 catch 兜住拒绝——此处**不另弹 Notice**：上面已提示
+			// 「该导图已在其他标签页打开」，再弹一条是重复打扰。
+			void this.app.workspace
+				.revealLeaf(duplicateLeaf)
+				.catch((error: unknown) => {
+					console.warn('切换到已打开的导图标签页失败:', error);
+				});
 			window.setTimeout(() => {
 				try {
 					this.leaf.detach();

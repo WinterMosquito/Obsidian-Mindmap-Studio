@@ -64,6 +64,71 @@ export function createModalSettle<T>(
 	return settle;
 }
 
+/** 表单弹窗骨架的构建上下文（由 {@link openFormModal} 注入；不对外导出） */
+interface FormModalContext<T> {
+	/** 内容根元素（各弹窗往里建自己的字段与按钮行） */
+	readonly root: HTMLElement;
+	/**
+	 * 落定结果并关闭——**顺序固定为先 settle 再 close**。
+	 *
+	 * close() 会同步触发关闭回调（兜底 `settle(null)`），顺序反了会把用户的
+	 * 输入当作取消。该坑此前在 4 个弹窗里各被注释说明一次，现由本helper 收口。
+	 */
+	readonly submit: (value: T | null) => void;
+	/** 官方 Modal 实例（需要 titleEl / contentEl 原生面时使用） */
+	readonly modal: Modal;
+}
+
+/** {@link openFormModal} 的参数 */
+export interface FormModalOptions<T> {
+	readonly app: App;
+	/** 标题文案 */
+	readonly title: string;
+	/** 内容根元素的class（如 `mindmap-name-editor`） */
+	readonly rootCls: string;
+	/** 骨架建好后填充内容（按钮行也由它自己建——见上方刻意不收口的说明） */
+	readonly build: (ctx: FormModalContext<T>) => void;
+}
+
+/**
+ * 表单弹窗骨架：Promise + Modal + settle 守卫 + 标题 + 内容根 + `open()`。
+ *
+ * 收口的是 name / link / image / text 四个弹窗**逐字重复**的那一段（各约 6~8 行，
+ * 含「点遮罩关闭时 Promise 也要 resolve」这条不可省的纪律）。
+ *
+ * **刻意不收口按钮行与快捷键**：四者的按钮集合、行class 与提交键语义各不相同
+ * （image 多两个按钮且用 `--inline` 行；text 用 Mod+Enter 提交而其余用 Enter；
+ * name 还要随输入置灰确认键），硬抽出来只会得到一个泄漏抽象。
+ */
+export function openFormModal<T>(options: FormModalOptions<T>): Promise<T | null> {
+	return new Promise((resolve) => {
+		const modal = new Modal(options.app);
+		/**
+		 * `build` 内**同步落定**（例如直接把结果交出去）时不得再 `open()`：那时
+		 * `modal.close()` 已执行，再 open 会重新显示一个「已结束」的会话——Promise
+		 * 早已定稿、`settle` 幂等，用户的后续输入会被静默丢弃。
+		 */
+		let settled = false;
+		const settle = createModalSettle<T>(modal, (value) => {
+			settled = true;
+			resolve(value);
+		});
+		modal.titleEl.setText(options.title);
+		const root = modal.contentEl.createDiv(options.rootCls);
+		options.build({
+			root,
+			modal,
+			submit: (value) => {
+				settle(value);
+				modal.close();
+			},
+		});
+		if (!settled) {
+			modal.open();
+		}
+	});
+}
+
 /** 联想候选数量上限（与 Obsidian 输入联想的轻量行为一致） */
 const MAX_SUGGESTIONS = 20;
 

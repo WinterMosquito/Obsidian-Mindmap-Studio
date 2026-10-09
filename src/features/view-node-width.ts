@@ -66,7 +66,11 @@ export function gateNodeWidthHandles(node: MindMapNode): void {
 		};
 		proto.__mindmapStudioWidthGate = true;
 	} catch (error) {
-		// 原型冻结等异常：退回「手柄照旧显示」的旧行为，不影响其余功能
+		// 原型冻结等异常：退回「手柄照旧显示」的旧行为，不影响其余功能。
+		// **刻意只用 console、不弹 Notice**：本函数签名只有 node（从引擎节点内容
+		// 回调里调用），拿不到 view.lang；为一条提示把语言透传进引擎回调会污染
+		// 防腐层接口。口径同 AGENTS.md 决策表「内部 → console.error/warn」——
+		// 这里的用户可感面是「死手柄依旧存在」，属可容忍的降级，非功能失效。
 		console.error('安装节点宽度手柄门禁失败', error);
 	}
 }

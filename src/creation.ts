@@ -23,7 +23,11 @@ export async function createNewMindMap(
 	language: Language,
 	folderPath?: string,
 ): Promise<void> {
-	const folder = folderPath || app.fileManager.getNewFileParent('').path;
+	// 库根目录的 path 是**空串**（不是 '/'）：`||` 会把「显式指定库根」误判成
+	// 「未指定」，回落 getNewFileParent('') 后文件被静默建到别的目录
+	// （文件浏览器里对着库根点「新建思维导图」即触发）。空串是合法取值，
+	// 故用 ?? —— 只有 undefined 才表示「未指定」。
+	const folder = folderPath ?? app.fileManager.getNewFileParent('').path;
 	const defaultName = buildDefaultMindMapName(language);
 	const name = await openNameInputModal(
 		app,
@@ -40,7 +44,7 @@ export async function createNewMindMap(
 			folder,
 			withMindMapMarker(name || defaultName),
 		);
-		const path = normalizePath(`${folder}/${fileName}`);
+		const path = vaultPath(folder, fileName);
 		// 新建内容为标准 Markdown 大纲；中心主题 = 文件名（虚拟文档根）
 		const content = createDefaultMarkdownContent(language);
 		const file = await app.vault.create(path, content);
@@ -52,6 +56,18 @@ export async function createNewMindMap(
 	} catch (error) {
 		notifyError(language, 'command.createFailed', error);
 	}
+}
+
+/**
+ * 库内路径拼接：库根目录的 folder 是**空串**，故不能无条件`${folder}/${name}`
+ * —— 那会产出带前导斜杠的 `/name.mindmap.md`（官方 `normalizePath` 是否剥离
+ * 前导斜杠未在 obsidian.d.ts / 官方帮助中承诺，不依赖该行为）。
+ *
+ * 全库只有本文件需要「folder + 文件名 → 新建目标路径」，故就地定义，
+ * 不另立收口（AGENTS.md硬规则 5：不造第二份判定）。
+ */
+function vaultPath(folder: string, name: string): string {
+	return normalizePath(folder ? `${folder}/${name}` : name);
 }
 
 /** 同一目录下重名时自动追加序号（Obsidian 惯例：名称 1、名称 2...）。
@@ -71,8 +87,8 @@ async function ensureUniqueFileName(
 	// 性能：候选路径存在性检查代替全库路径 Set 构建（大库下每次创建 O(1)）；
 	// 类型化 getter 成对使用（官方推荐，替代易混淆的 getAbstractFileByPath）
 	while (
-		app.vault.getFileByPath(normalizePath(`${folder}/${candidate}`)) ??
-		app.vault.getFolderByPath(normalizePath(`${folder}/${candidate}`))
+		app.vault.getFileByPath(vaultPath(folder, candidate)) ??
+		app.vault.getFolderByPath(vaultPath(folder, candidate))
 	) {
 		candidate = `${stem} ${index}${extension}`;
 		index++;

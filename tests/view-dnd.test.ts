@@ -1634,12 +1634,48 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 		);
 	});
 
-	it('全部入库失败（返回 null）：上报失败但不挂图、不给导入汇总', async () => {
+	it('全部入库失败（返回 null）：入库通道已提示，本层不二次提示、不挂图、不给导入汇总', async () => {
 		const { view, binder, execCommand } = makeHarness();
 		setupDragAndDrop(view);
 		h.getActiveNode.mockReturnValue(fakeNode());
-		// saveImageToVault 内部失败时返回 null（不抛错）→ firstError 记录不到具体错误
+		// 入库通道失败时**自身已提示**再返回 null：真实 images-save 的三条 null 路径
+		// （attachment.chooseImage / tooLarge / saveFailed）都是先弹提示才 return null，
+		// 见 images-save.ts:154/160/233。故本层firstError 仍是 null。
 		h.saveImageToVault.mockResolvedValue(null);
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {
+			// 静默：错误路径是要断言的输出
+		});
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {
+			// 静默：诊断痕迹是要断言的输出
+		});
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({ files: [fakeFile('a.png', 'image/png')] }),
+		);
+
+		// 无二次错误提示：旧实现按failedCount > 0 无条件再弹一条，
+		// 正文是 notifyError 拼上的 String(null) —— 字面量「null」。
+		expect(consoleArgs(errorSpy)).toEqual([]);
+		expect(h.noticeCalls).toEqual([importingToVault(ZH, 1)]);
+		// 失败计数仍留痕（控制台），保证「什么都没发生」也可诊断
+		expect(consoleArgs(warnSpy).flat().join('\n')).toContain(
+			'导入拖入的文件失败 1 个',
+		);
+		expect(h.applyNodeImage).not.toHaveBeenCalled();
+		expect(h.createNaturalSizeSetNodeImageOptions).not.toHaveBeenCalled();
+		expect(execCommand).not.toHaveBeenCalled();
+	});
+
+	it('入库通道已提示的失败不叠加第二条提示（复现真实通道语义）', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		h.getActiveNode.mockReturnValue(fakeNode());
+		// 桩复刻真实 images-save 的语义：自己弹原因、再 return null
+		h.saveImageToVault.mockImplementation(async () => {
+			h.noticeCalls.push(importImageFailed(ZH, '附件已存在'));
+			return null;
+		});
 		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {
 			// 静默：错误路径是要断言的输出
 		});
@@ -1649,15 +1685,12 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 			makeDataTransfer({ files: [fakeFile('a.png', 'image/png')] }),
 		);
 
-		expect(consoleArgs(errorSpy)).toEqual([['导入拖入的文件失败', 'null']]);
+		// 用户只看到「导入进度」+ 入库通道那一条原因，不出现重复提示
 		expect(h.noticeCalls).toEqual([
 			importingToVault(ZH, 1),
-			// 返回 null 的失败没有错误对象 → errorMessage(null) 为 'null'
-			importImageFailed(ZH, 'null'),
+			importImageFailed(ZH, '附件已存在'),
 		]);
-		expect(h.applyNodeImage).not.toHaveBeenCalled();
-		expect(h.createNaturalSizeSetNodeImageOptions).not.toHaveBeenCalled();
-		expect(execCommand).not.toHaveBeenCalled();
+		expect(consoleArgs(errorSpy)).toEqual([]);
 	});
 
 	it('保存期间换文件/重建引擎：放弃写入旧节点（无挂图、无子节点、无汇总）', async () => {

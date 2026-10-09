@@ -14,6 +14,13 @@
  *   挂载**的状态下走本函数的构建链；若替换只尝试一次就放弃，这类节点会永久
  *   停在字面占位（实机复验：MathJax 热加载时"关闭再打开文件"必现，
  *   冷加载时因 await 期间元素已挂载而侥幸成功——两条路径都要正确）。
+ * - **刻意不加「会话/代际守卫」（2026-10-07 研究结论，勿再加）**：审查曾怀疑
+ *   「await 期间 holder 被 A2 交给新段落 ⇒ 旧 TeX 产物覆盖新内容」。查
+ *   `vendor/BUILD.md` 补丁 5② 确认 A2 是**按 uid 存、取用即删**，同一元素
+ *   不会被跨 TeX 复用；节点内容重建会另建新元素，旧 holder 只是 detached，
+ *   写进去的内容不可见（最坏是浪费一次渲染，非错乱）。而现有 `isConnected`
+ *   判据已覆盖「未挂载 → 入队重试」。故**加守卫只会带来「该渲染的不渲染」
+ *   的新风险**，收益为零。若将来 A2 改为跨内容复用，此结论需重新评估。
  * - **样式就绪：flush 驱动 + 精确就绪判据**（三段实测 + S0.5 双环境定稿）：
  *   ① CHTML 的逐字符规则（`mjx-c.…::before { content; padding }`）只在样式表
  *   **flush**（官方 `finishRenderMath()`）时写入——未 flush 的产物「**非零但塌缩**」
@@ -513,8 +520,15 @@ function readCharRuleIndex(): Map<string, string> {
 				}
 			}
 		}
-	} catch {
-		/* 宿主查询不可用：留空索引 */
+	} catch (error) {
+		// 留空索引不是无害降级：它让 isInvisibleCharByDesign 恒 false，K113 的
+		// MathJax 4 零宽豁免整体失效 → 含 \sin/\log 的公式永久判未就绪 → 退字面。
+		// 而用户看到的唯一告警是下游泛化的「字体/样式未就绪」，指错根因，
+		// 故此处必须留痕（AGENTS.md决策表：静默跳过会让问题无痕退化）。
+		console.warn(
+			'[MindMap Studio] 读取 MathJax CHTML字符规则失败，v4 零宽豁免判据将失效',
+			error,
+		);
 	}
 	charRuleIndex = { generation: flushGeneration, decl };
 	return decl;

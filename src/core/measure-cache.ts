@@ -85,6 +85,13 @@ function readFontsStatus(): string {
  * `loadingdone` 会在字体**分批**加载时多次触发（MathJax 有 24 条 `@font-face`），
  * 每次都递增 epoch；`fonts.ready` 再兜一次「整体就绪」——两者都对应「自然宽可能
  * 已变」的时刻。任何异常都静默吞掉（epoch 少递增 ⇒ 退回旧行为，不制造故障）。
+ *
+ * **监听永不摘除是刻意的（2026-10-07 复核确认）**：`hookInstalled` 是模块级
+ * 单例，`fontEpoch` 也随之是进程级状态——它的读者（`measure-cache` 的测量
+ * 缓存）同样跨视图/跨引擎存活。给「进程级单例的监听」配「视图级」生命周期
+ * 会出现「视图关了→ epoch 停增 → 新开视图测宽不再失效」，反而制造 bug。
+ * 真正需要随视图摘除的字体监听在`features/view.ts` 里，那里走
+ * `Component.register()` 自动摘除——**两处分工不同，不是口径不一致**。
  */
 function installFontHook(): void {
 	if (hookInstalled || typeof document === 'undefined') {

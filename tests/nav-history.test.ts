@@ -176,7 +176,11 @@ describe('pruneViewSwitchNoise（leaf.history 防御式访问）', () => {
 		).not.toThrow();
 	});
 
-	it('私有结构抛错（getter）→ 吞掉并 debug 记录（退化为修复前行为）', () => {
+	it('私有结构抛错（getter）→ 吞掉并 warn 记录（退化为修复前行为，不弹 Notice）', () => {
+		// 2026-10-07 由 debug 升为 warn：本行是「侧键后退无反应」的唯一诊断线索，
+		// 留在 debug 级别会被默认的「隐藏级别」过滤掉。
+		// 同时**刻意不弹 Notice**——该探测每次视图切换都跑，私有结构一改就刷屏。
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
 		const leaf = {
 			get history(): never {
@@ -187,7 +191,9 @@ describe('pruneViewSwitchNoise（leaf.history 防御式访问）', () => {
 		expect(() =>
 			pruneViewSwitchNoise(leaf as never, 'a.mindmap.md', 'mindmap-view'),
 		).not.toThrow();
-		expect(debugSpy).toHaveBeenCalledTimes(1);
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+		expect(debugSpy).not.toHaveBeenCalled();
+		warnSpy.mockRestore();
 		debugSpy.mockRestore();
 	});
 });

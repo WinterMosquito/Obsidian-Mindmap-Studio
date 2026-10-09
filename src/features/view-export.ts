@@ -35,6 +35,9 @@ export async function exportPNG(view: MindMapViewContext): Promise<void> {
 			}
 		}
 	} catch (error) {
+		// 双通道与其余 5 处同款失败（view-paste / view-dnd / view-node-actions /
+		// view-image-actions）保持一致：Notice 给用户，console 留诊断。
+		console.error('导出 PNG 失败', error);
 		notifyError(view.lang, 'export.pngFailed', error);
 	}
 }

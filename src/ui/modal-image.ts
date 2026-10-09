@@ -6,13 +6,13 @@
  * - 确认返回规范引用：库内图片 → vault 相对路径（md 回写 ![[路径]]），
  *   外链 → 原样 URL。
  */
-import { App, Modal, TFile } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { isImageExtension, MAX_IMAGE_SIZE_MB } from '../core/constants';
-import { isAppResourceUrl, isExternalImageRef } from '../domain/url';
+import { isExternalImageRef, resourceUrlPathCandidates } from '../domain/url';
 import { t, type Language } from '../core/i18n';
 import { buildPastedImageName } from '../media/images-save';
 import { resolvePathToFile } from '../links/links-resolve';
-import { createButton, createModalSettle, VaultFileSuggest } from './modal-common';
+import { createButton, openFormModal, VaultFileSuggest } from './modal-common';
 
 /** 输入是否为外链/数据地址（无需库内解析）：domain/url 单一权威 */
 function isExternalImageUrl(value: string): boolean {
@@ -29,211 +29,205 @@ export function openImageEditorModal(
 	) => Promise<TFile | null>,
 	lang: Language,
 ): Promise<string | null> {
-	return new Promise((resolve) => {
-		const modal = new Modal(app);
-		const settle = createModalSettle<string>(modal, resolve);
-		modal.titleEl.setText(t(lang, 'modal.image.title'));
-		const root = modal.contentEl.createDiv('mindmap-image-editor');
+	return openFormModal<string>({
+		app,
+		title: t(lang, 'modal.image.title'),
+		rootCls: 'mindmap-image-editor',
+		build: ({ root, submit }) => {
+			const statusEl = root.createDiv();
+			statusEl.addClass('mindmap-modal-muted-hint');
 
-		const statusEl = root.createDiv();
-		statusEl.addClass('mindmap-modal-muted-hint');
+			/** 由引用文本得到「预览 URL」：统一入口解析（库内路径/app:///file://
+			 *  等形态，与 AGENTS.md「解析只走 resolvePathToFile」一致）；
+			 *  命中→资源地址；未命中→空串（无预览）。首次未命中会触发全库
+			 *  索引构建（file-lookup 缓存），之后 O(1)。 */
+			const toPreviewUrl = (value: string): string => {
+				if (!value || isExternalImageUrl(value)) {
+					return value;
+				}
+				const file = resolvePathToFile(value, app);
+				return file ? app.vault.getResourcePath(file) : '';
+			};
 
-		/** 由引用文本得到「预览 URL」：统一入口解析（库内路径/app:///file://
-		 *  等形态，与 AGENTS.md「解析只走 resolvePathToFile」一致）；
-		 *  命中→资源地址；未命中→空串（无预览）。首次未命中会触发全库
-		 *  索引构建（file-lookup 缓存），之后 O(1)。 */
-		const toPreviewUrl = (value: string): string => {
-			if (!value || isExternalImageUrl(value)) {
-				return value;
-			}
-			const file = resolvePathToFile(value, app);
-			return file ? app.vault.getResourcePath(file) : '';
-		};
-
-		const updateStatus = (url: string): void => {
-			if (url && isExternalImageUrl(url)) {
-				const shortened = url.length > 60 ? `${url.slice(0, 60)}…` : url;
-				statusEl.setText(`${t(lang, 'modal.image.address')}${shortened}`);
-			} else if (url) {
-				statusEl.setText(`${t(lang, 'modal.image.internalPath')}${url}`);
-			} else {
-				statusEl.setText(t(lang, 'modal.image.none'));
-			}
-		};
-		// current 可能是资源地址（app://local/...）：解码并去掉主机前缀 → 库内路径。
-		// app:// 引用来自用户可编辑 Markdown，解码失败（畸形 % 序列）须回退原值
-		// 而非抛 URIError——抛错会让整个图片弹窗打不开（无未处理拒绝）。
-		let initialRef = current;
-		if (isAppResourceUrl(current)) {
-			try {
-				initialRef = decodeURIComponent(
-					current.replace(/^app:\/\/[^/]*\//, ''),
-				);
-			} catch {
-				// 保留原值，后续预览/保存分支兜底
-			}
-		}
-		updateStatus(initialRef);
-
-		const label = root.createDiv();
-		label.setText(t(lang, 'modal.image.urlLabel'));
-		label.addClass('mindmap-modal-label');
-		const input = root.createEl('input', {
-			cls: 'mindmap-modal-input',
-			attr: {
-				type: 'text',
-				placeholder: t(lang, 'modal.image.hint'),
-				value: initialRef.startsWith('obsidian://') ? '' : initialRef,
-			},
-		});
-		input.focus();
-
-		const fileInput = root.createEl('input', {
-			attr: { type: 'file', accept: 'image/*' },
-		});
-		fileInput.addClass('mindmap-modal-hidden');
-
-		const actions = root.createDiv();
-		actions.addClass('mindmap-modal-action-row', 'mindmap-modal-action-row--inline');
-		const chooseButton = createButton(
-			actions,
-			t(lang, 'modal.image.chooseLocal'),
-			'secondary',
-			() => fileInput.click(),
-		);
-		// 官方组件级 tooltip（不再直接改 buttonEl.title）
-		chooseButton.setTooltip(t(lang, 'modal.image.localHint'));
-		createButton(actions, t(lang, 'modal.image.paste'), 'secondary', () => {
-			void pasteFromClipboard();
-		});
-		const fileStatus = actions.createSpan();
-		fileStatus.addClass('mindmap-modal-file-status');
-
-		const preview = root.createDiv('mindmap-modal-image-preview');
-		/**
-		 * 上次真正渲染的预览地址。输入过程中大量中间态（`附`、`附件/`、`附件/幽灵`…）
-		 * 解析结果其实相同（都未命中 → 空串），逐键 `empty()` + 重建 DOM 是白工；
-		 * 地址未变即跳过，省下的是 DOM 抖动与 style 重算。
-		 *
-		 * 去重键取**解析结果**而非输入原文：中间态各不相同的原文结果恒定，按原文
-		 * 比几乎不会命中。解析本身走统一入口、索引命中为 O(1)，故不做防抖——
-		 * 防抖只会给预览加上延迟，换不来更多收益。
-		 */
-		let renderedUrl: string | null = null;
-		const renderPreview = (ref: string): void => {
-			const url = toPreviewUrl(ref);
-			if (url === renderedUrl) {
-				return;
-			}
-			renderedUrl = url;
-			preview.empty();
-			preview.removeClass('is-error');
-			preview.removeClass('is-empty');
-			if (url) {
-				const img = preview.createEl('img');
-				img.src = url;
-				img.onerror = () => {
-					preview.empty();
-					preview.setText(t(lang, 'modal.image.loadFailed'));
-					preview.addClass('is-error');
-				};
-			} else {
-				preview.setText(t(lang, 'modal.image.none'));
-				preview.addClass('is-empty');
-			}
-		};
-		renderPreview(initialRef);
-
-		const setFileStatus = (text: string, isError = false): void => {
-			fileStatus.setText(text);
-			fileStatus.toggleClass('is-error', isError);
-		};
-
-		/** 保存本地文件后，把库内相对路径填入输入框（规范引用）。
-		 *  nameOverride：剪贴板粘贴时按 Obsidian 核心约定命名（Pasted image …） */
-		const saveAndApply = async (file: File, nameOverride?: string): Promise<void> => {
-			setFileStatus(t(lang, 'modal.image.saving'));
-			try {
-				const saved = await saveImage(file, MAX_IMAGE_SIZE_MB, nameOverride);
-				if (saved) {
-					input.value = saved.path;
-					renderPreview(saved.path);
-					updateStatus(saved.path);
-					setFileStatus(`${t(lang, 'modal.image.saved')}${saved.path}`);
+			const updateStatus = (url: string): void => {
+				if (url && isExternalImageUrl(url)) {
+					const shortened = url.length > 60 ? `${url.slice(0, 60)}…` : url;
+					statusEl.setText(`${t(lang, 'modal.image.address')}${shortened}`);
+				} else if (url) {
+					statusEl.setText(`${t(lang, 'modal.image.internalPath')}${url}`);
 				} else {
-					setFileStatus(t(lang, 'modal.image.saveFailed'), true);
+					statusEl.setText(t(lang, 'modal.image.none'));
 				}
-			} catch (error) {
-				setFileStatus(t(lang, 'modal.image.saveFailed'), true);
-				console.error('保存图片失败', error);
-			}
-		};
+			};
+			// current 可能是资源地址（app://local/...）：解码并去掉主机前缀 → 库内路径。
+			// 走 domain/url 的唯一提取实现（不再本地手写 replace + decode）：
+			// - 取 `://` 后第一个 `/` 之后的全部内容，并**截到 `?`/`#` 之前**
+			//   （查询串不是路径的一部分——旧实现会把 `?v=2` 留在输入框里）；
+			// - 候选顺序是 [原样, decode]，展示取最后一个即解码值；
+			// - app:// 引用来自用户可编辑 Markdown，解码失败（畸形 % 序列）时它内部
+			//   已 catch 并只保留原样候选，故这里不必再兜一份 URIError。
+			const initialRef = resourceUrlPathCandidates(current).at(-1) ?? current;
+			updateStatus(initialRef);
 
-		fileInput.onchange = async () => {
-			const file = fileInput.files?.[0];
-			if (file) {
-				await saveAndApply(file);
-			}
-		};
+			const label = root.createDiv();
+			label.setText(t(lang, 'modal.image.urlLabel'));
+			label.addClass('mindmap-modal-label');
+			const input = root.createEl('input', {
+				cls: 'mindmap-modal-input',
+				attr: {
+					type: 'text',
+					placeholder: t(lang, 'modal.image.hint'),
+					value: initialRef.startsWith('obsidian://') ? '' : initialRef,
+				},
+			});
+			input.focus();
 
-		const pasteFromClipboard = async (): Promise<void> => {
-			try {
-				const items = await navigator.clipboard.read();
-				for (const item of items) {
-					const imageType = item.types.find((type) =>
-						type.startsWith('image/'),
-					);
-					if (imageType) {
-						const blob = await item.getType(imageType);
-						const ext = imageType.split('/')[1] || 'png';
-						const file = new File([blob], `clipboard.${ext}`, {
-							type: imageType,
-						});
-						await saveAndApply(file, buildPastedImageName());
-						return;
+			const fileInput = root.createEl('input', {
+				attr: { type: 'file', accept: 'image/*' },
+			});
+			fileInput.addClass('mindmap-modal-hidden');
+
+			const actions = root.createDiv();
+			actions.addClass('mindmap-modal-action-row', 'mindmap-modal-action-row--inline');
+			const chooseButton = createButton(
+				actions,
+				t(lang, 'modal.image.chooseLocal'),
+				'secondary',
+				() => fileInput.click(),
+			);
+			// 官方组件级 tooltip（不再直接改 buttonEl.title）
+			chooseButton.setTooltip(t(lang, 'modal.image.localHint'));
+			createButton(actions, t(lang, 'modal.image.paste'), 'secondary', () => {
+				void pasteFromClipboard();
+			});
+			const fileStatus = actions.createSpan();
+			fileStatus.addClass('mindmap-modal-file-status');
+
+			const preview = root.createDiv('mindmap-modal-image-preview');
+			/**
+			 * 上次真正渲染的预览地址。输入过程中大量中间态（`附`、`附件/`、`附件/幽灵`…）
+			 * 解析结果其实相同（都未命中 → 空串），逐键 `empty()` + 重建 DOM 是白工；
+			 * 地址未变即跳过，省下的是 DOM抖动与 style 重算。
+			 *
+			 * 去重键取**解析结果**而非输入原文：中间态各不相同的原文结果恒定，按原文
+			 * 比几乎不会命中。解析本身走统一入口、索引命中为 O(1)，故不做防抖——
+			 * 防抖只会给预览加上延迟，换不来更多收益。
+			 */
+			let renderedUrl: string | null = null;
+			const renderPreview = (ref: string): void => {
+				const url = toPreviewUrl(ref);
+				if (url === renderedUrl) {
+					return;
+				}
+				renderedUrl = url;
+				preview.empty();
+				preview.removeClass('is-error');
+				preview.removeClass('is-empty');
+				if (url) {
+					const img = preview.createEl('img');
+					img.src = url;
+					img.onerror = () => {
+						preview.empty();
+						preview.setText(t(lang, 'modal.image.loadFailed'));
+						preview.addClass('is-error');
+					};
+				} else {
+					preview.setText(t(lang, 'modal.image.none'));
+					preview.addClass('is-empty');
+				}
+			};
+			renderPreview(initialRef);
+
+			const setFileStatus = (text: string, isError = false): void => {
+				fileStatus.setText(text);
+				fileStatus.toggleClass('is-error', isError);
+			};
+
+			/** 保存本地文件后，把库内相对路径填入输入框（规范引用）。
+			 *  nameOverride：剪贴板粘贴时按 Obsidian 核心约定命名（Pasted image …） */
+			const saveAndApply = async (
+				file: File,
+				nameOverride?: string,
+			): Promise<void> => {
+				setFileStatus(t(lang, 'modal.image.saving'));
+				try {
+					const saved = await saveImage(file, MAX_IMAGE_SIZE_MB, nameOverride);
+					if (saved) {
+						input.value = saved.path;
+						renderPreview(saved.path);
+						updateStatus(saved.path);
+						setFileStatus(`${t(lang, 'modal.image.saved')}${saved.path}`);
+					} else {
+						setFileStatus(t(lang, 'modal.image.saveFailed'), true);
 					}
+				} catch (error) {
+					setFileStatus(t(lang, 'modal.image.saveFailed'), true);
+					console.error('保存图片失败', error);
 				}
-				setFileStatus(t(lang, 'modal.image.noClipboardImage'), true);
-			} catch {
-				setFileStatus(t(lang, 'modal.image.clipboardError'), true);
-			}
-		};
+			};
 
-		input.addEventListener('input', () => {
-			renderPreview(input.value);
-			updateStatus(input.value);
-		});
+			fileInput.onchange = async () => {
+				const file = fileInput.files?.[0];
+				if (file) {
+					await saveAndApply(file);
+				}
+			};
 
-		// 库内图片联想：选择后填入库内相对路径
-		const vaultImages = app.vault
-			.getFiles()
-			.filter((f) => isImageExtension(f.extension));
-		new VaultFileSuggest(
-			app,
-			input,
-			vaultImages,
-			(file) => ({ icon: 'image', label: file.name }),
-			(file) => {
-				input.value = file.path;
-				renderPreview(file.path);
-				updateStatus(file.path);
-			},
-		);
+			const pasteFromClipboard = async (): Promise<void> => {
+				try {
+					const items = await navigator.clipboard.read();
+					for (const item of items) {
+						const imageType = item.types.find((type) =>
+							type.startsWith('image/'),
+						);
+						if (imageType) {
+							const blob = await item.getType(imageType);
+							const ext = imageType.split('/')[1] || 'png';
+							const file = new File([blob], `clipboard.${ext}`, {
+								type: imageType,
+							});
+							await saveAndApply(file, buildPastedImageName());
+							return;
+						}
+					}
+					setFileStatus(t(lang, 'modal.image.noClipboardImage'), true);
+				} catch {
+					setFileStatus(t(lang, 'modal.image.clipboardError'), true);
+				}
+			};
 
-		const buttons = root.createDiv();
-		buttons.addClass('mindmap-modal-action-row');
-		createButton(buttons, t(lang, 'modal.image.clear'), 'muted', () => {
-			settle('');
-			modal.close();
-		});
-		createButton(buttons, t(lang, 'modal.cancel'), 'secondary', () => {
-			settle(null);
-			modal.close();
-		});
-		createButton(buttons, t(lang, 'modal.apply'), 'primary', () => {
-			settle(input.value.trim());
-			modal.close();
-		});
-		modal.open();
+			input.addEventListener('input', () => {
+				renderPreview(input.value);
+				updateStatus(input.value);
+			});
+
+			// 库内图片联想：选择后填入库内相对路径
+			const vaultImages = app.vault
+				.getFiles()
+				.filter((f) => isImageExtension(f.extension));
+			new VaultFileSuggest(
+				app,
+				input,
+				vaultImages,
+				(file) => ({ icon: 'image', label: file.name }),
+				(file) => {
+					input.value = file.path;
+					renderPreview(file.path);
+					updateStatus(file.path);
+				},
+			);
+
+			const buttons = root.createDiv();
+			buttons.addClass('mindmap-modal-action-row');
+			createButton(buttons, t(lang, 'modal.image.clear'), 'muted', () => {
+				submit('');
+			});
+			createButton(buttons, t(lang, 'modal.cancel'), 'secondary', () => {
+				submit(null);
+			});
+			createButton(buttons, t(lang, 'modal.apply'), 'primary', () => {
+				submit(input.value.trim());
+			});
+		},
 	});
 }

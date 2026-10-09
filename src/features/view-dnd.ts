@@ -385,9 +385,18 @@ async function handleExternalFilesDrop(
 			firstError ??= error;
 		}
 	}
-	if (failedCount > 0) {
+	// 只有「抛异常」这一路径才由本层汇总提示。入库通道（images-save）对每个失败
+	// 已经弹过Notice（attachment.chooseImage / tooLarge）或 notifyError
+	// （attachment.saveFailed）并 return null，那种情况 firstError 仍是 null——
+	// 若按failedCount > 0 无条件再弹一次，用户会看到两条提示，且第二条正文是
+	// notifyError 拼上的 String(null) 字面量「null」。
+	if (firstError !== null) {
 		console.error('导入拖入的文件失败', firstError);
 		notifyError(view.lang, 'common.importFileFailed', firstError);
+	} else if (failedCount > 0) {
+		console.warn(
+			`导入拖入的文件失败 ${failedCount} 个（原因已由入库通道逐条提示）`,
+		);
 	}
 	// 归属：图片首张挂到所选节点（保持单图拖入的原行为），其余各新建子节点承载。
 	// 此前循环对同一节点反复 applyNodeImage（SET_NODE_IMAGE 覆盖图片字段），

@@ -110,6 +110,11 @@ const ZH = {
 	'common.linkedTo': '已将节点链接到',
 	'common.nodeCreatedAndLinked': '已创建节点并链接到',
 	'common.cannotOpen': '无法打开该文件类型',
+	// 「用系统默认应用打开」的失败：主因是系统里没有关联应用，与「文件类型不受支持」
+	// 不同源，故独立成键（见 platform/system-open.surfaceOpenResult）
+	'common.systemOpenFailed': '无法用系统默认应用打开该文件',
+	'common.duplicateFailed': '复制节点失败：',
+	'common.refreshFailed': '应用设置后重绘导图失败，已保留当前视图：',
 	// 官方「自动更新内部链接」关闭时的告知：链接仍指向旧位置（成为未解析链接）
 	'common.linksNotUpdatedOnRename':
 		'「{name}」已重命名：本图有指向它的引用未更新（已关闭「自动更新内部链接」，引用现为未解析链接）',
@@ -342,6 +347,10 @@ const EN: Record<TranslationKey, string> = {
 	'common.linkedTo': 'Linked node to ',
 	'common.nodeCreatedAndLinked': 'Node created and linked to ',
 	'common.cannotOpen': 'Cannot open this file type',
+	'common.systemOpenFailed': 'Could not open the file with the system default app',
+	'common.duplicateFailed': 'Failed to duplicate the node: ',
+	'common.refreshFailed':
+		'Failed to redraw the mind map after applying settings — the current view was kept: ',
 	'common.linksNotUpdatedOnRename':
 		'"{name}" was renamed: references in this map were not updated (Automatically update internal links is off — they are now unresolved)',
 	'common.linksNotUpdatedOnDelete':

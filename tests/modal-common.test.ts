@@ -1,10 +1,12 @@
 /**
  * modal-common 回归测试：弹窗共享件的当前实现契约（src/ui/modal-common.ts）。
  *
- * 覆盖三件事：
+ * 覆盖四件事：
  * - createModalSettle：settle 幂等（首值胜出、后到者被忽略）、关闭兜底经官方
  *   setCloseCallback 注册（Esc / 点遮罩关闭时 Promise 必然 settle，调用方 await
  *   不会永久挂起）、且**不覆写** modal.onClose（覆写会盖掉调用方/子类已有的实现）；
+ * - openFormModal：标题/内容根/open 一次的骨架契约、「先 settle 再 close」的顺序，
+ *   以及「build 内已同步落定则不再 open」这条守卫（见 src/ui/modal-common 注释）；
  * - createButton：variant → setCta() / buttonEl.is-muted / 两者皆无，文本与
  *   onClick 原样转发到官方 ButtonComponent；
  * - VaultFileSuggest：空查询返回空、大小写不敏感子串过滤、20 条上限、
@@ -26,6 +28,7 @@ import type { FileSuggestAppearance } from '../src/ui/modal-common';
 import {
 	createButton,
 	createModalSettle,
+	openFormModal,
 	VaultFileSuggest,
 } from '../src/ui/modal-common';
 
@@ -137,11 +140,15 @@ interface ButtonRecord {
  * vi.mock 工厂被提升到文件顶部，工厂内引用的变量必须由 vi.hoisted 提前创建
  * （直接引用普通顶层变量会报「Cannot access before initialization」）。
  */
-const { setIconMock, buttonRecords, suggestRecords } = vi.hoisted(() => ({
-	setIconMock: vi.fn<(parent: unknown, iconId: string) => void>(),
-	buttonRecords: [] as ButtonRecord[],
-	suggestRecords: [] as { app: unknown; inputEl: unknown }[],
-}));
+const { setIconMock, buttonRecords, suggestRecords, modalRecords } = vi.hoisted(
+	() => ({
+		setIconMock: vi.fn<(parent: unknown, iconId: string) => void>(),
+		buttonRecords: [] as ButtonRecord[],
+		suggestRecords: [] as { app: unknown; inputEl: unknown }[],
+		/** 每次 new Modal(app) 追加一条（openFormModal 的实例从这里取） */
+		modalRecords: [] as unknown[],
+	}),
+);
 
 vi.mock('obsidian', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('obsidian')>();
@@ -179,6 +186,27 @@ vi.mock('obsidian', async (importOriginal) => {
 		}
 	}
 
+	/** 弹窗内元素的最小面（开窗骨架只用 titleEl.setText / contentEl.createDiv） */
+	class MockEl {
+		text = '';
+		readonly classes: string[] = [];
+		readonly children: MockEl[] = [];
+
+		setText(text: string): this {
+			this.text = text;
+			return this;
+		}
+
+		createDiv(cls?: string): MockEl {
+			const child = new MockEl();
+			if (cls !== undefined) {
+				child.classes.push(...splitClasses(cls));
+			}
+			this.children.push(child);
+			return child;
+		}
+	}
+
 	/**
 	 * Modal 桩：onClose 用访问器实现——「写入次数」即断言依据
 	 * （createModalSettle 正确实现时写入次数恒为 0，覆写则 +1）。
@@ -187,7 +215,11 @@ vi.mock('obsidian', async (importOriginal) => {
 		private closeHandler: () => void = () => {};
 		onCloseWrites = 0;
 		closeCalls = 0;
+		/** open() 调用次数（openFormModal 的「已落定则不再 open」守卫靠它断言） */
+		openCalls = 0;
 		readonly closeCallbacks: (() => unknown)[] = [];
+		readonly titleEl = new MockEl();
+		readonly contentEl = new MockEl();
 
 		get onClose(): () => void {
 			return this.closeHandler;
@@ -198,9 +230,13 @@ vi.mock('obsidian', async (importOriginal) => {
 			this.closeHandler = handler;
 		}
 
-		constructor(_app: unknown) {}
+		constructor(_app: unknown) {
+			modalRecords.push(this);
+		}
 
-		open(): void {}
+		open(): void {
+			this.openCalls += 1;
+		}
 
 		setCloseCallback(callback: () => unknown): this {
 			this.closeCallbacks.push(callback);
@@ -245,15 +281,32 @@ vi.mock('obsidian', async (importOriginal) => {
  */
 type ModalStub = Modal & {
 	readonly closeCalls: number;
+	readonly openCalls: number;
 	readonly onCloseWrites: number;
 	readonly closeCallbacks: (() => unknown)[];
+	readonly titleEl: ModalElStub;
+	readonly contentEl: ModalElStub;
 	onClose: () => void;
 	/** 库层关闭（Esc / 点遮罩）：只触发关闭回调 */
 	fireClose(): void;
 };
 
+/** 桩内元素面（工厂内的 MockEl 无法在模块作用域引用其类型，故此处镜像一份） */
+interface ModalElStub {
+	readonly text: string;
+	readonly classes: string[];
+	readonly children: ModalElStub[];
+	setText(text: string): ModalElStub;
+	createDiv(cls?: string): ModalElStub;
+}
+
 function fakeModal(): ModalStub {
 	return new Modal(new App()) as unknown as ModalStub;
+}
+
+/** 最近一次 `new Modal(app)` 的实例（openFormModal 在内部创建弹窗） */
+function lastModal(): ModalStub {
+	return modalRecords.at(-1) as ModalStub;
 }
 
 /** 取第 index 个子元素（noUncheckedIndexedAccess 下显式收窄，缺失即失败） */
@@ -403,6 +456,81 @@ describe('createModalSettle（弹窗 Promise settle 守卫）', () => {
 		expect(resolveEmpty).toHaveBeenCalledTimes(1);
 		expect(resolveEmpty).toHaveBeenCalledWith('');
 		expect(resolveEmpty).not.toHaveBeenCalledWith(null);
+	});
+});
+
+describe('openFormModal（表单弹窗骨架）', () => {
+	it('骨架：标题 / 内容根就绪，build 收到 root+modal+submit，最后 open 一次', () => {
+		const seen: { root: unknown; modal: unknown; hasSubmit: boolean }[] = [];
+		void openFormModal<string>({
+			app: new App(),
+			title: '骨架标题',
+			rootCls: 'mindmap-x-editor',
+			build: ({ root, modal, submit }) => {
+				seen.push({ root, modal, hasSubmit: typeof submit === 'function' });
+			},
+		});
+		const modal = lastModal();
+
+		expect(modal.titleEl.text).toBe('骨架标题');
+		// build 拿到的 root 就是内容根下新建的那个元素（各弹窗往里建字段与按钮行）
+		const root = modal.contentEl.children[0];
+		expect(modal.contentEl.children).toHaveLength(1);
+		expect(root?.classes).toContain('mindmap-x-editor');
+		expect(seen).toHaveLength(1);
+		expect(seen[0]?.root).toBe(modal.contentEl.children[0]);
+		expect(seen[0]?.modal).toBe(modal);
+		expect(seen[0]?.hasSubmit).toBe(true);
+		expect(modal.openCalls).toBe(1);
+	});
+
+	it('按钮路径：submit 先落定再 close，结果不被关闭兜底覆盖', async () => {
+		// 用数组承接（而不是 let + 闭包赋值）：后者会被 TS 的控制流收窄成 never
+		const submits: ((value: string | null) => void)[] = [];
+		const promise = openFormModal<string>({
+			app: new App(),
+			title: 't',
+			rootCls: 'r',
+			build: (ctx) => {
+				submits.push(ctx.submit);
+			},
+		});
+		const modal = lastModal();
+		expect(modal.openCalls).toBe(1);
+
+		submits[0]?.('确认值');
+
+		await expect(promise).resolves.toBe('确认值');
+		expect(modal.closeCalls).toBe(1);
+	});
+
+	it('Esc / 点遮罩（库层关闭）：Promise 落定为 null，await 不永久挂起', async () => {
+		const promise = openFormModal<string>({
+			app: new App(),
+			title: 't',
+			rootCls: 'r',
+			build: () => undefined,
+		});
+
+		lastModal().fireClose();
+
+		await expect(promise).resolves.toBeNull();
+	});
+
+	it('build 内同步落定：不再 open（否则会显示一个已结束的会话，输入被静默丢弃）', async () => {
+		const promise = openFormModal<string>({
+			app: new App(),
+			title: 't',
+			rootCls: 'r',
+			build: ({ submit }) => {
+				submit('同步值');
+			},
+		});
+		const modal = lastModal();
+
+		expect(modal.closeCalls).toBe(1);
+		expect(modal.openCalls).toBe(0);
+		await expect(promise).resolves.toBe('同步值');
 	});
 });
 

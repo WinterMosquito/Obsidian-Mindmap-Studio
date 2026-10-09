@@ -105,8 +105,11 @@ export function pruneViewSwitchNoise(
 		pruneHistoryStack(history.backHistory, filePath, keepViewType);
 		pruneHistoryStack(history.forwardHistory, filePath, keepViewType);
 	} catch (error) {
-		// 私有结构变更时静默降级（退化为修复前行为，不影响打开流程）
-		console.debug(
+		// 私有结构变更时静默降级（退化为修复前行为，不影响打开流程）。
+		// **刻意不弹 Notice**：本探测在每次视图切换时都会跑，Obsidian 内部一改
+		// 就会对用户刷屏；而症状（侧键后退残留噪声条目）本身不影响正确性。
+		// 但不能留在 debug——本行是「侧键后退无反应」的唯一诊断线索，故用 warn。
+		console.warn(
 			'导航历史清理跳过（Obsidian 私有结构可能已变更）:',
 			filePath,
 			error,

@@ -40,12 +40,18 @@ import { fileLookupIndex } from '../src/links/file-lookup';
 import { openImageEditorModal } from '../src/ui/modal-image';
 import { openLinkEditorModal, type LinkPickResult } from '../src/ui/modal-link';
 import { openNameInputModal } from '../src/ui/modal-name';
+import {
+	openNodeTextModal,
+	type NodeTextModalOptions,
+} from '../src/ui/modal-text';
 
 /* ===== 伪 DOM（node 环境无 document；afterEach 还原） ===== */
 
 /** 伪键盘事件（keydown 分流所需最小面） */
 interface FakeKeyEvent {
 	readonly key: string;
+	readonly metaKey: boolean;
+	readonly ctrlKey: boolean;
 	preventDefault(): void;
 }
 
@@ -79,6 +85,8 @@ interface StubElNode {
 	clickCount: number;
 	/** empty() 调用次数（预览去重断言：只有真正重建才会计数） */
 	emptyCalls: number;
+	/** 最近一次 setSelectionRange 的入参（null = 从未调用） */
+	selectionRange: { start: number; end: number } | null;
 	createDiv(cls?: string): StubElNode;
 	createEl(tag: string, init?: StubElInit): StubElNode;
 	createSpan(init?: StubElInit | string): StubElNode;
@@ -90,6 +98,7 @@ interface StubElNode {
 	empty(): void;
 	focus(): void;
 	select(): void;
+	setSelectionRange(start: number, end: number): void;
 	click(): void;
 	addEventListener(type: string, listener: unknown): void;
 	asHTMLElement(): HTMLElement;
@@ -181,6 +190,8 @@ const {
 		selectCount = 0;
 		clickCount = 0;
 		emptyCalls = 0;
+		/** 最近一次 setSelectionRange 的入参（modal-text 把光标置于末尾） */
+		selectionRange: { start: number; end: number } | null = null;
 
 		constructor(tagName: string) {
 			this.tagName = tagName;
@@ -248,6 +259,10 @@ const {
 
 		select(): void {
 			this.selectCount += 1;
+		}
+
+		setSelectionRange(start: number, end: number): void {
+			this.selectionRange = { start, end };
 		}
 
 		click(): void {
@@ -562,11 +577,20 @@ function buttonTexts(container: StubElNode): string[] {
 		.map((record) => record.texts.join(''));
 }
 
-/** 触发伪元素的 keydown 监听，返回 preventDefault 调用次数供断言 */
-function pressKey(el: StubElNode, key: string): { preventDefaultCount: number } {
+/**
+ * 触发伪元素的 keydown 监听，返回 preventDefault 调用次数供断言。
+ * @param mods 修饰键（modal-text 用 Mod+Enter 提交，单行弹窗用裸 Enter）
+ */
+function pressKey(
+	el: StubElNode,
+	key: string,
+	mods: { metaKey?: boolean; ctrlKey?: boolean } = {},
+): { preventDefaultCount: number } {
 	let preventDefaultCount = 0;
 	const event: FakeKeyEvent = {
 		key,
+		metaKey: mods.metaKey === true,
+		ctrlKey: mods.ctrlKey === true,
 		preventDefault: (): void => {
 			preventDefaultCount += 1;
 		},
@@ -1350,18 +1374,36 @@ describe('openImageEditorModal（节点图片编辑弹窗）', () => {
 		await finishAsClosed(harness);
 	});
 
-	it('畸形 % 序列（app:// 解码失败）不抛错：回退原值，弹窗照常可用', async () => {
-		// decodeURIComponent('%E9%99') 会抛 URIError；抛出去整个弹窗就打不开了
+	it('畸形 % 序列（app:// 解码失败）不抛错：回退未解码路径，弹窗照常可用', async () => {
+		// decodeURIComponent('%E9%99') 会抛 URIError；抛出去整个弹窗就打不开了。
+		// 走 domain/url.resourceUrlPathCandidates 后，解码失败由它内部 catch
+		// （只保留未解码候选），本弹窗不再本地兜一份 URIError。
 		const malformed = 'app://local/%E9%99';
 		const harness = openImage(malformed);
 
-		expect(harness.input.value).toBe(malformed);
+		// 契约 2026-10-07 起由「回退整条 URL」改为「回退未解码路径」：
+		// 输入框是**可编辑的库内路径**字段，返回 `app://local/…` 等于把协议前缀
+		// 留给用户手删；两者都不是合法库内路径，但路径形态更接近可编辑形态。
+		expect(harness.input.value).toBe('%E9%99');
 		expect(harness.status.text).toBe(
-			`${t('zh', 'modal.image.internalPath')}${malformed}`,
+			`${t('zh', 'modal.image.internalPath')}%E9%99`,
 		);
 		// 解析不到库内文件 → 无预览（不崩）
 		expect(harness.preview.text).toBe(t('zh', 'modal.image.none'));
 		expect(harness.preview.classes).toContain('is-empty');
+
+		await finishAsClosed(harness);
+	});
+
+	it('app:// 引用带查询串/片段时只取路径部分（?/# 不是路径的一部分）', async () => {
+		const png = fakeFile('带参数图', 'png', '附件');
+		const harness = openImage(`app://local/${png.path}?v=2#锚`, {
+			files: [png],
+		});
+
+		expect(harness.input.value).toBe(png.path);
+		// 截到 ? 之前故仍能解析到库内文件 → 有预览
+		expect(childAt(harness.preview, 0).src).toBe(`app://local/${png.path}`);
 
 		await finishAsClosed(harness);
 	});
@@ -1733,5 +1775,133 @@ describe('openImageEditorModal（节点图片编辑弹窗）', () => {
 		]);
 
 		await finishAsClosed(harness);
+	});
+});
+
+/* ===== 节点文本弹窗===== */
+
+interface TextHarness {
+	readonly promise: Promise<string | null>;
+	readonly modal: ModalStub;
+	readonly root: StubElNode;
+	readonly input: StubElNode;
+	readonly buttons: StubElNode;
+	/** 实时预览行（仅原文模式且给了 preview 回调时存在） */
+	readonly preview: StubElNode | undefined;
+}
+
+/**
+ * 打开文本弹窗。
+ * 结构：别名模式 root → [hint, textarea, buttons]；原文模式带预览时插入 preview 行，
+ * 故preview 与 buttons 都按位置推取（末尾即按钮行）。
+ */
+function openText(
+	defaultValue = '节点文本',
+	lang: Language = 'zh',
+	options: NodeTextModalOptions = {},
+): TextHarness {
+	const promise = openNodeTextModal(fakeApp(), defaultValue, lang, options);
+	const modal = lastModal();
+	const root = childAt(modal.contentEl, 0);
+	const input = childAt(root, 1);
+	return {
+		promise,
+		modal,
+		root,
+		input,
+		buttons: childAt(root, root.children.length - 1),
+		preview: root.children.length === 4 ? childAt(root, 2) : undefined,
+	};
+}
+
+describe('openNodeTextModal（节点文本编辑弹窗）', () => {
+	it('别名模式：预填并聚焦、光标置于末尾，标题/提示/按钮走 i18n，无预览行', async () => {
+		const harness = openText('已有文本');
+
+		expect(harness.modal.openCalls).toBe(1);
+		expect(harness.modal.titleEl.text).toBe(t('zh', 'modal.text.title'));
+		expect(harness.root.classes).toEqual(['mindmap-text-editor']);
+		expect(harness.input.value).toBe('已有文本');
+		expect(harness.input.focusCount).toBe(1);
+		// 追加式编辑：光标落在末尾而非全选（避免误输入直接覆盖整段）
+		expect(harness.input.selectionRange).toEqual({
+			start: '已有文本'.length,
+			end: '已有文本'.length,
+		});
+		expect(childAt(harness.root, 0).text).toBe(t('zh', 'modal.text.hint'));
+		expect(harness.preview).toBeUndefined();
+		expect(harness.buttons.classes).toContain('mindmap-modal-action-row--mt');
+		expect(buttonTexts(harness.buttons)).toEqual([
+			t('zh', 'modal.cancel'),
+			t('zh', 'modal.apply'),
+		]);
+
+		await finishAsClosed(harness);
+	});
+
+	it('提交返回输入原文（不 trim）：点「应用」即落定并关闭', async () => {
+		const harness = openText('  前后留白  ');
+
+		clickButton(harness.buttons, t('zh', 'modal.apply'));
+
+		await expect(harness.promise).resolves.toBe('  前后留白  ');
+	});
+
+	it('Enter 不提交（留给换行），Mod+Enter / Ctrl+Enter 才落定', async () => {
+		const harness = openText('多行文本');
+
+		// 裸 Enter：既不落定也不拦截（保留浏览器默认换行）
+		expect(pressKey(harness.input, 'Enter').preventDefaultCount).toBe(0);
+		pressKey(harness.input, 'Enter', { metaKey: true });
+
+		await expect(harness.promise).resolves.toBe('多行文本');
+	});
+
+	it('Esc 取消：落定 null 且拦截默认行为', async () => {
+		const harness = openText('不要保存');
+
+		expect(pressKey(harness.input, 'Escape').preventDefaultCount).toBe(1);
+
+		await expect(harness.promise).resolves.toBeNull();
+	});
+
+	it('原文模式：标题/提示切原文档，实时预览随输入更新', async () => {
+		const harness = openText('**粗体**', 'zh', {
+			rawMode: true,
+			preview: (value) => `预览:${value}`,
+		});
+
+		expect(harness.modal.titleEl.text).toBe(t('zh', 'modal.text.titleRaw'));
+		expect(childAt(harness.root, 0).text).toBe(t('zh', 'modal.text.hintRaw'));
+		expect(harness.preview?.text).toBe(
+			`${t('zh', 'modal.text.preview')}预览:**粗体**`,
+		);
+
+		harness.input.value = '改成了 [链接](a.md)';
+		fireInput(harness.input);
+
+		expect(harness.preview?.text).toBe(
+			`${t('zh', 'modal.text.preview')}预览:改成了 [链接](a.md)`,
+		);
+
+		await finishAsClosed(harness);
+	});
+
+	it('原文模式未给 preview 回调：不开预览行（结构仍合法）', async () => {
+		const harness = openText('原文', 'zh', { rawMode: true });
+
+		expect(harness.preview).toBeUndefined();
+		expect(harness.buttons.classes).toContain('mindmap-modal-action-row--mt');
+
+		await finishAsClosed(harness);
+	});
+
+	it('取消按钮与点遮罩关闭同样落定 null', async () => {
+		const cancelled = openText('取消我');
+		clickButton(cancelled.buttons, t('zh', 'modal.cancel'));
+		await expect(cancelled.promise).resolves.toBeNull();
+
+		const closed = openText('关闭我');
+		await finishAsClosed(closed);
 	});
 });

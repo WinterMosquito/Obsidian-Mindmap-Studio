@@ -35,6 +35,7 @@ import {
 } from '../engine/mindmap';
 import { createThrottler } from '../core/concurrency';
 import { shouldEnablePerformanceMode } from '../core/constants';
+import { notifyError } from '../core/errors';
 import type { NodeContentStyle } from '../engine/mindmap';
 import { ensureUniqueUids } from '../markdown/markdown';
 import { nodeReferenceMatches } from '../core/node-data';
@@ -453,7 +454,10 @@ export class EngineController {
 		try {
 			this.initMindMap(this.mindMap.getData());
 		} catch (error) {
+			// 用户可感：设置已改但界面停在旧布局，无任何提示会被当成「设置没生效」
+			//（AGENTS.md 决策表：静默跳过会让问题无痕退化）。
 			console.error('重建引擎失败，保留当前实例', error);
+			notifyError(this.deps.getLang(), 'common.refreshFailed', error);
 		}
 	}
 
