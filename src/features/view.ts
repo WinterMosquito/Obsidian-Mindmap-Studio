@@ -11,8 +11,7 @@
  * - 本类只做编排：生命周期事件 → 装配 services 与 view-* 交互特性。
  */
 import { type EventRef, FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
-import { Language, t, tf } from '../core/i18n';
-import type { TranslationKey } from '../core/i18n';
+import { Language, t } from '../core/i18n';
 import { injectObsidianCssVarsIntoExportSvg } from '../platform/export-css-vars';
 import { padForeignObjectsForExport } from '../platform/export-foreign-object-padding';
 import {
@@ -26,6 +25,7 @@ import {
 	refreshPrismTokenColors,
 	renderCodeWithPrism,
 } from '../platform/prism-code';
+import { updatesInternalLinksOnRename } from '../platform/vault-prefs';
 import { createThrottler } from '../core/concurrency';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
@@ -90,7 +90,6 @@ import {
 } from './view-status';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { setupImageResize, teardownImageResize } from './image-resize';
-import { setupDragTargetAssist, teardownDragTargetAssist } from './drag-target';
 import { gateNodeWidthHandles, setupNodeWidthRefresh } from './view-node-width';
 import { EventBinder } from '../core/event-binder';
 import { TitleRenamer } from './view-title-renamer';
@@ -124,9 +123,10 @@ const RESIZE_THROTTLE_MS = 100;
  *   已打开的图**本就不生效**（重建一轮也不会有任何可见变化）⇒ 跳过即行为等价
  *   的优化（省掉整树 `structuredClone` + 全量重渲染，实测口径见 K58）。
  *
- * - `performanceMode` / `performanceThreshold`：引擎显式支持运行时切换
- *   （`updateConfig` → `after_update_config` 重新绑定视口变化处理器 + `forceLoadNode`，
- *   见 `engine/mindmap.applyPerformanceMode`）——性能阈值是设置面板的滑块，收益最直接。
+ * 2026-10-09 减法：原 `performanceMode` / `performanceThreshold` 两条在此做
+ * 引擎运行时切换（`engine/mindmap.applyPerformanceMode`）——性能模式改为**常开 +
+ * 常量阈值**后设置面板不再有滑块，运行时切换没有触发源，该分支随之删除
+ * （`applyPerformanceMode` 本身保留：`verify:visual` 的 perf 探针仍在用）。
  *
  * 其余两个键**必须重建**（引擎侧只有创建期通道，2026-09-17 审计结论见 K62）：
  * - `enableDrag`：节点拖拽由引擎 Drag 插件承担，而该插件在本插件创建期按此开关
@@ -140,8 +140,6 @@ const IN_PLACE_REFRESH_KEYS = new Set([
 	'defaultTheme',
 	'defaultLayout',
 	'defaultLineStyle',
-	'performanceMode',
-	'performanceThreshold',
 ]);
 
 /** 视图状态里 mdBackMode 的白名单取值（非法/缺失回退 source） */
@@ -231,14 +229,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	private readonly resizeThrottler = createThrottler(RESIZE_THROTTLE_MS);
 
 	/**
-	 * 内联内容构建选项（**视图实例级一次**，2026-10-02）：内容只依赖视图与设置，
-	 * 与 node/doc/style 无关——此前每个节点内容重建都新建对象 + 4 个闭包
+	 * 内联内容构建选项（**视图实例级一次**，2026-10-02）：内容只依赖视图，与
+	 * node/doc/style 无关——此前每个节点内容重建都新建对象 + 4 个闭包
 	 * （5000 节点打开 ≈ 2 万临时闭包，恰在打开路径上）。箭头闭包捕获实例 this
-	 * （属性读取延迟到调用），无字段初始化顺序问题；唯一与设置相关且会话中可变
-	 * 的 `selfDrawPlain` 由 `createNodeContent` **每次构建时就地覆盖**（见该处）。
+	 * （属性读取延迟到调用），无字段初始化顺序问题。
+	 *
+	 * 2026-10-09 减法：原 `selfDrawPlain` 项（设置 `selfDrawPlainNodes` 的会话中
+	 * 可变项，需每次构建就地覆盖）随该设置一并移除——纯文本节点**常开**接管。
 	 */
 	private readonly inlineContentOptions: InlineContentOptions = {
-		selfDrawPlain: false,
 		isResolvedLink: (linkpath) => isResolvedWikiLinkpath(this, linkpath),
 		renderMath: (_doc, tex, holder, display) =>
 			renderMathWithMathJax(tex, holder, display, (settledHolder) =>
@@ -526,8 +525,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				lineStyle: this.resolveLineStyle(),
 				themePref: this.plugin.settings.defaultTheme,
 				enableDrag: this.plugin.settings.enableDrag,
-				performanceMode: this.plugin.settings.performanceMode,
-				performanceThreshold: this.plugin.settings.performanceThreshold,
+				// 性能模式与阈值不再由设置传入（2026-10-09 减法）：引擎缺省
+				// 即「开启 + PERFORMANCE_NODE_THRESHOLD」，无需在此复述
 			}),
 			viewState: this.plugin.viewState,
 			openHyperlink: (link) => this.openHyperlink(link),
@@ -542,10 +541,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// 其中 isResolvedLink 注入未解析链接弱化、renderMath 走官方
 				// loadMathJax 通道并携带定稿回调——批次执行时经 findNodeByDom
 				// 解析真实节点再重排，构建期闭包可能持有预测量代理，见 K88）。
-				// `selfDrawPlain` 是唯一与设置相关且会话中可变的项：就地覆盖
-				// （构建为同步路径，无并发窗口）
-				this.inlineContentOptions.selfDrawPlain =
-					this.plugin.settings.selfDrawPlainNodes;
+				// 选项**不含任何设置项**（接管判据只看节点数据，见
+				// node-inline-content.resolveSelfDrawSource），故无需就地覆盖。
 				return buildInlineNodeContent(
 					node,
 					doc,
@@ -600,7 +597,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// 自绘（富）节点的双击编辑兜底（引擎编辑框对自绘节点静默 no-op）
 				setupNodeTextEditFallback(this);
 				setupImageResize(this);
-				setupDragTargetAssist(this);
 				// 拖左右边框改宽结束 → 重建自绘内容（节点高度方能跟随新宽度）
 				setupNodeWidthRefresh(this);
 			},
@@ -1018,16 +1014,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			// 主题偏好（默认/强制亮/强制暗）变更 → 引擎原地换 themeConfig
 			this.applyTheme();
 		}
-		if (
-			changedKeys.has('performanceMode') ||
-			changedKeys.has('performanceThreshold')
-		) {
-			// 性能模式开关/阈值变更 → 引擎运行时切换虚拟渲染（不重建实例）
-			this.engine.applyPerformance(
-				this.plugin.settings.performanceMode,
-				this.plugin.settings.performanceThreshold,
-			);
-		}
 	}
 
 	private applyTheme(): void {
@@ -1150,12 +1136,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	updateReferencesOnRename(file: TFile, oldPath: string): void {
-		// 对齐官方设置「自动更新内部链接」（默认开启）：关闭后重命名不再改写引用
-		// ——引用会变成未解析链接，与 Obsidian 关掉该设置后其它笔记的表现一致；
-		// 但官方关掉后是**逐个提示**是否更新（Settings.md：be prompted to update
-		// links after renaming），静默跳过等于用户无从知晓，故在此告知。
-		if (!this.plugin.settings.autoUpdateLinks) {
-			this.notifyReferencesKept(file, oldPath, 'common.linksNotUpdatedOnRename');
+		// 引用更新**跟随官方设置**（设置 → 文件与链接 → 「自动更新内部链接」），
+		// 本插件不再有同名开关（2026-10-09 减法：与官方设置并排的第二份判定已删）。
+		//
+		// 官方自己就会改写链接，这里为什么还要自己更新一遍（**不是重复实现**）：
+		// 官方核心改的是**磁盘上的文件**，而本视图持有内存树快照（`mdRaw` / `text`），
+		// 下一次自动保存会把旧链接**写回去**、覆盖核心的改写。内存树必须与核心同步
+		// 更新——两侧产出同一枚新链接，因此收敛；保存管线的外部改动检测是第二道
+		// 保险（万一两侧不一致，宁可跳过本轮保存，也不覆盖核心的改写）。
+		if (!updatesInternalLinksOnRename(this.app)) {
+			this.warnReferencesKept(file, oldPath, 'rename');
 			return;
 		}
 		if (this.engine.updateReferencesOnRename(file, oldPath)) {
@@ -1164,9 +1154,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	updateReferencesOnDelete(file: TFile): void {
-		// 同上：关闭后既不改写链接、也不清理附件引用与内嵌图片
-		if (!this.plugin.settings.autoUpdateLinks) {
-			this.notifyReferencesKept(file, file.path, 'common.linksNotUpdatedOnDelete');
+		// 同 rename：官方设置关闭后既不改写链接、也不清理附件引用与内嵌图片
+		if (!updatesInternalLinksOnRename(this.app)) {
+			this.warnReferencesKept(file, file.path, 'delete');
 			return;
 		}
 		if (this.engine.removeReferencesOnDelete(file)) {
@@ -1175,18 +1165,28 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
-	 * 「引用保持不变」的告知（仅在**本图确有可能的引用**时提示——无关文件的
-	 * 重命名/删除不该弹提示；判据与引用更新的短路预检同源）。
+	 * 官方「自动更新内部链接」关闭时的**内部痕迹**（控制台告警）。
+	 *
+	 * 为什么**不再弹 Notice**：官方在该设置关闭后会自己弹「是否更新链接」的确认
+	 * （Settings.md：be prompted to update links after renaming）——同一事件上再弹
+	 * 一条本插件提示即**二次提示**（K 规范：失败已由被调方提示过的，调用方不得
+	 * 二次提示）。留痕仍必要：静默跳过会让「引用为何没更新」无迹可查。
+	 * 只在**本图确有可能的引用**时告警（预检与引用更新的短路判定同源），
+	 * 避免无关文件的重命名/删除刷屏。
 	 */
-	private notifyReferencesKept(
+	private warnReferencesKept(
 		file: TFile,
 		oldPath: string,
-		key: TranslationKey,
+		action: 'rename' | 'delete',
 	): void {
 		if (!this.engine.hasReferencesFor(file, oldPath)) {
 			return;
 		}
-		new Notice(tf(this.lang, key, { name: file.name }));
+		console.warn(
+			'[mindmap-studio] 官方「自动更新内部链接」已关闭：本图对 %s 的引用保持不变（%s）',
+			file.path,
+			action,
+		);
 	}
 
 	override async onClose(): Promise<void> {
@@ -1199,10 +1199,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.resizeThrottler.cancel();
 		this.titleRenamer.cancel();
 		cancelStatusBarUpdate(this);
-		// 交互会话收尾（拖拽换父 / 图片调宽）：会话期间的临时 window 监听
+		// 交互会话收尾（图片调宽）：会话期间的临时 window 监听
 		// 不经事件绑定器记录，中途关闭视图收不到 mouseup，须显式清理。
 		// 必须在 savePipeline.save() 之前——调宽会话收尾会调度一次保存。
-		teardownDragTargetAssist(this);
 		teardownImageResize(this);
 		// 挂起装配信号：关闭后到达的 onLoadFile 等待下一次 onOpen（原轮询语义）
 		this.whenReady = new Promise(() => {});

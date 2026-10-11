@@ -15,9 +15,10 @@
  *
  * ## 职责边界
  * - 只做「节点 data → HTML 元素」；**是否接管**由引擎钩子按返回值决定：
- *   返回 null 的节点走引擎默认 SVG 文本（纯文本节点零成本、可双击编辑）。
- *   接管条件 = 无图 + 原文非空且未超长 + **有链接段或轻标记段**（`hasRichSegments`）
- *   ——轻标记要求节点内混排字重/字形，单串 SVG 文本表达不了，故与链接同路；
+ *   返回 null 的节点走引擎默认 SVG 文本。
+ *   接管条件 = 无图 + **段序列非空**（链接 / 轻标记 / 代码 / 数学 / 纯文本）或超长
+ *   ——2026-10-09 起**纯文本节点也常开接管**（原设置 `selfDrawPlainNodes` 已移除），
+ *   理由与代价见 `resolveSelfDrawSource` 的判据①；
  * - 渲染源：未编辑用 `mdRaw`（含链接语法），**已编辑用 `data.text`**（mdRaw 是
  *   解析期快照，编辑后过期；判据与回写侧 rawOk 同源：text === mdDerivedText）；
  * - 渲染**只读**节点数据：不写回、不改 `data.text`。轻标记（`**粗**` 等）与两类
@@ -296,19 +297,6 @@ const MARKUP_TAGS: Record<InlineTextStyle, string> = {
  */
 export interface InlineContentOptions {
 	/**
-	 * 所有**含文字的纯文本节点**也接管（缺省 false = 保持原型行为）。
-	 *
-	 * 生产经设置 `settings.selfDrawPlainNodes` 注入（默认开）。
-	 * 理由（实测）：引擎对**不自绘**节点做逐字符文本测宽
-	 *（`nodeCreateContents.createTextNode` 的逐字符循环 + 每字符一次强制
-	 * `getBBox`，实测 ~0.13ms/字符）——这是**打开大图的成本绝对主体**；
-	 * 自绘接管后引擎在 `createNodeData` 提前 return，测量全部跳过
-	 * （5000 节点实测：引擎文本 8.6s → 全自绘 1.36s，6.3 倍）。
-	 * 代价：该节点失去引擎内联编辑框（双击走插件弹窗，见 `view-node-actions`）。
-	 * 含图 / 空文本节点不在此列（图片走引擎图片通道、空文本无内容可绘）。
-	 */
-	selfDrawPlain?: boolean;
-	/**
 	 * 库内 linkpath 是否**已解析**到文件（缺省视为已解析）。
 	 *
 	 * 未解析 → 锚点带 `is-unresolved` 类 + 弱化配色：对齐 Obsidian 阅读视图
@@ -503,12 +491,6 @@ const MARKUP_RE = new RegExp(
 const MAX_MARKUP_DEPTH = 2;
 
 /**
- * 数学的**接管判据**：行内 `$…$` 与单行块级 `$$…$$` 都命中。直接由
- * `MATH_SOURCE` 构造，与 MARKUP_RE 的数学分支**同一来源**（分成两处写会漂移）。
- */
-const INLINE_MATH_RE = new RegExp(MATH_SOURCE);
-
-/**
  * 轻标记/隐藏语法的**单遍扫描**（顺序即优先级，见 MARKUP_RE）。
  *
  * 覆盖 Obsidian 帮助「Basic formatting syntax」的行内格式：
@@ -645,16 +627,6 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 }
 
 /**
- * 需要**消费反斜杠**的转义序列（字符集见 ESCAPABLE_CLASS）——接管判据之一：
- * 引擎默认路径会把反斜杠一起显示（`\*a\*` 原样），只有自绘能消费它。
- * 由 ESCAPABLE_CLASS 拼出，与该分支的匹配集**必须是同一组**。
- */
-const ESCAPED_MARKUP_RE = new RegExp('\\\\' + ESCAPABLE_CLASS);
-
-/** 行内注释（`%%…%%`，可跨行；未闭合不算） */
-const INLINE_COMMENT_RE = /%%[\s\S]*?%%/;
-
-/**
  * prose 的连续空格归一（HTML 折叠空白语义，原文由 mdRaw 保真）。
  *
  * **只作用于散文文本**：代码块 / 数学段的空白是内容（缩进、对齐），必须原文
@@ -744,28 +716,16 @@ function stripIndentedCodePrefix(line: string): string {
 }
 
 /**
- * 段序列缓存条目：段序列 + **接管判定**的惰性结果。
- *
- * 为什么把判定一并缓存：`resolveSelfDrawSource`（引擎自绘钩子每次节点内容
- * 重建都会走）需要「该节点是否被自绘接管」的布尔，而 `hasRichSegments` /
- * `needsHiddenSyntax` 是**只依赖原文**的纯函数——不缓存就等于每次重建都重扫
- * 3 个正则（转义 / 行内数学 / 注释）并遍历一遍段数组。
- */
-interface SegmentCacheEntry {
-	segments: readonly InlineSegment[];
-	/** 有链接段或轻标记段（可点 / 混合字形，SVG 单串文本表达不了） */
-	rich: boolean;
-	/** 含渲染期必须消费的隐藏语法（`\*` 转义 / `%%注释%%` / 行内数学 `$…$`） */
-	hidden: boolean;
-}
-
-/**
  * 段序列缓存（**按原文内容寻址**，与节点/引擎实例无关）。
  *
  * 引擎在节点**内容重建**时会为每个自绘节点调用构建器（编辑提交 / 拖宽收尾 /
  * 性能模式强制加载等；纯拖动与缩放**不**重建内容——K58 的 perf 探针实测空
- * render 构建器调用 0 次），而「原文 → 段序列 + 接管判定」是纯函数：同一行
- * 反复 tokenize + 轻标记切分纯属浪费。
+ * render 构建器调用 0 次），而「原文 → 段序列」是纯函数：同一行反复 tokenize
+ * + 轻标记切分纯属浪费。
+ *
+ * 缓存里**只有段序列**（2026-10-09 减法）：接管判定曾附带缓存 `rich` / `hidden`
+ * 两个布尔（依赖 `hasRichSegments` / `needsHiddenSyntax` 两个额外正则），现已收敛
+ * 为「段序列非空」——判据不再需要额外扫描，两个布尔与那两个函数一并删除。
  * 内容寻址天然避免跨导图实例串味（同一 uid 在不同文件里也不会命中彼此的段）。
  *
  * 淘汰策略是 **LRU**（命中即提升；超限淘汰最旧的一条，而非整表清空）：
@@ -775,7 +735,7 @@ interface SegmentCacheEntry {
  * 正在渲染的热点节点一起刷掉——此后每次渲染全部重 tokenize（缓存命中率归零）。
  * 上限用于防御极端输入（大文件里大量互不相同的长行）导致无界增长。
  */
-const segmentCache = new Map<string, SegmentCacheEntry>();
+const segmentCache = new Map<string, readonly InlineSegment[]>();
 /** 条目数上限（防无界增长；与字符预算双重约束） */
 const SEGMENT_CACHE_MAX = 512;
 /**
@@ -794,10 +754,10 @@ const SEGMENT_CACHE_SINGLE_MAX_CHARS = 32_000;
 let segmentCacheChars = 0;
 
 /**
- * 取（或构建）该原文的缓存条目：段序列与接管判定**一次算出、共享同一缓存**。
- * `buildInlineSegments`（段序列）与 `resolveSelfDrawSource`（接管判定）都经此入口。
+ * 取（或构建）该原文的段序列（带 LRU + 双维度预算）。
+ * `buildInlineSegments`（渲染）与 `resolveSelfDrawSource`（接管判定）都经此入口。
  */
-function segmentEntryOf(raw: string): SegmentCacheEntry {
+function segmentEntryOf(raw: string): readonly InlineSegment[] {
 	const cached = segmentCache.get(raw);
 	if (cached) {
 		// LRU 提升：删后重插 → 回到队尾（Map 迭代顺序 = 插入顺序）
@@ -806,11 +766,6 @@ function segmentEntryOf(raw: string): SegmentCacheEntry {
 		return cached;
 	}
 	const segments = buildInlineSegmentsUncached(raw);
-	const entry: SegmentCacheEntry = {
-		segments,
-		rich: hasRichSegments(segments),
-		hidden: needsHiddenSyntax(raw, segments),
-	};
 	// 超长单条不入缓存（预算守卫：一条就会挤掉大量短行热点，且复用场景罕见）
 	if (raw.length <= SEGMENT_CACHE_SINGLE_MAX_CHARS) {
 		// 淘汰最旧的一条（而非整表清空）：热点条目已由上方命中路径持续刷新到队尾，
@@ -827,10 +782,10 @@ function segmentEntryOf(raw: string): SegmentCacheEntry {
 			segmentCache.delete(oldest);
 			segmentCacheChars -= oldest.length;
 		}
-		segmentCache.set(raw, entry);
+		segmentCache.set(raw, segments);
 		segmentCacheChars += raw.length;
 	}
-	return entry;
+	return segments;
 }
 
 /**
@@ -857,7 +812,7 @@ export const MAX_INLINE_CONTENT_CHARS = 2000;
  * 返回值**只读**（缓存共享同一数组）：调用方不得就地修改。
  */
 export function buildInlineSegments(raw: string): readonly InlineSegment[] {
-	return segmentEntryOf(raw).segments;
+	return segmentEntryOf(raw);
 }
 
 /**
@@ -1036,7 +991,7 @@ export function buildInlineNodeContent(
 	lang: Language = 'zh',
 	options: InlineContentOptions = {},
 ): HTMLElement | null {
-	const source = resolveSelfDrawSource(node, options.selfDrawPlain === true);
+	const source = resolveSelfDrawSource(node);
 	if (!source) {
 		return null;
 	}
@@ -1071,10 +1026,7 @@ interface SelfDrawSource {
  * （引擎侧「宽度手柄只在能生效的节点上显示」的门禁）必须同一判据——两处各写
  * 一份判定迟早漂移（手柄留在不接管的节点上＝死手柄，用户实测 2026-09-16）。
  */
-function resolveSelfDrawSource(
-	node: MindMapNode,
-	selfDrawPlain = false,
-): SelfDrawSource | null {
+function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null {
 	const data = node.getData?.() as Record<string, unknown> | null | undefined;
 	if (!data) {
 		return null;
@@ -1094,68 +1046,34 @@ function resolveSelfDrawSource(
 	}
 	// 注意：**没有**「超长就不接管」这条——超长必须接管（见 MAX_INLINE_CONTENT_CHARS：
 	// 引擎逐字符换行是二次复杂度，长行交给它正是白屏/卡死的成因）
-	const entry = segmentEntryOf(raw);
+	const segments = segmentEntryOf(raw);
 	const overlong = raw.length > MAX_INLINE_CONTENT_CHARS;
 	// 接管判据（满足其一）：
-	// ① 有链接/轻标记段（可点 / 混合字形，SVG 单串文本表达不了）；
-	// ② 文本超过展示上限（**绝不能**交给引擎：其换行是逐字符二次复杂度，见
-	//    MAX_INLINE_CONTENT_CHARS 的实测）；
-	// ③ 有**隐藏/异步语法**需消费（`\*` 转义、`%%注释%%`、数学 `$…$` / `$$…$$`）——
-	//    它们的正确显示同样只有自绘能做到（数学要挂 MathJax 产物）。注释仅在
-	//    **去掉后仍有可见内容**时才算（否则会渲染出空节点，比原样显示注释更糟，
-	//    故让引擎按字面显示）；数学以字面占位、异步替换，无该风险。
-	// ④ `selfDrawPlain` 开启时**任意含文字的纯文本节点**也接管：
-	//    引擎对不自绘节点做逐字符文本测宽（~0.13ms/字符），是打开大图的成本
-	//    绝对主体；接管后引擎在 createNodeData 提前 return、测量全跳过
-	//    （5000 节点实测 8.6s → 1.36s）。代价见 InlineContentOptions.selfDrawPlain。
-	//    边界：**渲染后必须仍有可见内容**（段序列非空）——纯空白 / 整行只有
-	//    注释的节点不接管（否则渲染出空节点，比让引擎按字面显示更糟）。
-	// 都不满足的纯短文本走引擎 SVG 文本（测宽廉价、可双击**原位**编辑）。
-	// 判定结果（rich/hidden）与段序列同源、随条目缓存——纯函数不重复扫描。
-	const plain = selfDrawPlain && entry.segments.length > 0;
-	if (!overlong && !entry.rich && !entry.hidden && !plain) {
+	// ① **段序列非空**——链接 / 轻标记 / 代码块 / 数学 / **纯文本**全部接管。
+	//    为什么纯文本也接管（2026-10-09 起常开；原设置 `selfDrawPlainNodes` 已移除）：
+	//    引擎对**不自绘**节点做逐字符文本测宽（`nodeCreateContents.createTextNode`
+	//    的逐字符循环 + 每字符一次强制 `getBBox`，实测 ~0.13ms/字符），这是**打开
+	//    大图的成本绝对主体**；自绘接管后引擎在 `createNodeData` 提前 return，
+	//    测量全部跳过（5000 节点实测：引擎文本 8.6s → 全自绘 1.36s，6.3 倍）。
+	//    代价：这类节点失去引擎内联编辑框（引擎对自绘节点静默 no-op），编辑入口
+	//    统一走 `features/view-node-actions`（内联编辑器 / 弹窗）。
+	// ② **超长**（`overlong`，绝不能交给引擎）：其换行是逐字符二次复杂度，见
+	//    MAX_INLINE_CONTENT_CHARS 的实测。
+	// 两者都不满足 = **渲染后没有任何可见内容**（空文本 / 纯空白 / 整行只有
+	// `%%注释%%`——注释段被整段吞掉、段序列为空）⇒ 交给引擎按字面显示，
+	// 避免渲染出一个空节点。
+	const takeOver = overlong || segments.length > 0;
+	if (!takeOver) {
 		return null;
 	}
-	return { raw, segments: entry.segments, overlong };
+	return { raw, segments, overlong };
 }
 
 // 注：曾导出 `shouldSelfDrawNode`（静态判定「将被自绘接管」）供
-// 宽度手柄门禁消费；`selfDrawPlain` 引入后判定依赖**调用期选项**，且门禁改用
-// 更直接的运行时事实（`engine/mindmap.isCustomNodeContent` = 节点是否真的有
-// 自绘内容），该静态判定不再有生产消费方，已删除。自绘/不接管的判据单一来源
-// 仍是 `resolveSelfDrawSource`（本文件内部）。
-
-/**
- * 是否存在**渲染期必须消费**的隐藏语法（转义 / 注释）。
- *
- * 转义：`\*a\*` 在 Obsidian 里显示 `*a*`——只有自绘能消费反斜杠（引擎会把
- * 反斜杠一起显示，或更糟：把 `*` 当字面量而丢失用户意图）。
- * 注释：`%%…%%` 在阅读视图里整段隐藏；但**去掉后若无任何可见内容**则不接管
- * （见 buildInlineNodeContent 的判据③），避免渲染出一个空节点。
- */
-function needsHiddenSyntax(
-	raw: string,
-	segments: readonly InlineSegment[],
-): boolean {
-	if (ESCAPED_MARKUP_RE.test(raw)) {
-		return true;
-	}
-	// 数学（行内 `$…$` / 单行块级 `$$…$$`）：只有自绘能挂 MathJax 产物
-	//（引擎 SVG 文本恒为字面 `$…$`）。接管后仍以字面占位（见 buildMathElement），
-	// 渲染失败也安全回落。
-	if (INLINE_MATH_RE.test(raw)) {
-		return true;
-	}
-	// 代码块（fence 段）：只有自绘能渲染为块级盒子 + 复制按钮（引擎 SVG 文本
-	// 恒为字面围栏）。纯同步构建零依赖，接管成本仅一次 DOM 装配。
-	if (segments.some((segment) => segment.style === 'code' && segment.block === true)) {
-		return true;
-	}
-	if (!INLINE_COMMENT_RE.test(raw)) {
-		return false;
-	}
-	return segments.some((segment) => segment.text.trim() !== '');
-}
+// 宽度手柄门禁消费；门禁已改用更直接的运行时事实
+// （`engine/mindmap.isCustomNodeContent` = 节点是否真的有自绘内容），该静态判定
+// 不再有生产消费方，已删除。自绘/不接管的判据单一来源仍是
+// `resolveSelfDrawSource`（本文件内部，判定输入只剩节点数据本身）。
 
 /**
  * 展示截断：按段累加到上限即停（超出部分不渲染）。
@@ -1193,22 +1111,6 @@ function clampSegments(
 	// 尾部省略标记：显示为「…」，不参与回写（写回只读 mdRaw / data.text）
 	out.push({ kind: 'text', text: '…' });
 	return out;
-}
-
-/**
- * 接管判定的内容条件：**有链接段**（可点）或**有轻标记段**（混合字形）。
- *
- * 轻标记必须走同一条接管路径：`**粗**` / `` `码` `` 要求节点内混排字重与字形，
- * 而引擎默认正文是**单串 SVG `<text>`**（一个 font-weight 用到底），做不到
- * ——只有自绘 HTML 能表达。代价与含链接节点同款：这类节点不再有引擎编辑框，
- * 编辑入口走插件弹窗（`view-node-actions.editNodeText` → `ui/modal-text`）。
- * 2026-09-15 修订：此前只按「含链接」接管，导致 `**粗**` 在无链接节点里
- * 原样显示（用户实测发现）。
- */
-function hasRichSegments(segments: readonly InlineSegment[]): boolean {
-	return segments.some(
-		(segment) => segment.kind === 'link' || segment.style !== undefined,
-	);
 }
 
 /**

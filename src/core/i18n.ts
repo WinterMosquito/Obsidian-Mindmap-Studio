@@ -115,11 +115,6 @@ const ZH = {
 	'common.systemOpenFailed': '无法用系统默认应用打开该文件',
 	'common.duplicateFailed': '复制节点失败：',
 	'common.refreshFailed': '应用设置后重绘导图失败，已保留当前视图：',
-	// 官方「自动更新内部链接」关闭时的告知：链接仍指向旧位置（成为未解析链接）
-	'common.linksNotUpdatedOnRename':
-		'「{name}」已重命名：本图有指向它的引用未更新（已关闭「自动更新内部链接」，引用现为未解析链接）',
-	'common.linksNotUpdatedOnDelete':
-		'「{name}」已删除：本图有指向它的引用未清理（已关闭「自动更新内部链接」，引用现为未解析链接）',
 	// 官方 Canvas：双击画布空白新建卡片 / 空白右键「新建节点」
 	'menu.newNode': '新建节点',
 
@@ -183,23 +178,12 @@ const ZH = {
 	'settings.autoSaveDesc': '编辑思维导图时自动保存到笔记',
 	'settings.enableDrag': '启用节点拖拽',
 	'settings.enableDragDesc': '允许拖拽节点改变层级和顺序',
-	'settings.performanceMode': '性能模式',
-	'settings.performanceModeDesc':
-		'节点数超过阈值时只绘制视野内的节点，大图滚动更流畅',
-	'settings.performanceThreshold': '性能模式阈值',
-	'settings.performanceThresholdDesc': '节点数达到该数量时自动启用性能模式（仅性能模式开启时生效）',
 	'settings.exportScale': '导出图片倍率',
 	'settings.exportScaleDesc':
 		'导出 PNG 时的分辨率倍率（倍；越高越清晰，文件也越大）',
 	'settings.autoSplitMixedLinks': '自动拆分混排双链',
 	'settings.autoSplitMixedLinksDesc':
-		'被编辑的节点若含「双链 + 描述文字」，自动把文档/附件双链拆分为子节点（图片与外链不动）',
-	'settings.selfDrawPlainNodes': '文本节点快速渲染（打开大图显著加速）',
-	'settings.selfDrawPlainNodesDesc':
-		'所有含文字的节点改由插件渲染，打开大图速度可提升数倍。双击节点将打开编辑弹窗。仅对之后打开的文件生效',
-	'settings.autoUpdateLinks': '自动更新内部链接',
-	'settings.autoUpdateLinksDesc':
-		'重命名 / 删除库内文件时，自动更新导图节点里的链接与附件引用（对应官方设置「自动更新内部链接」）。关闭后：重命名不再改写链接（会变成未解析链接），删除也不再清理引用',
+		'默认关闭。开启后，被编辑的节点若含「双链 + 描述文字」，自动把文档/附件双链拆分为子节点（图片与外链不动）——这会改写文件结构；整篇批处理请用命令「拆分文档内全部混排双链」',
 	'settings.language': '语言',
 	'settings.languageDesc': '界面语言',
 
@@ -351,10 +335,6 @@ const EN: Record<TranslationKey, string> = {
 	'common.duplicateFailed': 'Failed to duplicate the node: ',
 	'common.refreshFailed':
 		'Failed to redraw the mind map after applying settings — the current view was kept: ',
-	'common.linksNotUpdatedOnRename':
-		'"{name}" was renamed: references in this map were not updated (Automatically update internal links is off — they are now unresolved)',
-	'common.linksNotUpdatedOnDelete':
-		'"{name}" was deleted: references in this map were not cleaned up (Automatically update internal links is off — they are now unresolved)',
 	// Official Canvas: double-click blank canvas / blank context menu to create a node
 	'menu.newNode': 'New node',
 
@@ -422,24 +402,12 @@ const EN: Record<TranslationKey, string> = {
 	'settings.enableDrag': 'Enable node dragging',
 	'settings.enableDragDesc':
 		'Allow dragging nodes to change hierarchy and order',
-	'settings.performanceMode': 'Performance mode',
-	'settings.performanceModeDesc':
-		'Draw only the nodes in view when the node count exceeds the threshold, which keeps large mind maps responsive',
-	'settings.performanceThreshold': 'Node count threshold',
-	'settings.performanceThresholdDesc':
-		'Enable performance mode when the node count reaches this value (only when performance mode is on)',
 	'settings.exportScale': 'Export image scale',
 	'settings.exportScaleDesc':
 		'Resolution scale for PNG export (higher is sharper and the file is larger)',
 	'settings.autoSplitMixedLinks': 'Auto-split mixed links',
 	'settings.autoSplitMixedLinksDesc':
-		'When an edited node mixes links with description text, split document/attachment links into child nodes (images and external URLs are left untouched)',
-	'settings.selfDrawPlainNodes': 'Fast text node rendering (much faster on large maps)',
-	'settings.selfDrawPlainNodesDesc':
-		'All text-bearing nodes are rendered by the plugin — opening large maps can be several times faster. Double-click opens an edit dialog. Applies to maps opened afterwards',
-	'settings.autoUpdateLinks': 'Automatically update internal links',
-	'settings.autoUpdateLinksDesc':
-		'When a vault file is renamed or deleted, update the links and attachment references on mind-map nodes (mirrors the official "Automatically update internal links" setting). Turn it off to leave links untouched: renaming no longer rewrites them (they become unresolved) and deleting no longer cleans up references',
+		'Off by default. When enabled, an edited node that mixes links with description text has its document/attachment links split into child nodes (images and external URLs are left untouched) — this rewrites the file structure; for a whole file use the command "Split all mixed links in document"',
 	'settings.language': 'Language',
 	'settings.languageDesc': 'UI language',
 

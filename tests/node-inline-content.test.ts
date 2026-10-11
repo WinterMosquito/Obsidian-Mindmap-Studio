@@ -575,71 +575,43 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect(buildInlineNodeContent(node, asDocument(new FakeDocument()))).toBeNull();
 	});
 
-	it('无行内链接（纯文本）：不接管（保持引擎 SVG 文本，可双击编辑）', () => {
-		const node = fakeNode({ text: '纯文本', mdRaw: '纯文本' });
-		expect(buildInlineNodeContent(node, asDocument(new FakeDocument()))).toBeNull();
-	});
-
-	it('selfDrawPlain 开启（文本节点快速渲染）：纯文本也接管', () => {
-		// 2026-09-25：跳过引擎逐字符测宽（打开大图的成本主体），设置项默认开
+	it('无行内链接（纯文本）：**接管**（文本节点快速渲染常开，2026-10-09 起）', () => {
+		// 引擎对不自绘节点做逐字符测宽（打开大图的成本主体），故纯文本恒自绘；
+		// 原先这是一项设置（`selfDrawPlainNodes`），现常开（见 settings.ts 减法说明）。
+		// 代价：这类节点没有引擎内联编辑框，双击走插件内联编辑器 / 弹窗。
 		const node = fakeNode({
 			text: '纯文本',
 			mdRaw: '纯文本',
 			mdDerivedText: '纯文本',
 		});
-		const el = buildInlineNodeContent(
-			node,
-			asDocument(new FakeDocument()),
-			{},
-			'zh',
-			{ selfDrawPlain: true },
-		);
+		const el = buildInlineNodeContent(node, asDocument(new FakeDocument()));
 		expect(el).not.toBeNull();
 		expect((childrenOf(el!)[0] as FakeTextNode).text).toBe('纯文本');
 	});
 
-	it('selfDrawPlain 开启：空文本 / 含图 / 隐藏后无可见内容仍不接管', () => {
+	it('渲染后无可见内容的行仍不接管（空文本 / 含图 / 整行只有注释）', () => {
 		const doc = () => asDocument(new FakeDocument());
 		// 空文本（URL icon-only / 图片独占）：无内容可绘，图标由引擎渲染
-		expect(
-			buildInlineNodeContent(
-				fakeNode({ text: '', mdRaw: '' }),
-				doc(),
-				{},
-				'zh',
-				{ selfDrawPlain: true },
-			),
-		).toBeNull();
+		expect(buildInlineNodeContent(fakeNode({ text: '', mdRaw: '' }), doc())).toBeNull();
 		// 含图：图片走引擎图片通道
 		expect(
 			buildInlineNodeContent(
 				fakeNode({ image: 'a.png', mdRaw: '见图 ![[a.png]]' }),
 				doc(),
-				{},
-				'zh',
-				{ selfDrawPlain: true },
 			),
 		).toBeNull();
-		// 整行只有注释：接管会渲染空节点（比让引擎按字面显示更糟）
+		// 整行只有注释：注释段被整段吞掉（段序列为空），接管会渲染空节点
+		//（比让引擎按字面显示更糟）
 		expect(
 			buildInlineNodeContent(
 				fakeNode({ text: '', mdRaw: '%%只有注释%%', mdDerivedText: '' }),
 				doc(),
-				{},
-				'zh',
-				{ selfDrawPlain: true },
 			),
 		).toBeNull();
-	});
-
-	it('selfDrawPlain 关闭 / 未传（缺省）：纯文本仍走引擎 SVG 文本', () => {
-		const node = fakeNode({ text: '纯文本', mdRaw: '纯文本' });
+		// 纯空白同理（段序列为空）
 		expect(
-			buildInlineNodeContent(node, asDocument(new FakeDocument()), {}, 'zh', {
-				selfDrawPlain: false,
-			}),
+			buildInlineNodeContent(fakeNode({ text: ' ', mdRaw: ' ' }), doc()),
 		).toBeNull();
-		expect(buildInlineNodeContent(node, asDocument(new FakeDocument()))).toBeNull();
 	});
 
 	it('仅轻标记（无链接）：**接管**——混合字形单串 SVG 文本表达不了', () => {
@@ -656,13 +628,22 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect((childrenOf(el)[2] as FakeElement).tagName).toBe('code');
 	});
 
-	it('未闭合标记：按字面保留 → 无样式段即不接管（显示与引擎一致）', () => {
+	it('未闭合标记：按字面保留（接管后无样式，显示与引擎一致）', () => {
+		// 2026-10-09：接管判据不再看「是否有样式段」（纯文本恒接管），但渲染结果
+		// 仍须与引擎一致——`**` 未闭合 ⇒ 不产生 `<strong>`，原样字符显示
 		const node = fakeNode({
 			text: 'a **b',
 			mdRaw: 'a **b',
 			mdDerivedText: 'a **b',
 		});
-		expect(buildInlineNodeContent(node, asDocument(new FakeDocument()))).toBeNull();
+		const el = buildInlineNodeContent(node, asDocument(new FakeDocument()))!;
+		expect(el).not.toBeNull();
+		expect(childrenOf(el).map((child) => (child as FakeTextNode).text).join('')).toBe(
+			'a **b',
+		);
+		expect(
+			childrenOf(el).some((child) => (child as FakeElement).tagName === 'strong'),
+		).toBe(false);
 	});
 
 	it('转义序列：**必须接管**（引擎会把反斜杠一起显示）', () => {
@@ -936,8 +917,9 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect(attrsOf(button).get('aria-label')).toBe('Copy code');
 	});
 
-	it('纯代码块节点（selfDrawPlain 未开）：仍因「代码块必须自绘」而接管', () => {
-		// needsHiddenSyntax 的 fence 判定：无链接/无轻标记的纯代码节点与数学同级
+	it('纯代码块节点：因「代码块必须自绘」而接管（围栏段非空即接管）', () => {
+		// 判据收敛后（2026-10-09）不再走 needsHiddenSyntax 的 fence 分支：
+		// 围栏段本身就在段序列里，与数学/纯文本同级
 		const node = fakeNode({
 			text: '```\nx = 1\n```',
 			mdRaw: '```\nx = 1\n```',
@@ -959,9 +941,17 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect((childrenOf(el)[0] as FakeElement).textContent).toBe('$x$');
 	});
 
-	it('只有图片语法（无链接）：不接管', () => {
+	it('只有图片语法且**无 image 字段**（解析侧不会出现的形态）：占位为剥壳显示名', () => {
+		// 生产解析侧对行内首个可渲染图片一律写 `data.image`（md-outline.ts），
+		// 而含图节点在上方判据被拦下、永不接管（见「含图节点：不接管」例）。
+		// 本用例锁的是该判据之外唯一可达的退化形态：图片 token 落到段序列时
+		// 占位为显示名——**不**渲染 `<img>`（图片只走引擎图片通道）。
 		const node = fakeNode({ mdRaw: '![[a.png]]' });
-		expect(buildInlineNodeContent(node, asDocument(new FakeDocument()))).toBeNull();
+		const el = buildInlineNodeContent(node, asDocument(new FakeDocument()))!;
+		expect(el).not.toBeNull();
+		expect(childrenOf(el).map((child) => (child as FakeTextNode).text).join('')).toBe(
+			'a.png',
+		);
 	});
 
 	it('data 为空对象 / mdRaw 与 text 均空：不接管', () => {
@@ -1259,15 +1249,18 @@ describe('渲染期缓存与超长回落（性能收口）', () => {
 	});
 
 	it('超长节点**接管并截断展示**（绝不回落引擎：其换行是逐字符二次复杂度）', () => {
-		// 纯文本且未超限：不接管（引擎 SVG 文本，短行廉价、可双击原位编辑）
+		// 恰在上限：接管（纯文本恒自绘）但**不**截断（`overlong` 是严格大于）
 		const atLimit = 'x'.repeat(MAX_INLINE_CONTENT_CHARS);
+		const atLimitEl = buildInlineNodeContent(
+			fakeNode({ mdRaw: atLimit, text: atLimit, mdDerivedText: atLimit }),
+			asDocument(new FakeDocument()),
+		)!;
+		expect(atLimitEl, '恰在上限：接管').not.toBeNull();
 		expect(
-			buildInlineNodeContent(
-				fakeNode({ mdRaw: atLimit, text: atLimit, mdDerivedText: atLimit }),
-				asDocument(new FakeDocument()),
-			),
-			'恰在上限：仍不接管（纯文本节点保持引擎路径）',
-		).toBeNull();
+			attrsOf(atLimitEl).get('data-truncated'),
+			'恰在上限：不截断（未截断便不挂该属性）',
+		).toBeUndefined();
+		expect((childrenOf(atLimitEl)[0] as FakeTextNode).text).toBe(atLimit);
 
 		// 超上限：**接管**（长行进 HTML，绝不交给引擎的逐字符换行）+ 截断展示
 		const long = 'x'.repeat(MAX_INLINE_CONTENT_CHARS + 500);

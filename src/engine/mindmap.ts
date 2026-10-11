@@ -3,7 +3,6 @@
  * 主题配置见 mindmap-theme.ts（本文件 re-export，调用方 import './mindmap' 不变）。
  */
 import {
-	AssociativeLine,
 	DoExport,
 	Drag,
 	KeyboardNavigation,
@@ -73,8 +72,14 @@ export interface CreateMindMapOptions {
 	themePref: string;
 	isDark: boolean;
 	enableDrag: boolean;
-	performanceMode: boolean;
-	performanceThreshold: number;
+	/**
+	 * 性能模式（虚拟渲染）**引擎级覆盖**（可选，2026-10-09 起生产不再传）：
+	 * 缺省 = 常开，阈值用 `PERFORMANCE_NODE_THRESHOLD`（见
+	 * `core/constants.shouldEnablePerformanceMode`）。保留此通道是给
+	 * `verify:visual` 的 perf 探针构造「阈值之上 / 之下」两种局面。
+	 */
+	performanceMode?: boolean;
+	performanceThreshold?: number;
 	/**
 	 * 打开分片渲染显式覆盖（可选）：不传时按 `RENDER_ASYNC_NODE_THRESHOLD`
 	 * 阈值判据（生产默认）；传布尔则强制开/关——bench 对照实验（同步 vs 分片）
@@ -317,8 +322,7 @@ function normalizeFontSize(value: unknown): string {
 
 /**
  * 创建思维导图实例并注册引擎插件。
- * 视图场景：选择、触控、关联线、键盘导航、导出、搜索全部启用；
- * 节点拖拽按设置启用。
+ * 视图场景：选择、触控、键盘导航、导出、搜索全部启用；节点拖拽按设置启用。
  */
 export function createMindMap(
 	el: HTMLElement,
@@ -447,7 +451,11 @@ export function createMindMap(
 
 	mindMap.addPlugin(Select);
 	mindMap.addPlugin(TouchEvent);
-	mindMap.addPlugin(AssociativeLine);
+	// 不注册 AssociativeLine（关联线，2026-10-09 减法）：引擎侧唯一的创建入口是
+	// 引擎自带右键菜单，而本项目从不配置 `opt.contextmenu`——节点右键走
+	// features/view-context-menu 的 Obsidian Menu，故注册了也**没有任何入口能创建**
+	// 关联线，属纯空转。若将来要开放该能力，须同时给出显式入口（工具栏/菜单 + i18n），
+	// 并注意关联线**不进 Markdown**（渲染层状态，不落文件）。
 	mindMap.addPlugin(KeyboardNavigation);
 	mindMap.addPlugin(DoExport);
 	mindMap.addPlugin(Search);
@@ -1050,6 +1058,14 @@ export function getActiveNode(mindMap: MindMap | null): MindMapNode | null {
  * `removeSelf()`）。唯一不随运行时切换生效的是节流窗口 `performanceConfig.time`
  * （`bindEvent` 创建时捕获，见 PERFORMANCE_CONFIG 注释）——它只影响视口变化后的
  * 重渲染节流，不影响正确性。
+ *
+ * @public 自 2026-10-09（K117）起**生产路径不再调用**：`performanceMode` /
+ * `performanceThreshold` 设置项已删（性能模式常开 + 常量阈值），运行时切换没有
+ * 触发源。保留它是给 `scripts/verify-visual.mjs` 的 perf-switch / render-eco 探针
+ * ——那两个探针把引擎侧「运行时切换」的语义（含开启方向要补一次渲染）钉成回归闸门，
+ * 一旦将来重新暴露开关，可直接复用。该脚本在**页内生成的模块字符串**里 import
+ * （静态分析看不见），故用 `@public` 显式声明为受支持的对外面（`check:dead-code`
+ * 的 knip 认这个标记）。
  *
  * @returns 是否已应用到引擎（引擎缺失/更新抛错时为 false）
  */
@@ -1855,145 +1871,6 @@ export function getDrawTransform(mindMap: MindMap | null): DrawTransform {
 	} catch {
 		return { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 };
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Drag 插件落点判定（features/drag-target.ts 专用，防腐收口）
-//
-// 引擎拖拽落点要求指针精确落在目标节点矩形内（checkIsOverlap 的闭区间判定），
-// 狭小节点/快速拖动时难以命中。drag-target 模块在拖拽期间计算「外扩邻近
-// 最近节点」，经 setDragOverlapTarget 外借给引擎作为落点——引擎自身每帧
-// checkOverlapNode 重置三态，外借不会被陈旧状态阻塞；松手后由引擎原生
-// MOVE_NODE_TO 完成挂接。仅拖拽中生效（见 drag-target.ts）。
-// ---------------------------------------------------------------------------
-
-/** 引擎 Drag 插件的落点判定状态（三态，内部形态经本接口收口） */
-export interface DragDropState {
-	/** 引擎本轮判定的「挂为子节点」目标（null = 未命中） */
-	overlapNode: MindMapNode | null;
-	/** 引擎本轮判定的「插到其后」目标 */
-	prevNode: MindMapNode | null;
-	/** 引擎本轮判定的「插到其前」目标 */
-	nextNode: MindMapNode | null;
-}
-
-/** 读取 Drag 插件实例的落点状态（插件未注册时返回 null） */
-export function getDragDropState(mindMap: MindMap): DragDropState | null {
-	const drag = (mindMap as unknown as { drag?: DragDropState }).drag;
-	return drag ?? null;
-}
-
-/** 外借落点：把邻近节点借给引擎作为「挂为子节点」目标（null 撤销外借） */
-export function setDragOverlapTarget(
-	mindMap: MindMap,
-	node: MindMapNode | null,
-): void {
-	const drag = (mindMap as unknown as { drag?: DragDropState }).drag;
-	if (drag) {
-		drag.overlapNode = node;
-	}
-}
-
-/**
- * 外借落点：把兄弟间隙锚点借给引擎作为「插到该节点之后」目标
- * （prevNode，null 撤销外借）。引擎松手走原生 INSERT_AFTER。
- */
-export function setDragPrevTarget(
-	mindMap: MindMap,
-	node: MindMapNode | null,
-): void {
-	const drag = (mindMap as unknown as { drag?: DragDropState }).drag;
-	if (drag) {
-		drag.prevNode = node;
-	}
-}
-
-/**
- * 就地读取节点布局字段（零分配）：`getNodeLayoutRect`（返回对象）与
- * `readNodeViewportCenter`（帧内零分配路径）**共用本字段表**——引擎字段的
- * 归一逻辑只此一处，两者不会漂移。
- */
-function readNodeLayoutFields(
-	node: MindMapNode,
-	out: { left: number; top: number; width: number; height: number },
-): void {
-	const n = node as unknown as {
-		left?: number;
-		top?: number;
-		width?: number;
-		height?: number;
-	};
-	out.left = typeof n.left === 'number' ? n.left : 0;
-	out.top = typeof n.top === 'number' ? n.top : 0;
-	out.width = typeof n.width === 'number' ? n.width : 0;
-	out.height = typeof n.height === 'number' ? n.height : 0;
-}
-
-/** 节点布局矩形（content 坐标，引擎布局字段 left/top/width/height） */
-export function getNodeLayoutRect(
-	node: MindMapNode,
-): { left: number; top: number; width: number; height: number } {
-	const out = { left: 0, top: 0, width: 0, height: 0 };
-	readNodeLayoutFields(node, out);
-	return out;
-}
-
-/**
- * `readNodeViewportCenter` 的模块级 scratch：仅承载**同步读取 → 立即消费**
- * 的临时字段，不跨调用持有；本模块中对它的使用只有该函数（无重入风险）。
- */
-const viewportCenterScratch = { left: 0, top: 0, width: 0, height: 0 };
-
-/**
- * 就地读取节点中心的**画布视口坐标**（零分配，写入 `out`）。
- *
- * 存在的理由：拖拽落点识别域（`features/drag-target` 的 handleMove）按帧对
- * 全树调用本换算，大图候选可达数千——每节点一个临时坐标对象是纯 GC 压力。
- * 换算口径必须与 `features/drag-target.nodeViewportCenter` 完全一致
- * （同一字段归一 + 同一中心公式；feature-helpers 有一致性用例钉住不漂移）。
- */
-export function readNodeViewportCenter(
-	node: MindMapNode,
-	transform: DrawTransform,
-	out: { x: number; y: number },
-): void {
-	readNodeLayoutFields(node, viewportCenterScratch);
-	out.x =
-		(viewportCenterScratch.left + viewportCenterScratch.width / 2) *
-			transform.scaleX +
-		transform.translateX;
-	out.y =
-		(viewportCenterScratch.top + viewportCenterScratch.height / 2) *
-			transform.scaleY +
-		transform.translateY;
-}
-
-/** 指针位置（引擎 toPos：相对画布的视口坐标，与变换后的节点矩形同空间） */
-export function toCanvasPoint(
-	mindMap: MindMap,
-	clientX: number,
-	clientY: number,
-): { x: number; y: number } {
-	try {
-		// toPos 为引擎运行时方法（d.cts 未声明，防腐收口于此）
-		const toPos = (
-			mindMap as unknown as {
-				toPos?: (x: number, y: number) => { x?: number; y?: number };
-			}
-		).toPos;
-		const p = toPos?.call(mindMap, clientX, clientY);
-		return {
-			x: typeof p?.x === 'number' ? p.x : NaN,
-			y: typeof p?.y === 'number' ? p.y : NaN,
-		};
-	} catch {
-		return { x: NaN, y: NaN };
-	}
-}
-
-/** 节点是否为根（中心主题）节点 */
-export function isRootNode(node: MindMapNode): boolean {
-	return node.isRoot === true;
 }
 
 /**

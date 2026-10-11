@@ -221,8 +221,6 @@ function buildHarness(
 			lineStyle: 'auto',
 			themePref: 'default',
 			enableDrag: false,
-			performanceMode: false,
-			performanceThreshold: 500,
 		})),
 		openHyperlink: vi.fn(),
 		onRootDataChanged: vi.fn(),
@@ -390,10 +388,13 @@ describe('EngineController.initMindMap（初始化入口与零尺寸等待）', 
 			themePref: 'default',
 			isDark: false,
 			enableDrag: false,
-			performanceMode: false,
-			performanceThreshold: 500,
 			lang: 'zh',
 		});
+		// 减法护栏（2026-10-09）：性能模式与阈值**不再由设置传入**——缺省即
+		// 「常开 + constants.PERFORMANCE_NODE_THRESHOLD」，重新出现这两键说明
+		// 有人把设置加回来了（须同步 README 与 K 条目）
+		expect('performanceMode' in createOptions).toBe(false);
+		expect('performanceThreshold' in createOptions).toBe(false);
 		expect(typeof createOptions.onHyperlinkJump).toBe('function');
 		// 创建前先清空容器：渲染前的防御性清理（destroyInstance）与随后的
 		// empty() 各一次，确保不会叠加上一次渲染的残余 DOM
@@ -650,8 +651,6 @@ describe('EngineController 装配与销毁', () => {
 			lineStyle: 'curve',
 			themePref: 'dark',
 			enableDrag: true,
-			performanceMode: true,
-			performanceThreshold: 100,
 		});
 		h.controller.refresh();
 
@@ -659,8 +658,6 @@ describe('EngineController 装配与销毁', () => {
 			layout: 'mindMap',
 			themePref: 'dark',
 			enableDrag: true,
-			performanceMode: true,
-			performanceThreshold: 100,
 		});
 		// 视图侧收尾按本次布局/连线样式回调（工具栏同步依赖它）
 		expect(h.deps.onEngineReady).toHaveBeenLastCalledWith('mindMap', 'curve');
@@ -1472,38 +1469,18 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 		expect(h.deps.getSetupOptions).not.toHaveBeenCalled();
 	});
 
-	it('applyPerformance 按阈值判据切换性能模式，且不重建实例', () => {
+	/**
+	 * 减法护栏（2026-10-09）：`applyPerformance`（性能模式运行时切换）随
+	 * `performanceMode` / `performanceThreshold` 设置项一并删除——性能模式改为
+	 * **常开 + 常量阈值**后设置面板不再有滑块，运行时切换没有触发源。判据本身
+	 * 仍由 `core/constants.shouldEnablePerformanceMode` 单点承担（constants.test.ts
+	 * 直测其默认值语义）。
+	 */
+	it('控制器不再暴露性能模式运行时切换（判据只剩创建期一处）', () => {
 		const h = readyHarness();
-		const engine = h.engines[0]!;
-		// 渲染树可取（节点数判据按它统计；性能模式下渲染树仍完整，见 count 探针）
-		mocks.getRenderRoot.mockReturnValue({});
-		mocks.countTreeNodes.mockReturnValue(151);
 
-		// 开关开 + 阈值 1 ⇒ 启用
-		h.controller.applyPerformance(true, 1);
-		expect(mocks.countTreeNodes).toHaveBeenCalledTimes(1);
-		expect(mocks.applyPerformanceMode).toHaveBeenLastCalledWith(engine, true);
-
-		// 开关关 ⇒ 关闭（判据与创建期同源：shouldEnablePerformanceMode 未被 mock）
-		h.controller.applyPerformance(false, 1);
-		expect(mocks.applyPerformanceMode).toHaveBeenLastCalledWith(engine, false);
-
-		// 开关开但阈值高于节点数（500 > 151）⇒ 同样关闭
-		h.controller.applyPerformance(true, 500);
-		expect(mocks.applyPerformanceMode).toHaveBeenLastCalledWith(engine, false);
-
-		// 全程原地切换：引擎实例未换、未销毁重建
-		expect(h.engines).toHaveLength(1);
-		expect(h.controller.mindMap).toBe(engine);
-		expect(destroyedEngines()).toEqual([]);
-	});
-
-	it('applyPerformance 无引擎时静默（不统计节点、不切换）', () => {
-		const h = buildHarness();
-
-		expect(() => h.controller.applyPerformance(true, 1)).not.toThrow();
-
-		expect(mocks.countTreeNodes).not.toHaveBeenCalled();
-		expect(mocks.applyPerformanceMode).not.toHaveBeenCalled();
+		expect(
+			'applyPerformance' in (h.controller as unknown as Record<string, unknown>),
+		).toBe(false);
 	});
 });

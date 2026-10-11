@@ -2,9 +2,9 @@
  * sanitizeSettings 回归（src/settings.ts）。
  *
  * data.json 可能来自历史版本或手工编辑，坏值（language:'fr'、exportScale:'2'、
- * performanceThreshold:'abc'、'true' 伪布尔）一旦直通内存就会流入引擎/导出
- * （NaN 尺寸、错误语言回退、越界档位）。这里锁定「类型正确 + 取值合法才采纳，
- * 其余回退默认」的不变式——data.json 加载与设置面板写回共用同一份校验。
+ * 'true' 伪布尔）一旦直通内存就会流入引擎/导出（NaN 尺寸、错误语言回退、越界档位）。
+ * 这里锁定「类型正确 + 取值合法才采纳，其余回退默认」的不变式——data.json 加载与
+ * 设置面板写回共用同一份校验。
  *
  * 取值域断言直接引用 constants.ts 的常量（EXPORT_SCALE_MIN/MAX 等），
  * 避免测试里另抄一份魔法数字而与面板定义脱节。
@@ -15,8 +15,6 @@ import {
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
 	LAYOUT_OPTIONS,
-	PERFORMANCE_THRESHOLD_MAX,
-	PERFORMANCE_THRESHOLD_MIN,
 	THEME_OPTIONS,
 } from '../src/core/constants';
 
@@ -26,8 +24,30 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		expect(out).toEqual(DEFAULT_SETTINGS);
 		// 面板会直接改写返回值：共享常量引用会污染后续所有默认值
 		expect(out).not.toBe(DEFAULT_SETTINGS);
-		out.performanceThreshold = 1234;
-		expect(DEFAULT_SETTINGS.performanceThreshold).toBe(500);
+		out.exportScale = 3;
+		expect(DEFAULT_SETTINGS.exportScale).toBe(2);
+	});
+
+	/**
+	 * 减法护栏（2026-10-09）：下面四项是**已移除**、不是「暂时不暴露」——
+	 * 重新加回等于把产品决策改回去，必须是有意识的动作（并同步 README 与 K 条目）：
+	 * - `autoUpdateLinks` → 改读**官方设置**（`platform/vault-prefs`）；
+	 * - `performanceMode` / `performanceThreshold` → **常开 + 常量阈值**
+	 *   （`core/constants.PERFORMANCE_NODE_THRESHOLD`）；
+	 * - `selfDrawPlainNodes` → 纯文本节点**常开自绘**（`features/node-inline-content`）。
+	 * 另锁一条**产品决策型默认值**：`autoSplitMixedLinks` 默认**关**（自动拆分改写
+	 * 用户文件结构，须用户显式开启；批量场景另有显式命令）。
+	 */
+	it('减法护栏 + 产品决策型默认值（自动拆分混排双链默认关）', () => {
+		expect(DEFAULT_SETTINGS.autoSplitMixedLinks).toBe(false);
+		for (const removed of [
+			'autoUpdateLinks',
+			'performanceMode',
+			'performanceThreshold',
+			'selfDrawPlainNodes',
+		]) {
+			expect(removed in DEFAULT_SETTINGS).toBe(false);
+		}
 	});
 
 	it('类型与取值全部合法的键原样保留', () => {
@@ -37,12 +57,8 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultTheme: 'dark',
 			autoSave: false,
 			autoSplitMixedLinks: false,
-			autoUpdateLinks: false,
 			exportScale: 4,
 			enableDrag: false,
-			performanceMode: false,
-			performanceThreshold: 100,
-			selfDrawPlainNodes: false,
 			language: 'en',
 		});
 		expect(out).toEqual({
@@ -51,12 +67,8 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultTheme: 'dark',
 			autoSave: false,
 			autoSplitMixedLinks: false,
-			autoUpdateLinks: false,
 			exportScale: 4,
 			enableDrag: false,
-			performanceMode: false,
-			performanceThreshold: 100,
-			selfDrawPlainNodes: false,
 			language: 'en',
 		});
 	});
@@ -83,16 +95,11 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		expect(Object.values(out).every((v) => v !== undefined)).toBe(true);
 	});
 
-	it('数字字符串宽容转换（历史 data.json 里的 "2" / "800"）', () => {
-		const out = sanitizeSettings({
-			exportScale: '2',
-			performanceThreshold: '800',
-		});
+	it('数字字符串宽容转换（历史 data.json 里的 "2"）', () => {
+		const out = sanitizeSettings({ exportScale: '2' });
 		expect(out.exportScale).toBe(2);
-		expect(out.performanceThreshold).toBe(800);
 		// 前后空白同样接受（手改文件常见）
-		expect(sanitizeSettings({ performanceThreshold: ' 800 ' }).performanceThreshold)
-			.toBe(800);
+		expect(sanitizeSettings({ exportScale: ' 3 ' }).exportScale).toBe(3);
 	});
 
 	it('非数字/非有限/空白字符串的数值回退默认，不产生 NaN', () => {
@@ -102,20 +109,18 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		expect(sanitizeSettings({ exportScale: '' }).exportScale).toBe(
 			DEFAULT_SETTINGS.exportScale,
 		);
-		expect(
-			sanitizeSettings({ performanceThreshold: '   ' }).performanceThreshold,
-		).toBe(DEFAULT_SETTINGS.performanceThreshold);
+		expect(sanitizeSettings({ exportScale: '   ' }).exportScale).toBe(
+			DEFAULT_SETTINGS.exportScale,
+		);
 		expect(sanitizeSettings({ exportScale: Number.NaN }).exportScale).toBe(
 			DEFAULT_SETTINGS.exportScale,
 		);
-		expect(
-			sanitizeSettings({ performanceThreshold: Number.POSITIVE_INFINITY })
-				.performanceThreshold,
-		).toBe(DEFAULT_SETTINGS.performanceThreshold);
-		expect(
-			sanitizeSettings({ performanceThreshold: Number.NEGATIVE_INFINITY })
-				.performanceThreshold,
-		).toBe(DEFAULT_SETTINGS.performanceThreshold);
+		expect(sanitizeSettings({ exportScale: Number.POSITIVE_INFINITY }).exportScale).toBe(
+			DEFAULT_SETTINGS.exportScale,
+		);
+		expect(sanitizeSettings({ exportScale: Number.NEGATIVE_INFINITY }).exportScale).toBe(
+			DEFAULT_SETTINGS.exportScale,
+		);
 	});
 
 	it('布尔字段只认真布尔：字符串/数字/空值一律回退默认', () => {
@@ -128,19 +133,16 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		expect(sanitizeSettings({ enableDrag: 1 }).enableDrag).toBe(
 			DEFAULT_SETTINGS.enableDrag,
 		);
-		expect(sanitizeSettings({ performanceMode: null }).performanceMode).toBe(
-			DEFAULT_SETTINGS.performanceMode,
+		expect(sanitizeSettings({ autoSplitMixedLinks: null }).autoSplitMixedLinks).toBe(
+			DEFAULT_SETTINGS.autoSplitMixedLinks,
 		);
 		// 合法布尔即使是 false 也必须保留（false 不等于"缺失"）
 		expect(sanitizeSettings({ autoSave: false }).autoSave).toBe(false);
 		expect(sanitizeSettings({ enableDrag: false }).enableDrag).toBe(false);
-		// 文本节点快速渲染（2026-09-25）：非布尔回退默认（true）、false 保留
-		expect(
-			sanitizeSettings({ selfDrawPlainNodes: 'yes' }).selfDrawPlainNodes,
-		).toBe(DEFAULT_SETTINGS.selfDrawPlainNodes);
-		expect(
-			sanitizeSettings({ selfDrawPlainNodes: false }).selfDrawPlainNodes,
-		).toBe(false);
+		// 自动拆分默认关（false）→ 开启必须被采纳
+		expect(sanitizeSettings({ autoSplitMixedLinks: true }).autoSplitMixedLinks).toBe(
+			true,
+		);
 	});
 
 	it('数值字段钳制到面板取值域并取整（坏值不直达引擎/导出）', () => {
@@ -155,21 +157,10 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		);
 		expect(sanitizeSettings({ exportScale: 2.6 }).exportScale).toBe(3);
 		expect(sanitizeSettings({ exportScale: 2.4 }).exportScale).toBe(2);
-
-		expect(sanitizeSettings({ performanceThreshold: 5 }).performanceThreshold).toBe(
-			PERFORMANCE_THRESHOLD_MIN,
-		);
-		expect(
-			sanitizeSettings({ performanceThreshold: 99_999 }).performanceThreshold,
-		).toBe(PERFORMANCE_THRESHOLD_MAX);
-		expect(
-			sanitizeSettings({ performanceThreshold: 149.6 }).performanceThreshold,
-		).toBe(150);
 		// 域内整数原样保留
-		expect(
-			sanitizeSettings({ performanceThreshold: PERFORMANCE_THRESHOLD_MAX })
-				.performanceThreshold,
-		).toBe(PERFORMANCE_THRESHOLD_MAX);
+		expect(sanitizeSettings({ exportScale: EXPORT_SCALE_MAX }).exportScale).toBe(
+			EXPORT_SCALE_MAX,
+		);
 	});
 
 	it('language 只接受 zh/en，其余（含非字符串）回退默认', () => {
@@ -223,8 +214,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		const out = sanitizeSettings({
 			defaultLayout: 'fishbone',
 			defaultTheme: 'not-a-theme',
-			exportScale: 3,
-			performanceThreshold: 'abc',
+			exportScale: 'abc',
 			language: 'en',
 			autoSave: 'yes',
 		});
@@ -232,15 +222,11 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLayout: 'fishbone',
 			defaultLineStyle: DEFAULT_SETTINGS.defaultLineStyle,
 			defaultTheme: DEFAULT_SETTINGS.defaultTheme,
-			exportScale: 3,
-			performanceThreshold: DEFAULT_SETTINGS.performanceThreshold,
+			exportScale: DEFAULT_SETTINGS.exportScale,
 			language: 'en',
 			autoSave: DEFAULT_SETTINGS.autoSave,
 			autoSplitMixedLinks: DEFAULT_SETTINGS.autoSplitMixedLinks,
-			autoUpdateLinks: DEFAULT_SETTINGS.autoUpdateLinks,
 			enableDrag: DEFAULT_SETTINGS.enableDrag,
-			performanceMode: DEFAULT_SETTINGS.performanceMode,
-			selfDrawPlainNodes: DEFAULT_SETTINGS.selfDrawPlainNodes,
 		});
 	});
 });
@@ -255,8 +241,6 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 		'defaultLineStyle',
 		'defaultTheme',
 		'enableDrag',
-		'performanceMode',
-		'performanceThreshold',
 		'language',
 	];
 
@@ -298,20 +282,20 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 		).toBe(0);
 	});
 
-	it('多键同时变化返回并集（滑块连拖与主题同改落在同一防抖窗口）', () => {
+	it('多键同时变化返回并集（主题与语言同改落在同一防抖窗口）', () => {
 		const changed = diffLiveRefreshKeys(
 			{ ...DEFAULT_SETTINGS },
 			{
 				...DEFAULT_SETTINGS,
-				performanceThreshold: 1000,
+				enableDrag: false,
 				defaultTheme: 'light',
 				language: 'en',
 			},
 		);
 		expect([...changed].sort()).toEqual([
 			'defaultTheme',
+			'enableDrag',
 			'language',
-			'performanceThreshold',
 		]);
 	});
 });

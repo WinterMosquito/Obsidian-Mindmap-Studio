@@ -2,11 +2,11 @@
  * 窗口级拖拽会话原语（mousemove/mouseup 临时监听 + rAF 合帧 + 幂等收尾）。
  *
  * 收口缘由（2026-10-07）：`image-resize`（拖宽手势）与 `drag-target`（拖拽换父
- * 辅助）各自实现了一份**逐行同构**的会话原语——同样的
+ * 辅助，2026-10-11 已移除）曾各自实现一份**逐行同构**的会话原语——同样的
  * 「win.addEventListener ×2 → move 里 `if (rafId === null) requestAnimationFrame`
  * → 收尾 `cancelAnimationFrame` + `removeEventListener ×2」，约 40 行。
- * 两者唯一的语义差异是**注册是否带捕获标志**，而该差异此前只能靠两处代码各自
- * 注释说明，已经实际分叉过一次（见下方 `capture` 参数）。
+ * 当时唯一的语义差异是**注册是否带捕获标志**，靠两处代码各自注释说明且已实际
+ * 分叉过一次（见下方 `capture` 参数）；现仅剩 `image-resize` 一个调用方。
  *
  * 归入 features 层而非 core：`core/` 是零依赖纯逻辑层（禁 DOM），而本原语
  * 直接操作 `Window` 事件与 `requestAnimationFrame`。
@@ -61,7 +61,8 @@ export interface WindowDragSessionOptions {
 	 * - `true`：**手势独占**。注册先于引擎容器级监听执行，配合 `onMove` 内的
 	 *   `stopPropagation()` 让引擎收不到事件（调宽用，避免缩放拖拽被节点拖拽
 	 *   逻辑串扰）。移除时必须带**同款**标志，否则监听摘不掉。
-	 * - `false`：与引擎监听并存（换父辅助用，它只观察事件、不夺）。
+	 * - `false`：与引擎监听并存（**观察式**会话：不夺事件，引擎照常收到）。
+	 *   现存调用方均传 `true`；该分支保留以表达「观察 vs 独占」两种语义。
 	 */
 	capture?: boolean;
 }
@@ -69,7 +70,7 @@ export interface WindowDragSessionOptions {
 /**
  * 建立窗口级拖拽会话：挂上 mousemove/mouseup 临时监听，返回合帧排期与幂等收尾句柄。
  *
- * 典型用法（调宽/ 换父辅助同款形状）：
+ * 典型用法（拖宽手势）：
  * ```ts
  * const session = startWindowDragSession({
  *   win: view.containerEl.win,

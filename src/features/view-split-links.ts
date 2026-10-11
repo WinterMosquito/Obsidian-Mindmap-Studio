@@ -107,7 +107,8 @@ export function splitAllLinksInDocument(view: MindMapViewContext): void {
 }
 
 /**
- * 自动触发（设置 `autoSplitMixedLinks`，默认开）：只处理**文本已被编辑过**的
+ * 自动触发（设置 `autoSplitMixedLinks`，**默认关**〔2026-10-09 减法：改写文件结构
+ * 须用户显式开启〕）：只处理**文本已被编辑过**的
  * 节点——`text !== mdDerivedText` 是与解析期快照不同的持久信号，存量未编辑的
  * 混排节点绝不会被自动改写（决策 R3「仅被编辑节点」）。
  *

@@ -4,8 +4,6 @@ import {
 	EXPORT_SCALE_MIN,
 	LAYOUT_OPTIONS,
 	LINE_STYLE_OPTIONS,
-	PERFORMANCE_THRESHOLD_MAX,
-	PERFORMANCE_THRESHOLD_MIN,
 	THEME_OPTIONS,
 } from './core/constants';
 import { Language, LANGUAGE_OPTIONS, t } from './core/i18n';
@@ -30,30 +28,17 @@ export interface MindMapStudioSettings {
 	defaultLineStyle: string;
 	defaultTheme: string;
 	autoSave: boolean;
-	/** 被编辑节点含「双链 + 描述文字」时自动拆分为子节点（见 links-split） */
-	autoSplitMixedLinks: boolean;
 	/**
-	 * 重命名 / 删除库内文件时自动更新导图里的引用（对齐官方设置
-	 * 「Settings → Files & Links → Automatically update internal links」，默认开启）。
-	 * 关闭后：重命名不改链接（链接变未解析）、删除不清理引用与附件。
+	 * 被编辑节点含「双链 + 描述文字」时自动拆分为子节点（见 links-split）。
+	 *
+	 * **默认关闭**（2026-10-09 减法）：自动拆分是**结构性改写用户文件**（把行内
+	 * 链接抽成子节点），且自绘节点已能让一行内每枚链接各自可点（`node-inline-content`），
+	 * 该结构性补偿不必默认发生。存量 data.json 里已为 `true` 的仍保持开启；
+	 * 整篇批处理走显式命令 `mindmap-split-links-all`（不受本设置约束）。
 	 */
-	autoUpdateLinks: boolean;
+	autoSplitMixedLinks: boolean;
 	exportScale: number;
 	enableDrag: boolean;
-	performanceMode: boolean;
-	performanceThreshold: number;
-	/**
-	 * 文本节点快速渲染：**所有含文字的节点**由插件自绘渲染，跳过引擎的
-	 * 逐字符文本测宽——实测它是打开大图的成本主体（0.13ms/字符）。
-	 *
-	 * ⚠ **不要在注释里写死秒数**：该值随引擎逐版本优化多次变化（K72 记录的
-	 * 5000 节点全自绘 1.36s 已被 K74~K77 优化取代），写死会与实机脱节。
-	 * 数据与机器可复现命令见 AGENTS.md K72：
-	 * `npm run verify:visual -- --require-chrome --bench-open`。
-	 * 代价：双击节点改用弹窗编辑（引擎内联编辑框对自绘节点静默 no-op）。
-	 * **仅对之后打开的文件生效**（不在 LIVE_REFRESH_SETTING_KEYS，见 K62 路由表）。
-	 */
-	selfDrawPlainNodes: boolean;
 	language: Language;
 }
 
@@ -63,19 +48,11 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	defaultLineStyle: 'auto',
 	defaultTheme: 'default',
 	autoSave: true,
-	// 默认开启：仅在节点被编辑后生效，存量未编辑节点不会被改写
-	autoSplitMixedLinks: true,
-	// 默认开启（与官方「Automatically update internal links」默认一致）
-	autoUpdateLinks: true,
+	// 默认关闭（2026-10-09 减法）：改写文件结构须由用户显式开启；开启后仅作用于
+	// 被编辑节点（存量未编辑节点仍不会被改写），批量场景用显式拆分命令
+	autoSplitMixedLinks: false,
 	exportScale: 2,
 	enableDrag: true,
-	// 默认开启性能模式：节点数超过阈值（performanceThreshold）时自动启用
-	// 虚拟渲染（仅渲染可视区域节点）。用户可在此关闭。
-	performanceMode: true,
-	performanceThreshold: 500,
-	// 默认开启：跳过引擎逐字符测宽（打开大图的成本主体，实测 6.3 倍提升）；
-	// 代价是双击节点走弹窗编辑——可在设置里关闭以恢复引擎内联编辑框
-	selfDrawPlainNodes: true,
 	language: 'zh',
 };
 
@@ -142,22 +119,10 @@ export function sanitizeSettings(
 		autoSplitMixedLinks:
 			pickBool('autoSplitMixedLinks') ??
 			DEFAULT_SETTINGS.autoSplitMixedLinks,
-		autoUpdateLinks:
-			pickBool('autoUpdateLinks') ?? DEFAULT_SETTINGS.autoUpdateLinks,
 		exportScale:
 			pickClampedInt('exportScale', EXPORT_SCALE_MIN, EXPORT_SCALE_MAX) ??
 			DEFAULT_SETTINGS.exportScale,
 		enableDrag: pickBool('enableDrag') ?? DEFAULT_SETTINGS.enableDrag,
-		selfDrawPlainNodes:
-			pickBool('selfDrawPlainNodes') ?? DEFAULT_SETTINGS.selfDrawPlainNodes,
-		performanceMode:
-			pickBool('performanceMode') ?? DEFAULT_SETTINGS.performanceMode,
-		performanceThreshold:
-			pickClampedInt(
-				'performanceThreshold',
-				PERFORMANCE_THRESHOLD_MIN,
-				PERFORMANCE_THRESHOLD_MAX,
-			) ?? DEFAULT_SETTINGS.performanceThreshold,
 		language:
 			language === 'zh' || language === 'en'
 				? language
@@ -171,8 +136,6 @@ const LIVE_REFRESH_SETTING_KEYS = new Set<string>([
 	'defaultLineStyle',
 	'defaultTheme',
 	'enableDrag',
-	'performanceMode',
-	'performanceThreshold',
 	'language',
 ]);
 
@@ -301,35 +264,9 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 						control: { type: 'toggle', key: 'autoSplitMixedLinks' },
 					},
 					{
-						name: t(this.lang, 'settings.autoUpdateLinks'),
-						desc: t(this.lang, 'settings.autoUpdateLinksDesc'),
-						control: { type: 'toggle', key: 'autoUpdateLinks' },
-					},
-					{
 						name: t(this.lang, 'settings.enableDrag'),
 						desc: t(this.lang, 'settings.enableDragDesc'),
 						control: { type: 'toggle', key: 'enableDrag' },
-					},
-					{
-						name: t(this.lang, 'settings.performanceMode'),
-						desc: t(this.lang, 'settings.performanceModeDesc'),
-						control: { type: 'toggle', key: 'performanceMode' },
-					},
-					{
-						name: t(this.lang, 'settings.performanceThreshold'),
-						desc: t(this.lang, 'settings.performanceThresholdDesc'),
-						control: {
-							type: 'slider',
-							key: 'performanceThreshold',
-							min: PERFORMANCE_THRESHOLD_MIN,
-							max: PERFORMANCE_THRESHOLD_MAX,
-							step: 100,
-						},
-					},
-					{
-						name: t(this.lang, 'settings.selfDrawPlainNodes'),
-						desc: t(this.lang, 'settings.selfDrawPlainNodesDesc'),
-						control: { type: 'toggle', key: 'selfDrawPlainNodes' },
 					},
 					{
 						name: t(this.lang, 'settings.exportScale'),

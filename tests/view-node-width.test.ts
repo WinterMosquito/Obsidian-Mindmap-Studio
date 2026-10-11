@@ -100,8 +100,8 @@ describe('setupNodeWidthRefresh（拖宽结束 → 重建自绘内容）', () =>
  * 但引擎的 SVG 文本路径不认 `customTextWidth`（拖了没反应，用户实测 2026-09-16）。
  * 门禁把判定收窄成「该节点**确实已被自绘接管**」——判据是**运行时事实**
  * （`isCustomNodeContent` = 引擎 `!!_customNodeContent`，2026-09-25 起；此前为
- * 静态判定 `shouldSelfDrawNode`）。有自绘内容 ⇔ 拖宽生效，天然覆盖
- * `selfDrawPlainNodes` 开关两种模式，无需逐处同步判据输入。
+ * 静态判定 `shouldSelfDrawNode`）。有自绘内容 ⇔ 拖宽生效——纯文本节点自
+ * 2026-10-09 起恒常开自绘，故判据输入只有节点数据本身，无需同步任何设置。
  */
 describe('gateNodeWidthHandles（每节点手柄门禁）', () => {
 	/**
@@ -145,8 +145,8 @@ describe('gateNodeWidthHandles（每节点手柄门禁）', () => {
 	});
 
 	it('有自绘内容：手柄照旧可用（拖宽确实生效，与内容类型无关）', () => {
-		// 判据只看引擎运行时事实：列表覆盖「含链接 / 轻标记 / 超长 / 自绘纯文本
-		// （selfDrawPlain 开启后的形态）」四种数据形态，只要内容事实为真即可用
+		// 判据只看引擎运行时事实：列表覆盖「含链接 / 轻标记 / 超长 / 自绘纯文本」
+		// 四种数据形态（纯文本自 2026-10-09 起恒接管），只要内容事实为真即可用
 		for (const data of [
 			{ text: '见 笔记A', mdDerivedText: '见 笔记A', mdRaw: '见 [[笔记A]]' },
 			{ text: '重点', mdDerivedText: '重点', mdRaw: '**重点**' },

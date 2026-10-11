@@ -78,4 +78,17 @@ describe('shouldEnablePerformanceMode — 性能模式阈值判据（创建期�
 		expect(shouldEnablePerformanceMode(0, true, 0)).toBe(true);
 		expect(shouldEnablePerformanceMode(0, true, 100)).toBe(false);
 	});
+
+	/**
+	 * 缺省参数即**生产判据**（2026-10-09 减法：`performanceMode` /
+	 * `performanceThreshold` 设置项已删，性能模式改为常开 + 常量阈值）。
+	 * 这里按**字面量**钉住阈值 500 与「缺省常开」——改这两个值等于改产品行为，
+	 * 必须是显式动作（并同步 README 的「已收成内部常开」说明）。
+	 */
+	it('缺省参数 = 生产判据：常开 + 阈值 500（等于即启用）', () => {
+		expect(shouldEnablePerformanceMode(500)).toBe(true);
+		expect(shouldEnablePerformanceMode(499)).toBe(false);
+		// 显式传 enabled=false 仍可关闭（引擎级覆盖通道，供 verify:visual 探针用）
+		expect(shouldEnablePerformanceMode(5000, false)).toBe(false);
+	});
 });

@@ -1,8 +1,8 @@
 /**
- * 交互会话收尾回归：拖拽换父（drag-target）与图片调宽（image-resize）在会话
- * 期间**动态注册临时 window 监听**（mousemove/mouseup），松手即移除——这类监听
- * 不经 EventBinder 记录（拖拽/调宽中途关闭视图收不到 mouseup），必须由视图
- * onClose 经 teardown* 显式收尾，否则监听泄漏且继续作用于已销毁视图。
+ * 交互会话收尾回归：图片调宽（image-resize）在会话期间**动态注册临时 window
+ * 监听**（mousemove/mouseup），松手即移除——这类监听不经 EventBinder 记录
+ * （调宽中途关闭视图收不到 mouseup），必须由视图 onClose 经 teardown* 显式收尾，
+ * 否则监听泄漏且继续作用于已销毁视图。
  *
  * 断言策略：window 桩维护「净挂载表」（add/remove 按 type + capture + 函数身份
  * 抵销）。因此
@@ -16,15 +16,11 @@ import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 import { ENGINE_COMMANDS } from '../src/engine/mindmap';
 import type { MindMapViewContext } from '../src/features/view-context';
 import {
-	setupDragTargetAssist,
-	teardownDragTargetAssist,
-} from '../src/features/drag-target';
-import {
 	setupImageResize,
 	teardownImageResize,
 } from '../src/features/image-resize';
 
-// 两模块经 import 链加载 vendor bundle（顶层求值触碰 document.documentElement）
+// 本模块经 import 链加载 vendor bundle（顶层求值触碰 document.documentElement）
 vi.hoisted(() => {
 	(globalThis as { document?: unknown }).document ??= { documentElement: {} };
 });
@@ -106,15 +102,6 @@ function makeEngineBinder() {
 }
 type EngineBinderStub = ReturnType<typeof makeEngineBinder>;
 
-/** 非根节点桩：collectExcludeUids（getData/children）与 isRootNode 所需最小面 */
-function fakeNode(uid = '', children: MindMapNode[] = []): MindMapNode {
-	return {
-		isRoot: false,
-		getData: (key: string) => (key === 'uid' ? uid : undefined),
-		children,
-	} as unknown as MindMapNode;
-}
-
 /** 视图桩：会话窗口经 containerEl.win 注入（popout 窗口语义） */
 function makeView(binder: EngineBinderStub, win: unknown, mindMap = {} as MindMap) {
 	const scheduleSave = vi.fn<() => void>();
@@ -128,214 +115,6 @@ function makeView(binder: EngineBinderStub, win: unknown, mindMap = {} as MindMa
 	} as unknown as MindMapViewContext;
 	return { view, scheduleSave };
 }
-
-describe('drag-target 会话收尾（拖拽中途关闭视图）', () => {
-	let mainWindow: WindowStub;
-	let canvasWindow: WindowStub;
-
-	beforeEach(() => {
-		mainWindow = makeWindowStub();
-		canvasWindow = makeWindowStub();
-		// 主窗口也桩掉：用于证明会话监听没有落到主窗口（popout 兼容）
-		vi.stubGlobal('window', mainWindow.win);
-	});
-
-	afterEach(() => {
-		vi.unstubAllGlobals();
-		vi.restoreAllMocks();
-	});
-
-	it('会话进行中收尾：临时 window 监听成对移除且净挂载归零', () => {
-		const binder = makeEngineBinder();
-		const { view } = makeView(binder, canvasWindow.win);
-		setupDragTargetAssist(view);
-		expect(binder.events()).toEqual(['node_dragging', 'node_dragend']);
-
-		// 引擎首次拖拽移动 → 建立会话并挂临时监听
-		binder.fire('node_dragging', fakeNode('u1'));
-		expect(canvasWindow.addedTypes()).toEqual(['mousemove', 'mouseup']);
-		expect(canvasWindow.listenerCount()).toBe(2);
-		// 主窗口收不到任何监听（popout 窗口里鼠标事件不落在主窗口）
-		expect(mainWindow.addedTypes()).toEqual([]);
-
-		// 视图在拖拽中被关闭：收不到 mouseup / node_dragend，必须显式收尾
-		teardownDragTargetAssist(view);
-		expect(canvasWindow.removedTypes()).toEqual(['mousemove', 'mouseup']);
-		// 移除的必须是注册时的同一函数引用、同一 capture 标志（否则移除无效）
-		expect(canvasWindow.removed.map((call) => call.listener)).toEqual(
-			canvasWindow.added.map((call) => call.listener),
-		);
-		// 换父辅助不夺事件（capture=false）：注册与摘除都必须是同款标志。
-		// 2026-10-07 起由 drag-session 原语**显式**传false（原实现省略第三参，
-		// 桩里记为 undefined）——`addEventListener(t, fn, false)` 与
-		// `addEventListener(t, fn)` 行为等价，故这是调用约定收敛，非行为变更。
-		expect(canvasWindow.removed.map((call) => call.capture)).toEqual([
-			false,
-			false,
-		]);
-		// 反向护栏：注册侧也必须是 false（不是 true，更不是 undefined）
-		expect(canvasWindow.added.map((call) => call.capture)).toEqual([
-			false,
-			false,
-		]);
-		expect(canvasWindow.listenerCount()).toBe(0);
-	});
-
-	it('mouseup / node_dragend 各自收尾：无需视图关闭即监听归零', () => {
-		const binder = makeEngineBinder();
-		const { view } = makeView(binder, canvasWindow.win);
-		setupDragTargetAssist(view);
-
-		// 松手（window 层）
-		binder.fire('node_dragging', fakeNode('u1'));
-		const up = canvasWindow.listenerOf('mouseup', false);
-		expect(up).not.toBeNull();
-		up?.({});
-		expect(canvasWindow.listenerCount()).toBe(0);
-
-		// 引擎在消费落点后发出 node_dragend
-		binder.fire('node_dragging', fakeNode('u1'));
-		expect(canvasWindow.listenerCount()).toBe(2);
-		binder.fire('node_dragend');
-		expect(canvasWindow.listenerCount()).toBe(0);
-		expect(canvasWindow.removedTypes()).toEqual([
-			'mousemove',
-			'mouseup',
-			'mousemove',
-			'mouseup',
-		]);
-	});
-
-	it('重复收尾幂等：无会话时不再移除任何监听、不抛异常', () => {
-		const binder = makeEngineBinder();
-		const { view } = makeView(binder, canvasWindow.win);
-		setupDragTargetAssist(view);
-
-		// 从未建立会话
-		expect(() => teardownDragTargetAssist(view)).not.toThrow();
-		expect(canvasWindow.removed).toHaveLength(0);
-
-		binder.fire('node_dragging', fakeNode('u1'));
-		teardownDragTargetAssist(view);
-		expect(canvasWindow.removed).toHaveLength(2);
-		// 第二次收尾：会话已清空，不重复移除
-		teardownDragTargetAssist(view);
-		expect(canvasWindow.removed).toHaveLength(2);
-	});
-
-	it('收尾后会话状态已清空：新拖拽可重新建立会话（无残留守卫阻塞）', () => {
-		const binder = makeEngineBinder();
-		const { view } = makeView(binder, canvasWindow.win);
-		setupDragTargetAssist(view);
-
-		binder.fire('node_dragging', fakeNode('u1'));
-		// 同一会话内重复事件不重复挂监听
-		binder.fire('node_dragging', fakeNode('u1'));
-		expect(canvasWindow.added).toHaveLength(2);
-
-		teardownDragTargetAssist(view);
-		binder.fire('node_dragging', fakeNode('u1'));
-		expect(canvasWindow.added).toHaveLength(4);
-		expect(canvasWindow.listenerCount()).toBe(2);
-	});
-
-	it('根节点拖拽不建立会话（中心主题不可换父，零监听零开销）', () => {
-		const binder = makeEngineBinder();
-		const { view } = makeView(binder, canvasWindow.win);
-		setupDragTargetAssist(view);
-
-		binder.fire('node_dragging', { isRoot: true });
-		// 引擎未给出节点（事件参数缺失）
-		binder.fire('node_dragging');
-		expect(canvasWindow.added).toHaveLength(0);
-	});
-
-	it('收尾取消未决的合帧回调；陈旧帧回调不再对已销毁会话求值', () => {
-		const binder = makeEngineBinder();
-		const { view } = makeView(binder, canvasWindow.win);
-		setupDragTargetAssist(view);
-		binder.fire('node_dragging', fakeNode('u1'));
-
-		const move = canvasWindow.listenerOf('mousemove', false);
-		move?.({ clientX: 10, clientY: 10 });
-		move?.({ clientX: 20, clientY: 20 });
-		// rAF 合帧：一帧内多次 mousemove 只排一次判定（大图按帧计价）
-		expect(canvasWindow.frames).toHaveLength(1);
-
-		teardownDragTargetAssist(view);
-		expect(canvasWindow.win.cancelAnimationFrame).toHaveBeenCalledWith(1);
-		// 视图已销毁：陈旧帧回调即使到达也不再判定（会话身份校验），且不抛异常
-		expect(() => canvasWindow.runFrame(0)).not.toThrow();
-		expect(canvasWindow.listenerCount()).toBe(0);
-	});
-
-	it('引擎重建（再次 setup）先收尾旧会话：旧监听不残留到新引擎实例', () => {
-		const binder = makeEngineBinder();
-		const { view } = makeView(binder, canvasWindow.win);
-		setupDragTargetAssist(view);
-		binder.fire('node_dragging', fakeNode('u1'));
-		expect(canvasWindow.listenerCount()).toBe(2);
-
-		// 引擎重建可能发生在拖拽会话进行中
-		setupDragTargetAssist(view);
-		expect(canvasWindow.listenerCount()).toBe(0);
-	});
-
-	it('会话中借到落点并高亮 → 收尾清高亮、撤监听', () => {
-		// 引擎桩：拖拽三态 + 渲染树（根 + 一个目标节点）+ 画布变换
-		const classList = { add: vi.fn(), remove: vi.fn() };
-		const target = {
-			isRoot: false,
-			getData: (key: string) => (key === 'uid' ? 'u9' : undefined),
-			children: [],
-			left: 300,
-			top: 100,
-			width: 80,
-			height: 40,
-			group: { node: { classList } },
-		} as unknown as MindMapNode;
-		const root = {
-			isRoot: true,
-			getData: () => undefined,
-			children: [target],
-			left: 0,
-			top: 0,
-			width: 100,
-			height: 40,
-		} as unknown as MindMapNode;
-		const drag = {
-			overlapNode: null as MindMapNode | null,
-			prevNode: null as MindMapNode | null,
-			nextNode: null as MindMapNode | null,
-		};
-		const mindMap = {
-			drag,
-			renderer: { root },
-			view: {
-				getTransformData: () => ({
-					transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 },
-				}),
-			},
-			toPos: (x: number, y: number) => ({ x, y }),
-		} as unknown as MindMap;
-
-		const binder = makeEngineBinder();
-		const { view } = makeView(binder, canvasWindow.win, mindMap);
-		setupDragTargetAssist(view);
-
-		binder.fire('node_dragging', fakeNode('u1'));
-		// 指针压到目标节点中心 (340, 120)：外借 overlapNode（挂为该节点子级）
-		canvasWindow.listenerOf('mousemove', false)?.({ clientX: 340, clientY: 120 });
-		canvasWindow.runFrame(0);
-		expect(drag.overlapNode).toBe(target);
-		expect(classList.add).toHaveBeenCalledWith('mindmap-drag-target');
-
-		teardownDragTargetAssist(view);
-		// 会话收尾必须撤掉高亮（类名留在 DOM 上会让节点永久显示为落点）
-		expect(classList.remove).toHaveBeenCalledWith('mindmap-drag-target');
-		expect(canvasWindow.listenerCount()).toBe(0);
-	});
-});
 
 /** SVG <image> 桩：currentNodeImageEl 用 instanceof SVGImageElement 判定真伪 */
 class FakeSvgImageElement {

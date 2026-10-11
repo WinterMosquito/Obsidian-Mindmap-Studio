@@ -264,23 +264,34 @@ export function isRenderableImageTarget(target: string): boolean {
  */
 export const EXPORT_SCALE_MIN = 1;
 export const EXPORT_SCALE_MAX = 4;
-export const PERFORMANCE_THRESHOLD_MIN = 100;
-export const PERFORMANCE_THRESHOLD_MAX = 2000;
 
 /**
- * 是否启用性能模式（虚拟渲染）：插件设置（开关 + 节点数阈值）的**唯一判据**。
+ * 性能模式（虚拟渲染）的**内部判据**：节点数 ≥ 此值即只渲染视口附近的节点。
  *
- * 创建（`engine/mindmap.createMindMap`，按数据树）与运行时切换
- * （`services/engine-controller.applyPerformance`，按渲染树）共用——两处节点数
- * 口径同构（count 探针已钉住「性能模式下渲染树结构仍完整」），故阈值语义在
- * 创建期与运行期完全一致；改判据只需改这一处。
+ * 2026-10-09 减法：此前是设置项（开关 + 可调阈值 100–2000）。用户无法为
+ * 「阈值取多少合适」建立心智模型，而虚拟渲染在大图下**总是更优**、在阈值之下
+ * 本就不生效（无副作用）⇒ 收成常量，设置面板少两项。
+ *
+ * 阈值依据：500 节点≈「一屏能看完」的边界，低于此值时虚拟渲染的调度开销无收益。
+ * 调整只影响「何时开始虚拟渲染」，不改变渲染结果（count 探针钉住「性能模式下
+ * 渲染树结构仍完整」）。
+ */
+const PERFORMANCE_NODE_THRESHOLD = 500;
+
+/**
+ * 是否启用性能模式（虚拟渲染）：**唯一判据**（创建期与运行期共用）。
+ *
+ * `nodeCount` 创建期按数据树、运行期按渲染树计数——两处口径同构（count 探针已
+ * 钉住「性能模式下渲染树结构仍完整」），故阈值语义在创建期与运行期完全一致。
+ * `enabled` / `threshold` 只作为**引擎级覆盖**存在（`verify:visual` 的 perf 探针
+ * 要构造「阈值之上 / 之下」两种局面），生产路径不传、走默认值。
  */
 export function shouldEnablePerformanceMode(
 	nodeCount: number,
-	performanceMode: boolean,
-	performanceThreshold: number,
+	enabled: boolean = true,
+	threshold: number = PERFORMANCE_NODE_THRESHOLD,
 ): boolean {
-	return performanceMode && nodeCount >= performanceThreshold;
+	return enabled && nodeCount >= threshold;
 }
 
 /**
@@ -435,13 +446,6 @@ export const RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS = 50;
 export const RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS = 2000;
 
 /**
- * 拖拽落点辅助判定半径（像素，CSS 像素空间，无需 devicePixelRatio）。
- * 引擎原生要求指针精确落在目标矩形内，此常量扩展为均匀圆形判定区。
- * 经验值 120px 覆盖多数兄弟节点间距（150–200px），密集布局下不误命中。
- */
-export const DRAG_TARGET_RADIUS_PX = 120;
-
-/**
  * 统一的节点图片显示尺寸。
  * 所有插入的图片都会以该固定高度显示，并完整呈现在子主题框架内；
  * SVG <image> 默认 preserveAspectRatio="xMidYMid meet"，图片会等比
@@ -478,8 +482,6 @@ export const CODE_BLOCK_MAX_HEIGHT_PX = 360;
  * 集中在常量表，核心改名/升级时一处核对，避免散落字符串漂移。
  */
 export const CORE_VIEW_TYPE = {
-	/** 文件浏览器视图（file-creator.ts 注入「新建」菜单） */
-	FILE_EXPLORER: 'file-explorer',
 	/** Markdown 视图（切回编辑/阅读，md-open.ts / open-as-restore.ts） */
 	MARKDOWN: 'markdown',
 } as const;

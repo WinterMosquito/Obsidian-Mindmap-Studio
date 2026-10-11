@@ -16,11 +16,9 @@ import {
 	MindMapTreeNode,
 } from '../../vendor/simple-mind-map.cjs';
 import {
-	applyPerformanceMode,
 	arrangeMindMap,
 	cancelEngineTimers,
 	centerContentAtFullScale,
-	countTreeNodes,
 	createMindMap,
 	destroyMindMap,
 	fitMindMap,
@@ -34,7 +32,6 @@ import {
 	syncHistoryLimit,
 } from '../engine/mindmap';
 import { createThrottler } from '../core/concurrency';
-import { shouldEnablePerformanceMode } from '../core/constants';
 import { notifyError } from '../core/errors';
 import type { NodeContentStyle } from '../engine/mindmap';
 import { ensureUniqueUids } from '../markdown/markdown';
@@ -56,8 +53,8 @@ interface EngineSetupOptions {
 	lineStyle: string;
 	themePref: string;
 	enableDrag: boolean;
-	performanceMode: boolean;
-	performanceThreshold: number;
+	// 性能模式与阈值**不经过设置**（2026-10-09 减法：常开 + 常量阈值），
+	// 故不在此列——`createMindMap` 的缺省值即判据
 }
 
 /** 引擎控制器依赖（窄化回调注入，不持有视图引用） */
@@ -299,8 +296,6 @@ export class EngineController {
 				themePref: options.themePref,
 				isDark: this.deps.isDark(),
 				enableDrag: options.enableDrag,
-				performanceMode: options.performanceMode,
-				performanceThreshold: options.performanceThreshold,
 				lang: this.deps.getLang(),
 				onHyperlinkJump: (link) => this.deps.openHyperlink(link),
 				// 节点内联内容（方案 B 原型）：缺省时引擎两键为 false/null，全部走默认文本。
@@ -535,37 +530,6 @@ export class EngineController {
 		}
 		const setup = this.deps.getSetupOptions();
 		this.writeThemeConfig(setup.layout, value, setup.themePref);
-	}
-
-	/**
-	 * 应用性能模式设置（开关 / 阈值变更）：**运行时切换，不重建实例**。
-	 *
-	 * 引擎显式支持（`after_update_config` 会在 `openPerformance` 变化时绑定/解绑
-	 * `view_data_change` 处理器并 `forceLoadNode`，见 `applyPerformanceMode`），
-	 * 故省掉「整树 structuredClone + 引擎销毁重建 + 视口重设」——性能阈值是设置
-	 * 面板里的滑块（唯一高频拖拽项），这条路径的收益最直接。
-	 *
-	 * 阈值判据与创建期同源（`shouldEnablePerformanceMode`）；节点数按**渲染树**
-	 * 统计（性能模式下节点实例仍留在 `parent.children`，计数准确，见 count 探针）。
-	 */
-	applyPerformance(
-		performanceMode: boolean,
-		performanceThreshold: number,
-	): void {
-		const mindMap = this.mindMap;
-		if (!mindMap) {
-			return;
-		}
-		const root = getRenderRoot(mindMap);
-		const nodeCount = root ? countTreeNodes(root) : 0;
-		applyPerformanceMode(
-			mindMap,
-			shouldEnablePerformanceMode(
-				nodeCount,
-				performanceMode,
-				performanceThreshold,
-			),
-		);
 	}
 
 	/** 应用主题（深色判定按当前主题偏好重算；连线样式随偏好与布局） */

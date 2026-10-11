@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MindMapStudioPlugin from '../src/main';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import {
+	EXPORT_SCALE_MAX,
 	SETTINGS_PERSIST_DEBOUNCE_MS,
 	SETTINGS_APPLY_DEBOUNCE_MS,
 	VIEW_STATE_PERSIST_MS,
@@ -82,13 +83,14 @@ describe('scheduleSettingsPersist（滑块突发合并）', () => {
 		vi.useRealTimers();
 	});
 
-	it('19 档滑块突发（跨越多窗口）只落盘一次，载荷为最后一档', async () => {
+	it('连续变更（跨越多窗口）只落盘一次，载荷为最后一次的值', async () => {
 		const h = makeHarness();
 		await h.plugin.loadSettings();
 
-		// 模拟滑块 100→1900（step 100）：每档 40ms，总跨度 720ms > 一个窗口
+		// 面板上连续操作：19 次写入、间隔 40ms（总跨度 720ms > 一个窗口）。
+		// 取值在 exportScale 的 1–4 之间反复（现存的唯一滑块项）
 		for (let i = 0; i < 19; i++) {
-			h.plugin.settings.performanceThreshold = 100 + i * 100;
+			h.plugin.settings.exportScale = 1 + (i % 4);
 			h.plugin.scheduleSettingsPersist();
 			if (i < 18) {
 				await vi.advanceTimersByTimeAsync(40);
@@ -100,7 +102,8 @@ describe('scheduleSettingsPersist（滑块突发合并）', () => {
 
 		await vi.advanceTimersByTimeAsync(1);
 		expect(h.saved).toHaveLength(1);
-		expect(h.saved[0]?.['performanceThreshold']).toBe(1900);
+		// 末次写入是 i=18 → 1 + (18 % 4) = 3
+		expect(h.saved[0]?.['exportScale']).toBe(3);
 		// 合并后的载荷就是内存设置本身（每个字段都在，无 undefined 空洞）
 		expect(h.saved[0]).toEqual({ ...h.plugin.settings });
 	});
@@ -138,17 +141,17 @@ describe('scheduleSettingsPersist（滑块突发合并）', () => {
 		const h = makeHarness();
 		await h.plugin.loadSettings();
 
-		h.plugin.settings.performanceThreshold = 400;
+		h.plugin.settings.exportScale = 3;
 		h.plugin.scheduleSettingsPersist();
 		await vi.advanceTimersByTimeAsync(200);
-		h.plugin.settings.performanceThreshold = 900;
+		h.plugin.settings.exportScale = 4;
 		h.plugin.scheduleSettingsPersist();
 		await vi.advanceTimersByTimeAsync(200);
 		expect(h.saved).toHaveLength(0); // 第二次调度重置了窗口
 
 		await vi.advanceTimersByTimeAsync(SETTINGS_PERSIST_DEBOUNCE_MS);
 		expect(h.saved).toHaveLength(1);
-		expect(h.saved[0]?.['performanceThreshold']).toBe(900);
+		expect(h.saved[0]?.['exportScale']).toBe(4);
 	});
 
 	it('落盘一次后不再重复写盘（防抖定时器不残留）', async () => {
@@ -235,19 +238,23 @@ describe('scheduleSettingsPersist（滑块突发合并）', () => {
 	it('加载时坏值经 sanitize 回退，写回后仍只有合法取值', async () => {
 		const h = makeHarness({
 			language: 'fr',
-			exportScale: 'abc',
-			performanceThreshold: 99_999,
+			exportScale: 99,
+			autoSplitMixedLinks: 'yes',
 		});
 		await h.plugin.loadSettings();
 
 		expect(h.plugin.settings.language).toBe(DEFAULT_SETTINGS.language);
-		expect(h.plugin.settings.exportScale).toBe(DEFAULT_SETTINGS.exportScale);
-		expect(h.plugin.settings.performanceThreshold).toBe(2000);
+		// 越界数字钳制到面板取值域（而非落回默认）
+		expect(h.plugin.settings.exportScale).toBe(EXPORT_SCALE_MAX);
+		// 非布尔回退默认（自动拆分默认关）
+		expect(h.plugin.settings.autoSplitMixedLinks).toBe(
+			DEFAULT_SETTINGS.autoSplitMixedLinks,
+		);
 
 		await h.plugin.saveSettings();
 		expect(h.saved[0]?.['language']).toBe('zh');
-		expect(h.saved[0]?.['exportScale']).toBe(DEFAULT_SETTINGS.exportScale);
-		expect(h.saved[0]?.['performanceThreshold']).toBe(2000);
+		expect(h.saved[0]?.['exportScale']).toBe(EXPORT_SCALE_MAX);
+		expect(h.saved[0]?.['autoSplitMixedLinks']).toBe(false);
 	});
 });
 
@@ -261,10 +268,10 @@ describe('applySettingsToViews（重建引擎的突发合并）', () => {
 
 	/**
 	 * 为什么钉死：应用一轮 = 每个打开的视图**销毁并重建引擎 + 全量重渲染 +
-	 * 工具栏重建**（EngineController.refresh），而 LIVE_REFRESH 键里含滑块
-	 * （performanceThreshold，step 100）——不防抖就是拖一次滑块重建几十轮。
+	 * 工具栏重建**（EngineController.refresh），而 LIVE_REFRESH 键里含面板上
+	 * 会被连续操作的项（`enableDrag` / `language`）——不防抖就是连点几次重建几轮。
 	 */
-	it('滑块连续变更（跨多个窗口）只应用一次；窗口未到不应用', async () => {
+	it('连续变更（跨多个窗口）只应用一次；窗口未到不应用', async () => {
 		const h = makeHarness();
 		await h.plugin.loadSettings();
 		// 观测面：应用一轮就会查询活动叶子（`applySettingsToViewsNow` 的第一步）。
@@ -274,9 +281,9 @@ describe('applySettingsToViews（重建引擎的突发合并）', () => {
 			workspace: { getLeavesOfType: getLeaves },
 		};
 
-		// 19 档滑块，每档 40ms（总跨度 720ms > 一个 250ms 窗口）
+		// 19 次连续变更，每次间隔 40ms（总跨度 720ms > 一个 250ms 窗口）
 		for (let i = 0; i < 19; i++) {
-			h.plugin.settings.performanceThreshold = 100 + i * 100;
+			h.plugin.settings.enableDrag = i % 2 === 0;
 			h.plugin.applySettingsToViews();
 			if (i < 18) {
 				await vi.advanceTimersByTimeAsync(40);

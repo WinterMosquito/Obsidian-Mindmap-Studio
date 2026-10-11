@@ -1369,8 +1369,9 @@ window.setTimeout(() => {
 // 两条契约：
 // ① 撤销必须**精确还原**（DOM 节点数回到插入前、树上被撤销的节点消失）——用户报过的
 //    「Ctrl+Z 失效」那类缺陷的守卫；
-// ② 撤销**不替换节点实例**（引擎复用 Node 对象）——view-drag-duplicate 的 Alt 拖拽
-//    复制依赖它：BACK 之后仍用拖拽前捕获的父节点引用插入副本。
+// ② 撤销**不替换节点实例**（引擎复用 Node 对象）。原消费者 view-drag-duplicate
+//    （Alt 拖拽复制）已于 2026-10-11 随拖拽换父辅助移除；断言保留为引擎历史语义
+//    的护栏——引擎若改为重建实例，依赖「BACK 后旧引用仍可寻址」的代码会静默失配。
 const identityProbe = document.createElement('pre');
 identityProbe.id = 'undo-probe';
 document.body.appendChild(identityProbe);
@@ -1629,7 +1630,7 @@ window.setTimeout(() => {
 //   mutations    = MutationObserver 记录数（DOM 变更量 ≈ 重建/重排规模）
 //   builderCalls = 自绘构建器调用数（内容重建粒度：整树 or 仅受影响节点）
 //   domNodes     = 该图的 DOM 元素总数（结构规模基线）
-// 规模取 500（= 默认 performanceThreshold）且**关闭性能模式** ⇒ 全部节点在 DOM，
+// 规模取 500（= constants.PERFORMANCE_NODE_THRESHOLD）且**关闭性能模式** ⇒ 全部节点在 DOM，
 // 属最坏形态。本轮只记录基线（ⓘ 输出）：阈值待基线稳定后再钉，避免把尚未复核的
 // 引擎行为写成假契约。
 const editProbe = document.createElement('pre');
@@ -2537,16 +2538,15 @@ window.setTimeout(() => {
 			{
 				...options,
 				performanceMode: false,
-				// 与生产默认一致（settings.selfDrawPlainNodes 默认开，2026-09-25）：
-				// 纯文本节点也自绘。否则负载的编辑路径是旧口径——编辑后 text 无
-				// 链接段 ⇒ 不接管 ⇒ 切回引擎 SVG 渲染 + 逐字符测量，测出的不是
-				// 生产编辑成本（生产编辑走 applyRawToNode 重解析写回，节点回
+				// 与生产一致：纯文本节点**恒自绘**（2026-10-09 起常开，原设置
+				// settings.selfDrawPlainNodes 已移除）。否则负载的编辑路径是旧口径
+				// ——编辑后 text 无链接段 ⇒ 不接管 ⇒ 切回引擎 SVG 渲染 + 逐字符测量，
+				// 测出的不是生产编辑成本（生产编辑走 applyRawToNode 重解析写回，节点回
 				// text === mdDerivedText 的未编辑态，继续自绘，见 K54）。
 				createNodeContent: (node, doc, style, lang) => {
 					gateNodeWidthHandles(node);
 					return buildInlineNodeContent(node, doc, style, lang, {
 						isResolvedLink: (linkpath) => !linkpath.startsWith('未解析'),
-						selfDrawPlain: true,
 					});
 				},
 			},
@@ -3116,7 +3116,7 @@ window.setTimeout(() => {
 // ---------------------------------------------------------------------------
 // 真实墙钟模式（`--perf`）的负载参数
 // ---------------------------------------------------------------------------
-/** 负载图规模（= 默认 performanceThreshold，非性能模式 ⇒ 全部节点在 DOM，最坏形态） */
+/** 负载图规模（= PERFORMANCE_NODE_THRESHOLD，非性能模式 ⇒ 全部节点在 DOM，最坏形态） */
 const PERF_WORKLOAD_NODES = Number(process.env.PERF_WORKLOAD_NODES) || 500;
 /**
  * 默认编辑次数（每次 = 一次整树渲染 + 一条历史快照）。
@@ -4122,9 +4122,9 @@ function checkHandles(dom) {
  * - BACK 后 DOM 节点数**回到插入前**（撤销必须真正重绘，不能只改数据）——
  *   「Ctrl+Z 失效」类缺陷的直接守卫；
  * - 树上被撤销的临时子节点消失（`treeChildrenAfterBack === 0`）；
- * - 撤销后**同一节点仍能用同一实例寻址**（`childSameAfterBack`）：引擎复用 Node 对象，
- *   `view-drag-duplicate`（Alt 拖拽复制）在 BACK 之后继续用旧父引用插入副本，
- *   引擎若改成重建实例，此处先红、需同步改为按 uid 重新定位。
+ * - 撤销后**同一节点仍能用同一实例寻址**（`childSameAfterBack`）：引擎复用 Node 对象。
+ *   原消费者 `view-drag-duplicate`（Alt 拖拽复制）已于 2026-10-11 移除；该断言保留为
+ *   引擎历史语义的护栏——引擎若改成重建实例，此处先红，依赖旧引用的代码需改为按 uid 定位。
  */
 function checkUndo(dom) {
 	const { probe, failures: parseFailures } = readProbe(dom, 'undo-probe', '撤销');
@@ -4151,7 +4151,7 @@ function checkUndo(dom) {
 	}
 	if (probe.childSameAfterBack !== true) {
 		failures.push(
-			'撤销后节点实例被替换（Alt 拖拽复制的「BACK 后用旧父引用插入」将失效，需改为按 uid 定位）',
+			'撤销后节点实例被替换（引擎历史语义变化：依赖「BACK 后旧引用仍可寻址」的代码需改为按 uid 定位）',
 		);
 	}
 	return failures;
@@ -5155,9 +5155,8 @@ const options = {
 			return placeholder;
 		}
 		return buildInlineNodeContent(node, doc, style, lang, {
-			// 与生产默认一致（2026-09-25 起 settings.selfDrawPlainNodes 默认开）：
+			// 与生产一致（2026-10-09 起纯文本节点恒自绘，原设置项已移除）：
 			// 基准测的是**真实生产路径**——纯文本节点也自绘、跳过引擎逐字符测宽
-			selfDrawPlain: true,
 			isResolvedLink: (linkpath) => !linkpath.startsWith('未解析'),
 		});
 	},

@@ -70,7 +70,7 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 | 访问引擎内部形态 | `engine/mindmap.ts` 具名函数 | 防腐收口 |
 | 库内文件解析 | `links/links-resolve.resolvePathToFile` | **形态路由顺序即契约** |
 | 弹窗骨架 | `ui/modal-common.openFormModal` | 只收Promise + Modal + settle 守卫 + 标题 + 内容根；**「先 settle 再 close」的顺序由 helper 保证**。按钮行与快捷键**刻意不收口**（四者按钮集合/行class/提交键语义各异，硬抽即泄漏抽象） |
-| 窗口级拖拽会话 | `features/drag-session.startWindowDragSession` | 收口 mousemove/mouseup 临时监听 + rAF 合帧 + 幂等收尾。`capture` 显式表达「手势独占（调宽）」vs「只观察（换父辅助）」——这是两处曾真实分叉过的语义。`onMove` **逐事件**、`onFrame` **每帧至多一次**，两条合约勿混用 |
+| 窗口级拖拽会话 | `features/drag-session.startWindowDragSession` | 收口 mousemove/mouseup 临时监听 + rAF 合帧 + 幂等收尾。`capture` 显式表达「手势独占（调宽，`true`）」vs「只观察（`false`，不夺事件）」——现存调用方只有图像调宽（`true`）；该语义曾由两处（调宽 / 换父辅助）真实分叉过，换父辅助已于 2026-10-11 移除。`onMove` **逐事件**、`onFrame` **每帧至多一次**，两条合约勿混用 |
 | 节点自绘内容 | `features/node-inline-content.ts` | 段序列 + 锚点属性契约 |
 | 节点内代码块 / 数学的**宿主侧渲染** | `platform/prism-code.ts` / `platform/math-jax.ts`（官方 `loadPrism` / `loadMathJax`） | 注入式：`node-inline-content` 只写字面占位 + 传参；**观感一律内联**（导出 SVG 不含 `styles.css`） |
 | DOM 事件监听 | `Component.register*` 或 `core/event-binder.ts` | 随生命周期自动摘除 |
@@ -129,35 +129,38 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 **platform/**（9）：`export-css-vars.ts` `export-foreign-object-padding.ts` `math-jax.ts` `nav-history.ts` `open-as-restore.ts` `prism-code.ts` `system-open.ts` `vault-prefs.ts` `vault-sync.ts`
 **ui/**（5）：`modal-common.ts` `modal-image.ts` `modal-link.ts` `modal-name.ts` `modal-text.ts`
 **services/**（4）：`document-service.ts` `engine-controller.ts` `status-bar.ts` `view-state.ts`
-**features/**（28）：`drag-session.ts` `drag-target.ts` `file-creator.ts` `image-resize.ts` `node-codeblock.ts` `node-inline-content.ts` `node-inline-editor.ts` `view-common.ts` `view-context-menu.ts` `view-context.ts` `view-dnd.ts` `view-drag-duplicate.ts` `view-export.ts` `view-hotkeys.ts` `view-image-actions.ts` `view-image-fullscreen.ts` `view-link-navigator.ts` `view-node-actions.ts` `view-node-width.ts` `view-paste.ts` `view-search.ts` `view-split-links.ts` `view-status.ts` `view-title-renamer.ts` `view-toolbar.ts` `view-viewport.ts` `view-wikilink.ts` `view.ts`
-**tests/**（67）：`agents-md-sync.test.ts` `concurrency.test.ts` `constants.test.ts` `creation-folder.test.ts` `domain.test.ts` `drag-session.test.ts` `engine-controller.test.ts` `engine-history-limit.test.ts` `engine-image-size.test.ts` `engine-refresh-nodes.test.ts` `event-binder.test.ts` `export-fo-padding.test.ts` `feature-helpers.test.ts` `feature-teardown.test.ts` `file-lookup.test.ts` `find-node-by-dom.test.ts` `images-path.test.ts` `language-refresh.test.ts` `links-rename.test.ts` `links-resolve.test.ts` `links-split.test.ts` `links-tree.test.ts` `math-jax-export-pin.test.ts` `math-jax.test.ts` `md-inline.test.ts` `md-line-write.test.ts` `md-roundtrip-property.test.ts` `md-roundtrip.test.ts` `measure-cache.test.ts` `mindmap-theme.test.ts` `mindmap-wiki-icon.test.ts` `modal-common.test.ts` `modal-input.test.ts` `nav-history.test.ts` `node-codeblock.test.ts` `node-inline-content.test.ts` `node-inline-editor.test.ts` `node-text-edit.test.ts` `obsidian.ts` `open-as-restore.test.ts` `pasted-name.test.ts` `persistence.test.ts` `plain-text-parser.test.ts` `prism-code.test.ts` `save-pipeline.test.ts` `settings-persist.test.ts` `settings.test.ts` `setup.ts` `system-open.test.ts` `url.test.ts` `vendor-contract.test.ts` `view-context-menu.test.ts` `view-dnd.test.ts` `view-export.test.ts` `view-hotkeys.test.ts` `view-node-actions.test.ts` `view-node-width.test.ts` `view-paste.test.ts` `view-search.test.ts` `view-split-links.test.ts` `view-state.test.ts` `view-status.test.ts` `view-toolbar.test.ts` `view-viewport.test.ts` `view-wikilink.test.ts` `viewport.test.ts` `wiki-display.test.ts`
+**features/**（25）：`drag-session.ts` `image-resize.ts` `node-codeblock.ts` `node-inline-content.ts` `node-inline-editor.ts` `view-common.ts` `view-context-menu.ts` `view-context.ts` `view-dnd.ts` `view-export.ts` `view-hotkeys.ts` `view-image-actions.ts` `view-image-fullscreen.ts` `view-link-navigator.ts` `view-node-actions.ts` `view-node-width.ts` `view-paste.ts` `view-search.ts` `view-split-links.ts` `view-status.ts` `view-title-renamer.ts` `view-toolbar.ts` `view-viewport.ts` `view-wikilink.ts` `view.ts`
+**tests/**（68）：`agents-md-sync.test.ts` `concurrency.test.ts` `constants.test.ts` `creation-folder.test.ts` `domain.test.ts` `drag-session.test.ts` `engine-controller.test.ts` `engine-history-limit.test.ts` `engine-image-size.test.ts` `engine-refresh-nodes.test.ts` `event-binder.test.ts` `export-fo-padding.test.ts` `feature-helpers.test.ts` `feature-teardown.test.ts` `file-lookup.test.ts` `find-node-by-dom.test.ts` `images-path.test.ts` `language-refresh.test.ts` `links-rename.test.ts` `links-resolve.test.ts` `links-split.test.ts` `links-tree.test.ts` `math-jax-export-pin.test.ts` `math-jax.test.ts` `md-inline.test.ts` `md-line-write.test.ts` `md-roundtrip-property.test.ts` `md-roundtrip.test.ts` `measure-cache.test.ts` `mindmap-theme.test.ts` `mindmap-wiki-icon.test.ts` `modal-common.test.ts` `modal-input.test.ts` `nav-history.test.ts` `node-codeblock.test.ts` `node-inline-content.test.ts` `node-inline-editor.test.ts` `node-text-edit.test.ts` `obsidian.ts` `open-as-restore.test.ts` `pasted-name.test.ts` `persistence.test.ts` `plain-text-parser.test.ts` `prism-code.test.ts` `save-pipeline.test.ts` `settings-persist.test.ts` `settings.test.ts` `setup.ts` `system-open.test.ts` `url.test.ts` `vault-prefs.test.ts` `vendor-contract.test.ts` `view-context-menu.test.ts` `view-dnd.test.ts` `view-export.test.ts` `view-hotkeys.test.ts` `view-node-actions.test.ts` `view-node-width.test.ts` `view-paste.test.ts` `view-search.test.ts` `view-split-links.test.ts` `view-state.test.ts` `view-status.test.ts` `view-toolbar.test.ts` `view-viewport.test.ts` `view-wikilink.test.ts` `viewport.test.ts` `wiki-display.test.ts`
 
 ### 文件规模与豁免（超 300 行须登记；完整理由见 docs/agents/architecture.md）
 
-> 行数基准 2026-10-04（**2026-10-08 复测更新了 `src/core/i18n.ts` / `src/features/drag-target.ts` /
-> `src/features/image-resize.ts` 三行**，其余条目仍是 10-04 读数）；**唯一口径** = `tests/agents-md-sync.test.ts` 的 countSourceLines
+> 行数基准 2026-10-04（**2026-10-09 复测刷新了 8 行**：`engine/mindmap.ts` / `core/i18n.ts` /
+> `core/constants.ts` / `settings.ts` / `features/view.ts` / `features/node-inline-content.ts` /
+> `services/engine-controller.ts` / `main.ts`——全部为减法批次〔K117〕的读数；**2026-10-11 又刷新 3 行**
+> （`engine/mindmap.ts` 2143 → 2012、`core/constants.ts` 501 → 494、`features/view.ts` 1252 → 1249，
+> 系移除拖拽换父辅助〔含引擎落点判定防腐面与识别域常量〕的减法读数）；其余条目仍是 10-04 读数，
+> 另 2026-10-08 复测过 `image-resize.ts` 一行）；**唯一口径** = `tests/agents-md-sync.test.ts` 的 countSourceLines
 >（按 `\n` 切分、末尾换行不计行）。**不要**用 PowerShell 的 Measure-Object -Line——
 > 口径不同会使登记值与实测对不上。改动任一豁免文件后若 agents-md-sync 转红，
 > 必须回来更新本表的行数列。
 
 | 文件 | 行数 | 豁免理由（完整理由见 docs/agents/architecture.md） |
 |---|---|---|
-| `src/engine/mindmap.ts` | 2135 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。 |
+| `src/engine/mindmap.ts` | 2012 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。 |
 | `src/markdown/md-serialize.ts` | 1058 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。嵌入拼写走 `domain/wikilink.formatEmbedWikilink`，注意 `embedLabelSuffix` 返回值**带前导 `|`** 需去前缀 |
 | `src/markdown/md-outline.ts` | 1053 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则。 |
-| `src/core/i18n.ts` | 526 | 纯词条表（无逻辑分支）。 |
-| `src/features/view.ts` | 1250 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。 |
-| `src/services/engine-controller.ts` | 815 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。 |
+| `src/core/i18n.ts` | 494 | 纯词条表（无逻辑分支）。 |
+| `src/features/view.ts` | 1249 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。 |
+| `src/services/engine-controller.ts` | 783 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。 |
 | `src/media/images-path.ts` | 633 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一）。`schedulePersistSizeCache` 是**第三种调度语义**（纯延迟落盘、窗口不重置、首调不立即执行），刻意不用 `createDebouncer`/`createThrottler`。 |
 | `src/features/image-resize.ts` | 409 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链。窗口级会话（监听 + rAF 合帧 + 幂等收尾）已收口到 `drag-session`，本文件只留业务回调；`capture: true` 是「手势独占」的显式参数 |
-| `src/features/drag-target.ts` | 384 | 单一算法收口（拖拽落点仲裁）：两类锚点（节点中心／兄弟间隙中点）必须共用同一套「按指针距离最近仲裁 + 引擎三态让位」规则。窗口级会话已收口到 `drag-session`，本文件只留落点判定；`capture` 取默认 false（只观察、不夺事件） |
 | `src/features/view-node-actions.ts` | 756 | 节点操作（链接/文本/剪贴板/删除）的**共用入口**——工具栏与右键菜单同调；图片操作已拆至 `view-image-actions.ts` 并由本文件 re-export。 |
 | `src/features/view-dnd.ts` | 584 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配。入库失败**不由本层二次提示**——入库通道（images-save）已逐条提示并返回 null，只留控制台计数痕迹。 |
-| `src/main.ts` | 360 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。 |
+| `src/main.ts` | 352 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。 |
 | `src/markdown/links-split.ts` | 486 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。 |
-| `src/core/constants.ts` | 492 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件）+ 代码块判定（缩进行 / 围栏语言码白名单 / 已渲染标记类）。 |
-| `src/settings.ts` | 379 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。 |
-| `src/features/node-inline-content.ts` | 1526 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分 + 围栏/缩进代码块判定 + 语言码规范化）→ HTML（锚点契约 + **内联样式常量** + 代码块 token 的异步注入面）。 |
+| `src/core/constants.ts` | 494 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件）+ 代码块判定（缩进行 / 围栏语言码白名单 / 已渲染标记类）。 |
+| `src/settings.ts` | 316 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。2026-10-09 减法（K117）删掉 4 项后已接近门槛（316 行），再删项时应顺势移出本表。 |
+| `src/features/node-inline-content.ts` | 1428 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分 + 围栏/缩进代码块判定 + 语言码规范化）→ HTML（锚点契约 + **内联样式常量** + 代码块 token 的异步注入面）。2026-10-09 减法（K117）：纯文本节点恒接管，接管判据＝段序列非空 ∨ 超长（删掉 `rich`/`hidden` 附带判定与三个正则）。 |
 | `src/features/view-wikilink.ts` | 411 | 链接交互**单一关注点**：**点击路径**的锚点识别（`findAnchorInNode` / `resolveAnchorLink`）与**悬停预览**（两级：锚点优先 + 节点级 `nodeLink` 三通道 + `hover-link` 事件）同在一处，还有中键 `auxclick`；把悬停拆出去会让「链接怎么取、锚点取哪个目标」出现第二份实现——正是本文件当初拆出（原在 view.ts）要消除的问题。 |
 | `src/platform/prism-code.ts` | 448 | 代码块语法高亮通道**单一落点**（全插件唯一 import `obsidian` 的代码高亮实现，`loadPrism`）：产品形态是「字面代码 → 异步 `Prism.tokenize` → token 元素（**不经 innerHTML**）→ 定稿（入产物缓存 + 通知重排）」；与数学通道的四点差异（tokenize 是同步纯函数，故**不搬**字体/flush/就绪判据/挂载补替换队列）必须成对阅读；token 颜色**探测宿主计算色后内联**（导出 SVG 无 app.css，K91/K99 口径）；主题切换走 `refreshPrismTokenColors`（清缓存 + 就地改色，不重建节点）。未登记语言 / `tokenize` 抛错 / 空产物一律保留字面（占位即回退）。 |
 | `src/platform/math-jax.ts` | 919 | 数学渲染通道**单一落点**（全插件唯一 import `obsidian` 的数学实现）：产品形态是「字面占位 → 异步替换 → 就绪判据（全部 `mjx-c` 宽 > 0 + **零宽豁免双形态**：v3 空 `content` 规则／v4 零 `padding` 规则，按字符码查 `#MJX-CHTML-styles` 的 CSSOM 索引、**按 flush 代际缓存**）→ 撤回字面 → 定稿（入缓存 + 通知重排）；**字体**（私有区码点，渐进渲染故不设重试）；**导出 SVG 后处理链**（样式注入 + `mjx-container` 高度钉定）。MathJax 3/4 两代规则形态均需兼容（K85 / K113）。读CHTML 规则表失败会**留痕告警**（留空索引 = K113 豁免整体失效，属无痕退化）。**刻意不加会话/代际守卫**——A2 元素按 uid 取用即删，旧 holder 写入不可见（结论见文件头）。 |

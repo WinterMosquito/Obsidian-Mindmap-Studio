@@ -3,8 +3,7 @@
  *
  * 本类只做装配与生命周期编排（遵循 obsidian-sample-plugin 规范）：
  * - onload: 设置载入、注册视图/扩展名/事件监听/设置面板；
- *   「打开方式记忆」的自动切换与文件浏览器菜单注入委托给
- *   open-as-restore.ts / features/file-creator.ts；
+ *   「打开方式记忆」的自动切换与启动恢复委托给 open-as-restore.ts；
  * - onunload: 排空未落盘的视图状态后清理。
  * 业务逻辑分别位于 settings.ts / commands.ts / creation.ts / features/view.ts /
  * mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
@@ -42,7 +41,6 @@ import { PluginDataWriter } from './core/persistence';
 import { ElementStatusBarService } from './services/status-bar';
 import type { StatusBarService } from './services/status-bar';
 import { updateStatusBar } from './features/view-status';
-import { injectIntoFileCreator } from './features/file-creator';
 import { pruneViewSwitchNoise } from './platform/nav-history';
 import { OpenAsPreferenceRestorer } from './platform/open-as-restore';
 
@@ -214,22 +212,16 @@ export default class MindMapStudioPlugin extends Plugin {
 		);
 		restorer.register(this);
 
-		// 文件浏览器「新建文件」菜单注入 + 启动后恢复「偏好为思维导图」的叶子
-		const injectFileCreatorMenu = (): void => {
-			injectIntoFileCreator(this.app, this.settings.language, (folderPath) => {
-				void createNewMindMap(this.app, this.settings.language, folderPath);
-			});
-		};
+		// 启动后恢复「偏好为思维导图」的叶子。
+		// 「在某个文件夹新建导图」只保留**一个**入口：上方官方 `file-menu` 的文件夹
+		// 右键项（`TFolder` 分支）。此前的 file-explorer「新建」菜单注入是同一动作的
+		// 第二入口、且依赖未公开私有 API（`view.fileCreator`），已于 2026-10-09 减法移除。
 		this.app.workspace.onLayoutReady(() => {
 			if (this.unloaded) {
 				return;
 			}
-			injectFileCreatorMenu();
 			restorer.scheduleStartupRestore();
 		});
-		this.registerEvent(
-			this.app.workspace.on('layout-change', () => injectFileCreatorMenu()),
-		);
 
 		// Vault 文件事件同步（重命名/删除/创建时更新打开导图的引用与查找缓存，
 		// 并经 hooks 迁移/清理视图状态键——事件单一注册入口，避免双订阅）

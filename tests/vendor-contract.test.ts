@@ -306,13 +306,13 @@ describe('vendor 契约：防腐层触碰的引擎内部字段', () => {
 
 describe('vendor 契约：插件依赖的引擎事件名', () => {
 	// 每个令牌对应一处 src 的 onEngine/emit 调用点：引擎若不派发该事件，
-	// 相应监听静默失效（右键菜单、拖拽换父、悬停预览、状态栏计数、图片灯箱全哑）。
+	// 相应监听静默失效（右键菜单、悬停预览、状态栏计数、图片灯箱全哑）。
 	const emittedEvents = [
 		'data_change', // engine-controller：保存调度 / view-status 计数
 		'node_click', // view-wikilink：链接点击跳转
 		'node_contextmenu', // view-context-menu：节点右键菜单
-		'node_dragend', // engine-controller（图片点击抑制）/ drag-target（会话收尾）
-		'node_dragging', // drag-target / image-resize：拖拽会话开始
+		'node_dragend', // engine-controller（图片点击抑制）
+		'node_dragging', // image-resize：拖宽会话开始（拖拽换父辅助已移除）
 		'node_img_click', // engine-controller：图片灯箱
 		'node_img_mouseenter', // image-resize：调宽手柄显隐
 		'node_img_mouseleave', // image-resize：调宽手柄显隐

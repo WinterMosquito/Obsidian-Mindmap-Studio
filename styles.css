@@ -457,13 +457,6 @@
   pointer-events: auto;
 }
 
-/* ========== 拖拽换父高亮（drag-target.ts） ========== */
-
-/* 节点被拖动时，光标邻近的潜在新父节点高亮（识别范围扩大到节点包围盒外扩） */
-.mindmap-drag-target {
-  filter: drop-shadow(0 0 5px var(--mm-drag-target-color, #f59e0b));
-}
-
 /* ========== 节点内联内容（方案 B：features/node-inline-content.ts 自绘） ==========
    布局 / 排版 / 配色 / 轻标记样式**全部内联在元素上**（该模块 CONTENT_STYLES 一族
    常量，唯一来源）：引擎导出 PNG/SVG 只注入自身 CSS 与 header/footer 的 cssText，

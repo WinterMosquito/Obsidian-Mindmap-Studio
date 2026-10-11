@@ -57,7 +57,7 @@
 > **100% 是 Quill 富文本样式**（`.ql-*`，240 条选择器，无元素/全局选择器），而引擎本体
 > 样式由 bundle 在运行时注入——`Render.appendCss()` 把内置 CSS 文本
 > （`joinCss()` 的 `bo` 常量）写入 `document.head`。本插件从不注册 RichText 插件
-> （`mindmap.ts` 只注册 Select/TouchEvent/AssociativeLine/KeyboardNavigation/
+> （`mindmap.ts` 只注册 Select/TouchEvent/KeyboardNavigation/
 > DoExport/Search/Drag），bundle 中亦无 Quill 代码（`ql-` 仅出现在
 > `if (this.mindMap.richText)` 守卫的导出分支与富文本文本提取助手里），故该 CSS
 > 永不匹配任何元素。删除 `styles.css` 的 vendor 段后 `npm run verify:visual`
@@ -405,8 +405,9 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
 
 ## 插件侧的引擎接缝（升级时重点核对）
 
-- `src/engine/mindmap.ts`：创建参数、插件注册（Select/TouchEvent/AssociativeLine/
-  KeyboardNavigation/DoExport/Search/Drag）、`ENGINE_COMMANDS` 常量表、
+- `src/engine/mindmap.ts`：创建参数、插件注册（Select/TouchEvent/
+  KeyboardNavigation/DoExport/Search/Drag；**AssociativeLine 自 2026-10-09 起不注册**
+  ——引擎自带右键菜单未启用，无人能创建关联线）、`ENGINE_COMMANDS` 常量表、
   全部防腐收口函数（renderer/view/search/doExport/opt 的内部访问只允许出现在这里）；
 - `src/services/engine-controller.ts`：初始化代际锁、视口存取、引用更新预检；
 - `vendor/simple-mind-map.d.cts`：手写类型的导出面。
