@@ -24,6 +24,7 @@ import {
 	isSchemeUrl,
 	isUrlLikeText,
 	resourceUrlPathCandidates,
+	tryDecodeUri,
 } from '../src/domain/url';
 
 describe('isHttpUrl', () => {
@@ -566,5 +567,37 @@ describe('resourceUrlPathCandidates（资源地址 → 库内路径候选）', (
 		expect(resourceUrlPathCandidates('app://local/目录/笔记.md')).toEqual([
 			'目录/笔记.md',
 		]);
+	});
+});
+
+/**
+ * URL 解码的唯一安全入口（2026-10-11 收口）。
+ *
+ * 收口前「解码失败怎么办」在 4 个文件里各写一份 try/catch，两种语义
+ * （回落原样 / 跳过候选）混在同一段注释里；现在由 `null` 显式区分。
+ */
+describe('tryDecodeUri', () => {
+	it.each([
+		{ value: 'a%20b.png', expected: 'a b.png', why: '常规转义' },
+		{ value: '%E7%AC%94%E8%AE%B0.md', expected: '笔记.md', why: '中文名' },
+		{ value: '笔记.md', expected: '笔记.md', why: '未编码中文原样返回' },
+		{ value: 'a%2Fb', expected: 'a/b', why: '编码斜杠被解出（解码不阻断斜杠）' },
+		{ value: '', expected: '', why: '空串是合法输入，不是失败' },
+	])('成功：$value → $expected（$why）', ({ value, expected }) => {
+		expect(tryDecodeUri(value)).toBe(expected);
+	});
+
+	it.each([
+		{ value: '100%.png', why: '孤立 %：真实文件名里的常见形态' },
+		{ value: 'a%E0%A4%A', why: '截断的多字节序列' },
+		{ value: 'a%zz', why: '非十六进制转义' },
+	])('失败返回 null：$value（$why）', ({ value }) => {
+		expect(tryDecodeUri(value)).toBeNull();
+	});
+
+	it('「失败」与「解出来还是原样」是两回事：调用方据此区分跳过 / 回落', () => {
+		// 回落型（`?? raw`）与跳过型（null → 放弃候选）的分界正是这条区分
+		expect(tryDecodeUri('笔记.md') ?? 'FALLBACK').toBe('笔记.md');
+		expect(tryDecodeUri('100%.png') ?? 'FALLBACK').toBe('FALLBACK');
 	});
 });

@@ -837,6 +837,37 @@ describe('injectMathStylesIntoExportSvg（导出 SVG 后处理 · 方案 B）', 
 		expect(appendedStyle?.textContent).not.toContain('@font-face');
 	});
 
+	it('样式表元素存在但 sheet 不可读：退回 textContent 并告警一次（导出图可能丢逐字符规则）', async () => {
+		// 元素在、CSSOM 不可读 ⇒ 只能退回 textContent；而 MathJax 的逐字符字形规则
+		// 是渲染期 insertRule 动态插入的、**不在 textContent 里** ⇒ 导出 SVG 丢规则
+		// （屏上正常、导出图数学不可见）⇒ 该失效只能靠日志发现（K85 ① 教训）。
+		vi.stubGlobal('document', {
+			getElementById: (id: string) =>
+				id === 'MJX-CHTML-styles' ? { textContent: 'mjx-container{}' } : null,
+		});
+		consoleWarnSpy.mockClear();
+		const appended: Array<{ tagName: string; textContent: string }> = [];
+		const svg = {
+			node: {
+				ownerDocument: {
+					win: {
+						createSvg: (tag: string) => ({ tagName: tag, textContent: '' }),
+					},
+				},
+				appendChild: (el: { tagName: string; textContent: string }) => {
+					appended.push(el);
+				},
+			},
+		};
+		const { injectMathStylesIntoExportSvg } = await loadModule();
+		expect(injectMathStylesIntoExportSvg(svg)).toBe(svg);
+
+		expect(appended).toHaveLength(1);
+		expect(appended[0]?.textContent).toContain('mjx-container');
+		expect(consoleWarnSpy, '回退必须留痕').toHaveBeenCalledTimes(1);
+		expect(String(consoleWarnSpy.mock.calls[0]?.[0])).toContain('CSSOM');
+	});
+
 	it('样式表缺失：安全 no-op（原样返回、不追加节点）', async () => {
 		vi.stubGlobal('document', { getElementById: () => null });
 		let appended = 0;

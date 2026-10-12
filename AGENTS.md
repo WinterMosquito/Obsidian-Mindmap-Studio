@@ -2,7 +2,7 @@
 
 ## 项目速览
 
-Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.md`（**100% 标准 Markdown**：frontmatter + 标题 + 列表）解析为思维导图，编辑后**无损回写**为 Markdown。
+Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把「声明为导图」的 `.md`（**100% 标准 Markdown**：frontmatter 的 `类型`/`Type: Mindmap` + 标题 + 列表）解析为思维导图，编辑后**无损回写**为 Markdown。
 
 - 标识 `mindmap-studio`，安装目录 `<vault>/.obsidian/plugins/mindmap-studio/`
 - 发布产物三件套：`main.js` / `manifest.json` / `styles.css`（`main.js` **不入库**，CI 构建）
@@ -15,7 +15,7 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 - Node `>=20`（以 `package.json` 的 `engines` 为准），包管理器 npm，打包器 esbuild
 - 装依赖 `npm install`｜开发 watch `npm run dev`｜生产构建 `npm run build`
 - **实机验证**：把 `main.js` + `manifest.json` + `styles.css` 复制到 `<vault>/.obsidian/plugins/mindmap-studio/`，重启 Obsidian 后在「设置 → 第三方插件」启用；改完代码用 `obsidian plugin:reload id=mindmap-studio` → `obsidian dev:errors`
-- ⚠ 同一 `.mindmap.md` **只允许一个导图实例**：在第二个 leaf 打开会提示并让位（两个实例＝两套引擎 + 两条保存管线，交错写会丢编辑）。自动化脚本连续测多个文件前须先 detach 已有的导图 leaf，否则会拿到空视图而误判为功能缺陷
+- ⚠ 同一导图文件 **只允许一个导图实例**：在第二个 leaf 打开会提示并让位（两个实例＝两套引擎 + 两条保存管线，交错写会丢编辑）。自动化脚本连续测多个文件前须先 detach 已有的导图 leaf，否则会拿到空视图而误判为功能缺陷
 
 
 ## 硬规则（Don't / Do 配对）
@@ -67,6 +67,7 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 | 纯逻辑（无 obsidian / 引擎依赖） | `domain/` | lint 强制零依赖 |
 | 通用机制（常量/文案/错误/并发/事件/持久化） | `core/` | 各一份，不分模块重复 |
 | Obsidian 平台集成 | `platform/` | — |
+| 「本文件是导图」的判据 | `domain/mindmap-property.ts` | frontmatter `Type`/`类型` = `Mindmap`（读侧双键都认，写侧按语言选键）——**唯一实现**，勿另写 |
 | 访问引擎内部形态 | `engine/mindmap.ts` 具名函数 | 防腐收口 |
 | 库内文件解析 | `links/links-resolve.resolvePathToFile` | **形态路由顺序即契约** |
 | 弹窗骨架 | `ui/modal-common.openFormModal` | 只收Promise + Modal + settle 守卫 + 标题 + 内容根；**「先 settle 再 close」的顺序由 helper 保证**。按钮行与快捷键**刻意不收口**（四者按钮集合/行class/提交键语义各异，硬抽即泄漏抽象） |
@@ -75,7 +76,7 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 | 节点内代码块 / 数学的**宿主侧渲染** | `platform/prism-code.ts` / `platform/math-jax.ts`（官方 `loadPrism` / `loadMathJax`） | 注入式：`node-inline-content` 只写字面占位 + 传参；**观感一律内联**（导出 SVG 不含 `styles.css`） |
 | DOM 事件监听 | `Component.register*` 或 `core/event-binder.ts` | 随生命周期自动摘除 |
 | 局部 UI 状态 | 视图实例字段 | 不持久化 |
-| 需跨会话的视图状态 | `data.json`（经 `core/persistence.ts`） | 布局/视口/打开方式按文件记 |
+| 需跨会话的视图状态 | `data.json`（经 `core/persistence.ts`） | **仅**布局/视口按文件记；打开方式由文件属性声明承载（`类型`/`Type`），不存 data.json |
 | 图片尺寸缓存 | 官方 `App.loadLocalStorage` | 按库隔离；**禁**全局 `localStorage`（跨库串味） |
 | 错误呈现 | 用户可感→ `notifyError`；内部 → `console.error/warn` | 静默跳过会让问题无痕退化。**失败已由被调方提示过的，调用方不得二次提示**（`return null` 约定见 `media/images-save`，否则弹两条且正文为 `String(null)`，见 `features/view-dnd.ts`） |
 
@@ -87,7 +88,7 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 3. **实现**：只触碰决策表指定的收口点
 4. **测试**：纯逻辑直测；渲染契约交 `verify:visual`
 5. **同步**：更新下方「代码结构索引」；超 300 行则登记豁免表
-6. **校验**（顺序执行，全绿才提交）：`npm run build` → `npm test` → `npm run lint` → 改过 `styles.css` 加 `npm run lint:css` → 新增/删除导出或文件加 `npm run check:dead-code` → 改过 `vendor/` 加 `npm run build:vendor`
+6. **校验**（顺序执行，全绿才提交）：`npm run build` → `npm test` → `npm run lint` → 改过 `styles.css` 加 `npm run lint:css` → 新增/删除导出或文件加 `npm run check:dead-code` → 改过 `vendor/` 加 `npm run build:vendor` → **改过自绘判据 / 节点渲染 / `scripts/verify-visual.mjs` 加 `npm run verify:visual -- --require-chrome`**（2026-10-11 补：本批曾把判据从「有链接段才接管」收敛为「段序列非空即接管」，门禁整片转红而没在提交前跑到）
 
 ### 修改 Markdown 往返格式
 1. 解析改 `src/markdown/md-outline.ts`，序列化改 `src/markdown/md-serialize.ts`
@@ -120,17 +121,17 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 ## 代码结构索引
 
 **组合根**（4）：`commands.ts` `creation.ts` `main.ts` `settings.ts`
-**domain/**（5）：`md-meta.ts` `tree.ts` `url.ts` `wiki-display.ts` `wikilink.ts`
+**domain/**（6）：`md-meta.ts` `mindmap-property.ts` `tree.ts` `url.ts` `wiki-display.ts` `wikilink.ts`
 **core/**（8）：`concurrency.ts` `constants.ts` `errors.ts` `event-binder.ts` `i18n.ts` `measure-cache.ts` `node-data.ts` `persistence.ts`
 **links/**（3）：`file-lookup.ts` `links-resolve.ts` `links-tree.ts`
 **markdown/**（7）：`links-rename.ts` `links-split.ts` `markdown.ts` `md-line-write.ts` `md-open.ts` `md-outline.ts` `md-serialize.ts`
 **media/**（2）：`images-path.ts` `images-save.ts`
 **engine/**（2）：`mindmap-theme.ts` `mindmap.ts`
-**platform/**（9）：`export-css-vars.ts` `export-foreign-object-padding.ts` `math-jax.ts` `nav-history.ts` `open-as-restore.ts` `prism-code.ts` `system-open.ts` `vault-prefs.ts` `vault-sync.ts`
+**platform/**（10）：`export-css-vars.ts` `export-foreign-object-padding.ts` `export-svg-style.ts` `math-jax.ts` `mindmap-auto-open.ts` `nav-history.ts` `prism-code.ts` `system-open.ts` `vault-prefs.ts` `vault-sync.ts`
 **ui/**（5）：`modal-common.ts` `modal-image.ts` `modal-link.ts` `modal-name.ts` `modal-text.ts`
 **services/**（4）：`document-service.ts` `engine-controller.ts` `status-bar.ts` `view-state.ts`
-**features/**（25）：`drag-session.ts` `image-resize.ts` `node-codeblock.ts` `node-inline-content.ts` `node-inline-editor.ts` `view-common.ts` `view-context-menu.ts` `view-context.ts` `view-dnd.ts` `view-export.ts` `view-hotkeys.ts` `view-image-actions.ts` `view-image-fullscreen.ts` `view-link-navigator.ts` `view-node-actions.ts` `view-node-width.ts` `view-paste.ts` `view-search.ts` `view-split-links.ts` `view-status.ts` `view-title-renamer.ts` `view-toolbar.ts` `view-viewport.ts` `view-wikilink.ts` `view.ts`
-**tests/**（68）：`agents-md-sync.test.ts` `concurrency.test.ts` `constants.test.ts` `creation-folder.test.ts` `domain.test.ts` `drag-session.test.ts` `engine-controller.test.ts` `engine-history-limit.test.ts` `engine-image-size.test.ts` `engine-refresh-nodes.test.ts` `event-binder.test.ts` `export-fo-padding.test.ts` `feature-helpers.test.ts` `feature-teardown.test.ts` `file-lookup.test.ts` `find-node-by-dom.test.ts` `images-path.test.ts` `language-refresh.test.ts` `links-rename.test.ts` `links-resolve.test.ts` `links-split.test.ts` `links-tree.test.ts` `math-jax-export-pin.test.ts` `math-jax.test.ts` `md-inline.test.ts` `md-line-write.test.ts` `md-roundtrip-property.test.ts` `md-roundtrip.test.ts` `measure-cache.test.ts` `mindmap-theme.test.ts` `mindmap-wiki-icon.test.ts` `modal-common.test.ts` `modal-input.test.ts` `nav-history.test.ts` `node-codeblock.test.ts` `node-inline-content.test.ts` `node-inline-editor.test.ts` `node-text-edit.test.ts` `obsidian.ts` `open-as-restore.test.ts` `pasted-name.test.ts` `persistence.test.ts` `plain-text-parser.test.ts` `prism-code.test.ts` `save-pipeline.test.ts` `settings-persist.test.ts` `settings.test.ts` `setup.ts` `system-open.test.ts` `url.test.ts` `vault-prefs.test.ts` `vendor-contract.test.ts` `view-context-menu.test.ts` `view-dnd.test.ts` `view-export.test.ts` `view-hotkeys.test.ts` `view-node-actions.test.ts` `view-node-width.test.ts` `view-paste.test.ts` `view-search.test.ts` `view-split-links.test.ts` `view-state.test.ts` `view-status.test.ts` `view-toolbar.test.ts` `view-viewport.test.ts` `view-wikilink.test.ts` `viewport.test.ts` `wiki-display.test.ts`
+**features/**（26）：`content-remeasure.ts` `drag-session.ts` `image-resize.ts` `node-codeblock.ts` `node-inline-content.ts` `node-inline-editor.ts` `view-common.ts` `view-context-menu.ts` `view-context.ts` `view-dnd.ts` `view-export.ts` `view-hotkeys.ts` `view-image-actions.ts` `view-image-fullscreen.ts` `view-link-navigator.ts` `view-node-actions.ts` `view-node-width.ts` `view-paste.ts` `view-search.ts` `view-split-links.ts` `view-status.ts` `view-title-renamer.ts` `view-toolbar.ts` `view-viewport.ts` `view-wikilink.ts` `view.ts`
+**tests/**（72）：`agents-md-sync.test.ts` `concurrency.test.ts` `constants.test.ts` `content-remeasure.test.ts` `creation-folder.test.ts` `domain.test.ts` `drag-session.test.ts` `engine-controller.test.ts` `engine-history-limit.test.ts` `engine-image-size.test.ts` `engine-refresh-nodes.test.ts` `errors.test.ts` `event-binder.test.ts` `export-fo-padding.test.ts` `feature-helpers.test.ts` `feature-teardown.test.ts` `file-lookup.test.ts` `find-node-by-dom.test.ts` `images-path.test.ts` `language-refresh.test.ts` `links-rename.test.ts` `links-resolve.test.ts` `links-split.test.ts` `links-tree.test.ts` `math-jax-export-pin.test.ts` `math-jax.test.ts` `md-frontmatter-trigger.test.ts` `md-inline.test.ts` `md-line-write.test.ts` `md-open-trigger.test.ts` `md-roundtrip-property.test.ts` `md-roundtrip.test.ts` `measure-cache.test.ts` `mindmap-auto-open.test.ts` `mindmap-theme.test.ts` `mindmap-wiki-icon.test.ts` `modal-common.test.ts` `modal-input.test.ts` `nav-history.test.ts` `node-codeblock.test.ts` `node-inline-content.test.ts` `node-inline-editor.test.ts` `node-text-edit.test.ts` `obsidian.ts` `pasted-name.test.ts` `persistence.test.ts` `plain-text-parser.test.ts` `prism-code.test.ts` `save-pipeline.test.ts` `settings-persist.test.ts` `settings.test.ts` `setup.ts` `system-open.test.ts` `url.test.ts` `vault-prefs.test.ts` `vendor-contract.test.ts` `view-context-menu.test.ts` `view-dnd.test.ts` `view-export.test.ts` `view-hotkeys.test.ts` `view-node-actions.test.ts` `view-node-width.test.ts` `view-paste.test.ts` `view-search.test.ts` `view-split-links.test.ts` `view-state.test.ts` `view-status.test.ts` `view-toolbar.test.ts` `view-viewport.test.ts` `view-wikilink.test.ts` `viewport.test.ts` `wiki-display.test.ts`
 
 ### 文件规模与豁免（超 300 行须登记；完整理由见 docs/agents/architecture.md）
 
@@ -138,7 +139,9 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 > `core/constants.ts` / `settings.ts` / `features/view.ts` / `features/node-inline-content.ts` /
 > `services/engine-controller.ts` / `main.ts`——全部为减法批次〔K117〕的读数；**2026-10-11 又刷新 3 行**
 > （`engine/mindmap.ts` 2143 → 2012、`core/constants.ts` 501 → 494、`features/view.ts` 1252 → 1249，
-> 系移除拖拽换父辅助〔含引擎落点判定防腐面与识别域常量〕的减法读数）；其余条目仍是 10-04 读数，
+> 系移除拖拽换父辅助〔含引擎落点判定防腐面与识别域常量〕的减法读数；**2026-10-11 再刷新 2 行**：
+> `node-inline-content.ts` 1428 → 1430、`main.ts` 352 → 353，系门禁修复批的注释订正；**同日第三次刷新**：
+> `features/view.ts` 1249 → 1086，系数学校准会话外置为 `features/content-remeasure.ts`（R3 批））；其余条目仍是 10-04 读数，
 > 另 2026-10-08 复测过 `image-resize.ts` 一行）；**唯一口径** = `tests/agents-md-sync.test.ts` 的 countSourceLines
 >（按 `\n` 切分、末尾换行不计行）。**不要**用 PowerShell 的 Measure-Object -Line——
 > 口径不同会使登记值与实测对不上。改动任一豁免文件后若 agents-md-sync 转红，
@@ -146,21 +149,21 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把 `.mindmap.
 
 | 文件 | 行数 | 豁免理由（完整理由见 docs/agents/architecture.md） |
 |---|---|---|
-| `src/engine/mindmap.ts` | 2012 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。 |
-| `src/markdown/md-serialize.ts` | 1058 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。嵌入拼写走 `domain/wikilink.formatEmbedWikilink`，注意 `embedLabelSuffix` 返回值**带前导 `|`** 需去前缀 |
-| `src/markdown/md-outline.ts` | 1053 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则。 |
+| `src/engine/mindmap.ts` | 2023 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。2026-10-12 增至 2023：导出收口 `exportMindMapPng` 泛化为 `exportMindMapImage`（PNG/SVG 双格式），格式类型引用 `core/constants` 的 `ExportImageFormat`。 |
+| `src/markdown/md-serialize.ts` | 1189 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。嵌入拼写走 `domain/wikilink.formatEmbedWikilink`，注意 `embedLabelSuffix` 返回值**带前导 `|`** 需去前缀。2026-10-12 增至 1189：无显示名段（首图 / icon-only URL）的**锚点插入点**反查（`anchorInsertPoint` / `insertionForm`）与替换型 slot 共用同一遍行内拼装，拆开会让「文本定位」与「锚点定位」各持一份区间占用判定 |
+| `src/markdown/md-outline.ts` | 1108 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则。2026-10-12 增至 1108：首图与 icon-only URL 也登记台账段并附**上下文锚点**（`tokenAnchors`）——不登记则合成只能尾插，图片被搬到行尾 |
 | `src/core/i18n.ts` | 494 | 纯词条表（无逻辑分支）。 |
-| `src/features/view.ts` | 1249 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。 |
+| `src/features/view.ts` | 1086 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。数学校准会话已外置为 `features/content-remeasure.ts`（2026-10-11）。 |
 | `src/services/engine-controller.ts` | 783 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。 |
 | `src/media/images-path.ts` | 633 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一）。`schedulePersistSizeCache` 是**第三种调度语义**（纯延迟落盘、窗口不重置、首调不立即执行），刻意不用 `createDebouncer`/`createThrottler`。 |
 | `src/features/image-resize.ts` | 409 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链。窗口级会话（监听 + rAF 合帧 + 幂等收尾）已收口到 `drag-session`，本文件只留业务回调；`capture: true` 是「手势独占」的显式参数 |
 | `src/features/view-node-actions.ts` | 756 | 节点操作（链接/文本/剪贴板/删除）的**共用入口**——工具栏与右键菜单同调；图片操作已拆至 `view-image-actions.ts` 并由本文件 re-export。 |
 | `src/features/view-dnd.ts` | 584 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配。入库失败**不由本层二次提示**——入库通道（images-save）已逐条提示并返回 null，只留控制台计数痕迹。 |
-| `src/main.ts` | 352 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。 |
+| `src/main.ts` | 353 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。 |
 | `src/markdown/links-split.ts` | 486 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。 |
-| `src/core/constants.ts` | 494 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件）+ 代码块判定（缩进行 / 围栏语言码白名单 / 已渲染标记类）。 |
-| `src/settings.ts` | 316 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。2026-10-09 减法（K117）删掉 4 项后已接近门槛（316 行），再删项时应顺势移出本表。 |
-| `src/features/node-inline-content.ts` | 1428 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分 + 围栏/缩进代码块判定 + 语言码规范化）→ HTML（锚点契约 + **内联样式常量** + 代码块 token 的异步注入面）。2026-10-09 减法（K117）：纯文本节点恒接管，接管判据＝段序列非空 ∨ 超长（删掉 `rich`/`hidden` 附带判定与三个正则）。 |
+| `src/core/constants.ts` | 480 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件）+ 代码块判定（缩进行 / 围栏语言码白名单 / 已渲染标记类）。2026-10-12 复测 480：新增导出格式选项表与唯一的 `ExportImageFormat` 类型。 |
+| `src/settings.ts` | 421 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。2026-10-11 增至 398：校验器加「被回退/钳制键」的诊断出参 + `reportDroppedSettings` 汇总留痕（无痕退化治理，K33 同族）。2026-10-12 增至 422：新增「导出格式」设置项（`exportImageFormat`，类型引用 `ExportImageFormat`），并令 `pickFrom` 泛型化以返回选项 value 的联合类型。 |
+| `src/features/node-inline-content.ts` | 1442 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分 + 围栏/缩进代码块判定 + 语言码规范化）→ HTML（锚点契约 + **内联样式常量** + 代码块 token 的异步注入面）。2026-10-09 减法（K117）：纯文本节点恒接管，接管判据＝段序列非空 ∨ 超长（删掉 `rich`/`hidden` 附带判定与三个正则）；**含文本节点一律自绘 ⇒ 引擎 prefix/hyperlink/attachment 图标通道只剩空文本/含图节点可达（K118）**。2026-10-12 增至 1442：`MARKUP_RE` 的 bold/ital 分支支持标记体内嵌套（星号版此前与下划线版不对称，见 K120）。 |
 | `src/features/view-wikilink.ts` | 411 | 链接交互**单一关注点**：**点击路径**的锚点识别（`findAnchorInNode` / `resolveAnchorLink`）与**悬停预览**（两级：锚点优先 + 节点级 `nodeLink` 三通道 + `hover-link` 事件）同在一处，还有中键 `auxclick`；把悬停拆出去会让「链接怎么取、锚点取哪个目标」出现第二份实现——正是本文件当初拆出（原在 view.ts）要消除的问题。 |
 | `src/platform/prism-code.ts` | 448 | 代码块语法高亮通道**单一落点**（全插件唯一 import `obsidian` 的代码高亮实现，`loadPrism`）：产品形态是「字面代码 → 异步 `Prism.tokenize` → token 元素（**不经 innerHTML**）→ 定稿（入产物缓存 + 通知重排）」；与数学通道的四点差异（tokenize 是同步纯函数，故**不搬**字体/flush/就绪判据/挂载补替换队列）必须成对阅读；token 颜色**探测宿主计算色后内联**（导出 SVG 无 app.css，K91/K99 口径）；主题切换走 `refreshPrismTokenColors`（清缓存 + 就地改色，不重建节点）。未登记语言 / `tokenize` 抛错 / 空产物一律保留字面（占位即回退）。 |
 | `src/platform/math-jax.ts` | 919 | 数学渲染通道**单一落点**（全插件唯一 import `obsidian` 的数学实现）：产品形态是「字面占位 → 异步替换 → 就绪判据（全部 `mjx-c` 宽 > 0 + **零宽豁免双形态**：v3 空 `content` 规则／v4 零 `padding` 规则，按字符码查 `#MJX-CHTML-styles` 的 CSSOM 索引、**按 flush 代际缓存**）→ 撤回字面 → 定稿（入缓存 + 通知重排）；**字体**（私有区码点，渐进渲染故不设重试）；**导出 SVG 后处理链**（样式注入 + `mjx-container` 高度钉定）。MathJax 3/4 两代规则形态均需兼容（K85 / K113）。读CHTML 规则表失败会**留痕告警**（留空索引 = K113 豁免整体失效，属无痕退化）。**刻意不加会话/代际守卫**——A2 元素按 uid 取用即删，旧 holder 写入不可见（结论见文件头）。 |
@@ -178,7 +181,7 @@ docs/
   markdown-mindmap-standard.md   # Markdown ↔ 思维导图映射规则（**权威标准**，改往返格式须同步）
   agents/architecture.md         # 模块职责、数据流、依赖矩阵、豁免理由详录
   agents/baseline-metrics.md     # 可复现基线（门禁/打开性能/体积归因/静态指标/核销台账）
-  agents/conventions.md          # 关键约定 K1–K112 全文（含实测账本与踩坑记录）
+  agents/conventions.md          # 关键约定 K1–K120 全文（含实测账本与踩坑记录）
   agents/testing.md              # 测试分层、CI 矩阵、CSS 检查、发布元数据护栏
   agents/process.md              # 新增功能检查清单、发布流程、安全合规
   release-notes-<tag>.md         # 各版本发布说明（中英双语；release.yml 按 tag 取用）

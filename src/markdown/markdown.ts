@@ -6,21 +6,26 @@
  */
 import { generateUid } from '../core/constants';
 import { t, type Language } from '../core/i18n';
+import { buildMindMapFrontmatter } from '../domain/mindmap-property';
 import { walkTree } from '../domain/tree';
 import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
 
 /**
- * 新建「Markdown 思维导图」(.mindmap.md) 的默认正文：
- * 渲染层定位——新文件是标准 Markdown（提示列表；无标题时中心主题 = 文件名，
- * 列表项即第 1 级子主题，与旧版默认树观感一致）。
+ * 新建思维导图的默认正文：**属性声明块 + 标准 Markdown 大纲**。
+ *
+ * 属性块（`类型: Mindmap` / en `Type: Mindmap`）是文件「是导图」的唯一凭据——
+ * 触发判定不认文件名（见 domain/mindmap-property）；块后空行分隔正文，
+ * 与 md-outline.splitFrontmatter 的边界口径一致（K46）。
+ * 无标题时中心主题 = 文件名，列表项即第 1 级子主题。
  */
 export function createDefaultMarkdownContent(lang: Language = 'zh'): string {
-	return [
+	const body = [
 		`- ${t(lang, 'default.shortcutHint')}`,
 		`- ${t(lang, 'default.tabHint')}`,
 		`- ${t(lang, 'default.enterHint')}`,
 		'',
 	].join('\n');
+	return `${buildMindMapFrontmatter(lang)}\n${body}`;
 }
 
 /**

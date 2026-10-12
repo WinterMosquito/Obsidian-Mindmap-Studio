@@ -136,9 +136,7 @@ export interface MindMapViewContext extends ViewEngineContext, ViewDomContext {
 	notifyNodeContentCommitted(node: MindMapNode): void;
 	/** 打开节点超链接（wiki / http / 库内路径 / 库外 file:// 绝对路径） */
 	openHyperlink(link: string, mode?: HyperlinkOpenMode): void;
-	/** 当前文件是否为 .mindmap.md（渲染层模式） */
-	isMdDocument(): boolean;
-	/** 切回 Markdown 编辑（工具栏/命令入口） */
+	/** 切回 Markdown 编辑（工具栏/命令入口；并把导图声明持久降级为 Markdown） */
 	backToMarkdown(): void;
 	/** 应用指定布局（布局选择器变更时） */
 	applyLayout(layout: string): void;

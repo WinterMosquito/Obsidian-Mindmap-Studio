@@ -382,22 +382,74 @@ describe('buildInlineData — mdSegments 对齐表（原位写回的定位基准
 		}
 	});
 
-	it('无显示名的 token：首枚不登记（由字段承载），额外枚只记原文', () => {
-		// 位置信息不在显示文本中 → 不参与原位定位；首枚由 hyperlink 字段实时渲染，
-		// 额外枚按原文切片尾插（内容与语法不丢，2026-09-13 起）
+	it('无显示名的 token：首枚与额外枚都登记，并带上下文锚点', () => {
+		// 位置信息不在显示文本中 → 不能按显示名原位定位，改按**上下文锚点**
+		// （左/右邻文字 + 分隔空白）反查插入点，合成回写才不会把它搬到行尾；
+		// 首枚由 hyperlink 字段实时渲染，额外枚按原文切片输出
 		const data = buildInlineData('参考 https://a.com 与 <https://b.com>');
 		expect(data.hyperlink, '首枚 URL 进引擎单链字段').toBe('https://a.com');
-		expect(data.mdSegments, '台账只登记额外的那一枚').toEqual([
-			{ kind: 'link', text: '', raw: '<https://b.com>', first: false },
+		expect(data.mdSegments).toEqual([
+			{
+				kind: 'link',
+				text: '',
+				raw: 'https://a.com',
+				first: true,
+				before: '参考',
+				after: '与',
+				sepBefore: true,
+				sepAfter: true,
+			},
+			{
+				kind: 'link',
+				text: '',
+				raw: '<https://b.com>',
+				first: false,
+				before: '与',
+				after: '',
+				sepBefore: true,
+				sepAfter: false,
+			},
 		]);
 		expect(data.text).toBe('参考 与');
 	});
 
-	it('首图不登记（不占显示文本）、非首图登记为 image 段', () => {
+	it('首图登记为带锚点的 image 段、非首图按显示名登记', () => {
 		const data = buildInlineData('前 ![[a.png]] 与 ![[b.png]] 后');
 		expect(data.mdSegments).toEqual([
+			{
+				kind: 'image',
+				text: '',
+				raw: '![[a.png]]',
+				first: true,
+				before: '前',
+				after: '与',
+				sepBefore: true,
+				sepAfter: true,
+			},
 			{ kind: 'image', text: 'b.png', raw: '![[b.png]]', first: false },
 		]);
+	});
+
+	it('紧贴锚点（无分隔空白）时 sep 为 false', () => {
+		const [seg] = buildInlineData('前缀：![[a.png]]').mdSegments ?? [];
+		expect(seg).toEqual({
+			kind: 'image',
+			text: '',
+			raw: '![[a.png]]',
+			first: true,
+			before: '前缀：',
+			after: '',
+			sepBefore: false,
+			sepAfter: false,
+		});
+	});
+
+	it('锚点超长时截断（前文取尾部、后文取头部）', () => {
+		const long = 'A'.repeat(60);
+		const seg = buildInlineData(`${long} ![[a.png]] ${'B'.repeat(60)}`)
+			.mdSegments?.[0];
+		expect(seg?.before).toBe('A'.repeat(32));
+		expect(seg?.after).toBe('B'.repeat(32));
 	});
 
 	it('文档嵌入登记为链接段（非图片嵌入走链接通道）', () => {

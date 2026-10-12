@@ -1,19 +1,25 @@
 /**
- * 「以思维导图打开」偏好恢复器回归（open-as-restore.ts）。
+ * 声明驱动自动打开回归（platform/mindmap-auto-open.ts）。
  *
  * 三条入口：
- * - `file-open`（互补兜底）→ `restoreMarkdownLeaves` 全叶子扫描；
+ * - `file-open`（互补兜底）→ `activateDeclaredLeaves` 全叶子扫描；
  * - `active-leaf-change`（运行期主路径，携带已激活 leaf）→ `autoSwitch` 单叶判定
  *   （不扫描：file-open 时序上活动视图可能尚未切到 markdown，会漏判）；
  * - `scheduleStartupRestore`（启动/布局就绪）→ 多档延时（默认 400/1500/3500ms）
  *   反复扫描，覆盖「叶子先建 markdown 视图、稍后才绑定文件」的异步恢复窗口。
+ *   `activateDeclaredLeaves` 也是组合根 `metadataCache.on('changed')` 的入口
+ *   （属性被就地加上时补判），故该方法是公开的。
+ *
+ * 判据本身（frontmatter 的 `Type`/`类型`）由组合根注入，本套件用「声明集合」桩
+ * 代替——那样判据回归在 tests/md-frontmatter-trigger.test.ts 单独锁定，两边互不
+ * 耦合。
  *
  * 为什么延时用例必须用 fake timers 断言**每一档的精确毫秒**：三档的作用就是
  * 「早/中/晚各试一次」，多一档会重复切换（用户可见的视图抖动）、少一档则
  * 启动恢复在慢机器上失效——只断言「最终切换了」会把档位丢失掩盖掉。
  *
  * 关于「陈旧回调」的防线（当前实现方式）：本模块**没有代为数/代际锁**，而是
- * - 每档回调触发时才读取当前叶子集合与当前 openAs 偏好（决策不缓存）；
+ * - 每档回调触发时才读取当前叶子集合与当前声明（决策不缓存）；
  * - 切换成功后该叶子不再是 markdown 叶子，后续档位扫描自然空转（幂等）；
  * - 插件卸载经宿主 `Component.register` 清理未触发的定时器。
  * 故用例按「后档重读最新状态、重复调度会叠加不取代」这一真实行为断言（见文末）。
@@ -21,7 +27,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarkdownView, TFile } from 'obsidian';
 import { CORE_VIEW_TYPE, VIEW_TYPE } from '../src/core/constants';
-import { OpenAsPreferenceRestorer } from '../src/platform/open-as-restore';
+import { MindMapAutoOpener } from '../src/platform/mindmap-auto-open';
 
 /** openAsMindMap 的 spy（vi.hoisted 保证先于 mock 工厂可用） */
 const openAsMindMapMock = vi.hoisted(() =>
@@ -30,16 +36,15 @@ const openAsMindMapMock = vi.hoisted(() =>
 
 vi.mock('../src/markdown/md-open', async (importOriginal) => {
 	const mod = await importOriginal<typeof import('../src/markdown/md-open')>();
-	// 仅替换视图切换（副作用单测目标）；isMindMapMarkdownFile 用真实实现，
-	// 保证「.mindmap.md 判定」这条分支与插件运行时同源。
+	// 仅替换视图切换（副作用单测目标）；其余导出保持真实实现
 	return { ...mod, openAsMindMap: openAsMindMapMock };
 });
 
-/** TFile 桩：extension 与 path 分离，用于验证 isMindMapMarkdownFile 的合取条件 */
-function fakeFile(path: string, extension?: string): TFile {
+/** TFile 桩（判据由注入的谓词决定，路径即身份） */
+function fakeFile(path: string): TFile {
 	return Object.assign(new TFile(), {
 		path,
-		extension: extension ?? (path.endsWith('.md') ? 'md' : 'png'),
+		extension: path.endsWith('.md') ? 'md' : 'png',
 	});
 }
 
@@ -48,16 +53,19 @@ function markdownViewWith(fields: Record<string, unknown>): MarkdownView {
 	return Object.assign(new MarkdownView(null as never), fields);
 }
 
-interface RestorerHarness {
-	restorer: OpenAsPreferenceRestorer;
-	/** 注册运行期事件（等价插件 onload 的 restorer.register(this)） */
+interface OpenerHarness {
+	opener: MindMapAutoOpener;
+	/** 注册运行期事件（等价插件 onload 的 opener.register(this)） */
 	register(): void;
+	/** 直接触发全叶子扫描（file-open 与 metadataCache changed 的共同入口） */
+	activate(): void;
 	/** 触发 file-open（回调恒不带参数） */
 	fireFileOpen(): void;
 	/** 触发 active-leaf-change */
 	fireLeafChange(leaf: unknown): void;
 	setLeaves(leaves: unknown[]): void;
-	setOpenAs(path: string, value: 'mindmap' | 'markdown' | undefined): void;
+	/** 设置某路径是否为「声明为导图」 */
+	setDeclared(path: string, declared: boolean): void;
 	/** getLeavesOfType 收到的视图类型（验证只查 markdown 叶子） */
 	queriedTypes: string[];
 	/** 经 Component.registerEvent 登记的事件引用 */
@@ -90,8 +98,9 @@ function makeComponent() {
 }
 
 function setupHarness(
-	openAsMap: Record<string, 'mindmap' | 'markdown' | undefined> = {},
-): RestorerHarness {
+	declaredPaths: readonly string[] = [],
+): OpenerHarness {
+	const declared = new Set<string>(declaredPaths);
 	const fileOpenCallbacks: (() => void)[] = [];
 	const leafChangeCallbacks: ((leaf?: unknown) => void)[] = [];
 	const queriedTypes: string[] = [];
@@ -110,17 +119,20 @@ function setupHarness(
 			return leaves;
 		},
 	};
-	const restorer = new OpenAsPreferenceRestorer(
+	const opener = new MindMapAutoOpener(
 		workspace as never,
-		{ getOpenAs: (path: string) => openAsMap[path] },
+		(file) => declared.has(file.path),
 		// 本插件视图判定（main.ts 注入 `view instanceof MindMapView`）；桩用 own 标记
 		(view: unknown) => Boolean(view && (view as { own?: boolean }).own),
 	);
 	const host = makeComponent();
 	return {
-		restorer,
+		opener,
 		register(): void {
-			restorer.register(host.component as never);
+			opener.register(host.component as never);
+		},
+		activate(): void {
+			opener.activateDeclaredLeaves();
 		},
 		fireFileOpen: (): void => {
 			for (const callback of fileOpenCallbacks) {
@@ -135,8 +147,12 @@ function setupHarness(
 		setLeaves: (next: unknown[]): void => {
 			leaves = next;
 		},
-		setOpenAs: (path, value): void => {
-			openAsMap[path] = value;
+		setDeclared: (path, value): void => {
+			if (value) {
+				declared.add(path);
+			} else {
+				declared.delete(path);
+			}
 		},
 		queriedTypes,
 		registeredEvents: host.registeredEvents,
@@ -164,9 +180,9 @@ describe('register（运行期事件接线）', () => {
 		]);
 	});
 
-	it('file-open：扫描 markdown 叶子，偏好为 mindmap 的 .mindmap.md 切回导图视图', () => {
-		const harness = setupHarness({ 'a.mindmap.md': 'mindmap' });
-		const file = fakeFile('a.mindmap.md');
+	it('file-open：扫描 markdown 叶子，声明为导图的文件切到导图视图', () => {
+		const harness = setupHarness(['a.md']);
+		const file = fakeFile('a.md');
 		const leaf = { view: markdownViewWith({ file }) };
 		harness.setLeaves([leaf]);
 		harness.register();
@@ -182,19 +198,26 @@ describe('register（运行期事件接线）', () => {
 		expect(VIEW_TYPE).toBe('mindmap-view');
 	});
 
-	it('file-open：多叶子中只切换命中的那些（其余原样保留）', () => {
-		const harness = setupHarness({
-			'a.mindmap.md': 'mindmap',
-			'c.mindmap.md': 'mindmap',
-			'd.mindmap.md': 'markdown',
-		});
-		const fileA = fakeFile('a.mindmap.md');
-		const fileC = fakeFile('c.mindmap.md');
+	it('activateDeclaredLeaves（metadataCache changed 入口）与 file-open 同一扫描', () => {
+		const harness = setupHarness(['a.md']);
+		const file = fakeFile('a.md');
+		const leaf = { view: markdownViewWith({ file }) };
+		harness.setLeaves([leaf]);
+
+		harness.activate();
+
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
+		expect(openAsMindMapMock).toHaveBeenCalledWith(leaf, file);
+	});
+
+	it('file-open：多叶子中只切换声明的那些（其余原样保留）', () => {
+		const harness = setupHarness(['a.md', 'c.md']);
+		const fileA = fakeFile('a.md');
+		const fileC = fakeFile('c.md');
 		const leafA = { view: markdownViewWith({ file: fileA }) };
-		const leafB = { view: markdownViewWith({ file: fakeFile('b.mindmap.md') }) }; // 无偏好记录
+		const leafB = { view: markdownViewWith({ file: fakeFile('b.md') }) }; // 未声明
 		const leafC = { view: markdownViewWith({ file: fileC }) };
-		const leafD = { view: markdownViewWith({ file: fakeFile('d.mindmap.md') }) }; // 偏好 markdown
-		harness.setLeaves([leafA, leafB, leafC, leafD]);
+		harness.setLeaves([leafA, leafB, leafC]);
 		harness.register();
 
 		harness.fireFileOpen();
@@ -205,19 +228,13 @@ describe('register（运行期事件接线）', () => {
 		]);
 	});
 
-	it('file-open：跳过矩阵（非 .mindmap.md / 偏好非 mindmap / 视图不符 / 无文件）', async () => {
-		const harness = setupHarness({
-			'note.md': 'mindmap', // 非 .mindmap.md
-			'b.mindmap.md': 'markdown', // 偏好不是 mindmap
-			'weird.mindmap.md': 'mindmap', // 命中后缀但扩展名非 md（合取条件第二项）
-		});
+	it('file-open：跳过矩阵（未声明 / 视图不符 / 无文件）', async () => {
+		const harness = setupHarness(['b.md']);
 		harness.setLeaves([
-			{ view: markdownViewWith({ file: fakeFile('note.md') }) },
-			{ view: markdownViewWith({ file: fakeFile('b.mindmap.md') }) },
-			{ view: markdownViewWith({ file: fakeFile('none.mindmap.md') }) }, // getOpenAs → undefined
+			{ view: markdownViewWith({ file: fakeFile('note.md') }) }, // 未声明
 			{ view: {} }, // 非 MarkdownView 实例
 			{ view: markdownViewWith({ file: null }) }, // 无文件
-			{ view: markdownViewWith({ file: fakeFile('weird.mindmap.md', 'txt') }) },
+			{ view: markdownViewWith({ file: fakeFile('weird.txt') }) }, // 非 md 扩展名（判据已排除）
 		]);
 		harness.register();
 
@@ -229,8 +246,8 @@ describe('register（运行期事件接线）', () => {
 
 	it('切换失败被捕获并记录（不产生未处理拒绝）', async () => {
 		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		const harness = setupHarness({ 'a.mindmap.md': 'mindmap' });
-		const file = fakeFile('a.mindmap.md');
+		const harness = setupHarness(['a.md']);
+		const file = fakeFile('a.md');
 		harness.setLeaves([{ view: markdownViewWith({ file }) }]);
 		harness.register();
 		openAsMindMapMock.mockRejectedValueOnce(new Error('leaf gone'));
@@ -242,14 +259,14 @@ describe('register（运行期事件接线）', () => {
 
 		// 前缀标识来源 + 文件路径（便于用户报告问题时定位）
 		expect(errorSpy.mock.calls[0]?.[0]).toBe('自动切换思维导图视图失败:');
-		expect(errorSpy.mock.calls[0]?.[1]).toBe('a.mindmap.md');
+		expect(errorSpy.mock.calls[0]?.[1]).toBe('a.md');
 	});
 });
 
 describe('active-leaf-change 自动切换（单叶判定，不做全量扫描）', () => {
-	it('激活的 markdown 视图文件匹配且偏好 mindmap → 切换该 leaf', () => {
-		const harness = setupHarness({ 'a.mindmap.md': 'mindmap' });
-		const file = fakeFile('a.mindmap.md');
+	it('激活的 markdown 视图文件已声明 → 切换该 leaf', () => {
+		const harness = setupHarness(['a.md']);
+		const file = fakeFile('a.md');
 		const leaf = { view: markdownViewWith({ file }) };
 		harness.register();
 
@@ -257,24 +274,19 @@ describe('active-leaf-change 自动切换（单叶判定，不做全量扫描）
 
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 		expect(openAsMindMapMock).toHaveBeenCalledWith(leaf, file);
-		// 走 autoSwitch 而非 restoreMarkdownLeaves：没有 getLeavesOfType 扫描
+		// 走 autoSwitch 而非全量扫描：没有 getLeavesOfType 调用
 		expect(harness.queriedTypes).toEqual([]);
 	});
 
-	it('跳过矩阵：本插件视图 / 空 leaf / 非 MarkdownView / 文件不符 / 偏好非 mindmap', () => {
-		const harness = setupHarness({
-			'a.mindmap.md': 'mindmap',
-			'c.mindmap.md': 'markdown',
-		});
+	it('跳过矩阵：本插件视图 / 空 leaf / 非 MarkdownView / 无文件 / 未声明', () => {
+		const harness = setupHarness(['a.md']);
 		harness.register();
 
-		harness.fireLeafChange({ view: markdownViewWith({ own: true, file: fakeFile('a.mindmap.md') }) });
+		harness.fireLeafChange({ view: markdownViewWith({ own: true, file: fakeFile('a.md') }) });
 		harness.fireLeafChange(undefined);
 		harness.fireLeafChange({ view: {} });
 		harness.fireLeafChange({ view: markdownViewWith({ file: null }) });
 		harness.fireLeafChange({ view: markdownViewWith({ file: fakeFile('note.md') }) });
-		harness.fireLeafChange({ view: markdownViewWith({ file: fakeFile('none.mindmap.md') }) });
-		harness.fireLeafChange({ view: markdownViewWith({ file: fakeFile('c.mindmap.md') }) });
 
 		// 已是本插件视图时不重启视图（导图标签内切换文件不该重开）
 		expect(openAsMindMapMock).not.toHaveBeenCalled();
@@ -284,13 +296,13 @@ describe('active-leaf-change 自动切换（单叶判定，不做全量扫描）
 describe('scheduleStartupRestore（启动多档延时）', () => {
 	it('默认三档 400 / 1500 / 3500ms：每档精确触发一次全量扫描', () => {
 		vi.useFakeTimers();
-		const harness = setupHarness({ 'a.mindmap.md': 'mindmap' });
-		const file = fakeFile('a.mindmap.md');
+		const harness = setupHarness(['a.md']);
+		const file = fakeFile('a.md');
 		const leaf = { view: markdownViewWith({ file }) };
 		harness.setLeaves([leaf]);
 		harness.register();
 
-		harness.restorer.scheduleStartupRestore();
+		harness.opener.scheduleStartupRestore();
 		// 调度本身不立即扫描（Obsidian 恢复叶子是异步的）
 		expect(openAsMindMapMock).not.toHaveBeenCalled();
 
@@ -320,13 +332,13 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 
 	it('自定义档位按传入毫秒触发（含单档），默认档位不参与', () => {
 		vi.useFakeTimers();
-		const harness = setupHarness({ 'a.mindmap.md': 'mindmap' });
+		const harness = setupHarness(['a.md']);
 		harness.setLeaves([
-			{ view: markdownViewWith({ file: fakeFile('a.mindmap.md') }) },
+			{ view: markdownViewWith({ file: fakeFile('a.md') }) },
 		]);
 		harness.register();
 
-		harness.restorer.scheduleStartupRestore([100, 250]);
+		harness.opener.scheduleStartupRestore([100, 250]);
 		vi.advanceTimersByTime(100);
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 		vi.advanceTimersByTime(99); // t = 199
@@ -337,7 +349,7 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 		vi.advanceTimersByTime(10_000);
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(2);
 
-		harness.restorer.scheduleStartupRestore([50]);
+		harness.opener.scheduleStartupRestore([50]);
 		vi.advanceTimersByTime(50);
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(3);
 		vi.advanceTimersByTime(10_000);
@@ -346,12 +358,12 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 
 	it('插件卸载（宿主清理回调）后：未触发的档位不再扫描视图', () => {
 		vi.useFakeTimers();
-		const harness = setupHarness({ 'a.mindmap.md': 'mindmap' });
+		const harness = setupHarness(['a.md']);
 		harness.setLeaves([
-			{ view: markdownViewWith({ file: fakeFile('a.mindmap.md') }) },
+			{ view: markdownViewWith({ file: fakeFile('a.md') }) },
 		]);
 		harness.register();
-		harness.restorer.scheduleStartupRestore();
+		harness.opener.scheduleStartupRestore();
 
 		vi.advanceTimersByTime(400); // 早档已触发
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
@@ -364,23 +376,23 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 
 	it('未 register（无宿主组件）时仍按档扫描且不抛异常', () => {
 		vi.useFakeTimers();
-		const harness = setupHarness({ 'a.mindmap.md': 'mindmap' });
+		const harness = setupHarness(['a.md']);
 		harness.setLeaves([
-			{ view: markdownViewWith({ file: fakeFile('a.mindmap.md') }) },
+			{ view: markdownViewWith({ file: fakeFile('a.md') }) },
 		]);
 		// 不调用 register：host 为 null（可选链跳过清理登记）
-		expect(() => harness.restorer.scheduleStartupRestore([100])).not.toThrow();
+		expect(() => harness.opener.scheduleStartupRestore([100])).not.toThrow();
 		vi.advanceTimersByTime(100);
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('后档触发时重读最新叶子集合与偏好：陈旧档位不覆盖新状态', () => {
+	it('后档触发时重读最新叶子集合与声明：陈旧档位不覆盖新状态', () => {
 		vi.useFakeTimers();
-		const harness = setupHarness({ 'a.mindmap.md': 'mindmap' });
-		const leaf = { view: markdownViewWith({ file: fakeFile('a.mindmap.md') }) };
+		const harness = setupHarness(['a.md']);
+		const leaf = { view: markdownViewWith({ file: fakeFile('a.md') }) };
 		harness.setLeaves([leaf]);
 		harness.register();
-		harness.restorer.scheduleStartupRestore();
+		harness.opener.scheduleStartupRestore();
 
 		vi.advanceTimersByTime(400); // 早档：切换到导图视图
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
@@ -390,26 +402,26 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 		vi.advanceTimersByTime(3100); // t = 3500，中档与晚档都已触发
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 
-		// 用户在晚档前改回 Markdown 且偏好已更新为 markdown → 晚档按最新偏好跳过
+		// 用户通过「以 Markdown 打开」把属性降级（声明消失）→ 晚档按最新声明跳过
 		harness.setLeaves([leaf]);
-		harness.setOpenAs('a.mindmap.md', 'markdown');
-		harness.restorer.scheduleStartupRestore([100]);
+		harness.setDeclared('a.md', false);
+		harness.opener.scheduleStartupRestore([100]);
 		vi.advanceTimersByTime(100);
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('重复调度会叠加（无代际锁）：调用两次即两组定时器各自扫描', () => {
 		vi.useFakeTimers();
-		const harness = setupHarness({ 'a.mindmap.md': 'mindmap' });
+		const harness = setupHarness(['a.md']);
 		harness.setLeaves([
-			{ view: markdownViewWith({ file: fakeFile('a.mindmap.md') }) },
+			{ view: markdownViewWith({ file: fakeFile('a.md') }) },
 		]);
 		harness.register();
 
 		// 每次调用都新注册一组 setTimeout，不取消上一组（故调用方须保证只调一次：
 		// main.ts 在 onLayoutReady 里调用一次）——此处按实现断言该边界。
-		harness.restorer.scheduleStartupRestore([100]);
-		harness.restorer.scheduleStartupRestore([100]);
+		harness.opener.scheduleStartupRestore([100]);
+		harness.opener.scheduleStartupRestore([100]);
 		vi.advanceTimersByTime(100);
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(2);
 	});

@@ -208,6 +208,56 @@ describe('轻标记扩展（显示层，不回写）', () => {
 		]);
 	});
 
+	// 2026-10-11 实机实测缺陷：`bold` 的标记体此前写死 `[^*\n]*`（排除 `*`），
+	// 而 `boldU` 的 `[^_\n]*` 不排除 `_` —— 星号版嵌套整段退化为字面、
+	// 屏幕上露出裸 `**`，与下划线版不对称。以下四例锁死修复后的口径。
+	it('星号版一层嵌套：`**粗 *斜* 粗**` 内层斜体生效（与下划线版对称）', () => {
+		const segments = buildInlineSegments('**粗 *斜* 粗**');
+		expect(segments).toHaveLength(1);
+		const nested = segments[0]!;
+		expect(nested.style).toBe('bold');
+		expect(nested.text).toBe('粗 *斜* 粗');
+		expect(nested.children).toEqual([
+			{ kind: 'text', text: '粗 ' },
+			{ kind: 'text', text: '斜', style: 'italic' },
+			{ kind: 'text', text: ' 粗' },
+		]);
+	});
+
+	it('星号版嵌套不跨越下一对 `**`（`**a** b **c**` 仍是两段粗体）', () => {
+		expect(shape('**a** b **c**')).toEqual(['bold:a', ' b ', 'bold:c']);
+	});
+
+	it('斜体包粗体 `*斜 **粗** 尾*`：外层斜体认到成对 `**`，内层粗体生效', () => {
+		// 此前 ital 的标记体排除 `*`，外层失配后正则会在 `**粗**` 内部凑出假的
+		// `<em>粗</em>` 把一行切碎、星号外露。现允许标记体内出现**成对** `**`
+		// （单个游离 `*` 仍由两侧「不与 `*` 相邻」守卫挡下，见 MARKUP_RE 注释）。
+		const segments = buildInlineSegments('*斜 **粗** 尾*');
+		expect(segments).toHaveLength(1);
+		const outer = segments[0]!;
+		expect(outer.style).toBe('italic');
+		expect(outer.text).toBe('斜 **粗** 尾');
+		expect(outer.children).toEqual([
+			{ kind: 'text', text: '斜 ' },
+			{ kind: 'text', text: '粗', style: 'bold' },
+			{ kind: 'text', text: ' 尾' },
+		]);
+	});
+
+	it('游离单个 `*` 不跨层乱配对（`*a* b *c*` 仍是两段斜体）', () => {
+		expect(shape('*a* b *c*')).toEqual(['italic:a', ' b ', 'italic:c']);
+	});
+
+	it('下划线版不受影响：`_斜 **粗** 尾_` 内层粗体生效', () => {
+		const segment = buildInlineSegments('_斜 **粗** 尾_')[0]!;
+		expect(segment.style).toBe('italic');
+		expect(segment.children).toEqual([
+			{ kind: 'text', text: '斜 ' },
+			{ kind: 'text', text: '粗', style: 'bold' },
+			{ kind: 'text', text: ' 尾' },
+		]);
+	});
+
 	it('嵌套深度上限：第三层按字面（MAX_MARKUP_DEPTH = 2，渲染收益趋零）', () => {
 		const segment = buildInlineSegments('**_==x==_**')[0]!;
 		expect(segment.style).toBe('bold');

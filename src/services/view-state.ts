@@ -1,7 +1,7 @@
 /**
  * 视图状态存储：按文件路径保存布局与视口（缩放/平移）。
  *
- * .mindmap.md 正文必须保持纯 Markdown，布局/视口不写入文件；
+ * 导图文件正文必须保持纯 Markdown，布局/视口不写入文件；
  * 状态存插件 data.json（顶层 `viewState` 键，path → 状态），
  * 与 settings 合并写入（保持历史顶层设置格式兼容）。
  *
@@ -63,7 +63,7 @@ export class ViewStateStore {
 				const s = state as Record<string, unknown>;
 				// 形状校验：只接受含已知字段的视图状态，丢弃畸形/异常条目
 				// （防手改 data.json、引擎升级后 view 结构变化等导致的坏数据渗入）。
-				if ('layout' in s || 'lineStyle' in s || 'view' in s || 'openAs' in s) {
+				if ('layout' in s || 'lineStyle' in s || 'view' in s) {
 					this.map.set(path, s);
 				}
 			}
@@ -92,16 +92,6 @@ export class ViewStateStore {
 
 	setLineStyle(path: string, lineStyle: string): void {
 		this.patch(path, { lineStyle });
-	}
-
-	/** 打开方式偏好：'mindmap' | 'markdown'（最后一次主动选择决定） */
-	getOpenAs(path: string): 'mindmap' | 'markdown' | undefined {
-		const openAs = this.map.get(path)?.openAs;
-		return openAs === 'mindmap' || openAs === 'markdown' ? openAs : undefined;
-	}
-
-	setOpenAs(path: string, mode: 'mindmap' | 'markdown'): void {
-		this.patch(path, { openAs: mode });
 	}
 
 	getView(path: string): unknown {

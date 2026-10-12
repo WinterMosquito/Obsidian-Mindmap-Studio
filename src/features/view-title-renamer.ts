@@ -5,13 +5,9 @@
  */
 import { App, Notice, TFile } from 'obsidian';
 import { createDebouncer } from '../core/concurrency';
-import { isMindMapMarkdownFile } from '../markdown/md-open';
+import { isMindMapFile } from '../markdown/md-open';
 import { sanitizeFileName } from '../media/images-save';
-import {
-	MD_FILE_SUFFIX,
-	stripMindMapStem,
-	TITLE_RENAME_DEBOUNCE_MS,
-} from '../core/constants';
+import { TITLE_RENAME_DEBOUNCE_MS } from '../core/constants';
 import { t } from '../core/i18n';
 import type { Language } from '../core/i18n';
 
@@ -45,7 +41,9 @@ export class TitleRenamer {
 
 	private async performRename(): Promise<void> {
 		const file = this.deps.getFile();
-		if (!file || !isMindMapMarkdownFile(file)) return;
+		// 仅声明为导图的文件跟随中心主题改名（手动开为导图的普通笔记不在此列：
+		// 「中心主题 = 文件名」是导图文档的语义，不静默重命名用户笔记）
+		if (!file || !isMindMapFile(this.deps.app, file)) return;
 
 		if (this.deps.isEditingText()) {
 			// 仍在文本编辑框内 → 等编辑结束
@@ -55,11 +53,10 @@ export class TitleRenamer {
 
 		const title = (this.deps.getRootText() ?? '').trim();
 		const sanitized = sanitizeFileName(title).trim();
-		const base = stripMindMapStem(file.basename);
-		if (!sanitized || sanitized === base) return;
+		if (!sanitized || sanitized === file.basename) return;
 
 		const folder = file.parent ? `${file.parent.path}/` : '';
-		const newPath = `${folder}${sanitized}${MD_FILE_SUFFIX}`;
+		const newPath = `${folder}${sanitized}.md`;
 		if (newPath === file.path) return;
 
 		// 非解析用途，仅判断路径是否已存在（类型化 getter 成对，官方推荐）

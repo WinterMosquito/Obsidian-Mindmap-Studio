@@ -1,12 +1,11 @@
 /**
- * 新建思维导图（Markdown 渲染模式）：创建 `.mindmap.md` 文件。
+ * 新建思维导图：创建普通 `命名.md` 文件，正文带 `类型: Mindmap` 属性声明。
  *
- * 渲染层定位：新文件是标准 Markdown 大纲（frontmatter 可选 + # 标题 + 列表），
- * 双击/链接打开落在 Obsidian markdown 视图；本模块负责流程（命名、落盘、打开），
- * 并在创建后自动把当前标签切换到导图视图（openAsMindMap）。
+ * 渲染层定位：新文件是标准 Markdown（属性块 + 提示列表），双击/链接打开落在
+ * Obsidian markdown 视图；本模块负责流程（命名、落盘、打开），并在创建后自动
+ * 把当前标签切换到导图视图（openAsMindMap）。
  */
 import { App, Notice, normalizePath } from 'obsidian';
-import { withMindMapMarker } from './core/constants';
 import { notifyError } from './core/errors';
 import { t, type Language } from './core/i18n';
 import { buildDefaultMindMapName, createDefaultMarkdownContent } from './markdown/markdown';
@@ -39,10 +38,12 @@ export async function createNewMindMap(
 		return; // 用户取消
 	}
 	try {
+		// 用户可能在弹窗里连扩展名一起输入：容忍 `.md` 后缀，不产生 `x.md.md`
+		const baseName = (name || defaultName).replace(/\.md$/i, '');
 		const fileName = await ensureUniqueFileName(
 			app,
 			folder,
-			withMindMapMarker(name || defaultName),
+			`${baseName}.md`,
 		);
 		const path = vaultPath(folder, fileName);
 		// 新建内容为标准 Markdown 大纲；中心主题 = 文件名（虚拟文档根）
@@ -71,17 +72,15 @@ function vaultPath(folder: string, name: string): string {
 }
 
 /** 同一目录下重名时自动追加序号（Obsidian 惯例：名称 1、名称 2...）。
- *  序号插在复合后缀 .mindmap.md 之前（stem 1.mindmap.md）。 */
+ *  序号插在扩展名之前（名称 1.md）。 */
 async function ensureUniqueFileName(
 	app: App,
 	folder: string,
 	fileName: string,
 ): Promise<string> {
-	// 拆分 stem 与扩展：优先完整复合后缀
-	const compound = fileName.match(/^(.*?)(\.mindmap\.md)$/i);
-	const simple = !compound ? fileName.match(/^(.*?)(\.[^.]+)$/) : null;
-	const stem = compound?.[1] ?? simple?.[1] ?? fileName;
-	const extension = compound?.[2] ?? simple?.[2] ?? '';
+	// 拆分 stem 与扩展名（调用方保证传入 `*.md`；无扩展名时整体当 stem）
+	const stem = fileName.replace(/\.[^.]+$/, '') || fileName;
+	const extension = fileName.slice(stem.length);
 	let candidate = fileName;
 	let index = 1;
 	// 性能：候选路径存在性检查代替全库路径 Set 构建（大库下每次创建 O(1)）；

@@ -1,12 +1,15 @@
 import { App, Plugin, PluginSettingTab, type SettingDefinitionItem } from 'obsidian';
 import {
+	EXPORT_IMAGE_FORMAT_OPTIONS,
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
 	LAYOUT_OPTIONS,
 	LINE_STYLE_OPTIONS,
 	THEME_OPTIONS,
+	type ExportImageFormat,
 } from './core/constants';
 import { Language, LANGUAGE_OPTIONS, t } from './core/i18n';
+import { createWarnOnce } from './core/errors';
 
 /**
  * MindMapStudioSettingTab 对宿主插件的窄化契约。
@@ -39,6 +42,8 @@ export interface MindMapStudioSettings {
 	autoSplitMixedLinks: boolean;
 	exportScale: number;
 	enableDrag: boolean;
+	/** 导出图片格式（png 位图 / svg 矢量）；点击导出按钮时按此直接导出 */
+	exportImageFormat: ExportImageFormat;
 	language: Language;
 }
 
@@ -53,45 +58,108 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	autoSplitMixedLinks: false,
 	exportScale: 2,
 	enableDrag: true,
+	exportImageFormat: 'png',
 	language: 'zh',
 };
 
 /**
+ * 校验/归一化的**诊断报告**（可选出参，见 `sanitizeSettings`）。
+ * 只登记「在 data.json 里确实给了值、但没被采纳」的键——缺失键是正常情况，
+ * 不进报告（否则每次全新安装都会报一串）。
+ */
+export interface SettingsSanitizeReport {
+	/** 被回退默认值或钳制的设置字段名（按出现顺序去重） */
+	dropped: string[];
+}
+
+/**
+ * 「非法设置被回退/钳制」的汇总留痕（进程内一次）。
+ *
+ * 为什么必须留痕：data.json 可被手工编辑或来自旧版本，坏值**静默**换掉之后，
+ * 用户看到的现象是「设置没生效」——属无痕退化（AGENTS.md 决策表：
+ * 静默跳过会让问题无痕退化）。汇总一次而不是逐键刷屏。
+ */
+const warnDroppedSettings = createWarnOnce();
+
+export function reportDroppedSettings(dropped: readonly string[]): void {
+	if (dropped.length === 0) {
+		return;
+	}
+	warnDroppedSettings(
+		`设置项取值非法，已回退默认或被钳制：${dropped.join('、')}`,
+	);
+}
+
+/**
  * 校验/归一化从 data.json 读出的设置。历史或手工数据可能含非法类型
- * （如 language:'fr'、exportScale:'2'、performanceThreshold:'abc'），
+ * （如 language:'fr'、exportScale:'2'、enableDrag:'yes'），
  * 直接 Object.assign 会让坏值覆盖默认值并流入运算（NaN/错误语言回退）。
  * 只采纳「类型正确 + 取值合法」的键，其余用默认值。
+ *
+ * @param report 可选出参：填入被回退/钳制的键（调用方交给
+ *   `reportDroppedSettings` 留痕；纯函数语义不变，不传即零开销）。
  */
 export function sanitizeSettings(
 	raw: Record<string, unknown>,
+	report?: SettingsSanitizeReport,
 ): MindMapStudioSettings {
+	// 被回退/钳制的键（有值才登记；缺失键不进报告）
+	const dropped = new Set<string>();
+	const drop = (key: string): void => {
+		dropped.add(key);
+	};
 	const pickString = (key: keyof MindMapStudioSettings): string | undefined => {
 		const value = raw[key];
-		return typeof value === 'string' ? value : undefined;
+		if (typeof value === 'string') {
+			return value;
+		}
+		if (value !== undefined) {
+			drop(key);
+		}
+		return undefined;
 	};
 	const pickNumber = (key: keyof MindMapStudioSettings): number | undefined => {
 		const value = raw[key];
+		if (value === undefined) {
+			return undefined;
+		}
 		const num =
 			typeof value === 'number'
 				? value
 				: typeof value === 'string' && value.trim() !== ''
 					? Number(value)
 					: NaN;
-		return Number.isFinite(num) ? num : undefined;
+		if (Number.isFinite(num)) {
+			return num;
+		}
+		drop(key);
+		return undefined;
 	};
 	const pickBool = (key: keyof MindMapStudioSettings): boolean | undefined => {
 		const value = raw[key];
-		return typeof value === 'boolean' ? value : undefined;
+		if (typeof value === 'boolean') {
+			return value;
+		}
+		if (value !== undefined) {
+			drop(key);
+		}
+		return undefined;
 	};
-	/** 白名单取值（布局/主题等枚举）：不在清单内即视为非法 → 回退默认 */
-	const pickFrom = (
+	/** 白名单取值（布局/主题/导出格式等枚举）：不在清单内即视为非法 → 回退默认 */
+	const pickFrom = <T extends string>(
 		key: keyof MindMapStudioSettings,
-		allowed: readonly { value: string }[],
-	): string | undefined => {
+		allowed: readonly { value: T }[],
+	): T | undefined => {
 		const value = pickString(key);
-		return value && allowed.some((option) => option.value === value)
-			? value
-			: undefined;
+		if (value === undefined) {
+			return undefined;
+		}
+		const match = allowed.find((option) => option.value === value);
+		if (match) {
+			return match.value;
+		}
+		drop(key);
+		return undefined;
 	};
 	/** 数值钳制（含取整）：坏值不直达引擎/导出（如手改 data.json 的 99） */
 	const pickClampedInt = (
@@ -103,10 +171,23 @@ export function sanitizeSettings(
 		if (value === undefined) {
 			return undefined;
 		}
-		return Math.min(max, Math.max(min, Math.round(value)));
+		const clamped = Math.min(max, Math.max(min, Math.round(value)));
+		if (clamped !== value) {
+			drop(key);
+		}
+		return clamped;
 	};
 	const language = pickString('language');
-	return {
+	const finalLanguage =
+		language === 'zh' || language === 'en'
+			? language
+			: DEFAULT_SETTINGS.language;
+	if (language !== undefined && finalLanguage !== language) {
+		drop('language');
+	}
+	// ⚠ 报告必须在**对象字面量求值之后**回填：pick* 是在字面量里被调用的
+	//（写在 return 之前会拿到空的 dropped）。
+	const settings: MindMapStudioSettings = {
 		defaultLayout:
 			pickFrom('defaultLayout', LAYOUT_OPTIONS) ??
 			DEFAULT_SETTINGS.defaultLayout,
@@ -123,11 +204,15 @@ export function sanitizeSettings(
 			pickClampedInt('exportScale', EXPORT_SCALE_MIN, EXPORT_SCALE_MAX) ??
 			DEFAULT_SETTINGS.exportScale,
 		enableDrag: pickBool('enableDrag') ?? DEFAULT_SETTINGS.enableDrag,
-		language:
-			language === 'zh' || language === 'en'
-				? language
-				: DEFAULT_SETTINGS.language,
+		exportImageFormat:
+			pickFrom('exportImageFormat', EXPORT_IMAGE_FORMAT_OPTIONS) ??
+			DEFAULT_SETTINGS.exportImageFormat,
+		language: finalLanguage,
 	};
+	if (report) {
+		report.dropped.push(...dropped);
+	}
+	return settings;
 }
 
 /** 变更后需要即时应用到已打开视图的设置项 */
@@ -208,6 +293,12 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 				t(this.lang, option.label),
 			]),
 		);
+		const exportImageFormatOptions = Object.fromEntries(
+			EXPORT_IMAGE_FORMAT_OPTIONS.map((option) => [
+				option.value,
+				t(this.lang, option.label),
+			]),
+		);
 		// 语言下拉选项（label 用语言自身的名字，不随界面语言变化）
 		const languageOptions = Object.fromEntries(
 			LANGUAGE_OPTIONS.map((option) => [option.value, option.label]),
@@ -279,6 +370,15 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 							step: 1,
 						},
 					},
+					{
+						name: t(this.lang, 'settings.exportImageFormat'),
+						desc: t(this.lang, 'settings.exportImageFormatDesc'),
+						control: {
+							type: 'dropdown',
+							key: 'exportImageFormat',
+							options: exportImageFormatOptions,
+						},
+					},
 				],
 			},
 		];
@@ -292,10 +392,16 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 	 * 不裸写内存对象——宿主对 slider 等控件传值的类型变化不会绕过校验。
 	 */
 	override setControlValue(key: string, value: unknown): void {
-		this.plugin.settings = sanitizeSettings({
-			...this.plugin.settings,
-			[key]: value,
-		});
+		const report: SettingsSanitizeReport = { dropped: [] };
+		this.plugin.settings = sanitizeSettings(
+			{
+				...this.plugin.settings,
+				[key]: value,
+			},
+			report,
+		);
+		// 面板控件正常不会给出非法值：一旦出现即控件契约漂移，需留痕
+		reportDroppedSettings(report.dropped);
 		// 防抖落盘：滑块等高频控件逐档触发，写盘在 main 侧合并为一次
 		//（内存设置已经 sanitizeSettings 即时生效，不受防抖影响）
 		this.plugin.scheduleSettingsPersist();

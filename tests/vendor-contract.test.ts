@@ -284,14 +284,11 @@ describe('vendor 契约：防腐层触碰的引擎内部字段', () => {
 		'removeNodeWhenOutCanvas',
 		'enableFreeDrag',
 		'customHyperlinkJump',
-		// Drag 落点三态（getDragDropState / setDragOverlapTarget / setDragPrevTarget）
-		'overlapNode',
-		'prevNode',
-		'nextNode',
-		'checkOverlapNode',
-		'command.add("MOVE_NODE_TO"',
-		'command.add("INSERT_AFTER"',
-		'command.add("INSERT_BEFORE"',
+		// 注：原「Drag 落点三态」（overlapNode / prevNode / nextNode / checkOverlapNode）
+		// 与 MOVE_NODE_TO / INSERT_AFTER / INSERT_BEFORE 三命令的令牌已随
+		// features/drag-target.ts（拖拽换父辅助）于 2026-10-11 移除——插件不再触碰
+		// 这些内部形态，令牌留在清单里会声明一份并不存在的依赖（见 K23 / K118）。
+		// 拖拽换父本身不受影响：引擎原生判定（指针落在目标矩形内）照旧工作。
 		// 图片展示尺寸（setNodeImageSize / features/image-resize.ts 拖拽调宽）
 		'imageSize',
 		'getImgShowSize',

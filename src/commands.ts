@@ -6,7 +6,7 @@ import { MarkdownView, Plugin, setTooltip } from 'obsidian';
 import { MindMapView } from './features/view';
 import { createNewMindMap } from './creation';
 import { fitMindMap } from './engine/mindmap';
-import { isMindMapMarkdownFile, openAsMindMap } from './markdown/md-open';
+import { declareAndOpenAsMindMap } from './markdown/md-open';
 import { Language, t } from './core/i18n';
 
 /**
@@ -141,11 +141,12 @@ function registerViewCommands(plugin: IPluginCommandsHost): void {
 	});
 }
 
-/** 导出与 md 文档模式：导出 PNG / md 打开为导图 / 切回 Markdown */
+/** 导出与 md 文档模式：导出图片（PNG/SVG）/ md 打开为导图 / 切回 Markdown */
 function registerDocumentCommands(plugin: IPluginCommandsHost): void {
 	plugin.addCommand({
+		// ID 按契约发布后不变（语义已从「导出 PNG」扩展为「导出图片，可选 PNG/SVG」）
 		id: 'mindmap-export-png',
-		name: t(plugin.settings.language, 'command.exportPng'),
+		name: t(plugin.settings.language, 'command.exportImage'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
 			// 引擎未就绪时导出静默无效果，视为不可用（避免"可用却无反应"）
@@ -155,36 +156,38 @@ function registerDocumentCommands(plugin: IPluginCommandsHost): void {
 			if (checking) {
 				return true;
 			}
-			void view.exportPNG();
+			void view.exportImage();
 			return true;
 		},
 	});
 
-	// .mindmap.md：当前 markdown 视图（编辑/阅读均可）→ 导图视图
+	// 任意 md：当前 markdown 视图（编辑/阅读均可）→ 导图视图
+	// （声明为导图的文件已由自动打开切入，本命令服务于「手动预览普通笔记」）
 	plugin.addCommand({
 		id: 'mindmap-open-md-as-view',
 		name: t(plugin.settings.language, 'command.openAsMindMap'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
 			const file = view?.file;
-			if (!file || !isMindMapMarkdownFile(file)) {
+			if (!file || file.extension !== 'md') {
 				return false;
 			}
 			if (checking) {
 				return true;
 			}
-			void openAsMindMap(view.leaf, file);
+			void declareAndOpenAsMindMap(plugin.app, view.leaf, file, plugin.settings.language);
 			return true;
-		},
-	});
+			},
+			});
 
-	// md 文档模式：从导图视图切回 Markdown
+	// md 文档：从导图视图切回 Markdown（并把导图声明持久降级为 Markdown）
 	plugin.addCommand({
 		id: 'mindmap-back-to-markdown',
 		name: t(plugin.settings.language, 'command.backToMarkdown'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
-			if (!view?.isMdDocument()) {
+			const file = view?.file;
+			if (!file || file.extension !== 'md') {
 				return false;
 			}
 			if (checking) {

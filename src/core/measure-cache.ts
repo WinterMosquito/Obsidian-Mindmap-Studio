@@ -55,12 +55,22 @@
  * `InlineContentDocument` 类型，要 per-window 需把 doc 一路传下来，收益不抵签名
  * 复杂度。改动此处前请先确认这条前提仍成立。
  */
+import { createWarnOnce } from './errors';
 
 /** 字体代际：每次「一批字体加载完成」或「字体整体就绪」时递增 */
 let fontEpoch = 0;
 
 /** 字体监听是否已装配（避免重复 addEventListener） */
 let hookInstalled = false;
+
+/**
+ * 「字体面存在但监听面不可用」的告警留痕（同进程只提醒一次）。
+ *
+ * 该形态下 epoch 永不递增 ⇒ 本模块的缓存键不再随字体状态分区 ⇒ 引擎会命中
+ * 偏小的旧宽度 ⇒ **K114 的节点裁切会回来**。属「用户不可感、只能靠日志发现」
+ * 的失效，必须留痕（K85 ① 教训）。
+ */
+const warnFontHookUnavailableOnce = createWarnOnce();
 
 /**
  * 读取 `document.fonts.status`。
@@ -105,7 +115,16 @@ function installFontHook(): void {
 			};
 		}
 	).fonts;
-	if (!fonts || typeof fonts.addEventListener !== 'function') {
+	if (!fonts) {
+		// 环境本就没有字体面（Node / 测试桩 / 极简宿主）：既非退化也不可修，静默。
+		return;
+	}
+	if (typeof fonts.addEventListener !== 'function') {
+		// 字体面**在**、监听面**变了**（宿主 API 形态变更）——这是唯一需要留痕的
+		// 形态差异：epoch 从此不再递增，缓存键不再随字体分区（见常量注释）。
+		warnFontHookUnavailableOnce(
+			'document.fonts 缺 addEventListener，字体代际监听未装配（测量缓存不再随字体失效，长公式可能被裁切）',
+		);
 		return;
 	}
 	hookInstalled = true;

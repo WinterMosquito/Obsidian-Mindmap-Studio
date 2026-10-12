@@ -77,6 +77,8 @@
  */
 import { finishRenderMath, loadMathJax } from 'obsidian';
 import { MATH_RENDERED_HOLDER_CLASS } from '../core/constants';
+import { createWarnOnce } from '../core/errors';
+import { appendSvgStyle } from './export-svg-style';
 
 /**
  * 本模块实际消费的 MathJax 面（窄化，避免 any）。
@@ -175,24 +177,14 @@ function notifyMathSettled(holder: HTMLElement): void {
 	callback(holder);
 }
 
-/** 「渲染方法缺失」告警去重：同一会话只提醒一次（按节点逐条会刷屏） */
-let renderApiMissingWarned = false;
-
 /**
  * MathJax 已就绪但没有任何可用渲染方法：显式告警一次。
  *
  * 教训：此前该情形静默保留字面占位，实机 API 假设错误因此长期
  * 不可见（单测与视觉闸门都触不到真 MathJax）。告警让这类失效**可被发现**。
+ * 去重与前缀由 `core/errors.createWarnOnce` 统一实现（2026-10-11 收口）。
  */
-function warnRenderApiMissing(): void {
-	if (renderApiMissingWarned) {
-		return;
-	}
-	renderApiMissingWarned = true;
-	console.warn(
-		'MindMap Studio：行内数学渲染不可用——MathJax 缺少 tex2chtml/tex2svg，保留字面显示',
-	);
-}
+const warnRenderApiMissing = createWarnOnce();
 
 /** MathJax 注入的 CHTML 样式表元素 id（字形与 @font-face 的载体） */
 const CHTML_STYLES_ID = 'MJX-CHTML-styles';
@@ -227,6 +219,11 @@ function readMathJaxCss(): string {
 	}
 	const sheet = el.sheet;
 	if (!sheet) {
+		// 样式元素在、CSSOM 不可读：退回 textContent（丢逐字符规则）——影响面只在
+		// 导出 SVG，用户不可感 ⇒ 必须留痕，否则该失效无痕退化。
+		warnCssSheetUnreadableOnce(
+			'数学样式表元素存在但 CSSOM 不可读，导出 SVG 将退回 textContent（导出图数学可能不可见）',
+		);
 		return el.textContent ?? '';
 	}
 	const parts: string[] = [];
@@ -277,19 +274,7 @@ export function injectMathStylesIntoExportSvg(svgElement: unknown): unknown {
 	if (!root || typeof root.appendChild !== 'function') {
 		return svgElement;
 	}
-	// 按属主文档创建 SVG style（popout 兼容；obsidian 的 Document 扩展
-	// `win.createSvg` 与 lint 规则 prefer-create-el 同口径）
-	const win = (
-		root.ownerDocument as unknown as {
-			win?: { createSvg?: (tag: 'style') => SVGStyleElement };
-		}
-	).win;
-	const styleEl = win?.createSvg?.('style');
-	if (!styleEl) {
-		return svgElement;
-	}
-	styleEl.textContent = stripFontFaceRules(css);
-	root.appendChild(styleEl);
+	appendSvgStyle(root, stripFontFaceRules(css));
 	return svgElement;
 }
 
@@ -630,8 +615,10 @@ function scheduleFlush(holder: HTMLElement): void {
 async function runFlush(): Promise<void> {
 	try {
 		await finishRenderMath();
-	} catch {
-		/* flush 失败：保持字面显示，由重试预算兜底，不打断渲染链 */
+	} catch (e) {
+		// flush 失败：保持字面显示，由重试预算兜底，不打断渲染链。
+		// 留痕一次便于定位无痕退化（K85 / K113 同族治理：静默会让失效无迹可寻）
+		console.debug('MindMap Studio：MathJax flush 失败', e);
 	}
 	flushGeneration += 1;
 	schedulePumpForPending();
@@ -771,7 +758,9 @@ function pumpPending(): void {
 		if (item.ruleWait) {
 			if (item.ruleRetriesLeft <= 0) {
 				pendingMath.delete(item);
-				warnRenderInvisibleOnce();
+				warnRenderInvisibleOnce(
+					'数学产物不可见（字体/样式未就绪），已回退为字面显示',
+				);
 				continue;
 			}
 			item.ruleRetriesLeft -= 1;
@@ -843,18 +832,21 @@ function ensureMathFonts(): Promise<void> {
 	return mathFontsPromise;
 }
 
-/** 「产物不可见并已回退字面」告警去重：同一会话只提醒一次 */
-let renderInvisibleWarned = false;
+/**
+ * 「产物不可见并已回退字面」告警留痕：同一会话只提醒一次。
+ * 去重与前缀由 `core/errors.createWarnOnce` 统一实现（2026-10-11 收口）。
+ */
+const warnRenderInvisibleOnce = createWarnOnce();
 
-function warnRenderInvisibleOnce(): void {
-	if (renderInvisibleWarned) {
-		return;
-	}
-	renderInvisibleWarned = true;
-	console.warn(
-		'MindMap Studio：数学产物不可见（字体/样式未就绪），已回退为字面显示',
-	);
-}
+/**
+ * 「CHTML 样式表元素存在但 `sheet` 不可读」告警留痕：同一会话只提醒一次。
+ *
+ * 为什么必须留痕：`readMathJaxCss` 此时退回 `textContent`，而 MathJax 的逐字符
+ * 字形规则（`mjx-c…::before{content:…}`）是渲染期 `insertRule` 动态插入的、
+ * **不在 textContent 里** ⇒ 导出 SVG 会丢这些规则、**导出图数学不可见**，而屏上
+ * 一切正常（单测与视觉闸门都触不到真宿主）。静默即无痕退化（K85 ① 教训）。
+ */
+const warnCssSheetUnreadableOnce = createWarnOnce();
 
 /**
  * 渲染一段 TeX 到 holder（异步，fire-and-forget；调用方无需等待）。
@@ -893,7 +885,9 @@ export function renderMathWithMathJax(
 				mathJax?.tex2svg?.(tex, { display }) ??
 				null;
 			if (!rendered) {
-				warnRenderApiMissing();
+				warnRenderApiMissing(
+					'行内数学渲染不可用——MathJax 缺少 tex2chtml/tex2svg，保留字面显示',
+				);
 				return;
 			}
 			const item: PendingMath = {

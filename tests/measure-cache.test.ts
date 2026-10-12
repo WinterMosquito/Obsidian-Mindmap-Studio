@@ -93,6 +93,24 @@ describe('measure-cache：字体代际缓存键（K114）', () => {
 		expect(m.fontMeasureKey()).toBe(first);
 	});
 
+	it('字体面在但缺 addEventListener：告警一次（缓存不再随字体失效），键仍可用且稳定', async () => {
+		// 「环境没有 fonts」（上一例，静默）与「fonts 形态变了」（本例，必须留痕）
+		// 是两种不同情形：后者 epoch 永不递增 ⇒ K114 的裁切会静默复现。
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		setDocument({ fonts: { status: 'loading' } });
+		const m = await freshModule();
+
+		const first = m.fontMeasureKey();
+		expect(first).toBe('loading:0');
+		expect(m.fontMeasureKey(), '键仍稳定可用').toBe(first);
+		// 幂等：同一模块实例只告警一次（多次取键不刷屏）
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+		expect(String(warnSpy.mock.calls[0]?.[0])).toContain(
+			'缺 addEventListener',
+		);
+		warnSpy.mockRestore();
+	});
+
 	it('同一字体状态下键恒定 ⇒ 引擎测量缓存照常命中（零额外测量）', async () => {
 		makeFonts('loading', false);
 		const m = await freshModule();

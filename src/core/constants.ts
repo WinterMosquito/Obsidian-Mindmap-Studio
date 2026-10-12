@@ -42,37 +42,6 @@ export const CODE_RENDERED_CLASS = 'tmm-code-hl';
  * 导出 SVG（不含 styles.css）同色。
  */
 export const PRISM_TOKEN_CLASS = 'token';
-/** Markdown 渲染模式（.mindmap.md）的完整后缀（含点） */
-export const MD_FILE_SUFFIX = '.mindmap.md';
-
-/**
- * .mindmap.md 标记的判定/剥离/拼接唯一实现（大小写不敏感）。
- * 勿在各模块手写同名正则或 replace——此前散落 4 处，规则变更需改多处。
- */
-const MD_MARKER_RE = /\.mindmap\.md$/i;
-/** basename 上复合后缀的 stem 段（'笔记.mindmap' 中的 '.mindmap'） */
-const MD_STEM_SUFFIX_RE = /\.mindmap$/i;
-
-/** 名称（路径或文件名）是否以 .mindmap.md 结尾 */
-export function hasMindMapMarker(name: string): boolean {
-	return MD_MARKER_RE.test(name);
-}
-
-/** 剥离 basename 上的 .mindmap stem 段（'笔记.mindmap' → '笔记'；无则原样） */
-export function stripMindMapStem(basename: string): string {
-	return basename.replace(MD_STEM_SUFFIX_RE, '');
-}
-
-/** 保证名称以 .mindmap.md 结尾（容忍误输入 .mindmap 或已有完整后缀） */
-export function withMindMapMarker(name: string): string {
-	if (MD_MARKER_RE.test(name)) {
-		return name;
-	}
-	if (MD_STEM_SUFFIX_RE.test(name)) {
-		return `${name}.md`;
-	}
-	return `${name}${MD_FILE_SUFFIX}`;
-}
 
 export interface LayoutOption {
 	value: string;
@@ -120,6 +89,23 @@ export const THEME_OPTIONS: ThemeOption[] = [
 	{ value: 'default', label: 'theme.default' },
 	{ value: 'light', label: 'theme.forceLight' },
 	{ value: 'dark', label: 'theme.forceDark' },
+];
+
+/**
+ * 导出图片格式的**唯一来源**（settings 设置项 / engine 导出参数 / features 入口
+ * 共用本类型，勿各自再写一份 `'png' | 'svg'`）。
+ */
+export type ExportImageFormat = 'png' | 'svg';
+
+export interface ExportImageFormatOption {
+	value: ExportImageFormat;
+	label: TranslationKey;
+}
+
+/** 导出图片格式选项（设置面板下拉与 sanitizeSettings 白名单共用） */
+export const EXPORT_IMAGE_FORMAT_OPTIONS: ExportImageFormatOption[] = [
+	{ value: 'png', label: 'settings.exportFormat.png' },
+	{ value: 'svg', label: 'settings.exportFormat.svg' },
 ];
 
 /** 支持的图片扩展名（拖拽插入） */
@@ -387,15 +373,15 @@ export const SETTINGS_PERSIST_DEBOUNCE_MS = 400;
 /**
  * 设置变更应用到已打开视图的防抖（`applySettingsToViews`）。
  *
- * 比落盘防抖短：应用是**用户可见**的（布局/主题/性能开关），要让「松手即生效」
- * 的感觉成立；但必须防抖——LIVE_REFRESH 键里含滑块（如 performanceThreshold，
- * step 100），而仍走重建的键（拖拽开关、语言）一轮 = 每个打开的视图**销毁并重建
- * 引擎 + 全量重渲染**，拖一次滑块就是几十轮。
+ * 比落盘防抖短：应用是**用户可见**的（布局/主题/拖拽开关），要让「松手即生效」
+ * 的感觉成立；但必须防抖——仍走重建的键（拖拽开关、语言）一轮 = 每个打开的视图
+ * **销毁并重建引擎 + 全量重渲染**，连点几次就是几十轮。
  *
- * 2026-09-17 起按键差集分流：主题原地生效（`setThemeConfig`，K59）、性能模式与
- * 阈值原地切换（`updateConfig`，K60）、默认布局/默认连线样式对已打开的图本就不
- * 生效故直接跳过；目前只剩拖拽开关与语言仍重建。防抖仍保留——滑块档位本身仍会
- * 反复触发应用。
+ * 2026-09-17 起按键差集分流：主题原地生效（`setThemeConfig`，K59）、默认布局/
+ * 默认连线样式对已打开的图本就不生效故直接跳过；目前只剩拖拽开关与语言仍重建。
+ * 防抖仍保留——面板上的连续操作（勾选开关、切换语言）仍会反复触发应用。
+ * （2026-10-09 减法前这里还有两个滑块键：`performanceThreshold` 已随设置项删除，
+ * 见 K117④；现存唯一滑块 `exportScale` 不在 LIVE_REFRESH 键内。）
  */
 export const SETTINGS_APPLY_DEBOUNCE_MS = 250;
 /**

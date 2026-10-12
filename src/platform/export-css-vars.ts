@@ -21,6 +21,8 @@
  * 接线：组合根 `exportSvgTransforms`（组合根传入 `handleBeingExportSvg`）。
  */
 
+import { appendSvgStyle } from './export-svg-style';
+
 /** 自绘内容实际消费的 Obsidian 变量（保守白名单：只注入确实被用到的） */
 const CSS_VARS_TO_EXPORT: readonly string[] = [
 	'--font-interface',
@@ -124,21 +126,8 @@ export function injectObsidianCssVarsIntoExportSvg(svgElement: unknown): unknown
 	if (decls.length === 0) {
 		return svgElement;
 	}
-	// 按属主文档创建 SVG style（popout 兼容；obsidian 的 Document 扩展
-	// `win.createSvg` 与 lint 规则 prefer-create-el 同口径——同
-	// injectMathStylesIntoExportSvg）
-	const win = (
-		root.ownerDocument as unknown as
-			| { win?: { createSvg?: (tag: 'style') => SVGStyleElement } }
-			| undefined
-	)?.win;
-	const styleEl = win?.createSvg?.('style');
-	if (!styleEl) {
-		return svgElement;
-	}
 	// 选择器 `svg` 匹配克隆 SVG 的根元素：自定义属性沿后代继承，
-	// foreignObject 内的 HTML 同样生效
-	styleEl.textContent = `svg { ${decls.join('; ')}; }`;
-	root.appendChild(styleEl);
+	// foreignObject 内的 HTML 同样生效。注入机制已收口到 export-svg-style.appendSvgStyle
+	appendSvgStyle(root, `svg { ${decls.join('; ')}; }`);
 	return svgElement;
 }

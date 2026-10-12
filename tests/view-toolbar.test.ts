@@ -3,7 +3,7 @@
  *
  * 覆盖：
  * - 分组结构与按钮顺序（左：编辑/插入；中：布局；右：画布/导入导出），
- *   右侧顺序为「重置缩放 → 适应画布 → 放大 → 缩小 → 导出 PNG」；
+ *   右侧顺序为「重置缩放 → 适应画布 → 放大 → 缩小 → 导出图片」；
  * - 每个按钮的 onclick 真的接到了对应动作上（引擎命令常量、节点操作、
  *   搜索栏、导出、缩放收口函数），并用 aria-label 校验无障碍标签；
  * - md 文档模式（.mindmap.md）多出「切换回 Markdown」入口 + 分隔符；
@@ -45,7 +45,7 @@ const engineMocks = vi.hoisted(() => ({
 
 const siblingMocks = vi.hoisted(() => ({
 	openSearchBar: vi.fn<(view: unknown) => void>(),
-	exportPNG: vi.fn<(view: unknown) => Promise<void>>(),
+	exportImage: vi.fn<(view: unknown) => Promise<void>>(),
 	addLinkToActiveNode: vi.fn<(view: unknown) => Promise<void>>(),
 	addImageToActiveNode: vi.fn<(view: unknown) => Promise<void>>(),
 	deleteActiveNode: vi.fn<(view: unknown) => void>(),
@@ -96,7 +96,7 @@ vi.mock('../src/features/view-search', () => ({
 }));
 
 vi.mock('../src/features/view-export', () => ({
-	exportPNG: siblingMocks.exportPNG,
+	exportImage: siblingMocks.exportImage,
 }));
 
 vi.mock('../src/features/view-node-actions', () => ({
@@ -183,10 +183,8 @@ interface Harness {
 	readonly backToMarkdown: ReturnType<typeof vi.fn>;
 }
 
-/** 构造视图桩（每次新建：工具栏在 toolbarEl 上建 DOM，语言/文档模式可配） */
-function makeView(
-	options: { isMdDocument?: boolean; withToolbar?: boolean } = {},
-): Harness {
+/** 构造视图桩（每次新建：工具栏在 toolbarEl 上建 DOM，语言可配） */
+function makeView(options: { withToolbar?: boolean } = {}): Harness {
 	const toolbarEl = new FakeEl('div');
 	const execCommand = vi.fn<(command: string, ...args: unknown[]) => void>();
 	const applyLayout = vi.fn();
@@ -198,7 +196,6 @@ function makeView(
 			options.withToolbar === false ? null : (toolbarEl as unknown as HTMLElement),
 		lang: 'zh',
 		mindMap,
-		isMdDocument: () => options.isMdDocument === true,
 		backToMarkdown,
 		applyLayout,
 		applyLineStyle,
@@ -254,7 +251,7 @@ function clickButton(button: FakeEl): void {
 
 beforeEach(() => {
 	vi.resetAllMocks();
-	siblingMocks.exportPNG.mockResolvedValue(undefined);
+	siblingMocks.exportImage.mockResolvedValue(undefined);
 	siblingMocks.addLinkToActiveNode.mockResolvedValue(undefined);
 	siblingMocks.addImageToActiveNode.mockResolvedValue(undefined);
 });
@@ -270,13 +267,15 @@ describe('buildToolbar（装配与分组结构）', () => {
 		expect(setIconMock).not.toHaveBeenCalled();
 	});
 
-	it('左侧按钮序列（含两个分隔符）：编辑/插入组', () => {
+	it('左侧按钮序列（含三个分隔符）：返回入口 + 编辑/插入组', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
 
-		// 结构：按钮×3 → 分隔符 → 按钮×3 → 分隔符 → 按钮×3（非 md 文档模式）
+		// 结构：返回按钮 → 分隔符 → 按钮×3 → 分隔符 → 按钮×3 → 分隔符 → 按钮×3
 		expect(left.children.map((child) => child.tag)).toEqual([
+			'button',
+			'div',
 			'button',
 			'button',
 			'button',
@@ -292,6 +291,7 @@ describe('buildToolbar（装配与分组结构）', () => {
 		expect(
 			buttonsOf(left).map((button) => button.attr['aria-label']),
 		).toEqual([
+			t('zh', 'toolbar.backToMarkdown'),
 			t('zh', 'toolbar.addChild'),
 			t('zh', 'toolbar.addSibling'),
 			t('zh', 'toolbar.deleteNode'),
@@ -311,8 +311,9 @@ describe('buildToolbar（装配与分组结构）', () => {
 					!('title' in button.attr),
 			),
 		).toBe(true);
-		// 图标按按钮顺序接线（左组先于中/右组构建，故取前 9 次 setIcon 调用）
-		expect(setIconMock.mock.calls.slice(0, 9).map((call) => call[1])).toEqual([
+		// 图标按按钮顺序接线（左组先于中/右组构建，故取前 10 次 setIcon 调用）
+		expect(setIconMock.mock.calls.slice(0, 10).map((call) => call[1])).toEqual([
+			'file-text',
 			'plus',
 			'circle-plus',
 			'trash-2',
@@ -325,43 +326,15 @@ describe('buildToolbar（装配与分组结构）', () => {
 		]);
 	});
 
-	it('md 文档模式：最前面多出「切换回 Markdown」按钮 + 分隔符', () => {
-		const h = makeView({ isMdDocument: true });
-		buildToolbar(h.view);
-		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
-
-		expect(left.children.map((child) => child.tag)).toEqual([
-			'button',
-			'div',
-			'button',
-			'button',
-			'button',
-			'div',
-			'button',
-			'button',
-			'button',
-			'div',
-			'button',
-			'button',
-			'button',
-		]);
-		const backButton = buttonByTooltip(left, t('zh', 'toolbar.backToMarkdown'));
-		clickButton(backButton);
-		expect(h.backToMarkdown).toHaveBeenCalledTimes(1);
-	});
-
-	it('非 md 文档模式：不出现「切换回 Markdown」按钮', () => {
+	it('「切换回 Markdown」恒在左组首位（任何 md 都可用），点击委托视图', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
 
-		expect(
-			buttonsOf(left).some(
-				(button) =>
-					button.attr['aria-label'] === t('zh', 'toolbar.backToMarkdown'),
-			),
-		).toBe(false);
-		expect(h.backToMarkdown).not.toHaveBeenCalled();
+		const backButton = buttonByTooltip(left, t('zh', 'toolbar.backToMarkdown'));
+		expect(buttonsOf(left)[0]).toBe(backButton);
+		clickButton(backButton);
+		expect(h.backToMarkdown).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -444,7 +417,7 @@ describe('buildToolbar（右侧画布/导出按钮顺序与接线）', () => {
 			t('zh', 'command.fitCanvas'),
 			t('zh', 'toolbar.zoomIn'),
 			t('zh', 'toolbar.zoomOut'),
-			t('zh', 'toolbar.exportPng'),
+			t('zh', 'toolbar.exportImage'),
 		]);
 		// 右组最后构建：取末尾 5 次 setIcon 调用，验证顺序与按钮一一对应
 		expect(setIconMock.mock.calls.slice(-5).map((call) => call[1])).toEqual([
@@ -484,14 +457,14 @@ describe('buildToolbar（右侧画布/导出按钮顺序与接线）', () => {
 		expect(engineMocks.resetZoom).not.toHaveBeenCalled();
 	});
 
-	it('导出 PNG → exportPNG(view)', () => {
+	it('导出图片 → exportImage(view)', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
 
-		clickButton(buttonByTooltip(right, t('zh', 'toolbar.exportPng')));
+		clickButton(buttonByTooltip(right, t('zh', 'toolbar.exportImage')));
 
-		expect(siblingMocks.exportPNG).toHaveBeenCalledWith(h.view);
+		expect(siblingMocks.exportImage).toHaveBeenCalledWith(h.view);
 	});
 });
 
@@ -694,6 +667,7 @@ describe('refreshToolbar（设置变更后重建）', () => {
 		expect(
 			buttonsOf(left).map((button) => button.attr['aria-label']),
 		).toEqual([
+			t('en', 'toolbar.backToMarkdown'),
 			t('en', 'toolbar.addChild'),
 			t('en', 'toolbar.addSibling'),
 			t('en', 'toolbar.deleteNode'),
@@ -713,7 +687,7 @@ describe('工具栏按钮的图标接线', () => {
 		buildToolbar(h.view);
 		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
 
-		const leftIcons = setIconMock.mock.calls.slice(0, 9);
+		const leftIcons = setIconMock.mock.calls.slice(0, 10);
 		expect(leftIcons.map((call) => call[0])).toEqual(buttonsOf(left));
 	});
 });

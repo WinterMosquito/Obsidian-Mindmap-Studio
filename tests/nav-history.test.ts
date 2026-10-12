@@ -244,7 +244,13 @@ describe('md-open 视图切换落定钩子接线', () => {
 			extension: 'md',
 		});
 
-		await openAsMarkdown(leaf as never, file, 'preview');
+		// app 桩：元数据缓存为空 ⇒ 无导图声明可降级（不触碰 fileManager）
+		await openAsMarkdown(
+			{ metadataCache: { getFileCache: () => null } } as never,
+			leaf as never,
+			file,
+			'preview',
+		);
 
 		expect(leaf.setViewState).toHaveBeenCalledWith({
 			type: CORE_VIEW_TYPE.MARKDOWN,

@@ -359,7 +359,7 @@ describe('onunload 冲刷', () => {
 
 		h.plugin.settings.language = 'en';
 		h.plugin.scheduleSettingsPersist();
-		h.plugin.viewState.setOpenAs(PATH_B, 'markdown'); // 视图状态同样挂起
+		h.plugin.viewState.setLayout(PATH_B, 'fishbone'); // 视图状态同样挂起
 
 		h.plugin.onunload();
 		await flushMicrotasks();
@@ -369,7 +369,7 @@ describe('onunload 冲刷', () => {
 		expect(h.disk['language']).toBe('en');
 		expect(h.disk['viewState']).toEqual({
 			[PATH_A]: { layout: 'mindMap' },
-			[PATH_B]: { openAs: 'markdown' },
+			[PATH_B]: { layout: 'fishbone' },
 		});
 	});
 

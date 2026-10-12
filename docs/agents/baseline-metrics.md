@@ -44,9 +44,10 @@
 | --- | --- | --- | --- |
 | G-01 | 类型检查 + 生产构建 | `BUILD_EXIT=0` | `npm run build` |
 | G-02 | Lint（0 warning 门禁） | `LINT_EXIT=0` | `npm run lint` |
-| G-03 | 单测 | 66 文件 / **1911** 用例全通过 | `npx vitest run` |
+| G-03 | 单测 | 68 文件 / **1922** 用例全通过（2026-10-12 复测） | `npx vitest run` |
 | G-04 | 死代码 | `KNIP_EXIT=0` | `npm run check:dead-code` |
 | G-05 | 文档同步契约 | 4 passed | `npx vitest run tests/agents-md-sync.test.ts` |
+| G-06 | 渲染契约（无头 Chrome） | `✓ 视觉验证通过`（2026-10-11 修复后） | `npm run verify:visual -- --require-chrome` |
 
 ---
 
@@ -217,7 +218,7 @@ Top 5：
 夹具：`real-5000.mindmap.md`（239,437 B、5,002 行、sha256 `a409f893…4715c517`；生成器口径 **5,000 节点**（不含根）／深 8／783 长文本／225 wikilink），**确定性重建**命令：
 
 ```bash
-node scripts/gen-perf-fixture.mjs --out "<vault>/real-5000.mindmap.md"   # seed 20261005，输出 5000 节点 / 深 8 / 783 长文本 / 225 wikilink
+node scripts/gen-perf-fixture.mjs --out "<vault>/real-5000.md"   # seed 20261005，输出 5000 节点 / 深 8 / 783 长文本 / 225 wikilink（自带 `类型: Mindmap` 声明）
 ```
 
 **更正记录（2026-10-09）**：上一版登记的夹具（239,438 B / 5,001 行 / sha `7eb5ec78…`）与生成器输出不一致，且库内副本已被就地编辑（多一个空节点、一个节点被拖动换父）。本轮**重建为标准形态**：生成器在根后输出一个空行，故行数为 5,002（上一版 5,001 是旧版生成器口径）。读数经 `obsidian vault="Mindmap" eval` 读画布 DOM。

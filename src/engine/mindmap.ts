@@ -21,10 +21,12 @@ import { docWikiLinkDisplay, type WikiAliasSource } from '../domain/wiki-display
 import {
 	RENDER_ASYNC_NODE_THRESHOLD,
 	RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,
+	type ExportImageFormat,
 	RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS,
 	RESET_LAYOUT_VIEWPORT_DELAY_MS,
 	shouldEnablePerformanceMode,
 } from '../core/constants';
+import { createWarnOnce } from '../core/errors';
 
 export {
 	getThemeConfig,
@@ -1518,18 +1520,27 @@ async function runWithExportScale<T>(
 }
 
 /**
- * 以导出倍率导出 PNG（DoExport 插件不可用时返回 null）。错误向调用方
+ * 导出图片（DoExport 插件不可用时返回 null）。错误向调用方
  * 传播（由 UI 层弹用户可见提示）。
  * doExport/exporter 为引擎插件内部形态，访问收口在本函数。
+ *
+ * - `png`：位图光栅化，受导出倍率（minExportImgCanvasScale）影响；
+ * - `svg`：矢量直出，与倍率无关（不临时切换 minExportImgCanvasScale）。
+ * 两者都走同一条 `handleBeingExportSvg` 导出后处理链（CSS 变量 / MathJax
+ * 字形注入等），由 vendor 的 export 插件在 getSvgData 时应用。
  */
-export async function exportMindMapPng(
+export async function exportMindMapImage(
 	mindMap: MindMap,
+	format: ExportImageFormat,
 	scale: number,
 	fileName: string,
 ): Promise<Blob | string | null> {
 	const exporter = mindMap.doExport;
 	if (!exporter?.export) {
 		return null;
+	}
+	if (format === 'svg') {
+		return exporter.export('svg', false, fileName);
 	}
 	return runWithExportScale(mindMap, scale, () =>
 		exporter.export('png', false, fileName),
@@ -1633,8 +1644,11 @@ export function refreshNodeCustomContent(
 	}
 }
 
-/** 「传入对象不可重排」告警去重（同一根因整会话只提示一次） */
-let refreshMissingReRenderWarned = false;
+/**
+ * 「传入对象不可重排」告警留痕（同一根因整会话只提示一次）。
+ * 去重与前缀由 `core/errors.createWarnOnce` 统一实现（2026-10-11 收口）。
+ */
+const warnMissingReRender = createWarnOnce();
 
 /**
  * **批量**重建多个节点的自绘内容（同 `refreshNodeCustomContent` 语义）。
@@ -1670,12 +1684,9 @@ export function refreshNodesCustomContent(
 				) => void;
 			};
 			if (typeof target.reRender !== 'function') {
-				if (!refreshMissingReRenderWarned) {
-					refreshMissingReRenderWarned = true;
-					console.warn(
-						'MindMap Studio：节点不支持自绘重排（reRender 缺失），跳过尺寸同步',
-					);
-				}
+				warnMissingReRender(
+					'节点不支持自绘重排（reRender 缺失），跳过尺寸同步',
+				);
 				continue;
 			}
 			target.reRender(['custom'], { ignoreUpdateCustomTextWidth: true });

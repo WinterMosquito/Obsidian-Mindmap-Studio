@@ -9,9 +9,16 @@
  * 取值域断言直接引用 constants.ts 的常量（EXPORT_SCALE_MIN/MAX 等），
  * 避免测试里另抄一份魔法数字而与面板定义脱节。
  */
-import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, diffLiveRefreshKeys, sanitizeSettings } from '../src/settings';
+import { describe, expect, it, vi } from 'vitest';
 import {
+	DEFAULT_SETTINGS,
+	diffLiveRefreshKeys,
+	reportDroppedSettings,
+	sanitizeSettings,
+	type SettingsSanitizeReport,
+} from '../src/settings';
+import {
+	EXPORT_IMAGE_FORMAT_OPTIONS,
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
 	LAYOUT_OPTIONS,
@@ -59,6 +66,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
+			exportImageFormat: 'svg',
 			language: 'en',
 		});
 		expect(out).toEqual({
@@ -69,6 +77,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
+			exportImageFormat: 'svg',
 			language: 'en',
 		});
 	});
@@ -210,6 +219,22 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		);
 	});
 
+	it('导出格式白名单：EXPORT_IMAGE_FORMAT_OPTIONS 全量合法，清单外的值回退默认', () => {
+		for (const option of EXPORT_IMAGE_FORMAT_OPTIONS) {
+			expect(
+				sanitizeSettings({ exportImageFormat: option.value }).exportImageFormat,
+			).toBe(option.value);
+		}
+		const report: SettingsSanitizeReport = { dropped: [] };
+		expect(
+			sanitizeSettings({ exportImageFormat: 'jpg' }, report).exportImageFormat,
+		).toBe(DEFAULT_SETTINGS.exportImageFormat);
+		expect(report.dropped, '非法格式须留痕').toContain('exportImageFormat');
+		expect(
+			sanitizeSettings({ exportImageFormat: 42 }).exportImageFormat,
+		).toBe(DEFAULT_SETTINGS.exportImageFormat);
+	});
+
 	it('部分非法键只影响自身：合法键仍被采纳', () => {
 		const out = sanitizeSettings({
 			defaultLayout: 'fishbone',
@@ -227,6 +252,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			autoSave: DEFAULT_SETTINGS.autoSave,
 			autoSplitMixedLinks: DEFAULT_SETTINGS.autoSplitMixedLinks,
 			enableDrag: DEFAULT_SETTINGS.enableDrag,
+			exportImageFormat: DEFAULT_SETTINGS.exportImageFormat,
 		});
 	});
 });
@@ -297,5 +323,85 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 			'enableDrag',
 			'language',
 		]);
+	});
+});
+
+/**
+ * 非法设置的回退**必须可见**（2026-10-11）。
+ *
+ * 背景：坏值此前静默回退默认，用户看到的现象是「设置没生效」——属无痕退化
+ * （AGENTS.md 决策表）。现在 `sanitizeSettings` 支持可选出参登记被回退/钳制的键，
+ * 由 `reportDroppedSettings` 汇总留痕一次。
+ */
+describe('sanitizeSettings：非法值诊断报告', () => {
+	const newReport = (): SettingsSanitizeReport => ({ dropped: [] });
+
+	it('缺失键不进报告（全新安装 / 只改过一个键都不刷屏）', () => {
+		const empty = newReport();
+		sanitizeSettings({}, empty);
+		expect(empty.dropped).toEqual([]);
+
+		const partial = newReport();
+		sanitizeSettings({ autoSave: false }, partial);
+		expect(partial.dropped).toEqual([]);
+	});
+
+	it('类型错误 / 白名单外 / 语言非法：逐键登记（无值的不登记）', () => {
+		const report = newReport();
+		sanitizeSettings(
+			{
+				language: 'fr', // 非 zh/en
+				defaultLayout: 'zigzag', // 白名单外
+				defaultLineStyle: 42, // 类型错误
+				autoSave: 'true', // 伪布尔
+				exportScale: 'abc', // 非数字
+				defaultTheme: 'dark', // 合法：不该出现
+			},
+			report,
+		);
+		expect([...report.dropped].sort()).toEqual([
+			'autoSave',
+			'defaultLayout',
+			'defaultLineStyle',
+			'exportScale',
+			'language',
+		]);
+	});
+
+	it('钳制（越界 / 小数）同样登记：坏值不直达引擎，但用户要知道改过', () => {
+		const clamped = newReport();
+		sanitizeSettings({ exportScale: 99 }, clamped);
+		expect(clamped.dropped).toEqual(['exportScale']);
+
+		const rounded = newReport();
+		sanitizeSettings({ exportScale: 2.6 }, rounded);
+		expect(rounded.dropped).toEqual(['exportScale']);
+
+		// 域内整数是正常输入
+		const ok = newReport();
+		sanitizeSettings({ exportScale: 3 }, ok);
+		expect(ok.dropped).toEqual([]);
+	});
+
+	it('宽容转换与未知键都不登记（历史 "2"、viewState 之外的杂键）', () => {
+		const report = newReport();
+		sanitizeSettings({ exportScale: ' 3 ', evil: 'x' }, report);
+		expect(report.dropped).toEqual([]);
+	});
+
+	it('reportDroppedSettings：空清单不输出；非空汇总一次带统一前缀（进程内幂等）', () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		reportDroppedSettings([]);
+		expect(warnSpy).not.toHaveBeenCalled();
+
+		reportDroppedSettings(['language', 'exportScale']);
+		reportDroppedSettings(['defaultLayout']);
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+		const message = String(warnSpy.mock.calls[0]?.[0]);
+		expect(message).toContain('MindMap Studio：');
+		expect(message).toContain('language、exportScale');
+
+		warnSpy.mockRestore();
 	});
 });

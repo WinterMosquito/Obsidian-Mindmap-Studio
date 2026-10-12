@@ -107,7 +107,7 @@ export function isResolvedWikiLinkpath(
 	view: MindMapViewContext,
 	linkpath: string,
 ): boolean {
-	const target = (linkpath.split('#')[0] ?? '').split('|')[0]?.trim() ?? '';
+	const target = parseWikilink(`[[${linkpath}]]`)?.target?.trim() ?? '';
 	if (!target) {
 		return linkpath.startsWith('#') && view.file !== null;
 	}

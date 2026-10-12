@@ -10,6 +10,11 @@
  *
  * vendor cjs 以 vi.mock 桩替代：只验图标构造的文档来源，不需要真实引擎
  * （也避免 Node 下引擎顶层求值触碰 document）。引擎构造参数经 vi.hoisted 捕获。
+ *
+ * 可达性（2026-10-11，K118）：本函数只是**构造**图标，实际显示还取决于引擎是否
+ * 走默认内容通道——引擎在节点有自绘内容时早退，故含文本的 `[[笔记]]` 节点（自绘）
+ * **不会**显示该图标（显示的是自绘的可点链接文本）；图标只在插件让给引擎的节点
+ * （空文本 / 含图 + `mdWikiLinkpath`）上出现。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMapNode, MindMapTreeNode } from '../vendor/simple-mind-map.cjs';

@@ -26,17 +26,15 @@ import {
 	renderCodeWithPrism,
 } from '../platform/prism-code';
 import { updatesInternalLinksOnRename } from '../platform/vault-prefs';
-import { createThrottler } from '../core/concurrency';
+import { createDebouncer, createThrottler, type Debouncer } from '../core/concurrency';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
-import { notifyError } from '../core/errors';
+import { createWarnOnce, notifyError } from '../core/errors';
 import {
 	applyImageSizeCorrectionsToEngine,
-	findNodesByContentProducts,
-	resolveNodesByDoms,
 	getRenderRoot,
-	refreshNodesCustomContent,
 } from '../engine/mindmap';
+import { ContentRemeasureSession } from './content-remeasure';
 import {
 	collectImageSizeCorrections,
 	ensureDefaultImageSizes,
@@ -72,7 +70,7 @@ import {
 	openSearchBar,
 	refreshSearchBarLabels,
 } from './view-search';
-import { exportPNG } from './view-export';
+import { exportImage } from './view-export';
 import {
 	arrangeMindMap,
 	buildToolbar,
@@ -220,7 +218,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 自动拆分混排双链的延后检查计时器（引擎 data_change 后触发）。
 	 * 视图关闭必须清理：回调会操作引擎与节点数据。
 	 */
-	private autoSplitTimer: number | null = null;
+	private autoSplitDebouncer: Debouncer = createDebouncer(AUTO_SPLIT_CHECK_DELAY_MS);
 
 	/**
 	 * resize 节流器（见 RESIZE_THROTTLE_MS）：窗口/侧栏拖动的连续尺寸变化合并到
@@ -241,22 +239,22 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		isResolvedLink: (linkpath) => isResolvedWikiLinkpath(this, linkpath),
 		renderMath: (_doc, tex, holder, display) =>
 			renderMathWithMathJax(tex, holder, display, (settledHolder) =>
-				this.scheduleContentRemeasure(settledHolder),
+				this.contentRemeasure.schedule(settledHolder),
 			),
 		getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
 		// 代码块 Prism 高亮：与数学同款纪律——官方通道在platform 层、这里只注入；
-		// 定稿回调同样交给 scheduleContentRemeasure（换的是尺寸同步机制，不是数学
+		// 定稿回调同样交给 contentRemeasure.schedule（换的是尺寸同步机制，不是数学
 		// 专属：它只做「按holder 反查真实节点 → 合并为一次批量重排」）
 		renderCode: (_doc, code, codeLang, holder) =>
 			renderCodeWithPrism(code, codeLang, holder, (settledHolder) =>
-				this.scheduleContentRemeasure(settledHolder),
+				this.contentRemeasure.schedule(settledHolder),
 			),
 		getCachedCode: (code, codeLang) => getRenderedCodeNodes(code, codeLang),
 	};
 
 	/**
-	 * .mindmap.md 文档模式（B3 显式切换）：文件本质是 Markdown，用导图视图
-	 * 编辑并回写为 md 大纲。
+	 * 文档模式（B3 显式切换）：文件本质是 Markdown（frontmatter 声明为导图，
+	 * 或用户手动把普通笔记开为导图），用导图视图编辑并回写为 md 大纲。
 	 */
 	/** 进入前 markdown 视图模式（返回「以 Markdown 编辑」时恢复） */
 	private mdBackMode: 'source' | 'preview' = 'source';
@@ -267,53 +265,26 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 旧文件的写盘会拼上新文件的文件头、或丢掉旧文件的文件头。
 	 */
 	private readonly frontmatterByPath = new Map<string, string | null>();
-	/**
-	 * 文档模式标记：parseDocument 时按文件名锁定（保存/回写恒为 md 大纲；
-	 * 标记用于工具栏返回按钮与相关交互的显示判定）。外部读取走 isMdDocument()。
-	 */
-	private mdDocumentMode = false;
 
 	/**
-	 * **自绘内容定稿**（公式替换 / 代码块高亮）后待同步尺寸的 **holder**
-	 * （P4，K88 修正；2026-10-07 起含代码块，见 K116）。
+	 * 自绘内容「定稿 → 尺寸同步」会话（P4 / K88 / K104 / K116）。
 	 *
-	 * ⚠ 为什么存 holder 而不是构建期捕获的 node：节点内容可能由引擎**预测量**
-	 * 路径构建（vendor 补丁 5 的轻量代理对象——只有 `nodeData`/`getData`，没有
-	 * `reRender`），A2 元素复用让同一内容进入真实节点 ⇒ 闭包里的 node 是代理 ⇒
-	 * `reRender?.()` 静默 no-op ⇒ 尺寸永不同步（实机复现：512px 外框 / 655px
-	 * 内容，29 次回调全部收到代理、永不修复）。故批次执行时经 `findNodeByDom`
-	 * 从 holder 反查**真实** MindMapNode 再重排。
-	 *
-	 * 合并到一次批量重排（`refreshNodesCustomContent`）：一次打开多个公式/代码块时
-	 * 每段都会定稿，逐个重排会各触发一次全树 render（本字段是性能护栏）。
+	 * 2026-10-11 外置到 `features/content-remeasure.ts`（架构文档登记的偏离项
+	 * 「数学校准会话仍在视图层」就此关闭）：按 holder 反查真实节点、批量合并重排、
+	 * 字体分批再同步与渲染窗口重试的完整论证都在该模块文件头，此处不重复。
 	 */
-	private pendingContentRemeasure: Set<HTMLElement> | null = null;
+	private readonly contentRemeasure = new ContentRemeasureSession({
+		getMindMap: () => this.mindMap,
+		register: (cleanup) => this.register(cleanup),
+	});
 
 	/**
-	 * 已成功解析并同步过的**真实节点**（**不清空**）。
+	 * 「冗余 leaf 摘除失败」告警留痕（同一视图只提示一次）。
 	 *
-	 * 用途：MathJax 字体是**分批**加载的（`document.fonts` 的 `loadingdone` 会
-	 * 多次触发）；首批就绪时的测量可能在后续批次变大——内容多的节点尤甚
-	 * （实机实测：655px 内容 / 512px 外框）。字体每就绪一批就再同步一次。
-	 * （代码块节点也会进入该集合：多一次重测无害，且避免两套并行集合。）
+	 * 失败只留空标签页，用户已经收到「该导图已在其他标签页打开」的提示（不二次
+	 * 打扰）；但空 leaf 残留本身**只能靠日志发现**，属无痕退化 ⇒ 必须留痕。
 	 */
-	private readonly contentRemeasureNodes = new Set<MindMapNode>();
-
-	/**
-	 * 「引擎渲染窗口」内解析失败的 holder（K104）：`Renderer._render` 期间
-	 * `renderer.root` 被置 null（见 K67 记录），此时 `findNodeByDom` 与产物
-	 * 反查**必然**双双落空——属预期中间态。暂存到 `node_tree_render_end`
-	 * （root 已回填）重试，不在当时告警。
-	 */
-	private deferredContentHolders: Set<HTMLElement> | null = null;
-	/** 暂存 holders 只重试一次：仍失败才告警（既防静默退化，也防反复重试） */
-	private deferredContentRetried = false;
-
-	/** 字体就绪监听只装一次（视图作用域，随 `register` 注销） */
-	private mathFontsHookInstalled = false;
-
-	/** 「定稿 holder 未能解析归属节点」告警去重（同一根因只提示一次） */
-	private contentRemeasureUnresolvedWarned = false;
+	private warnDuplicateLeafDetach = createWarnOnce();
 
 	/** 引擎实例（view-* 模块经 context 只读访问） */
 	get mindMap(): MindMap | null {
@@ -323,156 +294,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/** 引擎实例作用域事件绑定器（随引擎销毁清理，view-* 经 context 注册） */
 	get engineEvents(): EventBinder {
 		return this.engine.engineEvents;
-	}
-
-	/** 当前文件是否为 .mindmap.md 文档模式（由文档加载锁定） */
-	isMdDocument(): boolean {
-		return this.mdDocumentMode;
-	}
-
-	/**
-	 * 登记「数学定稿后需重测该节点尺寸」（P4，holder 入口见 K88）。
-	 *
-	 * 背景：引擎的内容测量是**同步**的（构建时按字面占位量高），而 MathJax 替换 /
-	 * Prism 高亮都是**异步**的——不重测就会出现「块级公式只占一行高度、内容溢出」
-	 * （用户实测）/「代码块按字面尺寸定框、替换后被裁」。定稿后重建该节点内容：此时
-	 * 产物缓存已命中（`buildMathElement` / `placeCodeTokens` **同步**放置产物），
-	 * 引擎量到的是**真实宽高**。
-	 *
-	 * 同帧多段定稿合并为一次批量重排（`window.setTimeout(0)`；不用 rAF——后台/
-	 * 隐藏窗口会被节流）。
-	 */
-	private scheduleContentRemeasure(holder: HTMLElement): void {
-		if (!this.pendingContentRemeasure) {
-			this.pendingContentRemeasure = new Set<HTMLElement>();
-			window.setTimeout(() => {
-				const holders = this.pendingContentRemeasure;
-				this.pendingContentRemeasure = null;
-				this.flushContentRemeasure(holders ? Array.from(holders) : []);
-			}, 0);
-		}
-		this.pendingContentRemeasure.add(holder);
-		this.installMathFontsHook();
-	}
-
-	/**
-	 * 批次执行：holder → 真实 MindMapNode（`resolveNodesByDoms` 批量反查）→ 批量重排。
-	 *
-	 * 解析失败（holder 已脱离 / 引擎重建中）**显式告警一次**并跳过该段——
-	 * 静默跳过会让「尺寸不同步」以无痕方式退化（K85 ① 教训）。
-	 */
-	private flushContentRemeasure(holders: readonly HTMLElement[]): void {
-		// 批量窗口（setTimeout）内视图可能已关闭、引擎已销毁：此时既无重测目标，
-		// 也不该再走回退并打「未命中」告警（关闭视图时刷误导日志）——静默结束。
-		if (!this.mindMap) {
-			return;
-		}
-		const nodes: MindMapNode[] = [];
-		const unresolvedHolders: HTMLElement[] = [];
-		// 批量反查：一次遍历建「group → 节点」表 + 逐 holder 沿祖先链
-		// 查表，取代逐 holder 全树 walkTree（O(holder 数 × 节点数)）。逐位置对应，
-		// 故「未命中」语义与原先逐个反查完全一致（落空的 holder 仍进
-		// unresolvedHolders，走下面「产物元素反查 / 延后重试」两条回退）。
-		const resolved = resolveNodesByDoms(this.mindMap, holders);
-		for (const [i, holder] of holders.entries()) {
-			const node = resolved[i] ?? null;
-			if (!node) {
-				unresolvedHolders.push(holder);
-				continue;
-			}
-			nodes.push(node);
-			this.contentRemeasureNodes.add(node);
-		}
-		if (unresolvedHolders.length > 0) {
-			// 反查一（K100/K104）：holder 可能已随引擎重渲染脱离（图片回灌 K96 的
-			// 补灌触发全树重建），改按**产物元素**反查——选择器三通道覆盖我方
-			// 数学 holder 类、CHTML 容器与**代码块高亮 holder**（见
-			// findNodesByContentProducts；2026-10-07 审查修复：此前缺代码块通道，
-			// 且兜底「捞到别的数学节点」会让本批代码块静默跳过、不重测也不告警）。
-			// ⚠ 兜底是**过包含**的（返回全部产物所在节点）⇒ 若本批 holder 彻底消失
-			// 且其产物也不在活 DOM里，仍会被静默跳过（K100 既有边界，未改设计）。
-			for (const node of findNodesByContentProducts(this.mindMap)) {
-				if (nodes.includes(node)) {
-					continue;
-				}
-				nodes.push(node);
-				this.contentRemeasureNodes.add(node);
-			}
-			if (nodes.length === 0) {
-				if (!this.deferredContentRetried) {
-					// 全部落空且尚未重试：**大概率是引擎渲染窗口**——`Renderer._render`
-					// 期间 `renderer.root` 为 null（K67），两条解析路径必然全空。
-					// 暂存 holders，等 node_tree_render_end（root 回填）重试，不告警。
-					this.deferredContentHolders = new Set(unresolvedHolders);
-					return;
-				}
-				// 重试后仍全空：真的定位不到 → 告警一次（静默跳过会让问题无痕退化）
-				if (!this.contentRemeasureUnresolvedWarned) {
-					this.contentRemeasureUnresolvedWarned = true;
-					console.warn(
-						'MindMap Studio：自绘内容节点（公式/代码块）尺寸同步未能定位归属节点，内容可能被裁剪',
-					);
-				}
-			}
-		}
-		// 本轮有命中（或无需重试）：清暂存与重试标记
-		this.deferredContentHolders = null;
-		this.deferredContentRetried = false;
-		if (nodes.length > 0) {
-			refreshNodesCustomContent(this.mindMap, nodes);
-		}
-	}
-
-	/**
-	 * 渲染完成后重试「渲染窗口内未解析的 holder」（K104）。
-	 *
-	 * `node_tree_render_end` 时 `renderer.root` 已回填，两条解析路径恢复可用；
-	 * 只重试**一次**（`deferredContentRetried`）——仍失败由 `flushContentRemeasure`
-	 * 告警，避免「重排 → 渲染 → 再重排」的循环。
-	 */
-	private retryDeferredContentRemeasure(): void {
-		const pending = this.deferredContentHolders;
-		if (!pending || pending.size === 0 || !this.mindMap) {
-			return;
-		}
-		this.deferredContentHolders = null;
-		this.deferredContentRetried = true;
-		this.flushContentRemeasure(Array.from(pending));
-	}
-
-	/**
-	 * 字体每就绪一批就把已同步的数学节点**再同步一次**：字体数据到位后同一
-	 * TeX 的产物会更高（多行内容尤甚），首批测量可能偏小。
-	 */
-	private remeasureSettledContentNodes(): void {
-		const nodes = Array.from(this.contentRemeasureNodes);
-		if (nodes.length > 0) {
-			refreshNodesCustomContent(this.mindMap, nodes);
-		}
-	}
-
-	/** 一次性装配字体就绪监听（`loadingdone` 会随字体分批多次触发） */
-	private installMathFontsHook(): void {
-		if (this.mathFontsHookInstalled) {
-			return;
-		}
-		this.mathFontsHookInstalled = true;
-		const fonts = (
-			window.document as unknown as {
-				fonts?: {
-					addEventListener?: (type: string, listener: () => void) => void;
-					removeEventListener?: (type: string, listener: () => void) => void;
-				};
-			}
-		).fonts;
-		if (!fonts?.addEventListener) {
-			return;
-		}
-		const onFontsLoaded = (): void => this.remeasureSettledContentNodes();
-		fonts.addEventListener('loadingdone', onFontsLoaded);
-		this.register(() => {
-			fonts.removeEventListener?.('loadingdone', onFontsLoaded);
-		});
 	}
 
 	constructor(leaf: WorkspaceLeaf, plugin: ViewPluginContext) {
@@ -681,7 +502,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	override async onLoadFile(file: TFile): Promise<void> {
-		// P0 同文件互斥（2026-09-28 加固）：同一 .mindmap.md 只允许一个
+		// P0 同文件互斥（2026-09-28 加固）：同一导图文件只允许一个
 		// MindMapView 持有引擎——两实例各自独立引擎 + 独立保存管线，防抖窗口
 		// 交错时**后写覆盖先写**（保存互踩、丢编辑）。Obsidian 允许同一文件
 		// 多标签（Ctrl+点击新开、重启后布局恢复都会走到这里）。
@@ -711,8 +532,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			window.setTimeout(() => {
 				try {
 					this.leaf.detach();
-				} catch {
-					// 摘除失败（leaf 已被外部关闭等）：保留空态即可
+				} catch (error) {
+					// 摘除失败（leaf 已被外部关闭等）：不再二次提示用户，但上次
+					// 「让位」是否真的生效只能靠日志发现 ⇒ 留痕一次
+					this.warnDuplicateLeafDetach(
+						'冗余标签页摘除失败（可能残留空标签页）',
+						error,
+					);
 				}
 			}, 0);
 			return;
@@ -767,7 +593,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 回灌会落空，留着只会在新文件上误判）
 		this.pendingImageCorrections = null;
 		// 数学重测节点同属本引擎：随引擎销毁一并丢弃（否则跨文件累积持有旧节点）
-		this.contentRemeasureNodes.clear();
+		this.contentRemeasure.resetNodes();
 		// 文件切换后允许再次加载同一路径（新会话）。仅清理「仍属于本次卸载」的
 		// 标记：await 期间可能已开始加载新文件（onLoadFile），无条件置空会把
 		// 新加载的代际标记抹掉，其 rAF 守卫随即判为过期 → 导图不渲染。
@@ -802,7 +628,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				return;
 			}
 			this.frontmatterByPath.set(file.path, doc.frontmatter);
-			this.mdDocumentMode = doc.isMdDocument;
 			// 记录进入前 markdown 模式（「以 Markdown 编辑」返回时恢复）：
 			// 视图状态未经校验（用户手改 workspace.json 等可能产生任意值），
 			// 按白名单取值，非法/缺失一律回退 source（与 ViewStateStore.hydrate
@@ -927,7 +752,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 个引擎销毁而失效——不清则 ① 旧节点被长期持有（换文件/设置刷新累积成
 		// 内存泄漏）；② 字体钩子会对**已销毁**的节点调重测（2026-09-28 复核修复）。
 		// 只清集合、不触发任何重排（K88 禁止全树重排的约束不变）。
-		this.contentRemeasureNodes.clear();
+		this.contentRemeasure.resetNodes();
 		// 图片尺寸校正回灌（探测在首帧前起步；引擎此刻才存在时在此落地）。
 		// 回灌改动节点尺寸 → 内容包围盒变化，排补居中修正默认视口
 		if (this.applyPendingImageCorrections()) {
@@ -944,34 +769,20 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				}
 				// 渲染完成后重试「渲染窗口内未解析的数学 holder」（K104）：
 				// 此刻 renderer.root 已回填，holder 与产物两条解析路径恢复可用
-				this.retryDeferredContentRemeasure();
+				this.contentRemeasure.retryDeferred();
 			});
 		}
 		if (this.layoutSelect) {
 			this.layoutSelect.value = layout;
 		}
 		syncLineStyleOptions(this, layout, lineStyle);
-		// md 文档模式：onOpen 构建工具栏时文件尚未加载（mdDocumentMode=false），
-		// 加载完成后重建工具栏以补上「以 Markdown 编辑」返回按钮
-		if (this.mdDocumentMode) {
-			this.refreshToolbar();
-			if (this.layoutSelect && this.currentLayout) {
-				this.layoutSelect.value = this.currentLayout;
-			}
-			// 重建后选项面回到全局默认：按文件会话值重新校正
-			syncLineStyleOptions(
-				this,
-				this.currentLayout ?? layout,
-				this.currentLineStyle ?? lineStyle,
-			);
-		}
 	}
 
 	/** 标题重命名已委托 TitleRenamer（view-title-renamer.ts） */
 
 	/**
 	 * 切换布局（工具栏调用）：更新会话字段 + 立即写入视图状态存储
-	 * （.mindmap.md 布局不写入正文，存 data.json 按文件路径恢复）。
+	 * （布局不写入正文，存 data.json 按文件路径恢复）。
 	 */
 	applyLayout(value: string): void {
 		this.currentLayout = value;
@@ -1067,19 +878,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 快速切换激活也不漏拆（2026-09-13 严格化）。
 	 */
 	private scheduleAutoSplitCheck(): void {
-		this.cancelAutoSplitCheck();
-		this.autoSplitTimer = window.setTimeout(() => {
-			this.autoSplitTimer = null;
-			runAutoSplitCheck(this);
-		}, AUTO_SPLIT_CHECK_DELAY_MS);
+		// createDebouncer 的 schedule 已含「取消未决任务」语义（尾沿防抖），
+		// 与原文 cancel-then-setTimeout 等价；此处不再重复 cancel
+		this.autoSplitDebouncer.schedule(() => runAutoSplitCheck(this));
 	}
 
 	/** 取消尚未执行的自动拆分检查（重复调度 / 视图关闭时） */
 	private cancelAutoSplitCheck(): void {
-		if (this.autoSplitTimer !== null) {
-			window.clearTimeout(this.autoSplitTimer);
-			this.autoSplitTimer = null;
-		}
+		this.autoSplitDebouncer.cancel();
 	}
 
 	// ==================== 工具栏（委托 view-toolbar.ts） ====================
@@ -1094,13 +900,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		refreshToolbar(this);
 	}
 
-	/** md 文档模式：切回 Markdown 编辑/阅读（恢复进入前模式） */
+	/** 文档模式：切回 Markdown 编辑/阅读（恢复进入前模式；声明随之降级） */
 	backToMarkdown(): void {
 		if (this.file) {
 			this.engine.persistViewport();
-			// 双向偏好：显式选择以 Markdown 查看 → 下次默认打开方式
-			this.plugin.viewState.setOpenAs(this.file.path, 'markdown');
-			void openAsMarkdown(this.leaf, this.file, this.mdBackMode);
+			void openAsMarkdown(
+				this.app,
+				this.leaf,
+				this.file,
+				this.mdBackMode,
+				this.lang,
+			);
 		}
 	}
 
@@ -1121,8 +931,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	// ==================== 导出（委托 view-export.ts） ====================
 
-	async exportPNG(): Promise<void> {
-		await exportPNG(this);
+	async exportImage(): Promise<void> {
+		await exportImage(this);
 	}
 
 	// ==================== 链接跳转 / 引用更新 / 清理 ====================
@@ -1227,8 +1037,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 清理视图生命周期作用域的事件（搜索输入框 input/keydown 等）
 		this.viewEvents.destroy();
 		// 数学重测节点随引擎销毁丢弃：视图关闭后不再有任何重测目标，
-		// 留着会一直持有已销毁的节点对象（同 onUnloadFile / onEngineReady）
-		this.contentRemeasureNodes.clear();
+		// 留着会一直持有已销毁的节点对象（同 onUnloadFile / onEngineReady）。
+		// dispose 另取消未决的重排批次（关闭后不再有宏任务在跑）。
+		this.contentRemeasure.dispose();
 		this.engine.destroyInstance();
 		// 清空状态栏后，若仍有其他打开的思维导图视图则恢复其计数
 		//（状态栏为插件级共享元素，本视图关闭不应清空其他视图的计数）。

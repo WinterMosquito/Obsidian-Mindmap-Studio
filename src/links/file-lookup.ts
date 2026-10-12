@@ -22,7 +22,7 @@
  * 失效后下一次查询（含失效事件的同批处理）会重建，时序上无竞态。
  */
 import { App, TFile, normalizePath } from 'obsidian';
-import { isRemoteOrDataUrl } from '../domain/url';
+import { isRemoteOrDataUrl, tryDecodeUri } from '../domain/url';
 
 /**
  * 把**单个文件**的全部形态键写入索引：
@@ -274,13 +274,10 @@ function lookupCandidates(
 /** 原样地址 + URL 解码地址（去重）作为索引查询候选 */
 function uniqueCandidates(url: string): string[] {
 	const candidates = [url];
-	try {
-		const decoded = decodeURIComponent(url);
-		if (decoded !== url) {
-			candidates.push(decoded);
-		}
-	} catch {
-		// 含未编码 % 等字符时仅用原样地址
+	// 解码失败（含未编码 % 等字符）只保留原样地址
+	const decoded = tryDecodeUri(url);
+	if (decoded !== null && decoded !== url) {
+		candidates.push(decoded);
 	}
 	return candidates;
 }

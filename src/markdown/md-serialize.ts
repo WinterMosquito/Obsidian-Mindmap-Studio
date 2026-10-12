@@ -36,6 +36,7 @@ import {
 import { isExternalImageRef, isSchemeUrl } from '../domain/url';
 import { docWikiLinkDisplay, editedWikilinkAlias, effectiveDocWikiLink } from '../domain/wiki-display';
 import type { MdNodeData } from '../core/node-data';
+import type { MdTokenSegment } from '../domain/md-meta';
 
 /** 链接目标是否需要尖括号包裹（含空格/括号/<>/\，否则会破坏 `(…)` 闭合） */
 function needsDestBraces(dest: string): boolean {
@@ -693,16 +694,109 @@ function inLinkSyntax(text: string, start: number, length: number): boolean {
 }
 
 /**
- * 合成路径（**原位**优先）：按 `mdSegments`（显示文本 ↔ 原文对齐表）把有显示名的
- * token 写回它原来在句子里的位置，返回 null 表示没有可用对齐表（调用方走尾插）。
+ * 无显示名段的**插入点**（见 `domain/md-meta` 「无显示名段的锚点」）：在编辑后的
+ * 文本里反查解析期记下的左邻（`before`，贪心只向后找）或右邻（`after`）文字，
+ * 返回该插 token 的下标。返回 -1 表示反查失败（调用方回落尾插）。
  *
- * 规则（解析侧只登记**在显示文本中可见**的 token，见 MdTokenSegment）：
- * 1. 取新文本首行 T，按段序在 T 中定位每个 token 的显示名（贪心、只向前找），
- *    命中的位置即该 token 的落点，其显示名被替换为 token 的**实时渲染形态**
+ * **邻接一致性校验是这套锚点能否信任的关键**：原文里 token 与锚点之间是什么形态
+ * （空白分隔 / 紧贴），新文本里必须仍然成立——否则说明用户把锚点那段改写了，
+ * 位置已不可考。少了这一步，`对比 https://a.com` 被改成 `对比结果` 后，短锚点
+ * `对比` 仍能在 `对比结果` 里命中 → token 被塞进「对比|结果」中间。
+ *
+ * 三处保守约束，宁可退化成尾插也不产出错位：
+ * ① **邻接一致性**（见上）；
+ * ② 占位区间不得落在已占用区间**内部**（正好压在边界上合法——插在替换前后皆可）；
+ * ③ 占位起点不得早于 `from`（段序单调，保证输出顺序稳定）。
+ *
+ * 返回的 `start` / `end` 即该 token 应占的区间：`start === end` 是**纯插入**
+ * （不改动文本）；`end = start + 1` 是**吃掉一个分隔空白**（见 after 分支）。
+ * `padLead` / `padTrail` 表示 token 形态前后各需不需要补一个空格（原文的分隔
+ * 空白在新文本里被折叠掉了就要补，见 `insertionForm`）。
+ */
+function anchorInsertPoint(
+	text: string,
+	segment: MdTokenSegment,
+	from: number,
+	occupied: readonly { start: number; end: number }[],
+): { start: number; end: number; padLead: boolean; padTrail: boolean } | null {
+	const before = typeof segment.before === 'string' ? segment.before : '';
+	const after = typeof segment.after === 'string' ? segment.after : '';
+	const isBlank = (ch: string | undefined): boolean =>
+		ch === undefined || /\s/.test(ch);
+	let start = -1;
+	let end = -1;
+	let padLead = false;
+	let padTrail = false;
+	if (before) {
+		const found = text.indexOf(before, from);
+		// 原文右侧有空白 → 新文本里锚点末尾也必须仍是空白/行尾（分隔还在，
+		// token 才仍能插在这里）；原文紧贴 → 该位置必须已到行尾
+		if (found !== -1) {
+			const tail = found + before.length;
+			if (segment.sepBefore ? isBlank(text[tail]) : tail >= text.length) {
+				start = tail;
+				end = tail;
+				// 原文 token 前有空白 ⇒ 补一个前导空格（插在此处会顶掉那个空白）
+				padLead = segment.sepBefore === true;
+			}
+		}
+	}
+	// before 不可用（原文里 token 紧贴行首，或锚点被改写）时改用右邻：插在它**前面**
+	if (start === -1 && after) {
+		const found = text.indexOf(after, from);
+		if (found !== -1 && (!segment.sepAfter || isBlank(text[found - 1]))) {
+			// 让 token **接手**它右邻的那个分隔空白：`双图：![[a]] 与…` 编辑后
+			// 文本是 `双图： 与 …`（token 两侧的空白被折叠成同一个），插在 `与`
+			// 前会写成 `双图： ![[a]]与`——改为**吃掉**那个空白（占位区间含它），
+			// token 自己补一个尾随空格，才回到用户原本的 `双图：![[a]] 与`。
+			if (found > 0 && isBlank(text[found - 1])) {
+				start = found - 1;
+				end = found;
+				padTrail = true;
+			} else {
+				start = found;
+				end = found;
+				// 插到行首时前面无处放分隔空白，只能落到 token 之后
+				padTrail = segment.sepAfter === true;
+			}
+		}
+	}
+	if (start === -1 || end === -1 || start < from) {
+		return null;
+	}
+	const blocked = occupied.some((s) => start > s.start && start < s.end);
+	return blocked ? null : { start, end, padLead, padTrail };
+}
+
+/**
+ * 插入形态按 `padLead` / `padTrail` 补回原文的分隔空白。
+ *
+ * 为什么必须补：首图不占显示文本，原文 token 两侧的空白在 `data.text` 里被
+ * **折叠成同一个**（`标注 ![[图|200]]` 的 text 只有 `标注`），不补就会写出
+ * `标注![[图|250]]`。各分支该不该补由 `anchorInsertPoint` 判定（它同时知道
+ * 占位区间落在哪个位置、那里有没有空白可复用），本函数只负责拼装。
+ */
+function insertionForm(
+	form: string,
+	padLead: boolean,
+	padTrail: boolean,
+): string {
+	return `${padLead ? ' ' : ''}${form}${padTrail ? ' ' : ''}`;
+}
+
+/**
+ * 合成路径（**原位**优先）：按 `mdSegments`（显示文本 ↔ 原文对齐表）把 token
+ * 写回它原来在句子里的位置，返回 null 表示没有可用对齐表（调用方走尾插）。
+ *
+ * 规则（解析侧登记两类 token，见 MdTokenSegment）：
+ * 1. **有显示名**者：取新文本首行 T，按段序在 T 中定位其显示名（贪心、只向前找），
+ *    命中的位置即该 token 的落点，显示名被替换为 token 的**实时渲染形态**
  *    （首链/首图取当前别名与尺寸，额外 token 用原文）；
- * 2. 定位失败（用户改了显示名、或该 token 本就不在显示文本中）→ 回落尾插，
+ * 2. **无显示名**者（首图 / icon-only URL）：显示文本里没有它的痕迹，改按解析期
+ *    记下的上下文锚点反查插入点（`anchorInsertPoint`），不改动文本只插入 token；
+ * 3. 定位失败（用户改了显示名或锚点文字、该 token 已不在文中）→ 回落尾插，
  *    与既有行为一致——**内容与语法不丢**优先于位置；
- * 3. 每枚 token 只输出一次：输出清单按值「取用即摘除」，避免与原尾插路径重复。
+ * 4. 每枚 token 只输出一次：输出清单按值「取用即摘除」，避免与原尾插路径重复。
  */
 function composeFirstLineSegmented(
 	data: MdNodeData,
@@ -737,7 +831,14 @@ function composeFirstLineSegmented(
 		pending.splice(index, 1);
 		return true;
 	};
-	const slots: { start: number; end: number; form: string }[] = [];
+	// slot 的 start === end 即**插入点**（不替换文本，只把 token 放进去）；
+	// `fallback` 是该 token **未加分隔补白**的形态（重叠兜底尾插用，见下方收尾循环）
+	const slots: {
+		start: number;
+		end: number;
+		form: string;
+		fallback: string;
+	}[] = [];
 	let anchor = 0;
 	for (const segment of segments) {
 		// 首链/首图取实时形态（别名/尺寸可能已被编辑）；额外 token 用原文
@@ -751,17 +852,44 @@ function composeFirstLineSegmented(
 			continue;
 		}
 		const name = typeof segment.text === 'string' ? segment.text : '';
-		const at = name ? text.indexOf(name, anchor) : -1;
+		if (!name) {
+			// 无显示名段（首图 / icon-only URL）：按上下文锚点插回原位
+			const spot = anchorInsertPoint(text, segment, anchor, slots);
+			if (!spot) {
+				pending.push(form);
+				continue;
+			}
+			slots.push({
+				start: spot.start,
+				end: spot.end,
+				form: insertionForm(form, spot.padLead, spot.padTrail),
+				fallback: form,
+			});
+			anchor = spot.end;
+			continue;
+		}
+		const at = text.indexOf(name, anchor);
 		if (at === -1 || inLinkSyntax(text, at, name.length)) {
 			pending.push(form); // 对不上 / 命中落在链接语法内 → 尾插（旧行为）
 			continue;
 		}
-		slots.push({ start: at, end: at + name.length, form });
+		slots.push({ start: at, end: at + name.length, form, fallback: form });
 		anchor = at + name.length;
 	}
 	let line = '';
 	let cursor = 0;
-	for (const slot of slots) {
+	// 插入点可能与替换区间同起点（或落在替换区间之前的一段文本后），统一按
+	// start 升序输出；同 start 时保持段序（排序稳定，段序即原文顺序）
+	const ordered = [...slots].sort((a, b) => a.start - b.start);
+	for (const slot of ordered) {
+		if (slot.start < cursor) {
+			// 区间重叠：当前不变式下不可达（anchor 单调 ⇒ 后一枚的起点不早于前一枚
+			// 的终点），但**兜底必须存在**——`takeToken` 已把该 token 从 `pending`
+			// 摘除，静默跳过会让它凭空消失（与「内容与语法不丢优先于位置」冲突）。
+			// 退化为尾插：位置退化，token 不丢。
+			pending.push(slot.fallback);
+			continue;
+		}
 		line += text.slice(cursor, slot.start) + slot.form;
 		cursor = slot.end;
 	}
@@ -770,7 +898,10 @@ function composeFirstLineSegmented(
 		const tail = pending.join(' ');
 		line = line ? `${line} ${tail}` : tail;
 	}
-	return line;
+	// 一枚都没原位定位 → 分段路径的 pending 顺序（首链先、首图后）不如
+	// `inlineTokens` 的「按 mdRaw 出现位置」权威，退回尾插路径对齐顺序
+	// （纯图行插入链接即走这里：`![[a.png]] [[笔记]]` 而非反过来）。
+	return slots.length === 0 ? null : line;
 }
 
 /** 合成路径：节点文本首行（原位 token，无对齐表时回落「剥壳文本 + 行尾 token」） */

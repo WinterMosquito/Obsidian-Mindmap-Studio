@@ -3,7 +3,7 @@
  *
  * 布局/视口按文件路径存插件 data.json 的顶层 `viewState` 键（正文字节保持纯
  * Markdown）。这里锁定三条易回退的契约：
- * - hydrate 形状校验：只接受含已知字段的条目（layout/view/openAs），
+ * - hydrate 形状校验：只接受含已知字段的条目（layout/lineStyle/view），
  *   手改 data.json 或引擎升级后的畸形结构不得渗入（否则 getLayout 返回坏值）；
  * - 写盘防抖：连续 patch 合并为一次 persist，且载荷是"当时"的快照
  *   （后续变更不得回头改写已交给写盘器的对象）；
@@ -36,7 +36,7 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 		store.hydrate({
 			viewState: {
 				[PATH_A]: { layout: 'mindMap', view: { transform: { scale: 1 } } },
-				[PATH_B]: { openAs: 'markdown' },
+				[PATH_B]: { lineStyle: 'curve' },
 			},
 			// 顶层设置键不属于视图状态
 			language: 'zh',
@@ -45,12 +45,12 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 
 		expect(store.getLayout(PATH_A)).toBe('mindMap');
 		expect(store.getView(PATH_A)).toEqual({ transform: { scale: 1 } });
-		expect(store.getOpenAs(PATH_B)).toBe('markdown');
+		expect(store.getLineStyle(PATH_B)).toBe('curve');
 		// 设置键不进入视图状态映射
 		expect(store.getLayout('language')).toBeUndefined();
 		expect(store.serialize()).toEqual({
 			[PATH_A]: { layout: 'mindMap', view: { transform: { scale: 1 } } },
-			[PATH_B]: { openAs: 'markdown' },
+			[PATH_B]: { lineStyle: 'curve' },
 		});
 		expect(console.warn).not.toHaveBeenCalled();
 	});
@@ -78,18 +78,6 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 		// 条目本身有效（含 layout 键）故被保留，但 getter 不返回非字符串
 		expect(store.serialize()).toEqual({ [PATH_A]: { layout: 42 } });
 		expect(store.getLayout(PATH_A)).toBeUndefined();
-	});
-
-	it('openAs 只认 mindmap/markdown，其余取值视为未设置', () => {
-		const store = new ViewStateStore(() => {});
-		store.hydrate({
-			viewState: {
-				[PATH_A]: { openAs: 'source' },
-				[PATH_B]: { openAs: 'mindmap' },
-			},
-		});
-		expect(store.getOpenAs(PATH_A)).toBeUndefined();
-		expect(store.getOpenAs(PATH_B)).toBe('mindmap');
 	});
 
 	it('非对象载荷与缺失 viewState 键均不加载任何状态', () => {
@@ -277,7 +265,7 @@ describe('ViewStateStore 变更与防抖写盘', () => {
 		store.hydrate({
 			viewState: {
 				[PATH_A]: { layout: 'x' },
-				[PATH_B]: { openAs: 'markdown' },
+				[PATH_B]: { lineStyle: 'curve' },
 			},
 		});
 
@@ -288,22 +276,7 @@ describe('ViewStateStore 变更与防抖写盘', () => {
 		store.removeKey(PATH_A);
 		await vi.advanceTimersByTimeAsync(100);
 		expect(persist).toHaveBeenCalledTimes(1);
-		expect(persist).toHaveBeenCalledWith({ [PATH_B]: { openAs: 'markdown' } });
-	});
-
-	it('setOpenAs 的记忆与读取对称（最后一次选择决定）', () => {
-		const store = new ViewStateStore(() => {}, 100);
-		store.setOpenAs(PATH_A, 'mindmap');
-		expect(store.getOpenAs(PATH_A)).toBe('mindmap');
-		store.setOpenAs(PATH_A, 'markdown');
-		expect(store.getOpenAs(PATH_A)).toBe('markdown');
-		// 不改动同一条目的其他字段
-		store.setLayout(PATH_A, 'timeline');
-		store.setOpenAs(PATH_A, 'mindmap');
-		expect(store.getLayout(PATH_A)).toBe('timeline');
-		expect(store.serialize()).toEqual({
-			[PATH_A]: { layout: 'timeline', openAs: 'mindmap' },
-		});
+		expect(persist).toHaveBeenCalledWith({ [PATH_B]: { lineStyle: 'curve' } });
 	});
 });
 

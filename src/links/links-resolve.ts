@@ -16,6 +16,7 @@ import {
 	isAppResourceUrl,
 	isRemoteOrDataUrl,
 	resourceUrlPathCandidates,
+	tryDecodeUri,
 } from '../domain/url';
 import { fileLookupIndex, lookupIndexedFile } from './file-lookup';
 
@@ -42,7 +43,11 @@ export function resolvePathToFile(
 		try {
 			const fileParam = new URL(text).searchParams.get('file');
 			if (fileParam) {
-				const path = decodeURIComponent(fileParam);
+				// 含未编码 % 等字符：按既有口径放弃该分支（与 URL 解析失败同出口）
+				const path = tryDecodeUri(fileParam);
+				if (path === null) {
+					return null;
+				}
 				// 官方推荐的类型化取文件（@since 1.5.7；CHANGELOG v1.5.7 明示
 				// getAbstractFileByPath 易混淆，应改用 getFileByPath）
 				const direct = app.vault.getFileByPath(path);
@@ -81,8 +86,9 @@ export function resolvePathToFile(
 	}
 
 	if (text.startsWith('file://')) {
-		try {
-			const decoded = decodeURIComponent(text.replace(/^file:\/\//, ''));
+		// 解码失败（路径含未编码 % 等字符）时忽略该分支
+		const decoded = tryDecodeUri(text.replace(/^file:\/\//, ''));
+		if (decoded !== null) {
 			// 官方 API：FileSystemAdapter.getBasePath() 返回库根的真实绝对路径。
 			// （旧实现按「库显示名」在路径中猜库根——库改名后即失配。）
 			const adapter = app.vault.adapter;
@@ -98,8 +104,6 @@ export function resolvePathToFile(
 					}
 				}
 			}
-		} catch {
-			// 路径含未编码 % 等字符时忽略该分支
 		}
 	}
 
@@ -188,16 +192,13 @@ export function resolveDroppedFile(
 		for (const line of uriList.split('\n')) {
 			const item = line.trim();
 			if (item.startsWith('file://')) {
-				try {
-					const decoded = decodeURIComponent(
-						item.replace(/^file:\/\//, ''),
-					);
+				// 解码失败（如含未编码的 %）：跳过该行
+				const decoded = tryDecodeUri(item.replace(/^file:\/\//, ''));
+				if (decoded !== null) {
 					const file = resolvePathToFile(decoded, app);
 					if (file) {
 						return file;
 					}
-				} catch {
-					// 个别 URL 解码失败，跳过该行
 				}
 			}
 		}
@@ -337,14 +338,14 @@ export function extractDroppedFileNames(dataTransfer: DataTransfer): string[] {
 		const pathPart = item.startsWith('file://')
 			? item.slice('file://'.length)
 			: item;
-		try {
-			const decoded = decodeURIComponent(pathPart);
-			const name = decoded.replace(/\\/g, '/').split('/').pop();
-			if (name) {
-				names.push(name);
-			}
-		} catch {
-			// 个别 URL 解码失败（如含未编码的 %），跳过该行
+		// 解码失败（如含未编码的 %）：跳过该行
+		const decoded = tryDecodeUri(pathPart);
+		if (decoded === null) {
+			continue;
+		}
+		const name = decoded.replace(/\\/g, '/').split('/').pop();
+		if (name) {
+			names.push(name);
 		}
 	}
 	return names;

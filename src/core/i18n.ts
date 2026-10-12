@@ -24,12 +24,14 @@ const ZH = {
 	'command.searchNodes': '搜索节点',
 	'command.fitCanvas': '适应画布',
 	'command.arrange': '自动整理思维导图',
-	'command.exportPng': '导出为 PNG',
+	'command.exportImage': '导出图片',
 	'command.created': '思维导图已创建',
 	'command.createFailed': '创建思维导图失败：',
 	'command.openAsMindMap': '以思维导图打开',
 	'command.openAsMarkdown': '以 Markdown 打开',
 	'command.backToMarkdown': '切换回 Markdown',
+	'command.downgradeFailed': '切换为 Markdown 文档失败：',
+	'command.upgradeFailed': '切换为思维导图文档失败：',
 	'command.splitLinksAll': '拆分文档内全部混排双链',
 	'modal.text.titleRaw': '编辑节点原文（Markdown）',
 	'modal.text.hintRaw':
@@ -60,7 +62,7 @@ const ZH = {
 	'toolbar.zoomIn': '放大',
 	'toolbar.zoomOut': '缩小',
 	'toolbar.resetZoom': '重置缩放（100%）',
-	'toolbar.exportPng': '导出 PNG',
+	'toolbar.exportImage': '导出图片',
 
 	// ===== 右键菜单 =====
 	'menu.editText': '编辑文本',
@@ -180,7 +182,12 @@ const ZH = {
 	'settings.enableDragDesc': '允许拖拽节点改变层级和顺序',
 	'settings.exportScale': '导出图片倍率',
 	'settings.exportScaleDesc':
-		'导出 PNG 时的分辨率倍率（倍；越高越清晰，文件也越大）',
+		'导出 PNG 时的分辨率倍率（倍；越高越清晰，文件也越大；SVG 导出为矢量，不受倍率影响）',
+	'settings.exportImageFormat': '导出格式',
+	'settings.exportImageFormatDesc':
+		'导出图片时使用的格式（PNG 位图 / SVG 矢量；倍率设置仅作用于 PNG）',
+	'settings.exportFormat.png': 'PNG（位图）',
+	'settings.exportFormat.svg': 'SVG（矢量）',
 	'settings.autoSplitMixedLinks': '自动拆分混排双链',
 	'settings.autoSplitMixedLinksDesc':
 		'默认关闭。开启后，被编辑的节点若含「双链 + 描述文字」，自动把文档/附件双链拆分为子节点（图片与外链不动）——这会改写文件结构；整篇批处理请用命令「拆分文档内全部混排双链」',
@@ -213,6 +220,7 @@ const ZH = {
 
 	// ===== 导出 =====
 	'export.pngFailed': '导出 PNG 失败：',
+	'export.svgFailed': '导出 SVG 失败：',
 
 	// ===== 保存 =====
 	'save.failed': '保存思维导图失败：',
@@ -245,12 +253,14 @@ const EN: Record<TranslationKey, string> = {
 	'command.searchNodes': 'Search nodes',
 	'command.fitCanvas': 'Fit to canvas',
 	'command.arrange': 'Arrange mind map',
-	'command.exportPng': 'Export as PNG',
+	'command.exportImage': 'Export image',
 	'command.created': 'Mind map created',
 	'command.createFailed': 'Failed to create mind map: ',
 	'command.openAsMindMap': 'Open as mind map',
 	'command.openAsMarkdown': 'Open as Markdown',
 	'command.backToMarkdown': 'Switch to Markdown',
+	'command.downgradeFailed': 'Failed to switch to a Markdown document: ',
+	'command.upgradeFailed': 'Failed to switch to a mind map document: ',
 	'command.splitLinksAll': 'Split all mixed links in document',
 	'modal.text.titleRaw': 'Edit node source (Markdown)',
 	'modal.text.hintRaw':
@@ -281,7 +291,7 @@ const EN: Record<TranslationKey, string> = {
 	'toolbar.zoomIn': 'Zoom in',
 	'toolbar.zoomOut': 'Zoom out',
 	'toolbar.resetZoom': 'Reset zoom (100%)',
-	'toolbar.exportPng': 'Export PNG',
+	'toolbar.exportImage': 'Export image',
 
 	// ===== 右键菜单 =====
 	'menu.editText': 'Edit text',
@@ -404,7 +414,12 @@ const EN: Record<TranslationKey, string> = {
 		'Allow dragging nodes to change hierarchy and order',
 	'settings.exportScale': 'Export image scale',
 	'settings.exportScaleDesc':
-		'Resolution scale for PNG export (higher is sharper and the file is larger)',
+		'Resolution scale for PNG export (higher is sharper and the file is larger; SVG export is vector-based and unaffected)',
+	'settings.exportImageFormat': 'Export format',
+	'settings.exportImageFormatDesc':
+		'Format used when exporting images (PNG raster / SVG vector; the scale setting only affects PNG)',
+	'settings.exportFormat.png': 'PNG (raster)',
+	'settings.exportFormat.svg': 'SVG (vector)',
 	'settings.autoSplitMixedLinks': 'Auto-split mixed links',
 	'settings.autoSplitMixedLinksDesc':
 		'Off by default. When enabled, an edited node that mixes links with description text has its document/attachment links split into child nodes (images and external URLs are left untouched) — this rewrites the file structure; for a whole file use the command "Split all mixed links in document"',
@@ -437,6 +452,7 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 导出 =====
 	'export.pngFailed': 'Export PNG failed: ',
+	'export.svgFailed': 'Export SVG failed: ',
 
 	// ===== 保存 =====
 	'save.failed': 'Failed to save mind map: ',

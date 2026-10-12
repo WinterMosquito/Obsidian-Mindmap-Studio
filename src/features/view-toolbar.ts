@@ -14,7 +14,7 @@ import {
 	zoomOutMindMap,
 } from '../engine/mindmap';
 import { openSearchBar } from './view-search';
-import { exportPNG } from './view-export';
+import { exportImage } from './view-export';
 import {
 	addImageToActiveNode,
 	addLinkToActiveNode,
@@ -44,16 +44,15 @@ function buildToolbarLeftGroup(
 	toolbar: HTMLElement,
 ): void {
 	const leftGroup = toolbar.createDiv('mindmap-toolbar-group');
-	// md 文档模式（.mindmap.md）：提供返回 Markdown 编辑/阅读的入口
-	if (view.isMdDocument()) {
-		createToolButton(
-			leftGroup,
-			t(view.lang, 'toolbar.backToMarkdown'),
-			'file-text',
-			() => view.backToMarkdown(),
-		);
-		leftGroup.createDiv('mindmap-toolbar-separator');
-	}
+	// 返回 Markdown 编辑/阅读的入口：本视图承载的**任何** md 都可用
+	//（声明为导图的文件点击即持久降级，普通笔记开为导图时点击即原样返回）
+	createToolButton(
+		leftGroup,
+		t(view.lang, 'toolbar.backToMarkdown'),
+		'file-text',
+		() => view.backToMarkdown(),
+	);
+	leftGroup.createDiv('mindmap-toolbar-separator');
 	createToolButton(leftGroup, t(view.lang, 'toolbar.addChild'), 'plus', () => {
 		view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE);
 	});
@@ -162,8 +161,8 @@ function buildToolbarRightGroup(
 		zoomOutMindMap(view.mindMap),
 	);
 	rightGroup.createDiv('mindmap-toolbar-separator');
-	createToolButton(rightGroup, t(view.lang, 'toolbar.exportPng'), 'image', () => {
-		void exportPNG(view);
+	createToolButton(rightGroup, t(view.lang, 'toolbar.exportImage'), 'image', () => {
+		void exportImage(view);
 	});
 }
 

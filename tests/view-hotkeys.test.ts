@@ -62,7 +62,6 @@ vi.mock('../src/engine/mindmap', () => ({
 	getActiveNodes: vi.fn((): unknown[] => []),
 	getNodeGroupEl: vi.fn((): Element | null => null),
 	panMindMap: vi.fn(),
-	toCanvasPoint: vi.fn(() => ({ x: NaN, y: NaN })),
 	zoomMindMapAt: vi.fn(),
 }));
 

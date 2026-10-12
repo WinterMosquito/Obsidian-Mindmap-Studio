@@ -1,5 +1,5 @@
 /**
- * Markdown ⇄ 思维导图 往返回归（.mindmap.md 渲染层核心套件）。
+ * Markdown ⇄ 思维导图 往返回归（导图文档渲染层核心套件）。
  *
  * 断言策略（为什么这样写）：
  * - 「不动点」用例一律比对**完整字符串**（parse → serialize → parse → serialize
@@ -13,9 +13,9 @@
  * 覆盖：解析结构 / 层级深度（含 5 万级显式栈）/ 往返不动点 / 编辑合成 /
  * 纯双链节点「编辑=改别名」/ rawOk 分支矩阵 / 图片独占节点 / 嵌入尺寸参数 /
  * URL icon-only 与附件双链 / 图文 token 不丢 / uid 修复 / 视图状态 /
- * .mindmap.md 标记与新建正文。
+ * 新建正文（属性声明块 + 标准大纲）。
  * 源码依据：src/markdown/md-outline.ts、src/markdown/md-serialize.ts、src/markdown/markdown.ts、
- * src/services/view-state.ts、src/domain/{md-meta,wikilink}.ts、src/core/constants.ts。
+ * src/services/view-state.ts、src/domain/{md-meta,wikilink,mindmap-property}.ts、src/core/constants.ts。
  */
 import { describe, expect, it, vi } from 'vitest';
 import { App, TFile } from 'obsidian';
@@ -27,11 +27,6 @@ import {
 	ensureUniqueUids,
 } from '../src/markdown/markdown';
 import { ViewStateStore } from '../src/services/view-state';
-import {
-	hasMindMapMarker,
-	stripMindMapStem,
-	withMindMapMarker,
-} from '../src/core/constants';
 
 // ---------------------------------------------------------------------------
 // 辅助
@@ -1264,6 +1259,53 @@ describe('嵌入尺寸参数', () => {
 		expect(serializeMdBody(tree, null)).toBe('- 标注 ![[a.png|250]]');
 	});
 
+	// 2026-10-11 实机实测缺陷：无显示名 token（首图）此前只能尾插 →
+	// 一经编辑（文本编辑 / 拖拽调宽）就被搬到**行尾**，行内顺序被改写。
+	// 下列四例锁死「按上下文锚点插回原位」。
+	it('P0 首图带后置文本：编辑后仍留在原位（此前被搬到行尾）', () => {
+		const { tree, data } = firstChild('- 前后文：前 ![[a.png|200]] 后\n');
+		data.text = '前后文：前 后改';
+		data.imageSize = { width: 260, height: 260, custom: true };
+		expect(serializeMdBody(tree, null)).toBe(
+			'- 前后文：前 ![[a.png|260]] 后改',
+		);
+	});
+
+	it('P0 首图紧贴前缀：不凭空多出空格', () => {
+		const { tree, data } = firstChild('- 前缀：![[a.png|200]]\n');
+		data.imageSize = { width: 260, height: 260, custom: true };
+		expect(serializeMdBody(tree, null)).toBe('- 前缀：![[a.png|260]]');
+	});
+
+	it('P0 一行两图：调宽后首图不被摘出原位', () => {
+		const { tree, data } = firstChild(
+			'- 双图：![[a.png|200]] 与 ![[b.png|150]]\n',
+		);
+		data.imageSize = { width: 260, height: 260, custom: true };
+		const out = serializeMdBody(tree, null);
+		expect(out, '首图仍在「双图：」之后、「与」之前，分隔空格与原文一致').toBe(
+			'- 双图：![[a.png|260]] 与 ![[b.png|150]]',
+		);
+	});
+
+	it('P0 锚点文字被改写：反查失败回落尾插（顺序退化但内容不丢）', () => {
+		const { tree, data } = firstChild('- 对比 https://a.com 与 [[B]]\n');
+		data.text = '对比结果';
+		// 短锚点「对比」在「对比结果」里仍能命中，但锚点末尾已不是空白 →
+		// 邻接一致性校验拒绝，token 落到行尾而非塞进「对比|结果」中间
+		expect(serializeMdBody(tree, null)).toBe(
+			'- 对比结果 <https://a.com> [[B]]',
+		);
+	});
+
+	it('P0 图 + icon-only URL：两枚无显示名 token 都按锚点插回', () => {
+		const { tree, data } = firstChild('- 首图 ![[a.png]] 尾 https://x.com 末\n');
+		data.text = '首图 尾 末';
+		const out = serializeMdBody(tree, null);
+		// URL 保持用户写的裸形态（不强行加尖括号），位置与原文一致
+		expect(out).toBe('- 首图 ![[a.png]] 尾 https://x.com 末');
+	});
+
 	it('外链 md 图片（![alt|300](url)）编辑/调宽后仍是 md 图片形态（原「已知降级」已修复）', () => {
 		// 旧行为成因：renderImage 首分支 `if (target && image === target)` 直接输出
 		// wiki 嵌入，而解析侧把 mdImg 的 mdImageTarget 也设为同一 URL → 只要图片未被
@@ -1797,12 +1839,13 @@ describe('图文/链接合成不丢 token', () => {
 		);
 	});
 
-	it('图文 + 链接节点编辑文本：链接原位写回，无显示名的首图尾插', () => {
+	it('图文 + 链接节点编辑文本：链接原位写回，无显示名的首图按锚点插回原位', () => {
 		const { tree, data } = firstChild('- ![[a.png]] 见 [[笔记]]\n');
 		data.text = '见图与笔记';
 		// 链接在显示文本里有剥壳名「笔记」→ 写回原位；首图不占显示文本
-		// （位置信息不在文本中）→ 保持既有尾插行为
-		expect(serializeMdBody(tree, null)).toBe('- 见图与[[笔记]] ![[a.png]]');
+		// （位置信息不在文本中）→ 按上下文锚点（右邻「见」）插回它原来的位置，
+		// 而不是被搬到行尾（2026-10-11 实机实测缺陷）
+		expect(serializeMdBody(tree, null)).toBe('- ![[a.png]] 见图与[[笔记]]');
 	});
 
 	it('已有链接的节点插入图片：链接原位保留，新插入的图片尾插', () => {
@@ -1900,9 +1943,18 @@ describe('多 token 编辑后保真（尾插回落路径）', () => {
 		expect(data.text, 'URL 本体不进文本（icon-only）').toBe('参考 与');
 		expect(
 			extrasOf(data),
-			'无显示名的额外 token：只保原文（text 空串，不参与原位定位）',
+			'无显示名的额外 token：记原文 + 上下文锚点（合成时按锚点插回原位）',
 		).toEqual([
-			{ kind: 'link', text: '', raw: 'https://b.com', first: false },
+			{
+				kind: 'link',
+				text: '',
+				raw: 'https://b.com',
+				first: false,
+				before: '与',
+				after: '',
+				sepBefore: true,
+				sepAfter: false,
+			},
 		]);
 		data.text = '两个站点';
 		// 首 URL 由字段承载（回写为规范 <url> 形态）；额外 token 是原文切片（裸 URL）
@@ -1937,7 +1989,16 @@ describe('多 token 编辑后保真（尾插回落路径）', () => {
 	it('多枚额外 token 按出现顺序尾插', () => {
 		const { tree, data } = firstChild('- a https://x.com b https://y.com c\n');
 		expect(extrasOf(data)).toEqual([
-			{ kind: 'link', text: '', raw: 'https://y.com', first: false },
+			{
+				kind: 'link',
+				text: '',
+				raw: 'https://y.com',
+				first: false,
+				before: 'b',
+				after: 'c',
+				sepBefore: true,
+				sepAfter: true,
+			},
 		]);
 		data.text = 'abc';
 		expect(serializeMdBody(tree, null)).toBe(
@@ -2114,7 +2175,7 @@ describe('uid 修复（ensureUniqueUids）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 十一、视图状态（ViewStateStore：布局/视口/打开偏好存 data.json，不写入 md 正文）
+// 十一、视图状态（ViewStateStore：布局/视口存 data.json，不写入 md 正文）
 // ---------------------------------------------------------------------------
 describe('视图状态（ViewStateStore）', () => {
 	const path = 'a/b.mindmap.md';
@@ -2123,10 +2184,10 @@ describe('视图状态（ViewStateStore）', () => {
 		const store = new ViewStateStore(() => {}, 999999);
 		store.hydrate({
 			viewState: {
-				[path]: { openAs: 'mindmap', layout: 'catalogOrganization' },
+				[path]: { lineStyle: 'curve', layout: 'catalogOrganization' },
 			},
 		});
-		expect(store.getOpenAs(path)).toBe('mindmap');
+		expect(store.getLineStyle(path)).toBe('curve');
 		expect(store.getLayout(path)).toBe('catalogOrganization');
 		expect(store.getView(path), '未存的字段为 undefined').toBeUndefined();
 	});
@@ -2155,39 +2216,44 @@ describe('视图状态（ViewStateStore）', () => {
 				'dropped-null.mindmap.md': null,
 				'dropped-unknown.mindmap.md': { foo: 1 },
 				'kept-layout.mindmap.md': { layout: 'mindmap' },
-				'kept-openas.mindmap.md': { openAs: 'markdown' },
+				'kept-linestyle.mindmap.md': { lineStyle: 'curve' },
 				'kept-view.mindmap.md': { view: { transform: { scale: 1 } } },
 			},
 		});
 		expect(Object.keys(store.serialize()).sort()).toEqual([
 			'kept-layout.mindmap.md',
-			'kept-openas.mindmap.md',
+			'kept-linestyle.mindmap.md',
 			'kept-view.mindmap.md',
 		]);
-		expect(store.getOpenAs('kept-layout.mindmap.md'), '缺 openAs → undefined').toBeUndefined();
+		expect(
+			store.getLineStyle('kept-layout.mindmap.md'),
+			'缺 lineStyle → undefined',
+		).toBeUndefined();
 		// 形状合法但取值非法：getLayout 的 typeof 收窄兜底
 		store.hydrate({ viewState: { 'bad-value.mindmap.md': { layout: 42 } } });
 		expect(store.getLayout('bad-value.mindmap.md')).toBeUndefined();
-		expect(store.getOpenAs('kept-openas.mindmap.md'), '重新 hydrate 会清空旧状态').toBeUndefined();
-		expect(store.getOpenAs('bad-value.mindmap.md'), '非法 openAs 取值被拒').toBeUndefined();
+		expect(
+			store.getLineStyle('kept-linestyle.mindmap.md'),
+			'重新 hydrate 会清空旧状态',
+		).toBeUndefined();
 		expect(store.serialize()['bad-value.mindmap.md'], '条目本身仍保留（形状合法）').toEqual({
 			layout: 42,
 		});
 	});
 
-	it('setLayout/setOpenAs/setView 是补丁式合并，serialize 输出完整映射', () => {
+	it('setLayout/setLineStyle/setView 是补丁式合并，serialize 输出完整映射', () => {
 		const store = new ViewStateStore(() => {}, 999999);
 		store.setLayout(path, 'fishbone');
-		store.setOpenAs(path, 'markdown');
+		store.setLineStyle(path, 'curve');
 		store.setView(path, { transform: { scale: 2 } });
 		expect(store.serialize()).toEqual({
 			[path]: {
 				layout: 'fishbone',
-				openAs: 'markdown',
+				lineStyle: 'curve',
 				view: { transform: { scale: 2 } },
 			},
 		});
-		expect(store.getOpenAs(path)).toBe('markdown');
+		expect(store.getLineStyle(path)).toBe('curve');
 	});
 
 	it('renameKey 迁移状态键；removeKey 清理状态键', () => {
@@ -2224,56 +2290,29 @@ describe('视图状态（ViewStateStore）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 十二、.mindmap.md 标记与新建正文（constants.ts 唯一实现 + markdown.ts 默认内容）
+// 十二、新建正文（属性声明块 + 标准 Markdown 大纲；声明判据见 mindmap-property）
 // ---------------------------------------------------------------------------
-describe('.mindmap.md 标记与新建正文', () => {
-	it.each([
-		{ name: '标准后缀', input: '笔记.mindmap.md', marker: true },
-		{ name: '大小写不敏感', input: 'NOTE.MINDMAP.MD', marker: true },
-		{ name: '普通 md 不算', input: '笔记.md', marker: false },
-		{ name: '后缀不在结尾不算', input: '笔记.mindmap.md.bak', marker: false },
-		{ name: '目录名含标记不算（按整串结尾判定）', input: 'x.mindmap.md/笔记', marker: false },
-	])('hasMindMapMarker：$name', ({ input, marker }) => {
-		expect(hasMindMapMarker(input)).toBe(marker);
-	});
-
-	it.each([
-		{ name: '剥离 stem 段', input: '笔记.mindmap', expected: '笔记' },
-		{ name: '无标记原样', input: '笔记', expected: '笔记' },
-		{ name: '完整后缀不在剥离范围（只剥 .mindmap 段）', input: '笔记.mindmap.md', expected: '笔记.mindmap.md' },
-		{ name: '大小写不敏感', input: 'A.MINDMAP', expected: 'A' },
-	])('stripMindMapStem：$name', ({ input, expected }) => {
-		expect(stripMindMapStem(input)).toBe(expected);
-	});
-
-	it.each([
-		{ name: '补全后缀', input: '笔记', expected: '笔记.mindmap.md' },
-		{ name: '容忍只写 .mindmap', input: '笔记.mindmap', expected: '笔记.mindmap.md' },
-		{ name: '已有完整后缀 → 幂等', input: '笔记.mindmap.md', expected: '笔记.mindmap.md' },
-		{ name: '已有完整后缀（大写）→ 幂等', input: 'A.MINDMAP.MD', expected: 'A.MINDMAP.MD' },
-	])('withMindMapMarker：$name', ({ input, expected }) => {
-		expect(withMindMapMarker(input)).toBe(expected);
-	});
-
-	it('三个标记助手互相自洽：补标记后必然命中判定，剥 stem 可还原', () => {
-		for (const stem of ['笔记', 'folder/笔记', '带 空格 的名字']) {
-			const file = withMindMapMarker(stem);
-			expect(hasMindMapMarker(file), `${file} 应命中标记判定`).toBe(true);
-			expect(stripMindMapStem(file.replace(/\.md$/, ''))).toBe(stem);
-		}
-	});
-
-	it('新建默认正文是标准 Markdown：解析为 3 个列表子主题且往返稳定', () => {
-		const content = createDefaultMarkdownContent('zh');
-		expect(content).toBe(
-			[
-				'- 示例：把想法拆成子节点',
-				'- Tab：添加子节点',
-				'- Enter：添加同级节点',
-				'',
-			].join('\n'),
+describe('新建导图正文', () => {
+	it('属性声明块按语言选键（zh「类型」/ en「Type」），块后空行分隔正文', () => {
+		expect(createDefaultMarkdownContent('zh').startsWith('---\n类型: Mindmap\n---\n\n')).toBe(
+			true,
 		);
+		expect(createDefaultMarkdownContent('en').startsWith('---\nType: Mindmap\n---\n\n')).toBe(
+			true,
+		);
+	});
+
+	it('新建默认正文是标准 Markdown：文件头被识别、解析为 3 个列表子主题且往返稳定', () => {
+		const content = createDefaultMarkdownContent('zh');
+		const body = [
+			'- 示例：把想法拆成子节点',
+			'- Tab：添加子节点',
+			'- Enter：添加同级节点',
+			'',
+		].join('\n');
+		expect(content).toBe(`---\n类型: Mindmap\n---\n\n${body}`);
 		const r = parseMdOutline(content, '根');
+		expect(r.frontmatter, '属性块逐字保留为文件头').toBe('---\n类型: Mindmap\n---\n');
 		expect(r.tree.children).toHaveLength(3);
 		expect(r.tree.children.map((c) => (c.data as MdData).mdMarker)).toEqual([
 			'-',
@@ -2287,17 +2326,14 @@ describe('.mindmap.md 标记与新建正文', () => {
 			'Enter：添加同级节点',
 		]);
 		const out = serializeMdBody(r.tree, null);
-		expect(out, '逐字回写（仅丢掉文件末尾的空行）').toBe(content.trimEnd());
+		expect(out, '正文逐字回写（仅丢掉文件末尾的空行）').toBe(body.trimEnd());
 		expect(serializeMdBody(parseMdOutline(out, '根').tree, null)).toBe(out);
 	});
 
-	it('默认文件名 + 标记拼接：思维导图YYYY-MM-DD.mindmap.md', () => {
+	it('默认文件名：思维导图YYYY-MM-DD（不再携带 .mindmap 后缀）', () => {
 		const name = buildDefaultMindMapName('zh', new Date(2026, 0, 5));
 		expect(name).toBe('思维导图2026-01-05');
-		const file = withMindMapMarker(name);
-		expect(file).toBe('思维导图2026-01-05.mindmap.md');
-		expect(hasMindMapMarker(file)).toBe(true);
-		expect(stripMindMapStem(file.replace(/\.md$/, ''))).toBe(name);
+		expect(name).not.toContain('.mindmap');
 	});
 });
 

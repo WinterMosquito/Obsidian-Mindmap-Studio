@@ -7,8 +7,8 @@
  *   原实现用 `folderPath || ...` 会把「显式指定库根」误判成「未指定」，
  *   文件被静默建到别的目录（文件浏览器里对着库根点「新建思维导图」即触发）。
  * - `undefined` 才是「未指定」，此时才回落 `getNewFileParent`。
- * - 拼接口径：库根产出 `名称.mindmap.md`（**不带前导斜杠**），子目录产出
- *   `目录/名称.mindmap.md`——不为前导斜杠依赖 `normalizePath` 的未承诺行为。
+ * - 拼接口径：库根产出 `名称.md`（**不带前导斜杠**），子目录产出
+ *   `目录/名称.md`——不为前导斜杠依赖 `normalizePath` 的未承诺行为。
  * - 存在性检查（重名追加序号）与最终 create 用**同一套**路径口径。
  *
  * 为什么自建 obsidian 桩：仓库 mock（tests/mocks/obsidian.ts）的 App 是空类，
@@ -18,10 +18,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { App } from 'obsidian';
-import { withMindMapMarker } from '../src/core/constants';
 import { createNewMindMap } from '../src/creation';
 
-/** 弹窗确认后返回的文件名（不含扩展名，扩展名由 withMindMapMarker 补） */
+/** 弹窗确认后返回的文件名（不含扩展名，`.md` 由 creation 补） */
 const TYPED_NAME = '测试导图';
 
 vi.mock('../src/ui/modal-name', () => ({
@@ -90,9 +89,9 @@ function createStubApp(
 	};
 }
 
-/** 期望的文件名（走生产代码的扩展名口径，避免测试里硬编码 '.mindmap.md'） */
+/** 期望的文件名（新建一律是普通 `.md`；导图身份靠正文的属性声明） */
 function expectedFileName(): string {
-	return withMindMapMarker(TYPED_NAME);
+	return `${TYPED_NAME}.md`;
 }
 
 describe('新建思维导图的落点判定', () => {
@@ -107,6 +106,8 @@ describe('新建思维导图的落点判定', () => {
 		expect(stub.created).toHaveLength(1);
 		expect(stub.created[0]?.path).toBe(expectedFileName());
 		expect(stub.created[0]?.path.startsWith('/')).toBe(false);
+		// 导图身份来自正文的属性声明（zh 用「类型」键）
+		expect(stub.created[0]?.content.startsWith('---\n类型: Mindmap\n---\n')).toBe(true);
 	});
 
 	it('指定目录：拼接为「目录/名称」，存在性检查用同一路径口径', async () => {
@@ -133,6 +134,6 @@ describe('新建思维导图的落点判定', () => {
 		await createNewMindMap(stub.app, 'zh', '');
 		// 首次探针用库根口径（不带前导斜杠），命中后追加序号 1
 		expect(stub.probedPaths()[0]).toBe(expectedFileName());
-		expect(stub.created[0]?.path).toBe('测试导图 1.mindmap.md');
+		expect(stub.created[0]?.path).toBe('测试导图 1.md');
 	});
 });

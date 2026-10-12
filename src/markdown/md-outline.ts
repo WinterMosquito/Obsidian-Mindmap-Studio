@@ -266,6 +266,46 @@ export function tokenDisplay(tok: InlineToken): string {
 }
 
 /**
+ * 无显示名 token 的**上下文锚点**（写入 `MdTokenSegment` 的 before/after/sep* 族）。
+ *
+ * 取原文里 token 左右两侧**紧邻的非空白文字 run**：合成侧在编辑后的新文本里反查
+ * 该文字即可把 token 插回原位，避免「无显示名 → 只能尾插 → 图片被搬到行尾」。
+ * 语义与长度上限见 `domain/md-meta` 「无显示名段的锚点」。
+ *
+ * 两侧都按**相邻 token 的边界**裁剪（`from` / `to`），而不是一路取到行首行尾——
+ * 否则 `前 ![[a]] 与 ![[b]] 后` 里 `a` 的右邻会连 `![[b]]` 一起吞进锚点，
+ * 反查时这段文字根本不在新文本里（`b` 的显示名才是），必然失配。
+ *
+ * run 截断到 `ANCHOR_MAX_CHARS`（前文取尾部、后文取头部）：锚点只用于**反查**，
+ * 太长既降低命中率也让 mdSegments 膨胀。两侧都空（纯 token 行）时全部留空，
+ * 合成侧反查失败走尾插——此时节点文本本就是空串，尾插结果与原文一致。
+ */
+const ANCHOR_MAX_CHARS = 32;
+
+function tokenAnchors(
+	raw: string,
+	start: number,
+	end: number,
+	from: number,
+	to: number,
+): Pick<MdTokenSegment, 'before' | 'after' | 'sepBefore' | 'sepAfter'> {
+	const left = raw.slice(from, start);
+	const right = raw.slice(end, to);
+	// 左邻 run：token 前最后一段连续非空白（不跨行）。
+	// ⚠ `$` 会让 `[^\n]*` 把**行末空白也吞进来**（`AAA ` 匹配到 `AAA `），
+	// 故先 trimEnd 再截断——否则截断窗口里混着空白、锚点凭空短一截。
+	const beforeRun = (/\S[^\n]*$/.exec(left)?.[0] ?? '').trimEnd();
+	// 右邻 run：token 后第一段连续非空白（不跨行）
+	const afterRun = (/^[^\n]*\S/.exec(right)?.[0] ?? '').trimStart();
+	return {
+		before: beforeRun.slice(-ANCHOR_MAX_CHARS),
+		after: afterRun.slice(0, ANCHOR_MAX_CHARS),
+		sepBefore: /\s$/.test(left),
+		sepAfter: /^\s/.test(right),
+	};
+}
+
+/**
  * 嵌入目标是否为图片（按扩展名判定；无扩展名/未知扩展名视为非图片）。
  * 用 Obsidian 可渲染图片清单（含 avif/apng/jxl/tif/tiff）——与 Obsidian 的嵌入
  * 行为对齐；非图片嵌入（PDF/音视频等）不能作为节点图渲染，需改走附件通道。
@@ -373,11 +413,14 @@ export function buildInlineData(raw: string): InlineData {
 	 */
 	const segments: MdTokenSegment[] = [];
 	let cursor = 0;
-	for (const tok of toks) {
+	for (const [tokIndex, tok] of toks.entries()) {
 		/** 本 token 是否被「首链 / 首图」字段承载（合成时取实时形态还是原文） */
 		let firstForThisToken = false;
 		pieces.push(raw.slice(cursor, tok.start));
+		// 上一个 token 的结尾：锚点只取「紧邻」文字，不能跨越已消费的 token
+		const prevTokenEnd = cursor;
 		cursor = tok.end;
+		const nextTokenStart = toks[tokIndex + 1]?.start ?? raw.length;
 		if (tok.kind === 'wikiImg' || tok.kind === 'mdImg') {
 			// 非图片的嵌入 `![[X]]`，按**目标类型**分两路（Obsidian 语义：末段为
 			// `.md` 或无扩展名 = 文档；其余扩展名 = 附件，判据
@@ -459,7 +502,16 @@ export function buildInlineData(raw: string): InlineData {
 						data.mdImageHeight = tok.sizeHeight;
 					}
 				}
-				// 首图以节点图呈现，不占文本
+				// 首图以节点图呈现，不占文本 → **必须**登记台账段（text 为空串 +
+				// 上下文锚点）：否则合成回写找不到原位，只能尾插 → 图片被搬到行尾、
+				// 且行尾凭空多出空格（拖拽调宽即会踩到，见 tokenAnchors）。
+				segments.push({
+					kind: 'image',
+					text: '',
+					raw: raw.slice(tok.start, tok.end),
+					first: true,
+					...tokenAnchors(raw, tok.start, tok.end, prevTokenEnd, nextTokenStart),
+				});
 			} else {
 				const display = tokenDisplay(tok);
 				pieces.push(display);
@@ -540,15 +592,18 @@ export function buildInlineData(raw: string): InlineData {
 				raw: raw.slice(tok.start, tok.end),
 				first: firstForThisToken,
 			});
-		} else if (!firstForThisToken) {
-			// **额外**的无显示名 token（第 2+ 枚 URL / url-like md 链接）：位置不在
-			// 显示文本中，只保原文——合成时按切片尾插（与首 token 同位）。
-			// 首 token 无显示名（URL icon-only）不入表：它由 hyperlink 字段实时渲染。
+		} else {
+			// **无显示名** token（icon-only URL：autolink / 裸 URL / label 为 URL 的
+			// md 链接；以及首枚这类 token）：本体不进节点文本，只显图标 → 台账记
+			// 原文 + **上下文锚点**，合成时按锚点原位插回（见 tokenAnchors）。
+			// 首 token 此前不入表（只保首链由 hyperlink 字段实时渲染），但那样
+			// 一旦文本被编辑就只剩尾插 → URL 被搬到行尾，故一并登记。
 			segments.push({
 				kind: 'link',
 				text: '',
 				raw: raw.slice(tok.start, tok.end),
-				first: false,
+				first: firstForThisToken,
+				...tokenAnchors(raw, tok.start, tok.end, prevTokenEnd, nextTokenStart),
 			});
 		}
 	}

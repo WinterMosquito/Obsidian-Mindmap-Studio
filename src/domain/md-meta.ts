@@ -31,7 +31,8 @@ type MdImageStyle = 'wiki' | 'md';
 /**
  * 行内 token 段（`mdSegments` 的元素，见 MdNodeMeta.mdSegments）。
  * 有显示名者：`text` 与解析侧 `pieces` 中的那一段**逐字相同**（对齐基准）；
- * 无显示名者：`text` 为空串（仅参与「原文不丢」，不参与原位定位）。
+ * 无显示名者：`text` 为空串，并带**上下文锚点**（`before` / `after` / `sepBefore` /
+ * `sepAfter`）——见下方「无显示名段的锚点」小节。
  * `raw` 恒为该 token 的原文切片。
  */
 export interface MdTokenSegment {
@@ -48,7 +49,35 @@ export interface MdTokenSegment {
 	 * `raw` 原样输出；`text` 为剥壳显示名或空串（无显示名者，见字段契约）。
 	 */
 	first: boolean;
+	/**
+	 * 锚点前文（**左邻**非空白文字 run，已 trim；过长取尾部，合成侧据此反查）。
+	 *
+	 * 仅无显示名段登记，见「无显示名段的锚点」。
+	 */
+	before?: string;
+	/**
+	 * 锚点后文（**右邻**非空白文字 run，已 trim；过长取头部）。
+	 * 仅无显示名段登记，`before` 为空时合成侧改用它反查（行首即 token 的形态）。
+	 */
+	after?: string;
+	/** 原文 token **左侧**是否有空白分隔（决定回写时补不补一个空格） */
+	sepBefore?: boolean;
+	/** 原文 token **右侧**是否有空白分隔（`sepBefore` 为假时的次选） */
+	sepAfter?: boolean;
 }
+
+/**
+ * 无显示名段的锚点（`MdTokenSegment.before` / `after` / `sepBefore` / `sepAfter`）
+ *
+ * 背景：首图与 icon-only 的 URL **不向显示文本贡献任何字符**（前者以节点图呈现，
+ * 后者只留图标），因此合成回写时既无「显示名」可原位替换、段序也对不上 `data.text`，
+ * 只能走尾插——于是图片被搬到**行尾**（`前 ![[图|200]] 后` → `前 后 ![[图|260]]`，
+ * 顺序被改写），且尾插的 `line + ' ' + tail` 还会凭空多出一个空格。
+ *
+ * 锚点用原文里 token **紧邻的文字**记位置：合成侧在编辑后的新文本里反查该文字，
+ * 把 token 插回它原先所在的那一侧，顺序与分隔空白随之复原。锚点文字被用户改掉时
+ * 反查失败，回落尾插（内容不丢，位置退化——与既有兜底同档）。
+ */
 
 export interface MdNodeMeta {
 	/** 原始 md 行（可能多行）：未编辑逐字回写的依据 */

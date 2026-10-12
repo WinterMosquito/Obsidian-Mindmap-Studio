@@ -46,6 +46,7 @@
  */
 import { loadPrism } from 'obsidian';
 import { CODE_RENDERED_CLASS, PRISM_TOKEN_CLASS } from '../core/constants';
+import { createWarnOnce } from '../core/errors';
 
 /**
  * 本模块实际消费的 Prism 面（窄化，避免 any）。
@@ -99,16 +100,11 @@ const RENDERED_CACHE_MAX = 200;
  */
 const tokenColorCache = new Map<string, string | null>();
 
-/** 「语法面缺失/高亮抛错」告警去重标记（跨节点只提醒一次，避免刷屏） */
-let renderWarned = false;
-
-function warnOnce(message: string, error?: unknown): void {
-	if (renderWarned) {
-		return;
-	}
-	renderWarned = true;
-	console.warn(`MindMap Studio：${message}`, error ?? '');
-}
+/**
+ * 「语法面缺失/高亮抛错」告警留痕（跨节点只提醒一次，避免刷屏）。
+ * 去重与前缀由 `core/errors.createWarnOnce` 统一实现（2026-10-11 收口）。
+ */
+const warnOnce = createWarnOnce();
 
 /** 缓存键（语言在前：`` `js\0code` `` 与 `` `\0code` `` 是不同条目） */
 function codeCacheKey(lang: string, code: string): string {

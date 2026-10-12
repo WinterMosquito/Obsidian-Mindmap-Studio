@@ -17,14 +17,18 @@
  *   ——合成的 click 事件经引擎 `node_click` 派发后，`event.target` 必须就是锚点本体
  *   且落在节点 group 内（= view-wikilink.findAnchorInNode 的两个前置判据），
  *   `data-href` 即锚点携带的原始 linkpath；`**重点**` 必须渲染为 `<strong>`；
- *   纯文本节点必须仍走引擎默认 SVG 文本；围栏代码块渲染为 `.tmm-codeblock`
+ *   **纯文本节点也必须被接管**（2026-10-09 起常开，原 `selfDrawPlainNodes` 设置已
+ *   移除），而**空文本 / 含图**节点仍让给引擎默认 SVG 通道（三条引擎图标通道只在
+ *   这类节点上可达）；围栏代码块渲染为 `.tmm-codeblock`
  *   块级结构（pre 原文：信息行剥离、缩进保留；复制按钮点击与锚点同款命中契约）；
  * - 覆盖（内联编辑，K92）：自绘节点主入口（覆盖层 textarea）的真实 DOM 装配——
  *   打开即有实际几何（节点 group 屏幕矩形定位）、预填为原文（含 `[[ ]]` 语法，
  *   走 `composeNodeContent`）、Enter 提交写回节点数据并恰好调度一次保存；
- * - 覆盖（导出保真）：导出 SVG（`map.getSvgData().svgHTML`）里自绘根元素 / 锚点 /
- *   轻标记元素必须带**内联样式**——引擎导出只注入自身 CSS 与 header/footer 的
- *   cssText，插件 styles.css 不在导出图里生效；
+ * - 覆盖（导出保真，走导出插件的 `doExport.getSvgData`）：① 导出 SVG 里自绘根元素 /
+ *   锚点 / 轻标记元素必须带**内联样式**——引擎导出只注入自身 CSS 与 header/footer 的
+ *   cssText，插件 styles.css 不在导出图里生效；② 组合根 `exportSvgTransforms` 链注入的
+ *   `<style>`（Obsidian CSS 变量 + MathJax 字形）必须真的落进产物——本页为此补齐真机
+ *   前置（`document.win.createSvg` 垫片 / `:root` CSS 变量 / `#MJX-CHTML-styles`）；
  * - 覆盖（打开视口的性能契约，`perf-box` 探针，见 AGENTS.md K70）：121 节点性能模式
  *   大图 + 800×300 视口——`centerContentAtFullScale` 前后 `.smm-node` 数均 < 总数 50%
  *   （不装配全量 DOM）、内容中心 = 画布中心 ±2px、数据层几何并集与 DOM 全量盒尺寸差
@@ -87,32 +91,45 @@ function argValue(name) {
 const SCENARIOS = [
 	{
 		name: 'plain',
-		label: '无链接节点（对照）',
+		label: '纯文本节点（自绘：段序列非空 ∨ 超长）',
+		// 2026-10-11 契约：**含文本的节点一律自绘**（原 `selfDrawPlainNodes` 设置已删）。
+		// 故 `plain` 不再是「引擎文本对照」，而是**纯文本也被接管**的正向锁。
 		data: { text: 'Plain' },
-		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0, widthBelow: 100 },
+		expect: {
+			docIcon: 0,
+			linkIcon: 0,
+			attachIcon: 0,
+			widthBelow: 100,
+			selfDrawn: true,
+		},
 	},
 	{
 		name: 'doc',
-		label: '文档双链 → 自绘文档页图标',
+		label: '文档双链（无文本）→ 引擎 prefix 文档页图标',
+		// 引擎图标通道的可达性（2026-10-11 实机复核）：`createNodeData` 在
+		// `_customNodeContent` 存在时**早退**，跳过 text/prefix/hyperlink/attachment
+		// 全部默认内容 ⇒ 三条引擎图标通道只剩「插件主动让给引擎」的形态可达
+		// （空文本 / 含图）。本场景用**空文本**节点锁通道本身；
+		// 带显示名的生产形态（`[[笔记]]`）由下方 `docnode` 反向锁定。
 		data: {
-			text: 'Note',
+			text: '',
 			mdWikiLinkpath: '[[Note]]',
 			mdLinkText: 'Note',
 			mdLinkStyle: 'wiki',
 		},
-		expect: { docIcon: 1, linkIcon: 0, attachIcon: 0 },
+		expect: { docIcon: 1, linkIcon: 0, attachIcon: 0, selfDrawn: false },
 	},
 	{
 		name: 'url',
-		label: 'URL → 引擎原生链接图标',
-		data: { text: 'Site', hyperlink: 'https://example.com' },
-		expect: { docIcon: 0, linkIcon: 1, attachIcon: 0 },
+		label: 'URL 单独成节点（无文本）→ 引擎原生链接图标',
+		data: { text: '', hyperlink: 'https://example.com' },
+		expect: { docIcon: 0, linkIcon: 1, attachIcon: 0, selfDrawn: false },
 	},
 	{
 		name: 'attach',
-		label: '附件双链 → 引擎原生回形针',
+		label: '附件双链（无文本）→ 引擎原生回形针',
 		data: {
-			text: 'Report.pdf',
+			text: '',
 			attachmentUrl: 'Report.pdf',
 			attachmentName: 'Report.pdf',
 			mdAttachmentLinkpath: 'Report.pdf',
@@ -123,13 +140,43 @@ const SCENARIOS = [
 			linkIcon: 0,
 			attachIcon: 1,
 			attachTitle: 'Report.pdf',
+			selfDrawn: false,
+		},
+	},
+	{
+		name: 'docnode',
+		label: '文档双链（生产形态：带显示名）→ 自绘、无引擎图标（负向锁）',
+		// 生产里 `[[笔记]]` 的 text = 别名 ⇒ 段序列含链接段 ⇒ 自绘接管 ⇒ 引擎
+		// prefix 通道被跳过。**这条锁住「被自绘遮蔽」这一事实**：文档页图标不会
+		// 出现在带文本的双链节点上（2026-10-11 实机：0.1.9 与本批行为一致，
+		// 见 docs/agents/conventions.md 的图标可达性条目）。若将来把图标恢复进
+		// 自绘内容，必须同时改这条场景与其断言。
+		data: {
+			text: '笔记',
+			mdDerivedText: '笔记',
+			mdRaw: '[[笔记]]',
+			mdWikiLinkpath: '[[笔记]]',
+			mdLinkText: '笔记',
+			mdLinkStyle: 'wiki',
+		},
+		expect: {
+			docIcon: 0,
+			linkIcon: 0,
+			attachIcon: 0,
+			selfDrawn: true,
 		},
 	},
 	{
 		name: 'long',
 		label: '长文本节点 → 测宽封顶（自动换行）',
 		data: { text: 'L'.repeat(200) },
-		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0, widthAtLeast: 400 },
+		expect: {
+			docIcon: 0,
+			linkIcon: 0,
+			attachIcon: 0,
+			widthAtLeast: 400,
+			selfDrawn: true,
+		},
 	},
 	{
 		name: 'inline',
@@ -383,6 +430,13 @@ export function normalizePath(p) {
 	return String(p).replace(/\\\\/g, '/');
 }
 export function setIcon() {}
+// math-jax 的具名导入（探针不触发真实 MathJax 渲染，仅保证模块图可链接）
+export function loadMathJax() {
+	return Promise.resolve();
+}
+export function finishRenderMath() {
+	return Promise.resolve();
+}
 `;
 
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
@@ -420,6 +474,23 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		'features',
 		'node-inline-editor.ts',
 	).replaceAll('\\', '/');
+	// 导出 SVG 后处理链的模块（与生产 view.ts 的 exportSvgTransforms 同源同序）
+	const exportPaddingModule = join(
+		ROOT,
+		'src',
+		'platform',
+		'export-foreign-object-padding.ts',
+	).replaceAll('\\', '/');
+	const exportCssVarsModule = join(
+		ROOT,
+		'src',
+		'platform',
+		'export-css-vars.ts',
+	).replaceAll('\\', '/');
+	const mathJaxModule = join(ROOT, 'src', 'platform', 'math-jax.ts').replaceAll(
+		'\\',
+		'/',
+	);
 	const serialized = JSON.stringify(
 		SCENARIOS.map(({ name, data }) => ({ name, data })),
 		null,
@@ -430,10 +501,17 @@ import { ensureDefaultImageSizes } from ${JSON.stringify(imagesPathModule)};
 import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
 import { buildInlineNodeContent, segmentCacheStats } from ${JSON.stringify(inlineContentModule)};
 import { gateNodeWidthHandles } from ${JSON.stringify(nodeWidthModule)};
-import { registerCodeBlockInteractions } from ${JSON.stringify(codeblockModule)};
+import { hideCopyButtonsInExportSvg, registerCodeBlockInteractions } from ${JSON.stringify(codeblockModule)};
 import { openNodeInlineEditor } from ${JSON.stringify(inlineEditorModule)};
+import { padForeignObjectsForExport } from ${JSON.stringify(exportPaddingModule)};
+import { injectObsidianCssVarsIntoExportSvg } from ${JSON.stringify(exportCssVarsModule)};
+import { injectMathStylesIntoExportSvg, pinMathContainerHeightsInExportSvg } from ${JSON.stringify(mathJaxModule)};
 
 const scenarios = ${serialized};
+
+// 与生产 view.ts 的 exportSvgTransforms 同链同序：本探针据此验证导出 SVG 的
+// 「CSS 变量注入 + MathJax 字形样式注入 + 几何余量 + 复制按钮隐身」端到端落地。
+const exportSvgTransforms = [padForeignObjectsForExport, injectObsidianCssVarsIntoExportSvg, injectMathStylesIntoExportSvg, pinMathContainerHeightsInExportSvg, hideCopyButtonsInExportSvg];
 
 const options = {
 	layout: 'logicalStructure',
@@ -445,6 +523,8 @@ const options = {
 	performanceThreshold: 1000,
 	lang: 'zh',
 	onHyperlinkJump: null,
+	// 导出 SVG 后处理链（引擎 opt.handleBeingExportSvg；与生产 view.ts 同链同序）
+	handleExportSvg: (svg) => exportSvgTransforms.reduce((acc, transform) => transform(acc), svg),
 	// 方案B 原型：节点内联内容渲染（返回 null 的节点走引擎默认 SVG 文本）。
 	// 未解析链接的弱化需要**注入解析器**（本模块不接触 Obsidian API，生产由
 	// view.ts 经 isResolvedWikiLinkpath 注入真实解析；无头验证里用确定性桩：
@@ -479,6 +559,52 @@ for (const { name, data } of scenarios) {
 		options,
 	);
 }
+
+// —— 场景指标探针：**按子节点定位**读几何与图标（2026-10-11 修正） ——
+// 为什么不能再用容器级 DOM 查询：场景根节点的文本就是场景名（map-inline 的根文本是
+// "inline"），而**含文本节点现在一律自绘** ⇒ 容器的「第一个自绘内容」落在根上，
+// 原先在容器上 querySelector 取到的是根，断言全部读错节点（实测症状：
+// 「显示文本 "syntax"」「内联编辑器预填 = "inline"」）。
+// 同理 data-width 只由**引擎默认文本通道**写入，自绘节点不带它 ⇒ 子节点宽度改从
+// **引擎节点字段**读（node.width），图标在**子节点 group 内**计数。
+// 排在 inline 探针（400ms）之前：该探针会把超长节点拖宽到 240px，读宽度必须在它之前。
+window.setTimeout(() => {
+	const metrics = {};
+	for (const { name } of scenarios) {
+		const map = scenarioMaps[name];
+		const child =
+			map && map.renderer && map.renderer.root
+				? map.renderer.root.children[0]
+				: null;
+		metrics[name] = { found: !!child };
+		if (!child) continue;
+		const groupEl = child.group ? child.group.node : null;
+		const count = (selector) =>
+			groupEl ? groupEl.querySelectorAll(selector).length : -1;
+		const first = (selector) =>
+			groupEl ? groupEl.querySelector(selector) : null;
+		const docIconEl = first('svg.mindmap-wiki-doc-icon');
+		const attachTitleEl = first('svg[cursor="pointer"] title');
+		Object.assign(metrics[name], {
+			// 接管事实 = 引擎运行时事实（与生产门禁判据同源）
+			custom: child._customNodeContent ? 1 : 0,
+			width: Math.round(child.width),
+			height: Math.round(child.height),
+			docIcon: count('svg.mindmap-wiki-doc-icon'),
+			docIconHtml: docIconEl ? docIconEl.outerHTML.slice(0, 200) : null,
+			linkIcon: count('[target="_blank"]'),
+			attachIcon: count('svg[cursor="pointer"]'),
+			attachTitle: attachTitleEl ? attachTitleEl.textContent : null,
+			foreignObjects: count('foreignObject'),
+			inlineContent: count('.mindmap-node-inline-content'),
+			anchors: count('a.internal-link, a.external-link'),
+		});
+	}
+	const probe = document.createElement('pre');
+	probe.id = 'scenario-metrics-probe';
+	probe.textContent = JSON.stringify(metrics);
+	document.body.appendChild(probe);
+}, 350);
 
 // —— 默认视口探针：打开时应为 100% 缩放 + 整体内容居中 ——
 // 用「深链」大图复现用户场景：fit 全图会把比例压到文字不可读。
@@ -911,11 +1037,25 @@ inlineProbe.id = 'inline-probe';
 document.body.appendChild(inlineProbe);
 window.setTimeout(() => {
 	try {
-		const holder = document.getElementById('map-inline');
-		const plainHolder = document.getElementById('map-plain');
+		// 场景**子节点**定位（2026-10-11）：根节点文本 = 场景名且现在同样自绘，
+		// 容器级 querySelector 会先命中根 ⇒ 断言读错节点（实测症状：「显示文本
+		// "syntax"」、「内联编辑器预填 = "inline"」）。故各场景的查询根一律取
+		// renderer.root.children[0] 的 group 元素：既排除了根，也排除了挂在画布
+		// 容器下（svg 之外）的引擎离屏测量克隆。
+		const childOf = (name) => {
+			const m = scenarioMaps[name];
+			return m && m.renderer && m.renderer.root
+				? m.renderer.root.children[0]
+				: null;
+		};
+		const groupOf = (name) => {
+			const n = childOf(name);
+			return n && n.group ? n.group.node : null;
+		};
+		const holder = groupOf('inline');
+		const plainHolder = groupOf('plain');
 		const map = scenarioMaps.inline;
-		// 查询一律限定在 foreignObject 内：引擎的离屏测量元素也挂在画布容器下
-		// （position:fixed，内含自绘内容的克隆体），不限定会把克隆体算进来
+		// 查询一律限定在 foreignObject 内（自绘内容盒都在子节点的 foreignObject 里）
 		const region = holder
 			? holder.querySelector('foreignObject .mindmap-node-inline-content')
 			: null;
@@ -923,17 +1063,17 @@ window.setTimeout(() => {
 		const external = holder
 			? holder.querySelector('foreignObject a.external-link')
 			: null;
-		// 仅轻标记（无链接）的场景容器：验证「轻标记也走自绘」
-		const markupHolder = document.getElementById('map-markup');
-		// 轻标记扩展 / 转义 / 注释 / 未解析链接的场景容器
-		const syntaxHolder = document.getElementById('map-syntax');
+		// 仅轻标记（无链接）的场景节点：验证「轻标记也走自绘」
+		const markupHolder = groupOf('markup');
+		// 轻标记扩展 / 转义 / 注释 / 未解析链接的场景节点
+		const syntaxHolder = groupOf('syntax');
 		const syntaxText = syntaxHolder
 			? (syntaxHolder.querySelector('.mindmap-node-inline-content')?.textContent ??
 				'')
 			: '';
 		// 行内数学场景（2026-09-27）：占位 span 必须在 foreignObject 内、文本为字面
 		// $…$ 占位（识别 + 占位 + 接管三段；MathJax 替换链路由单测与实机断言覆盖）
-		const mathHolder = document.getElementById('map-math');
+		const mathHolder = groupOf('math');
 		const mathSpans = mathHolder
 			? mathHolder.querySelectorAll('foreignObject .mindmap-node-inline-math')
 			: [];
@@ -955,7 +1095,7 @@ window.setTimeout(() => {
 			};
 		});
 		// 代码块场景（2026-09-28）：块级结构 + 原文保真 + 复制按钮点击契约
-		const codeHolder = document.getElementById('map-codeblock');
+		const codeHolder = groupOf('codeblock');
 		const codeBlock = codeHolder
 			? codeHolder.querySelector('foreignObject .tmm-codeblock')
 			: null;
@@ -1024,17 +1164,13 @@ window.setTimeout(() => {
 		window.setTimeout(() => {
 			try {
 				const inlineMap = scenarioMaps.inline;
-				const inlineRoot =
-					inlineMap && inlineMap.renderer ? inlineMap.renderer.root : null;
-				// inline 场景为**单节点**（根即目标，mdRaw 在根上）；根若未被自绘
-				// 接管（异常形态）则回退首个子节点，避免探针因取错节点而空转
-				let inlineNode = inlineRoot;
-				if (inlineNode && !isCustomNodeContent(inlineNode)) {
-					inlineNode =
-						inlineNode.children && inlineNode.children[0]
-							? inlineNode.children[0]
-							: null;
-				}
+				// inline 场景的**数据节点是子节点**（根节点的文本是场景名，mdRaw
+				// 在子节点上）。2026-10-11 起根节点同样自绘，故旧的「根未被自绘则
+				// 回退子节点」判据会误取根（实测：预填 = "inline"）——直接取子节点。
+				const inlineNode =
+					inlineMap && inlineMap.renderer && inlineMap.renderer.root
+						? inlineMap.renderer.root.children[0]
+						: null;
 				if (!inlineMap || !inlineNode) {
 					inlineEditProbe.textContent = JSON.stringify({ opened: false });
 					return;
@@ -1100,9 +1236,9 @@ window.setTimeout(() => {
 			}
 		}, 300);
 		// 段落（多行）场景：README 承诺「段落里的链接同样可点」，此处实测
-		const paragraphHolder = document.getElementById('map-paragraph');
+		const paragraphHolder = groupOf('paragraph');
 		// 超长单行场景：必须被接管（长行交给引擎会二次复杂度卡死）
-		const hugeHolder = document.getElementById('map-hugeline');
+		const hugeHolder = groupOf('hugeline');
 		const hugeRegion = hugeHolder
 			? hugeHolder.querySelector('.mindmap-node-inline-content')
 			: null;
@@ -1429,45 +1565,57 @@ handleProbe.id = 'handle-probe';
 document.body.appendChild(handleProbe);
 window.setTimeout(() => {
 	const report = {};
-	const ewResizeCount = (holderId) => {
-		const holder = document.getElementById(holderId);
-		if (!holder) return -1;
-		return [...holder.querySelectorAll('rect')].filter((el) =>
+	const nodeOf = (name) => {
+		const m = scenarioMaps[name];
+		return m && m.renderer && m.renderer.root
+			? m.renderer.root.children[0]
+			: null;
+	};
+	// 手柄计数限定在**目标节点自己的 group** 内：容器级计数会把根节点（现在同样
+	// 自绘 ⇒ 也有手柄）算进来，得到「每节点 ×2」的假读数（2026-10-11 修正）。
+	const ewResizeCount = (node) => {
+		const group = node && node.group ? node.group.node : null;
+		if (!group) return -1;
+		return [...group.querySelectorAll('rect')].filter((el) =>
 			(el.getAttribute('style') || '').includes('ew-resize'),
 		).length;
 	};
 	try {
-		const plainNode =
-			scenarioMaps.plain && scenarioMaps.plain.renderer.root
-				? scenarioMaps.plain.renderer.root.children[0]
-				: null;
-		const richNode =
-			scenarioMaps.inline && scenarioMaps.inline.renderer.root
-				? scenarioMaps.inline.renderer.root.children[0]
-				: null;
-		if (plainNode && typeof plainNode.active === 'function') plainNode.active();
-		if (richNode && typeof richNode.active === 'function') richNode.active();
-		report.plainHandles = ewResizeCount('map-plain');
-		report.richHandles = ewResizeCount('map-inline');
+		// 三种形态：纯文本（现在自绘）/ 含链接（自绘）/ **空文本**（让给引擎）
+		const drawnPlain = nodeOf('plain');
+		const richNode = nodeOf('inline');
+		const engineNode = nodeOf('url');
+		for (const node of [drawnPlain, richNode, engineNode]) {
+			if (node && typeof node.active === 'function') node.active();
+		}
+		report.plainHandles = ewResizeCount(drawnPlain);
+		report.richHandles = ewResizeCount(richNode);
+		report.engineHandles = ewResizeCount(engineNode);
 		// 引擎内部诊断：门禁后手柄节点根本没被创建
-		report.plainHasHandleNodes = Array.isArray(plainNode && plainNode._dragHandleNodes);
+		report.plainHasHandleNodes = Array.isArray(drawnPlain && drawnPlain._dragHandleNodes);
 		report.richHasHandleNodes = Array.isArray(richNode && richNode._dragHandleNodes);
-		// 接管事实（断言用的前置事实：纯文本 false / 自绘 true）——2026-09-25 起
-		// 取引擎运行时事实（_customNodeContent，防腐函数 isCustomNodeContent），
-		// 与生产门禁判据同源（原静态判定 shouldSelfDrawNode 已删）
-		report.wantedPlain = plainNode ? isCustomNodeContent(plainNode) : null;
+		report.engineHasHandleNodes = Array.isArray(
+			engineNode && engineNode._dragHandleNodes,
+		);
+		// 接管事实（断言用的前置事实）——2026-09-25 起取引擎运行时事实
+		// （_customNodeContent，防腐函数 isCustomNodeContent），与生产门禁判据同源
+		// （原静态判定 shouldSelfDrawNode 已删；纯文本自 2026-10-09 起恒接管）
+		report.wantedPlain = drawnPlain ? isCustomNodeContent(drawnPlain) : null;
 		report.wantedRich = richNode ? isCustomNodeContent(richNode) : null;
+		report.wantedEngine = engineNode ? isCustomNodeContent(engineNode) : null;
 	} catch (error) {
 		report.error = String(error);
 	}
 	handleProbe.textContent = JSON.stringify(report);
 }, 900);
 
-// —— DOM 规模探针：同形状地图下「引擎文本节点」vs「自绘节点」的 DOM 元素预算 ——
+// —— DOM 规模探针：同形状地图下「让给引擎的节点」vs「自绘节点」的 DOM 元素预算 ——
 // 为什么需要：自绘（方案 B）是结构性开销（每节点固定几个元素，乘节点数即整页的
 // 样式/布局规模），单测看不见 DOM。目的**不是**证明自绘更贵——2026-09-16 实测反而
 // 更轻（自绘 7.3 元素/节点 vs 引擎文本 8.2：接管后引擎跳过全部默认内容），真正
 // 成本在引擎对自绘内容的**离屏测宽**与内容重建；此探针只防「渲染路径悄悄加元素」。
+// 2026-10-11 修正：含文本节点一律自绘，「引擎侧」改用**空文本 + hyperlink**
+// （URL 单独成节点）这一唯一仍可达的引擎默认内容通道——否则两侧读数相同、A/B 失效。
 //
 // ⚠️ 本探针**不测耗时**：CI 用 --virtual-time-budget 跑，performance.now() 被虚拟化，
 // 耗时断言无意义；引擎的内容重建又走内部批处理，计数式测量也读不到（实测恒为 0），
@@ -1492,17 +1640,19 @@ window.setTimeout(() => {
 		const plainChildren = [];
 		const linkChildren = [];
 		for (let i = 0; i < N; i++) {
+			// 「让给引擎」侧（2026-10-11 修正）：含文本节点一律自绘 ⇒ 唯一还能走
+			// 引擎默认内容通道的形态是**无可见内容**的节点（空文本 / 含图）。
+			// 这里用「空文本 + hyperlink」＝URL 单独成节点（真实可达形态，引擎
+			// 渲染原生链接图标），保证 A/B 的引擎侧仍真实存在。
 			plainChildren.push({
 				data: {
 					uid: 'p-' + i,
-					text: '第 ' + i + ' 条普通的说明文本内容',
-					mdType: 'plain',
-					mdRaw: '第 ' + i + ' 条普通的说明文本内容',
-					mdDerivedText: '第 ' + i + ' 条普通的说明文本内容',
+					text: '',
+					hyperlink: 'https://example.com/' + i,
 				},
 				children: [],
 			});
-			// 纯单链接节点：自绘接管（hasRichSegments 命中）。
+			// 自绘侧：含链接段 ⇒ 段序列非空 ⇒ 接管。
 			// text === mdDerivedText ⇒ 视为「未编辑」，渲染源取 mdRaw（含链接语法）
 			linkChildren.push({
 				data: {
@@ -1533,14 +1683,16 @@ window.setTimeout(() => {
 			return origBuilder(node, doc, style, lang);
 		};
 		const perfOptions = { ...options, createNodeContent: countedBuilder };
+		// 两根节点**留空**：根有文本就同样自绘，会让「引擎侧 foreignObject = 0」的
+		// 断言失去意义（读数变成 31/1 而不是 30/0）。
 		const plainMap = createMindMap(
 			plainHolder,
-			{ data: { text: 'root-p', uid: 'root-p' }, children: plainChildren },
+			{ data: { uid: 'root-p' }, children: plainChildren },
 			perfOptions,
 		);
 		const linkMap = createMindMap(
 			linkHolder,
-			{ data: { text: 'root-l', uid: 'root-l' }, children: linkChildren },
+			{ data: { uid: 'root-l' }, children: linkChildren },
 			perfOptions,
 		);
 
@@ -2380,37 +2532,59 @@ window.setTimeout(() => {
 	historyProbe.textContent = JSON.stringify(report);
 }, 1000);
 
-// —— 导出样式探针：自绘内容的样式必须随导出 SVG 一起带出 ——
+// —— 导出样式探针：自绘内容样式 + 导出后处理链注入的 <style> 必须随导出 SVG 带出 ——
 // 引擎导出（getSvgData）只注入 joinCss()（引擎自身 CSS）与 header/footer 的
 // cssText，**插件 styles.css 不在导出图里生效**；而 foreignObject 的尺寸仍按
 // 屏上测宽固定 → 自绘内容一旦依赖类样式，导出 PNG 就会掉排版并溢出/错位。
-// 故断言导出 SVG 里自绘根元素 / 锚点 / 轻标记元素都带**内联样式**。
+// 故断言导出 SVG 里自绘根元素 / 锚点 / 轻标记元素都带**内联样式**；并进一步断言
+// 导出后处理链（exportSvgTransforms）注入的 <style> 真落进产物——
+//   · cssVarsInjected：CSS 变量注入（export-css-vars，含 --font-interface）；
+//   · mathInjected：MathJax 字形样式注入（math-jax，含 mjx-c 且已剥离 @font-face）。
 const exportProbe = document.createElement('pre');
 exportProbe.id = 'export-probe';
 document.body.appendChild(exportProbe);
-window.setTimeout(() => {
+window.setTimeout(async () => {
 	try {
 		const map = scenarioMaps.inline;
-		const data = typeof map.getSvgData === 'function' ? map.getSvgData({}) : null;
-		const html = data && typeof data.svgHTML === 'string' ? data.svgHTML : '';
+		// 走**导出插件**的方法：core 的 getSvgData 不触发 handleBeingExportSvg，
+		// 只有 doExport.getSvgData 会应用导出后处理链（与生产导出一致）
+		const exp = map && map.doExport;
+		const data =
+			exp && typeof exp.getSvgData === 'function' ? await exp.getSvgData() : null;
+		const html = data && typeof data.str === 'string' ? data.str : '';
 		const styleOf = (pattern) => {
 			const tag = pattern.exec(html);
 			if (!tag) return null;
 			const style = /style="([^"]*)"/.exec(tag[0]);
 			return style ? style[1] : '';
 		};
+		// 导出后处理链注入的 <style>（CSS 变量 / MathJax 字形）：逐块取出 CSS 文本，
+		// 判定两类注入是否真的落进产物（导出样式注入端到端；探针只存布尔，避免
+		// dump-dom 对 < > & 的转义干扰）
+		const styleBlocks = [];
+		const styleRe = /<style[^>]*>([\\s\\S]*?)<\\/style>/g;
+		let styleMatch = styleRe.exec(html);
+		while (styleMatch) {
+			styleBlocks.push(styleMatch[1]);
+			styleMatch = styleRe.exec(html);
+		}
 		exportProbe.textContent = JSON.stringify({
 			hasSvgHtml: html.length > 0,
 			regionStyle: styleOf(/<div[^>]*mindmap-node-inline-content[^>]*>/),
 			anchorStyle: styleOf(/<a[^>]*internal-link[^>]*>/),
 			markupStyle: styleOf(/<strong[^>]*>/),
+			styleBlockCount: styleBlocks.length,
+			cssVarsInjected: styleBlocks.some((css) => css.includes('--font-interface')),
+			mathInjected: styleBlocks.some(
+				(css) => css.includes('mjx-c') && !css.includes('@font-face'),
+			),
 		});
 	} catch (error) {
 		exportProbe.textContent = JSON.stringify({ error: String(error) });
 	}
 }, 500);
 
-// —— 富节点规模探针：自绘节点成规模时仍全部渲染，且不留测量垃圾 ——
+// —— 自绘规模探针（原「富节点规模」）：自绘节点成规模时仍全部渲染，且不留测量垃圾 ——
 // 引擎的离屏测宽元素是**缓存的单个复用元素**（commonCaches.measureCustomNodeContentSizeEl，
 // 每次 innerHTML='' 后复用，见 vendor 测宽实现），故「画布容器内只有 1 个测量元素」
 // 是**无泄漏不变量**：一旦渲染路径改成每节点新建，节点越多 DOM 越大，这里立刻红。
@@ -2428,7 +2602,9 @@ window.setTimeout(() => {
 		holder.style.width = '1200px';
 		holder.style.height = '400px';
 		document.body.appendChild(holder);
-		// 6 个分支 ×（5 个自绘 + 5 个纯文本）= 30 富节点 / 67 节点（含根与分支）
+		// 6 个分支 ×（5 个含链接 + 5 个纯文本）= 60 叶子 + 6 分支 + 根 = 67 节点。
+		// 2026-10-11 起**全部含文本节点自绘**（原「30 富节点自绘 / 其余走引擎」已不成立），
+		// 故断言改为「全部节点自绘且全部渲染」，规模性守卫（漏渲染 / 缓存串味）不变。
 		const richPerBranch = 5;
 		const plainPerBranch = 5;
 		const children = [];
@@ -2467,8 +2643,8 @@ window.setTimeout(() => {
 				scaleMap.render();
 				scaleMap.render();
 				scaleProbe.textContent = JSON.stringify({
-					richExpected: 6 * richPerBranch,
-					richRendered: holder.querySelectorAll('foreignObject').length,
+					// 自绘节点数 = 全部节点数（新契约：含文本即自绘）
+					selfDrawnRendered: holder.querySelectorAll('foreignObject').length,
 					measureEls: holder.querySelectorAll('div[style*="-99999px"]').length,
 					totalNodes: holder.querySelectorAll('g.smm-node').length,
 					nodeExpected: 1 + 6 + 6 * (richPerBranch + plainPerBranch),
@@ -3215,6 +3391,14 @@ function buildPageSource({
 		<meta charset="utf-8" />
 		<title>mindmap visual verify</title>
 		<link rel="stylesheet" href="${cssUrl}" />
+		<!-- 导出样式注入的前置（真机由 Obsidian / MathJax 提供，无头环境须补齐，
+		     否则导出后处理链恒为安全 no-op、export 探针无从验证）：
+		     ① document.win.createSvg（Obsidian 的 Document 扩展，appendSvgStyle 依赖）；
+		     ② :root CSS 变量（值 = 自绘内容兜底值，几何零扰动，供 export-css-vars 注入）；
+		     ③ #MJX-CHTML-styles 假样式表（供 math-jax 的 readMathJaxCss 读取）。 -->
+		<style id="verify-export-css-vars">:root{--font-interface:sans-serif;--font-monospace:monospace;}</style>
+		<style id="MJX-CHTML-styles">.mjx-c.mjx-c1D438::before{content:"E";padding:0.68em 0.764em 0 0;}</style>
+		<script>document.win={createSvg:function(t){return document.createElementNS("http://www.w3.org/2000/svg",t);}};</script>
 	</head>
 	<body>
 ${benchScript}\t\t<script src="${bundleFile}"></script>
@@ -3374,11 +3558,20 @@ function measure(fragment) {
 }
 
 /** 单场景断言：返回失败原因数组（空数组 = 通过） */
-function checkScenario(scenario, fragment) {
+function checkScenario(scenario, fragment, metrics) {
 	const failures = [];
 	if (!fragment) return [`容器 #map-${scenario.name} 未渲染`];
 	const m = measure(fragment);
 	const { expect } = scenario;
+	// 指标一律取**子节点**（#scenario-metrics-probe，按引擎节点 + 其 group 内查询）：
+	// 容器级字符串解析只能给节点数/画布尺寸，几何与图标在「所有文本节点自绘」后
+	// 必须由引擎节点字段与子节点 group 给出（见该探针的说明）。
+	const mm = metrics ? metrics[scenario.name] : null;
+	if (!mm || mm.found !== true) {
+		return [
+			`场景指标探针缺少 ${scenario.name} 的子节点（探针未执行或按子节点定位失败）`,
+		];
+	}
 
 	if (m.nodeCount !== 2) {
 		failures.push(`节点数 ${m.nodeCount} ≠ 2（根 + 子节点）`);
@@ -3390,38 +3583,51 @@ function checkScenario(scenario, fragment) {
 			`画布尺寸 ${m.canvasWidth}×${m.canvasHeight} ≠ 1200×400（未铺满容器）`,
 		);
 	}
-	if (m.docIcon !== expect.docIcon) {
-		failures.push(`自绘文档图标 ${m.docIcon} ≠ ${expect.docIcon}`);
+	// 接管事实：新契约下「含文本 ⇒ 自绘、空文本/含图 ⇒ 让给引擎」，两种形态都要锁
+	if (expect.selfDrawn !== undefined) {
+		const drawn = mm.custom === 1;
+		if (drawn !== expect.selfDrawn) {
+			failures.push(
+				`自绘接管 ${drawn} ≠ ${expect.selfDrawn}（${
+					expect.selfDrawn
+						? '含文本节点必须被接管'
+						: '无可见内容的节点必须让给引擎'
+				}）`,
+			);
+		}
+	}
+	if (mm.docIcon !== expect.docIcon) {
+		failures.push(`文档页图标 ${mm.docIcon} ≠ ${expect.docIcon}`);
 	}
 	if (expect.docIcon === 1) {
 		// 图标必须是带尺寸的 <svg> 根（历史上裸 <g> 在 foreignObject 里 0×0 不可见）
-		const tag = m.docIconTag ?? '';
+		const tag = mm.docIconHtml ?? '';
 		if (!/width="18"/.test(tag) || !/height="18"/.test(tag)) {
 			failures.push(`文档图标缺尺寸（应为 18×18）：${tag}`);
 		}
 	}
-	if (m.linkIcon !== expect.linkIcon) {
-		failures.push(`引擎链接图标 ${m.linkIcon} ≠ ${expect.linkIcon}`);
+	if (mm.linkIcon !== expect.linkIcon) {
+		failures.push(`引擎链接图标 ${mm.linkIcon} ≠ ${expect.linkIcon}`);
 	}
-	if (m.attachIcon !== expect.attachIcon) {
-		failures.push(`引擎回形针 ${m.attachIcon} ≠ ${expect.attachIcon}`);
+	if (mm.attachIcon !== expect.attachIcon) {
+		failures.push(`引擎回形针 ${mm.attachIcon} ≠ ${expect.attachIcon}`);
 	}
-	if (expect.attachTitle !== undefined && m.attachTitle !== expect.attachTitle) {
+	if (expect.attachTitle !== undefined && mm.attachTitle !== expect.attachTitle) {
 		failures.push(
-			`回形针标题 ${JSON.stringify(m.attachTitle)} ≠ ${JSON.stringify(expect.attachTitle)}`,
+			`回形针标题 ${JSON.stringify(mm.attachTitle)} ≠ ${JSON.stringify(expect.attachTitle)}`,
 		);
 	}
 	if (expect.widthBelow !== undefined) {
-		if (m.childWidth === null || m.childWidth >= expect.widthBelow) {
+		if (!(mm.width > 0) || mm.width >= expect.widthBelow) {
 			failures.push(
-				`子节点测宽 ${m.childWidth} 未 < ${expect.widthBelow}（短文本被拉平到容器宽？）`,
+				`子节点宽 ${mm.width} 未 < ${expect.widthBelow}（短文本被拉平到容器宽？）`,
 			);
 		}
 	}
 	if (expect.widthAtLeast !== undefined) {
-		if (m.childWidth === null || m.childWidth < expect.widthAtLeast) {
+		if (!(mm.width >= expect.widthAtLeast)) {
 			failures.push(
-				`长文本子节点测宽 ${m.childWidth} 未 ≥ ${expect.widthAtLeast}（换行/封顶失效？）`,
+				`长文本子节点宽 ${mm.width} 未 ≥ ${expect.widthAtLeast}（换行/封顶失效？）`,
 			);
 		}
 	}
@@ -3638,7 +3844,7 @@ function checkAnchor(dom) {
  *   复制按钮）：信息行剥离、缩进保留；按钮外观 100% 内联（mask/currentColor/
  *   --icon-color 三级兜底基色，屏上恒显）；导出图隐身由 handleExportSvg 钩子
  *   显式实现（hideCopyButtonsInExportSvg）；按钮点击与锚点同款命中契约；
- * - 对照：纯文本节点不得出现自绘锚点（未被接管，仍走引擎 SVG 文本）。
+ * - 对照：纯文本节点**也被接管**（自绘），但其内容里不得出现自绘锚点（无链接）。
  */
 /**
  * 校验图片尺寸回灌探针（`#image-probe`）：首帧后回灌校正结果 → 引擎按新尺寸渲染。
@@ -3753,10 +3959,12 @@ function checkCount(dom, diag) {
  * 校验 DOM 规模探针（`#perf-probe`）：自绘节点的结构开销有上限。
  *
  * 断言口径（同形状两棵地图，各 30 子节点，实测值写在上限里）：
- * - 自绘通道确实生效：自绘侧 foreignObject = 子节点数，引擎文本侧 = 0；
- * - **每节点 DOM 元素预算**：引擎文本 ≈8/节点、自绘 ≈13/节点（自绘多出
- *   foreignObject + 内容子树）——留出余量设上限（12 / 20），防渲染路径里的
- *   元素偷偷膨胀（DOM 规模直接决定样式与布局成本，且按节点数成倍放大）；
+ * - 两条通道的分派确实生效：**自绘侧**（含链接文本）foreignObject = 子节点数，
+ *   **让给引擎侧**（空文本 + hyperlink）foreignObject = 0；
+ * - **每节点 DOM 元素预算**：让给引擎 ≈13/节点（空文本 + hyperlink：引擎为
+ *   URL 图标额外建 `<a target="_blank">` + 图标组）、自绘 ≈7/节点（接管后引擎
+ *   跳过全部默认内容）——留出余量设上限（16 / 20），防渲染路径里的元素偷偷
+ *   膨胀（DOM 规模直接决定样式与布局成本，且按节点数成倍放大）；
  * - `countTreeNodes` 对**数据树**同样可用（节点数正确）。
  */
 function checkPerf(dom, diag) {
@@ -3773,15 +3981,15 @@ function checkPerf(dom, diag) {
 	}
 	if (probe.linkForeignObjects !== 30 || probe.plainForeignObjects !== 0) {
 		failures.push(
-			`自绘通道未按预期生效：自绘 foreignObject ${probe.linkForeignObjects}（应 30）/ 引擎文本 ${probe.plainForeignObjects}（应 0）`,
+			`两条通道未按预期分派：自绘 foreignObject ${probe.linkForeignObjects}（应 30）/ 让给引擎 ${probe.plainForeignObjects}（应 0）`,
 		);
 	}
 	const perNode = (els) => (typeof els === 'number' ? els / nodes : NaN);
 	const plainPerNode = perNode(probe.plainDomEls);
 	const linkPerNode = perNode(probe.linkDomEls);
-	if (!(plainPerNode <= 12)) {
+	if (!(plainPerNode <= 16)) {
 		failures.push(
-			`引擎文本节点 DOM 元素/节点 ${plainPerNode.toFixed(1)} 超过上限 12`,
+			`让给引擎的节点 DOM 元素/节点 ${plainPerNode.toFixed(1)} 超过上限 16`,
 		);
 	}
 	if (!(linkPerNode <= 20)) {
@@ -3806,7 +4014,7 @@ function checkPerf(dom, diag) {
 	// 若这两条红了，自绘成本模型变了——届时才需要重新评估「收窄接管面」。
 	if (probe.idleBuilderCallsPlain !== 0 || probe.idleBuilderCallsLink !== 0) {
 		failures.push(
-			`空 render 仍调用自绘构建器：引擎文本 ${probe.idleBuilderCallsPlain} / 自绘 ${probe.idleBuilderCallsLink}（应各为 0）`,
+			`空 render 仍调用自绘构建器：让给引擎侧 ${probe.idleBuilderCallsPlain} / 自绘侧 ${probe.idleBuilderCallsLink}（应各为 0）`,
 		);
 	}
 	if (probe.editBuilderCallsLink !== 1) {
@@ -3815,7 +4023,7 @@ function checkPerf(dom, diag) {
 		);
 	}
 	diag.log(
-		`      ⓘ DOM 元素/节点：引擎文本 ${plainPerNode.toFixed(1)}，自绘 ${linkPerNode.toFixed(1)}；构建器调用 空 render ${probe.idleBuilderCallsLink} / 改文本 ${probe.editBuilderCallsLink}`,
+		`      ⓘ DOM 元素/节点：让给引擎 ${plainPerNode.toFixed(1)}，自绘 ${linkPerNode.toFixed(1)}；构建器调用 空 render ${probe.idleBuilderCallsLink} / 改文本 ${probe.editBuilderCallsLink}`,
 	);
 	return failures;
 }
@@ -4071,12 +4279,14 @@ function checkHistory(dom) {
 }
 
 /**
- * 校验宽度手柄探针（`#handle-probe`）：手柄只应出现在自绘节点上。
+ * 校验宽度手柄探针（`#handle-probe`）：手柄只应出现在**会被自绘接管**的节点上。
  *
- * 断言口径：
- * - 纯文本节点（引擎 SVG 文本，拖动宽度无任何效果）**不得**出现宽度手柄
- *   （DOM 里 0 个 `ew-resize` 透明 rect，引擎内部也没有手柄节点）；
- * - 自绘节点（含链接的富节点，拖宽 + 高度跟随已实现）**必须**有手柄（左右各 1）。
+ * 断言口径（2026-10-11 修正：纯文本节点自 2026-10-09 起恒自绘，不再有「引擎文本
+ * 对照」）：
+ * - 自绘节点（纯文本 / 含链接，拖宽 + 高度跟随已实现）**必须**有手柄（左右各 1）；
+ * - **让给引擎**的节点（空文本 / 含图：引擎 SVG 路径不认 `customTextWidth`，拖了没
+ *   反应）**不得**出现宽度手柄（0 个 `ew-resize` 透明 rect，引擎内部也没有手柄节点）；
+ * - 门禁判据与自绘判据同源：`isCustomNodeContent` 为真 ⇔ 出现过手柄。
  */
 function checkHandles(dom) {
 	const { probe, failures: parseFailures } = readProbe(
@@ -4090,18 +4300,22 @@ function checkHandles(dom) {
 		failures.push(`探针异常：${probe.error}`);
 		return failures;
 	}
-	if (probe.plainHandles !== 0) {
+	if (
+		probe.wantedPlain !== true ||
+		probe.wantedRich !== true ||
+		probe.wantedEngine !== false
+	) {
 		failures.push(
-			`纯文本节点出现 ${probe.plainHandles} 个宽度手柄（拖动无效果的死手柄）`,
+			`接管判据取值异常（纯文本 ${probe.wantedPlain} / 含链接 ${probe.wantedRich} / 空文本 ${probe.wantedEngine}）——门禁判据与自绘判据应当同源`,
 		);
 	}
-	if (probe.plainHasHandleNodes === true) {
-		failures.push('纯文本节点仍创建了引擎手柄节点（门禁未生效）');
-	}
-	if (probe.wantedPlain !== false || probe.wantedRich !== true) {
+	if (probe.plainHandles !== 2) {
 		failures.push(
-			`接管判据取值异常（纯文本 ${probe.wantedPlain} / 自绘 ${probe.wantedRich}）——门禁判据与自绘判据应当同源`,
+			`自绘纯文本节点宽度手柄数 ${probe.plainHandles} ≠ 2（拖宽能力被误关）`,
 		);
+	}
+	if (probe.plainHasHandleNodes !== true) {
+		failures.push('自绘纯文本节点未创建引擎手柄节点（拖宽能力被误关）');
 	}
 	if (probe.richHandles !== 2) {
 		failures.push(
@@ -4110,6 +4324,14 @@ function checkHandles(dom) {
 	}
 	if (probe.richHasHandleNodes !== true) {
 		failures.push('自绘节点未创建引擎手柄节点（拖宽能力被误关）');
+	}
+	if (probe.engineHandles !== 0) {
+		failures.push(
+			`让给引擎的节点（空文本）出现 ${probe.engineHandles} 个宽度手柄（拖动无效果的死手柄）`,
+		);
+	}
+	if (probe.engineHasHandleNodes === true) {
+		failures.push('让给引擎的节点仍创建了引擎手柄节点（门禁未生效）');
 	}
 	return failures;
 }
@@ -4498,12 +4720,18 @@ function checkInlineEdit(dom) {
 }
 
 /**
- * 校验导出样式探针（`#export-probe`）：自绘内容的样式必须**内联在元素上**。
+ * 校验导出样式探针（`#export-probe`）：自绘内容的样式必须**内联在元素上**，
+ * 且导出后处理链注入的 `<style>`（CSS 变量 / MathJax 字形）必须落进产物。
  *
  * 引擎导出（`getSvgData`）只把 `joinCss()`（引擎自身 CSS）与 header/footer 的
  * cssText 注入导出 SVG——插件 styles.css 不在其中；若自绘内容依赖类规则，交给
  * canvas 光栅化时就会掉排版（尺寸/换行/配色），而 foreignObject 的宽高仍按屏上
  * 测宽固定 → 导出图溢出/错位。故导出 SVG 里必须能读到三类内联样式。
+ *
+ * 另断言两类 `<style>` 注入是否真的接线成功（只查「有没有注入」，样式内容细节由
+ * view-export / math-jax 单测覆盖）：CSS 变量（--font-interface）与 MathJax 字形
+ * （mjx-c 规则、且 @font-face 已剥离）——这类「导出后处理链没接上」的故障只有
+ * 端到端导出才抓得到。
  */
 function checkExport(dom) {
 	const { probe, failures: parseFailures } = readProbe(
@@ -4516,6 +4744,18 @@ function checkExport(dom) {
 	if (probe.hasSvgHtml !== true) {
 		failures.push('未取到导出 SVG（map.getSvgData 未返回 svgHTML）');
 		return failures;
+	}
+	// 导出后处理链的注入是否真落地（CSS 变量 / MathJax 字形）——只查「有没有注入」
+	// 这类端到端接线问题，样式内容细节由 view-export / math-jax 单测覆盖
+	if (probe.cssVarsInjected !== true) {
+		failures.push(
+			'导出 SVG 缺 Obsidian CSS 变量注入 <style>（--font-interface 未落进产物 → 导出字体度量回退、多行节点被裁）',
+		);
+	}
+	if (probe.mathInjected !== true) {
+		failures.push(
+			'导出 SVG 缺 MathJax 字形样式注入 <style>（mjx-c 规则缺失或未剥离 @font-face）',
+		);
 	}
 	const region = typeof probe.regionStyle === 'string' ? probe.regionStyle : '';
 	if (
@@ -4543,12 +4783,13 @@ function checkExport(dom) {
 }
 
 /**
- * 校验富节点规模探针（`#scale-probe`）：30 个自绘节点的大图必须**全部渲染**，
- * 且**不留测量垃圾**（引擎约定离屏测宽元素是单个复用元素）。
+ * 校验自绘规模探针（`#scale-probe`）：**全部含文本节点**在大图上必须被接管并
+ * 全部渲染，且**不留测量垃圾**（引擎约定离屏测宽元素是单个复用元素）。
  *
  * 覆盖的是「单测覆盖不到」的规模性回归：自绘节点漏渲染（例如缓存串味、
  * 接管判定在大图上退化）、节点总数不符（丢节点）、以及每节点新建测量元素
- * （DOM 随节点数膨胀）。
+ * （DOM 随节点数膨胀）。2026-10-11 起判据是「自绘数 = 节点总数」（原先是
+ * 「30 个富节点自绘」——那时纯文本节点走引擎）。
  *
  * **不测耗时**：CI 跑在 `--virtual-time-budget` 下，时钟被虚拟化 → 耗时断言
  * 恒过且无意义；性能基线需在真实时钟环境另设（见脚本头部说明）。
@@ -4557,13 +4798,13 @@ function checkScale(dom) {
 	const { probe, failures: parseFailures } = readProbe(
 		dom,
 		'scale-probe',
-		'富节点规模',
+		'自绘规模',
 	);
 	if (parseFailures) return parseFailures;
 	const failures = [];
-	if (probe.richRendered !== probe.richExpected) {
+	if (probe.selfDrawnRendered !== probe.nodeExpected) {
 		failures.push(
-			`自绘节点渲染数 ${probe.richRendered} ≠ ${probe.richExpected}（含富节点的大图漏渲染）`,
+			`自绘节点渲染数 ${probe.selfDrawnRendered} ≠ ${probe.nodeExpected}（含文本节点应全部接管并渲染）`,
 		);
 	}
 	if (probe.totalNodes !== probe.nodeExpected) {
@@ -4664,14 +4905,21 @@ async function runChecks(dom, diag) {
 		}
 	};
 
+	const metricsRead = readProbe(dom, 'scenario-metrics-probe', '场景指标');
+	if (metricsRead.failures) {
+		for (const failure of metricsRead.failures) diag.log(`  ✗ ${failure}`);
+		failed += metricsRead.failures.length;
+	}
+	const metrics = metricsRead.probe ?? null;
 	for (const scenario of SCENARIOS) {
 		const fragment = containerOf(dom, scenario.name);
 		const failures = safe(`场景 ${scenario.name}`, () =>
-			checkScenario(scenario, fragment),
+			checkScenario(scenario, fragment, metrics),
 		);
-		const width = fragment ? measure(fragment).childWidth : null;
+		const width =
+			metrics && metrics[scenario.name] ? metrics[scenario.name].width : null;
 		diag.log(
-			`  ${failures.length === 0 ? '✓' : '✗'} ${scenario.name.padEnd(7)} ${scenario.label}（子节点测宽 ${width}）`,
+			`  ${failures.length === 0 ? '✓' : '✗'} ${scenario.name.padEnd(8)} ${scenario.label}（子节点宽 ${width}px）`,
 		);
 		for (const failure of failures) diag.log(`      - ${failure}`);
 		if (failures.length > 0) {
@@ -4732,7 +4980,7 @@ async function runChecks(dom, diag) {
 	diag.log('  · inline 探针完成，进入 DOM 规模探针');
 	const perfFailures = safe('DOM 规模探针', () => checkPerf(dom, diag));
 	diag.log(
-		`  ${perfFailures.length === 0 ? '✓' : '✗'} perf   DOM 规模：引擎文本 vs 自绘节点的元素预算（自绘必带 foreignObject）`,
+		`  ${perfFailures.length === 0 ? '✓' : '✗'} perf   DOM 规模：让给引擎 vs 自绘节点的元素预算（自绘必带 foreignObject）`,
 	);
 	for (const failure of perfFailures) diag.log(`      - ${failure}`);
 	failed += perfFailures.length;
@@ -4797,7 +5045,7 @@ async function runChecks(dom, diag) {
 	diag.log('  · history 探针完成，进入 handle 探针');
 	const handleFailures = safe('handle 探针', () => checkHandles(dom));
 	diag.log(
-		`  ${handleFailures.length === 0 ? '✓' : '✗'} handle 宽度手柄：仅自绘节点有手柄（纯文本节点 0 个）`,
+		`  ${handleFailures.length === 0 ? '✓' : '✗'} handle 宽度手柄：仅自绘接管节点有手柄（空文本节点 0 个）`,
 	);
 	for (const failure of handleFailures) diag.log(`      - ${failure}`);
 	failed += handleFailures.length;
@@ -4820,11 +5068,11 @@ async function runChecks(dom, diag) {
 	for (const failure of exportFailures) diag.log(`      - ${failure}`);
 	failed += exportFailures.length;
 
-	// 规模契约：30 个自绘节点全部渲染 + 无测量垃圾累积（性能收口）
+	// 规模契约：全部含文本节点自绘 + 全部渲染 + 无测量垃圾累积（性能收口）
 	diag.log('  · export 探针完成，进入 scale 探针');
 	const scaleFailures = safe('scale 探针', () => checkScale(dom));
 	diag.log(
-		`  ${scaleFailures.length === 0 ? '✓' : '✗'} scale  自绘节点成规模渲染（30 富节点）× 无测量垃圾`,
+		`  ${scaleFailures.length === 0 ? '✓' : '✗'} scale  含文本节点全部自绘并渲染（67 节点）× 无测量垃圾`,
 	);
 	for (const failure of scaleFailures) diag.log(`      - ${failure}`);
 	failed += scaleFailures.length;
@@ -5518,6 +5766,10 @@ function checkLongSessionMemory({ control, load, edits, diag }) {
 	// 编辑分流），引擎改渲染文本 + 链接
 	// 图标：实测 div −1 与 g / path / rect / text / tspan 各 +1。生产路径的原文写回
 	// 会重建行内字段（见 K54 / `view-node-actions`），不会触发该切换。
+	// ⚠ **2026-10-11 起该「切回」不再可能**：接管判据收敛为「段序列非空 ∨ 超长」，
+	// 编辑后的纯文本节点仍是段序列非空 ⇒ 继续自绘。故本轮内存读数若与本注释的历史
+	// 解释不符，属**契约变更后的正常漂移**，需重新实测再改写本段（读数本身仍按
+	// 「每次编辑堆增长 / DOM 变更」输出，只作 ⓘ）。
 	if (load.baseline && typeof after.heapBytes === 'number') {
 		const steps = Math.max(1, edits);
 		const heapPer = (after.heapBytes - load.baseline.heapBytes) / steps;

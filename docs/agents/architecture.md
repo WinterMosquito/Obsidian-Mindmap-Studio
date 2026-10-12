@@ -32,13 +32,20 @@ src/
     wikilink.ts     #   双链解析/构造唯一权威（parse/format/display）
     wiki-display.ts #   链接「生效显示名」纯判定（editedWikilinkAlias/effectiveDocWikiLink/docWikiLinkDisplay）
     url.ts          #   URL/地址形态谓词唯一权威（isHttpUrl/isExternalImageRef/isSchemeUrl 等）
+                    #   + tryDecodeUri：URL 解码的唯一安全入口（失败返回 null，调用方选
+                    #   回落原样或跳过候选；2026-10-11 从 4 文件 8 处 try/catch 收口）
     tree.ts         #   walkTree 先序遍历（显式栈防溢出，visit 返回 false 短路）
     md-meta.ts      #   MdNodeMeta：节点 data 上 md* 元数据的类型契约（纯契约，无引擎类型）
+    mindmap-property.ts # 「本文件是导图」的 frontmatter 判据唯一实现（读侧 Type/类型 双键
+                    #   都认 + 值归一；写侧按语言选键）。2026-10-12 起取代文件名后缀判据
   core/             # L1 基座：通用机制与共享词汇
-    constants.ts    #   全局常量：MD_FILE_SUFFIX、扩展名分流清单、布局/连线/主题选项、
-                    #   hasMindMapMarker/stripMindMapStem/withMindMapMarker（标记后缀唯一实现）
+    constants.ts    #   全局常量：扩展名分流清单、布局/连线/主题选项、渲染能力清单
+                    #   （.mindmap.md 后缀判定三函数已于 2026-10-12 退役，判据见
+                    #   domain/mindmap-property.ts）
     i18n.ts         #   t() 取文案、tf() 占位符格式化
-    errors.ts       #   errorMessage(error)：面向用户的错误消息格式化唯一实现
+    errors.ts       #   errorMessage(error)：面向用户的错误消息格式化唯一实现；
+                    #   createWarnOnce()：内部告警「同一根因只告警一次」的唯一实现
+                    #   （2026-10-11 从 prism-code / math-jax×2 / view 四处同构实现收口）
     concurrency.ts  #   并发原语唯一实现：串行队列/防抖/节流（SavePipeline/ViewStateStore/
                     #   状态栏计数等共用；节流支持 trailingResetsWindow 选项）
     event-binder.ts #   DOM/引擎事件绑定器（作用域化统一销毁）
@@ -57,7 +64,8 @@ src/
     md-outline.ts   #   Markdown 大纲 → 导图树（frontmatter 跳过、标题/列表、行内 token；mdRaw 保真）
     md-serialize.ts #   导图树 → Markdown（未编辑逐字回写/编辑合成；链接/图片新增检测）
     markdown.ts     #   新建文件默认内容/文件名、uid 修复（ensureUniqueUids）
-    md-open.ts      #   .mindmap.md 触发判定、视图切换、打开方式偏好钩子
+    md-open.ts      #   声明判据（经 MetadataCache 同步读）、视图切换、切回 Markdown 的
+                    #   属性持久降级（processFrontMatter，三入口同语义）
     md-line-write.ts #  节点行内容**原文写入**（编辑弹窗原文模式的提交）：重解析 → 整体
                     #   重建行内字段（链接/图片/台账）⇒ 未编辑态 ⇒ 保存逐字写回用户输入
     links-split.ts  #   混排双链拆分纯逻辑（方案生成/批量改写/写回字段）；规则与产品决策
@@ -83,7 +91,8 @@ src/
                     #   亮/暗 + 连线样式；lineStyleForLayout 布局默认、resolveLineStyle 偏好解析）
   platform/         # L1 Obsidian 平台集成
     vault-sync.ts   #   库事件同步单一入口（引用更新、索引失效；插件侧补充处理经 hooks 注入）
-    open-as-restore.ts # 「以思维导图打开」偏好恢复（active-leaf-change/file-open/启动多档延时）
+    mindmap-auto-open.ts # 声明驱动自动打开（active-leaf-change/file-open/metadataCache
+                    #   changed 补判/启动多档延时）；判据由组合根注入，打开方式不存 data.json
     nav-history.ts  #   导航历史卫生（K111）：视图切换不是导航点——清理 leaf 历史里
                     #   「尾部连续同文件段」内跨视图类型的冗余条目（侧键后退修复）；
                     #   私有结构防御式访问，失败退化为修复前行为
@@ -116,11 +125,14 @@ src/
                         #   解析只做图片地址解析，不做尺寸归一（视图走 aspect 校正）；写盘归属：树快照与 frontmatter 按**该次写盘的文件**取（getSnapshotFor/getFrontmatterFor），不同文件不并入同一批次——core 不 await onUnloadFile，换文件期间的排空必须同源
     engine-controller.ts# 引擎实例生命周期 + 防腐收口（renderer 内部不外泄）；
                         #   导出 SVG 后处理链经 deps.exportSvgTransforms 由组合根注入（K51）
-    view-state.ts   #   按文件路径持久化布局/连线样式/视口/openAs 到插件 data.json（ViewStateStore）
+    view-state.ts   #   按文件路径持久化布局/连线样式/视口到插件 data.json（ViewStateStore）
+                    #   （openAs 已于 2026-10-12 退役：打开方式由文件属性声明承载）
     status-bar.ts   #   StatusBarService 契约 + 插件层实现（节点计数展示/清空，DOM 归插件层）
   features/         # L3 UI 特性与视图控制器
     view.ts         # Controller：Obsidian 生命周期编排、service 装配、链接跳转、标题重命名
     view-context.ts # MindMapViewContext：view-* 对视图的访问契约（结构化窄接口）
+    content-remeasure.ts # 自绘内容「定稿 → 尺寸同步」会话（P4/K88/K104/K116，2026-10-11 自 view.ts 外置）：
+                    #   holder 反查真实节点 → 批量合并重排 + 字体分批再同步 + 渲染窗口重试一次
     view-*.ts       # 17 个交互特性各自一文件：工具栏（view-toolbar.ts）/ 拖拽（view-dnd.ts）/
                     #   右键（view-context-menu.ts）/ 搜索（view-search.ts）/ 导出（view-export.ts）/
                     #   状态栏（view-status.ts）/ 图片灯箱（view-image-fullscreen.ts）/
@@ -167,6 +179,7 @@ tests/
   wiki-display.test.ts # 链接「生效显示名」纯判定（K6：六道闸门逐条 + 冗余省略 + 别名优先/回落默认名）
                        #   ——回写/可见名/tooltip 三消费方共用口径的直接回归（此前只靠端到端往返间接覆盖）
   constants.test.ts    # 扩展名清单边界（文档类 / 可渲染两份分流 —— 拖入与联想的「附件」口径已收敛到 domain/wikilink；`.base` 漏登记事故的防回退）
+  content-remeasure.test.ts # 自绘内容定稿→尺寸同步会话（批量合并恰一次重排 / 两条回退顺序 / 渲染窗口重试一次后告警 / 字体分批再同步 / dispose 生命周期）
   concurrency.test.ts  # 并发原语回归（串行队列/防抖/节流：错误传播、尾随保证、重置、窗口重置）
   url.test.ts          # URL 谓词边界（各语义的协议形态与否决集）
   save-pipeline.test.ts# SavePipeline 竞态回归（写入中再触发排空、失败上报、防抖/守卫、无差异写盘跳过）
@@ -174,6 +187,7 @@ tests/
   settings.test.ts     # sanitizeSettings（类型/取值校验、坏值回退默认）
   settings-persist.test.ts # 设置写回防抖（滑块突发合并、内存即时生效）
   engine-controller.test.ts # EngineController（初始化代际锁、ResizeObserver 零尺寸等待、装配/销毁、引用预检、拖拽抑制、refresh/视口）
+  errors.test.ts       # 错误处理共享件（createWarnOnce 幂等留痕：实例级去重/前缀/detail 透传；notifyError 文案拼接）
   event-binder.test.ts # EventBinder（注册即记录/销毁即清理：参数透传、监听器身份、幂等、单点抛错不阻断）
   persistence.test.ts  # PluginDataWriter（写前重读合并不丢键、串行队列、内部吞错）
   feature-helpers.test.ts # 特性纯函数（image-resize 等比缩放钳制）
@@ -213,7 +227,7 @@ tests/
                         #   不阻塞；P4 面：塌缩不入缓存、定稿回调恰好一次（见 K86）
   viewport.test.ts     # 视口几何（resetZoom 画布中心锚点 / 内容包围盒居中 / 自动整理后重置缩放）；
                        #   自动整理的渲染窗口守卫（root 暂缺延后执行 / 超上限放弃，K67）
-  open-as-restore.test.ts # 「以思维导图打开」偏好恢复（多档延时/代际）
+  mindmap-auto-open.test.ts # 声明驱动自动打开（多档延时/事件接线/陈旧档位不覆盖新状态）
   nav-history.test.ts  # 导航历史卫生（K111）：尾部连续同文件段内删除跨视图冗余 /
                        #   目标态保留 / 跨段保护 / 形态异常降级（私有结构防御式）
   engine-refresh-nodes.test.ts # 批量自绘重建（refreshNodesCustomContent，P4 尺寸同步）：
@@ -262,10 +276,10 @@ docs/
 | 文件 | 行数 | 豁免理由 |
 |---|---|---|
 | `src/engine/mindmap.ts` | 2115 | 引擎防腐层**唯一收口点**：vendor 内部形态（`node.group`、`renderer.*`、DoExport、Search 插件状态…）只允许在此出现。拆开等于把私有访问面摊到多个文件，耦合面反而变大——**这一条是必须豁免的，拆分即违约** |
-| `src/markdown/md-serialize.ts` | 1054 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆） |
-| `src/markdown/md-outline.ts` | 1046 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移 |
+| `src/markdown/md-serialize.ts` | 1189 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆）。2026-10-12（K119）：无显示名段的**锚点插入点**与替换型 slot 共用同一遍行内拼装（区间占用判定只有一份），拆开会让两种定位各持一套冲突规则 |
+| `src/markdown/md-outline.ts` | 1108 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移。2026-10-12（K119）：首图与 icon-only URL 也登记台账段并附**上下文锚点**（`tokenAnchors`），与其余 token 段同源 |
 | `src/core/i18n.ts` | 517 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
-| `src/features/view.ts` | 1243 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；**主**业务已外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。⚠ **已知偏离：数学校准会话（L264–452，6 字段 + 5 方法 ≈189 行）仍留在视图层**——它按 holder 反查真实节点（`findNodeByDom`/`findNodesByContentProducts`）并触发批量重排，依赖 engine 访问面，而 platform 按 K51 不得依赖 engine（`eslint.config.mts` boundary），故只能落在 features。抽出需配套 `onunload` 生命周期与会话单测，**尚未排期**（原 SF-04 已解析出方案漏洞，见开放项）。再拆会把「生命周期编排顺序集中可见」这一收口点摊到多文件 |
+| `src/features/view.ts` | 1086 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；**主**业务已外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。**数学校准会话已于 2026-10-11 外置为 `features/content-remeasure.ts`**（原「已知偏离：L264–452 仍留在视图层、尚未排期」就此关闭）——外置同时补上架构文档要求的两件事：`dispose()` 生命周期（取消未决批次）与会话直测（`tests/content-remeasure.test.ts` 9 例）。再拆剩余部分会把「生命周期编排顺序集中可见」这一收口点摊到多文件 |
 | `src/services/engine-controller.ts` | 815 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。与 `mindmap.ts` **同性质**——拆开即把私有访问面摊开，故同样必须豁免 |
 | `src/media/images-path.ts` | 618 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一），**从 images.ts 拆出**的产物；导出函数共享同一套路径与尺寸不变式，再拆会摊成跨文件的隐式协议 |
 | `src/features/image-resize.ts` | 411 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链（无常驻监听、帧内 DOM 直写、手势独占），拆开会让状态机与 DOM 手柄跨文件失配 |
@@ -275,7 +289,7 @@ docs/
 | `src/markdown/links-split.ts` | 486 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。与 `md-outline` / `md-serialize` 同性质 |
 | `src/core/constants.ts` | 452 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件，互有基表派生；「可链接附件」「系统媒体」两份白名单已于 2026-09-15 删除——附件口径收敛到 `domain/wikilink.wikilinkTargetIsAttachment`）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音 |
 | `src/settings.ts` | 379 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。`sanitizeSettings` 被 data.json 加载与面板写回共用（已在「代码结构」清单登记） |
-| `src/features/node-inline-content.ts` | 1327 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分）→ HTML（锚点契约 + **内联样式常量**）。三份东西互为契约——样式常量即导出保真契约（K53 ⑤，引擎导出不注入插件 CSS）、锚点属性即 `view-wikilink` 的识别契约（K53 ③）——拆开会让「显示名口径 / 样式来源 / 锚点形态」跨文件漂移；文件的复杂度全部来自这三个契约的**取值表**（段类型 × 标记 × 样式），不是职责堆叠 |
+| `src/features/node-inline-content.ts` | 1442 | 自绘节点内容的**单一关注点**闭环：行内原文 → 段序列（含轻标记切分）→ HTML（锚点契约 + **内联样式常量**）。三份东西互为契约——样式常量即导出保真契约（K53 ⑤，引擎导出不注入插件 CSS）、锚点属性即 `view-wikilink` 的识别契约（K53 ③）——拆开会让「显示名口径 / 样式来源 / 锚点形态」跨文件漂移；文件的复杂度全部来自这三个契约的**取值表**（段类型 × 标记 × 样式），不是职责堆叠。2026-10-12（K120）：`MARKUP_RE` 的 bold/ital 分支纳入**嵌套**判定（星号版此前与下划线版不对称），与下方渲染/嵌套深度共用同一份分组契约 |
 | `src/features/view-wikilink.ts` | 411 | 链接交互**单一关注点**：**点击路径**的锚点识别（`findAnchorInNode` / `resolveAnchorLink`）与**悬停预览**（两级：锚点优先 + 节点级 `nodeLink` 三通道 + `hover-link` 事件）同在一处，还有中键 `auxclick`；把悬停拆出去会让「链接怎么取、锚点取哪个目标」出现第二份实现——正是本文件当初拆出（原在 view.ts）要消除的问题。两条预览路径**都不预检目标是否存在**（交核心判断，见 K21） |
 | `src/platform/math-jax.ts` | 813 | 数学渲染通道**单一落点**（全插件唯一 import `obsidian` 的数学实现）：产品形态是「字面占位 → 异步替换 → 就绪判据（全部 `mjx-c` 宽 > 0 + 不可见操作符 U+2061 豁免，K90）→ flush 合并调度 → 产物缓存 / 重排通知 → 失败退字面」，再加导出 SVG 样式注入——屏上渲染与导出注入共享同一套就绪口径；拆开会让该口径跨文件漂移（它正是 K90 三轮实机实测的产物） |
 | `src/links/links-tree.ts` | 464 | 树内引用更新**单一遍历实现**：rename / clear 两模式共享待匹配形态派生（资源地址 + [[链接]] 双载体、回收站退化、跨文件夹移动取新位置、非 .md 文档带扩展名）与写回规则；拆开会让「重命名改写」与「删除清理」两条路径的匹配口径漂移 |

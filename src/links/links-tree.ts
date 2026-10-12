@@ -10,7 +10,7 @@
  */
 import { App, TFile } from 'obsidian';
 import { fileLookupIndex } from './file-lookup';
-import { isRemoteOrDataUrl } from '../domain/url';
+import { isRemoteOrDataUrl, tryDecodeUri } from '../domain/url';
 import { walkTree } from '../domain/tree';
 import { formatWikilink, parseWikilink } from '../domain/wikilink';
 import type { WikilinkParts } from '../domain/wikilink';
@@ -215,13 +215,10 @@ function treeHasReferences(tree: MindMapTreeNode): boolean {
  */
 function urlComparisonForms(url: string): string[] {
 	const forms = [url];
-	try {
-		const decoded = decodeURIComponent(url);
-		if (decoded !== url) {
-			forms.push(decoded);
-		}
-	} catch {
-		// 个别地址含未编码的 %，仅用原样形态
+	// 解码失败（个别地址含未编码的 %）只保留原样形态
+	const decoded = tryDecodeUri(url);
+	if (decoded !== null && decoded !== url) {
+		forms.push(decoded);
 	}
 	return forms;
 }

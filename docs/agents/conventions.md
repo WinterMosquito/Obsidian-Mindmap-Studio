@@ -1,4 +1,4 @@
-# 关键约定 K1–K117（详录）
+# 关键约定 K1–K121（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -30,10 +30,10 @@
 - [K8] 图片自定义尺寸（Obsidian 官方嵌入语法，不落 data.json）：`![[图.png|300]]`（仅宽、等比）/ `![[图.png|300x150]]`（宽高）/ `![alt|300](url)`（外链 md 图，尺寸在标签尾部）。解析进 `mdImageWidth/mdImageHeight`（domain/md-meta 契约）；`walkImageSizeCorrections` 对带参节点按参数定尺寸（仅宽时探测原始比例补高；**2026-09-28 K97 起未设置尺寸的图按图片原始大小展示**）；拖拽调宽改 engine `imageSize custom:true`，保存时 rawOk 尺寸特征（`目标|宽度`，终界 `]`/`x` 防前缀误匹配）不符 → 合成回写 `|宽度`。**加载期自动校正的尺寸绝不回写**（`mdImageAutoSize` 标记；`md-serialize.ts customImageSize` 是取尺寸后缀的唯一出口）：它只是显示用尺寸（`imageSize custom:true`），回写会让用户从未动过的行凭空多出 `|宽度`；标记在**用户拖拽调宽 / 插入或更换图片 / 移除图片**三处清除（前两者属用户意图、尺寸照旧回写；移除图片时清标记同时防止「该节点后续新图也不回写」）。
 - [K9] 图片独占节点（渲染层语义）：纯图行（`- ![[x.png]]`）解析为**无文本节点**（不回退文件名占位），图片节点删除文字（右键「移除文字」/双击清空）后即被图片独占，往返保持；代价是纯图节点不参与文本搜索。「链接已清除」检测**只排除指向本节点图片的嵌入**（非嵌入语法仍是负向断言 `(?<!!)\[\[`），图文混合行可逐字往返；**文档/附件嵌入按链接形态处理**——字段被清空后一并剥离（`rawHasForeignEmbed`），不再整行回写导致链接复活；但**图片类嵌入不是链接**（按目标扩展名判定，收口在 `constants.isRenderableImageTarget`）：同行多余图片（如 `![[a.png]] 与 ![[b.png]]`）不触发该检测——否则**任何保存**都会把非首图的嵌入语法降级为剥壳文本（2026-09-13 修复，回归见 `tests/md-roundtrip.test.ts` 的「同行两张库内图片」）。**「移除图片」的防复活判定不依赖 md 字段残留**：`removeNodeImage` 会清空 `image` 与全部 md 图片字段，故 `rawOk` 以「`image` 为空 + mdRaw 首行仍含图片语法（`![[…]]` 按扩展名 / `![…](…)`，排除缩进代码块）」剥离——只靠 `hasImageMeta` 会因字段全清而失效、图片在保存后复活（2026-09-13 修复，回归见 `tests/md-roundtrip.test.ts` 的「移除图片」用例组）。
 - [K10] 图片/链接对齐 Obsidian：`![[路径]]`/`[[笔记]]` 往返；插入弹窗联想库内文件；悬停预览用 `registerHoverLinkSource` + `hover-link`。合成路径下**外链图片恒写 `![alt|尺寸](url)`**（外链判定先于 `image === mdImageTarget`；`mdImageTarget` 是解析期快照、换图后会过期，地址取当前 `image`）。
-- [K11] 中心主题 ⇄ 文件名：编辑根节点文本会重命名 `.mindmap.md`（Obsidian 原生更新链接/反链）；外部改名后视图重载中心随新名。**重命名必须走 `FileManager.renameFile`**（`view-title-renamer.ts`），`Vault.rename` 只改文件系统、不更新库内其他笔记中指向本文件的链接/反链（官方 d.ts 明确要求用前者，核心文件浏览器/内联标题/CLI 均走前者）。
+- [K11] 中心主题 ⇄ 文件名：编辑根节点文本会重命名文件（`命名.md`；**仅对声明为导图的文件生效**——普通笔记被手动开为导图时不静默改名）；外部改名后视图重载中心随新名。**重命名必须走 `FileManager.renameFile`**（`view-title-renamer.ts`），`Vault.rename` 只改文件系统、不更新库内其他笔记中指向本文件的链接/反链（官方 d.ts 明确要求用前者，核心文件浏览器/内联标题/CLI 均走前者）。
 - [K12] **渲染层不修解析层遗留**（渲染/解析解耦）：显示名一律取解析层产物（`domain/wikilink.linkDisplayText` 一族），渲染层**只读不改**。典型遗留：`[[folder/笔记.md#标题]]` 这类带子路径的双链，显示名保留 `.md`（`笔记.md#标题`）——文档双链与文档嵌入**口径一致**，属解析期历史包袱；**勿**在 `mindmap.ts` / `view-*` / 悬停预览里补「剥 `.md`」的 render-time 修正分支（会牵动 rawOk 逐字回写与「纯 token 节点」判定，牵一发动全身）。
 - [K13] **节点状态与附件元数据隔离**（新的静态渲染只走视图层）：悬停预览 / 图标 / tooltip 等新的静态渲染手段一律在**视图层**拦截处理（`features/view-wikilink.ts` + `main.ts` 的 `registerHoverLinkSource`、`mindmap.ts` 的前缀渲染钩子），渲染层只**读**解析结果、不回写节点 state；**勿**为此新增或改写 `mdEmbed`——它是「原文带 `!`」的**语法事实位**，读取面仅 `md-serialize`（补 `!` 两处 + 非图片附件的管道位原文一处 `mdEmbedPipe`）与 `wiki-display` 一处排除附件别名，且各自先被 `attachmentUrl` / `mdWikiLinkpath` 闸住；要动这条通道字段（更名 / 拆位）须先评估附件通道副作用，不擅自改。
-- [K14] `.mindmap.md` 标记的判定/剥离/拼接一律用 `constants.ts` 的 `hasMindMapMarker` / `stripMindMapStem` / `withMindMapMarker`（勿手写同名正则或 replace）。
+- [K14] **导图判据唯一实现**：`domain/mindmap-property.ts`——读侧 `Type` / `类型` 两键**都查**（键名大小写不敏感），值 trim 后大小写不敏感比对 `mindmap`（兼容官方属性面板产出的单元素数组）；写侧才看语言（zh `类型` / en `Type`，值 `Mindmap`）。值 `Markdown` **不是否决票**：它只是「没有键等于 mindmap」的一种取值，故双键并存时任一命中即为导图。**勿**另写第二份判据（文件名后缀判据 `hasMindMapMarker` 等三函数已于 2026-10-12 退役，见 K121）。
 - [K45] **frontmatter 写盘取磁盘现值**（防「偶有笔记属性丢失」）：`SavePipeline.save` 在序列化前重读目标文件当前内容，文件头取 `splitFrontmatter(磁盘内容).frontmatter`；只有读不到磁盘内容（读取失败或 `cachedRead` 缺失）才回落到按文件存的加载快照（fail-open，不因读失败丢文件头）。视图打开期间用户在属性面板 / 其它窗格 / 其它设备（同步）改的属性不会被加载时的旧快照覆盖；回写只重写正文，文件头原样回贴。
 - [K46] **frontmatter 解析边界（向 Obsidian 属性解析对齐）**：`md-outline.splitFrontmatter` 三条口径——① 空属性块 `---\n---` 也是合法 frontmatter（不得并进正文，否则保存后整块消失）；② 结束围栏取第一个 `---` 行但**跳过 YAML 块标量（`|` / `>`）内部的 `---`**（硬切会截断属性、残余落进正文）；③ 开头 BOM 计入文件头并在序列化时原样带回（不处理会让首个标题降级为段落、首个列表项多出假缩进）。frontmatter 逐字保留换行形态（CRLF 不归一）。回归见 `tests/md-roundtrip.test.ts`（含 CRLF / 空块 / 块标量 / BOM 用例）。
 - [K47] **「添加链接」写入语义（决策 R4 修订，2026-09-13）**：**仅「完全空白」节点**（无文字、无任何链接通道、无图片、无行内额外 token〔K49〕——含「移除首图后 extra 孤存」形态，判定见 `hasAnyContent`）→ 覆盖（纯双链化：节点文字覆盖为链接显示名 / 附件名，别名优先）；**其余任何情况 → 链接一律建为子节点**，节点原文字、原链接、行内其它 token（K49）、图片全部不动——行内多 token 尾插保真后，拖入 / 添加链接只是「再挂一个链接」，不得覆盖节点已有内容。弹窗（`performAddLink`）与拖拽（`applyDocWikiLink` / `applyNodeAttachment` / `applyAttachmentLink`）同口径；URL / 协议链接同样建子节点（子节点文本为空、保持「仅图标」，`<url>` 由 hyperlink 通道回写）。**副作用**：一键改链入口取消（改链 = 先「清除链接」再添加，或直接编辑节点文本）。回归见 `tests/view-node-actions.test.ts`。
@@ -136,13 +136,13 @@
 
 ### 架构边界与单一来源
 
-- [K28] URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；防抖/节流/串行队列/有界并发映射一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段；批量异步任务勿用无界 Promise.all，用 `mapWithConcurrency`）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
+- [K28] URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；**URL 解码一律走 `domain/url.tryDecodeUri`**（2026-10-11 收口：失败返回 `null`，调用方按场景显式选「回落原样 `?? raw`」或「跳过该候选/该行」——此前这条口径在 `domain/url` ×2、`links/file-lookup` ×1、`links/links-resolve` ×3、`links/links-tree` ×1 各写一份 try/catch，`%` 是真实文件名里的常见字符而非常态外输入）；防抖/节流/串行队列/有界并发映射一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段；批量异步任务勿用无界 Promise.all，用 `mapWithConcurrency`）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
 - [K28b] **节点链接的「文件写法」只有一个来源：`md-serialize.renderHyperlink`**（wiki 双链 / 附件嵌入 `![[…]]` / md 链接 `[显示名](…)` / autolink `<url>`）。序列化回写与视图侧「复制链接」共用它——复制到剪贴板必须是**粘回笔记即可用的那一串**，此前直接复制通道原文，md 形态只拿到裸路径（粘回去是纯文本）。另：文件夹拖入的选文件口径统一走 `links-resolve.filesUnderFolder`（库根 `'/'` 特判——直拼 `'//'` 前缀会让整库拖入被当成空文件夹）；跨 await 的批量写入一律按「会话所属引擎」守卫（`view.mindMap !== engine` 即放弃，不能只判 `null`：重建后的新实例 ≠ null）。
 - [K29] 库内文件解析只走 `links-resolve.resolvePathToFile` 统一入口（勿自建 getAbstractFileByPath/索引/线性扫描组合）；索引原语在 `links/file-lookup.ts`。全部插件代码由 eslint `no-restricted-syntax` 机械强制（收口点 `links/links-resolve.ts`、`links/file-lookup.ts` 豁免；存在性检查等特例须 disable 并注明理由）；模块依赖矩阵另由 zone 规则强制（见 K51）。
 - [K30] vault rename/delete/create 事件只在 `VaultSyncService.attach` 注册一次，插件侧补充处理经 hooks 注入（勿再 registerEvent 第二份订阅）。
 - [K31] view-* 模块经 `ViewPluginContext` 访问插件能力（settings 活引用/viewState/statusBar 服务），不接触插件实例与状态栏 DOM；节点/悬停等视图态用模块级 WeakMap 内聚，不加到 `MindMapViewContext`。
 - [K32] view-* 模块按需依赖子上下文（R4 上下文瘦身）：只碰 UI 元素的拿 `ViewDomContext`，只碰引擎的拿 `ViewEngineContext`，再与 `Pick<MindMapViewContext, 'lang' | …>` 组合成模块内最窄面（示范：view-search/view-status）；勿默认依赖整个 `MindMapViewContext` 装配面，新成员先落到对应子面。
-- [K33] `errors.ts`：`errorMessage` 提取消息；用户可见错误提示统一用 `notifyError(lang, key, error)`
+- [K33] `errors.ts`：`errorMessage` 提取消息；用户可见错误提示统一用 `notifyError(lang, key, error)`；**内部告警（只在 console 留痕）统一用 `createWarnOnce()`**（2026-10-11 收口）——返回的幂等函数＝去重范围（模块级 const ⇒ 进程一次；视图字段 ⇒ 该视图一次），前缀 `MindMap Studio：` 由其统一添加，**勿再各写 `let warned = false` 或手拼前缀**。凡「失败后行为退化但用户不可感」的路径（导出产物缺失、字体代际监听未装配、冗余 leaf 摘除失败…）都必须留痕：静默即无痕退化（K85 ① 教训）
   （勿再手写 Notice 拼接）。
 - [K34] i18n 含 `{name}` 占位符的文案用 `tf(lang, key, params)` 格式化（勿手写 .replace 链）。
 - [K35] 弹窗 Promise 的 settle 守卫用 `modal-common.createModalSettle`（关闭兜底经官方 `Modal.setCloseCallback` 注册，**勿覆写 `modal.onClose`**）；库内文件输入联想用 `modal-common.VaultFileSuggest`（勿再各写一份 AbstractInputSuggest 子类）。
@@ -1283,3 +1283,121 @@
   `scripts/verify-visual.mjs` 的负载与 `--bench-open` 场景不再传 `selfDrawPlain`（恒自绘即生产路径）。
   ⑥ **有意不做（留给后续单独决策）**：`Ctrl`/`Option` 拖入写 `file:///` 绝对链接、`platform/nav-history`
   （侧键历史卫生）、自绘文档页图标 + URL icon-only 通道的简化——三者都动用户可感行为或保真面，不在本批。
+
+- [K118] **引擎图标通道的可达性：自绘遮蔽 prefix / hyperlink / attachment（2026-10-11 实机复核 + 门禁修复）**：
+  ① **事实**：引擎 `createNodeData` 在节点有自绘内容时**早退**——vendor 原文
+  `if (this._customNodeContent) { mt(this._customNodeContent); return; }`，其后才是
+  `image / icon / text / hyperlink / tag / note / attachment / prefix / postfix` 的创建。
+  故**任何**自绘节点都不再产生这些默认内容。自 2026-10-09（K117⑤：`selfDrawPlainNodes`
+  去设置化、含文本节点一律自绘）起，三条链接图标通道只剩**插件主动让给引擎**的形态可达：
+  空文本（URL / `<url>` 单独成节点）与含图节点。
+  ② **实机复核（2026-10-11，Obsidian CLI + 真实库）**：库内 `feature-verify.mindmap.md`
+  的 `[[笔记]]` 节点渲染为 `<a class="internal-link" data-href="笔记">笔记</a>`，**无**文档页
+  图标；`[[报告.pdf]]` 无回形针；而临时节点的空文本 + `mdWikiLinkpath` / `hyperlink` /
+  `attachmentUrl` 分别得到 文档页图标 = 1 / `target="_blank"` = 1 / `svg[cursor=pointer]` = 1。
+  **0.1.9（上一版 `main.js` sha `70e40c52…`）与当前批行为完全一致** ⇒ 属**既有**行为
+  （自 2026-09-25 `selfDrawPlainNodes` 默认开即如此），本批只是把「唯一逃生口」（设置项）删掉。
+  ③ **影响面**：`docs/markdown-mindmap-standard.md` 原表述「双链指向文档 = 自绘文档页图标」
+  与实际不符，已在该表加⚠️可达性说明；README 的「keeping the dedicated document icon」同理。
+  **是否把文档页图标 / 回形针恢复进自绘内容（例如在自绘内容里渲染内联图标）属待定产品决策**——
+  恢复会动节点观感与测宽、需要内联样式与导出契约，不在本次门禁修复批内。
+  ④ **门禁（`verify-visual`）随之修正**：`doc` / `url` / `attach` 三场景改用**空文本**形态
+  （唯一可达通道），新增 `docnode` 场景（生产形态 `[[笔记]]`）**反向锁定**「自绘 + 无引擎图标」；
+  场景探针改为**按子节点 group 定位**（场景根节点文本 = 场景名，且现在同样自绘，容器级
+  `querySelector` 会先命中根 ⇒ 断言读错节点），几何改读引擎节点字段（`data-width` 只由引擎
+  文本通道写入）、图标在子节点 group 内计数。另：`handle` 探针增加「空文本节点 0 手柄」的控制组，
+  `perf` 探针的引擎侧改用空文本 + hyperlink（否则两侧都全量自绘、A/B 失效，引擎侧预算上限
+  实测 13.0/节点 → 16），`scale` 探针判据改为「自绘数 = 节点总数（67）」。
+
+> **教训**：门禁的**场景数据必须与生产形态同形**。`doc` 场景原先省略 `mdRaw`（只剩纯文本 +
+> `mdWikiLinkpath`）且场景块不传 `selfDrawPlain`，于是它验证的是「非生产配置 + 退化数据形态」，
+> 图标通道的断言长期为**假契约**——自绘判据一改就整片转红，且掩盖了图标被自绘遮蔽这一事实。
+
+- [K119] **编辑含图节点会把图片搬到行尾：无显示名 token 缺「原位信息」（2026-10-12 实机实测 + 锚点修复）**：
+  ① **症状**（实机复现，非理论推演）：任何让节点进入「已编辑」态的操作——双击内联编辑、引擎编辑框、
+  **图片拖拽调宽**（改尺寸使 `rawOk` 失败）——都会把行内图片挪到**行尾**并多出一个空格：
+  `- 前后文：前 ![[图|200]] 后` 编辑后 → `- 前后文：前 后改 ![[图|260]]`；
+  一行两图更糟：`- 双图：![[a|200]] 与 ![[b|150]]` 调宽后 → `- 双图： 与 ![[b|150]] ![[a|260]]`（首图被摘出原位）。
+  ② **根因**：`composeFirstLineSegmented` 靠「在 `data.text` 里 `indexOf` token 的**显示名**」做原位替换，
+  而**首图与 icon-only URL 不向显示文本贡献任何字符**（前者以节点图呈现，后者只留图标）⇒ 查找必然 `-1`
+  ⇒ 落进 `pending.push(form)` 的尾插分支（`line + ' ' + tail`）——顺序被改写、空格凭空多出。
+  解析侧此前**根本不登记**这两类 token 的台账段（`md-inline.test.ts` 有「首枚不登记」「首图不登记」两例
+  把该行为写成了契约），合成侧自然无从下手。
+  ③ **修复（`MdTokenSegment` 增锚点族 + 合成侧增插入点分支）**：
+  - 解析侧（`md-outline.tokenAnchors`）：首图与 icon-only URL 也登记段，`text` 为空串，
+    另记 `before` / `after`（token 左右**紧邻**的非空白文字 run，截断 32 字符）与
+    `sepBefore` / `sepAfter`（该侧是否有空白分隔）。左右均按**相邻 token 边界**裁剪——
+    否则 `前 ![[a]] 与 ![[b]] 后` 里 `a` 的右邻会把 `![[b]]` 一起吞进锚点，反查时那串文字
+    在新文本里根本不存在（`b` 的显示名才是），必然失配。
+  - 合成侧（`md-serialize.anchorInsertPoint` / `insertionForm`）：`slot.start === slot.end` 即**插入点**
+    （不改动文本，只把 token 放进去），与替换型 slot 共用同一遍拼装、按 `start` 升序输出。
+    `sepBefore` 为真时补一个前导空格——原文那个分隔空格在节点文本里被折叠掉了
+    （`标注 ![[图|200]]` 的 text 只有 `标注`），不回补就写出 `标注![[图|250]]`。
+  ④ **邻接一致性校验是关键**（少了它会产出错位）：原文里 token 与锚点之间是什么形态，新文本里必须仍成立。
+  `- 对比 https://a.com 与 [[B]]` 被改成 `对比结果` 后，短锚点 `对比` **仍能在 `对比结果` 里命中**
+  ⇒ token 会被塞进「对比|结果」中间。加校验后拒绝该命中、回落尾插（`对比结果 <https://a.com> [[B]]`）。
+  ⑤ **兜底**：一枚都没能原位定位（`slots` 为空）时 `composeFirstLineSegmented` 返回 `null`，
+  交回 `composeFirstLine` 的尾插路径——后者的 token 顺序取自 `inlineTokens`（按 `mdRaw` 出现位置），
+  比分段路径的「首链先、首图后」权威（纯图行插入链接即走这里：必须是 `![[a.png]] [[笔记]]` 而非反过来）。
+  ⑥ **回归**（`md-roundtrip.test.ts` 新增 5 例 + `md-inline.test.ts` 台账形状 2 例改写）：
+  后置文本 / 紧贴前缀 / 一行两图 / 锚点被改写回落尾插 / 图 + icon-only URL。
+  既有用例中把旧行为写成契约的 3 例（「无显示名的首图尾插」等）已按新契约改写。
+  ⑦ **教训**：「无显示名 ⇒ 位置信息不在文本中 ⇒ 只能尾插」是一条**被注释合理化了很久**的伪结论；
+  真正缺的是「把位置用**锚点**独立记下来」。当一处代码的注释开始用「位置信息不在文本中」解释
+  一个用户可见的错位时，该把这句话当成缺陷线索而不是设计依据。
+
+- [K120] **星号粗体/斜体不能嵌套：`bold`/`ital` 的标记体写死排除 `*`（2026-10-12 实机实测 + 不对称修复）**：
+  ① **症状**：`**外层 *内层* 尾**` 整段退化为字面（屏幕上露出裸 `**`），而 `**外层 _内层_ 尾**`
+  正常渲染为粗体内斜体 —— 同一语法、两种定界符、行为分叉。
+  ② **根因**：`MARKUP_RE` 的 `bold` 分支标记体是 `[^*\n]*`（**排除 `*`**），`boldU` 是 `[^_\n]*`
+  （不排除 `_`）——下划线版靠「定界符只管自己那个字符」天然支持嵌套，星号版被自己排除了。
+  ③ **修复（两分支各自收紧/放宽到「恰好够用」）**：
+  - `bold`：`\*\*(?<bold>\S(?:(?!\*\*)[^\n]*\S)?)\*\*` —— 允许体内出现**单个** `*`、仅禁止 `**`。
+    既放行内层斜体，又不会让外层粗体越过下一对 `**` 乱配对（`**a** b **c**` 仍是两段粗体）。
+  - `ital`：加「不与 `*` 相邻」的双向守卫 `(?<!\*)\*(?!\*)…\*(?!\*)`，并允许体内出现**成对** `**`
+    （`(?:[^*\n]|\*\*[^*\n]*?\*\*)*`）。`*斜 **粗** 尾*` 由此得到 `italic` 包 `bold` 的嵌套，
+    与 Obsidian 一致；而 `**粗**` 不会再被 ital 从内部凑出假的 `<em>粗</em>` 把一行切碎。
+  ④ **刻意不做的**：`*斜 **粗** 尾*` 这种「星号同时作两层定界符」的完全通用解需要定界符栈
+    （CommonMark 的做法），本模块是单遍正则 + 递归扫描（`MAX_MARKUP_DEPTH = 2`），不为此引入栈。
+    下划线版无此歧义，不受影响。`***粗斜***` 仍是独立分支。
+  ⑤ **回归**（`node-inline-content.test.ts` 新增 5 例，含既有 1 例改写）：
+  星号版一层嵌套 / 不跨越下一对 `**` / 斜体包粗体 / 游离单 `*` 不乱配对 / 下划线版不受影响。
+  ⑥ **教训**：`*` 与 `_` 两条分支的**标记体字符类必须成对审阅**——一处改、另一处不改，
+  就会长出一条用户可见的行为分叉，且分叉会被「反正 `_` 版能用」的注释掩盖过去。
+
+- [K121] **触发判据从文件名后缀改为 frontmatter 声明：`.mindmap.md` 退役**（2026-10-12 用户裁决）：
+  ① **判据**：`类型` / `Type` 值为 `mindmap`（读写分离口径见 K14）。判据经官方
+  `MetadataCache.getFileCache(file)?.frontmatter` **同步**读取——文件菜单回调、命令
+  `checkCallback`、vault 事件这些只能同步返回的调用点因此**无须异步化**；缓存未就绪（刚创建 /
+  刚改名）或读取失败时返回 false，由组合根监听 `metadataCache.on('changed')` 调
+  `MindMapAutoOpener.activateDeclaredLeaves()` 补判（**只补「0→1」**：删掉声明不会把正在
+  编辑的导图视图抽走，声明只决定「打开时怎么进」）。
+  ② **删除面**：`constants.ts` 的 `MD_FILE_SUFFIX` / `hasMindMapMarker` / `stripMindMapStem` /
+  `withMindMapMarker`（共 6 个导出，判据改为 `domain/mindmap-property.ts` 唯一实现）；
+  `document-service` 的 `isMdDocument` 出参；`view.ts` 的 `mdDocumentMode` / `isMdDocument()`
+  契约成员——工具栏「切换回 Markdown」改为**恒显**（本视图承载的任何 md 都能切回编辑），
+  加载后重建工具栏的分支随之删除。虚拟根名直接取 `file.basename`。
+  ③ **打开方式不再存 data.json**（`ViewStateStore.getOpenAs/setOpenAs`、`setOpenAsPreferenceHook`
+  退役）：**「以 Markdown 打开」= 持久降级**——走官方 `FileManager.processFrontMatter` 把声明
+  **收敛为当前语言的唯一键、值改为 `Markdown`**（`domain/mindmap-property.convergeMindMapPropertyKey`：
+  删除 `Type`/`类型` 的重复键，只留 `mindMapPropertyKey(lang)`），此后不再自动进导图
+  视图。三个入口同语义（文件右键 / 工具栏 / 命令 `mindmap-back-to-markdown`）；代价是
+  **没有「临时看一眼源码」的轻量入口**（声明式模型的自觉取舍）。降级必须**先写属性再切视图**：
+  卸载时的保存按 K45 取**磁盘现值**回贴文件头，顺序颠倒会把 `Markdown` 覆盖回 `Mindmap`。
+  ④ **任意笔记入口**：「以思维导图打开」命令与文件右键对**任意 `.md`** 开放（消除「必须先改名 /
+  新建」这一最大采纳摩擦）；右键项按声明**互斥**显示（声明为导图 → 「以 Markdown 打开」；
+  其余 → 「以思维导图打开」）。手动开为导图的普通笔记会**先经 `declareAndOpenAsMindMap`
+  把声明写入 frontmatter**（无声明→按语言补 `类型`/`Type`=`Mindmap`；已声明→不重序列化），
+  即打开一次即正式成为导图、下次自动打开；此后**可编辑并回写**，但**不参与中心主题 ⇄ 文件名
+  同步**（见 K11）。降级/升级走官方 `processFrontMatter`，值随打开方式取 `Markdown`/`Mindmap`；
+  升级对已声明文件与降级对「已是 Markdown」文件均免写，避免每次打开都重序列化 YAML。
+  **键名随语言收敛**：改语言（设置面板 `language`）经 `refreshLanguageUi` →
+  `md-open.migrateMindMapPropertyKeys` **全库**把已有声明的键**重命名为当前语言的键**
+  （`类型` ⇄ `Type`，只改键名、值不动、已是目标键免写）；否则「只加新键」会让 `Type` 与
+  `类型` 并存（属性面板两把键同现）。升级/降级回调内再做一次权威判据（防 MetadataCache 滞后
+  导致的误判新增第二把键）。
+  ⑤ **零兼容**：存量 `.mindmap.md` 不再被识别为导图——作为普通 md 打开、**内容零改动**，不会
+  损坏。改名 + 补属性的一次性迁移工具属本条的**第二阶段（P2）**，尚未落地。
+  ⑥ **教训**：判据从「文件名」（同步、无 IO）换成「内容声明」时，官方 MetadataCache 是唯一
+  同时满足「官方 API 优先」与「不把 7 个调用点异步化」的落点；而**属性的写入侧**必须与读侧
+  分开设计（读双键、写单键），否则中英混用库会出现「看不见的导图」。

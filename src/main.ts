@@ -3,27 +3,29 @@
  *
  * 本类只做装配与生命周期编排（遵循 obsidian-sample-plugin 规范）：
  * - onload: 设置载入、注册视图/扩展名/事件监听/设置面板；
- *   「打开方式记忆」的自动切换与启动恢复委托给 open-as-restore.ts；
+ *   「声明为导图 ⇒ 自动切导图视图」的时机与启动恢复委托给 mindmap-auto-open.ts；
  * - onunload: 排空未落盘的视图状态后清理。
  * 业务逻辑分别位于 settings.ts / commands.ts / creation.ts / features/view.ts /
  * mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
  */
-import { Plugin, TFile, TFolder } from 'obsidian';
+import { Menu, Plugin, TFile, TFolder } from 'obsidian';
 import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, SETTINGS_APPLY_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS } from './core/constants';
 import { createDebouncer } from './core/concurrency';
 import {
 	MindMapStudioSettings,
 	MindMapStudioSettingTab,
 	diffLiveRefreshKeys,
+	reportDroppedSettings,
 	sanitizeSettings,
+	type SettingsSanitizeReport,
 } from './settings';
 import { MindMapView } from './features/view';
 import { createNewMindMap } from './creation';
 import {
-	isMindMapMarkdownFile,
+	isMindMapFile,
+	declareAndOpenAsMindMap,
+	migrateMindMapPropertyKeys,
 	openAsMarkdown,
-	openAsMindMap,
-	setOpenAsPreferenceHook,
 	setViewSwitchDoneHook,
 } from './markdown/md-open';
 import {
@@ -42,7 +44,7 @@ import { ElementStatusBarService } from './services/status-bar';
 import type { StatusBarService } from './services/status-bar';
 import { updateStatusBar } from './features/view-status';
 import { pruneViewSwitchNoise } from './platform/nav-history';
-import { OpenAsPreferenceRestorer } from './platform/open-as-restore';
+import { MindMapAutoOpener } from './platform/mindmap-auto-open';
 
 export default class MindMapStudioPlugin extends Plugin {
 	override settings!: MindMapStudioSettings;
@@ -80,9 +82,10 @@ export default class MindMapStudioPlugin extends Plugin {
 	/**
 	 * 设置**应用到视图**的防抖：应用一轮会重建每个打开的视图的引擎
 	 * （`EngineController.refresh`：整树 structuredClone + 全量重渲染），
-	 * 而 LIVE_REFRESH 键里含滑块（性能阈值 step 100）——不防抖就是拖一次
-	 * 滑块重建几十轮引擎。2026-09-17 起按键差集分流（见 K59）：主题原地生效、
-	 * 默认布局/默认连线样式不再重建，只有「引擎创建期通道」的键才真重建。
+	 * 而 LIVE_REFRESH 键会被反复触发（`enableDrag` 勾选、`language` 切换）——
+	 * 不防抖就是连点几次重建几十轮引擎。2026-09-17 起按键差集分流（见 K59）：
+	 * 主题原地生效、默认布局/默认连线样式不再重建，只有「引擎创建期通道」的键
+	 * 才真重建（2026-10-09 起性能模式常开，那两个设置键已删，见 K117④）。
 	 */
 	private readonly settingsApplyDebouncer = createDebouncer(SETTINGS_APPLY_DEBOUNCE_MS);
 	/**
@@ -117,14 +120,9 @@ export default class MindMapStudioPlugin extends Plugin {
 			},
 		});
 
-		// 「以思维导图打开」→ 记录打开方式偏好（双向：最后一次主动选择决定下次）
-		setOpenAsPreferenceHook((path) => {
-			this.viewState.setOpenAs(path, 'mindmap');
-		});
-
 		// 视图切换落定 → 导航历史卫生（K111）：清理 leaf 历史里同文件的跨视图
-		// 冗余条目（打开 .mindmap.md 会留下 markdown 中间态）；否则导图视图下
-		// 侧键后退落在中间态上又被偏好恢复切回，净效果为零（用户实测缺陷）。
+		// 冗余条目（打开声明为导图的文件会留下 markdown 中间态）；否则导图视图下
+		// 侧键后退落在中间态上又被声明驱动逻辑切回，净效果为零（用户实测缺陷）。
 		setViewSwitchDoneHook((leaf, path, viewType) => {
 			pruneViewSwitchNoise(leaf, path, viewType);
 		});
@@ -158,32 +156,15 @@ export default class MindMapStudioPlugin extends Plugin {
 			}),
 		);
 
-		// 文件右键：.mindmap.md 以思维导图打开；文件夹右键：新建思维导图
+		// 文件右键：md 文件互斥一项（声明为导图 → 「以 Markdown 打开」降级；
+		// 普通笔记 → 「以思维导图打开」，即「任意笔记可预览为导图」入口）；
+		// 文件夹右键：新建思维导图。
 		this.registerEvent(
 			this.app.workspace.on('file-menu', (menu, file) => {
-				if (file instanceof TFile && isMindMapMarkdownFile(file)) {
-					menu.addItem((item) =>
-						item
-							.setTitle(t(this.settings.language, 'command.openAsMindMap'))
-							.setIcon('dot-network')
-							.onClick(() => {
-								void openAsMindMap(this.app.workspace.getLeaf(false), file);
-							}),
-					);
-					menu.addItem((item) =>
-						item
-							.setTitle(t(this.settings.language, 'command.openAsMarkdown'))
-							.setIcon('file-text')
-							.onClick(() => {
-								// 先写偏好再打开：避免 active-leaf-change 自动切回导图
-								this.viewState.setOpenAs(file.path, 'markdown');
-								void openAsMarkdown(
-									this.app.workspace.getLeaf(false),
-									file,
-									'source',
-								);
-							}),
-					);
+				if (file instanceof TFile) {
+					if (file.extension === 'md') {
+						this.addMarkdownFileMenuItems(menu, file);
+					}
 					return;
 				}
 				if (file instanceof TFolder) {
@@ -203,16 +184,28 @@ export default class MindMapStudioPlugin extends Plugin {
 			}),
 		);
 
-		// 打开方式记忆：偏好为 mindmap 的 .mindmap.md 以 markdown 视图被激活时，
-		// 自动切入导图视图（重新打开仍为思维导图）。
-		const restorer = new OpenAsPreferenceRestorer(
+		// 声明式自动打开：frontmatter 声明为导图的文件以 markdown 视图出现时，
+		// 自动切入导图视图（运行期事件 + 启动多档延时恢复）。打开方式不再记入
+		// data.json——文件属性即声明，没有第二份状态可失配。
+		const opener = new MindMapAutoOpener(
 			this.app.workspace,
-			this.viewState,
+			(file) => isMindMapFile(this.app, file),
 			(view) => view instanceof MindMapView,
 		);
-		restorer.register(this);
+		opener.register(this);
 
-		// 启动后恢复「偏好为思维导图」的叶子。
+		// 属性被**就地**加上时补判（属性面板 / 其它设备同步写回）：metadataCache
+		// 变化即声明变化。反向（删掉声明）不主动把正在编辑的导图视图抽走——声明
+		// 只决定「打开/新声明时怎么进」，运行中不打断用户。
+		this.registerEvent(
+			this.app.metadataCache.on('changed', (file) => {
+				if (file.extension === 'md' && isMindMapFile(this.app, file)) {
+					opener.activateDeclaredLeaves();
+				}
+			}),
+		);
+
+		// 启动后恢复「声明为导图」的叶子。
 		// 「在某个文件夹新建导图」只保留**一个**入口：上方官方 `file-menu` 的文件夹
 		// 右键项（`TFolder` 分支）。此前的 file-explorer「新建」菜单注入是同一动作的
 		// 第二入口、且依赖未公开私有 API（`view.fileCreator`），已于 2026-10-09 减法移除。
@@ -220,7 +213,7 @@ export default class MindMapStudioPlugin extends Plugin {
 			if (this.unloaded) {
 				return;
 			}
-			restorer.scheduleStartupRestore();
+			opener.scheduleStartupRestore();
 		});
 
 		// Vault 文件事件同步（重命名/删除/创建时更新打开导图的引用与查找缓存，
@@ -228,7 +221,9 @@ export default class MindMapStudioPlugin extends Plugin {
 		this.vaultSync = new VaultSyncService(this.app);
 		this.vaultSync.attach(this, {
 			onRename: (file, oldPath) => {
-				if (file instanceof TFile && isMindMapMarkdownFile(file)) {
+				// 视图状态（布局/视口）按路径键存，改名即迁移；打开方式已不存
+				// data.json，故不再按「是不是导图」分流。
+				if (file instanceof TFile) {
 					this.viewState.renameKey(oldPath, file.path);
 				} else {
 					this.viewState.removeKey(oldPath);
@@ -260,6 +255,47 @@ export default class MindMapStudioPlugin extends Plugin {
 		this.statusBarEl = null;
 	}
 
+	/**
+	 * md 文件的右键项（**互斥**一项，避免同名动作两种行为）：
+	 * - 声明为导图（frontmatter `类型`/`Type` = `Mindmap`）→「以 Markdown 打开」，
+	 *   点击**持久降级**（属性改写为 `Markdown`），此后不再自动进导图视图；
+	 * - 其他 md →「以思维导图打开」，把当前标签切到导图视图
+	 *   （「任意笔记可预览为导图」的入口）。
+	 */
+	private addMarkdownFileMenuItems(menu: Menu, file: TFile): void {
+		const lang = this.settings.language;
+		if (isMindMapFile(this.app, file)) {
+			menu.addItem((item) =>
+				item
+					.setTitle(t(lang, 'command.openAsMarkdown'))
+					.setIcon('file-text')
+					.onClick(() => {
+						void openAsMarkdown(
+							this.app,
+							this.app.workspace.getLeaf(false),
+							file,
+							'source',
+							lang,
+						);
+					}),
+			);
+			return;
+		}
+		menu.addItem((item) =>
+			item
+				.setTitle(t(lang, 'command.openAsMindMap'))
+				.setIcon('dot-network')
+				.onClick(() => {
+					void declareAndOpenAsMindMap(
+						this.app,
+						this.app.workspace.getLeaf(false),
+						file,
+						lang,
+					);
+				}),
+		);
+	}
+
 	async loadSettings(): Promise<void> {
 		let data: unknown;
 		try {
@@ -276,10 +312,13 @@ export default class MindMapStudioPlugin extends Plugin {
 		const raw = data as Record<string, unknown>;
 		// hydrate 期望收到「整个 data.json 对象」（内部读取 data['viewState']），
 		// 而非视图状态对象本身；传错会导致 viewState 映射从未载入，
-		// 使 getOpenAs/getLayout 恒为 undefined —— 重启后不切导图视图、布局丢失。
+		// 使 getLayout 恒为 undefined —— 重启后布局/视口丢失。
 		this.viewState.hydrate(raw);
 		delete raw.viewState;
-		this.settings = sanitizeSettings(raw);
+		// 坏值静默回退会让用户看到「设置没生效」——汇总留痕一次（进程内）
+		const report: SettingsSanitizeReport = { dropped: [] };
+		this.settings = sanitizeSettings(raw, report);
+		reportDroppedSettings(report.dropped);
 	}
 
 	/**
@@ -338,6 +377,9 @@ export default class MindMapStudioPlugin extends Plugin {
 	 * 语言变更后刷新用户入口文案：命令面板（注册时缓存 name）与丝带提示
 	 * 重注册/更新，状态栏与已打开视图的搜索栏就地刷新。
 	 * 视图工具栏已由 applySettingsToViews（language 属 LIVE_REFRESH 键）重建。
+	 *
+	 * 同时触发**属性键迁移**：把库内已有导图的声明键重命名为当前语言的键
+	 * （zh `类型` ⇄ en `Type`），避免「只加新键」导致两把键并存。
 	 */
 	refreshLanguageUi(): void {
 		refreshCommandLabels(this, this.ribbonEl);
@@ -348,5 +390,11 @@ export default class MindMapStudioPlugin extends Plugin {
 				view.refreshSearchBarLabels();
 			}
 		});
+		// 全库迁移：键名随语言收敛（异步、逐个文件；单文件失败只留痕）
+		void migrateMindMapPropertyKeys(this.app, this.settings.language).catch(
+			(error) => {
+				console.error('迁移思维导图属性键失败:', error);
+			},
+		);
 	}
 }

@@ -28,17 +28,19 @@ import type { MindMapViewContext } from './view-context';
  * 引擎的 `checkEnableDragModifyNodeWidth()` 只看**全局开关**
  * （`enableDragModifyNodeWidth && (richText || isUseCustomNodeContent)`），
  * 而本插件 `isUseCustomNodeContent` 恒为真（自绘通道开着）⇒ **每个节点**都拿到
- * 左右边框手柄；可宽度只有**自绘节点**认（纯文本走 `textAutoWrapWidth` 的 SVG
- * 文本路径，不认 `customTextWidth`）⇒ 纯文本 / 含图节点上的手柄是**死手柄**
- * （拖动毫无反应，用户实测 2026-09-16）。
+ * 左右边框手柄；可宽度只有**自绘节点**认（让给引擎的节点走 `textAutoWrapWidth`
+ * 的 SVG 文本路径，不认 `customTextWidth`）⇒ 这些节点上的手柄是**死手柄**
+ * （拖动毫无反应，用户实测 2026-09-16）。**2026-10-09 起含文本节点恒自绘**，
+ * 故「让给引擎」只剩空文本 / 含图节点。
  *
  * 修法：给 Node 原型的方法加一层「且**确实已被自绘接管**」的判定——判据取
  * **运行时事实**（`engine/mindmap.isCustomNodeContent`，即引擎
  * `nodeCreateContents.isUseCustomNodeContent()` 的 `!!_customNodeContent`），
  * 手柄只留在拖动真正生效的节点上。
  *
- * 为什么用运行时事实而不是静态判定（2026-09-25 改）：自绘接管面随设置
- * （`selfDrawPlainNodes`）与节点内容变化，静态判定的输入需要逐处同步；而
+ * 为什么用运行时事实而不是静态判定（2026-09-25 改）：自绘接管面随节点内容变化
+ * （2026-10-09 前还随已删的设置项 `selfDrawPlainNodes` 变化），静态判定的输入
+ * 需要逐处同步；而
  * `_customNodeContent` 就是 `buildInlineNodeContent` 的实际产物——「有内容」
  * 与「拖宽生效」是同一件事，天然不会失配（K26d 教训的正解）。
  * 初始节点也在门禁之内：补丁在**首个内容回调**时装上，回调返回后引擎立即

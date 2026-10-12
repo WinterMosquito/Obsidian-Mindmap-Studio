@@ -1,5 +1,5 @@
 /**
- * Markdown 文档服务：.mindmap.md 的读取/解析与保存管线（渲染层数据面）。
+ * Markdown 文档服务：导图文件的读取/解析与保存管线（渲染层数据面）。
  * 从 view.ts 拆出（第 4 步）。
  *
  * 本模块不含引擎依赖：
@@ -17,7 +17,6 @@
  */
 import { App, TFile } from 'obsidian';
 import {
-	stripMindMapStem,
 	AUTO_SAVE_DEBOUNCE_MS,
 	SAVE_FAILURE_SUSPEND_THRESHOLD,
 } from '../core/constants';
@@ -25,7 +24,6 @@ import { createDebouncer, createSerialQueue } from '../core/concurrency';
 import { parseMdOutline, splitFrontmatter, UTF8_BOM } from '../markdown/md-outline';
 import { serializeMdBody } from '../markdown/md-serialize';
 import { walkResolveImagePaths } from '../media/images-path';
-import { isMindMapMarkdownFile } from '../markdown/md-open';
 import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
 
 /** 单次文档加载结果（视图据此前导引擎并更新自身文档状态） */
@@ -33,8 +31,6 @@ export interface DocumentLoadResult {
 	tree: MindMapTreeNode;
 	/** 原样保留的 frontmatter 块（含首尾 ---），保存时拼回文件头；无则 null */
 	frontmatter: string | null;
-	/** 文件是否为 .mindmap.md 文档模式（按文件名锁定） */
-	isMdDocument: boolean;
 }
 
 /**
@@ -51,8 +47,8 @@ export class DocumentService {
 
 	/** 解析文件内容：Markdown 大纲 → 导图树（渲染层定位，无专有格式分支） */
 	private parse(content: string, file: TFile): DocumentLoadResult {
-		// 根（中心主题）文本 = 文件名（去 .mindmap 后缀）；改名由视图编排
-		const rootName = stripMindMapStem(file.basename) || file.basename;
+		// 根（中心主题）文本 = 文件名（不含扩展名）；改名由视图编排
+		const rootName = file.basename;
 		const parsed = parseMdOutline(content, rootName);
 		const tree = parsed.tree;
 		// 图片：库内路径/外链 → 资源地址（mdImageTarget 保留原目标串，供回写）。
@@ -62,7 +58,6 @@ export class DocumentService {
 		return {
 			tree,
 			frontmatter: parsed.frontmatter,
-			isMdDocument: isMindMapMarkdownFile(file),
 		};
 	}
 }
@@ -111,7 +106,7 @@ const SAVE_DELAY_MS = AUTO_SAVE_DEBOUNCE_MS;
  * - 写入进行中再触发 → 标记待写并立即快照（视图卸载时引擎可能随即销毁，
  *   提前快照保证最后一批编辑不丢失）；
  * - 循环排空：写盘期间若又有编辑（savePending），继续写最新快照；
- * - 文件已删除时不重建（Obsidian 删除 .mindmap 会触发 onUnloadFile）；
+ * - 文件已删除时不重建（Obsidian 删除文件会触发 onUnloadFile）；
  * - **归属守卫**：排空期只接续同一文件的快照，不同文件的保存独立排队，
  *   绝不并入别人那一轮（详见文件头不变式）。
  */
@@ -185,7 +180,7 @@ export class SavePipeline {
 		if (!target) {
 			return;
 		}
-		// 文件已被删除时不应重新保存：Obsidian 删除 .mindmap 会触发 onUnloadFile，
+		// 文件已被删除时不应重新保存：Obsidian 删除文件会触发 onUnloadFile，
 		// 此时若继续 vault.modify，会重建已被删除的文件（表现为"要删两次"）。
 		if (
 			// 删除守卫是文件存在性检查（类型化 getter，官方推荐）

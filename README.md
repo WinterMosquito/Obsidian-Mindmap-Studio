@@ -4,7 +4,7 @@
 
 # 🧠 MindMap Studio
 
-> Mind map rendering for Markdown inside Obsidian. Open `.mindmap.md` — a normal Markdown file — and edit it as a mind map; the Markdown outline round-trips. Powered by the [simple-mind-map](https://github.com/wanglin2/mind-map) engine, developed by [WinterMosquito](https://github.com/WinterMosquito).
+> Mind map rendering for Markdown inside Obsidian. Put `Type: Mindmap` in a note's frontmatter (Chinese vaults write `类型: Mindmap`) and it opens as a mind map; any note can also be previewed via the context menu's **Open as mind map** — it stays a normal Markdown file, and the outline round-trips. Powered by the [simple-mind-map](https://github.com/wanglin2/mind-map) engine, developed by [WinterMosquito](https://github.com/WinterMosquito).
 
 <p align="center">
   <img src="https://img.shields.io/github/v/release/WinterMosquito/Obsidian-Mindmap-Studio?label=Release&color=blue" alt="Latest release" />
@@ -17,40 +17,44 @@
 
 ## 🚀 Quick start
 
-1. **Create**: run **Create new mind map** (command palette or ribbon) — name it (default = prefix + date); the `MindMap2026-09-06.mindmap.md` file is created and opens as a mind map.
+1. **Create**: run **Create new mind map** (command palette or ribbon) — name it (default = prefix + date); the `MindMap2026-09-06.md` file (frontmatter `Type: Mindmap`) is created and opens as a mind map. Existing notes work too.
 2. **Edit**: the file is ordinary Markdown, so its outline becomes the map — add/edit/delete nodes, drag to rearrange, attach images or links.
-3. **Back & save**: use **Switch to Markdown** to return anytime; edits are written back to the file (layout & viewport live in the plugin's `data.json`).
+3. **Back & save**: use **Switch to Markdown** to return anytime; edits are written back to the file (layout & viewport live in the plugin's `data.json`). That button rewrites the property to `Type: Markdown`, so the note **stops opening as a mind map**.
 
 ---
 
-![A .mindmap.md note shown as a mind map in Obsidian](assets/mindmap.png)
+![A note declared as a mind map, shown as a mind map in Obsidian](assets/mindmap.png)
 
 ## ✨ Why MindMap Studio
 
-The plugin is a **rendering layer**, not a file-format converter. `.mindmap.md` files are 100% standard Markdown — your notes, links, backlinks, search and Git all work as usual. A Markdown outline is parsed into a mind map; when you edit the map, the changes are written back as Markdown.
+The plugin is a **rendering layer**, not a file-format converter. A note declared as a mind map is 100% standard Markdown — your notes, links, backlinks, search and Git all work as usual. A Markdown outline is parsed into a mind map; when you edit the map, the changes are written back as Markdown.
 
 ## 🚀 Features
 
-- **Markdown-native**: `.mindmap.md` is ordinary Markdown (headings + lists). No proprietary format.
+- **Markdown-native**: a mind map is ordinary Markdown (a frontmatter declaration + headings + lists). No proprietary format, no special extension.
 - **Round-trip fidelity**: unedited lines are written back verbatim (frontmatter preserved; blank lines between paragraphs and standalone `---` separators are normalised); headings `#`–`######` map to node levels 1–6, nested lists to deeper levels.
 - **Obsidian-native wikilinks**: `[[note]]` shows as its link text, with hover preview and graded modifier clicks (matching Obsidian): plain click = current tab, `Ctrl`/`Command`+click = new tab, `+Alt` = new tab group, plus `Shift` = new window; the add-link dialog searches notes and other documents (`.canvas` / `.base`) plus non-image vault files (attachments); images go through **Add image**. **Links whose target does not exist yet** render in a **muted colour** (like Obsidian's reading view), resolved by the plugin from Obsidian's metadata cache; hover/click is left to Obsidian core (no pre-check on that path). New **document links** follow Obsidian's own settings: with **Use \[\[Wikilinks\]\]** on (the official default) they are written as `[[wikilinks]]` (keeping the dedicated document icon); with it off they are written as `[label](path.md)`, and the path form follows **New link format**. **Attachments and images** always keep the wikilink embed form (`![[report.pdf]]` / `[[archive.zip]]`). **A node shows the alias** (the note name when there is none); editing the text of a pure wikilink node edits that alias and writes back `[[note|new alias]]`. Attaching a wikilink — dropping a vault file (notes / images / attachments, **any type**) onto the node, or picking one in the add-link dialog — turns a **completely empty node** into a pure wikilink by writing the link's display name as its text; a node that already has **any content** (text, an image or an existing link — a pure-wikilink node included) keeps it, and the new link becomes a **child node**. A URL **on its own node** stays icon-only (no text).
 - **Rich node content (clickable links + inline syntax)**: links inside a node render as **clickable text** — click to open, `Ctrl`/`Command`+click for a new tab (`+Alt` for a new tab group, plus `Shift` for a new window); **every link on a line is clickable** (no longer only the first one). Hover preview has two levels: hovering **a specific link text** previews that link (important for multi-link lines and when the first link is an external URL), while hovering **anywhere else on the node** previews the link the node carries (vault targets only). **A URL mixed with other content is shown as a clickable address** instead of a bare icon. Inline syntax renders inside nodes the way Obsidian's reading view shows it: `**bold**` / `__bold__`, `*italic*` / `_italic_`, `` `inline code` `` (including double-backtick spans), `~~strikethrough~~`, `==highlight==`, `***bold italic***`; inline math `$…$` renders via MathJax and a **single-line** `$$…$$` renders as a block (centred) formula (falls back to the literal text until loaded; **multi-line** block math stays literal); `\*escaped\*` / `\$` consume the backslash and show the literal character, and `%%comments%%` are hidden inside the node (kept in the file; a line that is nothing but a comment stays literal). The raw text stays verbatim in the file; **links inside paragraph (multi-line) nodes are clickable too**. **Very long nodes** (> 2000 chars) show the beginning plus `…` (with a hover explanation) — the full text stays in the file, which also keeps oversized text from slowing the canvas down. Double-clicking such a node edits **the actual line from the file** (wikilink, URL and inline syntax stay visible and editable).
 - **Images**: vault image suggestions, uniform sizing, `![[path]]` round-trip; drag the corner handle to resize a node image — the size is written back as Obsidian's official embed syntax (`![[img.png|300]]` width-only, `|300x150` explicit, `![alt|300](url)` for external images); clear a node's text and the node becomes image-exclusive — an image-exclusive node has no text, so node search never matches it. Inline images also render in **text/paragraph nodes** (its first line; links inside a paragraph are clickable too, see above).
 - **Opens at 100%** with the whole map centred; **Fit to canvas** zooms out for an overview and **Reset zoom** returns to 100% while keeping the visible content in place (auto-arrange ends with fit-to-canvas); **six layouts** (switching a layout auto-arranges and fits the map) with per-file connector styles (**Auto** follows the layout; curve / direct / elbow — switchable for Logical structure / Mind map / Organization chart; the other three are fixed-straight and show *Auto*), node search, auto-arrange, **performance mode kicks in automatically on large maps** (500+ nodes draws only the nodes in view — no setting), **fast text node rendering** (every text node is rendered by the plugin — large maps open several times faster; double-click then opens the edit dialog), PNG export; **drag reparenting** — drop a node onto another node to nest it as its child, or between two siblings to insert it in between (native engine hit-testing).
-- **Persistence**: layout, viewport and "open as" preference are kept per file (in plugin data), surviving reopen, rename, and view switching.
-- **Central node ↔ filename**: editing the central node renames the `.mindmap.md` file (Obsidian updates links/backlinks).
+- **Persistence**: layout and viewport are kept per file (in plugin data), surviving reopen, rename and view switching. Whether a file *is* a mind map lives in the file's **own frontmatter**, so there is no second source of truth.
+- **Central node ↔ filename**: editing the central node renames the file (Obsidian updates links/backlinks) — for **declared** mind maps only; a note temporarily opened as a mind map is never renamed.
 
 ## 📖 Usage
 
 ### 1) Create & open a mind map
-- Run **Create new mind map** (command palette or ribbon) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-09-06.mindmap.md` file is created and opens in the mind-map view.
-- Any `.mindmap.md` file opens from its **context menu → Open as mind map** (or the same command), and goes back via **Open as Markdown**. The view you chose is remembered.
+- Run **Create new mind map** (command palette or ribbon) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-09-06.md` file is created and opens in the mind-map view.
+- **Turn any note into a mind map**: add `Type: Mindmap` to its frontmatter (Chinese vaults may write `类型: Mindmap`) — **both keys are recognised**, the value is case-insensitive, and the note opens as a mind map as soon as it is opened. Set it to `Markdown` (or remove the property) to stop. **No renaming, no new file, no format conversion.**
+- **Any note becomes a mind map**: any `.md` file opens from its **context menu → Open as mind map** (or the same command), can be edited and saved back; the **first open writes `Type: Mindmap`** (Chinese vaults `类型: Mindmap`) into the frontmatter, so the note is now officially a mind map and opens as one on its own next time (a note already declared is left untouched). A *declared* file instead shows **Open as Markdown** (which rewrites the property to `Markdown`, permanently).
 - The command palette also lists **Create mind map in current folder**, **Search nodes**, **Fit to canvas**, **Arrange mind map** and **Export as PNG** — the same actions as the toolbar.
 
 ### 2) How Markdown becomes a map
-Every `.mindmap.md` is 100% standard Markdown — the plugin renders it as a mind map and writes your edits back:
+A mind map file is 100% standard Markdown — the plugin renders it as a mind map and writes your edits back:
 
 ```markdown
+---
+Type: Mindmap               ← the declaration (Chinese vaults write 类型: Mindmap)
+---
 # Project plan              ← central node (= file name)
 ## Goals                    ← first-level child node (#)
 - Milestone 1               ← child node (list)
@@ -103,9 +107,9 @@ Undo/redo go through the engine's own history. Very large maps keep fewer undo s
 
 ### 4) Saving & persistence
 - Unedited lines are written back **verbatim** (frontmatter preserved; blank lines between paragraphs and standalone `---` separators are normalised); editing a **pure wikilink** node (the whole line is one wikilink) edits its **alias**, written back as `[[note|new alias]]` (clearing the text drops the alias and keeps the link; nodes that mix text and a link still round-trip as "text + link").
-- Layout, viewport and "open as" are kept per file in the plugin `data.json`; node image sizes go into the note itself as official embed syntax (`![[img|300]]`).
-- Editing the **central node** renames the `.mindmap.md` (Obsidian updates links/backlinks).
-- Only **one** mind-map editing instance per `.mindmap.md` (Obsidian itself lets you open the same file in as many tabs as you want): opening it in a second tab shows a notice and hands the view back, so two copies can never overwrite each other's saves. The note's reading view can still be open next to the mind map.
+- Layout and viewport are kept per file in the plugin `data.json`; whether a file **is** a mind map lives in the file's own property (`Type` / `类型`), so there is no second source of truth. Node image sizes go into the note itself as official embed syntax (`![[img|300]]`).
+- Editing the **central node** renames the file (Obsidian updates links/backlinks); declared mind maps only.
+- Only **one** mind-map editing instance per mind map (Obsidian itself lets you open the same file in as many tabs as you want): opening it in a second tab shows a notice and hands the view back, so two copies can never overwrite each other's saves. The note's reading view can still be open next to the mind map.
 - If the file is changed **outside** Obsidian (sync folder, another window), auto-save skips that round with a one-time notice instead of overwriting the other change; after repeated write failures auto-save is suspended with a notice (manual save still works).
 - Config is local; no telemetry, and the plugin makes **no network requests** — nothing is sent anywhere.
 - **Files outside the vault** are only ever touched when *you* ask for it: an absolute `file:///` link (created by holding `Ctrl`/`Option` while dropping a file) is handed to your system's default app when you click it. The plugin does not read, copy or upload those files.
@@ -122,7 +126,7 @@ The mind-map view is a **third kind of view** (neither reading nor editing view)
 | `[[` suggestions | Inline suggestions in the editor | The source-line dialog is a plain textarea (no inline suggestions) → use the vault-file suggestions in the **Add link** dialog |
 | Backlinks / Outgoing links / Unlinked mentions panes | Core plugins | Not duplicated — Obsidian's own panes act on the current file and work while the mind-map view is open |
 | Clicking a non-renderable vault file (zip / docx / …) | Opens in the default system app | Same |
-| Same file in a second tab | Allowed — "open as many tabs as you want"; `Ctrl`+clicking a link to a file that is already open makes a new tab | A notice appears and the view is handed back to the existing tab: one mind-map editing instance per `.mindmap.md` (two instances = two engines + two save pipelines, whose interleaved saves lose edits). The note's reading view can still be open alongside |
+| Same file in a second tab | Allowed — "open as many tabs as you want"; `Ctrl`+clicking a link to a file that is already open makes a new tab | A notice appears and the view is handed back to the existing tab: one mind-map editing instance per mind map (two instances = two engines + two save pipelines, whose interleaved saves lose edits). The note's reading view can still be open alongside |
 | Mouse side-button back / forward | Follows the navigation history | Same: side buttons follow Obsidian's navigation history in the mind-map view; switching views is **not** a navigation point — back goes straight to the previous navigation point (usually the previous note). Use **Switch to Markdown** (toolbar button or command palette), or **Open as Markdown** from the file context menu, to return to the note's Markdown view |
 
 The full Markdown ↔ mind-map mapping rules live in [`docs/markdown-mindmap-standard.md`](docs/markdown-mindmap-standard.md).

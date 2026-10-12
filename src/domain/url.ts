@@ -13,7 +13,29 @@
  * - isAppResourceUrl        Obsidian 库内资源地址（app://，getResourcePath 输出）
  * - isHyperlinkProtocolUrl  超链接语义的外部/协议地址（http/https/obsidian:///file://）
  * - isSchemeUrl             任意 scheme:// 形态（含自定义协议）
+ *
+ * 另收口**URL 解码的唯一安全入口** `tryDecodeUri`（2026-10-11）：此前「解码失败
+ * 怎么办」这条口径在 4 个文件里各写了一份 try/catch（本模块 ×2、
+ * `links/file-lookup` ×1、`links/links-resolve` ×3、`links/links-tree` ×1），
+ * 属 K28「地址形态判断只经本模块」的同族漂移面。
  */
+
+/**
+ * `decodeURIComponent` 的**唯一安全入口**：解码失败（含未编码的 `%`、孤立代理对）
+ * 返回 `null`，由调用方按场景选择「回落原样」(`?? raw`) 或「放弃该候选/该行」。
+ *
+ * 为什么必须收口（2026-10-11 审查）：同一判定散落 8 处、两种语义，各处自写
+ * try/catch 与注释——`%` 真实存在于文件名（Windows 允许），故这是常态输入而非
+ * 异常输入，口径必须一处定义。**返回 `null` 而不是回退原样**是刻意的：调用方
+ * 的语义分两类（追加候选 / 跳过），回退型由调用方 `?? raw` 显式表达。
+ */
+export function tryDecodeUri(text: string): string | null {
+	try {
+		return decodeURIComponent(text);
+	} catch {
+		return null;
+	}
+}
 
 export function isHttpUrl(value: string): boolean {
 	return value.startsWith('http://') || value.startsWith('https://');
@@ -63,13 +85,10 @@ export function resourceUrlPathCandidates(url: string): string[] {
 		return [];
 	}
 	const candidates = [path];
-	try {
-		const decoded = decodeURIComponent(path);
-		if (decoded !== path) {
-			candidates.push(decoded);
-		}
-	} catch {
-		// 含未编码 % 等字符：仅用原样候选
+	// 解码失败（含未编码 % 等字符）只保留原样候选
+	const decoded = tryDecodeUri(path);
+	if (decoded !== null && decoded !== path) {
+		candidates.push(decoded);
 	}
 	return candidates;
 }
@@ -151,12 +170,9 @@ export function absolutePathFromFileUrl(url: string): string | null {
 	if (!url.startsWith('file://')) {
 		return null;
 	}
-	let path = url.slice('file://'.length);
-	try {
-		path = decodeURIComponent(path);
-	} catch {
-		// 含未编码 % 的路径：按原样
-	}
+	// 解码失败（含未编码 % 的真实文件名）：按原样
+	const raw = url.slice('file://'.length);
+	const path = tryDecodeUri(raw) ?? raw;
 	if (!path) {
 		return null;
 	}
