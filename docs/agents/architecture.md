@@ -159,7 +159,24 @@ src/
                     #   不依赖 styles.css）的点击语义——经引擎 node_click 委托命中
                     #   选择器（与 view-wikilink 锚点同款模式，view.ts 同段注册）；
                     #   写剪贴板 + ✓ 反馈；导出图隐身为 hideCopyButtonsInExportSvg；
-                    #   DOM 结构构建留在 node-inline-content.buildCodeBlockElement
+                    #   DOM 结构构建留在 node-inline-content.buildCodeBlockElement。
+                    #   入参面 `CodeBlockInteractionHost { mindMap, engineEvents }`
+                    #   （2026-10-13 收窄）：代码块嵌入是第二个宿主，共用同一实现
+    node-content-factory.ts # 自绘内容的**装配收口**（视图与代码块嵌入共用）：把
+                    #   平台实现（官方 MathJax / Prism 通道 + 两个产物缓存读取）单向
+                    #   绑定成 InlineContentOptions；宿主相关的只有 isResolvedLink 与
+                    #   onSettled 两项（各传自己的 ContentRemeasureSession）。两处各写
+                    #   一遍 ⇒ 新增渲染通道时会单边漂移（K122）
+    mindmap-codeblock.ts # Markdown 代码块**只读嵌入**（K122，2026-10-13 恢复；该能力
+                    #   0.0.1 存在、0.0.3 移除）：组合根 registerMarkdownCodeBlockProcessor
+                    #   （语言键 mindmap，core/constants）→ 块体走 parseMdOutline（与
+                    #   .mindmap.md 同一份大纲语法）→ createMindMap({ readonly: true,
+                    #   enableViewDrag: false }) → **容器高度随内容**（按宽度适配量测
+                    #   measureContentFitToWidth + centerContentAtScale；只缩不放）；
+                    #   形态对齐 Obsidian 里的 Mermaid（无固定高度框、无 resize 手柄、
+                    #   无平移）；**不写 data.json**、不回写文件；超
+                    #   CODE_BLOCK_MAX_NODES 降级只读大纲（可见提示）；滚轮归宿主页面
+                    #   （capture 拦截，引擎 onMousewheel 无条件 preventDefault）
     node-inline-editor.ts # 节点内联编辑（自绘/富节点的**原文**编辑器，2026-09-28，见 K92）：
                     #   覆盖层 textarea 编辑文件里那一行（mdRaw 语义），提交走
                     #   applyRawToNode（与弹窗原文模式同一写回入口）；双击 / F2 /
@@ -296,12 +313,13 @@ docs/
 | `src/links/links-resolve.ts` | 351 | 「任意地址形态 → TFile」的**统一解析入口**：远程拒绝 → `obsidian://` → 资源地址 → 路径直查 → `file://` 剥离 → 官方 `getFirstLinkpathDest` → 索引兜底——形态路由的**分支顺序本身即契约**（新增规则只改这一处）；拆开会重新引入本文件当初拆出要收敛的「双轨并存、覆盖形态互有盲区」问题 |
 | `src/features/node-inline-editor.ts` | 384 | 节点内联编辑的**单一会话收口**（K92）：覆盖层定位与跟随（`scale` / `node_tree_render_end` 重定位）、键盘语义表、点击外部与 `mousewheel` 提交、会话所属引擎守卫、提交写回（`applyRawNodeContent`）共享同一套「会话 → 值 → 落数据」不变式；拆开会让定位跟随与提交守卫跨文件失配 |
 | `src/services/document-service.ts` | 365 | md 文档读写数据面：**读**（`DocumentService.load` → `parseMdOutline` + `walkResolveImagePaths`）与**写**（`SavePipeline` → 防抖调度 + 串行排空 + 卸载快照兜底 + 无差异跳过 + P1a 外部改动检测 / P1b 连续失败挂起）成对。二者共享文件头声明的**归属不变式**（一次写盘的目标文件与其内容必须属于同一个文件：`getSnapshotFor(file)`/`getFrontmatterFor(file)` 按文件取、排空期不读活引用、`drainFile` 锁定本轮归属）——拆开会把这条跨对象不变式切成跨文件隐式协议，代价高于行数收益（K50 收口唯一） |
+| `src/features/mindmap-codeblock.ts` | 510 | Markdown 代码块只读嵌入的**单一关注点**（K122，2026-10-13 恢复）：块体解析 → 只读引擎装配（`readonly: true` + 不注册任何交互插件）→ **容器高度随内容且随宽度重算**（观察器**先建且常驻**：首帧同步挂载成功也注册，否则高度口径锁死在首帧；重排在**下一帧**落，RO 回调里写布局会记 `ResizeObserver loop…`，见 `renderOrWait` / `deferFit`）→ 滚轮归宿主页面（capture 拦截；引擎 `onMousewheel` 无条件 preventDefault）→ 超限降级只读大纲 → 生命周期收尾（ResizeObserver / EventBinder / ContentRemeasureSession / 引擎）是一条不可分割的链；拆开会让「解析口径、零尺寸等待、尺寸反馈环、销毁顺序」四处漂移。**不写 `data.json`** |
 
 行数基准为 **2026-09-28 快照**，其后按实测逐批更新（**2026-10-02 全量重测**并补登记 `document-service.ts`；死代码审计、lint 合规化、K92/K93与「函数内纯移动拆分」轮后重测；**2026-10-04 再全量重测**，本轮因批量反查等改动更新了 6 个文件）。
 
 **口径（2026-10-04 统一）**：以 `tests/agents-md-sync.test.ts` 的 `countSourceLines` 为**唯一口径** —— `readFileSync(path,'utf8').split('\n')`，末尾换行不计行。⚠ **不要用 PowerShell `(Get-Content … | Measure-Object -Line).Lines`**：该 cmdlet 统计的是「非空行」以外的另一套计数，与本口径在多数文件上差 1–4%，会让登记值与实测对不上（实测曾因此误判「登记值整体失真」）。重测命令见下。
 
-全部 **22 个超限文件均已登记理由**（其中 `math-jax.ts` / `links-tree.ts` / `links-resolve.ts` / `node-inline-editor.ts` / `document-service.ts` 分属各批补登记）。
+全部 **23 个超限文件均已登记理由**（其中 `math-jax.ts` / `links-tree.ts` / `links-resolve.ts` / `node-inline-editor.ts` / `document-service.ts` / `mindmap-codeblock.ts` 分属各批补登记）。
 
 **判定分两层**（勿再写成「不以数字为准」——那样与下述测试契约自相矛盾）：
 1. **是否已登记理由**（人工/文档层）—— 未登记者一律视为待偿还债务。

@@ -1401,3 +1401,96 @@
   ⑥ **教训**：判据从「文件名」（同步、无 IO）换成「内容声明」时，官方 MetadataCache 是唯一
   同时满足「官方 API 优先」与「不把 7 个调用点异步化」的落点；而**属性的写入侧**必须与读侧
   分开设计（读双键、写单键），否则中英混用库会出现「看不见的导图」。
+
+- [K122] **`mindmap` 代码块只读嵌入恢复（0.0.3 移除的能力回归，2026-10-13 用户裁决）**：
+  ① **定位与形态**：普通笔记里写**语言标识为 `mindmap` 的围栏块** = **只读导图预览**——不回写文件、
+  不参与保存管线、**不写 `data.json`**（无 `ViewStateStore` 触点）；块体与 `.mindmap.md` 正文是
+  **同一份大纲语法**（标题 / 列表），解析走同一个 `parseMdOutline`，故不存在第二套格式。注册在
+  组合根（`registerMarkdownCodeBlockProcessor` + `ctx.addChild`），渲染逻辑全在
+  `features/mindmap-codeblock.ts`。**语言键沿用 0.0.1 的 `mindmap`**
+  （`core/constants.CODE_BLOCK_LANGUAGE`）——存量旧笔记无需改动即重新可用；与第三方插件抢注同键
+  的行为官方未文档化，已登记为文档风险（见 `docs/markdown-mindmap-standard.md`）。
+  ② **只读 = 引擎原生 `readonly`，不是自造开关**：0.0.1 用的是自造 `forCodeBlock`（不注册
+  `Search`/`DoExport` + 换代码块主题）；上游本就有 `readonly`（`constants/defaultOptions.js:13`），
+  消费点覆盖**全部命令**（`core/command/Command.js:106/137/157`）与双击进编辑框 / 拖拽 / 多选 /
+  图片调宽 / 画笔，而**渲染不受影响**。插件侧为真时**不注册任何交互插件**：`Search` /
+  `KeyboardNavigation` 经 `KeyCommand.bindEvent` 在 `window` 上注册 keydown（`KeyCommand.js:88`），
+  会与宿主笔记抢 `Ctrl+F` 与方向键；`TouchEvent` 抢触屏手势；`DoExport` 在嵌入里没有入口。
+  ③ **滚轮必须归宿主页面**：引擎 `Event.onMousewheel` 无条件 `stopPropagation + preventDefault`
+  （`core/event/Event.js:148-150`）⇒ 不拦就会把**笔记滚动卡死**在嵌入图上（指针悬在图上时）。
+  做法是在引擎容器**外**的 capture 阶段只 `stopPropagation`、**不** `preventDefault`：引擎收不到
+  wheel，浏览器默认滚动照常发生。备选「`pointer-events:none` 穿透」会一并杀掉节点内链接的悬停与
+  点击；「vendor 补丁加选项」只在将来要求嵌入内普通滚轮**平移**时才值得（要走 `patches` →
+  `build:vendor` → 两处 sha256）。
+  ④ **超限不建引擎**：节点数 > `CODE_BLOCK_MAX_NODES`（500）时降级为**只读缩进大纲 + 可见提示行**
+  ——一篇笔记可有多个块，每块一个引擎（含离屏测量、MathJax/Prism 注入）会让打开成本随块数线性叠加。
+  阈值**不复用** `PERFORMANCE_NODE_THRESHOLD`（那个是「虚拟渲染」阈值，超了照样渲染）。
+  ⑤ **共享收口（一处都不另写）**：自绘内容装配 → `features/node-content-factory.ts`（视图与嵌入
+  同工厂，宿主相关的只有 `isResolvedLink` / `onSettled`）；定稿尺寸同步 → 复用
+  `ContentRemeasureSession`（宿主 = RenderChild）；链接跳转与未解析弱化 → `view-link-navigator`
+  （入参从整张 `MindMapViewContext` 收窄为 `MindMapLinkHost { app, file.path, lang }`——两个函数
+  实测只用这三样）；主题写入 → 新增防腐入口 `engine/mindmap.applyThemeConfig`（`isDarkTheme` +
+  `getThemeConfig` 的**合成只此一处**，engine-controller 与嵌入共用）；resize →
+  `engine/mindmap.resizeMindMap`。
+  ⑥ **刻意不复刻视图的两处机制**（各有理由，勿"顺手统一"）：**不加代际锁**——`RenderChild` 一次性，
+  块体重渲即换新实例、unload 断开观察器，不存在文件视图那类「过期 tree 覆盖当前文件」的跨文件竞态；
+  **不建「活动嵌入注册表」**（旧方案稿的中央 `css-change` 分发）——RenderChild 的官方生命周期已保证
+  摘除，中央表是第二份收口，改为每实例一条 `registerEvent(app.workspace.on('css-change'))`。
+  ⑦ **降级与失败一律可见**：空块体 → 提示行；解析 / 引擎异常 → 清半初始化实例
+  （`cancelEngineTimers` + `destroyMindMap`）+ 块内提示行 + `console.error`（**不** `notifyError`：
+  一篇笔记可能有很多块，逐块弹通知会刷屏，口径同决策表「内部错误走 console」）。
+  ⑧ **回归**：`tests/mindmap-codeblock.test.ts` 16 例（展示树折叠 4 例喂真实 `parseMdOutline` 产物、
+  降级边界、语言键锁定、`readonly` 不注册插件 / 可编辑视图仍注册、`applyThemeConfig` 合成口径、
+  `measureContentFitToWidth` 只缩不放与留白双向扣除、styles.css 类名与挂载点高度链）+
+  `verify:visual` 新增 `embed` 探针（4 节点真渲染、**挂载点随内容**、无节点越界、computed
+  `resize: none`、**左键拖画布后节点位移 0**、**合成 wheel 的 `defaultPrevented === false`**、
+  **容器收窄即重排**（640px 的宽内容嵌入收窄到 240px：高度变小且无节点越界）、
+  601 条平铺 ⇒ 只读大纲 + 提示行含 602/500）。2026-10-13 **实机复核**（库内真笔记，
+  `obsidian eval` 驱动）：阅读视图 4 节点 / 699px→80px、收窄 300px→63px、回弹 80px，
+  两次都无节点越界；后台标签激活（零尺寸等待路径）同样挂载；`obsidian dev:errors`
+  无新增条目；嵌入渲染前后 `data.json` 哈希不变（写盘来自导图视图的视口持久化）。
+  ⑨ **形态对齐 Obsidian 里的 Mermaid（2026-10-13 追加，用户「保证内容完整显示、而非可调节
+  可移动内容」）**：从本机 `obsidian.asar` 抽出官方 `app.css` / `app.js` 取证——
+  **官方 Mermaid 配置**是 `startOnLoad:!1, securityLevel:"strict", themeVariables:{fontFamily:
+  "var(--font-mermaid)"}, flowchart/sequence/git/er:{useMaxWidth:!1}, gantt/journey/class/state/
+  pie:{useMaxWidth:!0}`（**mindmap 类型未被覆盖** ⇒ 走 Mermaid 缺省 `useMaxWidth: true`，即 SVG
+  `width:100%` + `max-width: 原宽`：**只缩不放**）；`app.css` 侧对 `.mermaid` 只有
+  `.mermaid-wrapper{display:flex;flex-direction:column}`（**无 max-height、无固定高度**）与
+  实时预览的 `overflow-x:auto`，**没有任何 resize 手柄或平移语义**（另有 `.mermaid-wrapper
+  .is-guarded` 的**安全守卫卡**——那是 securityLevel 的「允许渲染」按钮，与尺寸无关）。
+  据此定形态：**① 容器高度随内容**——新增 `engine/mindmap.measureContentFitToWidth`
+  （`scale = min(1, 可用宽/内容宽)`，高度 = 原高 × scale + 两侧留白；性能模式走数据层几何、
+  常规走 DOM rbox 除以当前比例还原）与泛化版 `centerContentAtScale`（由
+  `centerContentAtFullScale` 抽出，视图仍只走 `scale=1` 入口）；**② 高度是输出**，故嵌入
+  **不得**用 `fitMindMap`（双轴适配会把高度当输入，自相矛盾）；**③ 高度变了要请引擎重排**
+  （`resizeMindMap`）——引擎只看创建/`resize()` 时的画布尺寸，而布局根落位与性能模式的
+  视口剔除判据都读它，不重排会把高图判成「视口外」而裁掉可见节点；重排事件里高度已稳定
+  （比例只依赖宽度）⇒ 最多多跑一轮收敛；**④ 不可拖动**——新增 `enableViewDrag`（原生
+  `isDisableDrag`，`View.js:34/44` 切断左键与中键拖动画布；`readonly` **不含**这一层，
+  2026-10-13 实测遗漏）；**⑤ 不可调节**——删掉 `styles.css` 的 `resize: vertical` 手柄；
+  **⑥ 观察器先建且常驻，只认宽度变化，且重排隔一帧落**——`renderOrWait` **先**注册
+  `ResizeObserver` **再**试挂引擎：首帧同步挂载成功时也必须注册，否则高度口径锁死在首帧，
+  容器变窄则内容被 `overflow: hidden` 裁掉、变宽则留一片空白（旧形态是「挂载成功即早退」，
+  而这条路径恰是最常见的一条；2026-10-13 自查修复，回归由探针 `embed-resize-probe` 钉住）；
+  回调里过滤「只有我们自己写的高度变了」，否则自适应高度与观察器互触发不收敛；**「重建布局 +
+  重算高度」经 `deferFit` 推到下一帧**——在 RO 回调里同步写高度会让本次投递循环留下未投递的
+  通知，Chrome 记 `ResizeObserver loop completed with undelivered notifications`（实机
+  `obsidian dev:errors` 每个尺寸变化各一条，实测隔帧后消失；挂载路径保持同步，实机无此告警）；**⑦ 顺带补上块内代码块复制按钮**——把
+  `registerCodeBlockInteractions` 的入参从整张 `MindMapViewContext` 窄化为
+  `CodeBlockInteractionHost { mindMap, engineEvents }`（视图与嵌入共用同一份实现，
+  否则按钮是「看得见点不动」的死件）。
+  ⑩ **节点内链接点击**由 Obsidian 自身处理，**勿**再接 `view-wikilink` 的点击跳转
+  （2026-10-13 实机结论）：嵌入落在**笔记的 Markdown 预览容器内**，自绘锚点又是官方
+  形态 `a.internal-link[data-href]`，故核心的文档级委托直接命中——实机（vault 内临时
+  笔记，`a.click()` 合成点击）实测 `data-href="Note"` → 活动文件由测试笔记切到
+  `Note.md`、markdown 叶数 1 → 1（**同标签打开、无双开**）。再挂一份 `node_click`
+  跳转会让每次点击打开两次（本插件在自定义视图里必须自己接，正是这条差异的来源）。
+  ⚠ **隐藏副本**：同一块的渲染子会同时存在于**源码模式（live preview）的 `.cm-editor`
+  与阅读视图**（前者在阅读模式下 `clientWidth = 0`）——自动化探针/脚本必须把选择器
+  限定在 `.markdown-preview-view` 内，否则读到 0 尺寸的隐藏副本而误判「没渲染」
+  （本轮实机踩到）。0 尺寸副本**不建引擎**（零尺寸等待拦下），无额外开销。
+  ⑪ **实机验收（2026-10-13，vault 内临时笔记，测后已删除）**：小图（4 节点）挂载点
+  **699×80**（旧实现固定 360px 空框 ⇒ 已是随内容）、`resize: none`、无节点越界、
+  合成 wheel `defaultPrevented === false`、左键拖画布后节点位移 0、601 条平铺 ⇒
+  `engineMounted: false` + 大纲 + 提示「导图节点数 602 超过嵌入上限 500，此处仅显示大纲」、
+  `dev:errors` 无错误。

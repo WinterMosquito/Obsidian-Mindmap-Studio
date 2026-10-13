@@ -25,10 +25,11 @@
 
 ## 发布流程
 
-1. 更新 `manifest.json` 版本号 → `npm version patch|minor|major`（同步 `versions.json`）。
+1. 更新版本号 → `npm version patch|minor|major` 一步做完 `manifest.json` / `package.json` / `versions.json` / **`package-lock.json` 根版本**；**手工改版本号时必须自己补 `package-lock.json`**（漏改不报错，只是 lock 与 `package.json` 不一致——2026-10-13 发布 0.2.1 时实际漏过一次）。
 2. 创建与版本号完全一致的 GitHub Release tag（不带 `v` 前缀）。
-3. 附加 `main.js`、`manifest.json`、`styles.css`，以及 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`（`.github/workflows/release.yml` 自动构建并创建草稿 Release；许可声明必须随副本分发，见 K84）。
-4. 新增版本补 `docs/release-notes-<tag>.md`（中英双语）——`release.yml` 取该文件作 Release 说明，缺失则回退自动生成。
+3. 附加 `main.js`、`manifest.json`、`styles.css`，以及 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`（`.github/workflows/release.yml` 自动构建并创建**草稿** Release——草稿需人工在 GitHub 上 Publish 才对用户可见；许可声明必须随副本分发，见 K84）。
+4. 新增版本补 `docs/release-notes-<tag>.md`（中英双语）——`release.yml` 取该文件作 Release 正文，**tag 门禁硬校验其存在**（2026-10-13 起；此前缺失会静默回退 GitHub 自动生成），故该文件必须在打 tag 前入库。
+5. **tag 路径的门禁集**（tag push 不触发 `lint.yml`，故 `release.yml` 必须自证）：tag == `manifest.json` 版本 → 发布说明存在 → `check:release` → `test` → `lint` → `lint:css` → `lint:scanner` → `check:dead-code`（2026-10-13 补，此前只有本地链与 `lint.yml` 有）→ `build`。**`verify:visual` 不在发布路径上**（`lint.yml` 里为 `continue-on-error`，Linux 侧稳定性原因见该文件注释）——渲染契约目前只由本地门禁与实机验收兜住，发版前须本地跑一次 `npm run verify:visual -- --require-chrome`。
 
 ### 提交信息与 Actions 命名约定
 

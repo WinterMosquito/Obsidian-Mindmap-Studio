@@ -97,10 +97,6 @@ interface MathJaxLike {
 	tex2svg?: (tex: string, options?: { display?: boolean }) => Node | null;
 }
 
-/** 行内数学的显示类名（主题/调试定位用；样式交宿主全局 `.mjx-container` 规则） */
-/** 值收口在 core/constants：与 node-inline-content 的缓存命中路径共用 */
-const MATH_CONTAINER_CLASS = MATH_RENDERED_HOLDER_CLASS;
-
 /**
  * 产物模板缓存：`I:`/`B:` + TeX → 已渲染产物节点（复用时 `cloneNode`）。
  *
@@ -189,14 +185,6 @@ const warnRenderApiMissing = createWarnOnce();
 /** MathJax 注入的 CHTML 样式表元素 id（字形与 @font-face 的载体） */
 const CHTML_STYLES_ID = 'MJX-CHTML-styles';
 
-/**
- * 剥离 `@font-face` 声明块（导出注入专用）。
- *
- * 导出 SVG 在**独立上下文**渲染（data URI → `Image` → canvas），
- * `@font-face` 里的 `src: url("app://obsidian.md/lib/mathjax/…woff")` 在该
- * 上下文**无法加载**——保留只会产生失败请求；字形改由系统 fallback 提供
- * （位置/尺寸由 per-char 规则的 em `padding` 保证，公式结构仍然正确）。
- */
 /**
  * 读取当前 MathJax CHTML 样式表的**完整 CSS**。
  *
@@ -484,6 +472,9 @@ function isProductReady(holder: HTMLElement): boolean {
  */
 let charRuleIndex: { generation: number; decl: Map<string, string> } | null = null;
 
+/** 「CHTML 字符规则索引读取失败」告警留痕：同一进程只提醒一次（前缀/去重交 core/errors） */
+const warnCharRuleUnreadableOnce = createWarnOnce();
+
 function readCharRuleIndex(): Map<string, string> {
 	if (charRuleIndex && charRuleIndex.generation === flushGeneration) {
 		return charRuleIndex.decl;
@@ -510,8 +501,8 @@ function readCharRuleIndex(): Map<string, string> {
 		// MathJax 4 零宽豁免整体失效 → 含 \sin/\log 的公式永久判未就绪 → 退字面。
 		// 而用户看到的唯一告警是下游泛化的「字体/样式未就绪」，指错根因，
 		// 故此处必须留痕（AGENTS.md决策表：静默跳过会让问题无痕退化）。
-		console.warn(
-			'[MindMap Studio] 读取 MathJax CHTML字符规则失败，v4 零宽豁免判据将失效',
+		warnCharRuleUnreadableOnce(
+			'读取 MathJax CHTML 字符规则失败，v4 零宽豁免判据将失效',
 			error,
 		);
 	}
@@ -701,7 +692,7 @@ function attemptPlace(item: PendingMath): boolean {
 		return false; // 已确认规则未就绪：等下一次 flush 完成（runFlush 会再泵）
 	}
 	holder.replaceChildren(rendered);
-	holder.classList.add(MATH_CONTAINER_CLASS);
+	holder.classList.add(MATH_RENDERED_HOLDER_CLASS);
 	if (isProductReady(holder)) {
 		rememberRenderedMath(tex, display, rendered);
 		notifyMathSettled(holder);
@@ -709,7 +700,7 @@ function attemptPlace(item: PendingMath): boolean {
 	}
 	// 未就绪（逐字符规则尚未 flush → 产物「非零但塌缩」）：同步撤回字面 + 排队 flush
 	holder.textContent = display ? `$$${tex}$$` : `$${tex}$`;
-	holder.classList.remove(MATH_CONTAINER_CLASS);
+	holder.classList.remove(MATH_RENDERED_HOLDER_CLASS);
 	item.ruleWait = true;
 	item.failedGeneration = flushGeneration;
 	scheduleFlush(holder);

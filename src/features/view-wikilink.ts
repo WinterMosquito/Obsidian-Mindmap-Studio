@@ -29,6 +29,9 @@ import type { HyperlinkOpenMode, MindMapViewContext } from './view-context';
 /** 悬停防抖（与附件预览共用状态字段，互斥触发） */
 const HOVER_DEBOUNCE_MS = 400;
 
+/** 锚点选择器（节点内自绘锚点与引擎原生锚点共用；单一字面量） */
+const ANCHOR_SELECTOR = 'a.internal-link, a.external-link, a[href]';
+
 /** 悬停预览去重状态（WeakMap 按视图持有：上次预览的目标元素与时间） */
 interface HoverPreviewState {
 	el: Element | null;
@@ -54,7 +57,7 @@ function findAnchorInNode(
 	if (!groupEl || !groupEl.contains(target)) {
 		return null;
 	}
-	const anchor = target.closest('a.internal-link, a.external-link, a[href]');
+	const anchor = target.closest(ANCHOR_SELECTOR);
 	if (
 		!(anchor instanceof HTMLAnchorElement) ||
 		!groupEl.contains(anchor)
@@ -189,9 +192,6 @@ function hyperlinkOpenMode(event: MouseEvent): HyperlinkOpenMode | null {
 	// 官方返回 `PaneType | boolean`：非字符串即「无修饰键」（false）
 	return typeof mode === 'string' ? mode : null;
 }
-
-/** 锚点选择器（节点内自绘锚点与引擎原生锚点共用） */
-const ANCHOR_SELECTOR = 'a.internal-link, a.external-link, a[href]';
 
 /**
  * 注册 wikilink 的悬停预览与点击跳转（initMindMap 内调用一次）。

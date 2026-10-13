@@ -177,8 +177,6 @@ export function resolveDroppedFile(
 	dataTransfer: DataTransfer,
 	app: App,
 ): TFile | null {
-	// 性能：一次拖拽多次解析，缓存文件列表避免重复扫描
-	const allFiles = app.vault.getFiles();
 	const plain = dataTransfer.getData('text/plain').trim();
 	if (plain) {
 		const file = resolvePathToFile(plain, app);
@@ -243,6 +241,9 @@ export function resolveDroppedFile(
 	if (dataTransfer.files.length > 0) {
 		const dropped = dataTransfer.files[0];
 		if (dropped) {
+			// 全库文件列表只在此分支需要：惰性获取，避免常见路径
+			// （plain / uri-list 命中即早返回）白白全量拷贝一次
+			const allFiles = app.vault.getFiles();
 			const basename = dropped.name.replace(/\.[^.]+$/, '');
 			const matches = allFiles.filter(
 				(file) => file.name === dropped.name || file.basename === basename,

@@ -16,6 +16,7 @@ import {
 	MindMapTreeNode,
 } from '../../vendor/simple-mind-map.cjs';
 import {
+	applyThemeConfig,
 	arrangeMindMap,
 	cancelEngineTimers,
 	centerContentAtFullScale,
@@ -24,11 +25,10 @@ import {
 	fitMindMap,
 	getRenderRoot,
 	getRootText,
-	getThemeConfig,
 	isContentVisibleInCanvas,
-	isDarkTheme,
 	isEditingText,
 	replaceMindMapData,
+	resizeMindMap,
 	syncHistoryLimit,
 } from '../engine/mindmap';
 import { createThrottler } from '../core/concurrency';
@@ -547,15 +547,12 @@ export class EngineController {
 		lineStyle: string,
 		themePref: string,
 	): void {
-		if (!this.mindMap) {
-			return;
-		}
-		const dark = isDarkTheme(themePref, this.deps.isDark());
-		this.mindMap.setThemeConfig(getThemeConfig(dark, layout, lineStyle));
+		// 引擎内部写入收口在 mindmap.applyThemeConfig（视图与代码块嵌入共用）
+		applyThemeConfig(this.mindMap, this.deps.isDark(), themePref, layout, lineStyle);
 	}
 
 	resize(): void {
-		this.mindMap?.resize();
+		resizeMindMap(this.mindMap);
 	}
 
 	/** 当前树快照（引擎已销毁时为 null） */

@@ -3,7 +3,8 @@
  * 被工具栏（view-toolbar.ts）与右键菜单（view-context-menu.ts）共用。
  *
  * 图片操作已拆至 view-image-actions.ts 并由本文件 re-export 保持调用稳定：
- *   addImageToActiveNode / applyNodeImage / removeNodeImage / normalizeImageReference
+ *   addImageToActiveNode / applyNodeImage / createImageChildNode / removeNodeImage
+ * （`normalizeImageReference` 是 view-image-actions 的私有实现，不经本文件导出。）
  */
 import { Notice, TFile, type App } from 'obsidian';
 import {
@@ -229,8 +230,8 @@ function withLinkPath(link: string, linkpath: string): string {
 	if (!parsed) {
 		return linkpath;
 	}
-	const hash = parsed.linkpath.indexOf('#');
-	const block = hash >= 0 ? parsed.linkpath.slice(hash) : '';
+	// `#区块` 已由 parseWikilink 给出（parsed.block 不含 #）：勿在调用方另写切分
+	const block = parsed.block ? `#${parsed.block}` : '';
 	return formatWikilink(`${linkpath}${block}`, parsed.alias || undefined);
 }
 
@@ -404,6 +405,7 @@ export {
 	removeNodeImage,
 	addImageToActiveNode,
 	applyNodeImage,
+	createImageChildNode,
 } from './view-image-actions';
 
 /** 视图剪贴板（WeakMap 按视图持有：视图关闭后可回收；状态不暴露到 context） */

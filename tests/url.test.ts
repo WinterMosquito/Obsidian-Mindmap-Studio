@@ -25,6 +25,7 @@ import {
 	isUrlLikeText,
 	resourceUrlPathCandidates,
 	tryDecodeUri,
+	urlComparisonForms,
 } from '../src/domain/url';
 
 describe('isHttpUrl', () => {
@@ -599,5 +600,36 @@ describe('tryDecodeUri', () => {
 		// 回落型（`?? raw`）与跳过型（null → 放弃候选）的分界正是这条区分
 		expect(tryDecodeUri('笔记.md') ?? 'FALLBACK').toBe('笔记.md');
 		expect(tryDecodeUri('100%.png') ?? 'FALLBACK').toBe('FALLBACK');
+	});
+});
+
+/**
+ * 「原样 + 解码」比对形态（2026-10-13 收口）。
+ *
+ * 此前该构造在 `links/file-lookup`（`uniqueCandidates`）与 `links/links-tree`
+ * （`urlComparisonForms`）各写一份、本模块 `resourceUrlPathCandidates` 内又内联
+ * 一份——三份逐字同构。这里把「相同则去重」与「解码失败只留原样」两条口径
+ * 直接锁定，避免再次散落。
+ */
+describe('urlComparisonForms', () => {
+	it.each([
+		{
+			value: 'attachments/a%20b.png',
+			expected: ['attachments/a%20b.png', 'attachments/a b.png'],
+			why: '转义形态：原样在前、解码在后',
+		},
+		{
+			value: 'attachments/笔记.png',
+			expected: ['attachments/笔记.png'],
+			why: '无转义：解码结果相同 → 去重为单形态',
+		},
+		{
+			value: 'attachments/100%.png',
+			expected: ['attachments/100%.png'],
+			why: '解码失败：只保留原样，不造第二形态',
+		},
+		{ value: '', expected: [''], why: '空串可解码且结果相同 → 单形态' },
+	])('urlComparisonForms($value) → $expected（$why）', ({ value, expected }) => {
+		expect(urlComparisonForms(value)).toEqual(expected);
 	});
 });

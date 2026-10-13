@@ -60,8 +60,7 @@ export function findMindMapPropertyKeys(frontmatter: unknown): string[] {
 	const record = frontmatter as Record<string, unknown>;
 	const keys: string[] = [];
 	for (const key of Object.keys(record)) {
-		const lowered = key.trim().toLowerCase();
-		if (!READ_KEYS.some((known) => known === lowered)) {
+		if (!isMindMapPropertyKey(key)) {
 			continue;
 		}
 		if (normalizePropertyValues(record[key]).includes(NORMALIZED_TYPE_VALUE)) {

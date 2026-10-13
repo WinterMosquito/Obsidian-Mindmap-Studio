@@ -35,6 +35,7 @@ import {
 	applyNodeAttachment,
 	clearNodeHyperlink,
 	copyNode,
+	createImageChildNode,
 	deleteActiveNode,
 	editNodeTextInModal,
 	pasteNodeAsChild,
@@ -1569,6 +1570,107 @@ describe('图片操作（re-export 契约与自兜错误）', () => {
 		expect(noticeCalls).toEqual([`${zh('common.insertImageFailed')}boom`]);
 		expect(errorSpy).toHaveBeenCalledWith('插入图片失败', expect.any(Error));
 		errorSpy.mockRestore();
+	});
+});
+
+/**
+ * createImageChildNode：图片「贴入导图」的**唯一落点实现**（2026-10-13 收口——
+ * 此前 view-dnd 的私有 `insertImageChildNode` 与粘贴路径的建图逻辑各持一份）。
+ * 契约：
+ * - 在**调用方指定的父节点**下建纯图节点（拖入多图的其余各占一个子节点、拖入/
+ *   粘贴未选中节点时由调用方传渲染根）；
+ * - 初始数据一次给全：image/imageTitle/imageSize 与引擎 SET_NODE_IMAGE 命令的
+ *   写入面一致（vendor `setNodeImage` 实测；缺 imageSize 会让 createImgNode →
+ *   getImgShowSize 解构 TypeError、该节点渲染链中断）；
+ * - md 回写字段与 applyNodeImage 同口径：mdImageTarget 取库内路径、mdImageStyle
+ *   跟随官方「Use \[\[Wikilinks\]\]」（图片写入形态只有这一份判定）；
+ * - 探测尺寸期间引擎换代 → 不插入、不保存、返回 false（静默丢失守卫）；
+ * - 引擎缺失（视图重建中）→ 返回 false。
+ */
+describe('createImageChildNode（图片建节点的唯一入口）', () => {
+	it('在指定父节点下建纯图节点：初始数据一次给全（引擎图片三字段 + md 回写字段）', async () => {
+		const parent = fakeNode({ data: { text: '主题' } });
+		const { view, execCommand, scheduleSave, getResourcePath } = makeView();
+		const file = fakeFile('attachments/b.png', 'png');
+		aspectImageOptionsMock.mockResolvedValue({
+			url: 'app://local/attachments/b.png',
+			title: '探测标题',
+			width: 100,
+			height: 60,
+			custom: true,
+		});
+
+		await expect(createImageChildNode(view, parent, file)).resolves.toBe(true);
+
+		// 引擎渲染地址走资源地址（app://…），md 回写目标取库内路径
+		expect(getResourcePath).toHaveBeenCalledWith(file);
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[parent],
+			{
+				text: '',
+				image: 'app://local/attachments/b.png',
+				imageTitle: '探测标题',
+				imageSize: { width: 100, height: 60, custom: true },
+				mdImageTarget: 'attachments/b.png',
+				// 官方默认开「使用 [[Wikilinks]]」→ 回写 `![[attachments/b.png|100x60]]`
+				mdImageStyle: 'wiki',
+				isActive: false,
+			},
+		]);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('官方关闭「使用 [[Wikilinks]]」：md 回写形态记 md（与 applyNodeImage 同口径）', async () => {
+		const parent = fakeNode();
+		const { view, execCommand } = makeView({ useMarkdownLinks: true });
+		aspectImageOptionsMock.mockResolvedValue({
+			url: 'app://local/a.png',
+			title: '',
+			width: 10,
+			height: 10,
+			custom: true,
+		});
+
+		await createImageChildNode(view, parent, fakeFile('a.png', 'png'));
+
+		const [, , , payload] = callArgs(execCommand);
+		expect((payload as Record<string, unknown>)['mdImageStyle']).toBe('md');
+	});
+
+	it('探测尺寸期间引擎被重建：不插入、不保存、返回 false（静默丢失守卫）', async () => {
+		const parent = fakeNode();
+		const harness = makeView();
+		aspectImageOptionsMock.mockImplementation(async () => {
+			// 探测是异步的（真实实现要解码图片）：期间换文件/重建引擎
+			harness.raw.mindMap = makeEngine();
+			return {
+				url: 'app://local/a.png',
+				title: '',
+				width: 10,
+				height: 10,
+				custom: true,
+			};
+		});
+
+		await expect(
+			createImageChildNode(harness.view, parent, fakeFile('a.png', 'png')),
+		).resolves.toBe(false);
+
+		expect(harness.execCommand).not.toHaveBeenCalled();
+		expect(harness.scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('引擎缺失（视图重建中）：返回 false，不插入不保存', async () => {
+		const { view, execCommand, scheduleSave } = makeView({ withEngine: false });
+
+		await expect(
+			createImageChildNode(view, fakeNode(), fakeFile('a.png', 'png')),
+		).resolves.toBe(false);
+
+		expect(execCommand).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
 	});
 });
 

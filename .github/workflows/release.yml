@@ -25,14 +25,22 @@ jobs:
                   node-version: 24
                   cache: 'npm'
 
-            # Obsidian 按 tag 解析更新，tag 与 manifest.json 版本不一致会发布出错误版本，
-            # 故在构建前硬失败（对齐官方模板之外的额外护栏）。
-            - name: Verify tag matches manifest version
+            # 两条护栏都在装依赖前硬失败（攒在一步里是为了「一个红色步骤 = 一眼看清是元数据问题」）：
+            # ① Obsidian 按 tag 解析更新，tag 与 manifest.json 版本不一致会发布出错误版本；
+            # ② 发布说明是 Release 正文的来源（docs/release-notes-<tag>.md）——此前缺失时
+            #    静默回退 GitHub 自动生成的提交列表（与 docs/agents/process.md 发布第 4 条
+            #    「新增版本补发布说明」不一致），2026-10-13 起改为硬失败。
+            - name: Verify tag, manifest version and release notes
               run: |
                   tag="${GITHUB_REF#refs/tags/}"
                   version="$(node -p "require('./manifest.json').version")"
                   if [ "$tag" != "$version" ]; then
                     echo "::error::Tag '$tag' does not match manifest.json version '$version'. Obsidian resolves updates by tag; mismatched tags publish the wrong version."
+                    exit 1
+                  fi
+                  notes_file="docs/release-notes-${tag}.md"
+                  if [ ! -f "$notes_file" ]; then
+                    echo "::error::Missing $notes_file. Every release ships a bilingual release-notes file (see docs/agents/process.md, release step 4); without it the Release body silently falls back to auto-generated notes."
                     exit 1
                   fi
 
@@ -53,6 +61,9 @@ jobs:
                   npm run lint
                   npm run lint:css
                   npm run lint:scanner
+                  # 2026-10-13 补：本地校验链与 lint.yml 都有这一步，tag 路径此前独缺
+                  #（「本地绿」不能替代「发布路径自证」，见上方 tag 不触发 lint.yml 的说明）
+                  npm run check:dead-code
 
             - name: Build plugin
               run: npm run build
@@ -76,13 +87,9 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   tag="${GITHUB_REF#refs/tags/}"
-                  # 有对应版本的发布说明就用它，否则让 GitHub 依据提交生成
+                  # 发布说明必存在：上一道 tag 门禁已硬校验，故这里不再有 --generate-notes
+                  # 回落分支（2026-10-13 收敛；此前的回落会让「忘了写发布说明」无痕通过）
                   notes_file="docs/release-notes-${tag}.md"
-                  if [ -f "$notes_file" ]; then
-                    notes_args=(--notes-file "$notes_file")
-                  else
-                    notes_args=(--generate-notes)
-                  fi
 
                   # LICENSE 与 THIRD-PARTY-NOTICES.md 必须随产物分发：
                   # main.js 中约 72% 是 vendored 的 MIT/BSD 代码，且经 bundle + minify
@@ -96,7 +103,7 @@ jobs:
                   gh release create "$tag" \
                     --title="$tag" \
                     --draft \
-                    "${notes_args[@]}" \
+                    --notes-file "$notes_file" \
                     main.js manifest.json \
                     LICENSE vendor/THIRD-PARTY-NOTICES.md \
                     ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}

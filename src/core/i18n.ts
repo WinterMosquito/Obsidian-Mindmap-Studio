@@ -3,7 +3,8 @@
  *
  * 采用 key-based 策略：`t(lang, key)` 从对应语言字典取值。
  * - ZH 字典的 key 集合决定了合法的 TranslationKey（编译期类型检查）
- * - EN 字典缺失时回退到 ZH
+ * - EN 声明为 `Record<TranslationKey, string>`，键集合由编译期强制与 ZH 对齐，
+ *   故**不存在**运行时回退（缺词条是编译错误，不是运行期分支）
  * - 翻译值中可含 {name} / {count} 等占位符，由调用方在模板字符串中拼接
  */
 
@@ -41,7 +42,8 @@ const ZH = {
 		'节点文本过长，此处仅显示开头部分；完整内容仍保存在文件中，双击节点可查看或编辑',
 	'codeBlock.copy': '复制代码',
 	'rename.titleConflict': '已存在同名文件，无法按中心节点重命名',
-	'rename.titleFailed': '按中心节点重命名文件失败',
+	// 供 notifyError 拼接根因：与 save.failed 同口径，中文用全角冒号结尾
+	'rename.titleFailed': '按中心节点重命名文件失败：',
 
 	// ===== 工具栏 =====
 	'toolbar.addChild': '添加子节点 (Tab)',
@@ -98,7 +100,6 @@ const ZH = {
 	'common.nodeCopied': '节点已复制',
 	'common.splitLinksNone': '文档中没有可拆分的混排双链',
 	'common.splitLinksAllDone': '已拆分 {nodes} 个节点、{links} 条链接',
-	'common.selectNodeBeforePasteImage': '请先选择一个节点再粘贴图片',
 	'common.savingClipboardImage': '正在保存剪贴板图片…',
 	'common.imageSavedTo': '图片已保存到：',
 	'common.pasteImageFailed': '粘贴图片失败：',
@@ -109,6 +110,7 @@ const ZH = {
 	'common.insertImageFailed': '添加图片失败：',
 	'common.dropFailed': '处理拖入文件失败：',
 	'common.imageSetOnNode': '已设置节点图片：',
+	'common.imageNodeCreated': '已新建图片节点：',
 	'common.linkedTo': '已将节点链接到',
 	'common.nodeCreatedAndLinked': '已创建节点并链接到',
 	'common.cannotOpen': '无法打开该文件类型',
@@ -238,6 +240,14 @@ const ZH = {
 	// ===== 节点图片 =====
 	'nodeImage.alt': '节点图片',
 
+	// ===== 代码块嵌入（```mindmap 只读导图） =====
+	/** 块体没有 `#` 一级标题时的中心主题名（有标题则用标题文本） */
+	'mindmapEmbed.root': '思维导图',
+	'mindmapEmbed.empty': '代码块内没有可渲染的大纲内容',
+	'mindmapEmbed.tooMany':
+		'导图节点数 {count} 超过嵌入上限 {max}，此处仅显示大纲',
+	'mindmapEmbed.renderFailed': '代码块导图渲染失败（详见控制台）',
+
 	// ===== 默认内容（新建思维导图） =====
 	'default.shortcutHint': '示例：把想法拆成子节点',
 	'default.tabHint': 'Tab：添加子节点',
@@ -270,7 +280,7 @@ const EN: Record<TranslationKey, string> = {
 		'Node text is too long, so only the beginning is shown here; the full text is kept in the file (double-click the node to view or edit it).',
 	'codeBlock.copy': 'Copy code',
 	'rename.titleConflict': 'A file with that name already exists; cannot rename by central node',
-	'rename.titleFailed': 'Failed to rename the file by its central node',
+	'rename.titleFailed': 'Failed to rename the file by its central node: ',
 
 	// ===== 工具栏 =====
 	'toolbar.addChild': 'Add child node (Tab)',
@@ -327,7 +337,6 @@ const EN: Record<TranslationKey, string> = {
 	'common.nodeCopied': 'Node copied',
 	'common.splitLinksNone': 'No mixed links to split in this document',
 	'common.splitLinksAllDone': 'Split {links} link(s) in {nodes} node(s)',
-	'common.selectNodeBeforePasteImage': 'Please select a node before pasting an image',
 	'common.savingClipboardImage': 'Saving clipboard image…',
 	'common.imageSavedTo': 'Image saved to: ',
 	'common.pasteImageFailed': 'Paste image failed: ',
@@ -338,6 +347,7 @@ const EN: Record<TranslationKey, string> = {
 	'common.insertImageFailed': 'Add image failed: ',
 	'common.dropFailed': 'Failed to handle dropped file: ',
 	'common.imageSetOnNode': 'Image set on node: ',
+	'common.imageNodeCreated': 'Image node added: ',
 	'common.linkedTo': 'Linked node to ',
 	'common.nodeCreatedAndLinked': 'Node created and linked to ',
 	'common.cannotOpen': 'Cannot open this file type',
@@ -471,6 +481,13 @@ const EN: Record<TranslationKey, string> = {
 	// ===== 节点图片 =====
 	'nodeImage.alt': 'Node image',
 
+	// ===== 代码块嵌入（```mindmap 只读导图） =====
+	'mindmapEmbed.root': 'Mind map',
+	'mindmapEmbed.empty': 'There is no outline content to render in this block',
+	'mindmapEmbed.tooMany':
+		'The map has {count} nodes, above the embed limit of {max}; showing an outline instead',
+	'mindmapEmbed.renderFailed': 'Failed to render the mind map in this code block (see console)',
+
 	// ===== 默认内容（新建思维导图） =====
 	'default.shortcutHint': 'Example: break an idea into child nodes',
 	'default.tabHint': 'Tab: add a child node',
@@ -487,8 +504,10 @@ export type TranslationKey = keyof typeof ZH;
  * @param key 翻译 key（必须是 ZH 字典中定义的 key）
  */
 export function t(lang: Language, key: TranslationKey): string {
+	// EN 为完整 Record（编译期强制），`EN[key]` 恒有值，此前 `?? ZH[key]`
+	// 是永不触发的死分支（且与「双语对齐」硬规则相悖），已删除。
 	if (lang === 'en') {
-		return EN[key] ?? ZH[key];
+		return EN[key];
 	}
 	return ZH[key];
 }

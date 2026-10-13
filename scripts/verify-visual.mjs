@@ -34,6 +34,17 @@
  *   （不装配全量 DOM）、内容中心 = 画布中心 ±2px、数据层几何并集与 DOM 全量盒尺寸差
  *   ≤8px；探针规模须取「刚过阈值的最小量」（641 节点版本会因分片渲染任务链推后
  *   其余探针的读取窗口而连锁失败，见 K70 ③）；
+ * - 覆盖（代码块嵌入，`features/mindmap-codeblock.ts`，2026-10-13）：`mindmap`
+ *   语言标识的块体渲染为**只读**导图（引擎原生 `readonly` + 不注册任何交互插件），
+ *   形态对齐 Obsidian 里的 Mermaid——断言引擎真建起来了（`.smm-node` 计数）、
+ *   **容器高度随内容**（挂载点高 < 固定 360px 且比内容高不过 48px）、
+ *   **内容完整可见**（无节点越出挂载点）、**不可调节**（computed `resize: none`）、
+ *   **不可拖动**（左键拖画布后节点位移 0）、**普通滚轮不被 preventDefault**
+ *   （引擎无条件吞滚轮，嵌入必须拦在 capture 阶段，否则指针悬在图上会把笔记
+ *   滚动卡死）、超限（>500 节点）降级为只读大纲且**不建引擎**、提示行含实际
+ *   节点数与上限、**容器收窄即按新宽度重排**（观察器常驻：把 640px 的宽内容
+ *   嵌入收窄到 240px，断言高度变小且节点仍全在挂载点内——退回「挂载失败才建
+ *   观察器」时高度口径锁死在首帧，内容会被 `overflow: hidden` 裁掉）；
  * - 不覆盖：样式级联的极端回归。历史上有害规则
  *   `.mindmap-canvas-container > div{width:100%}` 会在 foreignObject 渲染路径下
  *   放大测宽（引擎的离屏测宽元素是**挂在画布容器下的 position:fixed 子 div**，
@@ -373,7 +384,24 @@ export class TFolder {}
 export class MarkdownView {}
 export class WorkspaceLeaf {}
 export class Plugin {}
-export class Component {}
+/**
+ * Component / MarkdownRenderChild：代码块嵌入探针要用**真实**渲染子
+ * （features/mindmap-codeblock 的 MindmapEmbedRenderChild 继承它），
+ * 故这里补「登记即忽略」的最小面——探针手动调 onload()，不模拟卸载调度。
+ */
+export class Component {
+	register() {}
+	registerEvent() {}
+	registerDomEvent() {}
+}
+export class MarkdownRenderChild extends Component {
+	constructor(containerEl) {
+		super();
+		this.containerEl = containerEl;
+	}
+	onload() {}
+	onunload() {}
+}
 export class FileSystemAdapter {
 	getBasePath() {
 		return '/';
@@ -437,6 +465,10 @@ export function loadMathJax() {
 export function finishRenderMath() {
 	return Promise.resolve();
 }
+// prism-code 的具名导入（代码块嵌入经 node-content-factory 触达；同上只保链接）
+export function loadPrism() {
+	return Promise.resolve({});
+}
 `;
 
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
@@ -491,6 +523,12 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		'\\',
 		'/',
 	);
+	const mindmapCodeblockModule = join(
+		ROOT,
+		'src',
+		'features',
+		'mindmap-codeblock.ts',
+	).replaceAll('\\', '/');
 	const serialized = JSON.stringify(
 		SCENARIOS.map(({ name, data }) => ({ name, data })),
 		null,
@@ -506,6 +544,7 @@ import { openNodeInlineEditor } from ${JSON.stringify(inlineEditorModule)};
 import { padForeignObjectsForExport } from ${JSON.stringify(exportPaddingModule)};
 import { injectObsidianCssVarsIntoExportSvg } from ${JSON.stringify(exportCssVarsModule)};
 import { injectMathStylesIntoExportSvg, pinMathContainerHeightsInExportSvg } from ${JSON.stringify(mathJaxModule)};
+import { EMBED_CANVAS_CLASS, EMBED_NOTICE_CLASS, EMBED_OUTLINE_CLASS, MindmapEmbedRenderChild } from ${JSON.stringify(mindmapCodeblockModule)};
 
 const scenarios = ${serialized};
 
@@ -559,6 +598,216 @@ for (const { name, data } of scenarios) {
 		options,
 	);
 }
+
+// —— mindmap 代码块嵌入探针（features/mindmap-codeblock，2026-10-13）——
+// 四条契约只有真实 DOM 能验（单测只覆盖纯判据，见 tests/mindmap-codeblock.test.ts）：
+// ① 只读引擎**真建起来了**（.smm-node 出现 ⇒ 解析 → 图片/uid → 引擎装配整链通）；
+// ② 普通滚轮**不**被 preventDefault——引擎 Event.onMousewheel 无条件
+//    preventDefault（vendor upstream core/event/Event.js:148-150），嵌入若不拦，
+//    指针悬在图上的用户会把**笔记滚动卡死**在嵌入图上；这里在引擎容器内派发一个
+//    真实可取消 wheel 事件读 defaultPrevented；
+// ③ 超限（> CODE_BLOCK_MAX_NODES）**降级为只读大纲**且不建引擎；
+// ④ **容器宽度变化即重排**：观察器必须**常驻**（首帧同步挂载成功也要建——
+//    此处一旦退回「挂载失败才建观察器」，高度口径就锁死在首帧：容器变窄后内容
+//    被 overflow:hidden 裁掉）。做法：一个宽内容嵌入（heading 链 6 级，天然宽度
+//    远大于容器）先按 640px 量一次，随后收窄到 240px 再量一次（500ms 后写
+//    #embed-resize-probe 探针）：断言高度变小**且**节点仍全在挂载点内。
+// 同时验证 styles.css 的尺寸链：.tmm-embed（外框）+ .tmm-embed-canvas 高度
+// （缺 height 会让 width/height 正则无约束，引擎在 0 尺寸下静默不建——这正是
+// 本探针要钉住的退化方向）。
+// Obsidian 运行时给 HTMLElement.prototype 注入 createDiv/createEl/empty/addClass；
+// 无头页没有它们，这里补最小实现（仅本探针用，其它探针口径不变）。
+HTMLElement.prototype.empty = function () {
+	while (this.firstChild) this.removeChild(this.firstChild);
+	return this;
+};
+HTMLElement.prototype.addClass = function (...names) {
+	this.classList.add(...names);
+	return this;
+};
+HTMLElement.prototype.createEl = function (tag, info) {
+	const el = document.createElement(tag);
+	// Obsidian 允许「字符串 = class」与「{ cls, text } 对象」两种形态
+	if (typeof info === 'string') {
+		el.className = info;
+	} else if (info) {
+		if (info.cls) el.className = info.cls;
+		if (info.text) el.textContent = info.text;
+	}
+	this.appendChild(el);
+	return el;
+};
+HTMLElement.prototype.createDiv = function (info) {
+	return this.createEl('div', info);
+};
+
+const embedApp = {
+	isDarkMode: () => false,
+	vault: { getFileByPath: () => null },
+	workspace: { on: () => ({}) },
+};
+const embedConfig = () => ({
+	layout: 'logicalStructure',
+	lineStyle: 'auto',
+	themePref: 'default',
+	lang: 'zh',
+});
+/** 挂一个嵌入渲染子（容器走 styles.css 的真实尺寸链） */
+function mountEmbed(id, source) {
+	const holder = document.createElement('div');
+	holder.id = id;
+	holder.className = 'tmm-embed';
+	holder.style.width = '640px';
+	document.body.appendChild(holder);
+	const child = new MindmapEmbedRenderChild(
+		embedApp,
+		source,
+		holder,
+		'notes/embed.md',
+		embedConfig,
+	);
+	child.onload();
+	return { holder, child };
+}
+
+const embedSmall = mountEmbed(
+	'map-embed',
+	'# 中心主题\\n## 分支 A\\n- 叶子 1\\n- 叶子 2',
+);
+// 超限：虚拟根 + 601 个子节点 = 602 节点 > CODE_BLOCK_MAX_NODES(500) ⇒ 降级大纲
+const embedBig = mountEmbed(
+	'map-embed-big',
+	Array.from({ length: 601 }, (_, i) => '- n' + i).join('\\n'),
+);
+// 宽度变化探针用：heading 链 6 级（每级各占一个节点宽度）⇒ 天然宽度远大于容器，
+// 收窄后必须重新按比例缩放才可能装下（见上方契约 ④）
+const embedWide = mountEmbed(
+	'map-embed-wide',
+	['# L1', '## L2', '### L3', '#### L4', '##### L5', '###### L6'].join('\\n'),
+);
+
+window.setTimeout(() => {
+	const probe = document.createElement('pre');
+	probe.id = 'embed-probe';
+	try {
+		const canvas = embedSmall.holder.querySelector('.' + EMBED_CANVAS_CLASS);
+		let wheelDefaultPrevented = null;
+		if (canvas) {
+			const event = new WheelEvent('wheel', {
+				deltaY: 120,
+				bubbles: true,
+				cancelable: true,
+			});
+			canvas.dispatchEvent(event);
+			wheelDefaultPrevented = event.defaultPrevented;
+		}
+		const rect = canvas ? canvas.getBoundingClientRect() : null;
+		// —— 完整显示：所有节点矩形必须落在挂载点内（Mermaid 式「不裁切」）——
+		const nodeRects = canvas
+			? [...canvas.querySelectorAll('.smm-node')].map((el) =>
+					el.getBoundingClientRect(),
+				)
+			: [];
+		let nodesOutside = 0;
+		let contentHeight = null;
+		if (rect && nodeRects.length > 0) {
+			nodesOutside = nodeRects.filter(
+				(r) =>
+					r.left < rect.left - 2 ||
+					r.top < rect.top - 2 ||
+					r.right > rect.right + 2 ||
+					r.bottom > rect.bottom + 2,
+			).length;
+			const minTop = Math.min(...nodeRects.map((r) => r.top));
+			const maxBottom = Math.max(...nodeRects.map((r) => r.bottom));
+			contentHeight = Math.round(maxBottom - minTop);
+		}
+		// —— 不可拖动：左键拖动画布若仍生效，节点相对挂载点会位移 ——
+		let panShift = null;
+		if (canvas && nodeRects.length > 0) {
+			const nodeEl = canvas.querySelector('.smm-node');
+			const before = nodeEl.getBoundingClientRect().left;
+			const box = canvas.getBoundingClientRect();
+			const cx = box.left + 20;
+			const cy = box.top + 20;
+			const mk = (type, offsetX) => {
+				const event = new MouseEvent(type, {
+					button: 0,
+					buttons: 1,
+					bubbles: true,
+					cancelable: true,
+					clientX: cx + offsetX,
+					clientY: cy,
+				});
+				// 引擎按 e.which 判鼠标键（上游 core/event/Event.js:103）
+				Object.defineProperty(event, 'which', { value: 1 });
+				return event;
+			};
+			canvas.dispatchEvent(mk('mousedown', 0));
+			canvas.dispatchEvent(mk('mousemove', 40));
+			canvas.dispatchEvent(mk('mouseup', 40));
+			panShift = Math.round(
+				Math.abs(nodeEl.getBoundingClientRect().left - before),
+			);
+		}
+		const notice = embedBig.holder.querySelector('.' + EMBED_NOTICE_CLASS);
+		probe.textContent = JSON.stringify({
+			canvas: rect
+				? { width: Math.round(rect.width), height: Math.round(rect.height) }
+				: null,
+			resize: canvas ? getComputedStyle(canvas).resize : null,
+			mountedNodes: embedSmall.holder.querySelectorAll('.smm-node').length,
+			nodesOutside,
+			contentHeight,
+			panShift,
+			wheelDefaultPrevented,
+			bigEngineNodes: embedBig.holder.querySelectorAll('.smm-node').length,
+			bigOutline: embedBig.holder.querySelectorAll(
+				'.' + EMBED_OUTLINE_CLASS,
+			).length,
+			bigNotice: notice ? notice.textContent : null,
+		});
+	} catch (error) {
+		probe.textContent = JSON.stringify({
+			error: String((error && error.message) || error),
+		});
+	}
+	document.body.appendChild(probe);
+
+	// —— 契约 ④：容器收窄后必须按新宽度重算（观察器常驻） ——
+	// 先记下 640px 下的高度，再收窄到 240px；500ms 后（等观察器回调 + 100ms
+	// 节流窗口 + 布局落地）写**独立探针**读新高度与越界节点数，断言见 checkEmbed。
+	const wideCanvas = embedWide.holder.querySelector('.' + EMBED_CANVAS_CLASS);
+	const wideBefore = wideCanvas
+		? Math.round(wideCanvas.getBoundingClientRect().height)
+		: null;
+	embedWide.holder.style.width = '240px';
+	window.setTimeout(() => {
+		const resizeProbe = document.createElement('pre');
+		resizeProbe.id = 'embed-resize-probe';
+		const canvasNow = embedWide.holder.querySelector('.' + EMBED_CANVAS_CLASS);
+		const rectNow = canvasNow ? canvasNow.getBoundingClientRect() : null;
+		// 收窄后仍越界的节点数：未重排时内容停在旧比例/旧中心 ⇒ 必然越界
+		const outsideNow = rectNow
+			? [...canvasNow.querySelectorAll('.smm-node')].filter((el) => {
+					const r = el.getBoundingClientRect();
+					return (
+						r.left < rectNow.left - 2 ||
+						r.top < rectNow.top - 2 ||
+						r.right > rectNow.right + 2 ||
+						r.bottom > rectNow.bottom + 2
+					);
+				}).length
+			: null;
+		resizeProbe.textContent = JSON.stringify({
+			before: wideBefore,
+			after: rectNow ? Math.round(rectNow.height) : null,
+			afterWidth: rectNow ? Math.round(rectNow.width) : null,
+			nodesOutside: outsideNow,
+		});
+		document.body.appendChild(resizeProbe);
+	}, 400);
+}, 400);
 
 // —— 场景指标探针：**按子节点定位**读几何与图标（2026-10-11 修正） ——
 // 为什么不能再用容器级 DOM 查询：场景根节点的文本就是场景名（map-inline 的根文本是
@@ -3643,6 +3892,128 @@ function probeText(dom, id) {
 }
 
 /** 解析探针 JSON：返回 `{ probe }` 或 `{ failures }` */
+/**
+ * 校验代码块嵌入探针（由入口脚本写入 `#embed-probe` 与 `#embed-resize-probe`，
+ * 见 buildEntrySource）：只读引擎装配 + **内容完整可见且容器随内容**（Mermaid
+ * 形态）+ 不可调节/不可拖动 + 滚轮归宿主页面 + 超限降级大纲 + **容器收窄即按
+ * 新宽度重排**（观察器常驻，见 verify-visual 入口的契约 ④）。
+ */
+function checkEmbed(dom) {
+	const { probe, failures: parseFailures } = readProbe(
+		dom,
+		'embed-probe',
+		'代码块嵌入',
+	);
+	if (parseFailures) return parseFailures;
+	const failures = [];
+	if (!probe.canvas) {
+		failures.push(
+			'嵌入容器内没有 .tmm-embed-canvas（解析/装配在挂载点之前就失败？）',
+		);
+	} else {
+		if (probe.canvas.width !== 640) {
+			failures.push(
+				`嵌入挂载点宽 ${probe.canvas.width} ≠ 640（styles.css 宽度链断裂）`,
+			);
+		}
+		// 容器高度是**输出**（按比例反算的内容高）：固定 360px 或留大片空白都算退化
+		if (!(probe.canvas.height > 0) || probe.canvas.height >= 360) {
+			failures.push(
+				`嵌入挂载点高 ${probe.canvas.height} 未随内容（应 < 360 且 > 0；` +
+					'固定高度会让小图周围留一大片空白）',
+			);
+		}
+		if (
+			typeof probe.contentHeight === 'number' &&
+			probe.canvas.height - probe.contentHeight > 48
+		) {
+			failures.push(
+				`挂载点比内容高 ${probe.canvas.height - probe.contentHeight}px > 48px` +
+					'（容器未随内容收拢）',
+			);
+		}
+		if (probe.resize !== 'none') {
+			failures.push(
+				`挂载点带 resize 手柄（computed resize=${probe.resize}）：嵌入不可调节`,
+			);
+		}
+	}
+	// 块体 `# 中心主题 / ## 分支 A / - 叶子 1 / - 叶子 2` = 4 个节点
+	if (probe.mountedNodes !== 4) {
+		failures.push(
+			`只读引擎渲染节点数 ${probe.mountedNodes} ≠ 4（块体未被渲染为导图）`,
+		);
+	}
+	// 完整显示：节点矩形不得越过挂载点边界（overflow 裁切会让内容看不见）
+	if (probe.nodesOutside !== 0) {
+		failures.push(`有 ${probe.nodesOutside} 个节点越出挂载点边界（内容被裁切）`);
+	}
+	// 不可拖动：引擎原生 isDisableDrag 未生效时，左键拖画布会把内容推走
+	if (probe.panShift !== 0) {
+		failures.push(
+			`左键拖动使节点位移 ${probe.panShift}px ≠ 0（画布平移未关：readonly 不含它）`,
+		);
+	}
+	// 滚轮契约：引擎无条件 preventDefault ⇒ 嵌入必须拦在 capture 阶段且只
+	// stopPropagation（不 preventDefault），否则宿主笔记滚动被卡死
+	if (probe.wheelDefaultPrevented !== false) {
+		failures.push(
+			`滚轮被 preventDefault（${probe.wheelDefaultPrevented}）：笔记滚动会被卡死在嵌入图上`,
+		);
+	}
+	if (probe.bigEngineNodes !== 0) {
+		failures.push(`超限嵌入仍建了引擎（.smm-node ${probe.bigEngineNodes} ≠ 0）`);
+	}
+	if (probe.bigOutline !== 1) {
+		failures.push(
+			`超限嵌入缺只读大纲（.tmm-embed-outline ${probe.bigOutline} ≠ 1）`,
+		);
+	}
+	// 降级必须可见（不静默），且提示行要带上实际节点数与上限（i18n 占位符替换）
+	if (
+		typeof probe.bigNotice !== 'string' ||
+		!/602/.test(probe.bigNotice) ||
+		!/500/.test(probe.bigNotice)
+	) {
+		failures.push(
+			`超限提示行未含节点数 602 与上限 500：${JSON.stringify(probe.bigNotice)}`,
+		);
+	}
+
+	// 契约 ④：容器收窄后必须按**新宽度**重算高度（观察器常驻）。这条只有真实
+	// 浏览器能验：RO 回调 + 100ms 节流 + 布局落地都不在单测覆盖面内。
+	const { probe: resizeProbe, failures: resizeFailures } = readProbe(
+		dom,
+		'embed-resize-probe',
+		'嵌入收窄重排',
+	);
+	if (resizeFailures) {
+		return failures.concat(resizeFailures);
+	}
+	if (typeof resizeProbe.after !== 'number') {
+		failures.push('收窄后读不到嵌入挂载点（.tmm-embed-canvas 缺失）');
+	} else if (resizeProbe.afterWidth !== 240) {
+		failures.push(
+			`收窄后嵌入挂载点宽 ${resizeProbe.afterWidth} ≠ 240（挂载点未随容器收窄）`,
+		);
+	} else {
+		// 未重排时高度停在 640px 那次的口径（不变），且内容仍按旧比例与旧中心
+		// 摆放 ⇒ 必然越界（overflow:hidden 会让用户看到被裁掉的内容）
+		if (!(resizeProbe.after < resizeProbe.before)) {
+			failures.push(
+				`收窄到 240px 后高度未按新宽度重算（${resizeProbe.before} → ${resizeProbe.after}）：` +
+					'观察器未常驻，高度口径锁死在首帧',
+			);
+		}
+		if (resizeProbe.nodesOutside !== 0) {
+			failures.push(
+				`收窄后仍有 ${resizeProbe.nodesOutside} 个节点越出挂载点（未按新宽度缩放）`,
+			);
+		}
+	}
+	return failures;
+}
+
 function readProbe(dom, id, label) {
 	const raw = probeText(dom, id);
 	if (!raw) return { failures: [`未找到${label}探针（入口脚本未执行？）`] };
@@ -4948,6 +5319,15 @@ async function runChecks(dom, diag) {
 	);
 	for (const failure of perfBoxFailures) diag.log(`      - ${failure}`);
 	failed += perfBoxFailures.length;
+
+	// 代码块嵌入契约（```mindmap）：只读引擎装配 + 滚轮归宿主页面 + 超限降级
+	diag.log('  · perf-box 探针完成，进入 embed 探针');
+	const embedFailures = safe('embed 探针', () => checkEmbed(dom));
+	diag.log(
+		`  ${embedFailures.length === 0 ? '✓' : '✗'} embed 代码块嵌入（只读 + 随内容高度 + 不可拖动/调节 + 滚轮归页面 + 超限降级 + 收窄即重排）`,
+	);
+	for (const failure of embedFailures) diag.log(`      - ${failure}`);
+	failed += embedFailures.length;
 
 	// 悬停预览锚定契约：SVG 节点补齐 offsetWidth/offsetHeight（弹窗可上下翻转）
 	diag.log('  · viewport 探针完成，进入 anchor 探针');

@@ -3,7 +3,7 @@
  * 增删节点图片 + 引用归一 + 拖拽/粘贴路径共享入口。
  * 被 view-toolbar.ts / view-context-menu.ts / view-dnd.ts / view-paste.ts 共用。
  */
-import { App } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { ENGINE_COMMANDS, getNodeDataString } from '../engine/mindmap';
 import {
 	createNaturalSizeSetNodeImageOptions,
@@ -21,7 +21,7 @@ import {
 import type { MdNodeData } from '../core/node-data';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
-import { requireActiveNode } from './view-common';
+import { insertChildNodeWithData, requireActiveNode } from './view-common';
 
 /** 单独移除节点图片（不影响节点与其他数据） */
 export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): void {
@@ -122,10 +122,7 @@ export async function applyNodeImage(
 	}
 	if (mdTarget) {
 		data.mdImageTarget = mdTarget;
-		// 语法形态跟随官方设置「Use \[\[Wikilinks\]\]」（该设置同时管 links 与
-		// images）：关闭 → 写 `![alt](路径)`，开启（默认）→ 写 `![[路径]]`。
-		// 仅**新建/换图**时按设置取——既有图的形态由解析期记录、不改写。
-		data.mdImageStyle = prefersMarkdownLinks(view.app) ? 'md' : 'wiki';
+		data.mdImageStyle = imageMdStyle(view.app);
 	} else {
 		delete data.mdImageTarget;
 		delete data.mdImageStyle;
@@ -133,6 +130,72 @@ export async function applyNodeImage(
 	// 插入/更换是用户意图：清除「加载期自动校正」标记，本次尺寸照旧回写
 	delete data.mdImageAutoSize;
 	view.scheduleSave();
+}
+
+/**
+ * 在指定父节点下新建**纯图节点**承载图片（图片独占节点语义：无文本）。
+ *
+ * 「图片贴入导图」的**唯一落点实现**（2026-10-13 收口，此前 view-dnd 的私有
+ * `insertImageChildNode` 与本文件的建图逻辑各持一份）：拖入多图时其余各占一个
+ * 子节点、拖入/粘贴**未选中节点**时挂到渲染根下（两者由调用方选好 parent）。
+ *
+ * 初始数据**一次给全**（引擎没有按插入结果取回节点的公开途径，见
+ * view-common.insertChildNodeWithData 文件头）。图片三字段与引擎 SET_NODE_IMAGE
+ * 命令的写入面一致（vendor `setNodeImage` 实测：
+ * `{image, imageTitle, imageSize:{width,height,custom}}`）——**imageSize 缺失
+ * 会让 createImgNode → getImgShowSize 解构 TypeError、该节点渲染链中断**
+ * （见 images-path.ensureDefaultImageSizes），故尺寸必须随插入带上。
+ *
+ * md 回写字段与 applyNodeImage 同口径：`mdImageTarget` 取库内路径，
+ * `mdImageStyle` 走 `imageMdStyle`（官方「Use \[\[Wikilinks\]\]」同时管 links
+ * 与 images）——图片的写入形态只有这一份判定，勿在别处另定。
+ *
+ * @returns 是否插入成功；探测尺寸期间引擎换代（父节点已不在新树上）返回 false
+ */
+export async function createImageChildNode(
+	view: MindMapViewContext,
+	parent: MindMapNode,
+	file: TFile,
+): Promise<boolean> {
+	const engine = view.mindMap;
+	if (!engine) {
+		return false;
+	}
+	const options = await createNaturalSizeSetNodeImageOptions(
+		view.app.vault.getResourcePath(file),
+	);
+	// 探测尺寸期间可能换文件/重建引擎：父节点已不在新树上，写入会静默丢失
+	if (view.mindMap !== engine) {
+		return false;
+	}
+	const inserted = insertChildNodeWithData(view, parent, {
+		text: '',
+		image: options.url,
+		imageTitle: options.title,
+		imageSize: {
+			width: options.width,
+			height: options.height,
+			custom: options.custom,
+		},
+		mdImageTarget: file.path,
+		mdImageStyle: imageMdStyle(view.app),
+	});
+	if (inserted) {
+		view.scheduleSave();
+	}
+	return inserted;
+}
+
+/**
+ * 图片回写**形态**：跟随官方设置「Use \[\[Wikilinks\]\]」（该设置同时管 links
+ * 与 images）——关闭 → `![alt](路径)`（'md'），开启（默认）→ `![[路径]]`
+ * （'wiki'）。仅**新建/换图**时按设置取：既有图的形态由解析期记录、不改写。
+ *
+ * 图片的形态只有这一份判定：`applyNodeImage`（换图）与 `createImageChildNode`
+ * （新建纯图节点）同口径，另写一份必然漂移（AGENTS.md 硬规则 5）。
+ */
+function imageMdStyle(app: App): 'md' | 'wiki' {
+	return prefersMarkdownLinks(app) ? 'md' : 'wiki';
 }
 
 /** 引用归一：显示地址 + md 回写目标 */

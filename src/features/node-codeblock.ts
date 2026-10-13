@@ -13,7 +13,8 @@
  * 反馈与剪贴板失败均**不抛穿**渲染链：失败仅 `console.warn`（可诊断）。
  */
 import { CODE_BLOCK_CLASS, CODE_COPY_CLASS } from './node-inline-content';
-import type { MindMapViewContext } from './view-context';
+import type { EventBinder } from '../core/event-binder';
+import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 
 /** 复制按钮命中：构建侧类名的单一来源（node-inline-content 导出） */
 const COPY_BUTTON_SELECTOR = `.${CODE_COPY_CLASS}`;
@@ -69,7 +70,8 @@ export function resolveCodeCopyTarget(
 		return null;
 	}
 	const embedded = button.getAttribute('data-code');
-	if (embedded !== null && embedded !== undefined) {
+	// getAttribute 只会返回 `string | null`：`!== undefined` 恒真，是冗余条件
+	if (embedded !== null) {
 		return { button, text: embedded };
 	}
 	const block = button.closest(CODE_BLOCK_SELECTOR);
@@ -162,15 +164,32 @@ export function hideCopyButtonsInExportSvg(svgElement: unknown): unknown {
 }
 
 /**
- * 注册代码块复制交互（`initMindMap` 内调用一次，与 wikilink 交互同点——
- * 见 `features/view.ts` 的注册块）。命中复制按钮即写剪贴板并按结果反馈；
- * 其余点击**不拦截**（节点选择/编辑等引擎默认语义不受影响）。
+ * 代码块复制交互所需的**最窄访问面**：引擎实例 + 引擎事件绑定器。
+ *
+ * 为什么要收窄：同一份交互有第二个宿主——Markdown 代码块嵌入
+ * （`features/mindmap-codeblock.ts`）只持有自己的引擎实例与绑定器，整张
+ * `MindMapViewContext` 的其余成员（文件/叶子/DOM 面/保存调度）与复制无关。
+ * `MindMapView` 结构化满足本面，视图侧调用点无需改动。
  */
-export function registerCodeBlockInteractions(view: MindMapViewContext): void {
-	if (!view.mindMap) {
+export interface CodeBlockInteractionHost {
+	readonly mindMap: MindMap | null;
+	readonly engineEvents: EventBinder;
+}
+
+/**
+ * 注册代码块复制交互（视图 `initMindMap` 内调用一次，与 wikilink 交互同点——
+ * 见 `features/view.ts` 的注册块；代码块嵌入在挂载后调一次）。
+ * 命中复制按钮即写剪贴板并按结果反馈；其余点击**不拦截**
+ * （节点选择/编辑等引擎默认语义不受影响）。
+ */
+export function registerCodeBlockInteractions(
+	host: CodeBlockInteractionHost,
+): void {
+	const mindMap = host.mindMap;
+	if (!mindMap) {
 		return;
 	}
-	view.engineEvents.onEngine(view.mindMap, 'node_click', (...args: unknown[]) => {
+	host.engineEvents.onEngine(mindMap, 'node_click', (...args: unknown[]) => {
 		const event = args[1] as MouseEvent | undefined;
 		const resolved = resolveCodeCopyTarget(event?.target ?? null);
 		if (!resolved) {

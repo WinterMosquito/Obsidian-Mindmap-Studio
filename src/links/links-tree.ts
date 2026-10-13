@@ -10,7 +10,7 @@
  */
 import { App, TFile } from 'obsidian';
 import { fileLookupIndex } from './file-lookup';
-import { isRemoteOrDataUrl, tryDecodeUri } from '../domain/url';
+import { isRemoteOrDataUrl, urlComparisonForms } from '../domain/url';
 import { walkTree } from '../domain/tree';
 import { formatWikilink, parseWikilink } from '../domain/wikilink';
 import type { WikilinkParts } from '../domain/wikilink';
@@ -206,21 +206,6 @@ function treeHasReferences(tree: MindMapTreeNode): boolean {
 		return undefined;
 	});
 	return found;
-}
-
-/**
- * 地址比对形态：原样 + URL 解码。
- * 节点里存的是资源地址（app://...），Obsidian 对中文/空格等文件名会做
- * URL 编码；直接与原始文件名比较会失配，导致"删除附件后节点不更新"。
- */
-function urlComparisonForms(url: string): string[] {
-	const forms = [url];
-	// 解码失败（个别地址含未编码的 %）只保留原样形态
-	const decoded = tryDecodeUri(url);
-	if (decoded !== null && decoded !== url) {
-		forms.push(decoded);
-	}
-	return forms;
 }
 
 /**

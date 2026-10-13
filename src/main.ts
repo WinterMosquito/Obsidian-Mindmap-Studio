@@ -9,7 +9,7 @@
  * mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
  */
 import { Menu, Plugin, TFile, TFolder } from 'obsidian';
-import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, SETTINGS_APPLY_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS } from './core/constants';
+import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, SETTINGS_APPLY_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS, CODE_BLOCK_LANGUAGE } from './core/constants';
 import { createDebouncer } from './core/concurrency';
 import {
 	MindMapStudioSettings,
@@ -20,6 +20,7 @@ import {
 	type SettingsSanitizeReport,
 } from './settings';
 import { MindMapView } from './features/view';
+import { MindmapEmbedRenderChild } from './features/mindmap-codeblock';
 import { createNewMindMap } from './creation';
 import {
 	isMindMapFile,
@@ -128,6 +129,31 @@ export default class MindMapStudioPlugin extends Plugin {
 		});
 
 		this.registerView(VIEW_TYPE, (leaf) => new MindMapView(leaf, this));
+
+		// ```` ```mindmap ```` 代码块：普通笔记中**只读**渲染块体大纲为导图。
+		// 渲染子交给官方 `ctx.addChild` 托管（容器脱离 DOM 即自动卸载，
+		// 引擎/观察器/事件随之回收）——注册是组合根的职责，渲染逻辑全在
+		// features/mindmap-codeblock.ts。设置经 getter 传窄面（活引用，
+		// 设置变更后新渲染的块即生效）。
+		this.registerMarkdownCodeBlockProcessor(
+			CODE_BLOCK_LANGUAGE,
+			(source, el, ctx) => {
+				ctx.addChild(
+					new MindmapEmbedRenderChild(
+						this.app,
+						source,
+						el,
+						ctx.sourcePath,
+						() => ({
+							layout: this.settings.defaultLayout,
+							lineStyle: this.settings.defaultLineStyle,
+							themePref: this.settings.defaultTheme,
+							lang: this.settings.language,
+						}),
+					),
+				);
+			},
+		);
 
 		// 悬停预览源：导图节点上的 [[wikilink]] 触发 Obsidian 原生页面预览
 		// （core 只处理已注册 hoverLinkSource 的事件，未注册会静默忽略）

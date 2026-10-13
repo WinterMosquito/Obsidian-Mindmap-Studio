@@ -20,7 +20,11 @@ import type {
 } from '../../vendor/simple-mind-map.cjs';
 import type { MdNodeData } from '../core/node-data';
 
-/** 是否为外部/绝对地址（无需按库内路径解析）：库内资源地址以外的远程/数据/file:// 形态 */
+/**
+ * 是否为**无需按库内路径解析**的地址：库内资源地址（`app://`）与远程/数据/
+ * `file://` 形态的并集。注意 `app://` 是**库内**地址——此处的"外部"指
+ * 「已是可直接使用的地址」，不是「库外」。
+ */
 export function isExternalUrl(url: string): boolean {
 	return isAppResourceUrl(url) || isExternalImageRef(url);
 }

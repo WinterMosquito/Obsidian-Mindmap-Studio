@@ -3,10 +3,14 @@
  * 与外部图片导入的分发编排，以及「导入附件目录 vs 直接引用库内文件」的分流边界。
  *
  * 模块只导出 setupDragAndDrop；handleFileDrop / handleDroppedVaultFile /
- * handleDroppedDocument / handleDroppedAttachment / handleExternalFilesDrop /
- * insertImageChildNode 均为私有。本测试用「记录式 onDom 桩」捕获
- * setupDragAndDrop 注册的三类 DOM 监听器，再按事件名触发以驱动私有分发链
- * （Node 环境无真实 DOM，画布/拖拽事件用最小假对象，只实现模块实际访问到的面）。
+ * handleDroppedDocument / handleDroppedAttachment / handleExternalFilesDrop
+ * 均为私有。本测试用「记录式 onDom 桩」捕获 setupDragAndDrop 注册的三类 DOM
+ * 监听器，再按事件名触发以驱动私有分发链（Node 环境无真实 DOM，画布/拖拽事件用
+ * 最小假对象，只实现模块实际访问到的面）。
+ *
+ * 分工：本文件只验证**分发**（调用哪个挂载入口、父节点与文件是谁、提示文案）；
+ * 建图节点的数据形态（image/imageTitle/imageSize + md 回写字段）与探测期守卫由
+ * `view-node-actions.test.ts` 的 createImageChildNode 用例覆盖（跑真实现）。
  *
  * 断言取向：不照搬文案原文，而是用 t(lang, key) 取真实字典值后按模块的拼接
  * 方式组合——文案内容属实现细节，但「前缀 + 文件名 / 数字 + 单位 / 换行分段」
@@ -69,14 +73,13 @@ const h = vi.hoisted(() => ({
 	extractDroppedFileNames: vi.fn<(dataTransfer: DataTransfer) => string[]>(),
 	getActiveNode: vi.fn<(mindMap: MindMap | null) => MindMapNode | null>(),
 	getRenderRoot: vi.fn<(mindMap: MindMap | null) => MindMapNode | null>(),
-	createNaturalSizeSetNodeImageOptions: vi.fn<
-		(url: string | null) => Promise<{
-			url: string;
-			title: string;
-			width: number;
-			height: number;
-			custom: boolean;
-		}>
+	/** 图片建节点入口（已收口到 view-image-actions，本文件只验证分发到它） */
+	createImageChildNode: vi.fn<
+		(
+			view: MindMapViewContext,
+			parent: MindMapNode,
+			file: TFile,
+		) => Promise<boolean>
 	>(),
 }));
 
@@ -146,6 +149,14 @@ vi.mock('../src/features/view-node-actions', async (importOriginal) => {
 		): void => {
 			h.applyMdLink(view, node, url, label);
 		},
+		// 图片建节点（图片独占语义 + 引擎渲染字段）已收口到 view-image-actions：
+		// 本文件只断言「分发到它、父节点与文件是谁」，其数据形态由
+		// view-node-actions 用例覆盖（那里跑真实现）。
+		createImageChildNode: (
+			view: MindMapViewContext,
+			parent: MindMapNode,
+			file: TFile,
+		): Promise<boolean> => h.createImageChildNode(view, parent, file),
 	};
 });
 
@@ -173,19 +184,8 @@ vi.mock('../src/links/links-resolve', () => ({
 		h.extractDroppedFileNames(dataTransfer),
 }));
 
-// 图片尺寸探测要真实解码（Node 下 Image 不可用）：以固定尺寸桩替换，
-// 用来断言 imageSize 三个字段确实来自探测结果而非写死。
-vi.mock('../src/media/images-path', () => ({
-	createNaturalSizeSetNodeImageOptions: (url: string | null) =>
-		h.createNaturalSizeSetNodeImageOptions(url),
-}));
-
 /** 引擎插入命令名（与 vi.mock 提供的常量表一致） */
 const INSERT_CHILD_NODE = 'INSERT_CHILD_NODE';
-/** 尺寸探测桩返回的标题：非空值才能证明 imageTitle 是从探测结果透传的 */
-const ASPECT_TITLE = '探测标题';
-/** 尺寸探测桩返回的尺寸：非默认值才能证明不是写死的 */
-const ASPECT_SIZE = { width: 100, height: 60, custom: true } as const;
 const ZH: Language = 'zh';
 
 // ---- 期望文案构造：字典值走 t()，拼接形态按模块实现复刻 ----
@@ -193,6 +193,11 @@ const ZH: Language = 'zh';
 /** `已设置节点图片：` + 文件名（前缀与文件名之间无分隔符是模块行为） */
 function imageSetOnNode(lang: Language, name: string): string {
 	return `${t(lang, 'common.imageSetOnNode')}${name}`;
+}
+
+/** `已新建图片节点：` + 文件名（图片「贴入导图」的落点提示） */
+function imageNodeCreated(lang: Language, name: string): string {
+	return `${t(lang, 'common.imageNodeCreated')}${name}`;
 }
 
 /** `已将节点链接到` + ` [[名]]` */
@@ -706,7 +711,35 @@ describe('库内文件拖入：分发分支', () => {
 		}
 	});
 
-	it('库内图片 + 无激活节点：提示先选择节点，不挂图不插入', async () => {
+	it('库内图片 + 无激活节点：在渲染根下新建图片节点（贴入导图，不要求先选节点）', async () => {
+		const { view, binder, execCommand } = makeHarness();
+		setupDragAndDrop(view);
+		const file = fakeTFile({
+			extension: 'png',
+			name: 'a.png',
+			basename: 'a',
+			path: 'assets/a.png',
+		});
+		const root = fakeNode();
+		h.resolveDroppedFile.mockReturnValue(file);
+		h.getActiveNode.mockReturnValue(null);
+		h.getRenderRoot.mockReturnValue(root);
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({ files: [fakeFile('a.png', 'image/png')] }),
+		);
+
+		// 引用分支：库内文件直接引用，绝不入库（不复制文件）
+		expect(h.saveImageToVault).not.toHaveBeenCalled();
+		expect(h.applyNodeImage, '不挂到中心主题上').not.toHaveBeenCalled();
+		expect(h.createImageChildNode).toHaveBeenCalledTimes(1);
+		expect(h.createImageChildNode).toHaveBeenCalledWith(view, root, file);
+		expect(execCommand, '建图走收口入口，不在本层插节点').not.toHaveBeenCalled();
+		expect(h.noticeCalls).toEqual([imageNodeCreated(ZH, 'a.png')]);
+	});
+
+	it('库内图片 + 无激活节点且渲染根不可用：提示尚未加载、不建节点', async () => {
 		const { view, binder, execCommand } = makeHarness();
 		setupDragAndDrop(view);
 		h.resolveDroppedFile.mockReturnValue(
@@ -718,18 +751,18 @@ describe('库内文件拖入：分发分支', () => {
 			}),
 		);
 		h.getActiveNode.mockReturnValue(null);
+		h.getRenderRoot.mockReturnValue(null);
 
 		await fireDrop(
 			binder,
 			makeDataTransfer({ files: [fakeFile('a.png', 'image/png')] }),
 		);
 
-		expect(h.noticeCalls).toEqual([textOf(ZH, 'common.selectNodeBeforeDrop')]);
+		expect(h.noticeCalls).toEqual([textOf(ZH, 'common.notLoaded')]);
+		expect(h.createImageChildNode).not.toHaveBeenCalled();
 		expect(h.applyNodeImage).not.toHaveBeenCalled();
 		expect(execCommand).not.toHaveBeenCalled();
 		expect(h.saveImageToVault).not.toHaveBeenCalled();
-		// 图片分支不查根节点（有节点与否都走「先选择节点」提示）
-		expect(h.getRenderRoot).not.toHaveBeenCalled();
 	});
 
 	it('可链接附件（表驱动扩展名）：选中走回形针通道，未选中在根节点下新建并携带附件数据', async () => {
@@ -1463,21 +1496,128 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 		expect(h.saveAttachmentToVault).not.toHaveBeenCalled();
 	});
 
-	it('外部图片但未选中主题：只提示先选择节点，不保存、不弹导入提示', async () => {
+	it('外部图片但未选中主题：贴入导图（渲染根下新建图片节点），不再要求先选节点', async () => {
 		const { view, binder } = makeHarness();
 		setupDragAndDrop(view);
+		const root = fakeNode();
+		const saved = fakeTFile({
+			extension: 'png',
+			name: 'photo.png',
+			basename: 'photo',
+			path: 'attachments/photo.png',
+		});
 		h.getActiveNode.mockReturnValue(null);
+		h.getRenderRoot.mockReturnValue(root);
+		h.saveImageToVault.mockResolvedValue(saved);
 
 		await fireDrop(
 			binder,
 			makeDataTransfer({ files: [fakeFile('photo.png', 'image/png')] }),
 		);
 
-		// 归属检查在「正在导入」提示之前 → 只留一条提示
+		expect(h.saveImageToVault).toHaveBeenCalledTimes(1);
+		expect(h.applyNodeImage, '不把那唯一的图盖到中心主题上').not.toHaveBeenCalled();
+		expect(h.createImageChildNode).toHaveBeenCalledTimes(1);
+		expect(h.createImageChildNode).toHaveBeenCalledWith(view, root, saved);
+		// 无归属的单图不再是「已设为节点图片」：统一走导入汇总
+		expect(h.noticeCalls).toEqual([
+			importingToVault(ZH, 1),
+			importedSummary(ZH, 1),
+		]);
+		expect(h.noticeTimeouts).toEqual([undefined, 5000]);
+	});
+
+	it('外部多图但未选中主题：每张各建一个根下的纯图节点', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		const root = fakeNode();
+		const first = fakeTFile({
+			extension: 'png',
+			name: 'a.png',
+			basename: 'a',
+			path: 'attachments/a.png',
+		});
+		const second = fakeTFile({
+			extension: 'png',
+			name: 'b.png',
+			basename: 'b',
+			path: 'attachments/b.png',
+		});
+		h.getActiveNode.mockReturnValue(null);
+		h.getRenderRoot.mockReturnValue(root);
+		h.saveImageToVault
+			.mockResolvedValueOnce(first)
+			.mockResolvedValueOnce(second);
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({
+				files: [fakeFile('a.png', 'image/png'), fakeFile('b.png', 'image/png')],
+			}),
+		);
+
+		expect(h.createImageChildNode).toHaveBeenCalledTimes(2);
+		expect(h.createImageChildNode).toHaveBeenNthCalledWith(1, view, root, first);
+		expect(h.createImageChildNode).toHaveBeenNthCalledWith(2, view, root, second);
+		expect(h.applyNodeImage, '无归属不走「挂到某节点」通道').not.toHaveBeenCalled();
+	});
+
+	it('未选中主题且载荷含非图片：提示先选择节点、不落盘（不做「部分贴入」）', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		h.getActiveNode.mockReturnValue(null);
+		h.getRenderRoot.mockReturnValue(fakeNode());
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({
+				files: [
+					fakeFile('photo.png', 'image/png'),
+					fakeFile('说明.txt', 'text/plain'),
+				],
+			}),
+		);
+
 		expect(h.noticeCalls).toEqual([textOf(ZH, 'common.selectNodeBeforeDrop')]);
-		expect(h.noticeTimeouts).toEqual([undefined]);
 		expect(h.saveImageToVault).not.toHaveBeenCalled();
-		expect(h.applyNodeImage).not.toHaveBeenCalled();
+		expect(h.saveAttachmentToVault).not.toHaveBeenCalled();
+		expect(h.createImageChildNode).not.toHaveBeenCalled();
+	});
+
+	it('未选中主题 + 全是图片但渲染根不可用：提示尚未加载、不落盘', async () => {
+		const { view, binder } = makeHarness();
+		setupDragAndDrop(view);
+		h.getActiveNode.mockReturnValue(null);
+		h.getRenderRoot.mockReturnValue(null);
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({ files: [fakeFile('photo.png', 'image/png')] }),
+		);
+
+		expect(h.noticeCalls).toEqual([textOf(ZH, 'common.notLoaded')]);
+		expect(h.saveImageToVault).not.toHaveBeenCalled();
+		expect(h.createImageChildNode).not.toHaveBeenCalled();
+	});
+
+	it('修饰键（Ctrl/Option）拖入但未选中主题：提示先选择节点（绝对链接要落在选中节点上）', async () => {
+		const { view, binder, execCommand } = makeHarness();
+		setupDragAndDrop(view);
+		h.getActiveNode.mockReturnValue(null);
+
+		await fireDrop(
+			binder,
+			makeDataTransfer({
+				files: [fakeFile('photo.png', 'image/png', 1024, 'C:\\tmp\\photo.png')],
+			}),
+			{ ctrlKey: true },
+		);
+
+		expect(h.noticeCalls).toEqual([textOf(ZH, 'common.selectNodeBeforeDrop')]);
+		expect(h.applyMdLink).not.toHaveBeenCalled();
+		expect(h.saveImageToVault).not.toHaveBeenCalled();
+		expect(h.createImageChildNode).not.toHaveBeenCalled();
+		expect(execCommand).not.toHaveBeenCalled();
 	});
 
 	it('多图外部导入：首张挂所选节点，其余各新建独占图片子节点', async () => {
@@ -1515,19 +1655,11 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 			node,
 			'app://vault/attachments/a.png',
 		);
-		// 其余各建一个承载图片的子节点（图片独占语义：无文本 + 引擎渲染字段）
-		expect(h.createNaturalSizeSetNodeImageOptions).toHaveBeenCalledWith(
-			'app://vault/attachments/b.png',
-		);
-		expect(execCommand).toHaveBeenCalledTimes(1);
-		expect(execCommand).toHaveBeenCalledWith(INSERT_CHILD_NODE, false, [node], {
-			text: '',
-			image: 'app://vault/attachments/b.png',
-			imageTitle: ASPECT_TITLE,
-			imageSize: { ...ASPECT_SIZE },
-			mdImageTarget: 'attachments/b.png',
-			isActive: false,
-		});
+		// 其余各建一个承载图片的子节点：走收口后的唯一入口（图片独占语义与引擎
+		// 渲染字段由 view-node-actions 用例覆盖，本文件只验证分发与父节点）
+		expect(h.createImageChildNode).toHaveBeenCalledTimes(1);
+		expect(h.createImageChildNode).toHaveBeenCalledWith(view, node, second);
+		expect(execCommand, '拖入不再自行插节点').not.toHaveBeenCalled();
 		// 多图不再逐张弹「已设置节点图片」：单条汇总 + 归属说明（换行分段）
 		expect(h.noticeCalls).toEqual([
 			importingToVault(ZH, 2),
@@ -1663,7 +1795,7 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 			'导入拖入的文件失败 1 个',
 		);
 		expect(h.applyNodeImage).not.toHaveBeenCalled();
-		expect(h.createNaturalSizeSetNodeImageOptions).not.toHaveBeenCalled();
+		expect(h.createImageChildNode).not.toHaveBeenCalled();
 		expect(execCommand).not.toHaveBeenCalled();
 	});
 
@@ -1716,63 +1848,16 @@ describe('外部文件拖入：导入分支与「导入 vs 引用」边界', () 
 
 		expect(preventDefault).toHaveBeenCalledTimes(1);
 		expect(h.applyNodeImage).not.toHaveBeenCalled();
-		expect(h.createNaturalSizeSetNodeImageOptions).not.toHaveBeenCalled();
+		expect(h.createImageChildNode).not.toHaveBeenCalled();
 		expect(execCommand).not.toHaveBeenCalled();
 		// 只保留「正在导入」：写入被放弃后不再给任何结果提示
 		expect(h.noticeCalls).toEqual([importingToVault(ZH, 1)]);
 		expect(canvas.classes.has('mindmap-drag-over')).toBe(false);
 	});
 
-	it('尺寸探测期间换文件/重建引擎：放弃新建承载子节点', async () => {
-		const { view, binder, execCommand, mutable } = makeHarness();
-		setupDragAndDrop(view);
-		const node = fakeNode();
-		h.getActiveNode.mockReturnValue(node);
-		h.saveImageToVault
-			.mockResolvedValueOnce(
-				fakeTFile({
-					extension: 'png',
-					name: 'a.png',
-					basename: 'a',
-					path: 'attachments/a.png',
-				}),
-			)
-			.mockResolvedValueOnce(
-				fakeTFile({
-					extension: 'png',
-					name: 'b.png',
-					basename: 'b',
-					path: 'attachments/b.png',
-				}),
-			);
-		h.createNaturalSizeSetNodeImageOptions.mockImplementation(async (url) => {
-			// 探测是异步的（真实实现要解码图片）：期间换引擎 → 父节点已不在新树上
-			mutable.mindMap = { execCommand } as unknown as MindMap;
-			return {
-				url: url ?? '',
-				title: ASPECT_TITLE,
-				width: ASPECT_SIZE.width,
-				height: ASPECT_SIZE.height,
-				custom: ASPECT_SIZE.custom,
-			};
-		});
-
-		await fireDrop(
-			binder,
-			makeDataTransfer({
-				files: [fakeFile('a.png', 'image/png'), fakeFile('b.png', 'image/png')],
-			}),
-		);
-
-		// 首张（挂所选节点）已写入，第二张因引擎变更被放弃
-		expect(h.applyNodeImage).toHaveBeenCalledTimes(1);
-		expect(h.createNaturalSizeSetNodeImageOptions).toHaveBeenCalledTimes(1);
-		expect(execCommand).not.toHaveBeenCalled();
-		expect(h.noticeCalls).toEqual([
-			importingToVault(ZH, 2),
-			importedWithPlacement(ZH, 2),
-		]);
-	});
+	// 「尺寸探测期间换文件/重建引擎 → 放弃建图节点」的守卫随实现迁至
+	// view-image-actions.createImageChildNode，用例见 view-node-actions.test.ts；
+	// 本文件只覆盖分发层（分发前的 `view.mindMap !== engine` 守卫见下方用例）。
 
 	it('引擎在入库期间被清空（mindMap 为 null）：不挂图不新建，仅完成入库与提示', async () => {
 		const { view, binder, mutable, execCommand } = makeHarness();
@@ -1822,23 +1907,15 @@ function resetHarnessMocks(): void {
 	h.extractDroppedFileNames.mockReset();
 	h.getActiveNode.mockReset();
 	h.getRenderRoot.mockReset();
-	h.createNaturalSizeSetNodeImageOptions.mockReset();
+	h.createImageChildNode.mockReset();
 
 	h.resolveDroppedFile.mockReturnValue(null);
 	h.extractDroppedFileNames.mockReturnValue([]);
 	h.getActiveNode.mockReturnValue(null);
 	h.getRenderRoot.mockReturnValue(null);
+	h.createImageChildNode.mockResolvedValue(true);
 	h.saveImageToVault.mockResolvedValue(null);
 	h.saveAttachmentToVault.mockResolvedValue(null);
-	h.createNaturalSizeSetNodeImageOptions.mockImplementation((url) =>
-		Promise.resolve({
-			url: url ?? '',
-			title: ASPECT_TITLE,
-			width: ASPECT_SIZE.width,
-			height: ASPECT_SIZE.height,
-			custom: ASPECT_SIZE.custom,
-		}),
-	);
 }
 
 afterEach(() => {

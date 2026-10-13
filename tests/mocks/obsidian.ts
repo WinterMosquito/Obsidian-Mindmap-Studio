@@ -71,7 +71,47 @@ export class Modal {
 	}
 }
 
-export class Component {}
+/**
+ * Component 桩：只补「注册即记录」的最小面。
+ *
+ * 生产代码只用它做生命周期登记（`register` 收集清理回调、`registerEvent`
+ * 登记官方事件），真实语义（卸载时按登记清理）由 Obsidian 提供；测试若需
+ * 驱动卸载，直接取 `cleanups` 逐条调用即可，不在本文件实现调度。
+ */
+export class Component {
+	/** 已登记的清理回调（测试可读；生产代码不读） */
+	readonly cleanups: (() => void)[] = [];
+	/** 已登记的官方事件（测试可读；生产代码不读） */
+	readonly registeredEvents: unknown[] = [];
+
+	register(cleanup: () => void): void {
+		this.cleanups.push(cleanup);
+	}
+
+	registerEvent(eventRef: unknown): void {
+		this.registeredEvents.push(eventRef);
+	}
+}
+
+/**
+ * MarkdownRenderChild 桩：`features/mindmap-codeblock` 的渲染子基类。
+ *
+ * 只保证「可继承 + 构造时接住 containerEl + register 可链路」——
+ * 真实渲染（引擎挂载、观察器、DOM 装配）由 verify:visual 的
+ * codeblock-embed 场景覆盖，Node 环境不虚拟 DOM。
+ */
+export class MarkdownRenderChild extends Component {
+	containerEl: HTMLElement;
+
+	constructor(containerEl: HTMLElement) {
+		super();
+		this.containerEl = containerEl;
+	}
+
+	onload(): void {}
+
+	onunload(): void {}
+}
 
 /**
  * 最小 Scope 桩：记录注册项，供快捷键接线断言。

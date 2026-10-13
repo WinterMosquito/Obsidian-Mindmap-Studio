@@ -75,6 +75,39 @@ export interface CreateMindMapOptions {
 	isDark: boolean;
 	enableDrag: boolean;
 	/**
+	 * **只读嵌入**（Markdown ```mindmap 代码块，可选；缺省 = 可编辑视图）。
+	 *
+	 * 用引擎原生 `readonly`（上游 `constants/defaultOptions.js:13`）而非另造开关：
+	 * 阻断**全部命令**（`core/command/Command.js:106/137/157`）与节点双击进入
+	 * 编辑框、拖拽、多选、图片调宽、画笔（`MindMapNode` / `Drag` / `Select` /
+	 * `NodeImgAdjust` / `Painter` / `TextEdit` 各自早退）；**渲染本身不受影响**
+	 * （`Render.selectAll` 之外无 readonly 分支）。
+	 *
+	 * 为真时 `createMindMap` **不注册任何交互插件**，理由各有实证：
+	 * - `Search` / `KeyboardNavigation` 经 `KeyCommand.bindEvent` 在 `window` 上
+	 *   注册 keydown（上游 `KeyCommand.js:88`），会与宿主笔记抢 `Ctrl+F` 与方向键；
+	 * - `TouchEvent` 抢触屏手势（笔记滚动/手势导航优先）；
+	 * - `DoExport` 在嵌入形态没有任何导出入口，注册属纯空转；
+	 * - `Select` / `Drag` 在 readonly 下本就恒早退。
+	 *
+	 * ⚠ 滚轮**不在** readonly 的豁免范围内：`Event.onMousewheel` 无条件
+	 * `stopPropagation + preventDefault`（上游 `core/event/Event.js:148-150`），
+	 * 嵌入调用方必须自建"滚轮归宿主页面"的拦截（见 `features/mindmap-codeblock`）。
+	 */
+	readonly?: boolean;
+	/**
+	 * **画布拖动（视图平移）**（可选；缺省 = 启用，同可编辑视图）。
+	 *
+	 * 置 `false` ⇒ 引擎原生 `isDisableDrag: true`（上游 `constants/defaultOptions.js:191`）
+	 * 在 `core/view/View.js:34` 与 `:44` 两处早退，关掉**左键/中键拖动画布**。
+	 * 与 `Drag` 插件（节点自身拖拽）无关——后者由 `enableDrag` 管。
+	 *
+	 * 只读嵌入（`readonly: true`）**仍须显式传** `false`：`readonly` 只管命令与
+	 * 节点编辑，不含画布平移——不关掉的话，用户能在「已完整显示」的嵌入图上
+	 * 把内容拖出视野（Mermaid 形态的嵌入没有平移语义）。
+	 */
+	enableViewDrag?: boolean;
+	/**
 	 * 性能模式（虚拟渲染）**引擎级覆盖**（可选，2026-10-09 起生产不再传）：
 	 * 缺省 = 常开，阈值用 `PERFORMANCE_NODE_THRESHOLD`（见
 	 * `core/constants.shouldEnablePerformanceMode`）。保留此通道是给
@@ -341,6 +374,8 @@ export function createMindMap(
 	);
 	/** 节点内联内容渲染器（方案 B 原型；null = 全部节点走引擎默认文本） */
 	const createNodeContent = options.createNodeContent ?? null;
+	/** 只读嵌入（见 CreateMindMapOptions.readonly）：命令/编辑全禁 + 不注册交互插件 */
+	const isReadonly = options.readonly ?? false;
 
 	const mindMap = new MindMap(
 		Object.assign(
@@ -365,14 +400,18 @@ export function createMindMap(
 				openPerformance: performanceEnabled,
 				performanceConfig: { ...PERFORMANCE_CONFIG },
 				enableFreeDrag: options.enableDrag,
+				readonly: isReadonly,
+				// 画布拖动（视图平移）：嵌入置 false（见 CreateMindMapOptions.enableViewDrag）
+				isDisableDrag: options.enableViewDrag === false,
 				customHyperlinkJump: options.onHyperlinkJump ?? null,
 			} satisfies MindMapOptions,
 			{
 				// 画布导航（官方 Canvas「Navigate the canvas」）**由引擎实现**，这里显式
 				// 钉住官方语义，不依赖「引擎默认值恰好一致」（升级换默认值时行为会悄悄变）：
 				// 滚轮 = 平移（官方 :227）、`Ctrl/Cmd + 滚轮` = 以指针为锚缩放（:231，
-				// 故 disableMouseWheelZoom 必须为 false）。中键拖拽（:226）走引擎 event
-				// 模块的 isMiddleMousedown → drag，无对应选项。
+				// 故 disableMouseWheelZoom 必须为 false）。左键/中键拖拽（:226）
+				// 走引擎 event 模块的 isLeft/isMiddleMousedown → 'drag'，由
+				// `isDisableDrag` 统一切断（见 CreateMindMapOptions.enableViewDrag）。
 				// 插件侧**不得**再注册 wheel / pointer 平移（会双重生效或成死代码，
 				// 见 features/view-viewport.ts 文件头；契约测试 tests/vendor-contract）。
 				mousewheelAction: 'move',
@@ -451,18 +490,24 @@ export function createMindMap(
 		}
 	};
 
-	mindMap.addPlugin(Select);
-	mindMap.addPlugin(TouchEvent);
-	// 不注册 AssociativeLine（关联线，2026-10-09 减法）：引擎侧唯一的创建入口是
-	// 引擎自带右键菜单，而本项目从不配置 `opt.contextmenu`——节点右键走
-	// features/view-context-menu 的 Obsidian Menu，故注册了也**没有任何入口能创建**
-	// 关联线，属纯空转。若将来要开放该能力，须同时给出显式入口（工具栏/菜单 + i18n），
-	// 并注意关联线**不进 Markdown**（渲染层状态，不落文件）。
-	mindMap.addPlugin(KeyboardNavigation);
-	mindMap.addPlugin(DoExport);
-	mindMap.addPlugin(Search);
-	if (options.enableDrag) {
-		mindMap.addPlugin(Drag);
+	// 只读嵌入（```mindmap 代码块）不注册任何交互插件：Search / KeyboardNavigation
+	// 经 KeyCommand 在 window 上抢宿主笔记的 Ctrl+F 与方向键，TouchEvent 抢触屏手势，
+	// DoExport 没有入口，Select / Drag 在 readonly 下恒早退（逐条理由见
+	// CreateMindMapOptions.readonly）。
+	if (!isReadonly) {
+		mindMap.addPlugin(Select);
+		mindMap.addPlugin(TouchEvent);
+		// 不注册 AssociativeLine（关联线，2026-10-09 减法）：引擎侧唯一的创建入口是
+		// 引擎自带右键菜单，而本项目从不配置 `opt.contextmenu`——节点右键走
+		// features/view-context-menu 的 Obsidian Menu，故注册了也**没有任何入口能创建**
+		// 关联线，属纯空转。若将来要开放该能力，须同时给出显式入口（工具栏/菜单 + i18n），
+		// 并注意关联线**不进 Markdown**（渲染层状态，不落文件）。
+		mindMap.addPlugin(KeyboardNavigation);
+		mindMap.addPlugin(DoExport);
+		mindMap.addPlugin(Search);
+		if (options.enableDrag) {
+			mindMap.addPlugin(Drag);
+		}
 	}
 	// 命令历史内存控制：每步一条「整树 JSON 快照」，固定条数上限会让单视图历史
 	// 内存随图规模失控（旧策略 500 条 × 500 节点 ≈ 91MB，见 K65/K66）。上限按
@@ -476,7 +521,10 @@ export function createMindMap(
 	// 「适应画布」、也无提示），与插件「自动整理」命令口径不一；而本插件不定义
 	// 默认热键（命令一律由用户在 Hotkeys 中自行分配）。故移除它——自动整理统一
 	// 走 mindmap-arrange 命令，用户把它绑到 Ctrl+L 时同样以「适应画布」收尾。
-	removeEngineShortcut(mindMap, 'Control+l');
+	// 只读嵌入没注册 KeyboardNavigation，无此快捷键可移除。
+	if (!isReadonly) {
+		removeEngineShortcut(mindMap, 'Control+l');
+	}
 
 	// 首帧前批量预测量 + 元素复用（引擎补丁 5，见 vendor/BUILD.md「补丁清单」）：
 	// 用与正式路径同一条构建链（doc / style / lang 全绑定）预生成自绘内容——
@@ -622,6 +670,43 @@ function syncCanvasGeometry(mindMap: MindMap): void {
 }
 
 /**
+ * 请求引擎重建布局与画布几何（容器尺寸变化时调用）。
+ *
+ * 为什么需要薄封装：`mindMap.resize` 在 `createMindMap` 里被包了一层**零尺寸守卫**
+ * （容器宽/高为 0 时引擎直接抛错），而"零尺寸守卫已装好"这件事只在本文件可见——
+ * 调用方（视图 / 代码块嵌入）直接调 `mindMap.resize()` 时无法表达这层保证。
+ */
+export function resizeMindMap(mindMap: MindMap | null): void {
+	mindMap?.resize();
+}
+
+/**
+ * 按「当前亮暗 + 主题偏好 + 布局 + 连线样式偏好」重算主题配置并写入引擎实例。
+ *
+ * 收口理由：`mindMap.setThemeConfig` 是引擎**内部形态**的唯一写入通道，
+ * 而引擎内部访问只允许出现在 engine/ 层——此前 `services/engine-controller`
+ * 直接调它，本次新增的代码块嵌入也要在 `css-change` 时原地换肤，两处各写一次
+ * 就是第二份收口，故提到此处。
+ *
+ * `isDark` 传**宿主当前亮暗**（`App.isDarkMode()`），`themePref` 是设置里的
+ * 主题偏好（default/light/dark）——两者经 `isDarkTheme` 合成真正的亮暗。
+ */
+export function applyThemeConfig(
+	mindMap: MindMap | null,
+	isDark: boolean,
+	themePref: string,
+	layout: string,
+	lineStyle: string,
+): void {
+	if (!mindMap) {
+		return;
+	}
+	mindMap.setThemeConfig(
+		getThemeConfig(isDarkTheme(themePref, isDark), layout, lineStyle),
+	);
+}
+
+/**
  * 适应画布（性能模式适配）。
  *
  * 引擎 view.fit() 基于可见节点的 SVG 包围盒（rbox）计算缩放；性能模式下
@@ -763,17 +848,29 @@ function readDrawTransform(mindMap: MindMap): {
  * 打开时的默认视口：100% 缩放 + **整体内容居中**（按渲染内容包围盒居中，
  * 不按根节点——根节点居中会让偏心的树偏向一侧）。
  *
- * 顺序：**比例非 1 时先** `setScale(1, 画布中心)` 固定比例（锚定画布中心，
- * 避免内容跳动；比例已是 1 时跳过缩放，见下方「幂等」），再按当前包围盒平移，
- * 使包围盒中心落在画布中心。
- *
- * **幂等**（K70）：比例已是 1 且内容已在画布中心（亚像素）时**零调用**——
- * 不碰 view、不发 `view_data_change`（性能模式下会触发分片整树渲染）；
- * 比例已是 1 时也跳过 `setScale`（vendor 无条件 emit，同款浪费，只是通常
- * 与 `translateXY` 的 emit 落在同一节流窗口，收益更小）。
+ * 语义（含幂等契约、两条测量口径）全在 `centerContentAtScale`，本函数只是
+ * `scale = 1` 的具名入口——**视图侧只用它**，勿直接调泛化版（视图的默认视口
+ * 恒为 100%，那是产品口径，不是实现细节）。
  */
 export function centerContentAtFullScale(mindMap: MindMap | null): void {
-	if (!mindMap) {
+	centerContentAtScale(mindMap, 1);
+}
+
+/**
+ * 按给定比例把**整体内容**居中（`centerContentAtFullScale` 的泛化；供代码块嵌入
+ * 的「按宽度适配」复用）。
+ *
+ * 除比例取值外语义完全一致（含幂等短路的零调用契约、性能模式的数据层几何口径）
+ * ——**勿**另写第二份：视图与嵌入的居中判据必须只有一处。
+ *
+ * 与 `fitMindMap` 的差异：本函数只负责比例与居中，**不做双轴适配**——嵌入的高度
+ * 由 `measureContentFitToWidth` 按（比例 × 原高）反算，交本函数对齐即可。
+ */
+export function centerContentAtScale(
+	mindMap: MindMap | null,
+	scale: number,
+): void {
+	if (!mindMap || !(scale > 0)) {
 		return;
 	}
 	try {
@@ -786,14 +883,14 @@ export function centerContentAtFullScale(mindMap: MindMap | null): void {
 			return;
 		}
 		const transform = readDrawTransform(mindMap);
-		const scaleIsOne =
+		const scaleAligned =
 			transform !== null &&
-			Math.abs(transform.scaleX - 1) < 1e-6 &&
-			Math.abs(transform.scaleY - 1) < 1e-6;
-		/** 比例非 1 时才 setScale（已是 1 时 vendor 也会无条件 emit，属白渲染） */
+			Math.abs(transform.scaleX - scale) < 1e-6 &&
+			Math.abs(transform.scaleY - scale) < 1e-6;
+		/** 比例未对齐时才 setScale（已对齐时 vendor 也会无条件 emit，属白渲染） */
 		const applyScale = (): void => {
-			if (!scaleIsOne) {
-				mindMap.view?.setScale(1, size.width / 2, size.height / 2);
+			if (!scaleAligned) {
+				mindMap.view?.setScale(scale, size.width / 2, size.height / 2);
 			}
 		};
 		// 包围盒口径分两路（性能轮，见 K70）：
@@ -809,16 +906,21 @@ export function centerContentAtFullScale(mindMap: MindMap | null): void {
 			// 数据层盒是布局坐标（不含视口变换）：内容中心屏幕位置 =
 			// 布局坐标 × scale + translate（引擎 getNodePosInClient 同口径），
 			// 平移增量 = 画布中心 - 当前屏幕位置。
+			applyScale();
+			// setScale 会改变换（scale-in-center 同时移动内容）：平移量必须按
+			// **改后**的变换重算，否则应用比例那次会少居中一次（同一契约见
+			// fitPerformanceMindMapFromData 的 `after`）
+			const after = scaleAligned ? transform : readDrawTransform(mindMap);
+			if (!after) {
+				return;
+			}
 			const centerX =
-				(dataBox.x + dataBox.width / 2) * transform.scaleX +
-				transform.translateX;
+				(dataBox.x + dataBox.width / 2) * after.scaleX + after.translateX;
 			const centerY =
-				(dataBox.y + dataBox.height / 2) * transform.scaleY +
-				transform.translateY;
+				(dataBox.y + dataBox.height / 2) * after.scaleY + after.translateY;
 			const dx = size.width / 2 - centerX;
 			const dy = size.height / 2 - centerY;
 			if (
-				scaleIsOne &&
 				Math.abs(dx) < VIEW_CENTER_EPSILON &&
 				Math.abs(dy) < VIEW_CENTER_EPSILON
 			) {
@@ -826,13 +928,12 @@ export function centerContentAtFullScale(mindMap: MindMap | null): void {
 				// 一轮分片整树渲染；translateXY(0,0) 本身虽 no-op，但不可依赖）
 				return;
 			}
-			applyScale();
 			mindMap.view?.translateXY(dx, dy);
 			return;
 		}
 		// 回退：DOM 测量（性能模式下渲染树几何不可得，或常规模式）。
-		// rbox 含当前变换（画布内坐标），1:1 下 box 的宽高即内容像素尺寸；
-		// 比例非 1 时先 setScale 再测（rbox 口径随之更新）。
+		// rbox 含当前变换（画布内坐标），故本路径与比例无关：先按目标比例
+		// setScale，再测「当前变换下的画面盒」，最后把该盒对齐画布中心。
 		applyScale();
 		const box = measureContentBox(mindMap);
 		if (!box) {
@@ -853,6 +954,60 @@ export function centerContentAtFullScale(mindMap: MindMap | null): void {
 		console.error('设置默认视口失败', error);
 		fitMindMap(mindMap);
 	}
+}
+
+/**
+ * 「按宽度适配」量测（Markdown 代码块嵌入**专用**）：给出容器应有的高度与目标比例。
+ *
+ * 语义对齐 Obsidian 里 Mermaid 的默认口径（`useMaxWidth` 缺省 true ⇒ SVG
+ * `width: 100%` + `max-width: 原宽`）：**只缩不放**（scale ≤ 1），容器高度 =
+ * 原高 × scale + 上下留白 ⇒ 内容完整可见且不留空白框（Mermaid 的 mindmap
+ * 类型即此口径；Obsidian 只把 flowchart/sequence/git/er 覆盖为绝对尺寸）。
+ *
+ * ⚠ 与 `fitMindMap` 的差异**必须保留**：vendor fit 是**双轴**适配（宽度与高度
+ * 同时塞进画布），而嵌入的高度是由比例**反算**出来的——用双轴适配会自相矛盾
+ * （fit 把高度当输入，这里把高度当输出）。
+ *
+ * @param availableWidth 容器可用宽度（CSS 像素；通常取挂载点的 `clientWidth`）
+ * @param padding 四周留白（px）：既进高度，也从可用宽度里扣除
+ * @returns `null` = 几何不可得（引擎未就绪 / 渲染树为空），调用方保持现状；
+ *          否则给出「挂载点应有的高度 + 与之配套的比例」——不要再回吐输入宽度
+ *          （挂载点宽度由 CSS 的 `width: 100%` 决定，回吐属无人消费的第二份真值）
+ */
+export function measureContentFitToWidth(
+	mindMap: MindMap | null,
+	availableWidth: number,
+	padding = 0,
+): { height: number; scale: number } | null {
+	if (!mindMap || !(availableWidth > 0)) {
+		return null;
+	}
+	syncCanvasGeometry(mindMap);
+	const transform = readDrawTransform(mindMap);
+	// **原尺寸**（布局像素）双路：性能模式用数据层并集（零装配），常规模式用
+	// DOM rbox 除以当前比例还原（rbox 含当前变换，不还原会把旧缩放当内容尺寸）。
+	let natural: { width: number; height: number } | null = null;
+	const dataBox = mindMap.opt?.openPerformance
+		? measureContentBoxFromData(mindMap)
+		: null;
+	if (dataBox) {
+		natural = { width: dataBox.width, height: dataBox.height };
+	} else {
+		const box = measureContentBox(mindMap);
+		const scaleX = transform?.scaleX ?? 1;
+		if (box && scaleX > 0) {
+			natural = { width: box.width / scaleX, height: box.height / scaleX };
+		}
+	}
+	if (!natural || !(natural.width > 0) || !(natural.height > 0)) {
+		return null;
+	}
+	const usable = Math.max(1, availableWidth - padding * 2);
+	const scale = Math.min(1, usable / natural.width);
+	return {
+		height: Math.ceil(natural.height * scale + padding * 2),
+		scale,
+	};
 }
 
 /**

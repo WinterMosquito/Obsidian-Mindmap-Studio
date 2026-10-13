@@ -49,6 +49,19 @@ export interface MindMapOptions {
 	performanceConfig?: { time?: number; padding?: number; removeNodeWhenOutCanvas?: boolean };
 	enableFreeDrag?: boolean;
 	customHyperlinkJump?: ((link: string, node: MindMapNode) => void) | null;
+	/**
+	 * 只读模式（上游 `constants/defaultOptions.js` 的 `readonly`，默认 false）：
+	 * 阻断全部命令与编辑交互（双击进编辑框 / 拖拽 / 多选 / 图片调宽），
+	 * 渲染不受影响。插件侧消费点见 `engine/mindmap.ts` 的
+	 * `CreateMindMapOptions.readonly`（只读嵌入 = 本键 + 不注册交互插件）。
+	 */
+	readonly?: boolean;
+	/**
+	 * 禁用**画布拖动（视图平移）**（上游 `constants/defaultOptions.js:191`；
+	 * 消费点 `core/view/View.js:34/44`，同时覆盖左键与中键拖拽）。
+	 * 插件侧对应 `CreateMindMapOptions.enableViewDrag`（缺省启用）。
+	 */
+	isDisableDrag?: boolean;
 }
 
 export interface MindMapNode {

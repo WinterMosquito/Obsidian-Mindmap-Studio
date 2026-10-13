@@ -17,9 +17,10 @@
 
 ## 🚀 Quick start
 
-1. **Create**: run **Create new mind map** (command palette or ribbon) — name it (default = prefix + date); the `MindMap2026-10-12.md` file (frontmatter `Type: Mindmap`) is created and opens as a mind map. Existing notes work too.
+1. **Create**: run **Create new mind map** (command palette or ribbon) — name it (default = prefix + date); the `MindMap2026-10-13.md` file (frontmatter `Type: Mindmap`) is created and opens as a mind map. Existing notes work too.
 2. **Edit**: the file is ordinary Markdown, so its outline becomes the map — add/edit/delete nodes, drag to rearrange, attach images or links.
 3. **Back & save**: use **Switch to Markdown** to return anytime; edits are written back to the file (layout & viewport live in the plugin's `data.json`). That button rewrites the property to `Type: Markdown`, so the note **stops opening as a mind map**.
+4. **Embed**: write a fenced code block with the `mindmap` language in **any note** and the reading view / live preview renders it as a **read-only mind map** — shaped like the built-in Mermaid, sized to its content, not draggable, and it never writes the file. The block body is the very same outline syntax as a mind map file.
 
 ---
 
@@ -33,9 +34,21 @@ The plugin is a **rendering layer**, not a file-format converter. A note declare
 
 - **Markdown-native**: a mind map is ordinary Markdown (a frontmatter declaration + headings + lists). No proprietary format, no special extension.
 - **Round-trip fidelity**: unedited lines are written back verbatim (frontmatter preserved; blank lines between paragraphs and standalone `---` separators are normalised); headings `#`–`######` map to node levels 1–6, nested lists to deeper levels.
-- **Obsidian-native wikilinks**: `[[note]]` shows as its link text, with hover preview and graded modifier clicks (matching Obsidian): plain click = current tab, `Ctrl`/`Command`+click = new tab, `+Alt` = new tab group, plus `Shift` = new window; the add-link dialog searches notes and other documents (`.canvas` / `.base`) plus non-image vault files (attachments); images go through **Add image**. **Links whose target does not exist yet** render in a **muted colour** (like Obsidian's reading view), resolved by the plugin from Obsidian's metadata cache; hover/click is left to Obsidian core (no pre-check on that path). New **document links** follow Obsidian's own settings: with **Use \[\[Wikilinks\]\]** on (the official default) they are written as `[[wikilinks]]` (rendered as clickable link text — no engine icon); with it off they are written as `[label](path.md)`, and the path form follows **New link format**. **Attachments and images** always keep the wikilink embed form (`![[report.pdf]]` / `[[archive.zip]]`). **A node shows the alias** (the note name when there is none); editing the text of a pure wikilink node edits that alias and writes back `[[note|new alias]]`. Attaching a wikilink — dropping a vault file (notes / images / attachments, **any type**) onto the node, or picking one in the add-link dialog — turns a **completely empty node** into a pure wikilink by writing the link's display name as its text; a node that already has **any content** (text, an image or an existing link — a pure-wikilink node included) keeps it, and the new link becomes a **child node**. A URL **on its own node** stays icon-only (no text).
-- **Rich node content (clickable links + inline syntax)**: links inside a node render as **clickable text** — click to open, `Ctrl`/`Command`+click for a new tab (`+Alt` for a new tab group, plus `Shift` for a new window); **every link on a line is clickable** (no longer only the first one). Hover preview has two levels: hovering **a specific link text** previews that link (important for multi-link lines and when the first link is an external URL), while hovering **anywhere else on the node** previews the link the node carries (vault targets only). **A URL mixed with other content is shown as a clickable address** instead of a bare icon. Inline syntax renders inside nodes the way Obsidian's reading view shows it: `**bold**` / `__bold__`, `*italic*` / `_italic_`, `` `inline code` `` (including double-backtick spans), `~~strikethrough~~`, `==highlight==`, `***bold italic***`; inline math `$…$` renders via MathJax and a **single-line** `$$…$$` renders as a block (centred) formula (falls back to the literal text until loaded; **multi-line** block math stays literal); `\*escaped\*` / `\$` consume the backslash and show the literal character, and `%%comments%%` are hidden inside the node (kept in the file; a line that is nothing but a comment stays literal). The raw text stays verbatim in the file; **links inside paragraph (multi-line) nodes are clickable too**. **Very long nodes** (> 2000 chars) show the beginning plus `…` (with a hover explanation) — the full text stays in the file, which also keeps oversized text from slowing the canvas down. Double-clicking such a node edits **the actual line from the file** (wikilink, URL and inline syntax stay visible and editable).
-- **Images**: vault image suggestions, uniform sizing, `![[path]]` round-trip; drag the corner handle to resize a node image — the size is written back as Obsidian's official embed syntax (`![[img.png|300]]` width-only, `|300x150` explicit, `![alt|300](url)` for external images); clear a node's text and the node becomes image-exclusive — an image-exclusive node has no text, so node search never matches it. Inline images also render in **text/paragraph nodes** (its first line; links inside a paragraph are clickable too, see above).
+- **Obsidian-native wikilinks**: `[[note]]` shows as its link text, with hover preview and graded modifier clicks (matching Obsidian).
+  - **Modifier clicks**: plain click = current tab, `Ctrl`/`Command`+click = new tab, `+Alt` = new tab group, plus `Shift` = new window
+  - **What the add-link dialog searches**: notes and other documents (`.canvas` / `.base`) plus non-image vault files (attachments); images go through **Add image**
+  - **Links whose target does not exist yet** render in a **muted colour** (like Obsidian's reading view), resolved by the plugin from Obsidian's metadata cache; hover/click is left to Obsidian core (no pre-check on that path)
+  - **New document links** follow Obsidian's own settings: with **Use \[\[Wikilinks\]\]** on (the official default) they are written as `[[wikilinks]]` (rendered as clickable link text — no engine icon); with it off they are written as `[label](path.md)`, and the path form follows **New link format**. **Attachments and images** always keep the wikilink embed form (`![[report.pdf]]` / `[[archive.zip]]`)
+  - **A node shows the alias** (the note name when there is none); editing the text of a pure wikilink node edits that alias and writes back `[[note|new alias]]`
+  - **Dropping a vault file onto a node** (notes / images / attachments, **any type**), or picking one in the add-link dialog: a **completely empty node** is turned into a pure wikilink by writing the link's display name as its text; a node that already has **any content** (text, an image or an existing link — a pure-wikilink node included) keeps it, and the new link becomes a **child node**. A URL **on its own node** stays icon-only (no text)
+- **Rich node content (clickable links + inline syntax)**: links inside a node render as **clickable text** — click to open, `Ctrl`/`Command`+click for a new tab (`+Alt` for a new tab group, plus `Shift` for a new window); **every link on a line is clickable** (no longer only the first one).
+  - **Hover preview has two levels**: hovering **a specific link text** previews that link (important for multi-link lines and when the first link is an external URL); hovering **anywhere else on the node** previews the link the node carries (vault targets only)
+  - **A URL mixed with other content is shown as a clickable address** instead of a bare icon
+  - **Inline syntax** renders inside nodes the way Obsidian's reading view shows it: `**bold**` / `__bold__`, `*italic*` / `_italic_`, `` `inline code` `` (including double-backtick spans), `~~strikethrough~~`, `==highlight==`, `***bold italic***`; inline math `$…$` renders via MathJax and a **single-line** `$$…$$` renders as a block (centred) formula (falls back to the literal text until loaded; **multi-line** block math stays literal); `\*escaped\*` / `\$` consume the backslash and show the literal character, and `%%comments%%` are hidden inside the node (kept in the file; a line that is nothing but a comment stays literal)
+  - The raw text stays verbatim in the file; **links inside paragraph (multi-line) nodes are clickable too**
+  - **Very long nodes** (> 2000 chars) show the beginning plus `…` (with a hover explanation) — the full text stays in the file, which also keeps oversized text from slowing the canvas down. Double-clicking such a node edits **the actual line from the file** (wikilink, URL and inline syntax stay visible and editable)
+- **Embedded read-only mind maps**: a fenced code block with the `mindmap` language renders in place as a read-only map (the block body uses the very same outline syntax as a mind map file). It behaves like Obsidian's built-in Mermaid: the container **fits the content** (scaled down to the note width, **never up**), **not draggable / zoomable / resizable**, and the wheel keeps scrolling the note. The preview writes neither the file nor plugin state; links inside nodes stay clickable and in-node code blocks stay copyable; above 500 nodes it degrades to a **read-only outline** with an in-block notice (see the [embedding section](#embedding-a-read-only-mind-map-in-a-note)).
+- **Images**: vault image suggestions, uniform sizing, `![[path]]` round-trip; drag the corner handle to resize a node image — the size is written back as Obsidian's official embed syntax (`![[img.png|300]]` width-only, `|300x150` explicit, `![alt|300](url)` for external images); clear a node's text and the node becomes image-exclusive — an image-exclusive node has no text, so node search never matches it. Inline images also render in **text/paragraph nodes** (its first line; links inside a paragraph are clickable too, see above). **With nothing selected**, pasting or dropping an image no longer asks you to select a node — each image becomes its own node under the central node.
 - **Opens at 100%** with the whole map centred; **Fit to canvas** zooms out for an overview and **Reset zoom** returns to 100% while keeping the visible content in place (auto-arrange ends with fit-to-canvas); **six layouts** (switching a layout auto-arranges and fits the map) with per-file connector styles (**Auto** follows the layout; curve / direct / elbow — switchable for Logical structure / Mind map / Organization chart; the other three are fixed-straight and show *Auto*), node search, auto-arrange, **performance mode kicks in automatically on large maps** (500+ nodes draws only the nodes in view — no setting), **fast text node rendering** (every text node is rendered by the plugin — large maps open several times faster; double-click then opens the edit dialog), **image export** (PNG or SVG, per the *Export format* setting); **drag reparenting** — drop a node onto another node to nest it as its child, or between two siblings to insert it in between (native engine hit-testing).
 - **Persistence**: layout and viewport are kept per file (in plugin data), surviving reopen, rename and view switching. Whether a file *is* a mind map lives in the file's **own frontmatter**, so there is no second source of truth.
 - **Central node ↔ filename**: editing the central node renames the file (Obsidian updates links/backlinks) — for **declared** mind maps only; a note temporarily opened as a mind map is never renamed.
@@ -43,20 +56,20 @@ The plugin is a **rendering layer**, not a file-format converter. A note declare
 ## 📖 Usage
 
 ### 1) Create & open a mind map
-- Run **Create new mind map** (command palette or ribbon) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-09-06.md` file is created and opens in the mind-map view.
+- Run **Create new mind map** (command palette or ribbon) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-10-13.md` file is created and opens in the mind-map view.
 - **Turn any note into a mind map**: add `Type: Mindmap` to its frontmatter (Chinese vaults may write `类型: Mindmap`) — **both keys are recognised**, the value is case-insensitive, and the note opens as a mind map as soon as it is opened. Set it to `Markdown` (or remove the property) to stop. **No renaming, no new file, no format conversion.**
 - **Any note becomes a mind map**: any `.md` file opens from its **context menu → Open as mind map** (or the same command), can be edited and saved back; the **first open writes `Type: Mindmap`** (Chinese vaults `类型: Mindmap`) into the frontmatter, so the note is now officially a mind map and opens as one on its own next time (a note already declared is left untouched). A *declared* file instead shows **Open as Markdown** (which rewrites the property to `Markdown`, permanently).
 - The command palette also lists **Create mind map in current folder**, **Search nodes**, **Fit to canvas**, **Arrange mind map** and **Export image** — the same actions as the toolbar.
 
 ### 2) How Markdown becomes a map
-A mind map file is 100% standard Markdown — the plugin renders it as a mind map and writes your edits back:
+A mind map file is 100% standard Markdown — the plugin renders it as a mind map and writes your edits back. **The central node *is* the file name** (a virtual document root that corresponds to no line in the file); `#` headings start at **level 1**:
 
 ```markdown
 ---
 Type: Mindmap               ← the declaration (Chinese vaults write 类型: Mindmap)
 ---
-# Project plan              ← central node (= file name)
-## Goals                    ← first-level child node (#)
+# Project plan              ← level-1 node (#)
+## Goals                    ← level-2 node (##)
 - Milestone 1               ← child node (list)
 - Milestone 2
 ###### Details              ← level-6 heading
@@ -67,7 +80,26 @@ Type: Mindmap               ← the declaration (Chinese vaults write 类型: Mi
 >
 > Non-image embeds such as `![[report.pdf]]` render as **clickable text** (the file name) — alone on a node or mixed with other descriptive text alike: click the text to open it (PDF, audio, video), `Ctrl`/`Command`+click for a new tab; hovering the text triggers Obsidian's native preview as well. Neither is rendered inline — a mind-map node cannot host Obsidian's inline media view.
 >
-> **Files dragged in from your system** (images / PDFs / audio & video / notes / any other file) need a **selected node** first (a notice appears otherwise): they are copied into the "default location for new attachments" and attached to that node (embeddable types are written as embeds `![[report.pdf]]`, everything else as links `[[archive.zip]]`); holding **`Ctrl` (Windows/Linux) / `Option` (macOS)** instead **skips the copy** and inserts an absolute link to the original location `[file name](file:///…)` (wrapped in `<…>` only when the path contains spaces or brackets; clicking opens it in your system's default app) — the same behaviour as Obsidian's drag & drop.
+> **Files dragged in from your system** (images / PDFs / audio & video / notes / any other file): **images** work with or without a selected node — with one they become that node's image, with nothing selected each image gets its own node under the central node; **other files need a selected node first** (a notice appears otherwise) and are copied into the "default location for new attachments" and attached to that node (embeddable types are written as embeds `![[report.pdf]]`, everything else as links `[[archive.zip]]`); holding **`Ctrl` (Windows/Linux) / `Option` (macOS)** instead **skips the copy** and inserts an absolute link to the original location `[file name](file:///…)` (wrapped in `<…>` only when the path contains spaces or brackets; clicking opens it in your system's default app) — the same behaviour as Obsidian's drag & drop.
+
+#### Embedding a read-only mind map in a note
+
+The same outline can live **inside a note**: write a fenced code block with the `mindmap` language and the reading view / live preview renders the block body as a **read-only mind map**.
+
+````md
+```mindmap
+# Project plan
+## Goals
+- Milestone 1
+- Milestone 2
+```
+````
+
+- **One syntax**: the block body is identical to a mind map file's body (headings + lists, one parser) — no second format, no new setting
+- **Shaped like the built-in Mermaid**: the container **grows with its content** — scaled down to the note width (**never up**), so nothing is clipped and a small map leaves no empty frame; **not draggable, zoomable or resizable**; **the wheel still scrolls the note** (even with the pointer over the map)
+- **Read-only, no side effects**: it writes neither the file nor the plugin's `data.json`; links inside nodes **stay clickable** (handled by Obsidian itself, so nothing opens twice) and in-node code blocks stay copyable
+- **Fallbacks are always visible**: above **500** nodes the block shows a read-only outline with an in-block notice; an empty block body or a render failure gets its own one-line notice — never silent
+- The language key stays `mindmap` from 0.0.1, so **existing notes work again with no edits**; which plugin wins when two register the same key is undocumented upstream
 
 ### 3) Everyday actions (in the mind-map view)
 | Want to | Do |
@@ -78,8 +110,9 @@ Type: Mindmap               ← the declaration (Chinese vaults write 类型: Mi
 | Delete a node | Right-click → **Delete node** |
 | Add a link | Select a node → toolbar/menu **Add link** (pick a vault note or paste a URL). A wikilink fills a **completely empty** node (text = display name); a node with any existing content (text, image or link) gets a linked child node; a URL on its own node stays icon-only |
 | Add an image | Select a node → **Add image** (from vault, clipboard, or a file) |
-| Attach by drag & drop | Drag **any vault file** from the file explorer onto a selected node — it becomes the node's link (completely empty node: text becomes the display name; a node with any existing content: a linked child node is created); dragging an image sets the node image. With nothing selected, a linked node is created under the root (images need a selected node) |
-| Drag files in from your system | **Select a node first**, then drop system files onto the canvas (otherwise a notice asks you to): images become the node image, other files are copied into the vault and attached by type (notes → wikilink, everything else → attachment; embeddable types are written as `![[report.pdf]]`). Hold **`Ctrl` (Win/Linux) / `Option` (mac)** to **skip the copy** and insert an absolute link `[file name](file:///…)` instead (wrapped in `<…>` only when the path contains spaces or brackets) |
+| Paste an image | `Ctrl`/`Cmd`+`V` on the canvas: with a **selected node** it becomes that node's image; with **nothing selected** a new image node is created under the central node |
+| Attach by drag & drop | Drag **any vault file** from the file explorer onto a selected node — it becomes the node's link (completely empty node: text becomes the display name; a node with any existing content: a linked child node is created); dragging an image sets the node image. With nothing selected, each file gets its own node under the central node — **images included** (a dropped image becomes its own image node) |
+| Drag files in from your system | **Images** can be dropped with or without a selected node: with one, they become that node's image; with nothing selected, each image gets its own node under the central node. **Other files** need a selected node first (otherwise a notice asks you to) — they are copied into the vault and attached by type (notes → wikilink, everything else → attachment; embeddable types are written as `![[report.pdf]]`). Hold **`Ctrl` (Win/Linux) / `Option` (mac)** to **skip the copy** and insert an absolute link `[file name](file:///…)` instead (wrapped in `<…>` only when the path contains spaces or brackets) |
 | Rearrange | Drag onto another node (pointer inside it) to nest it as its child; drag between two siblings to insert in between (native engine hit-testing) |
 | Resize a node image | Hover the image, drag its bottom-right handle (aspect ratio preserved) |
 | Make a node image-only | Clear the node's text: double-click → empty, or right-click → **Remove text** |
@@ -149,9 +182,11 @@ Everything lives in **Settings → MindMap Studio** (stored locally in the plugi
 
 ## 📦 Install
 
-- **Community plugins** (once listed): **Settings → Community plugins** → search *MindMap Studio*.
+- **Community plugins**: **Settings → Community plugins** → search *MindMap Studio*.
 - **From GitHub releases (recommended)**: download the latest release assets (`main.js`, `manifest.json`, `styles.css`) from the repo [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) page, copy them into `<vault>/.obsidian/plugins/mindmap-studio/`, reload Obsidian, then enable the plugin in **Settings → Community plugins**. (Each release also attaches `LICENSE` and `THIRD-PARTY-NOTICES.md` for licence compliance — no need to copy those into the plugin folder.)
 - **Build from source**: `npm install && npm run build` produces `main.js`; copy it together with `manifest.json` and `styles.css` into the plugin folder.
+
+> Release notes for each version live on the repo's [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) page (their text comes from [`docs/release-notes-<version>.md`](docs/)).
 
 > Requires Obsidian 1.13.0 or later. Desktop only (Windows, macOS, Linux). Config is stored locally (plugin `data.json`); no telemetry and no network requests. `main.js` is built in CI and attached to each GitHub Release (it is not committed to the repo).
 

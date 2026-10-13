@@ -197,7 +197,11 @@ function showNodeContextMenu(
 					void navigator.clipboard
 						.writeText(written)
 						.then(() => new Notice(t(view.lang, 'common.linkCopied')))
-						.catch(() => new Notice(t(view.lang, 'common.clipboardError')));
+						.catch((error) => {
+							// 静默吞掉会让失败原因无痕（内部错误 → console 留痕）
+							console.warn('MindMap Studio：复制链接失败', error);
+							new Notice(t(view.lang, 'common.clipboardError'));
+						});
 				}),
 		);
 	}

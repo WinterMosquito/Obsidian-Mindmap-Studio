@@ -1,7 +1,7 @@
 # Markdown ↔ 思维导图映射标准（MindMap Studio）
 
-> 关联实现：`src/markdown/md-outline.ts`（解析）/ `src/markdown/md-serialize.ts`（回写）/ `src/markdown/links-split.ts`（混排双链拆分，命令 + 自动触发）/ `src/features/view-wikilink.ts`（链接交互）/ `src/features/node-inline-content.ts`（节点内联内容，方案 B 原型）/ `src/engine/mindmap.ts`（图标、内联内容钩子与视口）；元数据契约 `src/domain/md-meta.ts`。
-> 回归测试：`tests/md-roundtrip.test.ts`（往返回归：解析结构、层级深度、不动点、编辑合成、rawOk 分支矩阵、uid、视图状态）与 `tests/md-inline.test.ts`（行内 token 边界形态）。
+> 关联实现：`src/markdown/md-outline.ts`（解析）/ `src/markdown/md-serialize.ts`（回写）/ `src/markdown/links-split.ts`（混排双链拆分，命令 + 自动触发）/ `src/features/view-wikilink.ts`（链接交互）/ `src/features/node-inline-content.ts`（节点内联内容，方案 B 原型）/ `src/features/mindmap-codeblock.ts`（代码块只读嵌入，见 §2.4）/ `src/engine/mindmap.ts`（图标、内联内容钩子与视口）；元数据契约 `src/domain/md-meta.ts`。
+> 回归测试：`tests/md-roundtrip.test.ts`（往返回归：解析结构、层级深度、不动点、编辑合成、rawOk 分支矩阵、uid、视图状态）、`tests/md-inline.test.ts`（行内 token 边界形态）与 `tests/mindmap-codeblock.test.ts`（代码块嵌入：展示树折叠、降级边界、只读口径、styles.css 类名链）。
 > 本文档依据**当前工作区源码**重新核对后撰写（核对时点见文末「附：本轮核对状态」）。
 >
 > 本标准定义**双向**映射：① 一个标准的 Obsidian Markdown 文件如何**渲染**为思维导图；② 导图中的编辑如何**无损回写**为该 Markdown。**所有渲染/回写行为以此为准**；实现与本标准不一致处视为缺陷。
@@ -99,6 +99,30 @@
 | `Mod+Z` / `Mod+Shift+Z` / `Mod+Y` | 引擎撤销/重做（视图 scope 接管；`Mod+Y` 在 macOS 不注册）。引擎自身未绑定这些键 |
 
 > **不存在 richText（Markdown）节点形态**：全仓库 `src/**` 无 `richText`/`RichText` 注册或引用，节点文本一律是纯文本就地编辑。早期版本文档所述「richText 节点就地编辑渲染文本」已不成立。
+
+### 2.4 代码块嵌入（只读导图）
+
+普通笔记里写**语言标识为 `mindmap` 的围栏块**，阅读视图 / 实时预览会把它**就地渲染为只读导图**（实现 `src/features/mindmap-codeblock.ts`，组合根注册 `registerMarkdownCodeBlockProcessor`）：
+
+````md
+```mindmap
+# 中心主题
+## 分支 A
+- 叶子 1
+```
+````
+
+| 项 | 标准 |
+|---|---|
+| **块体语法** | 与 `.mindmap.md` 正文**同一份大纲语法**（标题 + 列表），解析走同一个 `parseMdOutline`——**不存在第二套格式**，也不新增设置项 |
+| **中心主题** | 块体只有一个顶层块（一个 `# 标题` 或一条列表）→ 以该块为中心主题（虚拟文档根折叠）；多个顶层块 → 保留虚拟根，根名取插件文案（`mindmapEmbed.root`）。**刻意不另写「首个一级标题」判定**（标题语法只允许存在一份） |
+| **形态（尺寸）** | **完整显示 + 容器随内容**（对齐 Obsidian 里 Mermaid 的缺省口径：SVG `width:100%` + `max-width: 原宽`）：按容器宽度等比缩放（`scale = min(1, 可用宽 / 内容宽)`，**只缩不放**）后，容器高度 = 内容高 × scale + 留白 ⇒ 内容完整可见、小图不留大片空白框。⚠ 高度是**输出**（由比例反算），故不能用「适应画布」的双轴适配 |
+| **交互** | **只读 + 不可拖动 + 不可调节**：引擎原生 `readonly`（命令与编辑全禁）+ `enableViewDrag: false`（左键/中键拖动画布关闭）+ **不注册任何交互插件**（`Search`/`KeyboardNavigation` 会抢宿主笔记的 `Ctrl+F` 与方向键）+ 不提供 resize 手柄。节点内链接仍可点——**由 Obsidian 自身的链接委托处理**（锚点是官方形态 `a.internal-link[data-href]`，实机实测同标签打开；插件侧**不再**另接跳转，否则会双开）；块内代码块的复制按钮可用（与视图同一份实现）；悬停预览暂不提供 |
+| **滚轮** | **一律归宿主页面**：引擎对 wheel 无条件 `preventDefault`，嵌入在容器外层 capture 阶段 `stopPropagation` 拦下 ⇒ 指针悬在图上时笔记照常滚动 |
+| **持久化** | **不写 `data.json`**：嵌入的布局/视口不持久化，每次渲染按当前设置重算；也**不回写文件**（块体是用户手写的正文） |
+| **规模上限** | 节点数 > `CODE_BLOCK_MAX_NODES`（500）→ 降级为**只读缩进大纲 + 可见提示行**（一篇笔记可有多个块，不为此付出多份引擎成本） |
+| **降级与错误** | 空块体 → 提示行；解析/引擎异常 → 清半初始化实例 + 块内提示行（控制台留痕）。**降级一律可见**，不静默 |
+| **风险（登记）** | 语言键 `mindmap` 沿用 0.0.1（存量笔记的接口），与第三方插件抢注同键的行为官方未文档化 |
 
 ---
 

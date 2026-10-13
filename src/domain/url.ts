@@ -37,6 +37,27 @@ export function tryDecodeUri(text: string): string | null {
 	}
 }
 
+/**
+ * 地址的**比对形态**：原样 + URL 解码形态（相同则去重；解码失败只保留原样）。
+ *
+ * 为什么收口（2026-10-13）：同一构造此前在 `links/file-lookup`
+ * （`uniqueCandidates`）与 `links/links-tree`（`urlComparisonForms`）各写一份，
+ * 且 `resourceUrlPathCandidates` 内又内联一遍——三份逐字同构，属 K28
+ * 「地址形态判断只经本模块」的同族漂移面（与 `tryDecodeUri` 同源）。
+ *
+ * 背景：节点/拖拽里存的可能是资源地址（`app://...`），Obsidian 对中文/空格等
+ * 文件名会做 URL 编码，直接与原始文件名比较会失配。
+ */
+export function urlComparisonForms(url: string): string[] {
+	const forms = [url];
+	// 解码失败（含未编码 % 等字符）只保留原样形态
+	const decoded = tryDecodeUri(url);
+	if (decoded !== null && decoded !== url) {
+		forms.push(decoded);
+	}
+	return forms;
+}
+
 export function isHttpUrl(value: string): boolean {
 	return value.startsWith('http://') || value.startsWith('https://');
 }
@@ -84,13 +105,7 @@ export function resourceUrlPathCandidates(url: string): string[] {
 	if (!path) {
 		return [];
 	}
-	const candidates = [path];
-	// 解码失败（含未编码 % 等字符）只保留原样候选
-	const decoded = tryDecodeUri(path);
-	if (decoded !== null && decoded !== path) {
-		candidates.push(decoded);
-	}
-	return candidates;
+	return urlComparisonForms(path);
 }
 
 export function isHyperlinkProtocolUrl(value: string): boolean {

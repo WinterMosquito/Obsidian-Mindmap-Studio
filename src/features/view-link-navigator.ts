@@ -16,7 +16,7 @@ import {
 	openFileWithSystemApp,
 } from '../platform/system-open';
 import type { Language } from '../core/i18n';
-import type { HyperlinkOpenMode, MindMapViewContext } from './view-context';
+import type { HyperlinkOpenMode, MindMapLinkHost } from './view-context';
 
 /**
  * 打开节点超链接（wiki 链接 / http / 库内路径 / 库外 file://）。
@@ -25,40 +25,44 @@ import type { HyperlinkOpenMode, MindMapViewContext } from './view-context';
  * 无修饰＝当前标签、`Ctrl/Cmd`＝新标签、`Ctrl/Cmd+Alt`＝新标签组、
  * `Ctrl/Cmd+Alt+Shift`＝新窗口。库外绝对路径与系统媒体没有「标签页」概念，
  * 一律交给系统默认应用（mode 不参与）。
+ *
+ * 宿主取**最窄面** `MindMapLinkHost`（app / file.path / lang）：视图与
+ * 代码块嵌入（`features/mindmap-codeblock`）共用同一份跳转判定。
  */
 export function openHyperlink(
-	view: MindMapViewContext,
+	host: MindMapLinkHost,
 	link: string,
 	mode: HyperlinkOpenMode = 'current',
 ): void {
 	if (!link) {
 		return;
 	}
-	const sourcePath = view.file?.path ?? '';
+	const sourcePath = host.file?.path ?? '';
 	const wiki = parseWikilink(link);
 	if (wiki) {
-		const dest = view.app.metadataCache.getFirstLinkpathDest(
+		const dest = host.app.metadataCache.getFirstLinkpathDest(
 			wiki.target,
 			sourcePath,
 		);
-		openResolvedTarget(view, dest, wiki.inner, sourcePath, mode);
+		openResolvedTarget(host, dest, wiki.inner, sourcePath, mode);
 		return;
 	}
 	if (isHttpUrl(link)) {
 		window.open(link, '_blank');
 		return;
 	}
-	const file = resolvePathToFile(link, view.app);
-	if (!file && link.startsWith('file://')) {
+	const file = resolvePathToFile(link, host.app);
+	if (!file) {
 		// 库外 file:// 绝对路径（拖入系统文件时 Ctrl/Option 的形态，见
 		// domain/url.fileUrlFromAbsolutePath）：库内解析必然落空，交系统应用打开。
+		// `absolutePathFromFileUrl` 内部已判定 `file://` 前缀，此处不再自行判形态。
 		const path = absolutePathFromFileUrl(link);
 		if (path) {
-			openAbsolutePathWithSystemApp(path, view.lang);
+			openAbsolutePathWithSystemApp(path, host.lang);
 			return;
 		}
 	}
-	openResolvedTarget(view, file, link, sourcePath, mode);
+	openResolvedTarget(host, file, link, sourcePath, mode);
 }
 
 /**
@@ -72,19 +76,19 @@ export function openHyperlink(
  * （`openFileWithSystemApp` 在非桌面端仍会给出提示）。
  */
 function openResolvedTarget(
-	view: MindMapViewContext,
+	host: MindMapLinkHost,
 	file: TFile | null,
 	linkText: string,
 	sourcePath: string,
 	mode: HyperlinkOpenMode,
 ): void {
-	const lang: Language = view.lang;
+	const lang: Language = host.lang;
 	if (file && !canOpenInObsidian(file.extension)) {
-		openFileWithSystemApp(view.app, file, lang);
+		openFileWithSystemApp(host.app, file, lang);
 		return;
 	}
 	// 'current' 是本插件对「false = 当前标签」的命名（官方 PaneType 无 current）
-	void view.app.workspace.openLinkText(
+	void host.app.workspace.openLinkText(
 		linkText,
 		sourcePath,
 		mode === 'current' ? false : mode,
@@ -102,19 +106,21 @@ function openResolvedTarget(
  * `#区块` 与 `|别名` 不参与解析（核心按目标定位，区块由预览方自行处理）。
  * 例外：`[[#标题]]` 这类**同笔记内区块链接**没有目标段——目标就是当前文件，
  * 文件本身存在即视为已解析（否则会被误判为未解析链接）。
+ *
+ * 宿主取最窄面 `MindMapLinkHost`（视图与代码块嵌入共用，同 `openHyperlink`）。
  */
 export function isResolvedWikiLinkpath(
-	view: MindMapViewContext,
+	host: MindMapLinkHost,
 	linkpath: string,
 ): boolean {
 	const target = parseWikilink(`[[${linkpath}]]`)?.target?.trim() ?? '';
 	if (!target) {
-		return linkpath.startsWith('#') && view.file !== null;
+		return linkpath.startsWith('#') && host.file !== null;
 	}
 	return (
-		view.app.metadataCache.getFirstLinkpathDest(
+		host.app.metadataCache.getFirstLinkpathDest(
 			target,
-			view.file?.path ?? '',
+			host.file?.path ?? '',
 		) !== null
 	);
 }

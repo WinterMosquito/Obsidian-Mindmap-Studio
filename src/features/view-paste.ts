@@ -1,16 +1,16 @@
 /**
- * 画布粘贴处理：容器内 Ctrl+V 粘贴图片（写入附件目录并设置节点图片）、
- * 窗口级兜底监听。从 view.ts 拆出。
+ * 画布粘贴处理：容器内 Ctrl+V 粘贴图片（选中节点 → 设节点图片；未选中 →
+ * 根节点下新建纯图节点）、窗口级兜底监听。从 view.ts 拆出。
  *
  * 本模块不 import MindMapView 类（否则与 view.ts 形成运行时循环依赖）：
  * 类型走 MindMapViewContext；「激活视图是否为本视图」的判定由注册方
  * （view.ts，持有类引用）完成后才调用 handleWindowPaste。
  */
 import { Notice } from 'obsidian';
-import { getActiveNode } from '../engine/mindmap';
+import { getActiveNode, getRenderRoot } from '../engine/mindmap';
 import { buildPastedImageName, saveImageToVault } from '../media/images-save';
 import { notifyError } from '../core/errors';
-import { applyNodeImage } from './view-node-actions';
+import { applyNodeImage, createImageChildNode } from './view-node-actions';
 import { t } from '../core/i18n';
 import type { MindMapViewContext } from './view-context';
 
@@ -71,8 +71,13 @@ async function handlePasteEvent(
 	event.preventDefault();
 	const engine = view.mindMap;
 	const node = getActiveNode(engine);
-	if (!node) {
-		new Notice(t(view.lang, 'common.selectNodeBeforePasteImage'));
+	// 落点分流：选中节点 → 贴入该节点（设为节点图片）；未选中 → 贴入导图
+	// （根节点下新建纯图节点，与 view-dnd 的「文档/附件未选中 → 挂根节点下」
+	// 降级同构）。仅当渲染根也不可用（引擎初始化中间态）时才提示——那是
+	// 「没地方贴」，不是「没选节点」。
+	const fallbackRoot = node ? null : getRenderRoot(engine);
+	if (!node && !fallbackRoot) {
+		new Notice(t(view.lang, 'common.notLoaded'));
 		return;
 	}
 	new Notice(t(view.lang, 'common.savingClipboardImage'));
@@ -88,7 +93,12 @@ async function handlePasteEvent(
 		});
 		// 保存期间可能换文件/重建引擎：旧节点已不在新树上，写入会静默丢失
 		if (saved && view.mindMap === engine) {
-			await applyNodeImage(view, node, view.app.vault.getResourcePath(saved));
+			if (node) {
+				await applyNodeImage(view, node, view.app.vault.getResourcePath(saved));
+			} else if (fallbackRoot) {
+				// 未选中：根节点下新建纯图节点承载（与拖入同一条建图入口）
+				await createImageChildNode(view, fallbackRoot, saved);
+			}
 			new Notice(`${t(view.lang, 'common.imageSavedTo')}${saved.path}`);
 		}
 	} catch (error) {

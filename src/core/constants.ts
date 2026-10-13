@@ -13,9 +13,30 @@ import type { TranslationKey } from './i18n';
 export const VIEW_TYPE = 'mindmap-view';
 
 /**
+ * Markdown 代码块的**语言标识**（```` ```mindmap ````）：普通笔记中把块体
+ * 大纲**只读渲染**为导图（`features/mindmap-codeblock`）。
+ *
+ * 语言串**沿用 0.0.1/0.0.2 的 `mindmap`**（该能力于 0.0.3 移除，本键恢复）——
+ * 存量笔记无需改动即重新可用。与第三方插件（如 Enhancing Mindmap）抢注同一
+ * 语言键的行为官方未文档化（谁后注册谁生效，属已知风险，见
+ * `docs/markdown-mindmap-standard.md` 的代码块嵌入一节）。
+ */
+export const CODE_BLOCK_LANGUAGE = 'mindmap';
+
+/**
+ * 代码块嵌入的**节点数上限**：超过即降级为只读缩进大纲（不建引擎实例）。
+ *
+ * 与 `PERFORMANCE_NODE_THRESHOLD` 语义不同，故不复用：那个是「引擎虚拟渲染」
+ * 阈值（超了照样渲染，只是少画）；这里是「嵌入形态**拒绝建引擎**」的硬上限
+ * ——一篇笔记可以有很多块，每块一个引擎实例（含离屏测量、MathJax/Prism 注入）
+ * 会让打开成本随块数线性叠加，而大纲形态零成本且信息不丢。
+ */
+export const CODE_BLOCK_MAX_NODES = 500;
+
+/**
  * 数学段 holder 的**已渲染标记类**。
  *
- * 单一来源：`platform/math-jax` 的异步替换路径（`MATH_CONTAINER_CLASS`）与
+ * 单一来源：`platform/math-jax` 的异步替换路径与
  * `features/node-inline-content` 的**缓存命中同步放置路径**必须同口径——
  * 两条路径都代表"已渲染"，主题、调试定位与断言选择器才有唯一依据
  * （此前两处各写字面值，值相同但无约束）。

@@ -200,10 +200,13 @@ export class ContentRemeasureSession {
 			// 不重测也不告警）。⚠ 兜底是**过包含**的（返回全部产物所在节点）⇒ 若
 			// 本批 holder 彻底消失且其产物也不在活 DOM 里，仍会被静默跳过
 			//（K100 既有边界，未改设计）。
+			// 去重改用 Set：nodes 随循环增长，`includes` 会让本轮退化为 O(n²)
+			const seen = new Set(nodes);
 			for (const node of findNodesByContentProducts(mindMap)) {
-				if (nodes.includes(node)) {
+				if (seen.has(node)) {
 					continue;
 				}
+				seen.add(node);
 				nodes.push(node);
 				this.settledNodes.add(node);
 			}

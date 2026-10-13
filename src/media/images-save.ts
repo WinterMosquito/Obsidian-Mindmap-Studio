@@ -206,9 +206,13 @@ async function saveToVaultInner(
 			retry < 100
 		) {
 			retry++;
+			// 无扩展名时不得追加裸 `.`（`Makefile 1.` 在 Windows/Obsidian 均非法）
+			const retryName = ext
+				? `${baseName} ${retry}.${ext}`
+				: `${baseName} ${retry}`;
 			availablePath = normalizePath(
 				await app.fileManager.getAvailablePathForAttachment(
-					`${baseName} ${retry}.${ext}`,
+					retryName,
 					sourcePath,
 				),
 			);

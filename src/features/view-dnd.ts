@@ -1,10 +1,12 @@
 /**
  * 画布拖拽与文件输入：
- * - **库内**文件拖入：图片挂节点、文档建双链、其余一律挂回形针（判定与**解析侧同一
- *   口径** `wikilinkTargetIsAttachment`，不再用白名单——见 handleDroppedVaultFile）；
+ * - **库内**文件拖入：图片挂节点（未选中节点则在渲染根下新建图片节点）、文档建双链、
+ *   其余一律挂回形针（判定与**解析侧同一口径** `wikilinkTargetIsAttachment`，
+ *   不再用白名单——见 handleDroppedVaultFile）；
  * - **系统**文件拖入：任意文件入库后按同一套类型分流挂节点；按住 `Ctrl`
  *   （Win/Linux）/`Option`（mac）则**不导入**、改插入 `file:///` 绝对链接
- *   （对齐官方帮助「Drag and drop」）。
+ *   （对齐官方帮助「Drag and drop」）；**未选中节点且载荷全是图片**时在渲染根下
+ *   逐张新建纯图节点（「贴入导图」，与粘贴图片同一条入口，见 handleExternalFilesDrop）。
  * 从 view.ts 拆出。
  */
 import { Notice, Platform, type TFile, type TFolder } from 'obsidian';
@@ -15,7 +17,6 @@ import {
 	MAX_IMAGE_SIZE_MB,
 } from '../core/constants';
 import { saveAttachmentToVault, saveImageToVault } from '../media/images-save';
-import { createNaturalSizeSetNodeImageOptions } from '../media/images-path';
 import { notifyError } from '../core/errors';
 import {
 	extractDroppedFileNames,
@@ -29,6 +30,7 @@ import {
 	applyMdLink,
 	applyNodeAttachment,
 	applyNodeImage,
+	createImageChildNode,
 	newDocLinkFor,
 } from './view-node-actions';
 import { insertChildNodeWithData } from './view-common';
@@ -152,7 +154,7 @@ async function insertFileChildNode(
 	file: TFile,
 ): Promise<void> {
 	if (isRenderableImageExtension(file.extension)) {
-		await insertImageChildNode(view, target, file);
+		await createImageChildNode(view, target, file);
 		return;
 	}
 	const embed = isEmbeddableAttachmentExtension(file.extension);
@@ -180,8 +182,9 @@ async function insertFileChildNode(
 
 /**
  * 处理拖入的库内文件：
- * - 已选中主题 → 直接归入该主题；
- * - 未选中 → 按原逻辑处理（提示选择或挂到根节点下）。
+ * - 已选中主题 → 图片设为其节点图片、文档建双链、其余挂回形针；
+ * - 未选中 → 图片在渲染根下新建纯图节点（「贴入导图」，与粘贴/系统拖入共用
+ *   `createImageChildNode` 入口，2026-10-13）；文档/附件挂到根节点下。
  */
 async function handleDroppedVaultFile(view: MindMapViewContext, file: TFile): Promise<void> {
 	const selected = getActiveNode(view.mindMap);
@@ -192,8 +195,18 @@ async function handleDroppedVaultFile(view: MindMapViewContext, file: TFile): Pr
 		if (selected) {
 			await applyNodeImage(view, selected, url);
 			new Notice(`${t(view.lang, 'common.imageSetOnNode')}${file.name}`);
-		} else {
-			new Notice(t(view.lang, 'common.selectNodeBeforeDrop'));
+			return;
+		}
+		// 未选中：贴入导图——图片可独占一个节点，故不需要先选归属主题
+		const root = getRenderRoot(view.mindMap);
+		if (!root) {
+			// 引擎初始化中间态：没有可挂载的根（与粘贴/系统拖入同口径）
+			new Notice(t(view.lang, 'common.notLoaded'));
+			return;
+		}
+		// 探测期间引擎换代 → 返回 false（旧父节点已不在新树上），静默放弃写入
+		if (await createImageChildNode(view, root, file)) {
+			new Notice(`${t(view.lang, 'common.imageNodeCreated')}${file.name}`);
 		}
 		return;
 	}
@@ -287,17 +300,22 @@ async function handleDroppedDocument(
 /**
  * 外部（系统）文件拖入处理。
  *
- * 三条分支（对齐官方帮助「User interface / Drag and drop」与「Editing and
+ * 分支（对齐官方帮助「User interface / Drag and drop」与「Editing and
  * formatting / Attachments」）：
  * 1. 按住 `Ctrl`（Win/Linux）/`Option`（mac）拖入 → **不导入**，插入指向原文件的
- *    绝对链接（官方原文即 `file:///` absolute links）；
- * 2. 图片 → 入库（落点遵循「新附件默认位置」）后按既有规则挂图：首张挂所选节点、
- *    其余各占一个子节点；
- * 3. 其余文件（**任意类型**，含 PDF/音视频/笔记/压缩包/无扩展名）→ 入库后按
- *    `attachImportedFiles` 分流挂到所选节点：文档走双链通道、附件走回形针通道
- *    （可嵌入者写 `![[…]]`）。
+ *    绝对链接（官方原文即 `file:///` absolute links）——改写的是**选中节点**，
+ *    故仍要求先选中；
+ * 2. 有选中主题：图片入库（落点遵循「新附件默认位置」）后首张挂该节点、其余各占
+ *    一个子节点；
+ * 3. 有选中主题：其余文件（**任意类型**，含 PDF/音视频/笔记/压缩包/无扩展名）→
+ *    入库后按 `attachImportedFiles` 分流：文档走双链通道、附件走回形针通道
+ *    （可嵌入者写 `![[…]]`）；
+ * 4. **未选中主题且载荷全是图片** → 每张在渲染根下新建纯图节点（「贴入导图」，
+ *    与粘贴图片同一条 `createImageChildNode` 入口，2026-10-13）。
  *
- * 三种分支都要求先选中归属主题（图片分支的历史约定，统一沿用）。
+ * 归属规则：只有 ④ 允许无归属——图片可独占一个节点；**含非图片的载荷**在未选中
+ * 时仍提示先选主题，且不做「部分贴入」（文档/附件要挂在某主题下，混合载荷只处理
+ * 一部分会让结果难以预期）。
  */
 async function handleExternalFilesDrop(
 	view: MindMapViewContext,
@@ -311,18 +329,35 @@ async function handleExternalFilesDrop(
 		return;
 	}
 
-	// 需要先选中一个主题作为归属
 	const engine = view.mindMap;
 	const selected = getActiveNode(engine);
-	if (!selected) {
-		new Notice(t(view.lang, 'common.selectNodeBeforeDrop'));
-		return;
-	}
 
 	// ① 修饰键：不导入，直接写绝对链接（指向文件原位置）
 	if (shouldInsertAbsoluteLink(event)) {
-		insertAbsoluteLinks(view, selected, files);
+		if (selected) {
+			insertAbsoluteLinks(view, selected, files);
+		} else {
+			// 绝对链接落在选中节点上：无选中即无处可写
+			new Notice(t(view.lang, 'common.selectNodeBeforeDrop'));
+		}
 		return;
+	}
+
+	// 落点解析：有选中主题 → 全部文件归它；未选中 → 仅「全是图片」可在渲染根下
+	// 逐张新建图片节点，其余要求先选中（见上方归属规则）
+	const toRoot = selected === null;
+	let host: MindMapNode | null = selected;
+	if (!host) {
+		if (!files.every(isDroppedImage)) {
+			new Notice(t(view.lang, 'common.selectNodeBeforeDrop'));
+			return;
+		}
+		host = getRenderRoot(engine);
+		if (!host) {
+			// 引擎初始化中间态：没有可挂载的根（与粘贴图片同口径提示）
+			new Notice(t(view.lang, 'common.notLoaded'));
+			return;
+		}
 	}
 
 	// ② / ③ 入库：**任意文件都导入**（与 Obsidian 的拖放一致——它会把文件复制进
@@ -352,11 +387,7 @@ async function handleExternalFilesDrop(
 			continue;
 		}
 		const preferredName = useRealNames ? realNames[index] : undefined;
-		// 图片判定用**可渲染清单**（含 tif/tiff/jxl…），与解析侧 `isImageEmbedTarget`
-		// 同口径；`file.type` 兜底覆盖无名扩展名的来源。
-		const isImage =
-			file.type.startsWith('image/') ||
-			isRenderableImageExtension(extensionOf(file));
+		const isImage = isDroppedImage(file);
 		try {
 			// 图片与附件共用入库通道（同一串行队列 + 同一落点规则）
 			const result = isImage
@@ -405,11 +436,18 @@ async function handleExternalFilesDrop(
 	if (view.mindMap !== engine) {
 		return;
 	}
-	await attachImportedFiles(view, selected, saved);
-	// 提示：单图沿用「已设为节点图片」+「已导入 1」两条（历史文案），
-	// 其余形态统一走「已导入 N 个文件到仓库中…」
+	if (toRoot) {
+		// 未选中：每张各占根下一个纯图节点**且不碰中心主题**（图片独占节点语义）
+		for (const image of saved) {
+			await createImageChildNode(view, host, image);
+		}
+	} else {
+		await attachImportedFiles(view, host, saved);
+	}
+	// 提示：单图挂到**所选节点**上时沿用「已设为节点图片」+「已导入 1」两条
+	// （历史文案），其余形态统一走「已导入 N 个文件到仓库中…」
 	const firstImage = saved.find((file) => isImageExtension(file.extension));
-	if (saved.length === 1 && firstImage) {
+	if (!toRoot && saved.length === 1 && firstImage) {
 		new Notice(`${t(view.lang, 'common.imageSetOnNode')}${firstImage.name}`);
 		new Notice(
 			`${t(view.lang, 'common.imported')} 1 ${t(view.lang, 'common.filesStored')}`,
@@ -461,7 +499,7 @@ async function attachImportedFiles(
 		);
 	}
 	for (const extra of restImages) {
-		await insertImageChildNode(view, selected, extra);
+		await createImageChildNode(view, selected, extra);
 	}
 	for (const document of documents) {
 		// 官方链接语法：`.md` 可省略扩展名（与 handleDroppedDocument 同口径）
@@ -549,36 +587,13 @@ function extensionOf(file: File): string {
 }
 
 /**
- * 在指定父节点下新建承载一张图片的子节点（图片独占节点语义：无文本）。
- *
- * 直接以 INSERT_CHILD_NODE 的初始数据携带引擎渲染所需的字段（与
- * SET_NODE_IMAGE 写入的形态一致：image/imageTitle/imageSize），避免
- * 「插入后再回找新节点」——引擎未提供按插入结果取回节点的公开途径。
+ * 拖入的 `File` 是否为图片：用**可渲染清单**（含 tif/tiff/jxl…），与解析侧
+ * `isImageEmbedTarget` 同口径；`file.type` 兜底覆盖无名扩展名的来源。
+ * 落点判定（全为图片才允许无归属）与入库通道分流共用本谓词。
  */
-async function insertImageChildNode(
-	view: MindMapViewContext,
-	parent: MindMapNode,
-	file: TFile,
-): Promise<void> {
-	const url = view.app.vault.getResourcePath(file);
-	const engine = view.mindMap;
-	if (!engine) {
-		return;
-	}
-	const options = await createNaturalSizeSetNodeImageOptions(url);
-	// 探测尺寸期间可能换文件/重建引擎：父节点已不在新树上
-	if (view.mindMap !== engine) {
-		return;
-	}
-	insertChildNodeWithData(view, parent, {
-		text: '',
-		image: options.url,
-		imageTitle: options.title,
-		imageSize: {
-			width: options.width,
-			height: options.height,
-			custom: options.custom,
-		},
-		mdImageTarget: file.path,
-	});
+function isDroppedImage(file: File): boolean {
+	return (
+		file.type.startsWith('image/') ||
+		isRenderableImageExtension(extensionOf(file))
+	);
 }

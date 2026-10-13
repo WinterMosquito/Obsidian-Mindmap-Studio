@@ -80,9 +80,7 @@ export class MindMapAutoOpener {
 			if (!file || !this.isDeclared(file)) {
 				continue;
 			}
-			void openAsMindMap(leaf, file).catch((error) =>
-				console.error('自动切换思维导图视图失败:', file.path, error),
-			);
+			this.switchToMindMap(leaf, file);
 		}
 	}
 
@@ -95,6 +93,19 @@ export class MindMapAutoOpener {
 		if (!file || !this.isDeclared(file)) {
 			return;
 		}
-		void openAsMindMap(leaf, file);
+		this.switchToMindMap(leaf, file);
+	}
+
+	/**
+	 * 两条扫描路径共用的切换入口。
+	 *
+	 * `openAsMindMap` 自身吞掉 `setViewState` 的拒绝（见 md-open.ts），这里的兜底
+	 * 是**刻意的纵深防御**：扫描路径无用户手势触发，一旦上游契约变更，失败不应
+	 * 以未处理拒绝的形式静默消失。两条路径共用一处也避免后续再次分叉。
+	 */
+	private switchToMindMap(leaf: WorkspaceLeaf, file: TFile): void {
+		void openAsMindMap(leaf, file).catch((error) =>
+			console.error('自动切换思维导图视图失败:', file.path, error),
+		);
 	}
 }

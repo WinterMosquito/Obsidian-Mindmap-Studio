@@ -1018,12 +1018,14 @@ export function serializeMdBody(
 		out.push(...lines);
 	};
 
-	/** 节点输出行（mdRaw 未变 → 原文；否则合成）。prefix=首行前缀，restIndent=续行缩进 */
+	/**
+	 * 节点输出行（mdRaw 未变 → 原文；否则合成）。prefix=首行前缀，restIndent=续行缩进。
+	 * `app` 直接取外层入参（此前另立同名形参遮蔽之，四处调用全部传同一个值）。
+	 */
 	const nodeLines = (
 		child: MindMapTreeNode,
 		prefix: string,
 		restIndent: string,
-		app: App | null,
 	): string[] => {
 		const data: MdNodeData = child.data ?? {};
 		// 内容三态（未编辑原文 / 纯 token / 文本+token）统一在 composeNodeContent，
@@ -1115,7 +1117,7 @@ export function serializeMdBody(
 			if (type === 'heading') {
 				frame.orderedCount = 0;
 				const level = Math.min(6, Math.max(1, Number(data.mdLevel) || 1));
-				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', '', app));
+				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', ''));
 				stack.push({
 					children: child.children ?? [],
 					index: 0,
@@ -1131,7 +1133,7 @@ export function serializeMdBody(
 				// 与 list/heading 同一出口：未编辑逐字回写；被编辑/插换图后首行写
 				// 「文本 + token」——段落自本版起承载首行图片字段，插图中/移除图
 				// 必须能写回/剥离（此前只写 text，插进段落的图片会被静默丢弃）
-				pushBlock(nodeLines(child, '', '', app));
+				pushBlock(nodeLines(child, '', ''));
 				stack.push({
 					children: child.children ?? [],
 					index: 0,
@@ -1155,7 +1157,7 @@ export function serializeMdBody(
 			) {
 				const level = frame.headingLevel + 1;
 				frame.orderedCount = 0;
-				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', '', app));
+				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', ''));
 				stack.push({
 					children: child.children ?? [],
 					index: 0,
@@ -1173,7 +1175,7 @@ export function serializeMdBody(
 			frame.orderedCount =
 				data.mdMarker === 'ordered' ? frame.orderedCount + 1 : 0;
 			const indent = '  '.repeat(frame.listIndent);
-			out.push(...nodeLines(child, indent + marker + ' ', indent + '  ', app));
+			out.push(...nodeLines(child, indent + marker + ' ', indent + '  '));
 			stack.push({
 				children: child.children ?? [],
 				index: 0,

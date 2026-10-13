@@ -28,6 +28,8 @@ import { App, TFile } from 'obsidian';
 const mocks = vi.hoisted(() => {
 	return {
 		applyPerformanceMode: vi.fn(),
+		/** 主题写入防腐入口（亮暗 + 偏好 → 主题配置，合成在 engine 层） */
+		applyThemeConfig: vi.fn(),
 		arrangeMindMap: vi.fn(),
 		// destroyInstance 会先取消该实例的在途延时任务（延时 fit / 渲染根轮询链 /
 		// 文本编辑宏任务），故 mock 面必须包含它，否则每次销毁都会抛
@@ -40,14 +42,14 @@ const mocks = vi.hoisted(() => {
 		fitMindMap: vi.fn(),
 		getRenderRoot: vi.fn(),
 		getRootText: vi.fn(),
-		getThemeConfig: vi.fn(),
 		// 保存视口落界校验（默认 null＝无法判定，保持「有保存视口即恢复」行为）
 		isContentVisibleInCanvas: vi.fn(),
-		isDarkTheme: vi.fn(),
 		isEditingText: vi.fn(),
 		// 整树替换入口（保留撤销历史）：引用更新经它落数据，勿退回引擎 setData
 		// ——后者会 clearHistory，导致此后 Ctrl+Z 永久失效
 		replaceMindMapData: vi.fn(),
+		/** resize 防腐入口（`createMindMap` 的零尺寸守卫只在该层可见） */
+		resizeMindMap: vi.fn(),
 		renameReferencesInTree: vi.fn(),
 		removeReferencesOnDelete: vi.fn(),
 		// data_change 通道的命令历史上限同步（会话内长大的图收敛到 30MB 预算）
@@ -332,10 +334,11 @@ beforeEach(() => {
 	mocks.getRenderRoot.mockReturnValue(null);
 	mocks.getRootText.mockReset();
 	mocks.getRootText.mockReturnValue(null);
-	mocks.getThemeConfig.mockReset();
-	mocks.getThemeConfig.mockReturnValue({ theme: 'stub' });
-	mocks.isDarkTheme.mockReset();
-	mocks.isDarkTheme.mockReturnValue(false);
+	// 主题写入与 resize 的**引擎内部**调用已收口到 mindmap 层（applyThemeConfig
+	// / resizeMindMap）：本文件只断言「防腐入口被正确调用」，亮暗与主题偏好
+	// 的合成口径由 tests/mindmap-codeblock.test.ts 用真实实现覆盖。
+	mocks.applyThemeConfig.mockReset();
+	mocks.resizeMindMap.mockReset();
 	mocks.isEditingText.mockReset();
 	mocks.isEditingText.mockReturnValue(false);
 	mocks.renameReferencesInTree.mockReset();
@@ -1419,10 +1422,16 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 		h.controller.resize();
 
 		expect(h.engines[0]!.setLayout).toHaveBeenCalledWith('mindMap');
-		expect(h.engines[0]!.resize).toHaveBeenCalledTimes(1);
+		// resize 经防腐入口（零尺寸守卫在 mindmap 层，调用方不再直接摸 mindMap.resize）
+		expect(mocks.resizeMindMap).toHaveBeenCalledWith(h.engines[0]);
 		// 连线样式随布局联动：主题配置按本次布局（而非视图会话字段）重算并写入
-		expect(mocks.getThemeConfig).toHaveBeenCalledWith(false, 'mindMap', 'auto');
-		expect(h.engines[0]!.setThemeConfig).toHaveBeenCalledTimes(1);
+		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(
+			h.engines[0],
+			false,
+			'default',
+			'mindMap',
+			'auto',
+		);
 		// 切换布局后自动整理一次（无引擎的那次早退不算）
 		expect(mocks.arrangeMindMap).toHaveBeenCalledTimes(1);
 		expect(mocks.arrangeMindMap).toHaveBeenCalledWith(h.engines[0]);
@@ -1431,33 +1440,32 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 	it('setLineStyle 按当前会话布局重算主题配置（偏好即时生效、无引擎时静默）', () => {
 		const empty = buildHarness();
 		expect(() => empty.controller.setLineStyle('direct')).not.toThrow();
-		expect(mocks.getThemeConfig).not.toHaveBeenCalled();
+		expect(mocks.applyThemeConfig).not.toHaveBeenCalled();
 
 		const h = readyHarness();
 		h.controller.setLineStyle('direct');
 
-		expect(mocks.getThemeConfig).toHaveBeenCalledWith(
+		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(
+			h.engines[0],
 			false,
+			'default',
 			'logicalStructure',
 			'direct',
 		);
-		expect(h.engines[0]!.setThemeConfig).toHaveBeenCalledTimes(1);
 	});
 
-	it('applyTheme 按当前主题偏好与布局重算深色判定并写入主题配置', () => {
+	it('applyTheme 经防腐入口写入主题配置（亮暗/偏好合成在 engine 层）', () => {
 		const h = readyHarness();
-		const themeConfig = { theme: 'dark-stub' };
-		mocks.getThemeConfig.mockReturnValue(themeConfig);
 
 		h.controller.applyTheme();
 
-		expect(mocks.isDarkTheme).toHaveBeenCalledWith('default', false);
-		expect(mocks.getThemeConfig).toHaveBeenCalledWith(
+		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(
+			h.engines[0],
 			false,
+			'default',
 			'logicalStructure',
 			'auto',
 		);
-		expect(h.engines[0]!.setThemeConfig).toHaveBeenCalledWith(themeConfig);
 	});
 
 	it('applyTheme 无引擎时不读取设置项（避免无谓的主题计算）', () => {
@@ -1465,7 +1473,7 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 
 		h.controller.applyTheme();
 
-		expect(mocks.isDarkTheme).not.toHaveBeenCalled();
+		expect(mocks.applyThemeConfig).not.toHaveBeenCalled();
 		expect(h.deps.getSetupOptions).not.toHaveBeenCalled();
 	});
 

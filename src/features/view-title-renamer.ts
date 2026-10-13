@@ -5,6 +5,7 @@
  */
 import { App, Notice, TFile } from 'obsidian';
 import { createDebouncer } from '../core/concurrency';
+import { notifyError } from '../core/errors';
 import { isMindMapFile } from '../markdown/md-open';
 import { sanitizeFileName } from '../media/images-save';
 import { TITLE_RENAME_DEBOUNCE_MS } from '../core/constants';
@@ -75,7 +76,8 @@ export class TitleRenamer {
 			await this.deps.app.fileManager.renameFile(file, newPath);
 		} catch (error) {
 			console.error('根据中心主题重命名文件失败', error);
-			new Notice(t(this.deps.lang, 'rename.titleFailed'));
+			// 走统一格式化：用户可见根因（与 save / create / attachment 同口径）
+			notifyError(this.deps.lang, 'rename.titleFailed', error);
 		}
 	}
 }

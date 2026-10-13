@@ -15,16 +15,10 @@ import { Language, t } from '../core/i18n';
 import { injectObsidianCssVarsIntoExportSvg } from '../platform/export-css-vars';
 import { padForeignObjectsForExport } from '../platform/export-foreign-object-padding';
 import {
-	getRenderedMathNode,
 	injectMathStylesIntoExportSvg,
 	pinMathContainerHeightsInExportSvg,
-	renderMathWithMathJax,
 } from '../platform/math-jax';
-import {
-	getRenderedCodeNodes,
-	refreshPrismTokenColors,
-	renderCodeWithPrism,
-} from '../platform/prism-code';
+import { refreshPrismTokenColors } from '../platform/prism-code';
 import { updatesInternalLinksOnRename } from '../platform/vault-prefs';
 import { createDebouncer, createThrottler, type Debouncer } from '../core/concurrency';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
@@ -44,7 +38,7 @@ import { openAsMarkdown } from '../markdown/md-open';
 import { registerWikilinkInteractions } from './view-wikilink';
 import {
 	closeInlineEditor,
-	isInlineNodeEditing,
+	isAnyNodeEditing,
 } from './node-inline-editor';
 import {
 	hideCopyButtonsInExportSvg,
@@ -54,6 +48,7 @@ import {
 	buildInlineNodeContent,
 	type InlineContentOptions,
 } from './node-inline-content';
+import { createInlineContentOptions } from './node-content-factory';
 import {
 	setupCanvasQuickCreate,
 	setupNodeTextEditFallback,
@@ -235,22 +230,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 2026-10-09 减法：原 `selfDrawPlain` 项（设置 `selfDrawPlainNodes` 的会话中
 	 * 可变项，需每次构建就地覆盖）随该设置一并移除——纯文本节点**常开**接管。
 	 */
-	private readonly inlineContentOptions: InlineContentOptions = {
-		isResolvedLink: (linkpath) => isResolvedWikiLinkpath(this, linkpath),
-		renderMath: (_doc, tex, holder, display) =>
-			renderMathWithMathJax(tex, holder, display, (settledHolder) =>
-				this.contentRemeasure.schedule(settledHolder),
-			),
-		getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
-		// 代码块 Prism 高亮：与数学同款纪律——官方通道在platform 层、这里只注入；
-		// 定稿回调同样交给 contentRemeasure.schedule（换的是尺寸同步机制，不是数学
-		// 专属：它只做「按holder 反查真实节点 → 合并为一次批量重排」）
-		renderCode: (_doc, code, codeLang, holder) =>
-			renderCodeWithPrism(code, codeLang, holder, (settledHolder) =>
-				this.contentRemeasure.schedule(settledHolder),
-			),
-		getCachedCode: (code, codeLang) => getRenderedCodeNodes(code, codeLang),
-	};
+	private readonly inlineContentOptions: InlineContentOptions =
+		createInlineContentOptions({
+			// 宿主面就是本视图（结构化满足 MindMapLinkHost：app / file / lang）
+			isResolvedLink: (linkpath) => isResolvedWikiLinkpath(this, linkpath),
+			// 定稿回调交给本视图的尺寸同步会话（平台通道的回调绑定收口见
+			// node-content-factory；代码块嵌入用同一个工厂 + 自己的会话）
+			onSettled: (holder) => this.contentRemeasure.schedule(holder),
+		});
 
 	/**
 	 * 文档模式（B3 显式切换）：文件本质是 Markdown（frontmatter 声明为导图，
@@ -330,8 +317,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			app: this.app,
 			getFile: () => this.file,
 			// 任一编辑通道进行中（引擎编辑框 ∨ 插件内联编辑器）都视为「仍在编辑」
-			isEditingText: () =>
-				this.engine.isEditingText() || isInlineNodeEditing(this.mindMap),
+			isEditingText: () => isAnyNodeEditing(this.mindMap),
 			getRootText: () => this.engine.getRootText(),
 			lang: this.lang,
 		});

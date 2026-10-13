@@ -6,7 +6,9 @@
  * - `handleWindowPaste` 三道豁免：已消费（defaultPrevented）/ 目标在容器内
  *   （容器监听已处理）/ 输入框与文本域内（不劫持）；
  * - `handlePasteEvent`（经两条入口触发）：剪贴板无 items 或无图片不接管；
- *   有图片但无激活节点 → 提示先选节点；成功路径（按 Obsidian 命名约定
+ *   有图片且无激活节点 → 落点降级为「根节点下新建图片节点」
+ *   （createImageChildNode，不再要求先选节点）；渲染根亦不可用（引擎初始化
+ *   中间态）才提示「尚未加载」；成功路径（按 Obsidian 命名约定
  *   `buildPastedImageName` → `saveImageToVault` → `applyNodeImage` + 落盘提示）；
  *   两道守卫——保存返回 null、保存期间引擎换代（旧节点已不在新树上）均不写图；
  *   失败转用户可见提示（`common.pasteImageFailed`）。
@@ -24,18 +26,24 @@ import type { MindMapViewContext } from '../src/features/view-context';
 const {
 	noticeCalls,
 	getActiveNodeMock,
+	getRenderRootMock,
 	saveImageMock,
 	buildNameMock,
 	applyImageMock,
+	createImageChildNodeMock,
 	notifyErrorMock,
 } = vi.hoisted(() => ({
 	noticeCalls: [] as string[],
 	getActiveNodeMock: vi.fn<(mindMap: unknown) => unknown>(() => null),
+	getRenderRootMock: vi.fn<(mindMap: unknown) => unknown>(() => null),
 	saveImageMock: vi.fn<(options: unknown) => Promise<unknown>>(async () => null),
 	buildNameMock: vi.fn(() => 'Pasted image 20260928120000'),
 	applyImageMock: vi.fn<(view: unknown, node: unknown, url: string) => Promise<void>>(
 		async () => {},
 	),
+	createImageChildNodeMock: vi.fn<
+		(view: unknown, parent: unknown, file: unknown) => Promise<boolean>
+	>(async () => true),
 	notifyErrorMock: vi.fn<(lang: unknown, key: unknown, error: unknown) => void>(),
 }));
 
@@ -53,7 +61,10 @@ vi.mock('obsidian', async (importOriginal) => {
 	};
 });
 
-vi.mock('../src/engine/mindmap', () => ({ getActiveNode: getActiveNodeMock }));
+vi.mock('../src/engine/mindmap', () => ({
+	getActiveNode: getActiveNodeMock,
+	getRenderRoot: getRenderRootMock,
+}));
 
 vi.mock('../src/media/images-save', () => ({
 	buildPastedImageName: buildNameMock,
@@ -62,6 +73,7 @@ vi.mock('../src/media/images-save', () => ({
 
 vi.mock('../src/features/view-node-actions', () => ({
 	applyNodeImage: applyImageMock,
+	createImageChildNode: createImageChildNodeMock,
 }));
 
 vi.mock('../src/core/errors', () => ({ notifyError: notifyErrorMock }));
@@ -152,6 +164,7 @@ beforeEach(() => {
 	noticeCalls.length = 0;
 	vi.clearAllMocks();
 	getActiveNodeMock.mockReturnValue(null);
+	getRenderRootMock.mockReturnValue(null);
 	saveImageMock.mockResolvedValue(null);
 	// instanceof 判定的类存在性（行为不实现）
 	vi.stubGlobal('HTMLInputElement', HtmlInputElementStub);
@@ -294,16 +307,57 @@ describe('handlePasteEvent（图片识别与写回守卫）', () => {
 		expect(noticeCalls).toHaveLength(0);
 	});
 
-	it('有图片但无激活节点：提示先选节点，不落盘', async () => {
+	it('有图片但无激活节点：落点降级为渲染根下新建图片节点（贴入导图，不要求先选节点）', async () => {
+		const root = { uid: 'root' };
+		const saved = { path: '附件/x.png' };
 		getActiveNodeMock.mockReturnValue(null);
+		getRenderRootMock.mockReturnValue(root);
+		saveImageMock.mockResolvedValue(saved);
+		const { view, getResourcePath } = makeView();
+		const { preventDefault } = await paste(view, {
+			items: [{ type: 'image/png', getAsFile: () => ({ name: 'i.png' }) }],
+		});
+
+		expect(preventDefault, '图片已被接管，避免浏览器默认行为').toHaveBeenCalledTimes(1);
+		expect(saveImageMock).toHaveBeenCalledTimes(1);
+		// 建图节点直接吃库内文件（资源地址与 md 回写目标由该入口内部归一）
+		expect(createImageChildNodeMock).toHaveBeenCalledWith(view, root, saved);
+		expect(getResourcePath, '未选中分支不自行取资源地址').not.toHaveBeenCalled();
+		expect(applyImageMock, '无选中节点不设节点图片').not.toHaveBeenCalled();
+		expect(noticeCalls).toContain(
+			`${t('zh', 'common.imageSavedTo')}附件/x.png`,
+		);
+	});
+
+	it('有图片、无激活节点且渲染根不可用（引擎初始化中间态）：提示尚未加载，不落盘', async () => {
+		getActiveNodeMock.mockReturnValue(null);
+		getRenderRootMock.mockReturnValue(null);
 		const { view } = makeView();
 		const { preventDefault } = await paste(view, {
 			items: [{ type: 'image/png', getAsFile: () => ({ name: 'i.png' }) }],
 		});
 
 		expect(preventDefault, '图片已被接管，避免浏览器默认行为').toHaveBeenCalledTimes(1);
-		expect(noticeCalls).toEqual([t('zh', 'common.selectNodeBeforePasteImage')]);
+		expect(noticeCalls).toEqual([t('zh', 'common.notLoaded')]);
 		expect(saveImageMock).not.toHaveBeenCalled();
+		expect(createImageChildNodeMock).not.toHaveBeenCalled();
+	});
+
+	it('有图片但无激活节点：保存期间引擎换代，不创建节点（静默丢失守卫）', async () => {
+		getActiveNodeMock.mockReturnValue(null);
+		getRenderRootMock.mockReturnValue({ uid: 'root' });
+		const { view, raw } = makeView();
+		saveImageMock.mockImplementation(async () => {
+			raw.mindMap = {}; // 保存期间换文件/重建引擎
+			return { path: 'a.png' };
+		});
+
+		await paste(view, {
+			items: [{ type: 'image/png', getAsFile: () => ({}) }],
+		});
+
+		expect(createImageChildNodeMock).not.toHaveBeenCalled();
+		expect(applyImageMock).not.toHaveBeenCalled();
 	});
 
 	it('成功路径：按 Obsidian 命名约定保存（覆盖系统临时名）并携带视图上下文', async () => {

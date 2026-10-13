@@ -511,6 +511,55 @@
   line-height: 1.4;
 }
 
+/* ========== mindmap 代码块嵌入（features/mindmap-codeblock.ts） ==========
+   普通笔记里的**只读**导图：外层容器 + 引擎挂载点（canvas）+ 提示/大纲两态。
+
+   高度口径（2026-10-13，对齐 Obsidian 里 Mermaid 的缺省行为）：**随内容**。
+   `.tmm-embed-canvas` 的 `height` 只是**首帧前的临时值**——引擎必须有非零
+   尺寸才能首次布局，量出内容尺寸后由嵌入的 `applyEmbedFit` 改写内联高度
+   （= 按容器宽度缩放后的内容高），故渲染完成后不应再看到大块空白。
+   **不提供 resize 手柄、不提供平移/缩放**：嵌入没有「调节」语义（Mermaid 同款）。
+
+   ⚠ 与 `.mindmap-canvas-container` 同款警示：**勿**给 canvas 的直接子 div 加
+   `width/height: 100%`——引擎的测宽元素是 position:fixed 的临时 div、文本编辑
+   框挂在 body，都不受容器子 div 尺寸影响（历史曾据此误判「节点等宽 500px」
+   的成因，见上方同名注释）。 */
+.tmm-embed {
+  position: relative;
+  margin: 1em 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  /* 首帧前的临时高度（渲染完成后被内联高度覆盖；用户可用 CSS 片段调整它） */
+  --tmm-embed-height: 360px;
+}
+
+.tmm-embed-canvas {
+  width: 100%;
+  height: var(--tmm-embed-height);
+  /* 高度已按内容算准，overflow 只兜住亚像素误差 */
+  overflow: hidden;
+}
+
+/* 空态 / 超限降级 / 渲染失败提示行：单行弱化，不抢正文注意力 */
+.tmm-embed-notice {
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 12px);
+}
+
+/* 超限降级的只读大纲：层级与文本全保留、零引擎成本 */
+.tmm-embed-outline {
+  max-height: var(--tmm-embed-height);
+  padding: 6px 10px;
+  overflow: auto;
+}
+
+.tmm-embed-outline ul {
+  margin: 0;
+  padding-inline-start: 1.2em;
+}
+
 /* ========== 双链文档图标（mindmap.ts createNodePrefixContent 自绘） ========== */
 /* 图标为 <svg> 根元素，被引擎放进 foreignObject（HTML 上下文）：display:block
    去除行内基线间隙，手型光标提示可点（点击 = 打开目标）。 */

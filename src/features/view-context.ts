@@ -42,6 +42,24 @@ export interface ViewPluginContext {
 export type HyperlinkOpenMode = 'current' | 'tab' | 'split' | 'window';
 
 /**
+ * 链接导航所需的**最窄宿主面**（视图与代码块嵌入共用）。
+ *
+ * `openHyperlink` / `isResolvedWikiLinkpath`（`features/view-link-navigator`）
+ * 实测只用这三样：打开目标（app）、相对链接的解析基准（file.path）、
+ * 系统外跳提示文案（lang）。此前入参是整张 `MindMapViewContext` 装配面，
+ * 代码块嵌入（没有 FileView / leaf / savePipeline）无法复用，只能另写一份
+ * 跳转判定——违反「不造第二份判定」，故收窄。
+ *
+ * `file` 只要 `path`：视图的 `TFile | null` 结构化兼容本面（只读属性协变）。
+ */
+export interface MindMapLinkHost {
+	readonly app: App;
+	/** 链接解析基准文件（未保存 / 无属主时为 null） */
+	readonly file: { path: string } | null;
+	readonly lang: Language;
+}
+
+/**
  * 引擎面：view-* 对导图实例与事件绑定的窄化访问面。
  * 引擎实例与两类事件绑定器总是一起装配、一起重建，聚合为单一子面。
  */
@@ -110,7 +128,10 @@ export interface ViewDomContext {
  * 勿默认依赖整个装配面（R4 上下文瘦身：控制公开面随特性增长的膨胀）。
  * 结构化子集兼容：`MindMapView` 实现装配面，传给子面参数无需适配。
  */
-export interface MindMapViewContext extends ViewEngineContext, ViewDomContext {
+export interface MindMapViewContext
+	extends ViewEngineContext,
+		ViewDomContext,
+		MindMapLinkHost {
 	// ---- Obsidian 上下文（View/FileView 基类提供）----
 	readonly app: App;
 	readonly file: TFile | null;
