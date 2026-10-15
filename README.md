@@ -7,10 +7,10 @@
 > Mind map rendering for Markdown inside Obsidian. Put `Type: Mindmap` in a note's frontmatter (Chinese vaults write `类型: Mindmap`) and it opens as a mind map; any note can also be previewed via the context menu's **Open as mind map** — it stays a normal Markdown file, and the outline round-trips. Powered by the [simple-mind-map](https://github.com/wanglin2/mind-map) engine, developed by [WinterMosquito](https://github.com/WinterMosquito).
 
 <p align="center">
-  <img src="https://img.shields.io/github/v/release/WinterMosquito/Obsidian-Mindmap-Studio?label=Release&color=blue" alt="Latest release" />
-  <img src="https://img.shields.io/github/license/WinterMosquito/Obsidian-Mindmap-Studio?label=License&color=green" alt="License" />
-  <img src="https://img.shields.io/badge/Obsidian-1.13.0%2B-purple" alt="Obsidian version" />
-  <img src="https://img.shields.io/badge/Platform-Desktop-blue" alt="Platform" />
+  <a href="https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases"><img src="https://img.shields.io/github/v/release/WinterMosquito/Obsidian-Mindmap-Studio?label=Release&color=blue" alt="Latest release" /></a>
+  <a href="https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/blob/main/LICENSE"><img src="https://img.shields.io/github/license/WinterMosquito/Obsidian-Mindmap-Studio?label=License&color=green" alt="License" /></a>
+  <a href="https://obsidian.md"><img src="https://img.shields.io/badge/Obsidian-1.13.0%2B-purple" alt="Obsidian version" /></a>
+  <a href="https://obsidian.md"><img src="https://img.shields.io/badge/Platform-Desktop-blue" alt="Platform" /></a>
 </p>
 
 </div>

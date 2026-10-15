@@ -7,10 +7,10 @@
 > 在 Obsidian 中将 Markdown 渲染为思维导图。在笔记的 frontmatter 写 `类型: Mindmap`（英文库写 `Type: Mindmap`），它打开时即是导图；任何笔记也可用右键**「以思维导图打开」**临时预览 —— 仍是普通的 Markdown 文件，大纲可往返。基于 [simple-mind-map](https://github.com/wanglin2/mind-map) 引擎，由 [WinterMosquito](https://github.com/WinterMosquito) 开发。
 
 <p align="center">
-  <img src="https://img.shields.io/github/v/release/WinterMosquito/Obsidian-Mindmap-Studio?label=Release&color=blue" alt="Latest release" />
-  <img src="https://img.shields.io/github/license/WinterMosquito/Obsidian-Mindmap-Studio?label=License&color=green" alt="License" />
-  <img src="https://img.shields.io/badge/Obsidian-1.13.0%2B-purple" alt="Obsidian version" />
-  <img src="https://img.shields.io/badge/Platform-%E6%A1%8C%E9%9D%A2-blue" alt="Platform" />
+  <a href="https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases"><img src="https://img.shields.io/github/v/release/WinterMosquito/Obsidian-Mindmap-Studio?label=Release&color=blue" alt="Latest release" /></a>
+  <a href="https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/blob/main/LICENSE"><img src="https://img.shields.io/github/license/WinterMosquito/Obsidian-Mindmap-Studio?label=License&color=green" alt="License" /></a>
+  <a href="https://obsidian.md"><img src="https://img.shields.io/badge/Obsidian-1.13.0%2B-purple" alt="Obsidian version" /></a>
+  <a href="https://obsidian.md"><img src="https://img.shields.io/badge/Platform-%E6%A1%8C%E9%9D%A2-blue" alt="Platform" /></a>
 </p>
 
 </div>
