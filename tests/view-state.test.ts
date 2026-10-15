@@ -33,9 +33,15 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 
 	it('接受完整 data.json 对象，读取顶层 viewState 下的已知字段条目', () => {
 		const store = new ViewStateStore(() => {});
+		// 视口形状取引擎 `getTransformData()` 的真实形态（{transform, state}，
+		// state 含有限 scale/x/y）——hydrate 的可用性校验按此判据
+		const view = {
+			transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 },
+			state: { scale: 1, x: 0, y: 0 },
+		};
 		store.hydrate({
 			viewState: {
-				[PATH_A]: { layout: 'mindMap', view: { transform: { scale: 1 } } },
+				[PATH_A]: { layout: 'mindMap', view },
 				[PATH_B]: { lineStyle: 'curve' },
 			},
 			// 顶层设置键不属于视图状态
@@ -44,15 +50,71 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 		});
 
 		expect(store.getLayout(PATH_A)).toBe('mindMap');
-		expect(store.getView(PATH_A)).toEqual({ transform: { scale: 1 } });
+		expect(store.getView(PATH_A)).toEqual(view);
 		expect(store.getLineStyle(PATH_B)).toBe('curve');
 		// 设置键不进入视图状态映射
 		expect(store.getLayout('language')).toBeUndefined();
 		expect(store.serialize()).toEqual({
-			[PATH_A]: { layout: 'mindMap', view: { transform: { scale: 1 } } },
+			[PATH_A]: { layout: 'mindMap', view },
 			[PATH_B]: { lineStyle: 'curve' },
 		});
 		expect(console.warn).not.toHaveBeenCalled();
+	});
+
+	it('view 不可恢复：只丢该字段，保留同条目的 layout / lineStyle', () => {
+		const store = new ViewStateStore(() => {});
+		store.hydrate({
+			viewState: {
+				// state 缺失 / 非对象 / scale 非有限数：前两者会让
+				// setTransformData 抛（Object.keys(undefined)），第三者恢复不出视口
+				'missing-state.mindmap.md': {
+					layout: 'mindMap',
+					view: { transform: { scaleX: 1 } },
+				},
+				'scalar-state.mindmap.md': {
+					layout: 'mindMap',
+					view: { state: 'x' },
+				},
+				'array-state.mindmap.md': {
+					layout: 'mindMap',
+					view: { state: [] },
+				},
+				'nan-scale.mindmap.md': {
+					lineStyle: 'curve',
+					view: { state: { scale: Number.NaN, x: 0, y: 0 } },
+				},
+				'string-scale.mindmap.md': {
+					layout: 'mindMap',
+					view: { state: { scale: '1', x: 0, y: 0 } },
+				},
+			},
+		});
+
+		for (const path of [
+			'missing-state.mindmap.md',
+			'scalar-state.mindmap.md',
+			'array-state.mindmap.md',
+			'nan-scale.mindmap.md',
+			'string-scale.mindmap.md',
+		]) {
+			expect(store.getView(path), `${path} 的视口应被丢弃`).toBeUndefined();
+		}
+		// 同条目的其它状态仍然生效
+		expect(store.getLayout('missing-state.mindmap.md')).toBe('mindMap');
+		expect(store.getLayout('scalar-state.mindmap.md')).toBe('mindMap');
+		expect(store.getLineStyle('nan-scale.mindmap.md')).toBe('curve');
+	});
+
+	it('view 不可恢复且条目再无其它已知字段：整条丢弃（不落盘空壳）', () => {
+		const store = new ViewStateStore(() => {});
+		store.hydrate({
+			viewState: {
+				'only-view.mindmap.md': { view: { state: 42 } },
+			},
+		});
+
+		expect(store.getView('only-view.mindmap.md')).toBeUndefined();
+		expect(store.serialize()).toEqual({});
 	});
 
 	it('丢弃不含已知字段的畸形条目与非对象条目', () => {

@@ -175,6 +175,9 @@ export function openImageEditorModal(
 
 			const pasteFromClipboard = async (): Promise<void> => {
 				try {
+					// ⚠ 全插件**唯一**不经 `platform/clipboard` 的剪贴板调用（有意）：
+					// 这里读的是**图片**（`clipboard.read()` 取 MIME 条目），与文本
+					// 读写面不是同一能力。文本读写一律走 platform/clipboard。
 					const items = await navigator.clipboard.read();
 					for (const item of items) {
 						const imageType = item.types.find((type) =>

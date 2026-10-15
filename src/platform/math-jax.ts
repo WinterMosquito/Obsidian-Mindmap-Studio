@@ -14,6 +14,17 @@
  *   挂载**的状态下走本函数的构建链；若替换只尝试一次就放弃，这类节点会永久
  *   停在字面占位（实机复验：MathJax 热加载时"关闭再打开文件"必现，
  *   冷加载时因 await 期间元素已挂载而侥幸成功——两条路径都要正确）。
+ * - **放弃后的「症状修复」兜底**（2026-10-14 实机缺陷收口）：挂载等待预算
+ *   对「剪枝摘除的暂离视口」与「导出快照的永久离屏」**不具区分力**——预算
+ *   耗尽即放弃，而节点重进视口时引擎**复用旧 group 与内容、不重建**（剪枝
+ *   只摘 DOM，vendor BUILD.md 补丁 11），字面占位便永久留在屏上（实机：
+ *   500 节点性能导图 15 个节点平移往返后仍为字面，且无任何路径自愈）。
+ *   收口 = 未定稿登记面（`unsettledMath`）+ 既有钩子上的 `repairUnsettledMath`
+ *   （见其 JSDoc）：产物缓存命中即**同步修复**（不依赖挂载，出视口的节点也
+ *   就地修好），未命中且已挂载才重新入队；**定稿即注销**、视图卸载经
+ *   `clearUnsettledMath`（只清该宿主画布根内的段）/ 引擎**销毁**经
+ *   `pruneUnsettledMathOwnedBy`（按引擎归属精确清，**不得**按 `isConnected`
+ *   判——预测量本体从不挂载，论证见 `unsettledMath`）清理。
  * - **刻意不加「会话/代际守卫」（2026-10-07 研究结论，勿再加）**：审查曾怀疑
  *   「await 期间 holder 被 A2 交给新段落 ⇒ 旧 TeX 产物覆盖新内容」。查
  *   `vendor/BUILD.md` 补丁 5② 确认 A2 是**按 uid 存、取用即删**，同一元素
@@ -29,8 +40,11 @@
  *   （＝「块级公式只给一行高度」一类实机症状的根因）。本模块渲染后按批合并
  *   调度 flush（单次实测 ≈1s：本机 1006ms / 隔离实例 981–1046ms——绝不逐段等待），
  *   完成后重试全部待定段。
- *   ② **就绪判据**：产物内**全部 `mjx-c` 宽度 > 0**（实测：未 flush 11/11 为 0、
- *   flush 后 0/11 为 0）；无 `mjx-c` 的产物形态退回「宽高皆 > 0」保守判定。
+ *   ② **就绪判据**：**2026-10-15 v4 修正**——「本段字符的规则已落盘 + 宽度 > 0」
+ *   （见文末「就绪判据 v4 修正」与 `isProductReady`）。旧口径「全部 `mjx-c`
+ *   宽度 > 0」（实测：v3 未 flush 11/11 为 0、flush 后 0/11 为 0）在 MathJax 4
+ *   下因字符改为真实文本节点而**恒假阳**，已废止；无 `mjx-c` 的产物形态仍退回
+ *   「宽高皆 > 0」保守判定。
  *   例外（实测补，**双形态**）：零宽字符分两种「设计上不可见」，均视为就绪——
  *   MathJax ≤3.x：`::before` 的 content 为**空串**（U+2061函数应用等）；
  *   MathJax 4.x：无 content 规则，改以**逐字符规则 `padding` 全为 0** 判定
@@ -62,7 +76,8 @@
  *
  * **MathJax 4 面（1.14+ 实机取证，见 K113）**：`tex2chtml` 仍是官方通道（宿主
  * `app.js` 自身即 `MathJax.tex2chtml(e,{display:t})`），`tex2svg` 依旧 absent；
- * `#MJX-CHTML-styles` 与 24 条 `@font-face` 也都还在（导出注入链路未回归）。
+ * `#MJX-CHTML-styles` 与 24 条 `@font-face` 的**载体机制未变**（导出注入链路未回归；
+ * 但该样式表**仅在 flush 后挂进 document**——未 flush 时元素不存在，2026-10-15 补注见下）。
  * 但 **CHTML 逐字符规则的形态变了**——MathJax 4 的 `addCharStyles` 只写 `padding`、
  * 不再写 `content`：可见字符是 `mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }`，
  * 不可见操作符是 `mjx-c.mjx-c2061 { padding: 0px; }`，其 `::before` 计算值为 `none`
@@ -72,12 +87,30 @@
  * 3 轮 flush 重试耗尽 → **退字面 `$…$`**。故豁免判据改为**双形态**
  * （见 `isInvisibleCharByDesign`）。
  *
+ * **就绪判据 v4 修正（2026-10-15 实机缺陷收口）**：症状 = 导图内公式以
+ * **回退字体 + 无 TeX 间距**呈现（用户截图：`x² +y² =r²`，加号/等号两侧的
+ * TeX 间距塌缩）。根因链（1.14.4 + MathJax 4.1.3 实机取证）：v4 把字符改为
+ * **真实文本节点** ⇒ 未 flush 的产物也有非零字符宽度（实测 8/8 字符
+ * 6.19–7.42px）⇒ 旧判据「全部 `mjx-c` 宽 > 0」**恒假阳** ⇒ `scheduleFlush`
+ * 永不触发（它只在判定失败时调用）⇒ 官方 `finishRenderMath()` 从未执行 ⇒
+ * `chtmlStylesheet()` 生成的 `STYLE#MJX-CHTML-styles`（11862 字节：逐字符
+ * padding 规则 + @font-face）**从未挂进 document**（同刻实测 `inDoc:false`）
+ * ⇒ 间距规则与 MathJax 字体整体缺席——「关闭再打开文件」也不会自愈（判据
+ * 仍假阳）。修复 = 就绪判据改为「**本段字符的规则已落盘** + 宽度」三态设计
+ * （见 `readCharRuleIndex` / `isProductReady`），且索引缓存键从 flush 代际
+ * 改为（样式表元素, 规则条数）——外部通道（阅读视图等）挂载/补齐样式表时
+ * 本模块代际不前进，旧键会把「规则缺失」的空索引钉住。实机复验：删掉样式表
+ * （冷态）重开导图 → 首段显示字面约 1s（官方 flush 实测 ≈1s）→ 重试命中、
+ * 产物落盘（字符 padding 非零、字体 MJX-TEX-*：loaded）；此后同会话各段直接
+ * 命中规则、无字面窗口。
+ *
  * 产物形态提示：`<mjx-container class="MathJax" jax="CHTML">`——定位要按**标签
  * 名** `mjx-container`（class 是 `MathJax`，`.mjx-container` 类选择器匹配不到）。
  */
 import { finishRenderMath, loadMathJax } from 'obsidian';
 import { MATH_RENDERED_HOLDER_CLASS } from '../core/constants';
 import { createWarnOnce } from '../core/errors';
+import { formatMathPlaceholder } from '../core/math-placeholder';
 import { appendSvgStyle } from './export-svg-style';
 
 /**
@@ -163,8 +196,55 @@ const settleCallbacks = new WeakMap<
 	(holder: HTMLElement) => void
 >();
 
+/**
+ * **未定稿段登记面**（holder → 首次渲染参数 + 引擎归属）：`repairUnsettledMath`
+ * 的唯一依据。
+ *
+ * 为什么需要它：`pendingMath` 的挂载等待预算（PENDING_MAX_PUMPS）耗尽后段被
+ * 放弃（保持字面），而节点重进视口时引擎**复用旧 group 与内容、不重建**
+ * （剪枝只摘 DOM，见文件头）——若无人能回答「哪些 holder 仍是字面、其 TeX
+ * 是什么」，字面就永久留在屏上（2026-10-14 实机复现）。登记面同时承载
+ * 「待重试的 TeX 原文」，使修复**不反解屏幕文本**（占位串虽可与
+ * `formatMathPlaceholder` 互逆，但反解是第二份判定，硬规则 5 禁止）。
+ *
+ * `owner` = **构建该段的引擎实例**（不透明 token，由 `engine/mindmap` 经
+ * 构建链注入）。为什么不按 `isConnected` 判归属（2026-10-14 实机定案）：
+ * 首帧前预测量构建的 holder **本体从不挂载**（vendor 补丁 5 A2），与「旧
+ * 引擎残留（已脱离）」在 DOM 状态上**不可区分**——按连接状态清理会把新引擎
+ * 的全部懒加载段误清、`repairUnsettledMath` 从此无事可做（实机：500 节点图
+ * 视口外 76 段永久字面，泵预算耗尽后进视口也无人修）。归属判据使清理精确到
+ * 「该引擎的条目」：引擎销毁时清（`pruneUnsettledMathOwnedBy`），未挂载的
+ * 新引擎条目原样保留。
+ *
+ * 生命周期：`renderMathWithMathJax` 入口登记 → 定稿（`notifyMathSettled`，
+ * 覆盖「异步替换成功」与「repair 缓存命中」两条路径）即注销 → 失败/放弃
+ * **保留**（待修复）→ **引擎销毁**经 `pruneUnsettledMathOwnedBy` 精确清理 /
+ * 视图卸载经 `clearUnsettledMath` 全清。数据规模 ≈ 未定稿段数（远小于
+ * 节点数），遍历成本可忽略。
+ */
+const unsettledMath = new Map<
+	HTMLElement,
+	{
+		tex: string;
+		display: boolean;
+		owner: object | null;
+		/**
+		 * `repairUnsettledMath` **已重入次数**（2026-10-15 补，**不随重入清零**）：
+		 * 每次重入都会重建 `pendingMath` 的完整预算（挂载泵 / 规则重试），
+		 * 而 repair 的触发面是 `node_tree_render_end` 这类高频钩子——某段
+		 * 「永远不就绪」（API 面缺失 / 字符规则永不落盘）时无上限即等于
+		 * 每次渲染都重跑一遍完整链（loadMathJax → 字体 → tex2chtml）。
+		 * 真正的重建走**新 holder 元素** ⇒ 天然从 0 起算，不受本计数影响。
+		 */
+		repairAttempts: number;
+	}
+>();
+
 /** 通知该 holder 的观察者（一次性：取后即删，避免重建后被重复通知） */
 function notifyMathSettled(holder: HTMLElement): void {
+	// 定稿即注销登记面（本函数是「已定稿」的唯一出口）：异步替换成功与
+	// repair 的缓存命中路径都经此处，注销点与定稿点天然同一，不会分叉。
+	unsettledMath.delete(holder);
 	const callback = settleCallbacks.get(holder);
 	if (!callback) {
 		return;
@@ -419,14 +499,25 @@ export function pinMathContainerHeightsInExportSvg(
 }
 
 /**
- * 产物就绪判定（S0.5 实测锁定）：产物内**全部 `mjx-c` 宽度 > 0**。
+ * 产物就绪判定（2026-10-15 起「规则落盘 + 宽度」双条件；此前为「宽度 > 0」单条件）。
  *
- * 依据：CHTML 的字符宽度来自逐字符规则的 em `padding`，规则只在样式表 flush
- * 时写入——未 flush 时全为 0、产物「非零但塌缩」（实测：未 flush `14×20` 且
- * 11 个 `mjx-c` 全 0 宽；flush 后 `130×20` 且全 > 0）。「容器宽高 > 0」无法识别
- * 这种形态，会把错误尺寸送进产物缓存与节点重排（＝「块级公式只给一行高度」
- * 一类实机症状的根因）。无 `mjx-c` 的产物形态（异常/空公式）退回「宽高皆 > 0」
- * 保守判定。
+ * ## 为什么换判据（v4 实机缺陷，2026-10-15 收口，完整根因链见文件头）
+ * 旧判据「全部 `mjx-c` 宽 > 0」锁定于 v3：字形与宽度都在逐字符规则里（flush
+ * 前为空/0）。**MathJax 4 起字符改为真实文本节点**，字体回退下宽度恒非零
+ * （实机未 flush 的产物 8/8 字符 6.19–7.42px）⇒ 旧判据恒假阳 ⇒ 产物直接
+ * 定稿、`scheduleFlush` 永不触发 ⇒ 官方样式表从未挂载。故 v4 就绪以
+ * 「本段字符的**规则已落盘**」为准（三态语义与出处见 `readCharRuleIndex`）。
+ *
+ * ## 判定序（快 → 慢；每条路径都省掉不必要的代价）
+ * 1. 索引**可用**时先查「本段字符的规则是否已落盘」——缺失即快速失败
+ *    （**不读 rect**：未 flush 是可预期的常规态，避免无谓强制布局）；
+ * 2. 可见字符（宽度 > 0）直接就绪——**不查 `::before`**（伪元素查询只服务
+ *    零宽字符；若放在前面，每个可见字符都要多付一次样式计算）；
+ * 3. 宽度为 0 的字符才做豁免判定（`isInvisibleCharByDesign`，v3 空 content／
+ *    v4 零 padding 规则）；两者皆不命中 → 未就绪（规则在而宽度 0 = 异常
+ *    塌缩态，不得借豁免混入缓存）；
+ * 4. 索引**不可用**（无 document / sheet 缺失 / CSSOM 抛错）→ 整体退回旧
+ *    「宽度 > 0 + 豁免」判据（异常宿主保持可渲染，不因判定环境缺陷全量退字面）。
  *
  * 例外（用户实机复现 + 无头 MathJax 3.2.2 取证 + K113 v4 取证）：MathJax 会在
  * 命名函数与其参数之间插入**不可见操作符**（`\sin x` → U+2061 函数应用符，
@@ -435,6 +526,8 @@ export function pinMathContainerHeightsInExportSvg(
  * 「字体/样式未就绪」），故零宽字符交 `isInvisibleCharByDesign` 按**双形态**分流
  * （v3 空 content 规则／v4 零 padding 规则）；两者皆不命中 → 仍未就绪（保留对
  * 「塌缩态」的检测力，不放行部分塌缩）。
+ *
+ * 无 `mjx-c` 的产物形态（异常/空公式）退回「宽高皆 > 0」保守判定。
  */
 function isProductReady(holder: HTMLElement): boolean {
 	let chars: Element[] = [];
@@ -447,67 +540,187 @@ function isProductReady(holder: HTMLElement): boolean {
 		const box = holder.getBoundingClientRect();
 		return box.width > 0 && box.height > 0;
 	}
+	const index = readCharRuleIndex();
 	for (const char of chars) {
+		// ① 规则落盘检查（索引可用时）——先于 rect 读取：未 flush 是可预期的
+		// 常规态，规则缺失应当零布局成本地快速失败
+		if (index.usable && !hasCharRule(char, index)) {
+			return false;
+		}
+		// ② 可见字符：有宽度即就绪（不查 ::before——伪元素查询只服务零宽字符）
 		if (char.getBoundingClientRect().width > 0) {
 			continue;
 		}
-		if (!isInvisibleCharByDesign(char)) {
-			return false;
+		// ③ 零宽字符：豁免双形态放行；规则在而宽度 0 的异常塌缩态不放行
+		if (isInvisibleCharByDesign(char, index)) {
+			continue;
 		}
+		return false;
 	}
 	return true;
 }
 
 /**
- * 「字符码（大写 hex） → 该字符逐字符规则的声明体」索引，**按 flush 代际缓存**。
+ * 「字符码（大写 hex） → 该字符逐字符规则的声明体」索引 + **可用性三态**。
  *
- * 用途：MathJax 4 的零宽「不可见操作符」判据（见 `isInvisibleCharByDesign`）。
- * 规则形如 `mjx-c.mjx-c2061 { padding: 0px; }`；选择器**可能带字体类后缀**
- * （MathJax `addCharStyles` 的 `"mjx-c"+charSelector+(o?"."+o:"")`），故后缀一并
+ * 两条判据共用：`isProductReady` 的 **v4 就绪判据**（本段字符的规则是否已
+ * 落盘）与 `isInvisibleCharByDesign` 的零宽豁免。规则形如
+ * `mjx-c.mjx-c2061 { padding: 0px; }`；选择器**可能带字体类后缀**
+ * （MathJax `addCharStyles` 的 `"mjx-c"+charSelector+(o?"."+o:"")`）与
+ * **v3 的 `::before` 伪元素后缀**（v3 的字形与宽度都在伪元素里），两者一并
  * 容忍；`[noic]` / `:not(...)` 等派生变体不参与（要的是基规则）。
  *
- * ⚠ **规则缺失本身是信号**：未 flush / 该字符尚未 typeset 时规则不存在，此时
- * 判据必须返回「未就绪」——否则会放行塌缩产物（历史上正是要防的形态）。索引读取
- * 失败（宿主查询不可用 / 无样式表）同样留空，维持保守判定。
+ * 三态语义（2026-10-15 修复引入——此前「留空」没有区分「明确无规则」与
+ * 「环境读取失败」，而 v4 下两者后果相反）：
+ * - **usable=true + 空表**：样式表元素**不存在** = MathJax 尚未 flush
+ *   （v4 未挂载形态，实机取证）⇒ 调用方必须判「未就绪」（修复核心：此前该
+ *   形态被「字符宽度 > 0」的假阳放行）；
+ * - **usable=true + 有规则**：正常读数（含「部分落盘」——新字符尚未注册时
+ *   其键缺失，同样判未就绪）；
+ * - **usable=false**：判定环境不可用（无 `document` / `sheet` 缺失 /
+ *   `cssRules` 抛错）⇒ 调用方退回旧「宽度 > 0」判据（异常宿主保持可渲染，
+ *   不因判定环境缺陷全量退字面）+ 留痕告警。
+ *
+ * ⚠ **缓存键 =（样式表元素, 规则条数）**，不再按 flush 代际（2026-10-15
+ * 修复）：样式表可能由**外部通道**挂载/补齐（用户本会话在阅读视图渲染过
+ * 数学、其他插件渲染数学）——此时本模块的 `flushGeneration` 不前进，按代际
+ * 缓存会把「规则缺失」的空索引钉住，新段永久误判未就绪。MathJax 的规则
+ * **只增不减**（S0.5 双环境实测），故条数即可作为失效键：任何追加都会改长度。
  */
-let charRuleIndex: { generation: number; decl: Map<string, string> } | null = null;
+interface CharRuleIndex {
+	/** 索引可信：true = 结果有效（含「明确无规则」）；false = 环境不可用 */
+	usable: boolean;
+	/** 字符码（大写 hex）→ 该字符逐字符规则的声明体 */
+	decl: Map<string, string>;
+}
+
+let charRuleIndex: {
+	/** 样式表对象身份（元素不在时为 null） */
+	sheet: CSSStyleSheet | null;
+	/** 规则条数（元素不在时为 -1） */
+	ruleCount: number;
+	value: CharRuleIndex;
+} | null = null;
 
 /** 「CHTML 字符规则索引读取失败」告警留痕：同一进程只提醒一次（前缀/去重交 core/errors） */
 const warnCharRuleUnreadableOnce = createWarnOnce();
 
-function readCharRuleIndex(): Map<string, string> {
-	if (charRuleIndex && charRuleIndex.generation === flushGeneration) {
-		return charRuleIndex.decl;
+/** 索引读取失败告警文案（两处 catch 共用同一句——失效语义相同，勿各写一份） */
+const CHAR_RULE_UNREADABLE_MSG =
+	'读取 MathJax CHTML 字符规则失败，v4 就绪判据将退回宽度兜底';
+
+/** 不可用索引（共享空表——只读消费，无写路径） */
+const UNUSABLE_CHAR_RULE_INDEX: CharRuleIndex = {
+	usable: false,
+	decl: new Map(),
+};
+
+/** 「明确零规则」索引（样式表元素不存在 = 尚未 flush；只读消费，无写路径） */
+const EMPTY_CHAR_RULE_INDEX: CharRuleIndex = {
+	usable: true,
+	decl: new Map(),
+};
+
+function readCharRuleIndex(): CharRuleIndex {
+	if (typeof document === 'undefined') {
+		return UNUSABLE_CHAR_RULE_INDEX;
 	}
-	const decl = new Map<string, string>();
+	let el: HTMLStyleElement | null = null;
+	let sheet: CSSStyleSheet | null = null;
+	let ruleCount = -1;
 	try {
-		const el =
-			typeof document === 'undefined'
-				? null
-				: (document.getElementById(CHTML_STYLES_ID) as HTMLStyleElement | null);
-		const sheet = el?.sheet;
-		if (sheet) {
-			for (const rule of Array.from(sheet.cssRules)) {
-				const m = /^mjx-c\.mjx-c([0-9a-f]+)(?:\.[\w-]+)?\s*\{([^}]*)\}$/i.exec(
-					rule.cssText,
-				);
-				if (m) {
-					decl.set((m[1] ?? '').toUpperCase(), m[2] ?? '');
-				}
+		el = document.getElementById(CHTML_STYLES_ID) as HTMLStyleElement | null;
+		if (el) {
+			sheet = el.sheet;
+			if (sheet) {
+				ruleCount = sheet.cssRules.length;
 			}
 		}
 	} catch (error) {
-		// 留空索引不是无害降级：它让 isInvisibleCharByDesign 恒 false，K113 的
-		// MathJax 4 零宽豁免整体失效 → 含 \sin/\log 的公式永久判未就绪 → 退字面。
-		// 而用户看到的唯一告警是下游泛化的「字体/样式未就绪」，指错根因，
+		// 读取失败不是无害降级：索引不可用会让 v4 就绪判据退回宽度兜底（本次修复
+		// 失效）且 K113 零宽豁免整体失效 → 含 \sin/\log 的公式永久判未就绪 →
+		// 退字面。而用户看到的唯一告警是下游泛化的「字体/样式未就绪」，指错根因，
 		// 故此处必须留痕（AGENTS.md决策表：静默跳过会让问题无痕退化）。
-		warnCharRuleUnreadableOnce(
-			'读取 MathJax CHTML 字符规则失败，v4 零宽豁免判据将失效',
-			error,
-		);
+		warnCharRuleUnreadableOnce(CHAR_RULE_UNREADABLE_MSG, error);
+		return UNUSABLE_CHAR_RULE_INDEX;
 	}
-	charRuleIndex = { generation: flushGeneration, decl };
-	return decl;
+	if (!el) {
+		// 元素不存在 = MathJax 尚未 flush（v4 未挂载形态）：**明确零规则**。
+		// ⚠ 不可与「表格异常」混同：后者退回旧判据（见上），前者必须判未就绪。
+		return EMPTY_CHAR_RULE_INDEX;
+	}
+	if (!sheet) {
+		// 元素在、CSSOM 不可读（异常宿主；真实 MathJax 挂载后 sheet 恒可用）
+		// ⇒ 退回旧判据。不单独告警：本分支在真实宿主不可达（判定环境缺陷
+		// 由上方 catch 留痕），而单测桩普遍以无 sheet 元素表达「样式表存在」。
+		return UNUSABLE_CHAR_RULE_INDEX;
+	}
+	if (
+		charRuleIndex &&
+		charRuleIndex.sheet === sheet &&
+		charRuleIndex.ruleCount === ruleCount
+	) {
+		return charRuleIndex.value;
+	}
+	const decl = new Map<string, string>();
+	try {
+		for (const rule of Array.from(sheet.cssRules)) {
+			const m =
+				/^mjx-c\.mjx-c([0-9a-f]+)(?:\.[\w-]+)?(?:::before)?\s*\{([^}]*)\}$/i.exec(
+					rule.cssText,
+				);
+			if (m) {
+				decl.set((m[1] ?? '').toUpperCase(), m[2] ?? '');
+			}
+		}
+	} catch (error) {
+		warnCharRuleUnreadableOnce(CHAR_RULE_UNREADABLE_MSG, error);
+		return UNUSABLE_CHAR_RULE_INDEX;
+	}
+	const value: CharRuleIndex = { usable: true, decl };
+	charRuleIndex = { sheet, ruleCount, value };
+	return value;
+}
+
+/**
+ * 字符码键（大写 hex）：产物元素 → 逐字符规则的字典键。
+ *
+ * **双通道**（两代 MathJax 形态差）：
+ * - **类名优先**：`mjx-c1D465` 两代命名一致（v3 的字符元素**文本为空**——
+ *   字形在 `::before` 伪元素里，故 v3 下这是唯一键源；v4 起字符改为真实
+ *   文本节点）；
+ * - **文本兜底**：类名不可用（异常形态/桩）时按 `textContent` 首码点。
+ *
+ * 两通道皆不可得 → null（=「无对应规则」，就绪判据据此判未就绪）。
+ */
+function charRuleKey(char: Element): string | null {
+	try {
+		const cls = typeof char.className === 'string' ? char.className : '';
+		const m = /mjx-c([0-9a-f]+)/i.exec(cls);
+		if (m) {
+			return (m[1] ?? '').toUpperCase();
+		}
+	} catch {
+		/* 形态不符：尝试文本通道 */
+	}
+	try {
+		const code = char.textContent?.codePointAt(0);
+		return code === undefined ? null : code.toString(16).toUpperCase();
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 该字符的逐字符规则是否**已落盘**（v4 就绪判据的字符级检查）；
+ * 三态语义见 `CharRuleIndex`，调用点 `isProductReady`。
+ *
+ * 键取不到（无类名也无文本码点）与「规则缺失」同一后果：未就绪——保守，
+ * 不放行无法验证的产物。
+ */
+function hasCharRule(char: Element, index: CharRuleIndex): boolean {
+	const key = charRuleKey(char);
+	return key !== null && index.decl.has(key);
 }
 
 /**
@@ -531,17 +744,25 @@ function isZeroPaddingDecl(decl: string): boolean {
 /**
  * 零宽字符是否为「设计上不可见」（U+2061 函数应用符、U+2062 隐式乘号等）。
  *
+ * **调用点约定**：只由 `isProductReady` 对**宽度为 0** 的字符调用——可见字符
+ * 在更早的宽度检查处就绪、不走这里（伪元素样式查询不便宜，勿对每字符调用）。
+ *
  * **双形态**（两代MathJax 的规则形态都保留，缺一即误判）：
  * - **MathJax ≤ 3.x**：`::before` 的 content 为**空串**（显式空内容规则）。
  * - **MathJax 4.x**：不再有任何 content 规则（实机：整表 0 条 `content:""`），
- *   改以逐字符规则 **`padding` 全为 0** 判定（K113）。
+ *   改以逐字符规则 **`padding` 全为 0** 判定（K113）——规则体从调用方传入的
+ *   索引取（键来源见 `charRuleKey`：类名优先，兼收 v3「文本为空、字形在
+ *   伪元素」形态）。
  *
  * 其余一律 false：`none`（规则未落盘的塌缩态）、非空字形内容（字形规则在而宽度
  * 为 0 的异常态）、`padding` 非全零（可见字符被塌缩）、规则缺失。
  * 判定环境不可用（单测桩缺 getComputedStyle / 无样式表 / 异常宿主）时按 false
  * 处理，维持旧的保守行为。
  */
-function isInvisibleCharByDesign(char: Element): boolean {
+function isInvisibleCharByDesign(
+	char: Element,
+	index: CharRuleIndex,
+): boolean {
 	try {
 		if (
 			typeof getComputedStyle === 'function' &&
@@ -553,11 +774,11 @@ function isInvisibleCharByDesign(char: Element): boolean {
 		/* 判定环境不可用：继续按 MathJax 4 形态判定 */
 	}
 	try {
-		const code = char.textContent?.codePointAt(0);
-		if (code === undefined) {
+		const key = charRuleKey(char);
+		if (key === null) {
 			return false;
 		}
-		const decl = readCharRuleIndex().get(code.toString(16).toUpperCase());
+		const decl = index.decl.get(key);
 		return decl !== undefined && isZeroPaddingDecl(decl);
 	} catch {
 		return false;
@@ -653,6 +874,20 @@ const PUMP_INTERVAL_MS = 16;
 const RULE_RETRY_LIMIT = 3;
 
 /**
+ * `repairUnsettledMath` 对同一段的**累计重入上限**（2026-10-15 补）。
+ *
+ * 为什么必须有：repair 的重入会走 `renderMathWithMathJax` 重建 `pendingMath`
+ * 的完整预算，而它的触发面（`node_tree_render_end`）在平移 / 缩放 / 剪枝复挂
+ * 时高频派发——某段永远不就绪（MathJax API 面缺失、字符规则永不落盘）时，
+ * 无上限即等于「每次渲染都重跑一遍 loadMathJax → 字体 → tex2chtml」。
+ * 达上限即放弃并留痕一次（保持可见字面，与本模块「预算耗尽即放弃」同口径）。
+ */
+const REPAIR_ATTEMPT_LIMIT = 3;
+
+/** 「未定稿段修复已达上限」告警留痕：同一进程只提醒一次（前缀/去重交 core/errors） */
+const warnRepairGaveUpOnce = createWarnOnce();
+
+/**
  * 取队首段的 holder 排一次泵（`runFlush` 完成后调用——让「规则等待」中的段获得
  * 放行重试；队空则 no-op）。
  */
@@ -699,7 +934,7 @@ function attemptPlace(item: PendingMath): boolean {
 		return true;
 	}
 	// 未就绪（逐字符规则尚未 flush → 产物「非零但塌缩」）：同步撤回字面 + 排队 flush
-	holder.textContent = display ? `$$${tex}$$` : `$${tex}$`;
+	holder.textContent = formatMathPlaceholder(tex, display);
 	holder.classList.remove(MATH_RENDERED_HOLDER_CLASS);
 	item.ruleWait = true;
 	item.failedGeneration = flushGeneration;
@@ -849,13 +1084,29 @@ const warnCssSheetUnreadableOnce = createWarnOnce();
  *
  * @param display 单行 `$$…$$`（display / 块级）传 true → 渲染为独立居中公式；
  *   行内 `$…$` 传 false（缺省）。原样透传给 MathJax 通道的 `{ display }` 选项。
+ * @param owner 构建该段的引擎实例（不透明 token；登记面语义见 `unsettledMath`）。
+ *   登记面按它做**引擎销毁时的精确清理**（`pruneUnsettledMathOwnedBy`）。
+ *   repair 重入（`repairUnsettledMath`）**不传**——沿用既有条目的归属，
+ *   避免把仍在用的段错记为「无主」而被清理误伤。
  */
 export function renderMathWithMathJax(
 	tex: string,
 	holder: HTMLElement,
 	display = false,
 	onSettled?: (holder: HTMLElement) => void,
+	owner?: object | null,
 ): void {
+	// 未定稿登记（在任何异步之前）：放弃后的补修依据（见 unsettledMath）。
+	// repair 重入本函数时不传 onSettled——settleCallbacks 的既有回调原样保留
+	// （WeakMap 未被消费），定稿时仍会通知尺寸同步；owner 同理由「不覆盖」。
+	const prior = unsettledMath.get(holder);
+	unsettledMath.set(holder, {
+		tex,
+		display,
+		owner: owner ?? prior?.owner ?? null,
+		// repair 重入**沿用**已用次数：不沿用则每次重入都把重试上限清零 ⇒ 永不放弃
+		repairAttempts: prior?.repairAttempts ?? 0,
+	});
 	if (onSettled) {
 		settleCallbacks.set(holder, onSettled);
 	}
@@ -901,4 +1152,126 @@ export function renderMathWithMathJax(
 			console.warn('行内数学渲染失败，保留字面显示', error);
 		}
 	})();
+}
+
+/**
+ * **「被放弃的未定稿段」症状修复**（2026-10-14 实机缺陷收口，完整论证见文件头）。
+ *
+ * 缺陷链：字体未就绪时构建 → 字面占位 + 异步替换；节点随剪枝摘除（出视口）
+ * → `attemptPlace` 因未挂载失败 → 挂载等待预算耗尽被放弃 → 既有 `loadingdone`
+ * 重建只覆盖「已定稿（有产物）节点」→ 节点重进视口时引擎复用旧内容、不重建
+ * → **字面永久留在屏上**（实机：500 节点导图 15 个节点平移往返后仍字面）。
+ *
+ * 本函数按**登记面**（`unsettledMath`）做无状态修复：
+ * - 产物缓存**已命中**（同一 TeX 在别处渲染过）⇒ **同步**替换 + 标记 +
+ *   `notifyMathSettled`（注销登记 + 通知尺寸同步；回调未被消费则原样触发）——
+ *   **不依赖挂载**：已出视口的节点也能就地修好，重进视口即显示产物；
+ * - 未命中 ⇒ 仅当 holder **已挂载且无在途待定段**时重新入异步通道；未挂载的
+ *   留到下次触发（避免空转泵与重复 tex2chtml）。
+ *
+ * 幂等（修复即注销登记）且成本 O(未定稿段数)（稳态为零），可在渲染轮次等
+ * 高频钩子上调用。**但同一段的重入有累计上限**（`REPAIR_ATTEMPT_LIMIT`）：
+ * 重入会重建 pendingMath 的完整预算，永不就绪的段若无上限即等于每次渲染
+ * 重跑一遍完整链。调用点见 `features/content-remeasure`。
+ *
+ * @param root 该宿主的画布根（`mindmap-canvas-container`）：只修本宿主内的段
+ *   ——多视图 / 代码块嵌入并存时各修各的（`root.contains` 为 false 的已摘除
+ *   段，留待其重新挂载后的下一次触发）。
+ * @returns 本次处理（同步修复 + 重新入队）的段数，供调用方诊断 / 测试断言。
+ */
+export function repairUnsettledMath(root: Node): number {
+	let repaired = 0;
+	// **在途 holder 集合一次性取**（2026-10-15）：原先在循环内逐条调
+	// `hasPendingFor`（线性扫 `pendingMath`）⇒ O(未定稿数 × 在途数)；而本函数的
+	// 触发面是 `node_tree_render_end` 这类高频钩子（平移 / 缩放 / 剪枝复挂都派发）
+	const pendingHolders = new Set<HTMLElement>();
+	for (const item of pendingMath) {
+		pendingHolders.add(item.holder);
+	}
+	for (const [holder, entry] of Array.from(unsettledMath)) {
+		if (!root.contains(holder)) {
+			continue;
+		}
+		// 缓存命中：**立即**修复、不等在途项——产物取自上一次成功渲染，与「规则
+		// 是否落盘」无关；随后在途项可能再写一次**等价产物**（定稿回调已被消费，
+		// 不再通知），无可见后果。**刻意**不在此分支查在途集合：那会把「马上就能
+		// 修好」的段压后在途项的预算里等（2026-10-15 复核结论，与下方守卫互补）
+		const cached = getRenderedMathNode(entry.tex, entry.display);
+		if (cached) {
+			holder.replaceChildren(cached);
+			holder.classList.add(MATH_RENDERED_HOLDER_CLASS);
+			notifyMathSettled(holder);
+			repaired += 1;
+			continue;
+		}
+		if (!holder.isConnected || pendingHolders.has(holder)) {
+			continue;
+		}
+		// 重入上限（见 REPAIR_ATTEMPT_LIMIT）：重入会重建 pendingMath 的完整
+		// 预算，无上限时「永远不就绪」的段会在这个高频钩子上无界重跑
+		if (entry.repairAttempts >= REPAIR_ATTEMPT_LIMIT) {
+			warnRepairGaveUpOnce(
+				'未定稿数学段修复次数已达上限，保持字面显示（内容已重建或 MathJax 规则始终未落盘）',
+			);
+			continue;
+		}
+		entry.repairAttempts += 1;
+		renderMathWithMathJax(entry.tex, holder, entry.display);
+		repaired += 1;
+	}
+	return repaired;
+}
+
+/**
+ * 待定队列的「在途 holder」判据**只在 `repairUnsettledMath` 内使用**，且每次调用
+ * 就地构建一份局部 `Set`（2026-10-15 收口）。两处「不这么做」的教训：
+ * - 逐条调 `hasPendingFor(holder)`（原实现）：把 O(未定稿数) 变成
+ *   O(未定稿数 × 在途数)，而 repair 挂在 `node_tree_render_end` 高频钩子上；
+ * - 模块级缓存该集合：会跨调用**累积**已不在途的 holder，repair 随后越跑越空。
+ */
+
+/**
+ * 清理**本宿主画布根内**的未定稿登记（**视图销毁**专用；模块级单例跨视图存活，
+ * 不能依赖 GC——否则 holder 被 Map 长期强引用，开关视图逐次累积）。
+ *
+ * 口径 = `root.contains(holder)`，**只清本视图的段**。⚠ 刻意不加「已脱离文档
+ * （`!isConnected`）也算本视图」这类按 DOM 状态的判定：首帧前预测量构建的
+ * holder **本体从不挂载**（vendor 补丁 5 A2），与「旧引擎的残留」在连接状态上
+ * 不可区分——多视图 / 嵌入并存时会把**别的宿主**的懒加载段一并清掉，正是
+ * `pruneUnsettledMathOwnedBy` 记录的同类事故（按连接状态判归属已被实机否决）。
+ * root 外的残留（含已脱离）留给引擎销毁按**归属**清：两个宿主的销毁顺序都是
+ * `dispose()` → `destroyInstance()`（`MindMapView.onClose` /
+ * `MindmapEmbedRenderChild.onunload`），故不存在残留窗口。
+ */
+export function clearUnsettledMath(root: Node): void {
+	for (const holder of Array.from(unsettledMath.keys())) {
+		if (root.contains(holder)) {
+			unsettledMath.delete(holder);
+		}
+	}
+}
+
+/**
+ * 清理「**指定引擎**」的未定稿登记（**引擎销毁**专用，`content-remeasure`
+ * 的 `forgetEngine` 调用）。
+ *
+ * 为什么按归属而非 DOM 状态（2026-10-14 实机定案，论证见 `unsettledMath`）：
+ * 首帧前预测量构建的 holder **本体从不挂载**（vendor 补丁 5 A2），与「旧引擎
+ * 已脱离的残留」在连接状态上不可区分——按 `!isConnected` 清会把新引擎的
+ * 全部懒加载段误清、`repairUnsettledMath` 从此无事可做（实机：500 节点图
+ * 视口外 76 段永久字面，泵预算耗尽后进视口也无人修）。引擎销毁是**唯一**
+ * 无歧义的时机：此刻该引擎的 holder 必然不会再挂载（其 DOM 已拆），而其他
+ * 引擎的条目（含尚未挂载的新条目）必须原样保留 ⇒ owner 相等是精确判据。
+ *
+ * @returns 本次清理的段数（供调用方诊断 / 测试断言）。
+ */
+export function pruneUnsettledMathOwnedBy(owner: object): number {
+	let pruned = 0;
+	for (const [holder, entry] of Array.from(unsettledMath)) {
+		if (entry.owner === owner) {
+			unsettledMath.delete(holder);
+			pruned += 1;
+		}
+	}
+	return pruned;
 }

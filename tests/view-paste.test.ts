@@ -4,7 +4,9 @@
  * 覆盖：
  * - `setupPasteHandler`：容器 paste 监听注册（无 containerEl 时不注册）；
  * - `handleWindowPaste` 三道豁免：已消费（defaultPrevented）/ 目标在容器内
- *   （容器监听已处理）/ 输入框与文本域内（不劫持）；
+ *   （容器监听已处理）/ **输入类目标**内（不劫持——判定走共享的
+ *   `view-common.isTextEntryTarget`，按 `tagName` / `isContentEditable` 取形，
+ *   故桩只需这两个字段，无需 Node 环境缺失的 DOM 类）；
  * - `handlePasteEvent`（经两条入口触发）：剪贴板无 items 或无图片不接管；
  *   有图片且无激活节点 → 落点降级为「根节点下新建图片节点」
  *   （createImageChildNode，不再要求先选节点）；渲染根亦不可用（引擎初始化
@@ -14,9 +16,7 @@
  *   失败转用户可见提示（`common.pasteImageFailed`）。
  *
  * 隔离策略：引擎（getActiveNode）、图片保存（images-save）、节点写图
- * （view-node-actions）、错误上报（core/errors）全部 mock 为 spy；Notice 记录
- * 文案；`HTMLInputElement` / `HTMLTextAreaElement` 是 Node 环境缺失的 DOM 全局，
- * 用 `vi.stubGlobal` 提供最小桩（instanceof 判定需要类存在）。
+ * （view-node-actions）、错误上报（core/errors）全部 mock 为 spy；Notice 记录文案。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { t, type Language } from '../src/core/i18n';
@@ -104,10 +104,6 @@ interface RawViewStub {
 	lang: Language;
 }
 
-/** Node 环境缺失的 DOM 全局：instanceof 判定需要类存在（不实现行为） */
-class HtmlInputElementStub {}
-class HtmlTextAreaElementStub {}
-
 function makeView(
 	options: { withContainer?: boolean; withEngine?: boolean; filePath?: string | null } = {},
 ) {
@@ -143,16 +139,27 @@ function makeView(
 	};
 }
 
-/** 剪贴板事件桩：items 为 undefined（无 clipboardData）/ null（无 items）/ 数组 */
+/**
+ * 剪贴板事件桩：items 为 undefined（无 clipboardData）/ null（无 items）/ 数组。
+ * `getData` 与真实 ClipboardData 同形（文本分支读取它；缺省空串 = 无文本载荷）。
+ */
 function makePasteEvent(options: {
 	items?: { type: string; getAsFile: () => unknown }[] | null;
 	target?: unknown;
 	defaultPrevented?: boolean;
+	/** text/plain 载荷（文本粘贴分支用） */
+	text?: string;
 }) {
 	const preventDefault = vi.fn();
 	const event = {
 		clipboardData:
-			options.items === undefined ? undefined : { items: options.items },
+			options.items === undefined
+				? undefined
+				: {
+						items: options.items,
+						getData: (type: string): string =>
+							type === 'text/plain' ? (options.text ?? '') : '',
+					},
 		target: options.target ?? null,
 		defaultPrevented: options.defaultPrevented ?? false,
 		preventDefault,
@@ -166,14 +173,10 @@ beforeEach(() => {
 	getActiveNodeMock.mockReturnValue(null);
 	getRenderRootMock.mockReturnValue(null);
 	saveImageMock.mockResolvedValue(null);
-	// instanceof 判定的类存在性（行为不实现）
-	vi.stubGlobal('HTMLInputElement', HtmlInputElementStub);
-	vi.stubGlobal('HTMLTextAreaElement', HtmlTextAreaElementStub);
 });
 
 afterEach(() => {
 	noticeCalls.length = 0;
-	vi.unstubAllGlobals();
 });
 
 describe('setupPasteHandler（容器粘贴监听）', () => {
@@ -244,19 +247,21 @@ describe('handleWindowPaste（窗口级兜底三道豁免）', () => {
 		expect(saveImageMock).not.toHaveBeenCalled();
 	});
 
-	it('输入框 / 文本域内：不劫持（在输入框粘贴图片属于编辑行为）', () => {
+	it('输入类目标内：不劫持（粘贴图片/文本都属输入语义）', () => {
 		const { view } = makeView();
-		const inInput = makePasteEvent({
-			items: imageItems,
-			target: new HtmlInputElementStub(),
-		});
-		const inTextArea = makePasteEvent({
-			items: imageItems,
-			target: new HtmlTextAreaElementStub(),
-		});
+		// 四类目标都由共享判定 `isTextEntryTarget` 命中（含此前漏掉的
+		// contenteditable / select：焦点在别处编辑区时不应被导图劫持）
+		const targets = [
+			{ tagName: 'INPUT' },
+			{ tagName: 'TEXTAREA' },
+			{ tagName: 'SELECT' },
+			{ tagName: 'DIV', isContentEditable: true },
+		];
 
-		handleWindowPaste(view, inInput.event);
-		handleWindowPaste(view, inTextArea.event);
+		for (const target of targets) {
+			const { event } = makePasteEvent({ items: imageItems, target });
+			handleWindowPaste(view, event);
+		}
 
 		expect(saveImageMock).not.toHaveBeenCalled();
 	});

@@ -17,6 +17,7 @@ import {
 } from '../../vendor/simple-mind-map.cjs';
 import {
 	applyThemeConfig,
+	applyViewportState,
 	arrangeMindMap,
 	cancelEngineTimers,
 	centerContentAtFullScale,
@@ -25,17 +26,21 @@ import {
 	fitMindMap,
 	getRenderRoot,
 	getRootText,
+	getViewportSignature,
 	isContentVisibleInCanvas,
 	isEditingText,
+	readViewportState,
 	replaceMindMapData,
 	resizeMindMap,
 	syncHistoryLimit,
+	viewStateSignature,
 } from '../engine/mindmap';
 import { createThrottler } from '../core/concurrency';
 import { notifyError } from '../core/errors';
 import type { NodeContentStyle } from '../engine/mindmap';
 import { ensureUniqueUids } from '../markdown/markdown';
 import { nodeReferenceMatches } from '../core/node-data';
+import { encodedNameForm } from '../domain/url';
 import { removeReferencesOnDelete } from '../links/links-tree';
 import { renameReferencesInTree } from '../markdown/links-rename';
 import { walkTree } from '../domain/tree';
@@ -74,6 +79,16 @@ export interface EngineControllerDeps {
 	/** 引擎超链接点击跳转（onHyperlinkJump 回调） */
 	openHyperlink(link: string): void;
 	/**
+	 * 快捷键前置钩子（剪贴板三键回收）：返回 `true` 即取消该快捷键的引擎行为。
+	 *
+	 * 由组合根注入（实现落 `features/view-clipboard`）——services 不依赖
+	 * features（K51 依赖矩阵），与 `exportSvgTransforms` 同款注入口径。
+	 * 缺省 / null ⇒ 引擎快捷键行为不变（只读嵌入与视觉探针不传）。
+	 */
+	beforeShortcutRun?:
+		| ((key: string, nodes: readonly MindMapNode[]) => boolean)
+		| null;
+	/**
 	 * 节点内联内容渲染（方案 B 原型）：返回元素则**完全接管**该节点内容
 	 * （引擎跳过默认文本/图标渲染，元素包进 foreignObject 并按离屏克隆测宽）；
 	 * 返回 null 的节点走引擎默认 SVG 文本。缺省 = 全部节点走默认渲染。
@@ -87,6 +102,7 @@ export interface EngineControllerDeps {
 				doc: Document,
 				style: NodeContentStyle,
 				lang: Language,
+				owner: object | null,
 		  ) => HTMLElement | null)
 		| null;
 	/**
@@ -120,6 +136,17 @@ export interface EngineControllerDeps {
 	setupFeatures(): void;
 	/** 引擎就绪后视图侧收尾（工具栏布局/连线样式同步、md 模式工具栏重建） */
 	onEngineReady(layout: string, lineStyle: string): void;
+	/**
+	 * 引擎实例**即将销毁**（destroyInstance 的唯一通知点）：宿主据此按引擎
+	 * 归属清理插件侧登记（未定稿数学段的登记面，见 platform/math-jax 的
+	 * `unsettledMath` / `pruneUnsettledMathOwnedBy`）。
+	 *
+	 * 为什么经回调上抛而非本层直接清：登记面的清理收口在 features 的
+	 * `content-remeasure`（services 不依赖 features，K51），且多视图/嵌入
+	 * 并存时**只能**按引擎身份清——按 DOM 连接状态判会误清其他引擎尚未
+	 * 挂载的条目（2026-10-14 实机定案）。缺省 = 不通知（视觉探针/无宿主）。
+	 */
+	onEngineDisposed?(mindMap: object): void;
 	/** 引用更新完成（→ 防抖保存） */
 	onReferencesChanged(): void;
 }
@@ -140,24 +167,10 @@ const VIEWPORT_RECENTER_DELAY_MS = 200;
  */
 const HISTORY_LIMIT_SYNC_THROTTLE_MS = 1000;
 
-/**
- * 视口签名（scale|x|y）：非对象 / 非有限值返回 null。
- * savedView.state（data.json 持久化值）与实时视口（getTransformData）共用口径，
- * 供「已在目标视口上则跳过重复 setTransformData」的幂等判定（见 restoreOrFitViewport）。
- */
-function transformSignatureOf(state: unknown): string | null {
-	if (!state || typeof state !== 'object') {
-		return null;
-	}
-	const s = state as { scale?: unknown; x?: unknown; y?: unknown };
-	const scale = Number(s.scale);
-	const x = Number(s.x);
-	const y = Number(s.y);
-	if (!Number.isFinite(scale) || !Number.isFinite(x) || !Number.isFinite(y)) {
-		return null;
-	}
-	return `${scale}|${x}|${y}`;
-}
+// 视口签名与视口状态的读写一律走引擎防腐层（`viewStateSignature` /
+// `getViewportSignature` / `readViewportState` / `applyViewportState`）：本层
+// 此前自持一份 `view.getTransformData().state` 读法，两套读数（此处 state 与
+// 引擎层 transform）在改动时容易各改一边。
 
 export class EngineController {
 	/** 引擎实例作用域的事件绑定器（initMindMap 时注册，destroy 一次性清理） */
@@ -290,6 +303,8 @@ export class EngineController {
 			const nodeContentRenderer = this.deps.createNodeContent ?? null;
 			/** 导出 SVG 后处理链（组合根注入，按序应用；空链 = 不注册钩子） */
 			const exportSvgTransforms = this.deps.exportSvgTransforms ?? [];
+			/** 快捷键前置钩子（剪贴板三键回收；缺省 = 引擎快捷键行为不变） */
+			const beforeShortcutRun = this.deps.beforeShortcutRun ?? null;
 			this.mindMap = createMindMap(canvasEl, tree, {
 				layout: options.layout,
 				lineStyle: options.lineStyle,
@@ -298,11 +313,18 @@ export class EngineController {
 				enableDrag: options.enableDrag,
 				lang: this.deps.getLang(),
 				onHyperlinkJump: (link) => this.deps.openHyperlink(link),
+				// 快捷键前置钩子（剪贴板三键回收，见 deps.beforeShortcutRun）：
+				// 包一层箭头——deps 上的回调脱离对象后才不会触发 unbound-method
+				beforeShortcutRun: beforeShortcutRun
+					? (key, nodes) => beforeShortcutRun(key, nodes)
+					: null,
 				// 节点内联内容（方案 B 原型）：缺省时引擎两键为 false/null，全部走默认文本。
-				// 包一层箭头：方法引用脱离对象会触发 unbound-method（deps 未持有 this 语义）
+				// 包一层箭头：方法引用脱离对象会触发 unbound-method（deps 未持有 this 语义）。
+				// `owner`（本次引擎实例）由 createMindMap 注入并沿构建链透传，
+				// 本层只做转发（语义见 CreateMindMapOptions.createNodeContent）
 				createNodeContent: nodeContentRenderer
-					? (node, doc, style, lang) =>
-							nodeContentRenderer(node, doc, style, lang)
+					? (node, doc, style, lang, owner) =>
+							nodeContentRenderer(node, doc, style, lang, owner)
 					: null,
 				// 导出 SVG 后处理链（组合根注入，按序应用）：MathJax CHTML 逐字符
 				// 样式注入克隆 SVG——否则导出图中 `<mjx-c>` 无 `::before` 字形规则、
@@ -469,6 +491,14 @@ export class EngineController {
 		// 在途延时任务（延时 fit / 渲染根轮询链 / 文本编辑宏任务）先取消：
 		// 它们的闭包会触碰引擎实例，销毁后到期会在空实例上白跑（轮询链还会续排）。
 		cancelEngineTimers(this.mindMap);
+		// 引擎归属登记（未定稿数学段）在销毁点清理：此刻该引擎的 holder 必然
+		// 不会再挂载，而其他引擎（多视图 / 嵌入）的条目须原样保留 ⇒ 按实例
+		// 身份精确清（语义见 deps.onEngineDisposed 与 platform/math-jax 的
+		// unsettledMath）。放在 destroyMindMap 之前：实例引用仍有效，且
+		// destroy 抛错也不至于把登记面留成孤儿。
+		if (this.mindMap) {
+			this.deps.onEngineDisposed?.(this.mindMap);
+		}
 		destroyMindMap(this.mindMap);
 		this.mindMap = null;
 		this.deps.getCanvasEl()?.empty();
@@ -573,17 +603,21 @@ export class EngineController {
 	/** 持久化当前视口（关闭/卸载/切回 Markdown 前调用） */
 	persistViewport(): void {
 		const file = this.deps.getFile();
-		if (file && this.mindMap?.view) {
-			try {
-				this.deps.viewState.setView(
-					file.path,
-					this.mindMap.view.getTransformData(),
-				);
-			} catch (error) {
-				// 引擎尚未就绪等场景：仅记录。视口丢失不影响文档内容，
-				// 不打扰用户（下次打开退回 fit 全图）。
-				console.warn('持久化视口失败:', error);
-			}
+		if (!file) {
+			return;
+		}
+		// 无引擎/引擎拒绝时返回 null：与旧实现一致，**不触碰**引擎（读取失败
+		// 会在引擎层留痕）
+		const state = readViewportState(this.mindMap);
+		if (!state) {
+			return;
+		}
+		try {
+			this.deps.viewState.setView(file.path, state);
+		} catch (error) {
+			// 引擎尚未就绪等场景：仅记录。视口丢失不影响文档内容，
+			// 不打扰用户（下次打开退回 fit 全图）。
+			console.warn('持久化视口失败:', error);
 		}
 	}
 
@@ -607,7 +641,7 @@ export class EngineController {
 				// view_data_change——性能模式下该事件触发分片整树渲染（K70④ 给
 				// center 分支加过同款短路，savedView 分支此前缺失）。签名
 				// （scale|x|y）一致 = 当前已在保存视口上：只维持「恢复态」标记。
-				const savedSignature = transformSignatureOf(
+				const savedSignature = viewStateSignature(
 					(savedView as { state?: unknown }).state,
 				);
 				if (
@@ -618,7 +652,7 @@ export class EngineController {
 					this.restoredSavedViewport = true;
 					return;
 				}
-				mindMap.view.setTransformData(savedView);
+				applyViewportState(mindMap, savedView);
 				// 保存的变换按当时的容器/内容记录：尺寸大改或内容布局变化后
 				// 恢复它可能把内容推出画布（打开即空白）。明确判定不可见时
 				// 放弃恢复、回退默认居中；无法判定则保持（fail-open）。
@@ -674,20 +708,9 @@ export class EngineController {
 		}, VIEWPORT_RECENTER_DELAY_MS);
 	}
 
-	/** 当前视口签名（scale|x|y；读取失败返回 null） */
+	/** 当前视口签名（scale|x|y；读取失败返回 null）——读取面收口在引擎层 */
 	private viewSignature(): string | null {
-		const mindMap = this.mindMap;
-		if (!mindMap?.view) {
-			return null;
-		}
-		try {
-			return transformSignatureOf(
-				(mindMap.view.getTransformData() as { state?: unknown }).state,
-			);
-		} catch (error) {
-			console.warn('读取视口签名失败', error);
-			return null;
-		}
+		return getViewportSignature(this.mindMap);
 	}
 
 	/**
@@ -758,11 +781,14 @@ export class EngineController {
 			/\.[^.]+$/,
 			'',
 		);
+		// 编码形态不可得时**不放进 needle 集**（孤立代理对等非法序列；该形态不存在
+		// 即不可能命中，且绝不让预检在重命名/删除路径上抛错）。见 domain/url。
+		const encodedName = encodedNameForm(file.name);
 		const needles = [
 			file.name,
 			oldPath,
 			oldBasename,
-			encodeURIComponent(file.name),
+			...(encodedName === null ? [] : [encodedName]),
 		];
 		let found = false;
 		walkTree(root, (node) => {

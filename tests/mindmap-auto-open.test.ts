@@ -26,7 +26,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarkdownView, TFile } from 'obsidian';
-import { CORE_VIEW_TYPE, VIEW_TYPE } from '../src/core/constants';
+import {
+	AUTO_OPEN_SCAN_DEBOUNCE_MS,
+	CORE_VIEW_TYPE,
+	VIEW_TYPE,
+} from '../src/core/constants';
 import { MindMapAutoOpener } from '../src/platform/mindmap-auto-open';
 
 /** openAsMindMap 的 spy（vi.hoisted 保证先于 mock 工厂可用） */
@@ -180,7 +184,8 @@ describe('register（运行期事件接线）', () => {
 		]);
 	});
 
-	it('file-open：扫描 markdown 叶子，声明为导图的文件切到导图视图', () => {
+	it('file-open：扫描 markdown 叶子，声明为导图的文件切到导图视图（经合并窗口落地）', () => {
+		vi.useFakeTimers();
 		const harness = setupHarness(['a.md']);
 		const file = fakeFile('a.md');
 		const leaf = { view: markdownViewWith({ file }) };
@@ -188,6 +193,13 @@ describe('register（运行期事件接线）', () => {
 		harness.register();
 
 		harness.fireFileOpen();
+
+		// 合并窗口内不立即扫描：file-open 会连发（启动恢复逐叶开文件、批量开标签），
+		// 每次全量扫描都要遍历全部 markdown 叶子 + 逐叶读 frontmatter 判据
+		expect(openAsMindMapMock).not.toHaveBeenCalled();
+		expect(harness.queriedTypes).toEqual([]);
+
+		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS);
 
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 		expect(openAsMindMapMock).toHaveBeenCalledWith(leaf, file);
@@ -211,6 +223,7 @@ describe('register（运行期事件接线）', () => {
 	});
 
 	it('file-open：多叶子中只切换声明的那些（其余原样保留）', () => {
+		vi.useFakeTimers();
 		const harness = setupHarness(['a.md', 'c.md']);
 		const fileA = fakeFile('a.md');
 		const fileC = fakeFile('c.md');
@@ -221,6 +234,7 @@ describe('register（运行期事件接线）', () => {
 		harness.register();
 
 		harness.fireFileOpen();
+		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS);
 
 		expect(openAsMindMapMock.mock.calls).toEqual([
 			[leafA, fileA],
@@ -229,6 +243,7 @@ describe('register（运行期事件接线）', () => {
 	});
 
 	it('file-open：跳过矩阵（未声明 / 视图不符 / 无文件）', async () => {
+		vi.useFakeTimers();
 		const harness = setupHarness(['b.md']);
 		harness.setLeaves([
 			{ view: markdownViewWith({ file: fakeFile('note.md') }) }, // 未声明
@@ -239,8 +254,11 @@ describe('register（运行期事件接线）', () => {
 		harness.register();
 
 		harness.fireFileOpen();
+		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS);
 		await Promise.resolve();
 
+		// 扫描确实落地（否则本用例会在「根本没扫」的情况下通过）
+		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN]);
 		expect(openAsMindMapMock).not.toHaveBeenCalled();
 	});
 
@@ -424,5 +442,73 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 		harness.opener.scheduleStartupRestore([100]);
 		vi.advanceTimersByTime(100);
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe('file-open 防抖（scheduleDeclaredLeavesScan，2026-10-15）', () => {
+	it('连发只落地一次扫描（queriedTypes 只增一条）', () => {
+		vi.useFakeTimers();
+		const harness = setupHarness(['a.md']);
+		const file = fakeFile('a.md');
+		const leaf = { view: markdownViewWith({ file }) };
+		harness.setLeaves([leaf]);
+		harness.register();
+
+		// 启动恢复逐叶开文件 / 批量开标签 / 同步回写都会连发 file-open
+		harness.fireFileOpen();
+		harness.fireFileOpen();
+		harness.fireFileOpen();
+		expect(harness.queriedTypes).toEqual([]);
+
+		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS);
+
+		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN]);
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
+
+		// 窗口过后新触发照常调度（不是「只扫一次」的一次性闸门）
+		harness.fireFileOpen();
+		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS);
+		expect(harness.queriedTypes).toEqual([
+			CORE_VIEW_TYPE.MARKDOWN,
+			CORE_VIEW_TYPE.MARKDOWN,
+		]);
+	});
+
+	it('突发跨越窗口仍只落地一次（每次触发重置窗口——这是防抖而非节流）', () => {
+		vi.useFakeTimers();
+		const harness = setupHarness(['a.md']);
+		harness.setLeaves([
+			{ view: markdownViewWith({ file: fakeFile('a.md') }) },
+		]);
+		harness.register();
+
+		// 每 30ms 连发一次、持续 300ms：节流实现会按窗口数各扫一遍（≥5 次），
+		// 防抖实现只在最后一次触发后一个窗口扫一次
+		for (let i = 0; i < 10; i += 1) {
+			harness.fireFileOpen();
+			vi.advanceTimersByTime(30);
+		}
+		expect(harness.queriedTypes).toEqual([]);
+
+		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS);
+		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN]);
+	});
+
+	it('卸载（宿主清理回调）后：未决的扫描不再触发', () => {
+		vi.useFakeTimers();
+		const harness = setupHarness(['a.md']);
+		harness.setLeaves([
+			{ view: markdownViewWith({ file: fakeFile('a.md') }) },
+		]);
+		harness.register();
+
+		harness.fireFileOpen();
+		harness.unloadHost();
+		// 清理回调可被多次执行（幂等）：第二次卸载不应抛
+		harness.unloadHost();
+		vi.advanceTimersByTime(60_000);
+
+		expect(harness.queriedTypes).toEqual([]);
+		expect(openAsMindMapMock).not.toHaveBeenCalled();
 	});
 });

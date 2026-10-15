@@ -11,6 +11,29 @@
  * 不写入 .mindmap.md 文件正文。
  */
 
+/**
+ * 「节点文本自解析后是否被编辑过」——回写侧与渲染侧的**唯一判据**。
+ *
+ * 解析期 `text === mdDerivedText`（两者同取 derived）；用户编辑只改 `text`，
+ * `mdDerivedText` 保留解析期快照（见 md-outline 的字段说明）。
+ *
+ * **快照缺失**（从未从 Markdown 解析过的新建节点）一律按「未编辑」：没有基准
+ * 就无法判定，保守按未编辑——回写走逐字回写（保住原文）、渲染取 mdRaw、自动
+ * 拆分不动手。`mdRaw` 与快照**恒同源写入**（md-outline / links-split /
+ * links-rename / md-line-write 四处都是成对写），故「有 mdRaw 而无快照」的
+ * 状态解析侧产生不出来，两侧口径在真实数据上等价。
+ *
+ * 为什么收口（2026-10-15）：同一比较此前在 md-serialize（rawOk）、links-rename、
+ * view-split-links、wiki-display、node-inline-content 各写一遍，其中三处还各自
+ * 处理「快照缺失」的边界——口径迟早分叉。
+ *
+ * @param text 节点当前文本（data.text）
+ * @param mdDerivedText 解析期快照（data.mdDerivedText）
+ */
+export function isNodeTextEdited(text: unknown, mdDerivedText: unknown): boolean {
+	return typeof mdDerivedText === 'string' && text !== mdDerivedText;
+}
+
 /** 行类型（data.mdType）：md 三种行形态 */
 type MdLineType = 'heading' | 'list' | 'plain';
 

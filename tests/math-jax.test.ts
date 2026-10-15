@@ -7,8 +7,13 @@
  * （`mjx-c` 全 0 宽），「容器宽高 > 0」无法识别（实测 14×20 vs 130×20）。
  * 本套件锁定：
  * - 通道优先级（`tex2chtml` → `tex2svg`）与替换语义（内容替换 + 类名）；
- * - **就绪判据**：产物内全部 `mjx-c` 宽 > 0（无 `mjx-c` 退回「宽高皆 > 0」）；
- *   未就绪 → **同步撤回字面**（无中间态）+ 待定重试；预算耗尽保留字面并告警；
+ * - **就绪判据**（2026-10-15 v4 修正）：**本段字符的逐字符规则已落盘 +
+ *   （可见字符）宽度 > 0**。旧口径「全部 `mjx-c` 宽 > 0」在 v4 下恒假阳
+ *   （字符改为真实文本节点，字体回退宽度非零 ⇒ 从不驱动 flush ⇒ 官方样式表
+ *   永不落盘）；样式表元素**不存在** = 明确未 flush ⇒ 判未就绪 + 驱动 flush；
+ *   索引不可用（异常宿主）才退回旧宽度判据。未就绪 → **同步撤回字面**
+ *   （无中间态）+ 待定重试；预算耗尽保留字面并告警；无 `mjx-c` 退回
+ *   「宽高皆 > 0」保守判定；
  * - **零宽豁免双形态**：MathJax ≤3.x 的空 `content` 规则／**MathJax 4.x 的
  *   零 `padding` 规则**（K113：v4 的 `addCharStyles` 只写 padding、不再写 content，
  *   `::before` 计算值为 `none`——只认空串会让含 U+2061/U+2062 的公式全量退字面）；
@@ -36,10 +41,12 @@ vi.mock('obsidian', () => ({
 }));
 
 /**
- * 产物内 `mjx-c` 桩：就绪判据读取其宽度（全 > 0 = 逐字符规则已 flush）。
+ * 产物内 `mjx-c` 桩：就绪判据读取其宽度与**规则键**（v4 下缺一不可）。
  *
- * `textContent` 是 **MathJax 4 判据面**（零宽豁免要按字符码查样式表规则）；
- * 缺省即「无码点」→ 保守判未就绪，故既有只关心宽度的用例无需改动。
+ * `textContent` 是 **MathJax 判据面**（v4 就绪判据与零宽豁免都按字符码查
+ * 样式表规则；生产实现的键另含类名通道，桩以文本表达即可）；缺省即
+ * 「无码点」→ 索引可用时保守判未就绪。默认桩（样式表元素无 `sheet` →
+ * 索引不可用）只走宽度，故既有只关心宽度的用例无需改动。
  */
 interface FakeChar {
 	getBoundingClientRect(): { width: number };
@@ -82,7 +89,13 @@ interface FakeHolder {
 	replaceChildren(...nodes: unknown[]): void;
 	/** 就绪判定读取的 `mjx-c` 列表：空数组 → 退回容器盒判定（兼容箱型用例） */
 	querySelectorAll(selector: string): unknown[];
-	/** 运行中改字符宽度：模拟「flush 后逐字符规则到位」 */
+	/**
+	 * 运行中改字符宽度：模拟「flush 后逐字符规则到位」。
+	 *
+	 * ⚠ 在 `stubChtmlStylesheet` 桩（索引可用）下做**清理放行**时必须同时给
+	 * `texts`（规则键）：v4 判据的就绪条件是「宽度 > 0 + 规则键命中」，只改
+	 * 宽度不会放行——段会继续烧 flush 重试预算并把耗尽告警泄漏到后续用例。
+	 */
 	setChars(widths: number[], texts?: (string | undefined)[]): void;
 	/** 就绪判定回退路径读取：宽高**任一为 0** 视为不可见 */
 	getBoundingClientRect(): { width: number; height: number };
@@ -388,6 +401,67 @@ describe('renderMathWithMathJax（实机 API 面回归）', () => {
 		await wait(150);
 	});
 
+	it('MathJax 4 未 flush（样式表元素不存在）：宽 > 0 也判未就绪 + 驱动 flush（2026-10-15 实机缺陷回归）', async () => {
+		// v4 把字符改为真实文本节点 ⇒ 字体回退下宽度恒非零：旧判据「全部 mjx-c
+		// 宽 > 0」恒假阳 ⇒ 从不定稿前驱动 flush ⇒ 官方样式表永不落盘（实机：
+		// 8/8 字符宽 6.19–7.42px，而 #MJX-CHTML-styles inDoc:false）。本用例锁定
+		// 「元素不存在 = 明确未 flush ⇒ 撤字面 + 合并调度一次 flush」。
+		vi.stubGlobal('document', { getElementById: () => null });
+		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		holder.setChars([6.93, 7.42], ['\u{1D465}', '2']); // 回退字体下宽度亦非零
+		const { renderMathWithMathJax } = await loadModule();
+
+		renderMathWithMathJax('x^2', holder as unknown as HTMLElement);
+		await flush();
+
+		expect(holder.children).toHaveLength(0); // 未就绪 → 同步撤回字面
+		expect(holder.textContent).toBe('$x^2$');
+		expect(consoleWarnSpy).not.toHaveBeenCalled(); // 预算未耗尽，不告警
+
+		await wait(160); // flush 合并窗口 100ms
+		expect(finishRenderMathMock).toHaveBeenCalledTimes(1); // 旧实现此处为 0
+
+		// 清理：换「样式表已挂载 + 规则落盘」桩放行待定段（避免后续 flush 轮次残留）。
+		// 等待窗口须覆盖下一轮 flush（100ms 合并）与泵：放行后不得再有耗尽告警。
+		stubChtmlStylesheet([
+			'mjx-c.mjx-c1D465 { padding: 0.6em 0.7em 0px 0px; }',
+		]);
+		holder.setChars([7.43], ['\u{1D465}']);
+		await wait(550);
+		expect(holder.children).toHaveLength(1); // 已放行定稿
+		expect(consoleWarnSpy).not.toHaveBeenCalled(); // 预算未耗尽（无跨用例泄漏）
+	});
+
+	it('性能契约：可见字符（规则在 + 宽 > 0）不查 ::before 样式（getComputedStyle 零调用）', async () => {
+		// 判定序 =「规则落盘（免布局）→ 宽度 → 仅零宽字符才做伪元素查询」：
+		// rect 读取与样式查询是就绪判定里最贵的两项，恒为 0 次是本用例锁定的
+		// 开销面（旧写法对每个字符先调 isInvisibleCharByDesign，可见字符也白付
+		// 一次 getComputedStyle）。
+		let computedCalls = 0;
+		vi.stubGlobal('getComputedStyle', (_el: unknown, pseudo: string) => {
+			computedCalls += 1;
+			return pseudo === '::before' ? { content: 'none' } : {};
+		});
+		stubChtmlStylesheet([
+			'mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }',
+			'mjx-c.mjx-c1D465 { padding: 0.6em 0.7em 0px 0px; }',
+		]);
+		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		holder.setChars([5, 6], ['\u{1D438}', '\u{1D465}']); // 两个可见字符
+		const { renderMathWithMathJax } = await loadModule();
+
+		renderMathWithMathJax('Ex', holder as unknown as HTMLElement);
+		await flush();
+
+		expect(holder.children).toHaveLength(1); // 就绪（规则在 + 宽 > 0）
+		expect(computedCalls).toBe(0); // 可见字符路径零样式查询
+		expect(consoleWarnSpy).not.toHaveBeenCalled();
+	});
+
 	it('flush 后规则到位：自动换回产物并通知定稿（恰好一次）', async () => {
 		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
 		vi.stubGlobal('window', { MathJax: { tex2chtml } });
@@ -651,7 +725,7 @@ describe('renderMathWithMathJax（实机 API 面回归）', () => {
 		expect(holder.textContent).toBe('$E=mc^2$');
 		expect(holder.classList.removed).toContain('mindmap-inline-math');
 
-		holder.setChars([5]); // 清理：放行待定段，避免定时器跨用例残留
+		holder.setChars([5], ['\u{1D438}']); // 清理：放行待定段（索引可用桩须同时给规则键）
 		await wait(150);
 	});
 
@@ -673,11 +747,13 @@ describe('renderMathWithMathJax（实机 API 面回归）', () => {
 		expect(holder.children).toHaveLength(0);
 		expect(holder.textContent).toBe('$\\sin x$');
 
-		holder.setChars([5]); // 清理：放行待定段，避免定时器跨用例残留
+		holder.setChars([5], ['\u{1D438}']); // 清理：放行待定段（索引可用桩须同时给规则键）
 		await wait(150);
 	});
 
-	it('规则索引按 flush 代际失效：flush 后落盘的零 padding 规则可放行', async () => {
+	it('规则索引随样式表内容失效（缓存键非 flush 代际）：flush 后落盘规则可放行', async () => {
+		// 2026-10-15：缓存键从 flush 代际改为（样式表元素, 规则条数）——外部通道
+		// （阅读视图等）补齐样式表时本模块代际不前进，旧键会把空索引钉住。
 		const rules: string[] = [];
 		stubChtmlStylesheet(rules); // 初始无逐字符规则
 		vi.stubGlobal('getComputedStyle', (_el: unknown, pseudo: string) =>
@@ -702,7 +778,10 @@ describe('renderMathWithMathJax（实机 API 面回归）', () => {
 		expect(holder.textContent).toBe('$\\sin x$');
 		expect(onSettled).not.toHaveBeenCalled();
 
-		rules.push('mjx-c.mjx-c2061 { padding: 0px; }'); // 模拟 flush 写入逐字符规则
+		rules.push(
+			'mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }', // 可见字符（宽 5）
+			'mjx-c.mjx-c2061 { padding: 0px; }', // 零宽豁免（K113）
+		); // 模拟 flush 写入逐字符规则——可见字符的规则同样是在就绪必要条件（v4 判据）
 		await wait(250); // flush 合并窗口 100ms + 泵 16ms
 
 		expect(holder.children).toHaveLength(1);
@@ -1030,5 +1109,253 @@ describe('产物缓存与定稿回调（P4 尺寸同步）', () => {
 		holder.isConnected = true; // 首帧挂载 → 泵重试命中
 		await wait(40);
 		expect(onSettled).toHaveBeenCalledTimes(1);
+	});
+});
+
+/** 画布根桩：只实现作用域判定 `contains`（repair / clear 的唯一消费面） */
+const fakeRoot = (members: unknown[] = []): Node =>
+	({
+		contains: (node: unknown): boolean => members.includes(node),
+	}) as unknown as Node;
+
+/**
+ * 未定稿修复（2026-10-14 实机缺陷收口）：`repairUnsettledMath` / `clearUnsettledMath`。
+ *
+ * 锁定契约：
+ * - 缓存命中 → **同步修复**（替换 + 标记 + 通知，不依赖挂载、不重渲染）；
+ * - 未命中 + 已挂载 + 无在途 → 重新入异步通道（`tex2chtml` 恰好 +1 次）；
+ * - 未命中 + 未挂载 → 不动作（等下次触发，防空转）；
+ * - 定稿即注销（已定稿段永不入 repair）；root 作用域隔离；
+ * - `clearUnsettledMath` 只清 **root 内**的段（视图卸载专用；root 外的残留含
+ *   已脱离，一律留给按引擎归属清的 `pruneUnsettledMathOwnedBy`——按 DOM 连接
+ *   状态判归属会把其他宿主的未挂载段误清，见后者用例）。
+ */
+describe('repairUnsettledMath / clearUnsettledMath（未定稿段症状修复）', () => {
+	it('缓存命中 → 同步修复：出视口的字面段就地换成产物（不重渲染、不依赖挂载）', async () => {
+		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const settled = fakeHolder();
+		const detached = fakeHolder(false); // 出视口（被剪枝摘除）的段
+		const { renderMathWithMathJax, repairUnsettledMath } =
+			await loadModule();
+
+		// 同 TeX 先在屏内渲染成功 → 产物入缓存
+		renderMathWithMathJax('E=mc^2', settled as unknown as HTMLElement);
+		await flush();
+		expect(settled.classList.added).toContain('mindmap-inline-math');
+
+		// 第二个 holder 未挂载：保持字面 + 留在未定稿登记面
+		renderMathWithMathJax('E=mc^2', detached as unknown as HTMLElement);
+		await flush();
+		expect(detached.children).toHaveLength(0);
+
+		const renderedCalls = tex2chtml.mock.calls.length;
+		const repaired = repairUnsettledMath(fakeRoot([settled, detached]));
+
+		expect(repaired).toBe(1);
+		expect(detached.children).toHaveLength(1); // 产物克隆
+		expect(detached.classList.added).toContain('mindmap-inline-math');
+		// 同步修复不重渲染（缓存复用）；已定稿段不在册、不重复处理
+		expect(tex2chtml).toHaveBeenCalledTimes(renderedCalls);
+	});
+
+	it('未命中 + 已挂载 + 无在途 → 重新入队（tex2chtml 恰好再调一次并定稿）', async () => {
+		const tex2chtml = vi.fn((): Node | null => null); // 首次：API 面缺失 → 保持字面
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		const { renderMathWithMathJax, repairUnsettledMath } =
+			await loadModule();
+
+		renderMathWithMathJax('x', holder as unknown as HTMLElement);
+		await flush();
+		expect(holder.children).toHaveLength(0);
+		expect(tex2chtml).toHaveBeenCalledTimes(1);
+
+		tex2chtml.mockImplementation(() => fakeRendered('MJX-CONTAINER'));
+		const repaired = repairUnsettledMath(fakeRoot([holder]));
+		await flush();
+
+		expect(repaired).toBe(1);
+		expect(tex2chtml).toHaveBeenCalledTimes(2);
+		expect(holder.children).toHaveLength(1);
+		expect(holder.classList.added).toContain('mindmap-inline-math');
+	});
+
+	it('未命中 + 未挂载 → 不动作（留待重新挂载后的下一次触发，不空转）', async () => {
+		const tex2chtml = vi.fn((): Node | null => null);
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder(false);
+		const { renderMathWithMathJax, repairUnsettledMath } =
+			await loadModule();
+
+		renderMathWithMathJax('x', holder as unknown as HTMLElement);
+		await flush();
+
+		const repaired = repairUnsettledMath(fakeRoot([holder]));
+
+		expect(repaired).toBe(0);
+		expect(tex2chtml).toHaveBeenCalledTimes(1);
+	});
+
+	it('定稿即注销：成功渲染过的段不再进入修复面', async () => {
+		const tex2chtml = vi.fn(() => fakeRendered('MJX-CONTAINER'));
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		const { renderMathWithMathJax, repairUnsettledMath } =
+			await loadModule();
+
+		renderMathWithMathJax('x', holder as unknown as HTMLElement);
+		await flush();
+		expect(holder.classList.added).toContain('mindmap-inline-math');
+
+		expect(repairUnsettledMath(fakeRoot([holder]))).toBe(0);
+	});
+
+	it('作用域隔离：root 不含的段不动（多视图/嵌入并存各修各的）', async () => {
+		const tex2chtml = vi.fn((): Node | null => null);
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		const other = fakeHolder();
+		const { renderMathWithMathJax, repairUnsettledMath } =
+			await loadModule();
+
+		renderMathWithMathJax('x', holder as unknown as HTMLElement);
+		await flush();
+
+		expect(repairUnsettledMath(fakeRoot([other]))).toBe(0);
+		expect(tex2chtml).toHaveBeenCalledTimes(1); // 未重入
+	});
+
+	it('clearUnsettledMath：清 root 内的段（注销后 repair 不再处理）', async () => {
+		const tex2chtml = vi.fn((): Node | null => null);
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const holder = fakeHolder();
+		const { renderMathWithMathJax, repairUnsettledMath, clearUnsettledMath } =
+			await loadModule();
+
+		renderMathWithMathJax('x', holder as unknown as HTMLElement);
+		await flush();
+
+		clearUnsettledMath(fakeRoot([holder]));
+
+		expect(repairUnsettledMath(fakeRoot([holder]))).toBe(0);
+	});
+
+	it('clearUnsettledMath：root 外的段一律不动（含已脱离）——不得误清其他宿主的未挂载段', async () => {
+		const tex2chtml = vi.fn((): Node | null => null);
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		// 另一个宿主（多视图 / 嵌入）首帧前预测量构建的懒加载段：本体从不挂载
+		const holder = fakeHolder(false);
+		const { renderMathWithMathJax, repairUnsettledMath, clearUnsettledMath } =
+			await loadModule();
+
+		renderMathWithMathJax('x', holder as unknown as HTMLElement);
+		await flush();
+
+		// 另一个 root（不含本 holder）销毁：不得按「已脱离文档」把它清掉
+		//（旧口径在此误删 ⇒ 该段随宿主重新挂载后无人修，永久字面）
+		clearUnsettledMath(fakeRoot([{}]));
+
+		holder.isConnected = true; // 该段随宿主重新挂载
+		expect(repairUnsettledMath(fakeRoot([holder]))).toBe(1);
+	});
+});
+
+/**
+ * 引擎归属清理（2026-10-14 实机定案）：`pruneUnsettledMathOwnedBy`。
+ *
+ * 锁定契约：
+ * - **按引擎身份清**：只删 `owner` 相同的条目（无论连接状态），返回清理数；
+ * - **关键回归**：首帧前预测量构建的 holder **本体从不挂载**（vendor 补丁 5
+ *   A2）——「其他引擎的销毁清理」**不得**碰它们。旧口按 `!isConnected` 清，
+ *   实机（500 节点图、公式缓存冷）把视口外 76 段全部误清 ⇒ 泵预算（3.2s）
+ *   耗尽后进视口也无人修、永久字面；
+ * - repair 重入（不传 owner）**保留既有归属**——不得记为「无主」而漏清；
+ * - 清理即出册：被清的段不再进入 repair 面。
+ */
+describe('pruneUnsettledMathOwnedBy（按引擎归属清理）', () => {
+	it('关键回归：未挂载 holder 在「其他引擎的销毁清理」下必须保留', async () => {
+		const tex2chtml = vi.fn((): Node | null => null); // API 面缺失 → 保持未定稿
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const engineA = { engine: 'A' };
+		const engineB = { engine: 'B' };
+		const mounted = fakeHolder(); // 已在视口内挂载
+		const pending = fakeHolder(false); // 预测量式懒加载段：本体从不挂载
+		const { renderMathWithMathJax, pruneUnsettledMathOwnedBy } =
+			await loadModule();
+
+		renderMathWithMathJax(
+			'x',
+			mounted as unknown as HTMLElement,
+			false,
+			undefined,
+			engineA,
+		);
+		renderMathWithMathJax(
+			'y',
+			pending as unknown as HTMLElement,
+			false,
+			undefined,
+			engineA,
+		);
+		await flush();
+
+		// 其他引擎销毁：一条都不能清（旧口径会把未挂载的 pending 误清）
+		expect(pruneUnsettledMathOwnedBy(engineB)).toBe(0);
+		// 归属引擎销毁：两条都清；再清幂等
+		expect(pruneUnsettledMathOwnedBy(engineA)).toBe(2);
+		expect(pruneUnsettledMathOwnedBy(engineA)).toBe(0);
+	});
+
+	it('清理即出册：被清的段不再进入 repair 面', async () => {
+		const tex2chtml = vi.fn((): Node | null => null);
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const engineA = { engine: 'A' };
+		const holder = fakeHolder();
+		const {
+			renderMathWithMathJax,
+			repairUnsettledMath,
+			pruneUnsettledMathOwnedBy,
+		} = await loadModule();
+
+		renderMathWithMathJax(
+			'x',
+			holder as unknown as HTMLElement,
+			false,
+			undefined,
+			engineA,
+		);
+		await flush();
+		expect(pruneUnsettledMathOwnedBy(engineA)).toBe(1);
+
+		expect(repairUnsettledMath(fakeRoot([holder]))).toBe(0);
+	});
+
+	it('repair 重入保留既有归属：不因「重入未传 owner」而记为无主', async () => {
+		const tex2chtml = vi.fn((): Node | null => null);
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const engineA = { engine: 'A' };
+		const holder = fakeHolder();
+		const {
+			renderMathWithMathJax,
+			repairUnsettledMath,
+			pruneUnsettledMathOwnedBy,
+		} = await loadModule();
+
+		renderMathWithMathJax(
+			'x',
+			holder as unknown as HTMLElement,
+			false,
+			undefined,
+			engineA,
+		);
+		await flush();
+		// 已挂载 + 无在途 → repair 重新入队（重入不传 owner；tex2chtml 仍缺 →
+		// 再次未定稿）
+		expect(repairUnsettledMath(fakeRoot([holder]))).toBe(1);
+		await flush();
+
+		// 归属仍是 engineA：按 A 清恰好命中（若重入被记为 null 则为 0）
+		expect(pruneUnsettledMathOwnedBy(engineA)).toBe(1);
 	});
 });

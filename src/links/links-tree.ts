@@ -10,11 +10,15 @@
  */
 import { App, TFile } from 'obsidian';
 import { fileLookupIndex } from './file-lookup';
-import { isRemoteOrDataUrl, urlComparisonForms } from '../domain/url';
+import {
+	encodedNameForm,
+	isRemoteOrDataUrl,
+	urlComparisonForms,
+} from '../domain/url';
 import { walkTree } from '../domain/tree';
 import { formatWikilink, parseWikilink } from '../domain/wikilink';
 import type { WikilinkParts } from '../domain/wikilink';
-import { hasNodeReference } from '../core/node-data';
+import { hasNodeReference, readNodeDataString } from '../core/node-data';
 import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
 import type { MdNodeData } from '../core/node-data';
 
@@ -99,11 +103,11 @@ function pruneNodes(
  * 重新解析时该行不含内容 → 节点随之消失（= 用户要的「整个删除」）。
  */
 function removeAttachmentReference(data: MdNodeData): void {
-	const name = typeof data.attachmentName === 'string' ? data.attachmentName : '';
+	const name = readNodeDataString(data, 'attachmentName');
 	delete data.attachmentUrl;
 	delete data.attachmentName;
 	delete data.mdAttachmentLinkpath;
-	const text = typeof data.text === 'string' ? data.text : '';
+	const text = readNodeDataString(data, 'text');
 	if (!name || !text) {
 		return;
 	}
@@ -177,11 +181,6 @@ export function renamedMdLinkDest(
 		: inner;
 }
 
-/**
- * 由重命名后的文件与旧路径推导新目标（md 链接形态），保留用户原有的路径前缀写法。
- * 与 `renamedWikilink` 同源：它是 wiki 形态（`[[…]]`），这里取内层并按需补回扩展名。
- */
-
 /** 删除场景：以文件当前路径/名派生待匹配形态 */
 function deleteTargets(file: TFile): ReferenceTargets {
 	return {
@@ -226,10 +225,13 @@ function urlMatchesTarget(
 		}
 		const lastSegment = form.split('/').pop() ?? '';
 		for (const name of names) {
-			if (
-				lastSegment === name ||
-				lastSegment === encodeURIComponent(name)
-			) {
+			if (lastSegment === name) {
+				return true;
+			}
+			// 编码形态不可得（孤立代理对等非法序列）＝该形态不存在：不匹配即可，
+			// **绝不抛出**——本函数在「重命名 / 删除」的引用更新路径上（2026-10-15）
+			const encodedName = encodedNameForm(name);
+			if (encodedName !== null && lastSegment === encodedName) {
 				return true;
 			}
 		}

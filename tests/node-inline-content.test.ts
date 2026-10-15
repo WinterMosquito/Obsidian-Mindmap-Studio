@@ -641,7 +641,10 @@ describe('buildInlineNodeContent（接管判定）', () => {
 
 	it('渲染后无可见内容的行仍不接管（空文本 / 含图 / 整行只有注释）', () => {
 		const doc = () => asDocument(new FakeDocument());
-		// 空文本（URL icon-only / 图片独占）：无内容可绘，图标由引擎渲染
+		// 空文本 / 图片独占（**无 mdRaw、无段序列**）：无内容可绘，交引擎渲染。
+		// 注意 **URL 节点不在其列**：其 `mdRaw` 为 `<url>`（承载链接的新建 / 覆盖路径
+		// 统一经 applyInlineRawMeta 补齐），故恒自绘为可点地址文本——见下一条用例
+		//（2026-10-15 统一，旧注释「URL icon-only」已订正）
 		expect(buildInlineNodeContent(fakeNode({ text: '', mdRaw: '' }), doc())).toBeNull();
 		// 含图：图片走引擎图片通道
 		expect(
@@ -662,6 +665,25 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		expect(
 			buildInlineNodeContent(fakeNode({ text: ' ', mdRaw: ' ' }), doc()),
 		).toBeNull();
+	});
+
+	it('URL 单独成节点：自绘为可点地址文本（生产形态 `mdRaw` = `<url>`，2026-10-15 统一）', () => {
+		// 承载链接的新建 / 覆盖路径（insertChildNodeWithData / applyChannelOverwriteText
+		// → applyInlineRawMeta）恒补齐 mdRaw，故 URL 节点恒被接管、显示为可点地址文本；
+		// 引擎的原生链接图标不再出现（探针 'url' 的旧期望「无 mdRaw → 落引擎图标」已订正）
+		const node = fakeNode({
+			text: '',
+			hyperlink: 'https://example.com',
+			mdRaw: '<https://example.com>',
+			mdDerivedText: '',
+		});
+		const el = buildInlineNodeContent(node, asDocument(new FakeDocument()))!;
+		expect(el).not.toBeNull();
+		const anchor = childrenOf(el)[0] as FakeElement;
+		expect(anchor.tagName).toBe('a');
+		expect(attrsOf(anchor).get('href')).toBe('https://example.com');
+		// 锚点文本走 textContent（见 node-inline-content.buildAnchor），非子节点
+		expect(anchor.textContent).toBe('https://example.com');
 	});
 
 	it('仅轻标记（无链接）：**接管**——混合字形单串 SVG 文本表达不了', () => {
@@ -1346,6 +1368,30 @@ describe('渲染期缓存与超长回落（性能收口）', () => {
 		).toBe(false);
 		expect((children[children.length - 1] as FakeTextNode).text).toBe('…');
 	});
+
+	it('超长**纯表格**节点：整张表保留 + 明示截断（不再只剩一个「…」）', () => {
+		// 表格自身超预算：老口径「整枚放不下就整枚丢弃」会让纯表格节点在屏上只剩
+		// 「…」（1999 字显示整表、2000 字什么都不显示）。现改为整张保留 + 截断标记，
+		// 表格之后的段不再渲染（见 clampSegments 的两条口径）
+		const rows = Array.from(
+			{ length: 60 },
+			(_, i) => `| 行${i} | ${'x'.repeat(40)} |`,
+		).join('\n');
+		const raw = `| 名称 | 说明 |\n| --- | --- |\n${rows}`;
+		expect(raw.length).toBeGreaterThan(MAX_INLINE_CONTENT_CHARS);
+
+		const el = buildInlineNodeContent(
+			fakeNode({ mdRaw: raw, text: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+		)!;
+		const children = childrenOf(el);
+		expect(attrsOf(el).get('data-truncated'), '仍标记为已截断').toBe('true');
+		expect(
+			children.some((child) => (child as FakeElement).tagName === 'table'),
+			'整张表必须保留（不再只剩省略号）',
+		).toBe(true);
+		expect((children[children.length - 1] as FakeTextNode).text).toBe('…');
+	});
 });
 
 describe('内联样式契约（导出 PNG 保真）', () => {
@@ -1467,14 +1513,190 @@ describe('节点宽度：拖左右边框（引擎 customTextWidth）→ 自绘�
 });
 
 describe('InlineSegment（类型契约）', () => {
-	it('段序列仅两种 kind，链接段带 link/internal', () => {
-		const segments: readonly InlineSegment[] = buildInlineSegments('a [[B]] c');
+	it('段序列三种 kind：链接段带 link/internal，表格段带模型', () => {
+		const segments: readonly InlineSegment[] = buildInlineSegments(
+			'a [[B]] c\n| 列 | 值 |\n| --- | --- |\n| 甲 | 1 |',
+		);
 		for (const segment of segments) {
 			if (segment.kind === 'link') {
 				expect(typeof segment.link).toBe('string');
 				expect(typeof segment.internal).toBe('boolean');
 			}
+			if (segment.kind === 'table') {
+				expect(segment.table?.header).toEqual(['列', '值']);
+			}
 		}
+		expect(segments.some((segment) => segment.kind === 'table')).toBe(true);
+	});
+});
+
+describe('表格段（GFM 管道表：切分 / 装配 / 内联样式）', () => {
+	const doc = () => asDocument(new FakeDocument());
+
+	/** 自绘必接管的表格节点数据（未编辑：text === mdDerivedText ⇒ 渲染读 mdRaw） */
+	function tableData(raw: string): Record<string, unknown> {
+		return { text: raw, mdRaw: raw, mdDerivedText: raw };
+	}
+
+	/** 桩树里按 tagName 找第一个元素（深度优先 = 文档顺序） */
+	function findTag(node: unknown, tag: string): FakeElement | null {
+		if (node instanceof FakeElement) {
+			if (node.tagName === tag) {
+				return node;
+			}
+			for (const child of node.children) {
+				const hit = findTag(child, tag);
+				if (hit) {
+					return hit;
+				}
+			}
+		}
+		return null;
+	}
+
+	/** 桩树里按 tagName 收集全部元素（深度优先 = 文档顺序） */
+	function findAll(node: unknown, tag: string, out: FakeElement[] = []): FakeElement[] {
+		if (node instanceof FakeElement) {
+			if (node.tagName === tag) {
+				out.push(node);
+			}
+			for (const child of node.children) {
+				findAll(child, tag, out);
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * 桩树的可见文本：锚点走 `textContent`（`buildAnchor` 的写法，真实 DOM 里会
+	 * 替换子节点），其余元素由 `appendChild` 组装（本桩不联动这两个字段）。
+	 */
+	function plainText(node: unknown): string {
+		if (node instanceof FakeTextNode) {
+			return node.text;
+		}
+		if (node instanceof FakeElement) {
+			return (
+				node.textContent ||
+				node.children.map((child) => plainText(child)).join('')
+			);
+		}
+		return '';
+	}
+
+	it('装配：table > thead/tbody > tr > th/td，单元格文本取自模型', () => {
+		const raw = '| 名称 | 数量 |\n| --- | --- |\n| 甲 | 2 |';
+		const box = buildInlineNodeContent(fakeNode(tableData(raw)), doc());
+		expect(box).not.toBeNull();
+		expect(findTag(box, 'table')).not.toBeNull();
+		expect(findTag(box, 'thead')).not.toBeNull();
+		expect(findTag(box, 'tbody')).not.toBeNull();
+		// 表头行 + 数据行各一个 tr；th/td 文本取自 `domain/pipe-table` 的模型
+		expect(findAll(box, 'tr')).toHaveLength(2);
+		expect(findAll(box, 'th').map((cell) => plainText(cell))).toEqual(['名称', '数量']);
+		expect(findAll(box, 'td').map((cell) => plainText(cell))).toEqual(['甲', '2']);
+	});
+
+	it('注释块内的表格行不识别（与围栏 / 块级数学同为保护区，2026-10-15）', () => {
+		// `%%…%%` 在渲染期整段吞掉；若表格识别不绕开它，块内表格会**真渲染**成
+		// 表格，且两侧 `%%` 因落到不同文本块而无法配对、退化成屏上的字面文本
+		const raw = '可见文本\n%%\n| 名称 | 数量 |\n| --- | --- |\n| 甲 | 2 |\n%%';
+		const box = buildInlineNodeContent(fakeNode(tableData(raw)), doc());
+		expect(box).not.toBeNull();
+		expect(findTag(box, 'table')).toBeNull();
+		const text = plainText(box);
+		expect(text).toContain('可见文本');
+		expect(text).not.toContain('名称');
+		expect(text).not.toContain('%%');
+	});
+
+	it('样式全内联：结构 / 边框 / 内边距 / 表头底色 + 列对齐', () => {
+		const raw =
+			'| 左 | 中 | 右 | 默 |\n| :--- | :---: | ---: | --- |\n| a | b | c | d |';
+		const box = buildInlineNodeContent(fakeNode(tableData(raw)), doc());
+		const table = findTag(box, 'table');
+		expect(styleOf(table).borderCollapse).toBe('collapse');
+		// 不许撑爆节点：表宽以内容盒为顶（CONTENT_STYLES 的 500 / 拖宽后的显式宽）
+		expect(styleOf(table).maxWidth).toBe('100%');
+		const headers = findAll(box, 'th');
+		// 第四列分隔行写 `---`（未指定）⇒ 刻意**不写** text-align：官方样式包里没有
+		// `th { text-align }` 规则，沉默即与阅读视图/宿主默认一致（写死 left 会分叉）
+		expect(headers.map((cell) => styleOf(cell).textAlign)).toEqual([
+			'left',
+			'center',
+			'right',
+			undefined,
+		]);
+		// 导出 SVG 不含 styles.css / app.css：观感必须内联（边框、内边距、表头底色）
+		const cell = findAll(box, 'td')[0];
+		expect(styleOf(cell).border).toContain('1px solid');
+		expect(styleOf(cell).padding).toBe('2px 8px');
+		expect(styleOf(headers[0]).backgroundColor).toContain('var(--background-secondary');
+	});
+
+	it('单元格内容复用行内管线：双链锚点 / 轻标记 / `\\|` 还原', () => {
+		const raw = '| 链接 | 粗体 |\n| --- | --- |\n| [[笔记A\\|别名]] | **重点** |';
+		const box = buildInlineNodeContent(fakeNode(tableData(raw)), doc());
+		const anchor = findTag(box, 'a');
+		// 锚点契约与节点其余部分一致（view-wikilink 按 data-href 分流）
+		expect(attrsOf(anchor).get('data-href')).toBe('笔记A');
+		expect(plainText(anchor)).toBe('别名');
+		expect(plainText(findTag(box, 'strong'))).toBe('重点');
+	});
+
+	it('混合节点：段落 / 表格 / 段落的块顺序；预览里表格独占行（拼接 = 原文）', () => {
+		const raw = '上文\n| a | b |\n| --- | --- |\n| 1 | 2 |\n下文';
+		const segments = buildInlineSegments(raw);
+		expect(segments.map((segment) => segment.kind)).toEqual(['text', 'table', 'text']);
+		// 换行归属表格段：拼接后仍是原文，段落与表格不会粘成一行
+		expect(segments.map((segment) => segment.text).join('')).toBe(raw);
+		expect(inlineContentPreview(raw)).toBe(raw);
+		const box = buildInlineNodeContent(fakeNode(tableData(raw)), doc());
+		expect(
+			childrenOf(box).map((child) =>
+				child instanceof FakeElement ? child.tagName : 'text',
+			),
+		).toEqual(['text', 'table', 'text']);
+	});
+
+	it('超长：表格整张要么显示、要么不显示（不截半张表）', () => {
+		const filler = 'x'.repeat(MAX_INLINE_CONTENT_CHARS - 10);
+		const raw = `${filler}\n| a | b |\n| --- | --- |\n| 1 | 2 |`;
+		const box = buildInlineNodeContent(fakeNode(tableData(raw)), doc());
+		expect(findTag(box, 'table')).toBeNull();
+		const texts = childrenOf(box).filter(
+			(child): child is FakeTextNode => child instanceof FakeTextNode,
+		);
+		expect(texts[texts.length - 1]?.text).toBe('…');
+	});
+
+	it('围栏代码块内的表格行不渲染成表格（保护区复用 MARKUP_RE）', () => {
+		const fenced = ['```', '| a | b |', '| --- | --- |', '```'].join('\n');
+		const segments = buildInlineSegments(fenced);
+		expect(segments.some((segment) => segment.kind === 'table')).toBe(false);
+		expect(segments[0]?.style).toBe('code');
+		expect(segments[0]?.block).toBe(true);
+	});
+
+	it('缩进代码块内的表格行不渲染成表格（缩进块 = 代码，既有判定）', () => {
+		// 整节点都是缩进代码：走块级代码通道
+		expect(
+			buildInlineSegments('    | a | b |\n    | --- | --- |').some(
+				(segment) => segment.kind === 'table',
+			),
+		).toBe(false);
+		// 段落之后的缩进块：缩进行同样不参与表格识别
+		expect(
+			buildInlineSegments('段落\n    | a | b |\n    | --- | --- |').some(
+				(segment) => segment.kind === 'table',
+			),
+		).toBe(false);
+	});
+
+	it('setext 下划线 / 无分隔行的管道文本：不误判为表', () => {
+		expect(buildInlineSegments('标题\n---').some((s) => s.kind === 'table')).toBe(false);
+		expect(buildInlineSegments('a | b').some((s) => s.kind === 'table')).toBe(false);
+		expect(buildInlineSegments('| a | b |').some((s) => s.kind === 'table')).toBe(false);
 	});
 });
 

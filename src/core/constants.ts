@@ -41,6 +41,16 @@ export const CODE_BLOCK_MAX_NODES = 500;
  * 两条路径都代表"已渲染"，主题、调试定位与断言选择器才有唯一依据
  * （此前两处各写字面值，值相同但无约束）。
  */
+/**
+ * 自绘内容 / 渲染标记类名的前缀纪律（2026-10-15 登记）：全仓存在**两套**前缀——
+ * `mindmap-*`（数学与自绘内容：`MATH_RENDERED_HOLDER_CLASS`、
+ * `node-inline-content` 的段类名）与 `tmm-*`（代码块与嵌入：
+ * `CODE_BLOCK_CLASS` / `CODE_RENDERED_CLASS` / `.tmm-embed-canvas`）。
+ *
+ * 规则：**同一子系统内保持一致**，跨子系统勿混用（主题与 `verify:visual` 的探针
+ * 选择器按字面引用这些类名）；新类名就落在所在子系统已有的前缀上，不做整体迁移
+ * （迁移会同时动 styles.css / 导出后处理链 / 探针，收益只是"看起来统一"）。
+ */
 export const MATH_RENDERED_HOLDER_CLASS = 'mindmap-inline-math';
 
 /**
@@ -63,6 +73,34 @@ export const CODE_RENDERED_CLASS = 'tmm-code-hl';
  * 导出 SVG（不含 styles.css）同色。
  */
 export const PRISM_TOKEN_CLASS = 'token';
+
+/**
+ * 新建导图的默认保存位置（四态）。
+ *
+ * - `obsidian`：跟随官方「设置 → 文件与链接 → 新建笔记的默认位置」
+ *   （经 `FileManager.getNewFileParent` 完整生效，含核心的「指定文件夹」模式）；
+ * - `root`：仓库的根目录；
+ * - `current`：当前文件（含导图视图，`MindMapView` 是 `FileView`）所在的文件夹；
+ * - `folder`：`settings.saveFolder` 指定的文件夹。
+ *
+ * 后三态与 Obsidian Canvas「新白板文件的默认位置」同口径，`obsidian` 为本插件
+ * 默认档（Canvas 无对应档）。「当前/指定文件夹」不可解析时一律回落库根
+ * （对齐 Canvas：不自动创建文件夹）。
+ */
+export type SaveLocation = 'obsidian' | 'root' | 'current' | 'folder';
+
+export interface SaveLocationOption {
+	value: SaveLocation;
+	label: TranslationKey;
+}
+
+/** 保存位置选项（设置面板下拉与 sanitizeSettings 白名单共用） */
+export const SAVE_LOCATION_OPTIONS: SaveLocationOption[] = [
+	{ value: 'obsidian', label: 'settings.saveLocation.obsidian' },
+	{ value: 'root', label: 'settings.saveLocation.root' },
+	{ value: 'current', label: 'settings.saveLocation.current' },
+	{ value: 'folder', label: 'settings.saveLocation.folder' },
+];
 
 export interface LayoutOption {
 	value: string;
@@ -424,6 +462,14 @@ export const SAVE_FAILURE_SUSPEND_THRESHOLD = 3;
  */
 export const AUTO_SPLIT_CHECK_DELAY_MS = 120;
 export const VIEW_STATE_PERSIST_MS = 600;
+/**
+ * 「声明为导图的文件自动切到导图视图」的**全量扫描防抖窗口**（毫秒）。
+ * 启动恢复 / 批量开标签会连发多次 `file-open`，而每次全量扫描都要遍历全部
+ * markdown 叶子并逐叶读 frontmatter 判据——整个突发只扫一次
+ * （见 `platform/mindmap-auto-open`）。**集中在此**：实现与测试同源，
+ * 避免两处各写一个裸 50（常量一改测试就静默失真）。
+ */
+export const AUTO_OPEN_SCAN_DEBOUNCE_MS = 50;
 /**
  * 标题重命名防抖（更长——涉及 FileManager.renameFile 引发全库链接/反链更新，
  * 1.5s 等待用户停止打字 + isEditingText 守卫二次确认编辑结束）。

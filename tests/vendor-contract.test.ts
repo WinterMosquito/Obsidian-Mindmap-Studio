@@ -80,7 +80,7 @@ const mindMapPrototype = (vendor.MindMap as { prototype: Record<string, unknown>
  * 产物而不是内容改动，两者在上游行为上等价，故不作为漂移处理。
  */
 const EXPECTED_BUNDLE_SHA256 =
-	'07dc23d0ed9ffd231f516c21c8eb6201673d5331d787a32e0590d545381f69b2';
+	'9f0074885714bdf5737020de7a8c0ec870bd87761244b5356a84ca4610e8083e';
 const bundleSha256 = createHash('sha256')
 	.update(readFileSync(BUNDLE_PATH, 'utf8').replace(/\r\n/g, '\n'), 'utf8')
 	.digest('hex');
@@ -227,6 +227,16 @@ describe('vendor 契约：ENGINE_COMMANDS 命令名全表', () => {
 		'SET_NODE_DATA',
 		'SET_NODE_HYPERLINK',
 		'SET_NODE_IMAGE',
+		// 2026-10-13 剪贴板改建新增（`Ctrl+X` 剪切、Markdown 子树粘贴）：
+		// 两者都由引擎真实注册（上游 `Render.js` 的 `command.add('CUT_NODE', …)` /
+		// `command.add('INSERT_MULTI_CHILD_NODE', …)`），非本插件自造命令名
+		'CUT_NODE',
+		'INSERT_MULTI_CHILD_NODE',
+		// 2026-10-14 节点上/下移新增（右键菜单「上移节点 / 下移节点」）：
+		// 引擎真实注册于上游 `Render.js`（`command.add('UP_NODE', …)`，与
+		// `Ctrl+Up` / `Ctrl+Down` 自带快捷键同一对命令）
+		'UP_NODE',
+		'DOWN_NODE',
 	];
 
 	it('常量表就是上述命令名的纯注册表（不多不少，防静默增删）', () => {

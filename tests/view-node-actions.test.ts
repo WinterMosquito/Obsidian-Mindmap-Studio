@@ -34,11 +34,11 @@ import {
 	applyMdLink,
 	applyNodeAttachment,
 	clearNodeHyperlink,
-	copyNode,
 	createImageChildNode,
 	deleteActiveNode,
 	editNodeTextInModal,
-	pasteNodeAsChild,
+	moveNodeDown,
+	moveNodeUp,
 	removeNodeImage,
 	removeNodeText,
 } from '../src/features/view-node-actions';
@@ -52,6 +52,7 @@ const {
 	ENGINE,
 	setNodeTextMock,
 	markNodeNeedLayoutMock,
+	siblingMoveMock,
 	forceRemoveMock,
 	openLinkMock,
 	openImageMock,
@@ -77,6 +78,9 @@ const {
 	},
 	setNodeTextMock: vi.fn<(...args: unknown[]) => void>(),
 	markNodeNeedLayoutMock: vi.fn<(...args: unknown[]) => void>(),
+	// 兄弟上/下移的防腐入口（兄弟判定与清坐标在 engine/mindmap.ts，
+	// 由 tests/engine-node-move.test.ts 直测；本文件只验编排与提示映射）
+	siblingMoveMock: vi.fn<(...args: unknown[]) => unknown>(),
 	forceRemoveMock: vi.fn<(...args: unknown[]) => void>(),
 	openLinkMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 	openImageMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
@@ -105,6 +109,7 @@ vi.mock('../src/engine/mindmap', () => ({
 	setNodeText: (...args: unknown[]): void => {
 		setNodeTextMock(...args);
 	},
+	moveNodeInSiblings: (...args: unknown[]): unknown => siblingMoveMock(...args),
 	markNodeNeedLayout: (...args: unknown[]): void => {
 		markNodeNeedLayoutMock(...args);
 	},
@@ -309,6 +314,8 @@ beforeEach(() => {
 	openImageMock.mockResolvedValue(null);
 	setImageOptionsMock.mockImplementation((url: unknown) => ({ url }));
 	aspectImageOptionsMock.mockResolvedValue({ aspect: true });
+	// 兄弟上/下移默认「成功」；拒绝分支由用例按需 mockReturnValueOnce
+	siblingMoveMock.mockReturnValue('moved');
 });
 
 afterEach(() => {
@@ -1356,110 +1363,81 @@ describe('deleteActiveNode（删除编排与兜底）', () => {
 	});
 });
 
-describe('copyNode / pasteNodeAsChild（视图剪贴板）', () => {
-	it('复制：深拷贝节点数据并提示「节点已复制」', () => {
-		const source = fakeNode({ data: { text: '来源', uid: 'u1' } });
-		const parent = fakeNode({ data: { text: '父' } });
-		const { view, execCommand } = makeView({ activeNode: source });
+describe('moveNodeUp / moveNodeDown（编排：入参转发与结果 → 提示）', () => {
+	it('上移：把 mindMap / 节点 / 方向 -1 交给防腐入口（不依赖激活列表）', () => {
+		const node = fakeNode({ data: { text: 'n' } });
+		const { view } = makeView();
 
-		copyNode(view, source);
+		moveNodeUp(view, node);
 
-		expect(noticeCalls).toEqual([zh('common.nodeCopied')]);
-		// 深拷贝：复制后修改源节点数据不影响剪贴板内容
-		dataOf(source)['text'] = '被改过';
-		pasteNodeAsChild(view, parent);
-		const [, , , payload] = callArgs(execCommand);
-		expect((payload as Record<string, unknown>)['text']).toBe('来源');
-	});
-
-	it('复制：节点无 getData 时回退读 nodeData.data', () => {
-		const source = fakeNode({
-			data: { text: '无 getData' },
-			withGetData: false,
-		});
-		const parent = fakeNode();
-		const { view, execCommand } = makeView({ activeNode: parent });
-
-		copyNode(view, source);
-		pasteNodeAsChild(view, parent);
-
-		const [, , , payload] = callArgs(execCommand);
-		expect((payload as Record<string, unknown>)['text']).toBe('无 getData');
-	});
-
-	it('未复制时粘贴：提示「剪贴板为空」且不调用引擎', () => {
-		const parent = fakeNode();
-		const { view, execCommand } = makeView({ activeNode: parent });
-
-		pasteNodeAsChild(view, parent);
-
-		expect(noticeCalls).toEqual([zh('common.clipboardEmpty')]);
-		expect(execCommand).not.toHaveBeenCalled();
-	});
-
-	it('剪贴板按视图隔离：另一个视图看不到本视图的剪贴板', () => {
-		const source = fakeNode({ data: { text: '来源' } });
-		const first = makeView({ activeNode: source });
-		copyNode(first.view, source);
-
-		const parent = fakeNode();
-		const second = makeView({ activeNode: parent });
-		pasteNodeAsChild(second.view, parent);
-
-		expect(noticeCalls).toEqual([zh('common.nodeCopied'), zh('common.clipboardEmpty')]);
-		expect(second.execCommand).not.toHaveBeenCalled();
-	});
-
-	it('粘贴到指定父节点：剥离 uid/isActive，保留其余数据', () => {
-		const source = fakeNode({
-			data: {
-				text: '来源',
-				uid: 'u1',
-				isActive: true,
-				mdWikiLinkpath: '[[笔记]]',
-				children: [],
-			},
-		});
-		const parent = fakeNode({ data: { text: '父' } });
-		const { view, execCommand } = makeView({ activeNode: source });
-		copyNode(view, source);
-
-		pasteNodeAsChild(view, parent);
-
-		const [command, flag, parents, payload] = callArgs(execCommand);
-		expect(command).toBe(ENGINE.INSERT_CHILD_NODE);
-		expect(flag).toBe(false);
-		expect(parents).toEqual([parent]);
-		const data = payload as Record<string, unknown>;
-		expect(data['uid']).toBeUndefined();
-		expect(data['isActive']).toBe(false);
-		expect(data['text']).toBe('来源');
-		// md 回写通道随节点数据一起带过去（粘贴出来的副本仍是文档链接节点）
-		expect(data['mdWikiLinkpath']).toBe('[[笔记]]');
-	});
-
-	it('未指定父节点：挂到渲染根节点下（空父节点会静默失效）', () => {
-		const source = fakeNode({ data: { text: '来源' } });
-		const root = fakeNode({ data: { text: '中心' } });
-		const { view, execCommand } = makeView({ activeNode: source, root });
-		copyNode(view, source);
-
-		pasteNodeAsChild(view, null);
-
-		const [, , parents] = callArgs(execCommand);
-		expect(parents).toEqual([root]);
-	});
-
-	it('未指定父节点且渲染根为空：静默失败（不调用引擎也不提示）', () => {
-		const source = fakeNode({ data: { text: '来源' } });
-		const { view, execCommand } = makeView({ activeNode: source, root: null });
-		copyNode(view, source);
-		noticeCalls.length = 0;
-
-		pasteNodeAsChild(view, null);
-
-		expect(execCommand).not.toHaveBeenCalled();
+		expect(callArgs(siblingMoveMock)).toEqual([view.mindMap, node, -1]);
 		expect(noticeCalls).toHaveLength(0);
+	});
+
+	it('下移：方向 +1（其余入参同）', () => {
+		const node = fakeNode({ data: { text: 'n' } });
+		const { view } = makeView();
+
+		moveNodeDown(view, node);
+
+		expect(callArgs(siblingMoveMock)).toEqual([view.mindMap, node, 1]);
+		expect(noticeCalls).toHaveLength(0);
+	});
+
+	it('node 传 null 时回落到激活节点（工具栏形态预留）', () => {
+		const node = fakeNode({ data: { text: 'n' } });
+		const { view } = makeView({ activeNode: node });
+
+		moveNodeDown(view, null);
+
+		expect(callArgs(siblingMoveMock)).toEqual([view.mindMap, node, 1]);
+	});
+
+	it('未指定节点且无激活节点：走通用守卫提示，不调防腐入口', () => {
+		const { view } = makeView();
+
+		moveNodeUp(view, null);
+
+		expect(noticeCalls).toEqual([zh('common.selectNodeFirst')]);
+		expect(siblingMoveMock).not.toHaveBeenCalled();
+	});
+
+	it('拒绝分支 root / atTop / atBottom：各弹对应文案（表驱动）', () => {
+		const cases = [
+			['root', 'common.rootCannotMove'],
+			['atTop', 'common.moveAtTop'],
+			['atBottom', 'common.moveAtBottom'],
+		] as const;
+		for (const [outcome, key] of cases) {
+			noticeCalls.length = 0;
+			siblingMoveMock.mockReturnValueOnce(outcome);
+			const { view } = makeView();
+
+			moveNodeUp(view, fakeNode({ data: { text: 'n' } }));
+
+			expect(noticeCalls).toEqual([zh(key)]);
+		}
+	});
+
+	it('moved / detached 不提示：后者是无父坏形态，静默对齐引擎 no-op', () => {
+		for (const outcome of ['moved', 'detached'] as const) {
+			noticeCalls.length = 0;
+			siblingMoveMock.mockReturnValueOnce(outcome);
+			const { view } = makeView();
+
+			moveNodeDown(view, fakeNode({ data: { text: 'n' } }));
+
+			expect(noticeCalls).toHaveLength(0);
+		}
+	});
+
+	it('拒绝提示随视图语言（英文视图弹英文提示）', () => {
+		siblingMoveMock.mockReturnValueOnce('root');
+		const { view } = makeView({ lang: 'en' });
+
+		moveNodeDown(view, fakeNode({ data: { text: 'n' } }));
+
+		expect(noticeCalls).toEqual([t('en', 'common.rootCannotMove')]);
 	});
 });
 

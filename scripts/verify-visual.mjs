@@ -34,6 +34,13 @@
  *   （不装配全量 DOM）、内容中心 = 画布中心 ±2px、数据层几何并集与 DOM 全量盒尺寸差
  *   ≤8px；探针规模须取「刚过阈值的最小量」（641 节点版本会因分片渲染任务链推后
  *   其余探针的读取窗口而连锁失败，见 K70 ③）；
+ * - 覆盖（视口几何落地，`viewport-geometry` 探针，2026-10-14 第十四批）：容器
+ *   800→1000 变宽（引擎几何缓存滞后）后「打开视口 → 适应画布 → 重置缩放」三步
+ *   各自的内容中心偏移 ≤2px——钉住「`resize()` 只编排渲染（setTimeout(0)）、布局
+ *   未落地时做视口换算 ⇒ 残差 (W新−W旧)/2 被 reset 按 1/scale 放大」的回归
+ *   （实机 500 节点：容器 1357.33↔1050 变化 ⇒ 151 节点探针 100px 级、实机 153.67px）；
+ *   每个断言步**等到「内容居中」或超时**再读（修复前的残差持久存在，超时如实
+ *   报告；若同步紧测则测到尚未重算的旧布局、探针对修复前也「绿」——失效）；
  * - 覆盖（代码块嵌入，`features/mindmap-codeblock.ts`，2026-10-13）：`mindmap`
  *   语言标识的块体渲染为**只读**导图（引擎原生 `readonly` + 不注册任何交互插件），
  *   形态对齐 Obsidian 里的 Mermaid——断言引擎真建起来了（`.smm-node` 计数）、
@@ -132,9 +139,29 @@ const SCENARIOS = [
 	},
 	{
 		name: 'url',
-		label: 'URL 单独成节点（无文本）→ 引擎原生链接图标',
-		data: { text: '', hyperlink: 'https://example.com' },
-		expect: { docIcon: 0, linkIcon: 1, attachIcon: 0, selfDrawn: false },
+		label: 'URL 单独成节点 → 自绘为可点地址文本（2026-10-15 统一，不再用引擎图标）',
+		// 生产形态：承载链接的新建 / 覆盖路径都经 `insertChildNodeWithData` /
+		// `applyChannelOverwriteText` → `applyInlineRawMeta` 补齐 `mdRaw`（`<url>`），
+		// 故 URL 节点**恒被自绘接管**、显示为可点地址文本；「仅引擎链接图标」的
+		// 无 `mdRaw` 形态在生产不可达（旧探针数据即该形态，期望已按生产形态订正）
+		data: {
+			text: '',
+			hyperlink: 'https://example.com',
+			mdRaw: '<https://example.com>',
+			mdDerivedText: '',
+		},
+		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0, selfDrawn: true },
+	},
+	{
+		name: 'empty',
+		label: '空文本节点（无链接 / 无图，生产可达）→ 引擎默认内容通道',
+		// 生产可达的**唯一**引擎渲染形态之一（另一个是含图节点）：新建节点 / `- `
+		// 空列表项都是这个形态。2026-10-15 起它同时是 handle 探针「让给引擎」的
+		// 对照样本——此前那个样本是 'url' 场景，而 URL 节点在**生产**里恒带 mdRaw
+		//（承载链接的新建 / 覆盖路径都经 applyInlineRawMeta 补齐）⇒ 恒自绘 ⇒ 不再是
+		// 引擎侧样本（探针的 url 场景保留为「无 mdRaw 的实验室形态」图标通道锁）
+		data: { text: '' },
+		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0, selfDrawn: false },
 	},
 	{
 		name: 'attach',
@@ -270,6 +297,21 @@ const SCENARIOS = [
 			text: '第一段 见 笔记A\n第二段 见 https://example.com',
 			mdDerivedText: '第一段 见 笔记A\n第二段 见 https://example.com',
 			mdRaw: '第一段 见 [[笔记A]]\n第二段 见 https://example.com',
+			mdType: 'plain',
+		},
+		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0 },
+	},
+	{
+		name: 'table',
+		label: '表格：GFM 管道表自绘为内联样式 <table>（表宽不撑爆节点）',
+		data: {
+			// 2026-10-14：plain 多行节点里的表格块独立成段（识别在 domain/pipe-table，
+			// 装配在 features/node-inline-content），产出 table/thead/tbody，样式
+			// **全内联**（导出 SVG 不含 styles.css）。第二列分隔行写 `---:` ⇒ 该列
+			// 对齐必须落到内联 text-align（本场景是「对齐不是摆设」的锁定用例）
+			text: '上文\n| 名称 | 数量 |\n| --- | ---: |\n| 甲 | 2 |\n下文',
+			mdDerivedText: '上文\n| 名称 | 数量 |\n| --- | ---: |\n| 甲 | 2 |\n下文',
+			mdRaw: '上文\n| 名称 | 数量 |\n| --- | ---: |\n| 甲 | 2 |\n下文',
 			mdType: 'plain',
 		},
 		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0 },
@@ -600,7 +642,7 @@ for (const { name, data } of scenarios) {
 }
 
 // —— mindmap 代码块嵌入探针（features/mindmap-codeblock，2026-10-13）——
-// 四条契约只有真实 DOM 能验（单测只覆盖纯判据，见 tests/mindmap-codeblock.test.ts）：
+// 五条契约只有真实 DOM 能验（单测只覆盖纯判据，见 tests/mindmap-codeblock.test.ts）：
 // ① 只读引擎**真建起来了**（.smm-node 出现 ⇒ 解析 → 图片/uid → 引擎装配整链通）；
 // ② 普通滚轮**不**被 preventDefault——引擎 Event.onMousewheel 无条件
 //    preventDefault（vendor upstream core/event/Event.js:148-150），嵌入若不拦，
@@ -612,6 +654,10 @@ for (const { name, data } of scenarios) {
 //    被 overflow:hidden 裁掉）。做法：一个宽内容嵌入（heading 链 6 级，天然宽度
 //    远大于容器）先按 640px 量一次，随后收窄到 240px 再量一次（500ms 后写
 //    #embed-resize-probe 探针）：断言高度变小**且**节点仍全在挂载点内。
+// ⑤ **卸载即清 DOM**：已卸载实例不得把 .tmm-embed-canvas 骨架留在容器里——
+//    切模式时 Obsidian 会保留另一套视图子树（隐藏），残留骨架会让文档级
+//    querySelectorAll('.tmm-embed-canvas') 出现「空壳」第二份（2026-10-14
+//    实机归属分析）；探针挂一个嵌入后立即 onunload()，读容器内残余 canvas 数。
 // 同时验证 styles.css 的尺寸链：.tmm-embed（外框）+ .tmm-embed-canvas 高度
 // （缺 height 会让 width/height 正则无约束，引擎在 0 尺寸下静默不建——这正是
 // 本探针要钉住的退化方向）。
@@ -639,6 +685,18 @@ HTMLElement.prototype.createEl = function (tag, info) {
 };
 HTMLElement.prototype.createDiv = function (info) {
 	return this.createEl('div', info);
+};
+// Obsidian 的 Element.isShown()（祖先链无 display:none）；无头页没有它。
+// 2026-10-14：content-remeasure 的可见性守卫（flush / retryDeferred /
+// remeasureSettled / syncVisibility，经宿主注入的 isVisible）与嵌入的注入都会
+// 调用它，缺此垫片会让 node_tree_render_end 处理器抛错、中断渲染收尾（嵌入几何
+// 断言整片转红，逐层二分定位）。真机恒有该方法，垫片只补能力、不改任何断言的
+// 判定口径——生产热路径仍不得依赖宿主面缺口（见 content-remeasure 的
+// repairUnsettled）。注意：本文件此处位于模板字符串内，注释里不得出现反引号或
+// 美元花括号插值记号（2026-10-14 实测：反引号会提前终止模板，探针整页
+// SyntaxError）。
+HTMLElement.prototype.isShown = function () {
+	return this.getClientRects().length > 0;
 };
 
 const embedApp = {
@@ -684,6 +742,12 @@ const embedBig = mountEmbed(
 const embedWide = mountEmbed(
 	'map-embed-wide',
 	['# L1', '## L2', '### L3', '#### L4', '##### L5', '###### L6'].join('\\n'),
+);
+// 表格（2026-10-14）：「视图与代码块嵌入共用同一份自绘内容装配」的实测对照——
+// 块体里的 GFM 管道表在嵌入画布里同样必须渲染为真表格（不许只修视图一侧）
+const embedTable = mountEmbed(
+	'map-embed-table',
+	'# 表格嵌入\\n## 分支\\n| 列 | 值 |\\n| --- | --- |\\n| 甲 | 1 |',
 );
 
 window.setTimeout(() => {
@@ -751,6 +815,12 @@ window.setTimeout(() => {
 			);
 		}
 		const notice = embedBig.holder.querySelector('.' + EMBED_NOTICE_CLASS);
+		// —— 契约 ⑤：卸载即清 DOM（防隐藏视图子树的「空壳」残留，见 onunload）——
+		const embedUnload = mountEmbed('map-embed-unload', '# 卸载验证');
+		embedUnload.child.onunload();
+		const unloadLeftover = embedUnload.holder.querySelectorAll(
+			'.' + EMBED_CANVAS_CLASS,
+		).length;
 		probe.textContent = JSON.stringify({
 			canvas: rect
 				? { width: Math.round(rect.width), height: Math.round(rect.height) }
@@ -766,6 +836,12 @@ window.setTimeout(() => {
 				'.' + EMBED_OUTLINE_CLASS,
 			).length,
 			bigNotice: notice ? notice.textContent : null,
+			// 表格嵌入（2026-10-14）：同一份自绘装配下，管道表在嵌入画布内也应是
+			// <table>（视图侧由 table 场景 + inline 探针断言）
+			embedTableCount: embedTable.holder.querySelectorAll(
+				'foreignObject table',
+			).length,
+			unloadLeftover,
 		});
 	} catch (error) {
 		probe.textContent = JSON.stringify({
@@ -775,14 +851,18 @@ window.setTimeout(() => {
 	document.body.appendChild(probe);
 
 	// —— 契约 ④：容器收窄后必须按新宽度重算（观察器常驻） ——
-	// 先记下 640px 下的高度，再收窄到 240px；500ms 后（等观察器回调 + 100ms
-	// 节流窗口 + 布局落地）写**独立探针**读新高度与越界节点数，断言见 checkEmbed。
+	// 先记下 640px 下的高度，再收窄到 240px；随后**轮询到几何稳定**（连续两拍高度
+	// 一致，60ms 一拍、上限 1.5s）再写**独立探针**读新高度与越界节点数，断言见
+	// checkEmbed。为什么不用固定单点延时：收窄后要连等三拍（观察器回调 → 100ms
+	// 节流窗口 → 布局落地），负载高 / 首帧慢时固定延时不足会读到中间态而**假失败**
+	// ——本文件其它探针早已改用「事件 + 轮询」的就绪等待（见 whenMapReady 的
+	// 2026-09-21 加固记录），此处补齐同一纪律（2026-10-15）。
 	const wideCanvas = embedWide.holder.querySelector('.' + EMBED_CANVAS_CLASS);
 	const wideBefore = wideCanvas
 		? Math.round(wideCanvas.getBoundingClientRect().height)
 		: null;
 	embedWide.holder.style.width = '240px';
-	window.setTimeout(() => {
+	const writeResizeProbe = () => {
 		const resizeProbe = document.createElement('pre');
 		resizeProbe.id = 'embed-resize-probe';
 		const canvasNow = embedWide.holder.querySelector('.' + EMBED_CANVAS_CLASS);
@@ -806,7 +886,27 @@ window.setTimeout(() => {
 			nodesOutside: outsideNow,
 		});
 		document.body.appendChild(resizeProbe);
-	}, 400);
+	};
+	const resizeDeadline = Date.now() + 1500;
+	let lastResizeHeight = null;
+	let resizeStableRounds = 0;
+	const pollResizeProbe = () => {
+		const canvasNow = embedWide.holder.querySelector('.' + EMBED_CANVAS_CLASS);
+		const heightNow = canvasNow
+			? Math.round(canvasNow.getBoundingClientRect().height)
+			: null;
+		resizeStableRounds =
+			heightNow !== null && heightNow === lastResizeHeight
+				? resizeStableRounds + 1
+				: 0;
+		lastResizeHeight = heightNow;
+		if (resizeStableRounds >= 2 || Date.now() > resizeDeadline) {
+			writeResizeProbe();
+			return;
+		}
+		window.setTimeout(pollResizeProbe, 60);
+	};
+	window.setTimeout(pollResizeProbe, 120);
 }, 400);
 
 // —— 场景指标探针：**按子节点定位**读几何与图标（2026-10-11 修正） ——
@@ -1174,6 +1274,128 @@ const whenMapReady = (map, holder, run, baseDelay = 80, timeout = 1200, strict =
 	window.setTimeout(() => wait(Date.now() + timeout), baseDelay);
 };
 
+// —— 视口几何落地探针（2026-10-14 第十四批）：容器尺寸变化后的视口操作 ——
+// 实机症状（用户报告）：>500 节点（性能模式）导图，「适应画布」后「重置缩放」，
+// 视图偏右（500 节点实测 150px 级；默认视口打开也偏 ~16px）。根因：vendor
+// 的 Renderer.render() 只做 setTimeout(() => this._render(), 0) 编排，布局
+// （layout.doLayout）要等那次 _render() 才按新画布尺寸重算；而
+// MindMap.resize() 在「尺寸变化」分支只调这一次 render——于是存在窗口：
+// 「mindMap.width/height 已是实时容器尺寸、渲染树 left/top 还是旧基准」。
+// 性能模式的数据层居中/fit 在该窗口内测量＝旧布局中心，而目标画布中心是新值
+// ⇒ 平移残差 (W新−W旧)/2（屏幕上被 ×scale 压小），resetZoom 随即按
+// 1/scale 缩放回 100% 把残差**放大回屏幕**（实机 0.0699 ⇒ 14.3 倍）。
+// 本探针钉两条契约（容器 800→1000 变宽、引擎几何缓存滞后）：
+//   ① centerContentAtFullScale（内部 sync→resize）后内容中心 ≈ 画布中心；
+//   ② 随后 fit → resetZoom 全链，内容中心仍 ≈ 画布中心（不许被 1/scale 放大）。
+// 每一步都**等一拍再测**：修复前的残差要等「编排的那次渲染」落地后才体现在
+// 画面上（若同步紧测，测到的是尚未重算的旧布局，探针对修复前也「绿」——无效）。
+const viewportGeometryHolder = document.createElement('div');
+viewportGeometryHolder.id = 'viewport-geometry';
+viewportGeometryHolder.className = 'mindmap-canvas-container';
+viewportGeometryHolder.style.width = '800px';
+viewportGeometryHolder.style.height = '300px';
+document.body.appendChild(viewportGeometryHolder);
+// 151 节点（1 + 5×(1+29)）> 阈值 100 ⇒ 性能模式；规模刻意压低（共享页面时序纪律）
+const viewportGeometryTree = { data: { text: 'vg-root', uid: 'vg-root' }, children: [] };
+for (let i = 0; i < 5; i++) {
+	const branch = { data: { text: 'vg-b' + i, uid: 'vg-b' + i }, children: [] };
+	for (let j = 0; j < 29; j++) {
+		branch.children.push({
+			data: { text: 'vg-l' + i + '-' + j, uid: 'vg-l-' + i + '-' + j },
+			children: [],
+		});
+	}
+	viewportGeometryTree.children.push(branch);
+}
+const viewportGeometryProbe = document.createElement('pre');
+viewportGeometryProbe.id = 'viewport-geometry-probe';
+viewportGeometryProbe.textContent = 'PENDING';
+document.body.appendChild(viewportGeometryProbe);
+let viewportGeometryMap = null;
+try {
+	viewportGeometryMap = createMindMap(viewportGeometryHolder, viewportGeometryTree, {
+		...options,
+		performanceMode: true,
+		performanceThreshold: 100,
+	});
+} catch (error) {
+	viewportGeometryProbe.textContent = JSON.stringify({ error: String(error) });
+}
+const runViewportGeometryProbe = () => {
+	try {
+		if (!viewportGeometryMap) return;
+		const map = viewportGeometryMap;
+		/** 内容中心（画布内屏幕坐标）相对画布中心的偏移（数据层盒 + 变换口径） */
+		const snapshot = () => {
+			const t = map.draw.transform();
+			const box = collectDataBox(map.renderer.root);
+			const rect = viewportGeometryHolder.getBoundingClientRect();
+			if (!box) return { error: 'empty data box' };
+			const centerX = (box.x + box.width / 2) * t.scaleX + t.translateX;
+			const centerY = (box.y + box.height / 2) * t.scaleY + t.translateY;
+			return {
+				scale: Math.round(t.scaleX * 1000) / 1000,
+				dx: Math.round((centerX - rect.width / 2) * 100) / 100,
+				dy: Math.round((centerY - rect.height / 2) * 100) / 100,
+				canvas: [Math.round(rect.width), Math.round(rect.height)],
+				// 诊断读数：布局基准（数据盒中心的布局坐标）与引擎缓存宽度必须同步
+				// 才好定位「测量时用的是旧布局还是新布局」
+				mapWidth: Math.round(map.width),
+				boxCenterX: Math.round((box.x + box.width / 2) * 100) / 100,
+				tx: Math.round(t.translateX * 100) / 100,
+				rendering: map.renderer.isRendering === true,
+			};
+		};
+		// 容器变宽（模拟窗口/侧栏变化；不通知引擎——「几何缓存滞后」是本场景前提）
+		viewportGeometryHolder.style.width = '1000px';
+		const steps = { before: snapshot() };
+		// 打开视口入口（内部 syncCanvasGeometry → resize →「尺寸变化」分支 →
+		// flushPendingLayoutRender 提前启动渲染；布局落地是异步的，居中补正由
+		// scheduleCenteringCorrection 在 node_tree_render_end 时完成）
+		centerContentAtFullScale(map);
+		// 同步紧测（诊断用，不参与断言）：修复前/后此处都仍是旧布局——
+		// 它用于区分「几何未就绪」与「补正未生效」，不构成契约
+		steps.immediate = snapshot();
+		// 等「内容居中」或超时：修复后补正在渲染落地时很快完成（通常 <100ms）；
+		// 修复前残差是持久的（布局落地后内容偏 (W新−W旧)/2），超时如实报告
+		const waitCentered = (label, next, deadline) => {
+			const s = snapshot();
+			const centered =
+				!s.error && Math.abs(s.dx) <= 2 && Math.abs(s.dy) <= 2;
+			if (centered || Date.now() > deadline) {
+				steps[label] = s;
+				next();
+				return;
+			}
+			window.setTimeout(() => waitCentered(label, next, deadline), 50);
+		};
+		waitCentered(
+			'afterCenter',
+			() => {
+				fitMindMap(map);
+				waitCentered(
+					'afterFit',
+					() => {
+						resetZoom(map);
+						waitCentered(
+							'afterReset',
+							() => {
+								viewportGeometryProbe.textContent = JSON.stringify(steps);
+							},
+							Date.now() + 600,
+						);
+					},
+					Date.now() + 600,
+				);
+			},
+			Date.now() + 600,
+		);
+	} catch (error) {
+		viewportGeometryProbe.textContent = JSON.stringify({ error: String(error) });
+	}
+};
+whenMapReady(viewportGeometryMap, viewportGeometryHolder, runViewportGeometryProbe, 80, 1200);
+
 // —— 布局探针：六种布局渲染 × 连线样式分派 × 根节点连线起点 ——
 // 连线路径 = 容器内非节点形状的 path（节点形状带 class="smm-node-shape"，
 // 圆角以 C 命令实现，混入会把"直线布局"误判成含曲线）。
@@ -1367,7 +1589,11 @@ window.setTimeout(() => {
 				},
 			});
 		} catch {
-			// 桩失败：复制断言降级跳过（copiedCode 保持 null）
+			// 桩失败：copiedCode 保持 null —— 不是「降级跳过」：Node 侧对
+			// copyProbe.copied 做真值断言，桩失败会以「复制内容 null ≠ …」报错。
+			// 此注释此前写成「降级跳过」，会把排查者引向产品缺陷（真实原因见
+			// 上方 defineProperty 的异常）。注意本段位于页内模板字符串中，注释里
+			// 不能出现反引号（会提前终止模板）
 		}
 		if (codeMap && typeof codeMap.on === 'function') {
 			// 与锚点同款契约：合成 click 经引擎 node_click 派发后，event.target 必须
@@ -1486,6 +1712,24 @@ window.setTimeout(() => {
 		}, 300);
 		// 段落（多行）场景：README 承诺「段落里的链接同样可点」，此处实测
 		const paragraphHolder = groupOf('paragraph');
+		// 表格场景（2026-10-14）：GFM 管道表必须自绘成 table/thead/tbody；样式全内联；
+		// 表宽以内容盒为顶（max-width:100% + 单元格折行）——「不许撑爆节点」的实测闸门
+		const tableHolder = groupOf('table');
+		const tableEl = tableHolder
+			? tableHolder.querySelector('foreignObject table')
+			: null;
+		const tableBox = tableHolder
+			? tableHolder.querySelector('.mindmap-node-inline-content')
+			: null;
+		const tableTh = tableEl ? tableEl.querySelector('th') : null;
+		const tableOverflowPx =
+			tableEl && tableBox
+				? Math.round(
+						(tableEl.getBoundingClientRect().right -
+							tableBox.getBoundingClientRect().right) *
+							100,
+					) / 100
+				: null;
 		// 超长单行场景：必须被接管（长行交给引擎会二次复杂度卡死）
 		const hugeHolder = groupOf('hugeline');
 		const hugeRegion = hugeHolder
@@ -1730,6 +1974,37 @@ window.setTimeout(() => {
 							?.textContent ?? ''
 					).split('\\n').length
 				: -1,
+			// 表格（2026-10-14）：管道表 → 内联样式 <table>；单元格文本与列对齐取自
+			// 模型（domain/pipe-table）；表宽不得超出内容盒（不许撑爆节点）
+			tableInForeignObject: insideForeignObject(tableEl),
+			tableThTexts: tableEl
+				? Array.from(tableEl.querySelectorAll('th')).map(
+						(el) => el.textContent,
+					)
+				: null,
+			tableTdTexts: tableEl
+				? Array.from(tableEl.querySelectorAll('td')).map(
+						(el) => el.textContent,
+					)
+				: null,
+			tableRowCount: tableEl ? tableEl.querySelectorAll('tr').length : -1,
+			// 对齐 / 边框 / 内边距一律读**计算值**：无头页里没有任何类样式可用，
+			// 能算出这些值就证明它们确实内联在元素上（导出 SVG 同源）
+			tableAligns: tableEl
+				? Array.from(tableEl.querySelectorAll('th')).map(
+						(el) => window.getComputedStyle(el).textAlign,
+					)
+				: null,
+			tableCellBorder: tableTh
+				? window.getComputedStyle(tableTh).borderTopWidth
+				: null,
+			tableCellPadding: tableTh
+				? window.getComputedStyle(tableTh).padding
+				: null,
+			tableBorderCollapse: tableEl
+				? window.getComputedStyle(tableEl).borderCollapse
+				: null,
+			tableOverflowPx,
 			// 对照：纯文本节点未被接管（自绘锚点数为 0）
 			plainAnchors: plainHolder
 				? plainHolder.querySelectorAll(
@@ -1833,7 +2108,10 @@ window.setTimeout(() => {
 		// 三种形态：纯文本（现在自绘）/ 含链接（自绘）/ **空文本**（让给引擎）
 		const drawnPlain = nodeOf('plain');
 		const richNode = nodeOf('inline');
-		const engineNode = nodeOf('url');
+		// 「让给引擎」的对照样本取 **empty 场景**（空文本节点，生产可达）：
+		// 'url' 场景自 2026-10-15 起按生产形态（mdRaw ＝ <url>）恒被自绘接管，
+		// 不再是引擎渲染节点（见 scenarios 的 empty / url 两条注释）
+		const engineNode = nodeOf('empty');
 		for (const node of [drawnPlain, richNode, engineNode]) {
 			if (node && typeof node.active === 'function') node.active();
 		}
@@ -1889,10 +2167,12 @@ window.setTimeout(() => {
 		const plainChildren = [];
 		const linkChildren = [];
 		for (let i = 0; i < N; i++) {
-			// 「让给引擎」侧（2026-10-11 修正）：含文本节点一律自绘 ⇒ 唯一还能走
-			// 引擎默认内容通道的形态是**无可见内容**的节点（空文本 / 含图）。
-			// 这里用「空文本 + hyperlink」＝URL 单独成节点（真实可达形态，引擎
-			// 渲染原生链接图标），保证 A/B 的引擎侧仍真实存在。
+			// 「让给引擎」侧（2026-10-11 修正；2026-10-15 澄清前提）：含文本节点一律自绘，
+			// 走引擎默认内容通道的只剩**无可见内容**的节点（空文本 / 含图）。
+			// 这里用「空文本 + hyperlink（**无 mdRaw**）」的**实验室形态**：生产里 URL 节点
+			// 恒带 mdRaw（承载链接的新建 / 覆盖路径都经 applyInlineRawMeta 补齐）⇒ 恒自绘、
+			// 显示为可点地址文本，故此形态不可达；保留它只为让 A/B 的「引擎侧」仍有**文本类**
+			// 内容通道可对比（真实可达的引擎侧样本见 scenarios 的 empty / attach / 含图节点）。
 			plainChildren.push({
 				data: {
 					uid: 'p-' + i,
@@ -2817,8 +3097,33 @@ window.setTimeout(async () => {
 			styleBlocks.push(styleMatch[1]);
 			styleMatch = styleRe.exec(html);
 		}
+		// 表格场景（2026-10-14）单独导出一次：导出 SVG 里既没有 styles.css 也没有
+		// app.css，表格的结构与观感**只能**以内联样式出现在产物里——否则导出图里
+		// 表格线/内边距/列对齐全部丢失（而 foreignObject 尺寸仍按屏上测宽固定）
+		const styleOfIn = (pattern, source) => {
+			const tag = pattern.exec(source);
+			if (!tag) return null;
+			const style = /style="([^"]*)"/.exec(tag[0]);
+			return style ? style[1] : '';
+		};
+		const tableMap = scenarioMaps.table;
+		const tableExp = tableMap && tableMap.doExport;
+		const tableSvg =
+			tableExp && typeof tableExp.getSvgData === 'function'
+				? await tableExp.getSvgData()
+				: null;
+		const tableHtml =
+			tableSvg && typeof tableSvg.str === 'string' ? tableSvg.str : '';
+		const tableCellStyles = tableHtml
+			? Array.from(
+					tableHtml.matchAll(/<t[hd][^>]*style="([^"]*)"[^>]*>/g),
+				).map((match) => match[1])
+			: [];
 		exportProbe.textContent = JSON.stringify({
 			hasSvgHtml: html.length > 0,
+			tableInExport: /<table/.test(tableHtml),
+			tableStyle: styleOfIn(/<table[^>]*>/, tableHtml),
+			tableCellStyles,
 			regionStyle: styleOf(/<div[^>]*mindmap-node-inline-content[^>]*>/),
 			anchorStyle: styleOf(/<a[^>]*internal-link[^>]*>/),
 			markupStyle: styleOf(/<strong[^>]*>/),
@@ -3948,6 +4253,13 @@ function checkEmbed(dom) {
 	if (probe.nodesOutside !== 0) {
 		failures.push(`有 ${probe.nodesOutside} 个节点越出挂载点边界（内容被裁切）`);
 	}
+	// 表格（2026-10-14）：嵌入与视图共用同一份自绘内容装配 ⇒ 块体里的管道表也必须
+	// 在嵌入画布内渲染成 <table>（若只修了视图一侧，这里先红）
+	if (probe.embedTableCount !== 1) {
+		failures.push(
+			`嵌入画布内的表格数 ${probe.embedTableCount} ≠ 1（视图与嵌入共用装配，管道表应在两处同时生效）`,
+		);
+	}
 	// 不可拖动：引擎原生 isDisableDrag 未生效时，左键拖画布会把内容推走
 	if (probe.panShift !== 0) {
 		failures.push(
@@ -3967,6 +4279,13 @@ function checkEmbed(dom) {
 	if (probe.bigOutline !== 1) {
 		failures.push(
 			`超限嵌入缺只读大纲（.tmm-embed-outline ${probe.bigOutline} ≠ 1）`,
+		);
+	}
+	// 契约 ⑤：卸载即清 DOM（已卸载实例不得把 .tmm-embed-canvas 骨架留在容器里）
+	if (probe.unloadLeftover !== 0) {
+		failures.push(
+			`卸载后容器仍留 ${probe.unloadLeftover} 个 .tmm-embed-canvas 骨架：` +
+				'隐藏视图子树会残留「空壳」，文档级计数出现第二份',
 		);
 	}
 	// 降级必须可见（不静默），且提示行要带上实际节点数与上限（i18n 占位符替换）
@@ -4154,6 +4473,55 @@ function checkPerfBox(dom) {
 	) {
 		failures.push(
 			`数据层盒 ${dataWidth}×${dataHeight} 与 DOM 盒 ${domWidth}×${domHeight} 相差 > 8px`,
+		);
+	}
+	return failures;
+}
+
+/**
+ * 校验「视口几何落地」探针（`#viewport-geometry-probe`，见 buildEntrySource）。
+ *
+ * 契约：容器 800→1000 变宽（引擎几何缓存滞后）后，三步视口操作各自的
+ * 「内容中心 − 画布中心」偏移都必须 ≈0（2px 容差）——
+ * ① 打开视口（centerContentAtFullScale）；② 适应画布；③ 重置缩放。
+ * 修复前：`resize()` 只编排渲染（setTimeout(0)），布局尚未按新尺寸重算，
+ * 数据层几何测量＝旧基准 ⇒ ② 留下残差 (W新−W旧)/2 = 100px 级；③ 再按
+ * 1/scale 放大 ⇒ 视角偏移。三步同容差钉死，防「修了 fit 漏了 reset」。
+ */
+function checkViewportGeometry(dom) {
+	const { probe, failures: parseFailures } = readProbe(
+		dom,
+		'viewport-geometry-probe',
+		'视口几何落地',
+	);
+	if (parseFailures) return parseFailures;
+	const failures = [];
+	if (probe.error) {
+		failures.push(`探针执行失败：${probe.error}`);
+		return failures;
+	}
+	// 注：probe.immediate 是「同步紧测」诊断读数（布局落地是异步的，此刻几何
+	// 尚未就绪属预期），不参与断言；契约只看三步操作各自的最终态。
+	const steps = [
+		['打开视口', probe.afterCenter],
+		['适应画布', probe.afterFit],
+		['重置缩放', probe.afterReset],
+	];
+	for (const [label, step] of steps) {
+		if (!step || step.error) {
+			failures.push(`${label}：${step ? step.error : '读数缺失'}`);
+			continue;
+		}
+		if (Math.abs(step.dx) > 2 || Math.abs(step.dy) > 2) {
+			failures.push(
+				`${label}后内容中心偏移 (${step.dx}, ${step.dy})px 超 2px（画布 ${step.canvas.join('×')}，scale ${step.scale}，` +
+					`引擎缓存宽 ${step.mapWidth}，布局盒中心 ${step.boxCenterX}，tx ${step.tx}，渲染在途 ${step.rendering}）`,
+			);
+		}
+	}
+	if (!probe.afterReset || probe.afterReset.scale !== 1) {
+		failures.push(
+			`重置缩放后比例 ${probe.afterReset ? probe.afterReset.scale : '读数缺失'} ≠ 1`,
 		);
 	}
 	return failures;
@@ -4967,6 +5335,57 @@ function checkInline(dom) {
 			`段落节点显示行数 ${probe.paragraphLines} ≠ 2（多行结构被压平，white-space 失效）`,
 		);
 	}
+	// 表格（2026-10-14）：管道表必须自绘成 table/thead/tbody；单元格文本与列对齐
+	// 取自 domain/pipe-table 的模型；边框/内边距/对齐**必须内联**（导出 SVG 不含
+	// styles.css 与 app.css，类规则在产物里整体失效）；表宽不得超出内容盒
+	if (probe.tableInForeignObject !== true) {
+		failures.push(
+			'表格未落在 foreignObject 内（管道表未被自绘接管 → 引擎按字面 SVG 文本渲染表格行）',
+		);
+	}
+	if (
+		JSON.stringify(probe.tableThTexts) !== JSON.stringify(['名称', '数量'])
+	) {
+		failures.push(
+			`表头单元格 ${JSON.stringify(probe.tableThTexts)} ≠ ["名称","数量"]（模型 → DOM 的文本口径漂移）`,
+		);
+	}
+	if (JSON.stringify(probe.tableTdTexts) !== JSON.stringify(['甲', '2'])) {
+		failures.push(
+			`数据单元格 ${JSON.stringify(probe.tableTdTexts)} ≠ ["甲","2"]`,
+		);
+	}
+	if (probe.tableRowCount !== 2) {
+		failures.push(`表格 tr 数 ${probe.tableRowCount} ≠ 2（表头行 + 数据行）`);
+	}
+	// 首列分隔行写 `---`（未指定对齐）⇒ **不写** text-align，计算值 = 表头 UA 默认
+	// 「center」（官方样式包无 `th { text-align }` 规则，阅读视图同一个默认）；
+	// 第二列写 `---:` ⇒ 必须落到内联 `right`。这一对恰好同时锁住「沉默」与「生效」
+	if (JSON.stringify(probe.tableAligns) !== JSON.stringify(['center', 'right'])) {
+		failures.push(
+			`列对齐口径异常（计算值 ${JSON.stringify(probe.tableAligns)} ≠ ["center","right"]：未指定列应保持宿主默认、---: 列应内联 right）`,
+		);
+	}
+	if (probe.tableCellBorder !== '1px') {
+		failures.push(
+			`单元格边框未内联（计算 border-top-width ${JSON.stringify(probe.tableCellBorder)} ≠ "1px"；导出图会丢表格线）`,
+		);
+	}
+	if (probe.tableCellPadding !== '2px 8px') {
+		failures.push(
+			`单元格内边距未内联（计算 padding ${JSON.stringify(probe.tableCellPadding)} ≠ "2px 8px"）`,
+		);
+	}
+	if (probe.tableBorderCollapse !== 'collapse') {
+		failures.push(
+			`表格边框合并未生效（计算 border-collapse ${JSON.stringify(probe.tableBorderCollapse)} ≠ "collapse"）`,
+		);
+	}
+	if (!(probe.tableOverflowPx <= 0.5)) {
+		failures.push(
+			`表格超出内容盒 ${probe.tableOverflowPx}px（max-width:100% + 单元格折行失效 → 会撑爆节点）`,
+		);
+	}
 	if (!(probe.childWidth > 0) || !(probe.childHeight > 0)) {
 		failures.push(
 			`自绘节点测宽非正（${probe.childWidth}×${probe.childHeight}，离屏克隆测宽失效？）`,
@@ -5150,6 +5569,35 @@ function checkExport(dom) {
 			`轻标记元素缺内联样式（导出图粗体丢失）：${JSON.stringify(probe.markupStyle)}`,
 		);
 	}
+	// 表格（2026-10-14）：导出产物里必须仍是一张**带表格线**的表——`<table>` 与
+	// 单元格的内联样式（边框 / 内边距 / 列对齐）都随 foreignObject 一起被序列化
+	if (probe.tableInExport !== true) {
+		failures.push('导出 SVG 里没有 <table>（表格场景未导出或表格未进产物）');
+	}
+	const tableStyle =
+		typeof probe.tableStyle === 'string' ? probe.tableStyle : '';
+	if (!/border-collapse/.test(tableStyle)) {
+		failures.push(
+			`导出 SVG 的 <table> 缺内联样式（表格边框合并丢失）：${JSON.stringify(probe.tableStyle)}`,
+		);
+	}
+	const cellStyles = Array.isArray(probe.tableCellStyles)
+		? probe.tableCellStyles
+		: [];
+	if (
+		cellStyles.length === 0 ||
+		!/border/.test(cellStyles.join(';')) ||
+		!/padding/.test(cellStyles.join(';'))
+	) {
+		failures.push(
+			`导出 SVG 的单元格缺内联边框/内边距（导出图会掉表格线）：${JSON.stringify(probe.tableCellStyles)}`,
+		);
+	}
+	if (!cellStyles.some((style) => /text-align:\s*right/.test(style))) {
+		failures.push(
+			`导出 SVG 丢失列对齐（应有一列内联 text-align: right）：${JSON.stringify(probe.tableCellStyles)}`,
+		);
+	}
 	return failures;
 }
 
@@ -5320,11 +5768,22 @@ async function runChecks(dom, diag) {
 	for (const failure of perfBoxFailures) diag.log(`      - ${failure}`);
 	failed += perfBoxFailures.length;
 
+	// 视口几何落地契约（第十四批）：容器尺寸变化后 fit/reset 不产生「被 1/scale 放大」的偏移
+	diag.log('  · perf-box 探针完成，进入 viewport-geometry 探针');
+	const viewportGeometryFailures = safe('viewport-geometry 探针', () =>
+		checkViewportGeometry(dom),
+	);
+	diag.log(
+		`  ${viewportGeometryFailures.length === 0 ? '✓' : '✗'} viewport-geometry 容器变宽后视口三步（打开/适应/重置）内容中心不偏移`,
+	);
+	for (const failure of viewportGeometryFailures) diag.log(`      - ${failure}`);
+	failed += viewportGeometryFailures.length;
+
 	// 代码块嵌入契约（```mindmap）：只读引擎装配 + 滚轮归宿主页面 + 超限降级
 	diag.log('  · perf-box 探针完成，进入 embed 探针');
 	const embedFailures = safe('embed 探针', () => checkEmbed(dom));
 	diag.log(
-		`  ${embedFailures.length === 0 ? '✓' : '✗'} embed 代码块嵌入（只读 + 随内容高度 + 不可拖动/调节 + 滚轮归页面 + 超限降级 + 收窄即重排）`,
+		`  ${embedFailures.length === 0 ? '✓' : '✗'} embed 代码块嵌入（只读 + 随内容高度 + 不可拖动/调节 + 滚轮归页面 + 超限降级 + 收窄即重排 + 卸载即清 DOM）`,
 	);
 	for (const failure of embedFailures) diag.log(`      - ${failure}`);
 	failed += embedFailures.length;

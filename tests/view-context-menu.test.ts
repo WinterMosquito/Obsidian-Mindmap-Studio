@@ -119,9 +119,11 @@ const {
 	editNodeTextMock,
 	editNodeTextInModalMock,
 	clearNodeHyperlinkMock,
-	copyNodeMock,
-	pasteNodeAsChildMock,
+	copySelectedNodesMock,
+	pasteClipboardIntoNodeMock,
 	deleteActiveNodeMock,
+	moveNodeUpMock,
+	moveNodeDownMock,
 	removeNodeImageMock,
 	removeNodeTextMock,
 	addLinkToActiveNodeMock,
@@ -137,9 +139,11 @@ const {
 	editNodeTextMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	editNodeTextInModalMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	clearNodeHyperlinkMock: vi.fn<(view: unknown, node: unknown) => void>(),
-	copyNodeMock: vi.fn<(view: unknown, node: unknown) => void>(),
-	pasteNodeAsChildMock: vi.fn<(view: unknown, node: unknown) => void>(),
+	copySelectedNodesMock: vi.fn<(view: unknown) => void>(),
+	pasteClipboardIntoNodeMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	deleteActiveNodeMock: vi.fn<(view: unknown) => void>(),
+	moveNodeUpMock: vi.fn<(view: unknown, node: unknown) => void>(),
+	moveNodeDownMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	removeNodeImageMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	removeNodeTextMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	addLinkToActiveNodeMock: vi.fn<(view: unknown) => Promise<void>>(),
@@ -166,15 +170,24 @@ vi.mock('../src/features/view-node-actions', () => ({
 	addImageToActiveNode: addImageToActiveNodeMock,
 	addLinkToActiveNode: addLinkToActiveNodeMock,
 	clearNodeHyperlink: clearNodeHyperlinkMock,
-	copyNode: copyNodeMock,
 	deleteActiveNode: deleteActiveNodeMock,
 	// 编辑文本的共用入口（默认节点走引擎编辑框、自绘节点走插件内联编辑器）
 	editNodeText: editNodeTextMock,
 	// 弹窗编辑的备选入口（右键「在弹窗中编辑」）
 	editNodeTextInModal: editNodeTextInModalMock,
-	pasteNodeAsChild: pasteNodeAsChildMock,
+	// 兄弟间上/下移（根节点/首尾拒绝与提示收口在动作内部，本层只验证委托入参）
+	moveNodeUp: moveNodeUpMock,
+	moveNodeDown: moveNodeDownMock,
 	removeNodeImage: removeNodeImageMock,
 	removeNodeText: removeNodeTextMock,
+}));
+
+// 剪贴板三入口（复制节点 / 粘贴为子节点 / 粘贴节点）已收口到 view-clipboard：
+// 本文件只验证「菜单点了哪一个入口、带了什么落点」，剪贴板内部行为由
+// tests/view-clipboard.test.ts 覆盖
+vi.mock('../src/features/view-clipboard', () => ({
+	copySelectedNodes: copySelectedNodesMock,
+	pasteClipboardIntoNode: pasteClipboardIntoNodeMock,
 }));
 
 vi.mock('../src/features/view-image-fullscreen', () => ({
@@ -429,6 +442,8 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 			zh('menu.editTextModal'),
 			zh('menu.addChild'),
 			zh('menu.addSibling'),
+			zh('menu.moveUp'),
+			zh('menu.moveDown'),
 		],
 		clip: [zh('menu.copyNode'), zh('menu.pasteAsChild')],
 		link: [zh('menu.addLink')],
@@ -660,6 +675,8 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		expect(menu.item(zh('menu.editText')).icon).toBe('pencil');
 		expect(menu.item(zh('menu.addChild')).icon).toBe('plus');
 		expect(menu.item(zh('menu.addSibling')).icon).toBe('circle-plus');
+		expect(menu.item(zh('menu.moveUp')).icon).toBe('arrow-up');
+		expect(menu.item(zh('menu.moveDown')).icon).toBe('arrow-down');
 		expect(menu.item(zh('menu.copyNode')).icon).toBe('copy');
 		expect(menu.item(zh('menu.pasteAsChild')).icon).toBe('clipboard');
 		expect(menu.item(zh('menu.addLink')).icon).toBe('link');
@@ -706,11 +723,20 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		const node = fakeNode({});
 		const { menu, view } = openNodeMenu(node);
 		menu.click(zh('menu.copyNode'));
-		expect(copyNodeMock).toHaveBeenCalledWith(view, node);
+		expect(copySelectedNodesMock).toHaveBeenCalledWith(view);
 		menu.click(zh('menu.pasteAsChild'));
-		expect(pasteNodeAsChildMock).toHaveBeenCalledWith(view, node);
+		expect(pasteClipboardIntoNodeMock).toHaveBeenCalledWith(view, node);
 		menu.click(zh('menu.deleteNode'));
 		expect(deleteActiveNodeMock).toHaveBeenCalledWith(view);
+	});
+
+	it('上移/下移：委托 view-node-actions 并显式携带该节点（根/首尾拒绝在动作内）', () => {
+		const node = fakeNode({ text: 'x' });
+		const { menu, view } = openNodeMenu(node);
+		menu.click(zh('menu.moveUp'));
+		expect(moveNodeUpMock).toHaveBeenCalledWith(view, node);
+		menu.click(zh('menu.moveDown'));
+		expect(moveNodeDownMock).toHaveBeenCalledWith(view, node);
 	});
 
 	it('根节点的删除条目照常给出：拒绝逻辑在 deleteActiveNode 内部（本层不预判）', () => {
@@ -803,7 +829,7 @@ describe('画布空白右键菜单', () => {
 		const menu = lastMenu();
 
 		menu.click(zh('menu.pasteNode'));
-		expect(pasteNodeAsChildMock).toHaveBeenCalledWith(view, null);
+		expect(pasteClipboardIntoNodeMock).toHaveBeenCalledWith(view, null);
 
 		menu.click(zh('menu.resetZoom'));
 		expect(resetZoomMock).toHaveBeenCalledWith(view.mindMap);

@@ -1,6 +1,8 @@
 /**
  * 右键菜单：节点右键完整菜单与画布空白处通用菜单。从 view.ts 拆出。
- * 菜单动作（复制/粘贴/链接/图片/删除等）委托给 view-node-actions.ts。
+ * 菜单动作（链接/图片/删除等）委托给 view-node-actions.ts；
+ * 剪贴板三项（复制节点 / 粘贴为子节点 / 粘贴节点）走 view-clipboard——
+ * 那里是系统剪贴板（Markdown 文本）的**唯一**收口，勿在本文件另开一条。
  */
 import { Menu, Notice } from 'obsidian';
 import {
@@ -15,19 +17,24 @@ import {
 	addImageToActiveNode,
 	addLinkToActiveNode,
 	clearNodeHyperlink,
-	copyNode,
 	createChildNodeBelow,
 	deleteActiveNode,
 	editNodeText,
 	editNodeTextInModal,
-	pasteNodeAsChild,
+	moveNodeDown,
+	moveNodeUp,
 	removeNodeImage,
 	removeNodeText,
 } from './view-node-actions';
+import {
+	copySelectedNodes,
+	pasteClipboardIntoNode,
+} from './view-clipboard';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { nodeLink } from './view-wikilink';
 import { arrangeMindMap } from './view-toolbar';
 import { t } from '../core/i18n';
+import { writeClipboardText } from '../platform/clipboard';
 import { renderHyperlink } from '../markdown/md-serialize';
 import type { MdNodeData } from '../core/node-data';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
@@ -47,8 +54,11 @@ export function setupContextMenu(view: MindMapViewContext): void {
 			showNodeContextMenu(view, event, node);
 		}
 	});
-	// 空白处右键：画布委托。附件图标等未 stopPropagation 的冒泡事件
-	// 命中节点时也统一走节点菜单，避免双菜单或菜单丢失。
+	// 空白处右键：画布委托。**留住**「命中节点则走节点菜单」这一支——节点自己的
+	// contextmenu 处理器**并非无条件** stopPropagation：`readonly` 或 `e.ctrlKey`
+	// 时它直接 return（上游 `render/node/MindMapNode.js`），事件会冒泡到画布。
+	// macOS 的 Ctrl+左键即走这条路径；删掉该支会让它落到空白菜单（2026-10-15
+	// 复核：审计曾判其为死分支，实测依据不足）。
 	view.engineEvents.onDom(view.canvasEl, 'contextmenu', (event) => {
 		event.preventDefault();
 		const target = event.target as HTMLElement;
@@ -75,7 +85,7 @@ export function setupContextMenu(view: MindMapViewContext): void {
 			item
 				.setTitle(t(view.lang, 'menu.pasteNode'))
 				.setIcon('clipboard')
-				.onClick(() => pasteNodeAsChild(view, null)),
+				.onClick(() => pasteClipboardIntoNode(view, null)),
 		);
 		menu.addSeparator();
 		menu.addItem((item) =>
@@ -150,18 +160,35 @@ function showNodeContextMenu(
 			.setIcon('circle-plus')
 			.onClick(() => mindMap.execCommand(ENGINE_COMMANDS.INSERT_NODE)),
 	);
+	// 兄弟间上/下移（引擎 UP_NODE / DOWN_NODE）：显式传节点——本菜单虽在入口处
+	// node.active()，但画布委托路径可能处于多选态，激活列表首位未必是右键目标；
+	// 根节点/首尾的拒绝与提示收口在 moveNodeUp/moveNodeDown（本层不预判）
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'menu.moveUp'))
+			.setIcon('arrow-up')
+			.onClick(() => moveNodeUp(view, node)),
+	);
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'menu.moveDown'))
+			.setIcon('arrow-down')
+			.onClick(() => moveNodeDown(view, node)),
+	);
 	menu.addSeparator();
 	menu.addItem((item) =>
 		item
 			.setTitle(t(view.lang, 'menu.copyNode'))
 			.setIcon('copy')
-			.onClick(() => copyNode(view, node)),
+			// 剪贴板三入口统一走 view-clipboard（系统剪贴板 + Markdown 文本）：
+			// 本菜单已在入口处 `node.active()`，故「复制」等价于复制该节点子树
+			.onClick(() => copySelectedNodes(view)),
 	);
 	menu.addItem((item) =>
 		item
 			.setTitle(t(view.lang, 'menu.pasteAsChild'))
 			.setIcon('clipboard')
-			.onClick(() => pasteNodeAsChild(view, node)),
+			.onClick(() => pasteClipboardIntoNode(view, node)),
 	);
 	menu.addSeparator();
 	menu.addItem((item) =>
@@ -194,14 +221,13 @@ function showNodeContextMenu(
 					// 取不到写法时回落到通道原文。
 					const written =
 						renderHyperlink(node.getData() as MdNodeData) ?? linkRef.link;
-					void navigator.clipboard
-						.writeText(written)
-						.then(() => new Notice(t(view.lang, 'common.linkCopied')))
-						.catch((error) => {
-							// 静默吞掉会让失败原因无痕（内部错误 → console 留痕）
-							console.warn('MindMap Studio：复制链接失败', error);
-							new Notice(t(view.lang, 'common.clipboardError'));
-						});
+					// 写入走 platform/clipboard（本文件头的「勿另开剪贴板通道」同样
+					// 适用于这里）：失败留痕由它负责，这一层只按成败选文案
+					void writeClipboardText(written).then((ok) => {
+						new Notice(
+							t(view.lang, ok ? 'common.linkCopied' : 'common.clipboardError'),
+						);
+					});
 				}),
 		);
 	}

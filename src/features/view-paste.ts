@@ -11,6 +11,8 @@ import { getActiveNode, getRenderRoot } from '../engine/mindmap';
 import { buildPastedImageName, saveImageToVault } from '../media/images-save';
 import { notifyError } from '../core/errors';
 import { applyNodeImage, createImageChildNode } from './view-node-actions';
+import { pasteFromClipboardEvent } from './view-clipboard';
+import { isTextEntryTarget } from './view-common';
 import { t } from '../core/i18n';
 import type { MindMapViewContext } from './view-context';
 
@@ -28,7 +30,7 @@ export function setupPasteHandler(view: MindMapViewContext): void {
 
 /**
  * 窗口级粘贴兜底（焦点在画布容器外时仍可粘贴）：
- * 前置「激活视图为本视图」判定由注册方完成；这里仅做容器与输入框豁免。
+ * 前置「激活视图为本视图」判定由注册方完成；这里仅做容器与输入类目标的豁免。
  */
 export function handleWindowPaste(
 	view: MindMapViewContext,
@@ -41,11 +43,11 @@ export function handleWindowPaste(
 	if (target && view.containerEl?.contains(target)) {
 		return; // 容器监听已处理
 	}
-	if (
-		target instanceof HTMLInputElement ||
-		target instanceof HTMLTextAreaElement
-	) {
-		return; // 输入框内不劫持
+	// 输入类目标不劫持：与容器路径同一份判定（`isTextEntryTarget` 含
+	// contenteditable——焦点在别处编辑区时粘贴图片/文本都属输入语义，
+	// 此前只认 input/textarea，contenteditable 会被误劫持）
+	if (isTextEntryTarget(target)) {
+		return;
 	}
 	void handlePasteEvent(view, event);
 }
@@ -54,6 +56,13 @@ async function handlePasteEvent(
 	view: MindMapViewContext,
 	event: ClipboardEvent,
 ): Promise<void> {
+	// 输入类目标不劫持——**图片分支与文本分支同一道闸门**（文本分支在
+	// pasteFromClipboardEvent 内同判）：搜索框 `input` 就挂在 `containerEl`
+	// 下，容器路径漏判时在那里粘贴图片会被当成「导入图片并设节点图片」，
+	// 与窗口兜底路径（handleWindowPaste 已判）口径不一致
+	if (isTextEntryTarget(event.target)) {
+		return;
+	}
 	const items = event.clipboardData?.items;
 	if (!items) {
 		return;
@@ -66,6 +75,10 @@ async function handlePasteEvent(
 		}
 	}
 	if (!imageFile) {
+		// 非图片载荷 → **文本粘贴**（Markdown 大纲 → 子树）：与图片分支同一
+		// 入口、同一落点规则。优先级「图片 > 文本」与既有行为一致（网页复制
+		// 常同时携带两者，图片是更具体的意图）。
+		pasteFromClipboardEvent(view, event);
 		return;
 	}
 	event.preventDefault();

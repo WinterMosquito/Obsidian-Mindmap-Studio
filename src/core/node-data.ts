@@ -41,6 +41,23 @@ const NODE_REFERENCE_FIELDS = [
 	'mdAttachmentLinkpath',
 ] as const;
 
+/**
+ * 读取节点 data 的字符串字段：非字符串（缺失 / 数字 / 被引擎清空）一律归 `''`。
+ *
+ * **唯一归一实现**（2026-10-15 收口）：此前同一语义在 features / links / markdown
+ * 各处手写 `typeof x === 'string' ? x : ''`（多处真值来源），防腐层的
+ * `engine/mindmap.getNodeDataString` 是同款第三份——现由本函数承担，引擎层具名
+ * 入口改为委托（硬规则 5：不造第二份判定）。本函数在 core 以便**所有**层复用
+ * （links/markdown/features 都可依赖 core）。
+ */
+export function readNodeDataString(
+	data: Record<string, unknown> | null | undefined,
+	key: string,
+): string {
+	const value = data?.[key];
+	return typeof value === 'string' ? value : '';
+}
+
 /** 节点 data 是否含任一引用字段（引用更新前短路用：无引用即整树跳过） */
 export function hasNodeReference(
 	data: Record<string, unknown> | null | undefined,

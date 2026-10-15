@@ -7,12 +7,45 @@
  */
 import { Notice } from 'obsidian';
 import { ENGINE_COMMANDS, getActiveNode } from '../engine/mindmap';
-import { t } from '../core/i18n';
+import { t, type Language } from '../core/i18n';
 import { composeNodeContent } from '../markdown/md-serialize';
 import { formatWikilink, linkDisplayText } from '../domain/wikilink';
+import type { App } from 'obsidian';
 import type { MdNodeData } from '../core/node-data';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext, ViewNodeEditContext } from './view-context';
+
+/**
+ * 剪贴板收口（`features/view-clipboard`）的宿主面：引擎 + 应用（合成时反查
+ * 库内图片路径）+ 语言 + 保存调度。菜单与快捷键两条入口都用它，不依赖整张
+ * 装配面（与 `MindMapLinkHost` 同款「最窄宿主面」口径）。
+ */
+export interface PasteClipboardHost {
+	readonly mindMap: MindMap | null;
+	readonly app: App;
+	readonly lang: Language;
+	scheduleSave: () => void;
+}
+
+/**
+ * 文本输入类目标（搜索框 / 弹窗输入 / 引擎节点文本编辑框 / 插件内联编辑器）：
+ * 命中即「粘贴/快捷键必须让位」——那些位置上的 `Ctrl+V` / `Backspace` /
+ * `F2` 是输入语义，不是导图语义。
+ *
+ * 放在 view-common：快捷键（`view-hotkeys`）与剪贴板（`view-clipboard`）
+ * 共用同一份判定（此前 view-hotkeys 私有实现，剪贴板若再抄一份必然漂移）。
+ */
+export function isTextEntryTarget(target: EventTarget | null): boolean {
+	const el = target as HTMLElement | null;
+	if (!el) {
+		return false;
+	}
+	if (el.isContentEditable) {
+		return true;
+	}
+	const tag = el.tagName;
+	return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
 
 /**
  * 取当前激活节点；无则提示「请先选择一个节点」并返回 null。

@@ -22,6 +22,7 @@ import {
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
 	LAYOUT_OPTIONS,
+	SAVE_LOCATION_OPTIONS,
 	THEME_OPTIONS,
 } from '../src/core/constants';
 
@@ -62,6 +63,8 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLayout: 'mindMap',
 			defaultLineStyle: 'direct',
 			defaultTheme: 'dark',
+			saveLocation: 'folder',
+			saveFolder: '笔记/导图',
 			autoSave: false,
 			autoSplitMixedLinks: false,
 			exportScale: 4,
@@ -73,6 +76,8 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLayout: 'mindMap',
 			defaultLineStyle: 'direct',
 			defaultTheme: 'dark',
+			saveLocation: 'folder',
+			saveFolder: '笔记/导图',
 			autoSave: false,
 			autoSplitMixedLinks: false,
 			exportScale: 4,
@@ -189,6 +194,21 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		);
 	});
 
+	it('saveFolder 过官方 normalizePath（粘贴的反斜杠路径不致静默回落库根）', () => {
+		// 只断言与桩一致的形态：桩刻意只实现「反斜杠→正斜杠」（见
+		// tests/mocks/obsidian.ts 的说明——真实实现还去重复/首尾斜杠，但那会
+		// 波及 URL 形态调用点的观测实参）
+		expect(sanitizeSettings({ saveFolder: '笔记\\导图' }).saveFolder).toBe(
+			'笔记/导图',
+		);
+		// 空值仍是空值（库根语义，不能变成 '/'）
+		expect(sanitizeSettings({ saveFolder: '' }).saveFolder).toBe('');
+		// 归一不放松类型校验：非字符串照旧回退默认
+		expect(sanitizeSettings({ saveFolder: 42 }).saveFolder).toBe(
+			DEFAULT_SETTINGS.saveFolder,
+		);
+	});
+
 	it('布局白名单：LAYOUT_OPTIONS 全量合法，清单外的值回退默认', () => {
 		for (const option of LAYOUT_OPTIONS) {
 			expect(sanitizeSettings({ defaultLayout: option.value }).defaultLayout)
@@ -219,6 +239,39 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		);
 	});
 
+	it('保存位置白名单（四态）：SAVE_LOCATION_OPTIONS 全量合法，清单外的值回退默认', () => {
+		for (const option of SAVE_LOCATION_OPTIONS) {
+			expect(sanitizeSettings({ saveLocation: option.value }).saveLocation).toBe(
+				option.value,
+			);
+		}
+		expect(sanitizeSettings({ saveLocation: 'desktop' }).saveLocation).toBe(
+			DEFAULT_SETTINGS.saveLocation,
+		);
+		expect(sanitizeSettings({ saveLocation: 3 }).saveLocation).toBe(
+			DEFAULT_SETTINGS.saveLocation,
+		);
+		expect(sanitizeSettings({ saveLocation: null }).saveLocation).toBe(
+			DEFAULT_SETTINGS.saveLocation,
+		);
+		// 默认档＝跟随官方「新建笔记的默认位置」（引入本设置前的行为口径）
+		expect(DEFAULT_SETTINGS.saveLocation).toBe('obsidian');
+	});
+
+	it('目标文件夹（saveFolder）只认字符串，非字符串回退默认并留痕', () => {
+		expect(sanitizeSettings({ saveFolder: '笔记/导图' }).saveFolder).toBe(
+			'笔记/导图',
+		);
+		// 空串合法（＝未配置，创建时回落库根）；不做存在性校验（可先配后建）
+		expect(sanitizeSettings({ saveFolder: '' }).saveFolder).toBe('');
+		expect(sanitizeSettings({ saveFolder: 42 }).saveFolder).toBe(
+			DEFAULT_SETTINGS.saveFolder,
+		);
+		const report: SettingsSanitizeReport = { dropped: [] };
+		sanitizeSettings({ saveFolder: 42 }, report);
+		expect(report.dropped).toContain('saveFolder');
+	});
+
 	it('导出格式白名单：EXPORT_IMAGE_FORMAT_OPTIONS 全量合法，清单外的值回退默认', () => {
 		for (const option of EXPORT_IMAGE_FORMAT_OPTIONS) {
 			expect(
@@ -247,6 +300,8 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLayout: 'fishbone',
 			defaultLineStyle: DEFAULT_SETTINGS.defaultLineStyle,
 			defaultTheme: DEFAULT_SETTINGS.defaultTheme,
+			saveLocation: DEFAULT_SETTINGS.saveLocation,
+			saveFolder: DEFAULT_SETTINGS.saveFolder,
 			exportScale: DEFAULT_SETTINGS.exportScale,
 			language: 'en',
 			autoSave: DEFAULT_SETTINGS.autoSave,

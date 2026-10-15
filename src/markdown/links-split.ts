@@ -32,6 +32,7 @@
  */
 import { App } from 'obsidian';
 import { isRenderableImageTarget } from '../core/constants';
+import { readNodeDataString } from '../core/node-data';
 import {
 	buildInlineData,
 	INLINE_LINK_FIELDS,
@@ -337,7 +338,7 @@ function buildChildren(
 		// 与**解析出的**纯双链节点同构：`mdDerivedText` 是「文本未被编辑」的基准。
 		// 缺了它，用户改子节点文本会退化成「新文本 + 行尾链接」（`新年 [[冬天]]`），
 		// 而不是「纯双链节点编辑 = 改别名」（`[[冬天|新年]]`，见 domain/wiki-display）。
-		data.mdDerivedText = typeof data.text === 'string' ? data.text : '';
+		data.mdDerivedText = readNodeDataString(data, 'text');
 		out.push({ text: name, data });
 	}
 	return out;
@@ -390,7 +391,7 @@ export function planSplitLinks(
 		return null;
 	}
 	// 多行（列表续行合并）节点不拆：续行语义与「一行内混排」不同，避免误伤
-	if (typeof data.text === 'string' && data.text.includes('\n')) {
+	if (readNodeDataString(data, 'text').includes('\n')) {
 		return null;
 	}
 	// 必须与序列化同口径（带 app）：缺了它，图片会以 app:// 资源地址形态进入

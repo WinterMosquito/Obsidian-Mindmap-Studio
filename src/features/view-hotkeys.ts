@@ -10,6 +10,7 @@
 import { Platform, Scope } from 'obsidian';
 import { ENGINE_COMMANDS, getActiveNode } from '../engine/mindmap';
 import { isAnyNodeEditing } from './node-inline-editor';
+import { isTextEntryTarget } from './view-common';
 import { deleteActiveNode, editNodeText } from './view-node-actions';
 import { fitToScreen, zoomToSelection } from './view-viewport';
 import type { ViewNodeEditContext } from './view-context';
@@ -75,8 +76,15 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 	// F2 = 编辑当前激活节点（引擎自带 F2 判定苛刻，见 handleEditNodeHotkey）
 	scope.register([], 'F2', (evt) => handleEditNodeHotkey(view, evt));
 	// 删除选中节点：`Delete` / `Backspace`（官方 Canvas 同款：Backspace 或
-	// Delete 删除选中卡片，见 en/Plugins/Canvas.md）。引擎未绑定这两个键，
-	// 此前只能走右键菜单/工具栏。
+	// Delete 删除选中卡片，见 en/Plugins/Canvas.md）。
+	//
+	// ⚠ 引擎核心（`vendor/upstream/src/core/render/Render.js`）**也**绑定了这两个
+	// 键（`addShortcut('Del|Backspace', …REMOVE_NODE)`，bundle 同源；上游
+	// AssociativeLine / OuterFrame 另有同键绑定，但本插件不注册这两个插件）。
+	// 归属已**显式化**：`createMindMap` 在非只读模式下 `removeEngineShortcut(
+	// mindMap, 'Del|Backspace')`（与 `Control+l` 同处，见 engine/mindmap.ts）——
+	// 删除因此只有本 scope 这一条通道，不再依赖「scope 先于引擎 window 监听命中」
+	// 的事件传播顺序（引擎先删会自动激活兄弟节点，随后删掉的就不是原节点）。
 	scope.register([], 'Delete', (evt) => handleDeleteNodeHotkey(view, evt));
 	scope.register([], 'Backspace', (evt) => handleDeleteNodeHotkey(view, evt));
 	// 画布缩放：官方 Canvas 的 `Shift+1`（缩放至全览）与 `Shift+2`（缩放至选区）。
@@ -129,19 +137,6 @@ function handleDeleteNodeHotkey(
 	evt.stopPropagation();
 	deleteActiveNode(view);
 	return false;
-}
-
-/** 文本输入类目标（搜索框/弹窗输入/引擎文本编辑框）：F2 让位，不劫持 */
-function isTextEntryTarget(target: EventTarget | null): boolean {
-	const el = target as HTMLElement | null;
-	if (!el) {
-		return false;
-	}
-	if (el.isContentEditable) {
-		return true;
-	}
-	const tag = el.tagName;
-	return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 }
 
 /**

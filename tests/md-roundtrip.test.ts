@@ -2217,7 +2217,16 @@ describe('视图状态（ViewStateStore）', () => {
 				'dropped-unknown.mindmap.md': { foo: 1 },
 				'kept-layout.mindmap.md': { layout: 'mindmap' },
 				'kept-linestyle.mindmap.md': { lineStyle: 'curve' },
-				'kept-view.mindmap.md': { view: { transform: { scale: 1 } } },
+				// 视口形状取引擎 `getTransformData()` 的真实形态（{transform, state}
+				// 且 state 含有限 scale/x/y）——2026-10-15 起 hydrate 对 `view` 增设
+				// 可用性校验（见 view-state.isUsableSavedView），此后**无 state 的
+				// 视口**会被剥离（用例末尾单独断言）
+				'kept-view.mindmap.md': {
+					view: {
+						transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 },
+						state: { scale: 1, x: 0, y: 0 },
+					},
+				},
 			},
 		});
 		expect(Object.keys(store.serialize()).sort()).toEqual([

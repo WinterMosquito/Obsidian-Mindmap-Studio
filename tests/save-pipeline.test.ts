@@ -752,6 +752,69 @@ describe('P1a/P1b：外部改动检测与连续失败降级', () => {
 		expect(h.onExternalChange).not.toHaveBeenCalled();
 	});
 
+	it('冲突提示在成功落盘后解除：第二次外部改动仍会提示（不永久静默）', async () => {
+		let disk = '- Root\n- A\n';
+		const cachedRead = vi.fn(async () => disk);
+		const h = makeHarness({}, { cachedRead });
+		// modify 真实更新磁盘（否则写盘后读到的仍是旧内容，误判外部改动）
+		h.modify.mockImplementation(async (_target: TFile, content: string) => {
+			disk = content;
+		});
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+
+		// 第一次外部改动 → 提示一次并跳过写盘
+		disk = '# 别人改过一次\n';
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.onExternalChange).toHaveBeenCalledTimes(1);
+
+		// 用户显式保存（知情决策）：落盘成功 → 冲突解除
+		await h.pipeline.save();
+		const writesAfterExplicit = h.writes.length;
+
+		// 第二次外部改动：必须重新提示——只 add 不 delete 会让它静默扣住不写盘
+		disk = '# 别人改过两次\n';
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.onExternalChange).toHaveBeenCalledTimes(2);
+		expect(h.writes.length).toBe(writesAfterExplicit);
+	});
+
+	it('排空另一文件期间的自动保存：重入仍透传 checkExternal（不覆盖他人改动）', async () => {
+		const otherPath = 'notes/b.mindmap.md';
+		let disk = '- Root\n- B\n';
+		const cachedRead = vi.fn(async (target: { path: string }) =>
+			target.path === FILE_PATH ? '- Root\n- A\n' : disk,
+		);
+		const h = makeHarness({}, { cachedRead });
+		const other = h.addFile(otherPath);
+
+		// 建立 B 的写盘基线（显式保存：不检测外部改动）
+		h.setFile(other);
+		await h.pipeline.save(other, node('Root', [node('B')]));
+		const writesToB = h.writes.filter((w) => w.path === otherPath).length;
+
+		// 外部改了 B（同步盘/其它窗口）
+		disk = '# 别人改过的内容\n';
+
+		// 卡住 A 的写盘 → 制造「另一文件正在排空」的重入入口
+		h.setFile(h.file);
+		h.gate(1);
+		const draining = h.pipeline.save(h.file);
+		await flushMicrotasks();
+
+		// 排空期间对 B 的自动保存（不 await：它要等 A 排空）
+		const savingB = h.pipeline.save(other, node('Root', [node('B')]), {
+			checkExternal: true,
+		});
+		await flushMicrotasks();
+		h.release(0);
+		await draining;
+		await savingB;
+
+		// 重入前丢 opts ⇒ 这次自动保存会直接覆盖 B 上的外部改动
+		expect(h.onExternalChange).toHaveBeenCalledTimes(1);
+		expect(h.writes.filter((w) => w.path === otherPath).length).toBe(writesToB);
+	});
+
 	it('连续失败达阈值挂起自动保存（一次性提示），显式保存成功后解除', async () => {
 		const h = makeHarness();
 		// mockRejectedValueOnce 按调用次序消耗，避开 gates 索引累积的坑

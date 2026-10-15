@@ -47,9 +47,11 @@ export function createInlineContentOptions(
 	return {
 		isResolvedLink: deps.isResolvedLink,
 		// 定稿回调经平台入口的第 4 参绑定（platform 层不得依赖 features，
-		// 故回调只能在上层绑定，见 node-inline-content 的 renderCode 注释）
-		renderMath: (_doc, tex, holder, display) =>
-			renderMathWithMathJax(tex, holder, display, deps.onSettled),
+		// 故回调只能在上层绑定，见 node-inline-content 的 renderCode 注释）；
+		// 第 5 参 = 构建该段的引擎实例（归属登记，供引擎销毁时精确清理未定稿
+		// 段——不按 DOM 连接状态判归属的理由见 platform/math-jax 的 unsettledMath）
+		renderMath: (_doc, tex, holder, display, owner) =>
+			renderMathWithMathJax(tex, holder, display, deps.onSettled, owner),
 		getCachedMath: (tex, display) => getRenderedMathNode(tex, display),
 		renderCode: (_doc, code, codeLang, holder) =>
 			renderCodeWithPrism(code, codeLang, holder, deps.onSettled),

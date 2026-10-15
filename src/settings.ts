@@ -1,12 +1,20 @@
-import { App, Plugin, PluginSettingTab, type SettingDefinitionItem } from 'obsidian';
+import {
+	App,
+	normalizePath,
+	Plugin,
+	PluginSettingTab,
+	type SettingDefinitionItem,
+} from 'obsidian';
 import {
 	EXPORT_IMAGE_FORMAT_OPTIONS,
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
 	LAYOUT_OPTIONS,
 	LINE_STYLE_OPTIONS,
+	SAVE_LOCATION_OPTIONS,
 	THEME_OPTIONS,
 	type ExportImageFormat,
+	type SaveLocation,
 } from './core/constants';
 import { Language, LANGUAGE_OPTIONS, t } from './core/i18n';
 import { createWarnOnce } from './core/errors';
@@ -30,6 +38,14 @@ export interface MindMapStudioSettings {
 	/** 默认连线样式（auto/curve/direct/straight；auto＝随布局） */
 	defaultLineStyle: string;
 	defaultTheme: string;
+	/**
+	 * 新建导图的默认保存位置（四态，见 `core/constants` 的 `SaveLocation`）。
+	 * 默认 `obsidian`：完整跟随官方「设置 → 文件与链接 → 新建笔记的默认位置」；
+	 * 其余三态为显式覆盖（与 Obsidian Canvas 同口径）。
+	 */
+	saveLocation: SaveLocation;
+	/** `saveLocation === 'folder'` 时的目标文件夹（库内路径；不存在时回落库根） */
+	saveFolder: string;
 	autoSave: boolean;
 	/**
 	 * 被编辑节点含「双链 + 描述文字」时自动拆分为子节点（见 links-split）。
@@ -52,6 +68,11 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	// auto：随布局（四种直线布局 straight、两种曲线布局 curve），保持既有观感
 	defaultLineStyle: 'auto',
 	defaultTheme: 'default',
+	// 默认跟随官方「新建笔记的默认位置」（经 getNewFileParent 完整生效）——
+	// 与引入本设置前的行为一致；另三档为用户显式覆盖
+	saveLocation: 'obsidian',
+	// 可先配后建：创建时解析不到（被删/改名）则回落库根，不在此处校验存在性
+	saveFolder: '',
 	autoSave: true,
 	// 默认关闭（2026-10-09 减法）：改写文件结构须由用户显式开启；开启后仅作用于
 	// 被编辑节点（存量未编辑节点仍不会被改写），批量场景用显式拆分命令
@@ -196,6 +217,17 @@ export function sanitizeSettings(
 			DEFAULT_SETTINGS.defaultLineStyle,
 		defaultTheme:
 			pickFrom('defaultTheme', THEME_OPTIONS) ?? DEFAULT_SETTINGS.defaultTheme,
+		saveLocation:
+			pickFrom('saveLocation', SAVE_LOCATION_OPTIONS) ??
+			DEFAULT_SETTINGS.saveLocation,
+		// 纯字符串：文件夹可先配后建，存在性在创建时判定（不可解析才回落库根）。
+		// 归一化走**官方** `normalizePath`（d.ts：正斜杠 / 去掉重复与首尾斜杠 /
+		// 反斜杠→正斜杠 / 非断行空格→普通空格 / NFC）——不归一的话，从资源管理器
+		// 粘贴 `笔记\子目录` 或带尾随斜杠的值会令 `getFolderByPath` 恒 null，
+		// 按设计静默回落库根，用户只看到「设置没生效」
+		saveFolder: normalizePath(
+			pickString('saveFolder') ?? DEFAULT_SETTINGS.saveFolder,
+		),
 		autoSave: pickBool('autoSave') ?? DEFAULT_SETTINGS.autoSave,
 		autoSplitMixedLinks:
 			pickBool('autoSplitMixedLinks') ??
@@ -293,6 +325,12 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 				t(this.lang, option.label),
 			]),
 		);
+		const saveLocationOptions = Object.fromEntries(
+			SAVE_LOCATION_OPTIONS.map((option) => [
+				option.value,
+				t(this.lang, option.label),
+			]),
+		);
 		const exportImageFormatOptions = Object.fromEntries(
 			EXPORT_IMAGE_FORMAT_OPTIONS.map((option) => [
 				option.value,
@@ -342,6 +380,28 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 							type: 'dropdown',
 							key: 'defaultTheme',
 							options: themeOptions,
+						},
+					},
+					{
+						name: t(this.lang, 'settings.saveLocation'),
+						desc: t(this.lang, 'settings.saveLocationDesc'),
+						control: {
+							type: 'dropdown',
+							key: 'saveLocation',
+							options: saveLocationOptions,
+						},
+					},
+					{
+						name: t(this.lang, 'settings.saveFolder'),
+						desc: t(this.lang, 'settings.saveFolderDesc'),
+						// 仅「指定的文件夹」档显示；visible 每次渲染求值，
+						// 下拉切换后由 setControlValue 调 update() 重算（d.ts 契约）
+						visible: (): boolean =>
+							this.plugin.settings.saveLocation === 'folder',
+						control: {
+							type: 'folder',
+							key: 'saveFolder',
+							placeholder: t(this.lang, 'settings.saveFolderPlaceholder'),
 						},
 					},
 					{
@@ -416,6 +476,15 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 		if (key === 'language') {
 			this.plugin.refreshLanguageUi();
 			this.update();
+		}
+		// 保存位置切档：重算「目标文件夹」项的 `visible` 谓词——官方为此提供
+		// `refreshDomState()`（obsidian.d.ts:9290：「Re-evaluate every visible
+		// and disabled predicate … Cheap: toggles CSS state in place, no
+		// re-render」，1.13.0 起），而非 `update()`——后者整页重渲染并重建搜索
+		// 索引，且会让刚操作完的下拉框失焦。`update()` 只留给**结构**变化
+		//（新增/删除定义项），语言切换属此类，见上。
+		if (key === 'saveLocation') {
+			this.refreshDomState();
 		}
 	}
 

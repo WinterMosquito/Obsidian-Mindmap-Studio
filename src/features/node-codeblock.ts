@@ -12,6 +12,7 @@
  * 剥离，见 `node-inline-content.splitFenceInfo`；不含围栏定界符）。
  * 反馈与剪贴板失败均**不抛穿**渲染链：失败仅 `console.warn`（可诊断）。
  */
+import { writeClipboardText } from '../platform/clipboard';
 import { CODE_BLOCK_CLASS, CODE_COPY_CLASS } from './node-inline-content';
 import type { EventBinder } from '../core/event-binder';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
@@ -83,18 +84,13 @@ export function resolveCodeCopyTarget(
 const feedbackTimers = new WeakMap<HTMLElement, number>();
 
 /**
- * 写入剪贴板：取按钮**属主窗口**的 navigator（popout 场景按钮挂副窗口文档，
- * 主窗口 navigator 在焦点判定上可能不成立）；失败仅告警并返回 false。
+ * 写入剪贴板：走 `platform/clipboard`（写入面的**唯一**收口，此前本文件自开
+ * 第二条通道并自带 catch）；传按钮**属主窗口**的 document（popout 场景按钮挂
+ * 副窗口文档，主窗口 navigator 在焦点判定上可能不成立）。失败由 platform 层
+ * 留痕并回 false，本函数只把成败交给反馈逻辑。
  */
 async function copyText(button: HTMLElement, text: string): Promise<boolean> {
-	try {
-		const nav = button.ownerDocument?.defaultView?.navigator ?? navigator;
-		await nav.clipboard.writeText(text);
-		return true;
-	} catch (error) {
-		console.warn('MindMap Studio：复制代码失败，保留原状', error);
-		return false;
-	}
+	return writeClipboardText(text, button.ownerDocument);
 }
 
 /**

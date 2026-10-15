@@ -24,6 +24,10 @@
  * - 渲染**只读**节点数据：不写回、不改 `data.text`。轻标记（`**粗**` 等）与两类
  *   **隐藏语法**（`%%注释%%`、`\*` 反斜杠转义）只在渲染期处理，回写原文仍由
  *   mdRaw / `data.text` 逐字保真；
+ * - **块级切分**：GFM 管道表（表头行 + 分隔行成对）独立成段（`kind: 'table'`，
+ *   见 `scanTableBlocks` / `buildTableElement`）——样式全内联、宽度不撑爆节点、
+ *   不设高度上限；识别与单元格模型在 `domain/pipe-table`（纯逻辑）。围栏代码块与
+ *   块级数学**内**的表格行不识别（保护区复用 `MARKUP_RE`，见 `protectedRanges`）；
  * - **超长文本截断展示**（> `MAX_INLINE_CONTENT_CHARS`）：只影响显示（尾部 `…` +
  *   `title` 提示），文件与 `data.text` 一字不动，双击弹窗可见/可编辑全文；
  * - 段序列是**渲染期重建**（现场 token 化）：与回写侧的 `mdSegments` 对齐表
@@ -50,6 +54,11 @@
  *   多行块与 `$$$x$$$` 均按此解析，对齐 Obsidian 阅读视图实测口径，见 K89；
  *   经注入的 `renderMath` 异步 MathJax 渲染，占位即字面回退）；未闭合的
  *   标记/注释按字面保留；含这些语法的节点同样被接管 → 编辑入口走弹窗（见上）；
+ * - **表格**（2026-10-14）：只识别「表头行 + 分隔行」成对的 GFM 管道表；单元格内
+ *   的 `\|` 还原为字面 `|`（显示口径，帮助「Vertical bars in tables」）。有意边界：
+ *   单列表必须写外框管道（`| a |` + `| --- |`；裸 `---` 属 setext H2，绝不当表）；
+ *   单元格内**不支持图片嵌入渲染**（`image` 非空的节点整体不接管）与表格嵌表格；
+ *   数据行遇空行、或不含未转义 `|` 的行即结束（不吞后续段落）；
  * - 库内锚点的 `data-href` 是**原始 linkpath**（与 Obsidian 产物一致）；目标未解析
  *   时加 `is-unresolved` 类 + 弱化配色（解析器由调用方注入，见 InlineContentOptions
  *   ——本模块必须可在无 Obsidian 运行时打包）；带子路径的显示名口径由 view-wikilink /
@@ -63,12 +72,17 @@ import {
 	CODE_BLOCK_MAX_HEIGHT_PX,
 	CODE_RENDERED_CLASS,
 } from '../core/constants';
+import { readNodeDataString } from '../core/node-data';
 import { t } from '../core/i18n';
 import type { Language } from '../core/i18n';
+import { matchPipeTable } from '../domain/pipe-table';
+import type { PipeTable, PipeTableAlign } from '../domain/pipe-table';
 import { isSafeAnchorHref, isSchemeUrl, isUrlLikeText } from '../domain/url';
+import { isNodeTextEdited } from '../domain/md-meta';
 import { tokenDisplay, tokenizeInline } from '../markdown/md-outline';
 import type { InlineToken } from '../markdown/md-outline';
 import type { NodeContentStyle } from '../engine/mindmap';
+import { formatMathPlaceholder } from '../core/math-placeholder';
 import { fontMeasureKey } from '../core/measure-cache';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 
@@ -173,6 +187,47 @@ const MARKUP_STYLES: Record<InlineTextStyle, Partial<CSSStyleDeclaration>> = {
 	// 数学是容器（span 占位 → MathJax 产物替换），样式随 Obsidian 全局
 	// `.mjx-container` 规则，本层不自定字体/行高（避免与 MathJax 输出打架）
 	math: {},
+};
+
+/**
+ * 表格（GFM 管道表段）的**结构样式**：内联在元素上（导出保真，理由同
+ * CONTENT_STYLES——插件 styles.css 不进导出 SVG，类规则在导出图里整体失效）。
+ *
+ * 三条口径：
+ * - `maxWidth: 100%` + 单元格 `overflowWrap: anywhere` ——**表格不许撑爆节点**：
+ *   表宽以内容自然宽为底、以内容盒宽（默认 500 / 拖宽后的显式宽）为顶，超出即
+ *   由单元格折行吸收（用户裁决 2026-10-14）；
+ * - 配色走主题变量 + 字面量兜底（导出图内没有主题变量上下文，同 CODE_BLOCK_STYLES）；
+ * - **不设高度上限**（表格是数据展示面；`MAX_INLINE_CONTENT_CHARS` **不构成行数封顶**
+ *   ——`clampSegments` 对「表格自身超预算」是**整张保留 + 明示截断**，故单表的行/单元格
+ *   数无硬上限、只受节点 `mdRaw` 长度约束（测量缓存键随表体量增长，K114 已知取舍）；
+ *   代码块那套「限高 + 块内滚动」在导出克隆里会裁掉内容，不适合表格）。
+ */
+const TABLE_STYLES: Partial<CSSStyleDeclaration> = {
+	borderCollapse: 'collapse',
+	maxWidth: '100%',
+	margin: '4px 0',
+};
+
+/** 表格单元格（td / th 共用底）：边框 + 内边距 + 长内容折行 */
+const TABLE_CELL_STYLES: Partial<CSSStyleDeclaration> = {
+	border: '1px solid var(--background-modifier-border, rgba(128, 128, 128, 0.35))',
+	padding: '2px 8px',
+	verticalAlign: 'top',
+	overflowWrap: 'anywhere',
+	wordBreak: 'break-word',
+};
+
+/**
+ * 表头单元格 = 单元格底 + 底色与字重。
+ *
+ * 底色**不是**抄自阅读视图（官方样式包里表格没有底色规则，实测零命中），而是画布
+ * 的可读性取舍：节点是空间对象，表头需要一眼可辨；配色走主题变量 + 字面量兜底。
+ */
+const TABLE_HEADER_STYLES: Partial<CSSStyleDeclaration> = {
+	...TABLE_CELL_STYLES,
+	backgroundColor: 'var(--background-secondary, rgba(128, 128, 128, 0.1))',
+	fontWeight: '600',
 };
 
 /** 块级代码块容器类名（styles.css 的 hover/按钮规则与 verify:visual 断言共用） */
@@ -315,12 +370,18 @@ export interface InlineContentOptions {
 	 *
 	 * `display` = 段模型的 display 标记（true → `tex2chtml` 的 `{ display: true }`，
 	 * 渲染为独立居中公式；实现方需原样透传给 MathJax 通道）。
+	 *
+	 * `owner` = 构建该段的**引擎实例**（不透明 token，由 `engine/mindmap` 注入，
+	 * 本模块原样透传）——平台侧据此登记归属，引擎销毁时精确清理未定稿段
+	 * （`platform/math-jax` 的 `pruneUnsettledMathOwnedBy`，语义见那里的
+	 * `unsettledMath`）。
 	 */
 	renderMath?: (
 		doc: InlineContentDocument,
 		tex: string,
 		holder: HTMLElement,
 		display: boolean,
+		owner?: object | null,
 	) => void;
 	/**
 	 * **产物缓存查询**（可选，P4 尺寸同步）：返回已渲染产物的**克隆**，未命中 null。
@@ -362,8 +423,17 @@ export interface InlineContentOptions {
 
 /** 行内段：渲染节点内联内容的最小单元（纯数据，可单测） */
 export interface InlineSegment {
-	kind: 'text' | 'link';
-	/** 纯文本原样 / 链接段的**剥壳显示名**（`tokenDisplay` 口径，与节点文本一致） */
+	kind: 'text' | 'link' | 'table';
+	/**
+	 * 纯文本原样 / 链接段的**剥壳显示名**（`tokenDisplay` 口径，与节点文本一致）
+	 * / 表格段的**原文块文本**（逐字：含外框管道、`\|` 转义与边界换行）。截断上限
+	 * 与编辑弹窗预览都按它计量（见 `clampSegments` / `inlineContentPreview`）。
+	 *
+	 * ⚠ 段序列 `text` 拼接 **≈ 原文、非逐字相等**：文本段经空格归一
+	 * （`normalizeSpaces`）与首尾空白剔除（`trimEdges`），`%%注释%%` 整段不进段
+	 * 序列——只有**表格段**的 `text` 是逐字切片。需要逐字原文请用 `mdRaw` /
+	 * `data.text`（回写侧同款口径）。
+	 */
 	text: string;
 	/** 链接段跳转目标：wiki = 原始 linkpath；md 链接 / URL = 地址原文 */
 	link?: string;
@@ -401,6 +471,14 @@ export interface InlineSegment {
 	 * `platform/prism-code` 查语法。
 	 */
 	lang?: string;
+	/**
+	 * **表格段**的模型（仅 kind = 'table'）：解析在 `domain/pipe-table`（纯逻辑），
+	 * 本模块只负责 DOM 装配与内联样式（`buildTableElement`）。
+	 *
+	 * 与 `block` / `display` 同款纪律：**重建或拷贝段对象时必须带上**，否则表格段
+	 * 会退化成空元素（而 `clampSegments` 的就地切短路径会丢字段——它已排除表格段）。
+	 */
+	table?: PipeTable;
 }
 
 /**
@@ -862,6 +940,27 @@ function buildInlineSegmentsUncached(raw: string): InlineSegment[] {
 		return [{ kind: 'text', text: indented, style: 'code', block: true }];
 	}
 	const segments: InlineSegment[] = [];
+	// 表格块先切出来（见 scanTableBlocks）：无表时这里只有**一个**文本块 ⇒ 与
+	// 「直接 tokenize 整段」逐字等价（零成本快路径，既有契约不受影响）
+	for (const block of scanTableBlocks(raw)) {
+		const table = block.table;
+		if (table) {
+			segments.push({ kind: 'table', text: block.text, table });
+			continue;
+		}
+		pushInlineText(block.text, segments);
+	}
+	return trimEdges(segments);
+}
+
+/**
+ * 一段**不含表格块**的原文 → 行内段（token 循环本体，自 buildInlineSegmentsUncached
+ * 逐字搬入）。
+ *
+ * 快路径（原文无表）＝整段一次调用，与引入表格前的实现完全一致；有表时按块调用
+ * （表前 / 表后各一段），链接、轻标记、代码块、数学的切分口径一概不变。
+ */
+function pushInlineText(raw: string, segments: InlineSegment[]): void {
 	let cursor = 0;
 	const pushText = (text: string): void => {
 		if (!text) {
@@ -878,9 +977,9 @@ function buildInlineSegmentsUncached(raw: string): InlineSegment[] {
 				// display/block 只在对应段型上出现（重建段对象时必须保留，
 				// 否则 buildMathElement 拿到"行内形态"、块级代码退化为行内码）
 				...(piece.display ? { display: true } : {}),
-									...(piece.block ? { block: true } : {}),
-									...(piece.lang ? { lang: piece.lang } : {}),
-									...(piece.children ? { children: piece.children } : {}),
+				...(piece.block ? { block: true } : {}),
+				...(piece.lang ? { lang: piece.lang } : {}),
+				...(piece.children ? { children: piece.children } : {}),
 			});
 		}
 	};
@@ -896,7 +995,154 @@ function buildInlineSegmentsUncached(raw: string): InlineSegment[] {
 		}
 	}
 	pushText(raw.slice(cursor));
-	return trimEdges(segments);
+}
+
+/** 原文的**行切片**（字符区间）：start 含、end 不含（不含行尾 `\n`） */
+interface LineSpan {
+	start: number;
+	end: number;
+}
+
+/** 按 `\n` 切行并记录字符区间（末尾换行只产生一个空行切片，不额外加行） */
+function splitLineSpans(raw: string): LineSpan[] {
+	const spans: LineSpan[] = [];
+	let start = 0;
+	for (;;) {
+		const newline = raw.indexOf('\n', start);
+		if (newline < 0) {
+			spans.push({ start, end: raw.length });
+			return spans;
+		}
+		spans.push({ start, end: newline });
+		start = newline + 1;
+	}
+}
+
+/**
+ * 受**保护区间**：围栏代码块（``` / ~~~）、块级数学（`$$…$$`，可跨行）与
+ * `%%…%%` 注释块。
+ *
+ * 表格识别必须整体绕开它们——文档里作为**示例**的表格行（围栏内）不能被渲染成
+ * 真表格，`$$` 块内的 `|` 同理；**注释块同理**（2026-10-15 补：注释在渲染期整段
+ * 吞掉，若此处被切成表格段，块内表格会真渲染出来，且两侧 `%%` 因跨块无法配对、
+ * 退化成字面文本留在屏上）。
+ *
+ * 判定**复用 `MARKUP_RE` 源码**（围栏/数学的单一来源，AGENTS.md 硬规则 5）：这里
+ * 新建**独立实例**并显式归零 `lastIndex`——`MARKUP_RE` 是模块级共享正则，
+ * `splitMarkedText` 的子调用会改写它的 `lastIndex`，直接复用（含 `matchAll` 对
+ * 原正则 `lastIndex` 的隐式读取）会从错误位置起扫。
+ */
+function protectedRanges(raw: string): LineSpan[] {
+	const ranges: LineSpan[] = [];
+	const scanner = new RegExp(MARKUP_RE.source, MARKUP_RE.flags);
+	scanner.lastIndex = 0;
+	for (const match of raw.matchAll(scanner)) {
+		const groups = match.groups ?? {};
+		if (
+			groups.fenceCode !== undefined ||
+			groups.mathBlock !== undefined ||
+			groups.comment !== undefined
+		) {
+			ranges.push({ start: match.index, end: match.index + match[0].length });
+		}
+	}
+	return ranges;
+}
+
+/** 节点内容的块级切片：文本块（原文切片）或表格块（模型 + 原文切片） */
+interface ContentBlock {
+	kind: 'text' | 'table';
+	/**
+	 * 源码切片（逐字，含 `\|` 转义与外框管道）。**换行归属**：表格块吃掉与它
+	 * 相邻的边界换行（有则吃），文本块不含那个换行 ⇒ 全部块按序拼接仍等于原文
+	 * （编辑弹窗预览里表格独占行、不与段落粘连），而渲染侧文本块不带多余换行
+	 * （表格是块级元素，换行由它自己承担；渲染不看表格块的 text，DOM 用模型）。
+	 */
+	text: string;
+	table?: PipeTable;
+}
+
+/**
+ * 原文 → 「文本块 / 表格块」序列（表格之外的原文逐字保留，含换行）。
+ *
+ * 两条切分纪律：
+ * - **换行归属**：表格块吃掉与它相邻的边界换行（见 ContentBlock.text）⇒ 文本块
+ *   不带多余换行（多行文本仍靠 `white-space: pre-wrap` 呈现，与引入表格前一致），
+ *   而全部块的 text 拼接仍等于原文（编辑弹窗预览里表格独占行）；
+ * - 三类行**不参与**表格识别：① 落在 `protectedRanges` 内的行（围栏代码块 /
+ *   块级数学）；② 缩进代码行（`isIndentedCodeLine`，对齐解析层「缩进块是代码」
+ *   的既有判定）；③ 其余行交给 `domain/pipe-table.matchPipeTable` 判定
+ *   （表头行 + 分隔行成对才算表）。
+ *
+ * 无表时返回**单个文本块 = 整段原文** ⇒ 上层走与引入表格前逐字等价的快路径。
+ */
+function scanTableBlocks(raw: string): ContentBlock[] {
+	// 快路径：整段没有任何管道字符 ⇒ 不可能有表。这一步把「按行切片 + 保护区
+	// 扫描（含新建 MARKUP 扫描正则）+ 逐行 `matchPipeTable`」全部省掉——无表
+	// 节点是绝大多数（纯文本 / 链接 / 标记），上面「无表时与直接 tokenize 逐字
+	// 等价」的零成本承诺至此才是**真的**零成本
+	if (!raw.includes('|')) {
+		return [{ kind: 'text', text: raw }];
+	}
+	const lines = splitLineSpans(raw);
+	const texts = lines.map((span) => raw.slice(span.start, span.end));
+	const protectedSpans = protectedRanges(raw);
+	const blocks: ContentBlock[] = [];
+	let cursor = 0;
+	let protectedIndex = 0;
+	for (let index = 0; index < lines.length; ) {
+		const line = lines[index];
+		if (line === undefined) {
+			break;
+		}
+		// 保护区按起点升序（matchAll 顺序），游标只前进
+		let guarded = protectedSpans[protectedIndex];
+		while (guarded !== undefined && guarded.end <= line.start) {
+			protectedIndex += 1;
+			guarded = protectedSpans[protectedIndex];
+		}
+		if (guarded !== undefined && guarded.start <= line.start) {
+			index += 1;
+			continue;
+		}
+		if (isIndentedCodeLine(texts[index] ?? '')) {
+			index += 1;
+			continue;
+		}
+		const match = matchPipeTable(texts, index);
+		const last = match ? lines[index + match.lineCount - 1] : undefined;
+		if (!match || last === undefined) {
+			index += 1;
+			continue;
+		}
+		// 表前的文本（**不含**边界换行——那个换行归表格段，见 ContentBlock.text）
+		const textEnd = index > 0 ? line.start - 1 : 0;
+		if (textEnd > cursor) {
+			blocks.push({ kind: 'text', text: raw.slice(cursor, textEnd) });
+		}
+		// 表格段的切片**含前后边界换行**（有则含）：段序列 text 拼接 = 原文，
+		// 预览里表格独占行。渲染不看它（DOM 用模型），故不会多出空行
+		// `Math.max(cursor, …)`：边界换行**不得**与前一段重叠——相邻两张表
+		//（中间无文本行）时 `line.start - 1` 会落进上一表格段已吃掉的那个换行，
+		// 破坏「段序列 text 拼接 == 原文」的不变量（当前不可达：无管道行才断表，
+		// 第二张表头会被当数据行吞掉；此处按不变量写死，防将来放宽切分规则）
+		const blockStart = Math.max(
+			cursor,
+			index > 0 ? line.start - 1 : line.start,
+		);
+		const blockEnd = Math.min(last.end + 1, raw.length);
+		blocks.push({
+			kind: 'table',
+			text: raw.slice(blockStart, blockEnd),
+			table: match.table,
+		});
+		cursor = blockEnd;
+		index += match.lineCount;
+	}
+	if (raw.length > cursor) {
+		blocks.push({ kind: 'text', text: raw.slice(cursor) });
+	}
+	return blocks.length > 0 ? blocks : [{ kind: 'text', text: raw }];
 }
 
 /** 链接类 token → 链接段；图片/无链接 token 返回 null */
@@ -994,7 +1240,9 @@ function trimEdges(segments: InlineSegment[]): InlineSegment[] {
  *
  * `doc` 必须是**画布所在 document**（popout 场景由引擎层传 `el.ownerDocument`）；
  * `lang` 用于截断提示文案（省略时按 zh，与插件默认语言一致）；
- * `options` 注入外部解析（未解析链接弱化，见 InlineContentOptions）。
+ * `options` 注入外部解析（未解析链接弱化，见 InlineContentOptions）；
+ * `owner` = 构建该内容的引擎实例（不透明 token，见 `renderMath` 的说明——
+ * 本模块只做透传，不解释；省略时为 null = 无归属）。
  */
 export function buildInlineNodeContent(
 	node: MindMapNode,
@@ -1002,30 +1250,37 @@ export function buildInlineNodeContent(
 	style: NodeContentStyle = {},
 	lang: Language = 'zh',
 	options: InlineContentOptions = {},
+	owner: object | null = null,
 ): HTMLElement | null {
 	const source = resolveSelfDrawSource(node);
 	if (!source) {
 		return null;
 	}
 	const { segments, overlong } = source;
+	// 超限判定按原文长度，标记按**实际丢弃**（clamped.truncated）——两者可能不同
+	// （见 clampSegments）
+	const clamped = overlong
+		? clampSegments(segments, MAX_INLINE_CONTENT_CHARS)
+		: { segments, truncated: false };
 	return buildContentElement(
 		doc,
-		overlong ? clampSegments(segments, MAX_INLINE_CONTENT_CHARS) : segments,
+		clamped.segments,
 		style,
 		{
-			truncationTitle: overlong ? t(lang, 'nodeTextTruncated') : null,
+			truncationTitle: clamped.truncated
+				? t(lang, 'nodeTextTruncated')
+				: null,
 			// 用户拖过左右边框时按引擎写入的宽度渲染（未拖过 → null → 500 折行上限）
 			explicitWidth: customTextWidthOf(node),
 			options,
 			lang,
+			owner,
 		},
 	);
 }
 
 /** 自绘接管的判定输入（`resolveSelfDrawSource` 的内部形态，判定与渲染源同源） */
 interface SelfDrawSource {
-	/** 渲染源原文（未编辑 → mdRaw；已编辑 → text） */
-	raw: string;
 	segments: readonly InlineSegment[];
 	/** 超过展示上限（必须接管，见 MAX_INLINE_CONTENT_CHARS） */
 	overlong: boolean;
@@ -1046,15 +1301,16 @@ function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null {
 		return null;
 	}
 	// 含图节点不接管：图片由引擎图片通道渲染，自绘会丢图
-	if (readString(data, 'image')) {
+	if (readNodeDataString(data, 'image')) {
 		return null;
 	}
 	// 渲染源：未编辑 → mdRaw（含链接语法）；**已编辑 → data.text**——mdRaw 是解析期
 	// 快照，用户编辑（引擎编辑框或插件弹窗）后已过期，再按它渲染会显示旧内容
 	//（与回写侧 rawOk 的「未编辑」判据同源：text === mdDerivedText）
-	const text = readString(data, 'text');
-	const edited = text !== readString(data, 'mdDerivedText');
-	const raw = edited ? text : readString(data, 'mdRaw') || text;
+	const text = readNodeDataString(data, 'text');
+	// 「未编辑」判据与回写侧同一实现（domain/md-meta.isNodeTextEdited）
+	const edited = isNodeTextEdited(data.text, data.mdDerivedText);
+	const raw = edited ? text : readNodeDataString(data, 'mdRaw') || text;
 	if (!raw) {
 		return null;
 	}
@@ -1080,7 +1336,7 @@ function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null {
 	if (!takeOver) {
 		return null;
 	}
-	return { raw, segments, overlong };
+	return { segments, overlong };
 }
 
 // 注：曾导出 `shouldSelfDrawNode`（静态判定「将被自绘接管」）供
@@ -1092,16 +1348,33 @@ function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null {
 /**
  * 展示截断：按段累加到上限即停（超出部分不渲染）。
  *
- * 两条口径：
+ * 三条口径：
  * - **链接段要么整枚显示、要么整枚不显示**——半个 `[[目标` 比不显示更糟
  *   （会误导用户以为文件里就是这么写的）；
- * - 命中上限的文本段**就地切短**（文本本身无语法，切一半是安全的）。
- * `…` 标记由调用方在尾部追加（见 buildContentElement）。
+ * - **表格段「自身超预算」时整张保留**（其余情况仍按预算省略）：老口径「同链接段
+ *   ——整张要么显示要么不显示」会让**纯表格**节点在超限时屏上只剩一个 `…`
+ *   （1999 字显示整表、2000 字什么都不显示，观感突变且用户会以为内容丢了，
+ *   2026-10-15 裁决）。判据取「表格自身的长度 > max」而非「放不下剩余预算」：
+ *   后者是正常截断点（前面的文本 + `…` 已是可读的产出），预算约束仍要生效；
+ * - 命中上限的文本段**就地切短**（文本本身无语法，切一半是安全的）——该分支会
+ *   丢嵌套子段、只保留外层样式，故**不适用于表格段**（切短分支已限定
+ *   `kind === 'text'`）。
+ *
+ * `…` 由本函数在尾部追加，且**只在真的丢过内容时**追加——调用方的超限判定按
+ * 「原文长度」（`MAX_INLINE_CONTENT_CHARS`），而可见文本可能并未超限（空格
+ * 归一、`%%注释%%` 整段不进段序列、链接段只计显示名），照判据标记截断会让用户
+ * 以为内容被裁（假截断）。故 `truncated` 是唯一的标记依据。
  */
+interface ClampedSegments {
+	segments: readonly InlineSegment[];
+	/** 确有内容被丢弃（尾部 `…` / `data-truncated` / 悬停提示都以此为准） */
+	truncated: boolean;
+}
+
 function clampSegments(
 	segments: readonly InlineSegment[],
 	max: number,
-): readonly InlineSegment[] {
+): ClampedSegments {
 	const out: InlineSegment[] = [];
 	let used = 0;
 	for (const segment of segments) {
@@ -1110,6 +1383,14 @@ function clampSegments(
 			out.push(segment);
 			used += length;
 			continue;
+		}
+		if (segment.kind === 'table' && length > max) {
+			// **表格自身**超预算：整张保留（见函数说明）——此后不再渲染任何段，
+			// 仍算「被截断」（`…` + 悬停提示照挂）。表格自身在预算内、只是被
+			// 前面的内容挤掉时**不走本支**：那属正常截断点，保留预算约束
+			out.push(segment);
+			out.push({ kind: 'text', text: '…' });
+			return { segments: out, truncated: true };
 		}
 		if (segment.kind === 'text') {
 			const keep = max - used;
@@ -1120,11 +1401,13 @@ function clampSegments(
 				out.push({ ...rest, text: segment.text.slice(0, keep) });
 			}
 		}
-		break;
+		// 走到这里必然有内容被丢（整段放不下，或文本段只留下前 keep 个字符）
+		// 尾部省略标记：显示为「…」，不参与回写（写回只读 mdRaw / data.text）
+		out.push({ kind: 'text', text: '…' });
+		return { segments: out, truncated: true };
 	}
-	// 尾部省略标记：显示为「…」，不参与回写（写回只读 mdRaw / data.text）
-	out.push({ kind: 'text', text: '…' });
-	return out;
+	// 全部段都放下 ⇒ 没有丢任何内容，不追加标记
+	return { segments: out, truncated: false };
 }
 
 /**
@@ -1133,12 +1416,16 @@ function clampSegments(
  * 与自绘渲染同一口径：URL 显示为地址、轻标记剥壳、超长按展示上限截断（含尾部
  * `…`），多行照原样保留。**不要**改用 `buildInlineData(...).text`——那是引擎侧
  * 口径（URL icon-only 不进文本），用它做预览会让用户以为「URL 又消失了」。
+ *
+ * **表格段**贡献的是**整块原文**（`segment.text`）：表格没有能用一行代表的显示
+ * 文本，给原文最诚实，也与此前「未识别表格时」的观感一致（`|` 形态即用户所写）。
  */
 export function inlineContentPreview(raw: string): string {
 	const segments = buildInlineSegments(raw);
+	// 与自绘同一口径：`…` 只在真的丢过内容时出现（见 clampSegments）
 	const shown =
 		raw.length > MAX_INLINE_CONTENT_CHARS
-			? clampSegments(segments, MAX_INLINE_CONTENT_CHARS)
+			? clampSegments(segments, MAX_INLINE_CONTENT_CHARS).segments
 			: segments;
 	return shown.map((segment) => segment.text).join('');
 }
@@ -1160,6 +1447,11 @@ interface BuildContentParams {
 	options: InlineContentOptions;
 	/** 界面语言：代码块复制按钮的 aria-label 等构建期文案（见 buildCodeBlockElement） */
 	lang: Language;
+	/**
+	 * 构建该内容的引擎实例（不透明 token；只透传给 `renderMath`，见其说明）。
+	 * 内层递归（`buildTextElement` 的 children）同样携带——归属与嵌套深度无关。
+	 */
+	owner: object | null;
 }
 
 /**
@@ -1230,6 +1522,10 @@ function buildContentElement(
 		box.style.fontWeight = style.fontWeight;
 	}
 	for (const segment of segments) {
+		if (segment.kind === 'table') {
+			box.appendChild(buildTableElement(doc, segment, params));
+			continue;
+		}
 		if (segment.kind === 'text') {
 			box.appendChild(buildTextElement(doc, segment, params));
 			continue;
@@ -1251,7 +1547,7 @@ function buildTextElement(
 	params: BuildContentParams,
 ): Node {
 	if (segment.style === 'math') {
-		return buildMathElement(doc, segment, params.options);
+		return buildMathElement(doc, segment, params.options, params.owner);
 	}
 	if (segment.style === 'code' && segment.block === true) {
 		return buildCodeBlockElement(doc, segment, params.lang, params.options);
@@ -1269,6 +1565,100 @@ function buildTextElement(
 	}
 	wrapper.appendChild(doc.createTextNode(segment.text));
 	return wrapper;
+}
+
+/**
+ * 表格段（GFM 管道表，`kind: 'table'`）：`table > thead/tbody > tr > th/td`，
+ * 样式全内联（见 TABLE_* 三表），单元格内容**复用**行内段管线。
+ *
+ * 三条与模块其余部分共享的纪律：
+ * - **同步纯 DOM**：没有「占位 → 产物」两段式，也就没有数学/代码块那套定稿重排；
+ * - **零监听**：单元格里的链接仍是普通锚点，点击由 `view-wikilink` 经引擎
+ *   `node_click` 命中（与节点其余部分的锚点同一契约）；
+ * - **只读显示**：模型来自 `domain/pipe-table`（`\|` 已还原、列数已归一），原文
+ *   仍由 `mdRaw` 逐字保真——回写路径一个字都不经过这里。
+ *
+ * 单元格内容走同一套段管线（`buildInlineSegments` → 文本段 / 锚点）：单元格是
+ * **单行**文本 ⇒ 其中不可能再切出表格段（表格至少两行），递归在此天然终止。
+ */
+function buildTableElement(
+	doc: InlineContentDocument,
+	segment: InlineSegment,
+	params: BuildContentParams,
+): HTMLElement {
+	const table = doc.createElement('table');
+	Object.assign(table.style, TABLE_STYLES);
+	const model = segment.table;
+	if (!model) {
+		// 表格段的构造点唯一（必带模型）；真出现空壳时按字面兜底，不渲染空白
+		table.appendChild(doc.createTextNode(segment.text));
+		return table;
+	}
+	const head = doc.createElement('thead');
+	const headRow = doc.createElement('tr');
+	head.appendChild(headRow);
+	table.appendChild(head);
+	model.header.forEach((cell, column) => {
+		const th = doc.createElement('th');
+		Object.assign(th.style, TABLE_HEADER_STYLES);
+		applyCellAlign(th, model.align[column] ?? null);
+		appendCellContent(doc, th, cell, params);
+		headRow.appendChild(th);
+	});
+	if (model.rows.length > 0) {
+		const body = doc.createElement('tbody');
+		table.appendChild(body);
+		for (const row of model.rows) {
+			const tr = doc.createElement('tr');
+			body.appendChild(tr);
+			row.forEach((cell, column) => {
+				const td = doc.createElement('td');
+				Object.assign(td.style, TABLE_CELL_STYLES);
+				applyCellAlign(td, model.align[column] ?? null);
+				appendCellContent(doc, td, cell, params);
+				tr.appendChild(td);
+			});
+		}
+	}
+	return table;
+}
+
+/**
+ * 列对齐 → 内联样式；`null`（分隔行未指定）**不写**，交给宿主与浏览器默认。
+ *
+ * 为什么 `null` 保持沉默：官方样式包里没有 `th { text-align }` 规则（`resources/*.asar`
+ * 实测零命中），阅读视图的表头因此走浏览器 UA 默认（**居中**）——写死 `left` 反而
+ * 会与阅读视图分叉。指定了对齐（`:---` / `---:` / `:---:`）才写内联样式。
+ */
+function applyCellAlign(cell: HTMLElement, align: PipeTableAlign | null): void {
+	if (align !== null) {
+		cell.style.textAlign = align;
+	}
+}
+
+/**
+ * 单元格内容 → 行内段（轻标记 / 链接 / 数学 / 行内码），与节点其余部分同一套
+ * token 口径（`tokenizeInline` + `tokenDisplay`），故单元格里的双链同样可点。
+ */
+function appendCellContent(
+	doc: InlineContentDocument,
+	cell: HTMLElement,
+	text: string,
+	params: BuildContentParams,
+): void {
+	for (const segment of buildInlineSegments(text)) {
+		if (segment.kind === 'link') {
+			cell.appendChild(buildAnchor(doc, segment, params.options));
+			continue;
+		}
+		if (segment.kind === 'text') {
+			cell.appendChild(buildTextElement(doc, segment, params));
+			continue;
+		}
+		// 其余段（代码 / 数学 / 表格）在单元格里**不可达**：单元格文本恒单行
+		//（`splitPipeRow` 按行切）且单元格内刻意不做块级内容——此处的 `continue`
+		// 是显式不变式声明（模型若放宽，孤段被跳过而不是渲染出半个单元格）
+	}
 }
 
 /**
@@ -1364,17 +1754,22 @@ function placeCodeTokens(
  * 字面显示，与「未闭合标记按字面」同一条安全口径。渲染由注入的
  * `options.renderMath` 异步完成（生产实现见 `platform/math-jax`；本模块不
  * import Obsidian，保持无运行时可打包/可单测）。
+ *
+ * `owner` = 构建该段的引擎实例（不透明 token；只透传给 `renderMath` 供平台侧
+ * 登记归属，本模块不解释）——见 `InlineContentOptions.renderMath` 的说明。
  */
 function buildMathElement(
 	doc: InlineContentDocument,
 	segment: InlineSegment,
 	options: InlineContentOptions,
+	owner: object | null,
 ): HTMLElement {
 	const holder = doc.createElement(MARKUP_TAGS.math);
 	holder.className = MATH_SEGMENT_CLASS;
 	const display = segment.display === true;
-	// 占位与原文定界符同形：行内 `$…$` / 单行块级 `$$…$$`
-	holder.textContent = display ? `$$${segment.text}$$` : `$${segment.text}$`;
+	// 占位与原文定界符同形（形态**单一来源**：core/math-placeholder——异步
+	// 撤回路径用同一函数，两处断链即「撤回后与构建形态不一致」的静默分叉）
+	holder.textContent = formatMathPlaceholder(segment.text, display);
 	// 产物缓存命中（同一 TeX 已渲染过）：**同步**放入克隆产物——引擎随后的
 	// 离屏测量直接量到真实宽高（不存在「按占位测量 → 替换后溢出」的窗口），
 	// 且不触发异步替换 ⇒ 由重排引发的重建不会再次触发重排（无循环）
@@ -1384,7 +1779,7 @@ function buildMathElement(
 		holder.classList.add(MATH_RENDERED_HOLDER_CLASS);
 		return holder;
 	}
-	options.renderMath?.(doc, segment.text, holder, display);
+	options.renderMath?.(doc, segment.text, holder, display, owner);
 	return holder;
 }
 
@@ -1435,8 +1830,5 @@ function buildAnchor(
 	return anchor;
 }
 
-/** 读取节点 data 的字符串字段（非字符串/缺失归一为空串） */
-function readString(data: Record<string, unknown>, key: string): string {
-	const value = data[key];
-	return typeof value === 'string' ? value : '';
-}
+// 注：节点 data 的字符串字段读取已收口到 `core/node-data.readNodeDataString`
+// （本文件此前自带的 readString 是同款第三份实现，2026-10-15 删除）。

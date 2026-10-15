@@ -15,7 +15,7 @@
  * 不适用形态）都会让另一侧静默失配。改这里，不要改调用方。
  */
 
-import type { MdNodeMeta } from './md-meta';
+import { isNodeTextEdited, type MdNodeMeta } from './md-meta';
 import { linkDisplayText, withWikilinkAlias } from './wikilink';
 
 /**
@@ -42,7 +42,7 @@ export interface WikiAliasSource extends MdNodeMeta {
  *
  * 逐条闸门（全部满足才改写）：
  * 1. wiki 双链（`mdLinkStyle === 'wiki'`，URL/md 链接无别名概念，不适用）；
- * 2. 文本已被编辑（`text !== mdDerivedText`；未编辑整行逐字回写，本就不需要改写）；
+ * 2. 文本已被编辑（`md-meta.isNodeTextEdited`；未编辑整行逐字回写，本就不需要改写）；
  * 3. 单行文本（多行没有「唯一别名」的语义，回落旧的合成行为，不丢数据）；
  * 4. 纯双链：通道自带的可见名与 `mdDerivedText` 相等，即原文除该链接外别无内容
  *    （文档双链看 `mdLinkText`，附件双链看 `attachmentName`）；
@@ -64,7 +64,9 @@ export function editedWikilinkAlias(data: WikiAliasSource): string | null {
 	if (typeof text !== 'string' || typeof derived !== 'string' || !derived) {
 		return null;
 	}
-	if (text === derived || text.includes('\n')) {
+	// 「是否被编辑」用**唯一判据**（md-meta.isNodeTextEdited）——这里两者已窄化
+	// 为 string，等价于原来的 `text === derived`，但口径与回写/渲染侧同源
+	if (!isNodeTextEdited(text, derived) || text.includes('\n')) {
 		return null;
 	}
 	const alias = text.trim();

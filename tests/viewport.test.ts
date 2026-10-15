@@ -373,11 +373,31 @@ describe('isContentVisibleInCanvas（保存视口恢复后的落界校验）', (
 		expect(isContentVisibleInCanvas(broken.mindMap)).toBe(false);
 	});
 
-	it('性能模式 / 引擎结构不可得 → null（fail-open，不误伤合法视口恢复）', () => {
-		// 性能模式：视口外节点被回收，rbox 只覆盖已加载子集，判定不可靠
+	it('性能模式：改用数据层盒判定（护栏在性能模式下真正生效）', () => {
+		// 数据层盒（布局坐标 30,40 400×200）+ draw 变换（scale 1 / translate 0）
+		// ⇒ 画布坐标 30,40 400×200，与 800×600 的画布相交 → true
 		expect(
 			isContentVisibleInCanvas(makeMindMap({ openPerformance: true }).mindMap),
+		).toBe(true);
+
+		// 数据层盒被推到画布外 → false（此前性能模式恒 null，这条护栏不可达）
+		const outside = makeMindMap({ openPerformance: true });
+		const root = (
+			outside.mindMap as unknown as {
+				renderer: { root: Record<string, unknown> };
+			}
+		).renderer.root;
+		root.left = 9000;
+		root.top = 9000;
+		expect(isContentVisibleInCanvas(outside.mindMap)).toBe(false);
+
+		// 变换不可得（引擎中间态）→ null：fail-open，不误伤合法视口恢复
+		expect(
+			isContentVisibleInCanvas(makeMindMap({ openPerformance: true, hasDraw: false }).mindMap),
 		).toBeNull();
+	});
+
+	it('引擎结构不可得 → null（fail-open，不误伤合法视口恢复）', () => {
 		expect(isContentVisibleInCanvas(makeMindMap({ hasDraw: false }).mindMap)).toBeNull();
 		expect(isContentVisibleInCanvas(null)).toBeNull();
 	});

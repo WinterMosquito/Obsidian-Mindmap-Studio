@@ -10,8 +10,16 @@
  * - openHyperlink（view-link-navigator.ts） 节点超链接跳转路由；
  * - 本类只做编排：生命周期事件 → 装配 services 与 view-* 交互特性。
  */
-import { type EventRef, FileView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import {
+	type EventRef,
+	FileView,
+	Notice,
+	TFile,
+	type ViewStateResult,
+	WorkspaceLeaf,
+} from 'obsidian';
 import { Language, t } from '../core/i18n';
+import { readNodeDataString } from '../core/node-data';
 import { injectObsidianCssVarsIntoExportSvg } from '../platform/export-css-vars';
 import { padForeignObjectsForExport } from '../platform/export-foreign-object-padding';
 import {
@@ -77,6 +85,7 @@ import { setupContextMenu } from './view-context-menu';
 import { registerViewHotkeys } from './view-hotkeys';
 import { setupViewportGestures } from './view-viewport';
 import { handleWindowPaste, setupPasteHandler } from './view-paste';
+import { handleClipboardShortcut } from './view-clipboard';
 import {
 	cancelStatusBarUpdate,
 	updateStatusBar,
@@ -135,9 +144,17 @@ const IN_PLACE_REFRESH_KEYS = new Set([
 	'defaultLineStyle',
 ]);
 
-/** 视图状态里 mdBackMode 的白名单取值（非法/缺失回退 source） */
-function readMdBackMode(value: unknown): 'source' | 'preview' {
-	return value === 'preview' ? 'preview' : 'source';
+/**
+ * 从视图状态读「进入前 md 模式」（唯一的取值 + 白名单判定）。
+ *
+ * 状态未经校验（用户手改 workspace.json 等可能产生任意值，`state` 本身也可能
+ * 是 null / 非对象），非法/缺失一律回退 source（与 ViewStateStore.hydrate 的
+ * 防御风格一致）。消费点只有 setState 覆写（读入点），见那里。
+ */
+function readMdBackMode(state: unknown): 'source' | 'preview' {
+	return (state as { mdBackMode?: unknown } | null)?.mdBackMode === 'preview'
+		? 'preview'
+		: 'source';
 }
 
 export class MindMapView extends FileView implements MindMapViewContext {
@@ -173,6 +190,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 而本视图在 `onClose` 并不卸载，故须自行保存引用并在 `onClose` 显式 `offref`。
 	 */
 	private cssChangeRef: EventRef | null = null;
+	/** `active-leaf-change` 的 `EventRef`（同款：`onClose` 不卸载 Component，须显式 `offref`） */
+	private activeLeafRef: EventRef | null = null;
 	/** 窗口级 paste 监听器（须按同一函数引用移除；`registerDomEvent` 同样只在卸载时清理） */
 	private pasteHandler: ((event: ClipboardEvent) => void) | null = null;
 	/**
@@ -243,7 +262,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 文档模式（B3 显式切换）：文件本质是 Markdown（frontmatter 声明为导图，
 	 * 或用户手动把普通笔记开为导图），用导图视图编辑并回写为 md 大纲。
 	 */
-	/** 进入前 markdown 视图模式（返回「以 Markdown 编辑」时恢复） */
+	/**
+	 * 进入前 markdown 视图模式（「切换回 Markdown」时恢复）。
+	 * 读入点 = setState 覆写（唯一权威来源），写回点 = getState 覆写
+	 * （官方 leaf.getViewState() 的 state 只取自 view.getState()）。
+	 */
 	private mdBackMode: 'source' | 'preview' = 'source';
 	/**
 	 * 按文件键保留的 frontmatter 块（保存时拼回文件头；条目在 onUnloadFile
@@ -263,6 +286,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	private readonly contentRemeasure = new ContentRemeasureSession({
 		getMindMap: () => this.mindMap,
 		register: (cleanup) => this.register(cleanup),
+		// 可见性判据（官方 `Element.isShown()`）：叶子在后台标签时祖先链为
+		// display:none，此刻量测恒 0×0，会话据此挂起（见 content-remeasure ④）
+		isVisible: () => this.containerEl.isShown(),
+		// 画布根（未定稿修复 / 登记面清理的作用域，见 content-remeasure ⑤）：
+		// holder 都在引擎挂载点内；引擎未建（首帧前）时为 null，会话静默跳过
+		getContentRoot: () => this.canvasEl,
 	});
 
 	/**
@@ -337,10 +366,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			}),
 			viewState: this.plugin.viewState,
 			openHyperlink: (link) => this.openHyperlink(link),
+			// 引擎销毁通知（未定稿数学段登记面的唯一清理点）：按引擎身份清掉该
+			// 实例归属的条目（语义见 content-remeasure 的 forgetEngine；按 DOM
+			// 连接状态判归属会在首帧前误清新引擎的全部懒加载段，2026-10-14 实机定案）
+			onEngineDisposed: (engine) =>
+				this.contentRemeasure.forgetEngine(engine),
 			// 节点内联内容（方案 B 原型）：含行内链接 / 轻标记、或超长文本（引擎的
 			// SVG 换行是逐字符二次复杂度，长行必须接管）且无图的节点改走自绘 HTML；
 			// 其余节点返回 null 走引擎默认文本（点击跳转复用 view-wikilink 既有分流）
-			createNodeContent: (node, doc, style, lang) => {
+			createNodeContent: (node, doc, style, lang, owner) => {
 				// 宽度手柄门禁（幂等）：纯文本/含图节点上的拖宽手柄是死的
 				// （引擎文本路径不认 customTextWidth），只留在自绘节点上
 				gateNodeWidthHandles(node);
@@ -350,12 +384,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// 解析真实节点再重排，构建期闭包可能持有预测量代理，见 K88）。
 				// 选项**不含任何设置项**（接管判据只看节点数据，见
 				// node-inline-content.resolveSelfDrawSource），故无需就地覆盖。
+				// `owner`（本次引擎实例）原样透传——数学段的归属登记靠它，
+				// 本层不解释（见 InlineContentOptions.renderMath）
 				return buildInlineNodeContent(
 					node,
 					doc,
 					style,
 					lang,
 					this.inlineContentOptions,
+					owner,
 				);
 			},
 			// 导出 SVG 后处理链（按序应用）：foreignObject 几何余量（几何校正
@@ -374,6 +411,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				pinMathContainerHeightsInExportSvg,
 				hideCopyButtonsInExportSvg,
 			],
+			// 快捷键前置钩子：把 Ctrl+C / Ctrl+X / Ctrl+V 从引擎的「内部 JSON
+			// 剪贴板」收回到插件的 Markdown 剪贴板（2026-10-13 裁决）。引擎对
+			// 每个快捷键都会问一次，非剪贴板键由 view-clipboard 放行。
+			beforeShortcutRun: (key) => handleClipboardShortcut(this, key),
 			onRootDataChanged: () => {
 				this.scheduleSave();
 				updateStatusBar(this);
@@ -383,9 +424,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			onNodeTextEdited: (node) => captureAutoSplitCandidate(this, node),
 			onNodeImageClick: (node) => openNodeImageFullscreen(this, node),
 			onNodeAttachmentClick: (node) => {
-				const data = node.getData() as { attachmentUrl?: unknown };
-				const url =
-					typeof data?.attachmentUrl === 'string' ? data.attachmentUrl : '';
+				const url = readNodeDataString(
+					node.getData() as Record<string, unknown>,
+					'attachmentUrl',
+				);
 				if (url) {
 					this.openHyperlink(url);
 				}
@@ -447,6 +489,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.searchBarEl = containerEl.createDiv('mindmap-search-bar');
 		this.buildSearchBar();
 		this.canvasEl = containerEl.createDiv('mindmap-canvas-container');
+		// 打开时先采样一次可见性（④ 自愈的**起点**）：启动恢复的后台 leaf 在
+		// onOpen 时即不可见、且从未 active 过（active-leaf-change 不因它触发），
+		// 若不在内容构建前置脏，后续「从未记脏直接可见」会让 syncVisibility
+		// 的自愈分支零成本早退、0×0 内容永不恢复（另两处采样见下方
+		// active-leaf-change 与 onResize）
+		this.contentRemeasure.syncVisibility();
 
 		this.boundHandleCssChange = () => {
 			// 代码块 token 的内联色来自主题（探测后写入，导出 SVG 无 styles.css
@@ -464,6 +512,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			this.boundHandleCssChange,
 		);
 		this.registerEvent(this.cssChangeRef);
+		// 可见性采样（自绘内容尺寸自愈，见 content-remeasure ④）：叶子被切到
+		// 后台 / 切回时各采样一次。与 onResize 的采样互补——个别情况下标签切换
+		// 只发 active-leaf-change；自愈本身幂等，无脏时零成本
+		// 引用须保存：onClose 不卸载 Component（见那里的对称回收说明），
+		// 不显式 offref 会让每次 onOpen 在 workspace 上叠加一个监听
+		this.activeLeafRef = this.app.workspace.on('active-leaf-change', () => {
+			this.contentRemeasure.syncVisibility();
+		});
+		this.registerEvent(this.activeLeafRef);
 		// 视图内快捷键（搜索 / 撤销重做 / F2 编辑节点）：内部会按官方要求
 		// 确保 this.scope 已创建（View.scope 默认为 null，不创建则全部失效）
 		registerViewHotkeys(this);
@@ -485,6 +542,35 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		if (this.file) {
 			await this.loadMindMapFromFile(this.file);
 		}
+	}
+
+	/**
+	 * 读入点（唯一）：官方 `setViewState` 把传入 state **原样**交给
+	 * `view.setState`（实机源码：`c = e.state || {}` → `n.setState(c, s)`），
+	 * 这是 `mdBackMode` 的权威来源，必须**先于** `super.setState` 落字段——
+	 * super 内部经 `loadFile` → `onLoadFile` 完成文件装载，onLoadFile 不参与
+	 * 模式读回（旧实现在那里从 leaf 读回，恒失败链路，原理见下方 getState
+	 * 覆写，2026-10-15）。
+	 *
+	 * 取值与白名单收敛在 `readMdBackMode` 一处（state 形态未经校验）。
+	 */
+	override async setState(
+		state: unknown,
+		result: ViewStateResult,
+	): Promise<void> {
+		this.mdBackMode = readMdBackMode(state);
+		await super.setState(state, result);
+	}
+
+	/**
+	 * 写回点：官方 `leaf.getViewState()` 的 state 完全取自 `view.getState()`
+	 * （实机源码：`{ type, state: e.getState() }`），而基类 `FileView.getState()`
+	 * 只回 file——不覆写则 `mdBackMode` 读不回，布局保存（workspace.json）
+	 * 也随之丢失模式，重启恢复后退化为编辑视图（2026-10-15 缺陷根因）。
+	 * 保留 super 结果：官方字段（如 file）不重复手写、未来新增字段自动跟随。
+	 */
+	override getState(): Record<string, unknown> {
+		return { ...super.getState(), mdBackMode: this.mdBackMode };
 	}
 
 	override async onLoadFile(file: TFile): Promise<void> {
@@ -614,13 +700,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				return;
 			}
 			this.frontmatterByPath.set(file.path, doc.frontmatter);
-			// 记录进入前 markdown 模式（「以 Markdown 编辑」返回时恢复）：
-			// 视图状态未经校验（用户手改 workspace.json 等可能产生任意值），
-			// 按白名单取值，非法/缺失一律回退 source（与 ViewStateStore.hydrate
-			// 的防御风格一致）。
-			this.mdBackMode = readMdBackMode(
-				this.leaf.getViewState().state?.mdBackMode,
-			);
+			// mdBackMode 的读入已前移到 setState 覆写：官方 view.getState() 不保留
+			// 传入 state，从此处经 leaf.getViewState() 读回是恒失败链路（2026-10-15）。
 			const tree = doc.tree;
 			// 图片尺寸（2026-09-28 用户裁决 K97）：**未设置尺寸的图片一律按默认
 			// 大小展示**（IMAGE_WIDTH×IMAGE_HEIGHT，框内等比留白不变形），只有
@@ -1013,6 +1094,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			this.app.workspace.offref(this.cssChangeRef);
 			this.cssChangeRef = null;
 		}
+		if (this.activeLeafRef) {
+			this.app.workspace.offref(this.activeLeafRef);
+			this.activeLeafRef = null;
+		}
 		if (this.pasteHandler) {
 			this.containerEl.win.removeEventListener('paste', this.pasteHandler);
 			this.pasteHandler = null;
@@ -1041,6 +1126,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	override onResize(): void {
 		// 首次立即执行、窗口内合并 + 尾随（最后尺寸必然落地）：拖动窗口/侧栏期间
 		// 不再是每个 resize 事件一次整树 render（见 RESIZE_THROTTLE_MS）
-		this.resizeThrottler.run(() => this.engine.resize());
+		this.resizeThrottler.run(() => {
+			this.engine.resize();
+			// 可见性采样（自绘内容尺寸自愈，见 content-remeasure ④）：叶子由隐藏
+			// 转可见时容器尺寸 0→非 0，本回调必然触发；先 resize 再自愈——
+			// 若 resize 已使尺寸正确，自愈的症状扫描自然为空（幂等、无脏零成本）
+			this.contentRemeasure.syncVisibility();
+		});
 	}
 }

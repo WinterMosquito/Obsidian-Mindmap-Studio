@@ -23,6 +23,15 @@ interface TitleRenamerDeps {
 /** 中心主题改名：防抖（TITLE_RENAME_DEBOUNCE_MS）+ 非编辑态守卫 + 目标路径存在性校验 */
 export class TitleRenamer {
 	private readonly debouncer = createDebouncer(TITLE_RENAME_DEBOUNCE_MS);
+	/**
+	 * 「编辑中」时是否已重排过一次兜底。
+	 *
+	 * 正常路径是**事件**：两条编辑通道的提交点都会重新 `schedule()`（引擎编辑框经
+	 * `onRootDataChanged`、插件侧通道经 `notifyNodeContentCommitted`，见 view.ts），
+	 * 此前每次调度命中「编辑中」就无限自递归（每 1.5s 一拍），把「编辑中不改名」
+	 * 这条不变量的依赖从事件变成了时间（也把重命名时机交给轮询节奏）。
+	 */
+	private retriedWhileEditing = false;
 
 	constructor(private readonly deps: TitleRenamerDeps) {}
 
@@ -42,15 +51,20 @@ export class TitleRenamer {
 
 	private async performRename(): Promise<void> {
 		const file = this.deps.getFile();
-		// 仅声明为导图的文件跟随中心主题改名（手动开为导图的普通笔记不在此列：
-		// 「中心主题 = 文件名」是导图文档的语义，不静默重命名用户笔记）
+		// 仅声明为导图的文件跟随中心主题改名（守卫只看属性声明）
 		if (!file || !isMindMapFile(this.deps.app, file)) return;
 
 		if (this.deps.isEditingText()) {
-			// 仍在文本编辑框内 → 等编辑结束
-			this.schedule();
+			// 仍在文本编辑框内：**至多重排一次**兜底（一拍后复检），不再无限
+			// 自递归轮询——提交点会重新调度（见 retriedWhileEditing 的说明）
+			if (!this.retriedWhileEditing) {
+				this.retriedWhileEditing = true;
+				this.schedule();
+			}
 			return;
 		}
+		// 已离开编辑态：兜底标记复位，下一次进入编辑态仍有一次重排机会
+		this.retriedWhileEditing = false;
 
 		const title = (this.deps.getRootText() ?? '').trim();
 		const sanitized = sanitizeFileName(title).trim();

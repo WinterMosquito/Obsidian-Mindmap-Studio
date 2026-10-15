@@ -1,4 +1,4 @@
-# 关键约定 K1–K121（详录）
+# 关键约定 K1–K125（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -1494,3 +1494,24 @@
   合成 wheel `defaultPrevented === false`、左键拖画布后节点位移 0、601 条平铺 ⇒
   `engineMounted: false` + 大纲 + 提示「导图节点数 602 超过嵌入上限 500，此处仅显示大纲」、
   `dev:errors` 无错误。
+- [K123] **节点内渲染 GFM 管道表（表格块 → 内联样式 `<table>`）**（2026-10-14，用户裁决 + 官方样式包实测取证）：
+  - **问题**：表格行在解析层就并入 plain 多行节点（`mdType: 'plain'`，见 `docs/markdown-mindmap-standard.md` §2.1 / §3.4），显示层只按「一个含 `\n` 的文本节点 + `white-space: pre-wrap`」折行 ⇒ 节点里永远是一串裸 `|`，没有任何产生 `<table>` 的代码路径。
+  - **路径选择（方案 A，用户确认）**：识别走新模块 `src/domain/pipe-table.ts`（纯逻辑、零依赖），装配走 `src/features/node-inline-content.buildTableElement`（表格段 `kind: 'table'` + 三张内联样式表）。**不选**官方 `MarkdownRenderer.render`（`obsidian.d.ts:6079` 可渲染表格）：异步 + 每节点 `Component` 生命周期会破坏本模块「同步纯 DOM、零监听、可单测」的契约，且导出离屏克隆里没有宿主管线、导出 SVG 不含 `app.css` ⇒ 表格线/对齐/配色全丢——与 K116 对代码块的同一取舍同源（那里已明确否决「整段交回宿主管线」）。
+  - **识别口径**：表头行 + 分隔行**成对**才成立；分隔行必须含**未转义 `|`**（借此把 setext 下划线 `标题\n---` 与 `---` 分隔线挡在门外——它们是解析层的既有语义）；外框管道可有可无；单元格内 `\|` 还原为字面 `|`；列数不足补空、超出截断；数据行遇空行、或不含未转义 `|` 的行即结束（不吞后续段落）。**围栏代码块 / 块级数学内的表格行不识别**：保护区复用显示层 `MARKUP_RE` 源码构造**独立实例**（不造第二份围栏判定，也不受该模块级共享正则 `lastIndex` 影响）；缩进代码行同样排除。
+  - **显示纪律**：结构 / 边框 / 内边距 / 表头底色 / 列对齐**全内联**（导出 SVG 不含 `styles.css` 与 `app.css`，K91/K99 口径）；表宽以内容盒为顶（`max-width: 100%` + 单元格 `overflow-wrap: anywhere`——用户裁决「不允许表格超宽撑爆节点」）；**不设高度上限**（代码块那套「限高 + 块内滚动」在导出克隆里会裁掉内容）；表格段**要么整张显示、要么整张不显示**（沿用链接段的截断口径，`clampSegments` 无需特判——表格段 `kind !== 'text'` 自然走 break 分支）。
+  - **官方实测（`resources/app.asar` 与 `obsidian.asar` 交叉 grep，两包零命中）**：官方样式表**没有** `th { text-align }`，也没有阅读视图的 `border-collapse` 规则（唯一命中是帮助浮层 `.overlay-help`）⇒ ① 未指定对齐的列**不写** `text-align`（`th` 走浏览器 UA 默认居中、`td` 左对齐——与阅读视图同源；写死左对齐反而会与阅读视图分叉）；② `border-collapse: collapse` 与表头底色是本插件的**画布取舍**（已在代码注释登记理由，不谎称「对齐阅读视图」）。无头 Chrome 里读到的计算值 `["center","right"]` 正是这条口径的实测锁定。
+  - **换行归属**：表格段**吃掉**与它相邻的边界换行 ⇒ 段序列 `text` 拼接 = 原文，编辑弹窗预览里表格独占行、不与段落粘连；渲染侧文本块因此不带多余换行（表格是块级元素，换行由它自己承担）。
+  - **边界（有意）**：单元格内不支持图片嵌入渲染（`image` 非空的节点整体不接管，K118 既有边界）与表格嵌表格；单元格是单行文本 ⇒ 其中不可能再切出表格段（递归天然终止）。
+  - **门禁**：`tests/pipe-table.test.ts` 17 例（正例 + 反例：setext / 分隔线 / 列数不等 / 非法分隔单元格 / 全空表头 / 错位表头 / `\|` 与 `\\|` 两种转义）；`tests/node-inline-content.test.ts` 新增表格段组 8 例 + 段类型契约定名从「仅两种 kind」更新为三种；`verify:visual` 新增 `table` 场景（`th`/`td` 文本、`tr` 数、计算出的边框/内边距/对齐、表宽不溢出内容盒）+ 导出产物断言（`<table>`、单元格内联边框/内边距、`text-align: right` 落进导出 SVG）+ **嵌入对照**（新挂 `map-embed-table`：视图与嵌入共用同一份装配 ⇒ 嵌入画布内也必须是 `<table>`）。
+
+- [K124] **修复「阅读视图进入导图后，切回 Markdown 恒落编辑视图」：视图状态读入/写回点覆写 `setState` / `getState`**（2026-10-15，CLI 实机源码取证）：
+  - **症状（用户报告）**：md 文档在**阅读视图**以导图打开，再「以 Markdown 打开」/「切换回 Markdown」后落在**编辑视图**；编辑视图进入时恰好正确（掩盖了缺陷）。
+  - **断裂 ①（读回链路恒失败）**：`openAsMindMap` 把进入前模式写进 `setViewState` 的 state（`{file, mdBackMode}`），读点却在 `onLoadFile` 里经 `leaf.getViewState()` 取——实机读出官方源码：`WorkspaceLeaf.getViewState()` 的 state **完全取自 `view.getState()`**（`{ type, state: e.getState() }`），而视图基类链 `View.getState()` 恒 `{}`、`FileView.getState()` 只回 `file` ⇒ **不覆写 `getState()` 自定义键就永远读不回**（恒回退 `'source'`；布局保存 workspace.json 同样丢模式）。实机取证：修复前 `leaf.getViewState().state` 为 `{"file":"…"}`。
+  - **断裂 ②（文件菜单硬编码）**：组合根「以 Markdown 打开」直接传 `'source'`，从不读进入前模式（实机：`getLeaf(false)` 就是当前导图 leaf，信息本就在手边）。同批修正为「**全库**查找该文件的导图视图 → `setActiveLeaf` 带到前台 + 复用 `backToMarkdown()`」——与工具栏/命令同语义；导图在后台标签时也命中（旧实现按活跃 leaf 判断，会顶掉当前标签页）。
+  - **修法（读入点前移）**：视图覆写 **`setState` 读入**（官方 `setViewState` 把传入 state 原样交给 `view.setState`——实机源码 `c = e.state || {}` → `n.setState(c, s)`，唯一权威来源；先于 super 的 `loadFile → onLoadFile` 装载落字段）+ **`getState` 写回**（`{...super.getState(), mdBackMode}`，官方字段不重复手写）；`onLoadFile` 旧读点删除（来源唯一）。⚠ **设计陷阱**：若只覆写 `getState()` 而读回仍留在 `onLoadFile`，构成**自读自赋值**（读回时字段还是默认值，恒 `'source'`）——读入点必须前移。
+  - **回归**：新增 `tests/view-md-back-mode.test.ts` 5 例（原型自有 getState / getState 回显 file+mdBackMode / 写入键 ⊆ 读回键 / setState 读入点 / 非法值白名单回退）；mock `FileView` 补 `getState` + `setState` 官方契约最小面。实机：阅读视图 → 导图（`mdBackMode: preview` 随状态存活）→ 菜单入口（**后台标签**场景）→ 落阅读视图且带到前台；`dev:errors` 无新增。
+
+- [K125] **终端默认 Git Bash（`bash -lc '…'`），仅需 Windows 专属能力时才切 PowerShell 7**（2026-10-15 用户裁决）：
+  - **口径**：本仓库一切命令行操作（构建、测试、lint、`obsidian` CLI 实机验证、`scripts/probe-*.sh` 探针）**默认经 Git Bash** 执行——在 PowerShell 里以 `bash -lc '…'` 形式调用（本机 Bash 5.3 / MINGW64，`C:\Program Files\Git\bin` 已在用户级 PATH）。仅当任务确需 Windows 专属能力（注册表、HKLM 环境变量、PowerShell 专有 cmdlet）才切回 **PowerShell 7+**，且须在输出中说明原因（7+ 与 bash 共用 .NET / CrossPlatform 约定，切换成本低）。
+  - **理由**：① 与既有生态一致——探针脚本（`scripts/probe-*.sh`）本就是 bash，`grep` / `sed` / `tail` 等 Unix 工具直接可用（同日实测：PowerShell 里 `ls -la | head` 报「术语 'head' 不被识别」，须改写为 `Select-Object -First`）；② 单引号语义可预测，`obsidian eval --code='…'` 的内联 JS 在**单层** bash 下不易被破坏（K107 ④ 的 PowerShell 单引号经验对单层调用仍有效）。
+  - **注意（双层调用仍会坏引号）**：经 PowerShell → bash **双层**传递时，内联 `--code='…'` 的引号与中文参数会静默损坏——`obsidian eval` 一律把 JS 包装进 `.sh` / `.mjs` **脚本文件**再执行（本仓库 `scripts/probe-*.sh` 即此模式的落地）。

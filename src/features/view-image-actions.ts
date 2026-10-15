@@ -18,7 +18,7 @@ import {
 	isAppResourceUrl,
 	isExternalImageRef,
 } from '../domain/url';
-import type { MdNodeData } from '../core/node-data';
+import { readNodeDataString, type MdNodeData } from '../core/node-data';
 import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type { MindMapViewContext } from './view-context';
 import { insertChildNodeWithData, requireActiveNode } from './view-common';
@@ -113,7 +113,7 @@ export async function applyNodeImage(
 	// 记录/清除 md 回写目标（引擎不识别该字段，仅序列化用）
 	const data = node.getData() as MdNodeData;
 	const oldTarget = data.mdImageTarget ?? '';
-	const text = typeof data.text === 'string' ? data.text : '';
+	const text = readNodeDataString(data, 'text');
 	// 纯图节点的占位文本（旧图文件名）随换图同步，避免回写残留旧名
 	const oldName = oldTarget.split('/').pop() ?? '';
 	if (oldName && text === oldName) {

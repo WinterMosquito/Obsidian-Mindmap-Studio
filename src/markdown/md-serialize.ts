@@ -25,6 +25,8 @@ import {
 	isRenderableImageExtension,
 	isRenderableImageTarget,
 } from '../core/constants';
+import { readNodeDataString } from '../core/node-data';
+import { isNodeTextEdited } from '../domain/md-meta';
 import { resolvePathToFile } from '../links/links-resolve';
 import { tokenizeInline } from './md-outline';
 import {
@@ -249,7 +251,7 @@ function rawImageMatches(
 	raw: string,
 	app: App | null,
 ): boolean {
-	const rawImage = typeof data.image === 'string' ? data.image : '';
+	const rawImage = readNodeDataString(data, 'image');
 	const vaultPath = imageVaultPath(data, app);
 	const candidates: string[] = [];
 	if (rawImage) {
@@ -549,7 +551,8 @@ function rawOk(
 	if (typeof raw !== 'string') {
 		return false;
 	}
-	if (data.text !== data.mdDerivedText) {
+	// 未编辑判据的唯一实现（快照缺失按未编辑处理，见 domain/md-meta）
+	if (isNodeTextEdited(data.text, data.mdDerivedText)) {
 		return false;
 	}
 	// 图片已被移除（右键「移除图片」/被引用文件被删除）：image 已清空，mdRaw 里的
@@ -806,7 +809,7 @@ function composeFirstLineSegmented(
 	if (!segments || segments.length === 0) {
 		return null;
 	}
-	const text = (typeof data.text === 'string' ? data.text : '').split('\n')[0] ?? '';
+	const text = readNodeDataString(data, 'text').split('\n')[0] ?? '';
 	// 本节点当前应写出的全部 token 形态（与 inlineTokens 同源，便于「取用即摘除」）
 	const pending: string[] = [];
 	const link = renderHyperlink(data);
@@ -910,7 +913,7 @@ function composeFirstLine(data: MdNodeData, app: App | null): string {
 	if (segmented !== null) {
 		return segmented;
 	}
-	const text = typeof data.text === 'string' ? data.text.split('\n')[0] ?? '' : '';
+	const text = readNodeDataString(data, 'text').split('\n')[0] ?? '';
 	let line = text.trimEnd();
 	const tokens = inlineTokens(data, app);
 	if (tokens.length > 0) {
@@ -930,7 +933,7 @@ function composeFirstLine(data: MdNodeData, app: App | null): string {
  * 否则会出现「弹窗给的是别名、写回按原文」这类错位。
  */
 export function isPureLinkNode(data: MdNodeData): boolean {
-	const text = typeof data.text === 'string' ? data.text : '';
+	const text = readNodeDataString(data, 'text');
 	return (
 		!text.includes('\n') &&
 		text.trim() !== '' &&
@@ -951,7 +954,7 @@ export function composeNodeContent(data: MdNodeData, app: App | null): string {
 	if (rawOk(data, app)) {
 		return data.mdRaw;
 	}
-	const rest = (typeof data.text === 'string' ? data.text : '')
+	const rest = readNodeDataString(data, 'text')
 		.split('\n')
 		.slice(1);
 	return [composeNodeFirstLine(data, app), ...rest].join('\n');
@@ -994,6 +997,38 @@ export function composeNodeFirstLine(
 export function serializeMdBody(
 	tree: MindMapTreeNode,
 	app: App | null = null,
+): string {
+	return serializeTrees(tree.children ?? [], app, false);
+}
+
+/**
+ * 序列化若干**子树**为大纲正文（剪贴板复制入口）。
+ *
+ * 与 `serializeMdBody` 共用同一个 walker（`nodeLines` / 逐字回写 / 缩进规则
+ * 全部同一份实现），差异只有**形态**（2026-10-13 用户裁决）：
+ * 标题一律降级为无序列表项（`#` → `-`，不论几个 `#`），层级由缩进表达；
+ * 有序项保留 `1.`；`*` / `+` 归一为 `-`。
+ *
+ * 为什么形态开关必须在 walker 内、不能在调用方「先清掉 mdType」：标题的 `#`
+ * 前缀由本 walker 补，且「无标记节点在标题上下文回写为 `#`」（K98）会把
+ * 剪贴板文本又变回标题——两处各判一次必然漂移。
+ */
+export function serializeSubtreesToOutline(
+	trees: readonly MindMapTreeNode[],
+	app: App | null = null,
+): string {
+	return serializeTrees(trees, app, true);
+}
+
+/**
+ * 大纲序列化的共用实现。
+ * @param headingsAsList 剪贴板形态：标题/段落一并走列表分支
+ *   （见 serializeSubtreesToOutline）
+ */
+function serializeTrees(
+	siblings: readonly MindMapTreeNode[],
+	app: App | null,
+	headingsAsList: boolean,
 ): string {
 	const out: string[] = [];
 
@@ -1041,7 +1076,7 @@ export function serializeMdBody(
 	};
 
 	interface SerializeFrame {
-		children: MindMapTreeNode[];
+		children: readonly MindMapTreeNode[];
 		index: number;
 		listIndent: number;
 		orderedCount: number;
@@ -1091,13 +1126,13 @@ export function serializeMdBody(
 	 * 语义与递归等价：先序输出，orderedCount/缩进按层独立。
 	 */
 	const walkChildren = (
-		parent: MindMapTreeNode,
+		topSiblings: readonly MindMapTreeNode[],
 		listIndent: number,
 		headingLevel: number | null,
 	): void => {
 		const stack: SerializeFrame[] = [
 			{
-				children: parent.children ?? [],
+				children: topSiblings,
 				index: 0,
 				listIndent,
 				orderedCount: 0,
@@ -1114,7 +1149,7 @@ export function serializeMdBody(
 			frame.index++;
 			const data: MdNodeData = child.data ?? {};
 			const type = data.mdType;
-			if (type === 'heading') {
+			if (type === 'heading' && !headingsAsList) {
 				frame.orderedCount = 0;
 				const level = Math.min(6, Math.max(1, Number(data.mdLevel) || 1));
 				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', ''));
@@ -1128,7 +1163,7 @@ export function serializeMdBody(
 				});
 				continue;
 			}
-			if (type === 'plain') {
+			if (type === 'plain' && !headingsAsList) {
 				frame.orderedCount = 0;
 				// 与 list/heading 同一出口：未编辑逐字回写；被编辑/插换图后首行写
 				// 「文本 + token」——段落自本版起承载首行图片字段，插图中/移除图
@@ -1150,6 +1185,7 @@ export function serializeMdBody(
 			// 显式选了列表标记（mdMarker）的新节点尊重用户选择；**同层已有列表型
 			// 兄弟时跟随列表**（纯列表文档不冒出标题，K98 补充）。
 			if (
+				!headingsAsList &&
 				!type &&
 				data.mdMarker === undefined &&
 				frame.headingLevel !== null &&
@@ -1167,11 +1203,14 @@ export function serializeMdBody(
 				});
 				continue;
 			}
-			// list 或未标注（新建，位于列表/段落上下文或 6 级之下）节点 → 列表行
+			// list 或未标注（新建，位于列表/段落上下文或 6 级之下）节点 → 列表行；
+			// 剪贴板形态（headingsAsList）下 `*`/`+` 归一为 `-`（有序项保留编号）
 			const marker =
 				data.mdMarker === 'ordered'
 					? `${frame.orderedCount + 1}.`
-					: data.mdMarker || '-';
+					: headingsAsList
+						? '-'
+						: data.mdMarker || '-';
 			frame.orderedCount =
 				data.mdMarker === 'ordered' ? frame.orderedCount + 1 : 0;
 			const indent = '  '.repeat(frame.listIndent);
@@ -1186,6 +1225,8 @@ export function serializeMdBody(
 		}
 	};
 
-	walkChildren(tree, 0, 0);
+	// 剪贴板形态：起始 headingLevel 传 null ⇒ 未标注节点一律走列表分支
+	// （文档形态传 0 ⇒ 1 级标题可用，见 SerializeFrame.headingLevel 契约）
+	walkChildren(siblings, 0, headingsAsList ? null : 0);
 	return out.join('\n');
 }

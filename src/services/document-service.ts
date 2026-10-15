@@ -98,8 +98,6 @@ export interface SavePipelineDeps {
 	onAutoSaveSuspended?(): void;
 }
 
-const SAVE_DELAY_MS = AUTO_SAVE_DEBOUNCE_MS;
-
 /**
  * 保存管线：防抖调度 + 串行写盘排空 + 卸载前快照兜底。
  * 原 view.ts save 机制逐行等价搬移：
@@ -111,7 +109,7 @@ const SAVE_DELAY_MS = AUTO_SAVE_DEBOUNCE_MS;
  *   绝不并入别人那一轮（详见文件头不变式）。
  */
 export class SavePipeline {
-	private debouncer = createDebouncer(SAVE_DELAY_MS);
+	private debouncer = createDebouncer(AUTO_SAVE_DEBOUNCE_MS);
 	/** 串行写盘队列：所有 save 调用共享，调用方可 await 完整排空 */
 	private enqueue = createSerialQueue();
 	private saveInProgress = false;
@@ -130,7 +128,8 @@ export class SavePipeline {
 	 * 手动编辑）。显式保存（命令/卸载路径）不检测，成功后同样更新基线。
 	 */
 	private readonly lastWritten = new Map<string, string>();
-	/** 已就「外部修改」提示过的文件：每路径只提示一次（防告警疲劳） */
+	/** 已就「外部修改」提示过的文件：**同一冲突**只提示一次（防告警疲劳）；
+	 * 成功落盘即解除（见写盘成功路径），让下一次冲突重新提示 */
 	private readonly externalConflictNotified = new Set<string>();
 	/** 连续写盘失败次数（P1b）：成功一次即清零 */
 	private consecutiveSaveFailures = 0;
@@ -167,6 +166,8 @@ export class SavePipeline {
 	 *                已是新文件（会把旧文档内容写进新文件）。
 	 * @param treeHint 调用方对**该文件**的树快照（卸载时同步抓取）。引擎已交班/
 	 *                销毁导致活快照取不到时用它兜底，保证最后一批编辑不丢。
+	 * @param opts     `checkExternal` 仅自动保存启用。**重入（另一文件正在排空）
+	 *                必须一起透传**——排队不等于降级，见「不同文件」分支。
 	 */
 	async save(
 		file?: TFile,
@@ -202,9 +203,11 @@ export class SavePipeline {
 				return this.activeSave;
 			}
 			// 不同文件：等在排空的那一轮收尾后独立入队，绝不并入别人的批次
-			//（并入会把本文件的内容写进正被排空的另一个文件）。
+			//（并入会把本文件的内容写进正被排空的另一个文件）。**opts 必须一起
+			// 透传**：漏掉它会把这次自动保存降级成 checkExternal: false，正好绕过
+			// P1a「绝不覆盖他人改动」这条唯一防线。
 			await this.activeSave;
-			return this.save(target, treeHint);
+			return this.save(target, treeHint, opts);
 		}
 		// frontmatter 在请求时刻按目标文件抓取：排空期间即使视图已切到别的文件，
 		// 本文件写出的仍是自己的文件头。
@@ -261,6 +264,10 @@ export class SavePipeline {
 						// 内容与本轮序列化结果等价）；P1b：一次成功即清零失败计数并
 						// 解除自动保存挂起（显式保存成功同样恢复）。
 						this.lastWritten.set(target.path, content);
+						// 冲突已解除：本轮落盘成功即把「已提示」标记还给下一次冲突
+						//（只 add 不 delete 会让同一文件的第二次外部改动**静默**扣住
+						// 不写盘——用户以为自动保存正常，编辑其实一直没落盘）
+						this.externalConflictNotified.delete(target.path);
 						this.consecutiveSaveFailures = 0;
 						this.autoSaveSuspended = false;
 					} catch (error) {

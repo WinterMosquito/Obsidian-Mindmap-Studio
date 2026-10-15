@@ -1,6 +1,10 @@
 /**
- * 节点操作：增删改节点（链接/文本/剪贴板/删除）。
+ * 节点操作：增删改节点（链接/文本/删除）。
  * 被工具栏（view-toolbar.ts）与右键菜单（view-context-menu.ts）共用。
+ *
+ * 剪贴板（复制/剪切/粘贴）**不在本文件**：已收口到 view-clipboard.ts
+ * （系统剪贴板 + Markdown 文本，2026-10-13）；此前的视图级 WeakMap 剪贴板
+ * （copyNode / pasteNodeAsChild）已整体删除，勿在此重建第二份。
  *
  * 图片操作已拆至 view-image-actions.ts 并由本文件 re-export 保持调用稳定：
  *   addImageToActiveNode / applyNodeImage / createImageChildNode / removeNodeImage
@@ -13,8 +17,10 @@ import {
 	getNodeDataString,
 	getRenderRoot,
 	isCustomNodeContent,
+	moveNodeInSiblings,
 	setNodeText,
 	startNodeTextEdit,
+	type SiblingMoveOutcome,
 } from '../engine/mindmap';
 import { openLinkEditorModal } from '../ui/modal-link';
 import { openNodeTextModal } from '../ui/modal-text';
@@ -23,7 +29,7 @@ import { notifyError } from '../core/errors';
 import { isEmbeddableAttachmentExtension } from '../core/constants';
 import { fileLookupIndex } from '../links/file-lookup';
 import { resolvePathToFile } from '../links/links-resolve';
-import { t } from '../core/i18n';
+import { t, type TranslationKey } from '../core/i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
 import { composeNodeContent, isPureLinkNode } from '../markdown/md-serialize';
 
@@ -42,8 +48,8 @@ import {
 	openNodeInlineEditor,
 } from './node-inline-editor';
 import { requireActiveNode, insertChildNodeWithData, applyInlineRawMeta } from './view-common';
-import type { MdNodeData } from '../core/node-data';
-import type { MindMapNode, MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
+import { readNodeDataString, type MdNodeData } from '../core/node-data';
+import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import type {
 	MindMapViewContext,
 	ViewNodeEditContext,
@@ -67,7 +73,7 @@ function clearDocWikiLink(node: MindMapNode): void {
  * 节点已有内容（文字 / 原链接 / 行内其它 token / 图片）。
  */
 function hasAnyContent(data: MdNodeData): boolean {
-	const text = typeof data.text === 'string' ? data.text.trim() : '';
+	const text = readNodeDataString(data, 'text').trim();
 	if (text) {
 		return true;
 	}
@@ -189,6 +195,71 @@ export function applyDocWikiLink(
 	view.scheduleSave();
 }
 
+/** `planDocLink` 的产物：载荷与提示来自**同一次判定**，故永不分叉 */
+export interface DocLinkPlan {
+	/** 链接目标名（`.md` 去扩展名；canvas/base 等非 Markdown 文档带扩展名） */
+	target: string;
+	/** 双链形态的完整写法（已按官方「New link format」定路径形态） */
+	link: string;
+	/** 子节点插入载荷（行级元数据由 `insertChildNodeWithData` 补齐，勿自写 `mdRaw`） */
+	data: Record<string, unknown>;
+	/** 提示文案里的**实际写法**（用户看到的 = 文件里写出的） */
+	notice: string;
+}
+
+/**
+ * 拖入**文档链接**的计划：目标名 → 链接串 → 载荷 / 提示（形态跟随官方
+ * 「使用 \[\[Wikilinks\]\]」，与 `applyDocWikiLink` 同一判定 `prefersMarkdownLinks`）。
+ *
+ * 为什么是一个 plan 而不是两个函数：一次拖入同时需要载荷（新建子节点）与提示
+ * （Notice），分成两个出口会把链接串算两遍，且「提示与实际写法一致」退化为约定；
+ * 合成一次判定后两处产物**结构上**同源。
+ *
+ * 为什么必须收口在此：拖入库内文档的三条路径（选中 → `applyDocWikiLink`；
+ * **未选中**、**文件夹拖入**）此前各写一份硬编码 wikilink 载荷，后两条**不查
+ * 官方设置**，与「选中拖入」跟随设置的行为分叉（2026-10-15 复核发现，违反
+ * 硬规则 5）。载荷构造只此一处，勿在别处另判。
+ */
+export function planDocLink(
+	view: MindMapViewContext,
+	file: TFile,
+): DocLinkPlan {
+	// `.md` 可省略扩展名，canvas/base 等必须带（与解析侧同口径；勿统一用 basename）
+	const target =
+		file.extension.toLowerCase() === 'md' ? file.basename : file.name;
+	// 路径形态跟随官方「New link format」（默认 shortest ＝ 上面的 basename 口径；
+	// 存在同名文件时退化为完整路径，见 newDocLinkFor / newDocLinkpath）
+	const link = newDocLinkFor(view, file, formatWikilink(target));
+	if (prefersMarkdownLinks(view.app)) {
+		// 官方关闭 Wikilinks：写 `[显示名](路径.md)`，走引擎 hyperlink 通道
+		// （与 `applyMdLink` 的子节点载荷同形）；代价是显示引擎原生链接图标
+		const dest = markdownDocTarget(link);
+		return {
+			target,
+			link,
+			data: {
+				text: target,
+				hyperlink: dest,
+				mdLinkStyle: 'md',
+				mdLinkText: target,
+				hyperlinkTitle: dest,
+			},
+			notice: `[${target}](${dest})`,
+		};
+	}
+	return {
+		target,
+		link,
+		data: {
+			text: target,
+			mdWikiLinkpath: link,
+			mdLinkStyle: 'wiki',
+			mdLinkText: target,
+		},
+		notice: link,
+	};
+}
+
 /**
  * 新建文档链接的**路径形态**：跟随官方「New link format」（默认最短路径）。
  *
@@ -238,9 +309,10 @@ function withLinkPath(link: string, linkpath: string): string {
 /**
  * 新建/拖入**文档**时的链接串：路径形态跟随官方「New link format」，
  * 别名与 `#区块` 保留（`link` 缺省时按文件路径构造）。
- * 供添加链接弹窗与拖入文档两条入口共用（口径必须一致，否则同一操作两种写法）。
+ * **模块内唯一换算**：添加链接弹窗的提交路径与拖入文档的计划（`planDocLink`）
+ * 共用（口径必须一致，否则同一操作两种写法），故不再对外导出。
  */
-export function newDocLinkFor(
+function newDocLinkFor(
 	view: MindMapViewContext,
 	file: TFile,
 	link = file.path,
@@ -264,6 +336,46 @@ function markdownDocTarget(link: string): string {
 }
 
 /**
+ * 附件链接的**字段集**（不含节点文本）：`mdEmbed` 按扩展名（可嵌入类型写嵌入
+ * 语法，与 Obsidian 拖放一致），回写用**完整库内路径**（basename 会被 Obsidian
+ * 去掉扩展名，无法定位附件）。
+ *
+ * 收口理由：这几个字段此前在 `applyNodeAttachment` 的子节点分支、覆盖分支与
+ * `view-dnd.handleDroppedAttachment` 里各写一份——与文档链接同一类分叉风险
+ *（2026-10-15 复核，违反硬规则 5）。字段集只此一处。
+ */
+function attachmentFields(
+	view: MindMapViewContext,
+	file: TFile,
+	embed: boolean,
+): Record<string, unknown> {
+	return {
+		attachmentUrl: view.app.vault.getResourcePath(file),
+		attachmentName: file.name,
+		mdAttachmentLinkpath: file.path,
+		mdLinkStyle: 'wiki',
+		...(embed ? { mdEmbed: true } : {}),
+	};
+}
+
+/**
+ * 拖入**附件**的计划：载荷 + 提示写法（与 `planDocLink` 同构——一次判定，
+ * 两处产物同源）。提示里的 `!` 与 `mdEmbed` 出自同一个 `embed`，故提示与文件
+ * 内容永不分叉（此前提示恒写 `[[名]]`，可嵌入附件的提示与内容差一个 `!`；
+ * 2026-10-15 复核）。
+ */
+export function planAttachmentLink(
+	view: MindMapViewContext,
+	file: TFile,
+): { data: Record<string, unknown>; notice: string } {
+	const embed = isEmbeddableAttachmentExtension(file.extension);
+	return {
+		data: { text: file.name, ...attachmentFields(view, file, embed) },
+		notice: `${embed ? '!' : ''}[[${file.name}]]`,
+	};
+}
+
+/**
  * 把库内附件挂到节点（拖入附件时调用）：走引擎 attachmentUrl 通道
  * （原生回形针图标，点击经 node_attachmentClick 打开）+ mdAttachmentLinkpath
  * 回写通道，与解析侧 `[[报告.pdf]]` 语义一致。
@@ -284,25 +396,15 @@ export function applyNodeAttachment(
 	if (hasAnyContent(data)) {
 		appendLinkChild(view, node, {
 			text: file.name,
-			attachmentUrl: view.app.vault.getResourcePath(file),
-			attachmentName: file.name,
-			mdAttachmentLinkpath: file.path,
-			mdLinkStyle: 'wiki',
-			...(embed ? { mdEmbed: true } : {}),
+			...attachmentFields(view, file, embed),
 		});
 		return;
 	}
 	purgeLinkChannels(data);
-	data.attachmentUrl = view.app.vault.getResourcePath(file);
-	data.attachmentName = file.name;
-	// 回写用完整库内路径（basename 会被 Obsidian 去掉扩展名，无法定位附件）
-	data.mdAttachmentLinkpath = file.path;
-	data.mdLinkStyle = 'wiki';
-	if (embed) {
-		data.mdEmbed = true;
-	}
-	// 覆盖为附件承载：行级元数据一并重算（同 applyDocWikiLink 覆盖分支）；
-	// 纯双链化：覆盖节点文字为文件名（仅「完全空白」节点可达；与根节点下新建分支同款 text）
+	// 覆盖为附件承载：字段集与新建子节点同源（先清后填，同 md-line-write 的解析侧约束）
+	Object.assign(data, attachmentFields(view, file, embed));
+	// 行级元数据一并重算（同 applyDocWikiLink 覆盖分支）；纯双链化：覆盖节点文字为
+	// 文件名（仅「完全空白」节点可达；与根节点下新建分支同款 text）
 	applyChannelOverwriteText(view, node, data, file.name, true);
 	view.scheduleSave();
 }
@@ -407,9 +509,6 @@ export {
 	applyNodeImage,
 	createImageChildNode,
 } from './view-image-actions';
-
-/** 视图剪贴板（WeakMap 按视图持有：视图关闭后可回收；状态不暴露到 context） */
-const clipboards = new WeakMap<MindMapViewContext, MindMapNodeData>();
 
 /**
  * 给当前激活节点添加链接（无节点时提示）。
@@ -706,6 +805,57 @@ export function clearNodeHyperlink(
 	view.scheduleSave();
 }
 
+/** 上/下移结果 → 提示文案（'moved' 与 'detached' 不提示，故不入表） */
+const SIBLING_MOVE_NOTICE_KEYS: Record<
+	Exclude<SiblingMoveOutcome, 'moved' | 'detached'>,
+	TranslationKey
+> = {
+	root: 'common.rootCannotMove',
+	atTop: 'common.moveAtTop',
+	atBottom: 'common.moveAtBottom',
+};
+
+/**
+ * 兄弟序列上移 / 下移（右键菜单「上移节点 / 下移节点」，2026-10-14）。
+ *
+ * 引擎侧的全部不变式（兄弟顺序判定、清自由拖拽坐标使画面跟随、相邻兄弟交换）
+ * 已收口到 `engine/mindmap.moveNodeInSiblings`（防腐层唯一收口面）——本层只做
+ * 两件事：解析目标节点、把结果映射成用户提示。
+ *
+ * 保存无需在此调度：命令执行后引擎自动 `addHistory()`（可 Ctrl+Z 撤销）并派发
+ * `data_change` ⇒ 视图 `onRootDataChanged → scheduleSave` 链路回写 Markdown
+ * （行序跟随新顺序）。拒绝分支引擎静默 no-op、不记历史、不派发事件。
+ */
+export function moveNodeUp(view: ViewNodeEditContext, node: MindMapNode | null): void {
+	applySiblingMove(view, node, -1);
+}
+
+/** 见 moveNodeUp（方向相反；取节点与结果映射完全共用） */
+export function moveNodeDown(view: ViewNodeEditContext, node: MindMapNode | null): void {
+	applySiblingMove(view, node, 1);
+}
+
+/** 上/下移的唯一编排：目标节点解析 → 防腐入口调用 → 结果映射成用户提示 */
+function applySiblingMove(
+	view: ViewNodeEditContext,
+	node: MindMapNode | null,
+	offset: -1 | 1,
+): void {
+	// 显式传入的节点优先（右键菜单已 node.active()，但画布委托路径可能处于
+	// 多选态、激活列表首位未必是右键目标）；缺省回落到通用的激活守卫
+	const target = node ?? requireActiveNode(view);
+	const mindMap = view.mindMap;
+	if (!target || !mindMap) {
+		return;
+	}
+	const outcome = moveNodeInSiblings(mindMap, target, offset);
+	// 'detached'（节点无父的坏形态）静默：与引擎的静默 no-op 一致，不产噪音
+	if (outcome === 'moved' || outcome === 'detached') {
+		return;
+	}
+	new Notice(t(view.lang, SIBLING_MOVE_NOTICE_KEYS[outcome]));
+}
+
 /**
  * 删除选中节点（修复 3/4）：
  * 1. 先走引擎 REMOVE_NODE 常规路径（实例清理 + 历史记录 + 渲染）；
@@ -729,30 +879,4 @@ export function deleteActiveNode(view: ViewNodeEditContext): void {
 		forceRemoveNodeData(mindMap, parent, nodeData);
 	}
 	view.scheduleSave();
-}
-
-/** 复制节点（深拷贝节点数据到视图剪贴板） */
-export function copyNode(view: MindMapViewContext, node: MindMapNode): void {
-	const data = node.getData
-		? (node.getData() as MindMapNodeData)
-		: node.nodeData.data;
-	clipboards.set(view, JSON.parse(JSON.stringify(data)) as MindMapNodeData);
-	new Notice(t(view.lang, 'common.nodeCopied'));
-}
-
-/** 粘贴剪贴板节点为指定节点的子节点（未指定时挂到根节点） */
-export function pasteNodeAsChild(
-	view: MindMapViewContext,
-	node: MindMapNode | null,
-): void {
-	const cached = clipboards.get(view);
-	if (!cached) {
-		new Notice(t(view.lang, 'common.clipboardEmpty'));
-		return;
-	}
-	// 复制的是节点数据；剥离 uid 与激活状态后作为新节点的初始数据
-	const { uid: _uid, isActive: _isActive, ...clipboardData } = cached;
-	// 未选中节点时挂到根节点下（引擎在 appointNodes 与激活列表均为空时
-	// 直接 return，空数组粘贴会静默失效）
-	insertChildNodeWithData(view, node ?? getRenderRoot(view.mindMap), clipboardData);
 }

@@ -23,12 +23,27 @@ const engine = vi.hoisted(() => ({
 	resolveNodesByDoms: vi.fn(),
 	findNodesByContentProducts: vi.fn(),
 	refreshNodesCustomContent: vi.fn(),
+	isNodeCollapsed: vi.fn(),
 }));
 
 vi.mock('../src/engine/mindmap', () => ({
 	resolveNodesByDoms: engine.resolveNodesByDoms,
 	findNodesByContentProducts: engine.findNodesByContentProducts,
 	refreshNodesCustomContent: engine.refreshNodesCustomContent,
+	isNodeCollapsed: engine.isNodeCollapsed,
+}));
+
+/** 平台层（未定稿修复 / 登记面清理）：本套件只验证会话的**调用编排** */
+const platform = vi.hoisted(() => ({
+	repairUnsettledMath: vi.fn(),
+	clearUnsettledMath: vi.fn(),
+	pruneUnsettledMathOwnedBy: vi.fn(),
+}));
+
+vi.mock('../src/platform/math-jax', () => ({
+	repairUnsettledMath: platform.repairUnsettledMath,
+	clearUnsettledMath: platform.clearUnsettledMath,
+	pruneUnsettledMathOwnedBy: platform.pruneUnsettledMathOwnedBy,
 }));
 
 /** holder 与节点桩：对会话而言都是不透明引用（编排逻辑只看身份） */
@@ -66,6 +81,10 @@ describe('ContentRemeasureSession（自绘内容定稿 → 尺寸同步会话）
 	let cleanups: Array<() => void>;
 	let fontSet: ReturnType<typeof makeFontSet>;
 	let session: ContentRemeasureSession;
+	/** 宿主可见性（不变式 ④）：用例就地翻转以模拟「切到后台 / 切回前台」 */
+	let visible: boolean;
+	/** 画布根（⑤ 修复作用域；platform 层被 mock，此处只是不透明引用） */
+	let contentRoot: Node | null;
 
 	const makeSession = (): ContentRemeasureSession =>
 		new ContentRemeasureSession(
@@ -74,6 +93,8 @@ describe('ContentRemeasureSession（自绘内容定稿 → 尺寸同步会话）
 				register: (cleanup) => {
 					cleanups.push(cleanup);
 				},
+				isVisible: () => visible,
+				getContentRoot: () => contentRoot,
 			},
 			() => fontSet.fonts,
 		);
@@ -83,10 +104,19 @@ describe('ContentRemeasureSession（自绘内容定稿 → 尺寸同步会话）
 		map = { stub: true } as unknown as MindMap;
 		cleanups = [];
 		fontSet = makeFontSet();
+		visible = true;
+		contentRoot = { root: true } as unknown as Node;
+		platform.repairUnsettledMath.mockReset();
+		platform.clearUnsettledMath.mockReset();
+		platform.pruneUnsettledMathOwnedBy.mockReset();
 		session = makeSession();
 		engine.resolveNodesByDoms.mockReset();
+		// 症状扫描的默认形状：无产物节点（可见自愈的 ③ 分支不介入既有用例）
 		engine.findNodesByContentProducts.mockReset();
+		engine.findNodesByContentProducts.mockReturnValue([]);
 		engine.refreshNodesCustomContent.mockReset();
+		engine.isNodeCollapsed.mockReset();
+		engine.isNodeCollapsed.mockReturnValue(true);
 	});
 
 	afterEach(() => {
@@ -256,5 +286,256 @@ describe('ContentRemeasureSession（自绘内容定稿 → 尺寸同步会话）
 		// 监听已摘除：字体再就绪也不触发任何重排
 		fontSet.fire();
 		expect(engine.refreshNodesCustomContent).toHaveBeenCalledTimes(1);
+	});
+
+	describe('④ 可见性不变式（隐藏态不测量 + 转可见自愈）', () => {
+		it('隐藏态定稿：不反查不重排；切回前台自动补做（无需重开文件）', () => {
+			const n1 = node('n1');
+			engine.resolveNodesByDoms.mockReturnValue([n1]);
+			visible = false;
+
+			session.schedule(holder());
+			vi.advanceTimersByTime(0);
+
+			expect(engine.resolveNodesByDoms).not.toHaveBeenCalled();
+			expect(engine.refreshNodesCustomContent).not.toHaveBeenCalled();
+
+			// 切回前台：可见性采样 → 自愈（一拍宏任务）→ 挂起的 holder 重新入批
+			visible = true;
+			session.syncVisibility();
+			vi.advanceTimersByTime(1); // 自愈拍（+1ms：让随后排定的批量拍一并到期）
+			vi.advanceTimersByTime(1); // 重新入批的批量拍
+			expect(engine.resolveNodesByDoms).toHaveBeenCalledTimes(1);
+			expect(engine.refreshNodesCustomContent).toHaveBeenCalledWith(map, [
+				n1,
+			]);
+		});
+
+		it('无脏时 syncVisibility 零成本（不查 DOM、不重排）', () => {
+			session.syncVisibility();
+
+			expect(engine.findNodesByContentProducts).not.toHaveBeenCalled();
+			expect(engine.refreshNodesCustomContent).not.toHaveBeenCalled();
+		});
+
+		it('隐藏态字体批次：只记脏不测量；可见后补做一次（字体 epoch 修复不被削弱）', () => {
+			const n1 = node('n1');
+			engine.resolveNodesByDoms.mockReturnValue([n1]);
+			session.schedule(holder());
+			vi.advanceTimersByTime(0);
+			expect(engine.refreshNodesCustomContent).toHaveBeenCalledTimes(1);
+
+			visible = false;
+			fontSet.fire();
+			expect(engine.refreshNodesCustomContent).toHaveBeenCalledTimes(1);
+
+			visible = true;
+			session.syncVisibility();
+			vi.advanceTimersByTime(0);
+			expect(engine.refreshNodesCustomContent).toHaveBeenCalledTimes(2);
+			expect(engine.refreshNodesCustomContent).toHaveBeenLastCalledWith(map, [
+				n1,
+			]);
+		});
+
+		it('症状自愈：引擎内部在隐藏态砸出的塌陷节点，可见时按尺寸反查后重测', () => {
+			const collapsed = node('collapsed');
+			const healthy = node('healthy');
+			visible = false;
+			session.syncVisibility(); // 采样：记脏
+			engine.findNodesByContentProducts.mockReturnValue([collapsed, healthy]);
+			engine.isNodeCollapsed.mockImplementation(
+				(value: unknown): boolean => value === collapsed,
+			);
+
+			visible = true;
+			session.syncVisibility();
+			vi.advanceTimersByTime(0);
+
+			expect(engine.findNodesByContentProducts).toHaveBeenCalledTimes(1);
+			expect(engine.refreshNodesCustomContent).toHaveBeenCalledWith(map, [
+				collapsed,
+			]);
+		});
+
+		it('自愈拍到期前又切到后台：不测量、脏标记保留，再次可见仍能自愈', () => {
+			const collapsed = node('collapsed');
+			visible = false;
+			session.syncVisibility(); // 采样：记脏（隐藏）
+
+			visible = true;
+			session.syncVisibility(); // 排自愈拍
+			visible = false; // 拍到期前又切走（快速切标签 / 正在关闭的叶子）
+			session.syncVisibility();
+
+			engine.findNodesByContentProducts.mockReturnValue([collapsed]);
+			vi.advanceTimersByTime(1); // 自愈拍到期：此刻量测恒 0×0，不得动手
+			expect(engine.findNodesByContentProducts).not.toHaveBeenCalled();
+			expect(engine.refreshNodesCustomContent).not.toHaveBeenCalled();
+
+			// 脏标记未被白清：再次可见仍能自愈（否则 0×0 写回后永久塌陷）
+			visible = true;
+			session.syncVisibility();
+			vi.advanceTimersByTime(1);
+			expect(engine.refreshNodesCustomContent).toHaveBeenCalledWith(map, [
+				collapsed,
+			]);
+		});
+
+		it('隐藏态渲染窗口重试不白耗额度：不提前告警，可见后仍能重试成功', () => {
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const n1 = node('n1');
+			engine.resolveNodesByDoms.mockReturnValue([null]);
+			engine.findNodesByContentProducts.mockReturnValue([]);
+			session.schedule(holder());
+			vi.advanceTimersByTime(0); // 全落空 → 暂存（渲染窗口 K104）
+
+			visible = false;
+			session.retryDeferred();
+			expect(warnSpy).not.toHaveBeenCalled();
+
+			visible = true;
+			engine.resolveNodesByDoms.mockReturnValue([n1]);
+			session.syncVisibility();
+			vi.advanceTimersByTime(0); // 自愈拍：重试暂存的渲染窗口批次
+			expect(engine.refreshNodesCustomContent).toHaveBeenCalledWith(map, [
+				n1,
+			]);
+			expect(warnSpy).not.toHaveBeenCalled();
+			warnSpy.mockRestore();
+		});
+		});
+
+	describe('⑤ 未定稿修复（被放弃的字面数学段，2026-10-14 实机缺陷）', () => {
+		let map: MindMap | null;
+		let session: ContentRemeasureSession;
+		let visible: boolean;
+		let contentRoot: Node | null;
+		let fontSet: ReturnType<typeof makeFontSet>;
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+			map = { stub: true } as unknown as MindMap;
+			visible = true;
+			contentRoot = { root: true } as unknown as Node;
+			fontSet = makeFontSet();
+			engine.resolveNodesByDoms.mockReset();
+			engine.findNodesByContentProducts.mockReset();
+			engine.findNodesByContentProducts.mockReturnValue([]);
+			engine.refreshNodesCustomContent.mockReset();
+			engine.isNodeCollapsed.mockReset();
+			platform.repairUnsettledMath.mockReset();
+			platform.clearUnsettledMath.mockReset();
+			platform.pruneUnsettledMathOwnedBy.mockReset();
+			session = new ContentRemeasureSession(
+				{
+					getMindMap: () => map,
+					register: () => {},
+					isVisible: () => visible,
+					getContentRoot: () => contentRoot,
+				},
+				() => fontSet.fonts,
+			);
+		});
+
+		afterEach(() => {
+			session.dispose();
+			vi.useRealTimers();
+			vi.restoreAllMocks();
+		});
+
+		it('渲染轮次结束：修复（带画布根）与 deferred 重试各一次（两条链路互不吞没）', () => {
+			engine.resolveNodesByDoms.mockReturnValue([null]);
+			engine.findNodesByContentProducts.mockReturnValue([]);
+			session.schedule({} as HTMLElement);
+			vi.advanceTimersByTime(0); // 全落空 → 暂存（渲染窗口 K104）
+
+			platform.repairUnsettledMath.mockClear();
+			const n1 = node('n1');
+			engine.resolveNodesByDoms.mockReturnValue([n1]);
+			session.retryDeferred();
+
+			expect(platform.repairUnsettledMath).toHaveBeenCalledTimes(1);
+			expect(platform.repairUnsettledMath).toHaveBeenCalledWith(contentRoot);
+			expect(engine.refreshNodesCustomContent).toHaveBeenCalledWith(map, [n1]);
+		});
+
+		it('无 deferred 暂存时同样修复（修复与 deferred 状态无关，早退不得吞没）', () => {
+			session.retryDeferred();
+
+			expect(platform.repairUnsettledMath).toHaveBeenCalledTimes(1);
+			expect(platform.repairUnsettledMath).toHaveBeenCalledWith(contentRoot);
+		});
+
+		it('字体批次就绪：修复一次（与已同步节点的再同步同批）', () => {
+			const n1 = node('n1');
+			engine.resolveNodesByDoms.mockReturnValue([n1]);
+			session.schedule({} as HTMLElement);
+			vi.advanceTimersByTime(0);
+			platform.repairUnsettledMath.mockClear();
+
+			expect(platform.repairUnsettledMath).not.toHaveBeenCalled();
+
+			fontSet.fire();
+
+			expect(platform.repairUnsettledMath).toHaveBeenCalledTimes(1);
+			expect(platform.repairUnsettledMath).toHaveBeenCalledWith(contentRoot);
+		});
+
+		it('隐藏态同样触发（修复刻意不做可见性守卫——下游守卫负责量测纪律）', () => {
+			visible = false;
+			session.retryDeferred();
+			expect(platform.repairUnsettledMath).toHaveBeenCalledTimes(1);
+			expect(platform.repairUnsettledMath).toHaveBeenCalledWith(contentRoot);
+
+			// 关键回归（verify:visual embed 探针二分抓出的形态）：repair 不得借
+			// `wasHidden` 置脏——否则可见后会凭空触发一次症状重测（重建 → 重排）
+			visible = true;
+			session.syncVisibility();
+			vi.advanceTimersByTime(1);
+			expect(engine.findNodesByContentProducts).not.toHaveBeenCalled();
+			expect(engine.refreshNodesCustomContent).not.toHaveBeenCalled();
+		});
+
+		it('画布根缺失（引擎未建）：静默跳过、不抛错、不误报', () => {
+			contentRoot = null;
+			expect(() => session.retryDeferred()).not.toThrow();
+
+			expect(platform.repairUnsettledMath).not.toHaveBeenCalled();
+		});
+
+		it('resetNodes 不动登记面（首帧前误清高危）/ forgetEngine 按引擎身份清 / dispose 按画布根全清', () => {
+			// 关键回归（2026-10-14 实机定案）：resetNodes 在「新引擎就绪、首帧
+			// 渲染之前」被调用，此刻新引擎由预测量构建的 holder **本体从不挂载**
+			// （vendor 补丁 5 A2）——任何按 DOM 连接状态的清理都会把它们误删，
+			// 字面从此无人修（实机：500 节点图视口外 76 段永久字面）。登记面
+			// 只属于「引擎已销毁」（forgetEngine）与「视图已卸载」（dispose）。
+			const engineA = { engine: 'A' };
+			session.resetNodes();
+			expect(platform.pruneUnsettledMathOwnedBy).not.toHaveBeenCalled();
+			expect(platform.clearUnsettledMath).not.toHaveBeenCalled();
+
+			// 引擎销毁：按**实例身份**精确清（参数即该实例；多视图/嵌入并存
+			// 时不得触碰其他引擎的条目）
+			session.forgetEngine(engineA);
+			expect(platform.pruneUnsettledMathOwnedBy).toHaveBeenCalledTimes(1);
+			expect(platform.pruneUnsettledMathOwnedBy).toHaveBeenCalledWith(
+				engineA,
+			);
+
+			// null（不应出现）静默跳过：不误清
+			session.forgetEngine(null);
+			expect(platform.pruneUnsettledMathOwnedBy).toHaveBeenCalledTimes(1);
+
+			// 视图销毁清**画布根内**的段（root 外的残留由紧随的引擎销毁按归属清）
+			session.dispose();
+			expect(platform.clearUnsettledMath).toHaveBeenCalledTimes(1);
+			expect(platform.clearUnsettledMath).toHaveBeenCalledWith(contentRoot);
+
+			// 根缺失时幂等且无副作用（调用次数不再增加）
+			contentRoot = null;
+			expect(() => session.dispose()).not.toThrow();
+			expect(platform.clearUnsettledMath).toHaveBeenCalledTimes(1);
+		});
 	});
 });

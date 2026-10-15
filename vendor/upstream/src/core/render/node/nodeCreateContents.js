@@ -567,6 +567,14 @@ const measureContentSizeCache = new Map()
 function measureCacheGet(key) {
   const hit = measureContentSizeCache.get(key)
   if (hit) {
+    // 0×0 是**无效条目**（见 measureCachePut 的守卫说明）：视同未命中并就地
+    // 剔除，本次真实测量会把正确尺寸写回——已固化的存量坏缓存由此自愈
+    //（2026-10-13 实机复现：隐藏 leaf 里重测后数学节点 foreignObject 恒 0×0，
+    // 连线收束成一点，reRender/重开文件都无法恢复，正是命中了 0 条目）
+    if (!(hit.width > 0) || !(hit.height > 0)) {
+      measureContentSizeCache.delete(key)
+      return undefined
+    }
     // LRU 提升：删后重插（Map 迭代顺序 = 插入顺序）
     measureContentSizeCache.delete(key)
     measureContentSizeCache.set(key, hit)
@@ -574,6 +582,16 @@ function measureCacheGet(key) {
   return hit
 }
 function measureCachePut(key, size) {
+  // 0×0 = 测量环境异常，**绝不能入缓存**：测量容器挂在 mindMap.el 内部
+  // （见 measureCustomNodeContentSize），leaf 切后台（display:none）时
+  // getBoundingClientRect 恒为 0；而缓存键是内容 outerHTML——模块级、跨引擎
+  // 实例存活。0 一旦以某键写入，此后每次重建（含 reRender / 重开文件）都命中
+  // 0，foreignObject 与布局永久 0×0（2026-10-13 实机复现：数学节点全部
+  // w=0/h=0，连线收束、节点叠团）。自绘内容根元素自带 padding，合法尺寸
+  // 不可能为 0，故此守卫不吞任何正常值
+  if (!(size.width > 0) || !(size.height > 0)) {
+    return
+  }
   if (measureContentSizeCache.has(key)) {
     measureContentSizeCache.delete(key)
   } else if (measureContentSizeCache.size >= MEASURE_CACHE_MAX) {

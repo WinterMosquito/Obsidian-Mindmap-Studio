@@ -8,7 +8,7 @@
 见「补丁清单」节）：vendor 产物 = fix.3 源码（`vendor/upstream/`）+ `vendor/patches/`，
 经 `npm run build:vendor` 重打包。
 
-`vendor/simple-mind-map.cjs`（411,297 B）= **fix.3 源码 + 自有补丁的按需 tree-shake 重打包**（2026-09-25 起）：
+`vendor/simple-mind-map.cjs`（413,558 B，2026-10-13 补丁 4 修订后）= **fix.3 源码 + 自有补丁的按需 tree-shake 重打包**（2026-09-25 起）：
 
 - 源码仓：`vendor/upstream/`（fix.3 原样入仓：`src/` 74 文件 + `index.js` + `full.js` + `package.json`）
   ＋ `vendor/patches/`（引擎侧自有补丁，见「补丁清单」节）；
@@ -17,8 +17,24 @@
 - 入口仅导出 8 个符号：`MindMap, DoExport, Select, TouchEvent, AssociativeLine, KeyboardNavigation, Search, Drag`；
 - 打包命令（脚本内固化）：`esbuild entry.mjs --bundle --format=cjs --minify --target=es2021 --legal-comments=inline`（entry 从
   `./vendor/upstream/` 与 `./vendor/patches/` 以本地相对路径具名/副作用导入）；
-- **打包面依赖**（须已安装，缺失时 esbuild 直接报解析错误；不改 package.json）：`simple-mind-map@0.14.0-fix.3`
-  的依赖树——`npm install simple-mind-map@0.14.0-fix.3 --no-save` 即可满足；
+- **打包面依赖**（须已安装，缺失时 esbuild 直接报解析错误；**不改 package.json**）：源码虽取自
+  `vendor/upstream/`，但 `import` 的**裸包名**（如 `@svgdotjs/svg.js`）仍由 esbuild 从
+  `node_modules/` 解析——版本由 `vendor/upstream/package.json` 声明（`@svgdotjs/svg.js` 为
+  **精确版本** `3.2.0`，其余多为 `^` 区间），安装方式仍是
+  `npm install simple-mind-map@0.14.0-fix.3 --no-save`（或按该文件逐包装）。
+  ⚠ 因走 `--no-save`，根 `package-lock.json` **不含**这些包 ⇒ 只有**直接**依赖的版本被声明面
+  锁住，`^` 区间内的**传递依赖仍可能漂移**——重打包后务必跑
+  `node scripts/build-vendor.mjs --check` 核对字节（2026-10-15 实测：本机 `--check` 通过，
+  与「产物字节级身份」登记值一致）；
+- **2026-10-15 登记｜产物内的第三方增量（svg.js 形态注册表）**：本批重打包（补丁 4 修订）产物
+  与 0.2.1 产物差 6 行，除补丁 4 的两处 minified 改动外，还含一处**未登记的第三方库变化**——
+  `@svgdotjs/svg.js` 的 morphable 类型注册表由 `Lt`（旧一份打包所用 svg.js 的
+  List/Array 包装类）变为 `Ct`（`PathArray`）。它**不是本仓库的补丁**，而是重打包时从
+  `node_modules/` 取到的 svg.js 构建产物与 2026-10-13 那次打包所用版本不同所致；同刻
+  `--check` 通过 ⇒ 当前产物与当前依赖树自洽（可复现的是「现在这一份」）。影响面：
+  morphable 类型注册表只参与 svg.js 的 morph/动画类型判定，本插件只做静态图形、不使用该
+  能力，屏上与导出均无行为变化——但它意味着**换机或重装依赖后 sha256 护栏可能变红**；
+  要重建同一字节，须先按上一条把 svg.js 装到与登记产物一致的那一版；
 - **已验证**：按此配方从 fix.3 重建的产物与 2026-09 前的旧 vendor 产物在「字符串字面量集合」
   与「数字字面量袋」双锚点校验下完全一致（1018/1018 字符串零增减、数字仅新增许可注释年份），
   差异仅 `--legal-comments=inline` 内联的许可注释本身。旧产物与重建产物的历史差异（三处打包
@@ -29,8 +45,8 @@
   （svg.js 横幅，`main.js` 同步保留）——逐库声明义务由 `vendor/THIRD-PARTY-NOTICES.md`
   承担（主载体），内联注释仅为补充佐证；其 §3 已按实测口径更新。
 
-**产物字节级身份**（2026-10-05 性能补丁 ×11 后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
-`07dc23d0ed9ffd231f516c21c8eb6201673d5331d787a32e0590d545381f69b2`（413,469 B），
+**产物字节级身份**（2026-10-13 测量缓存 0×0 防写/自愈守卫后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
+`9f0074885714bdf5737020de7a8c0ec870bd87761244b5356a84ca4610e8083e`（413,558 B），
 由 `tests/vendor-contract.test.ts` 断言。**重新打包后必须同步更新此处与该测试里的常量**——
 它是最外层护栏：其余契约断言（导出类 / 原型方法 / 命令名 / 事件名令牌）都只钉在
 **API 面**上，对字节改动无感。（缺口来源：本文件第 22 行要求「不可手工编辑」，
@@ -105,6 +121,20 @@ NaN 对齐全 JSON 语义），替换两处快照生成（`MindMapNode.update` �
 **实测收益（`BENCH_TWICE=1` 同页销毁重建通道）**：单次打开 1276ms ⇒ **第二次打开 ≈810ms
 （-37%；容量 200000 对照 758ms/-41%）**。首次打开不变（缓存冷）。**容量教训**：4096
 容量下「顺序重扫 + 淘汰」把命中率击穿，收益仅 20%（省 261ms）——容量须 ≥ 工作集。
+
+**2026-10-13 修订｜0×0 防写 + 命中 0 自愈**（实机 bug 定位，用户截图：数学节点连线收束
+成一点、节点叠团）：测量容器 `position:fixed` 挂在 `mindMap.el` **内部**——Obsidian 切
+leaf 时非激活叶是 `display:none`，此刻任何一次测量（字体 `loadingdone` 钩子是**进程级**
+的，后台视图也会被重测）`getBoundingClientRect` 恒为 **0×0**，而 `fontsReady=true` 时
+**照写缓存**；缓存键 = 内容 `outerHTML`（模块级、跨引擎实例/跨会话存活；**键里不含任何
+字体代际/epoch 成分**——字体只作为**写入门控**：`document.fonts.status !== 'loaded'` 时不写入
+缓存，见实现处的 `fontsReady`；2026-10-15 订正：此前本行写作「+ 字体 epoch（会话内稳定）」，
+与实现不符）。含数学的节点此后经 `getCachedMath` **同步放产物**重建 → outerHTML 与
+坏键逐字节相同 → **永远命中 0×0**（foreignObject 0×0、布局 w=0/h=0、连线收束；
+`reRender`/重开文件都无法自愈，实机复现并证实）。守卫两处：`measureCachePut` 拒写
+`!(w>0)||!(h>0)`（自绘内容根元素自带 padding，合法尺寸不可能为 0）；`measureCacheGet`
+命中 0 值条目**视同未命中并就地剔除**（存量坏缓存自愈，下次真实测量写回正确值）。
+预测量路径（补丁 5）经同一 `measureCachePut` 写入，守卫自动覆盖。
 
 **补丁 5｜`upstream/src/core/render/preMeasure.js`（新增）+ `index.js` + `MindMapNode.js` + `nodeCreateContents.js` · 首帧前预测量 + 元素复用 + 门禁实例化**
 ① **预测量**：`new MindMap` 之后、首帧 `setTimeout(0)` 前，经
@@ -434,5 +464,6 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×7 | 补丁 7（拖宽监听器惰性注册 + 会话解绑）：5000 自绘节点 15000 个监听器（构造期注册、全库无解绑）→ 常态零全局监听；**A/B/B/A 交替对照：5000 节点打开 1327→1153ms（-174ms / -13%）**——该成本此前被 K77 误归入「引擎固有」；顺带修复「节点实例被 window 永久持有」的潜伏泄漏与每次 mousemove 10000 次空调用；sha256/字节数同步（`1e335f8f…` / 410,692 B） |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×9 | 补丁 8/9（布局平移字段快路径 + 延迟物化）：「固有」段第二战——`adjustTopValue` 实测 **293 万次子树平移**（节点数 584 倍）→ 记账 + O(n) 物化（几何逐字节等价）；5000 节点 **1161→1091ms（-6%）**、10000 节点 **2255→1741ms**；新增 `count-layout` 计数探针；sha256/字节数同步（`ce3bbadd…` / 411,297 B） |
 | 2026-10-05 | 0.14.0-fix.3 + 补丁 ×11 | 补丁 11（**子树纵向范围剪枝**）：先证伪了前一版方案（`transform()` memo，97.7% 命中却零收益，已回退并单列「已否决的假设」），据成本分解（遍历记账占 ~60%）改走「少访问节点」路线——布局期自底向上记账子树纵向范围（渲染期只读、视口路径不重算）+ 渲染递归整棵子树跳过（纵向可剪、横向不可剪）+ 在屏集合 `attachedNodes` 补做摘除核对（因 `removeSelf` 不置空 group）+ `setNodeData` 位置写入失效钩子（并修正「有自定义坐标即整体禁用」的过严设计）。实机 5002 节点真实形态基准：同步渲染遍历 **34–38ms → 2–3ms（-91%）**、折叠 **173ms → 66ms（-62%）**、访问节点数 5002 → 110（-97.8%）；正确性以「应见/实渲 uid 集合逐一比对」验证 **缺失 0 / 多余 0**；新增 `perfrender` 探针（填补 harness 结构性盲区：非性能模式下 `checkIsInClient` 被 `!openPerformance` 短路，既有渲染类变体测不到该项）；新增 `scripts/gen-perf-fixture.mjs` 真实形态基准生成器；诊断常驻 `__PRUNE_STATS__`；sha256/字节数同步（`07dc23d0…` / 413,469 B） |
+| 2026-10-13 | 0.14.0-fix.3 + 补丁 ×11 | 补丁 4 修订（**测量缓存 0×0 防写 + 命中 0 自愈**）：测量容器挂在 `mindMap.el` 内，leaf 切后台（`display:none`）时测量恒 0×0 且 `fontsReady=true` 照写缓存——键（内容 outerHTML，模块级跨会话存活）被 0 污染后，数学节点每次重建（`getCachedMath` 同步放产物 → outerHTML 与坏键相同）永远命中 0，foreignObject/布局 0×0、连线收束成一点，`reRender`/重开均无法自愈（实机复现 + 截图）。守卫：`measureCachePut` 拒写 0（自绘内容根元素自带 padding，合法尺寸不可能为 0）；`measureCacheGet` 命中 0 视同未命中并剔除（存量坏缓存自愈）。补丁 5 预测量经同一 put 写入，自动覆盖；诊断计数不变。sha256/字节数同步（`9f007488…` / 413,558 B） |
 | 2026-10-05 | 0.14.0-fix.3 + 补丁 ×10 | 补丁 10（视口可见集合未变时短路）：性能模式 `view_data_change` 无条件触发的全树分片重绘，实机 5001 节点 **70.8ms/次 → 短路后 0.6ms**（仅签名计算，零渲染事件）；移除监听对照 **0 次**（收益上限）；可见集合真变化时仍正常重绘；签名与 `checkIsInClient` 同式 + transform 提出循环（0.6ms vs 朴素 12.1ms）；sha256/字节数同步（`f51a257a…` / 411,736 B） |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×9 | 许可声明口径修正（**无产物变更，sha256 不变**）：`THIRD-PARTY-NOTICES.md` §3 与本文档的「内联注释覆盖」表述改为**实测口径**——`--legal-comments=inline` 实际仅保留 **1 段**（svg.js 横幅，`main.js` 同），逐库声明义务由 `THIRD-PARTY-NOTICES.md` 承担（主载体）、内联注释仅为补充佐证；`.github/workflows/release.yml` 注释同步（原「0 命中」为 2026-09-17 审计时点口径）并移除指向已删审计文档的悬空引用 |

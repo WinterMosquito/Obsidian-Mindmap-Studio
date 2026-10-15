@@ -20,6 +20,7 @@ import {
 	type SplitLinkPlan,
 } from '../markdown/links-split';
 import { ensureUniqueUids } from '../markdown/markdown';
+import { isNodeTextEdited } from '../domain/md-meta';
 import { insertChildNodeWithData } from './view-common';
 import { t, tf } from '../core/i18n';
 import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
@@ -139,8 +140,8 @@ export function autoSplitNode(
 	const data = node.getData() as MdNodeData;
 	if (
 		!options.force &&
-		(typeof data.mdDerivedText !== 'string' ||
-			data.text === data.mdDerivedText)
+		// 未编辑（含「无解析快照」的新建节点）不拆：判据与回写侧同一实现
+		!isNodeTextEdited(data.text, data.mdDerivedText)
 	) {
 		return 0;
 	}

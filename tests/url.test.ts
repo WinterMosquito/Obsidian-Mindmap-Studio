@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	absolutePathFromFileUrl,
+	encodedNameForm,
 	fileUrlFromAbsolutePath,
 	isAppResourceUrl,
 	isExternalImageRef,
@@ -611,6 +612,30 @@ describe('tryDecodeUri', () => {
  * 一份——三份逐字同构。这里把「相同则去重」与「解码失败只留原样」两条口径
  * 直接锁定，避免再次散落。
  */
+/**
+ * 编码侧唯一构造点，**不可编码时返回 `null`**（2026-10-15 收口）。
+ *
+ * 为什么值一条直测：`encodeURIComponent` 对孤立代理对抛 `URIError`，而 NTFS
+ * 允许此类文件名；此前只有索引键侧包了 `try`，比较侧（links-tree 末段比较、
+ * engine-controller 引用预检 needle）裸调用 ⇒「重命名 / 删除含该名文件」会在
+ * 引用更新**中途抛错**。现在失败由 `null` 表达，调用方按「该形态不存在」处理。
+ */
+describe('encodedNameForm', () => {
+	it('常规名：与 encodeURIComponent 同值（唯一构造点不改变既有形态）', () => {
+		expect(encodedNameForm('笔记 名.png')).toBe(
+			encodeURIComponent('笔记 名.png'),
+		);
+		expect(encodedNameForm('a/b.png')).toBe('a%2Fb.png');
+		expect(encodedNameForm('')).toBe('');
+	});
+
+	it('不可编码（孤立代理对）返回 null，**绝不抛**', () => {
+		expect(encodedNameForm('bad\uD800name.png')).toBeNull();
+		expect(encodedNameForm('\uDFFF')).toBeNull();
+		expect(encodedNameForm('\uD83D\uDE00')).toBe('%F0%9F%98%80');
+	});
+});
+
 describe('urlComparisonForms', () => {
 	it.each([
 		{

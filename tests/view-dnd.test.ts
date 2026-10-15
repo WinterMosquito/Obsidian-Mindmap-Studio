@@ -114,13 +114,15 @@ vi.mock('../src/engine/mindmap', () => ({
 
 // 节点挂载动作（图片/附件/文档双链）以桩替换：本文件只验证「分发到哪个函数、
 // 入参是什么」，三者内部写数据的形态由 view-node-actions 自己的用例覆盖。
-// `newDocLinkFor` 用**真实现**：拖入断言链依赖官方「New link format」的换算
-// （默认最短路径），桩掉反而掩盖行为。
 vi.mock('../src/features/view-node-actions', async (importOriginal) => {
 	const actual =
 		await importOriginal<typeof import('../src/features/view-node-actions')>();
 	return {
-		newDocLinkFor: actual.newDocLinkFor,
+		// 载荷与提示的计划用**真实现**：本文件要验「形态跟随官方设置」的真实分支
+		// （wiki / md 两形态），桩掉就等于不测；计划里载荷与提示同源，故拖入提示
+		// 也随设置变化（2026-10-15）
+		planDocLink: actual.planDocLink,
+		planAttachmentLink: actual.planAttachmentLink,
 		applyNodeImage: (
 			view: MindMapViewContext,
 			node: MindMapNode,
@@ -200,14 +202,24 @@ function imageNodeCreated(lang: Language, name: string): string {
 	return `${t(lang, 'common.imageNodeCreated')}${name}`;
 }
 
-/** `已将节点链接到` + ` [[名]]` */
-function linkedTo(lang: Language, name: string): string {
-	return `${t(lang, 'common.linkedTo')} [[${name}]]`;
+/** `已将节点链接到` + 空格 + **实际写法**（`[[名]]` / `![[名]]` / `[名](路径.md)`） */
+function linkedToForm(lang: Language, form: string): string {
+	return `${t(lang, 'common.linkedTo')} ${form}`;
 }
 
-/** `已创建节点并链接到` + ` [[名]]` */
+/** `已创建节点并链接到` + 空格 + **实际写法** */
+function createdAndLinkedForm(lang: Language, form: string): string {
+	return `${t(lang, 'common.nodeCreatedAndLinked')} ${form}`;
+}
+
+/** `已将节点链接到` + ` [[名]]`（双链形态的常见分支） */
+function linkedTo(lang: Language, name: string): string {
+	return linkedToForm(lang, `[[${name}]]`);
+}
+
+/** `已创建节点并链接到` + ` [[名]]`（双链形态的常见分支） */
 function createdAndLinked(lang: Language, name: string): string {
-	return `${t(lang, 'common.nodeCreatedAndLinked')} [[${name}]]`;
+	return createdAndLinkedForm(lang, `[[${name}]]`);
 }
 
 /** `正在导入` + 空格 + 数量 + 空格 + `个文件到仓库中…` */
@@ -382,7 +394,13 @@ interface MutableView {
 }
 
 function makeHarness(
-	options: { canvas?: boolean; lang?: Language; file?: TFile | null } = {},
+	options: {
+		canvas?: boolean;
+		lang?: Language;
+		file?: TFile | null;
+		/** 官方库级偏好（`vault.getConfig`）：缺省空 = 各键未设 → 一律按官方默认 */
+		vaultConfig?: Record<string, unknown>;
+	} = {},
 ) {
 	const innerChild = {};
 	const canvas = makeCanvas(innerChild);
@@ -398,8 +416,13 @@ function makeHarness(
 	const getResourcePath = vi.fn<(file: TFile) => string>(
 		(file) => `app://vault/${file.path}`,
 	);
+	// `vault.getConfig` 是内部接口（读取收口在 platform/vault-prefs.readVaultConfig，
+	// 读失败 / 缺键一律按官方默认）：桩出来才能测「写入形态跟随官方偏好」的两分支
+	const getConfig = vi.fn<(key: string) => unknown>(
+		(key) => options.vaultConfig?.[key],
+	);
 	const mindMap = { execCommand } as unknown as MindMap;
-	const app = { vault: { getResourcePath } } as unknown as App;
+	const app = { vault: { getResourcePath, getConfig } } as unknown as App;
 	const mutable: MutableView = {
 		mindMap,
 		engineEvents: binder as unknown as EventBinder,
@@ -795,7 +818,14 @@ describe('库内文件拖入：分发分支', () => {
 				node,
 				activeFile,
 			);
-			expect(h.noticeCalls, extension).toEqual([linkedTo(ZH, name)]);
+			// 提示按**实际写法**：可嵌入附件（PDF/音视频）写嵌入语法 `![[名]]`，
+			// 其余写 `[[名]]`（2026-10-15 起与文件内容一致）
+			expect(h.noticeCalls, extension).toEqual([
+				linkedToForm(
+					ZH,
+					`${isEmbeddableAttachmentExtension(extension) ? '!' : ''}[[${name}]]`,
+				),
+			]);
 			expect(active.execCommand, extension).not.toHaveBeenCalled();
 			expect(h.saveImageToVault, extension).not.toHaveBeenCalled();
 
@@ -839,7 +869,13 @@ describe('库内文件拖入：分发分支', () => {
 				},
 			);
 			expect(h.applyNodeAttachment, extension).toHaveBeenCalledTimes(1);
-			expect(h.noticeCalls, extension).toEqual([createdAndLinked(ZH, name)]);
+			// 提示同上：按实际写法（可嵌入附件带 `!`）
+			expect(h.noticeCalls, extension).toEqual([
+				createdAndLinkedForm(
+					ZH,
+					`${isEmbeddableAttachmentExtension(extension) ? '!' : ''}[[${name}]]`,
+				),
+			]);
 			// 零入库：附件是库内既有文件，不复制
 			expect(h.saveImageToVault, extension).not.toHaveBeenCalled();
 		}
@@ -994,6 +1030,53 @@ describe('库内文件拖入：分发分支', () => {
 			expect(h.applyDocWikiLink, name).toHaveBeenCalledTimes(1);
 			expect(h.noticeCalls, name).toEqual([createdAndLinked(ZH, target)]);
 		}
+	});
+
+	it('库内 .md 未选中拖入：形态跟随官方「使用 [[Wikilinks]]」——关闭时写 md 链接形态（2026-10-15 修复）', async () => {
+		resetHarnessMocks();
+		const target = '笔记';
+		const name = `${target}.md`;
+		const file = fakeTFile({
+			extension: 'md',
+			name,
+			basename: target,
+			path: name,
+		});
+		// 官方关闭 Wikilinks：文档拖入应写 `[显示名](路径.md)`（引擎 hyperlink 通道）。
+		// 此前「未选中 / 文件夹拖入」两路各自硬编码 wikilink、不查设置，与「选中拖入」
+		// 跟随设置的行为分叉（违反硬规则 5）——载荷与提示已收口到 planDocLink
+		const h2 = makeHarness({ vaultConfig: { useMarkdownLinks: true } });
+		setupDragAndDrop(h2.view);
+		const rootNode = fakeNode();
+		h.resolveDroppedFile.mockReturnValue(file);
+		h.getActiveNode.mockReturnValue(null);
+		h.getRenderRoot.mockReturnValue(rootNode);
+
+		await fireDrop(
+			h2.binder,
+			makeDataTransfer({ files: [fakeFile(name, 'text/markdown')] }),
+		);
+
+		expect(h2.execCommand).toHaveBeenCalledWith(
+			INSERT_CHILD_NODE,
+			false,
+			[rootNode],
+			{
+				text: target,
+				hyperlink: `${target}.md`,
+				mdLinkStyle: 'md',
+				mdLinkText: target,
+				hyperlinkTitle: `${target}.md`,
+				// 行级元数据补齐：原文 = 保存将写出的那一行（md 链接形态）
+				mdRaw: `[${target}](${target}.md)`,
+				mdDerivedText: target,
+				isActive: false,
+			},
+		);
+		// 提示同源：按实际写法显示 `[笔记](笔记.md)`（不是 `[[笔记]]`）
+		expect(h.noticeCalls).toEqual([
+			createdAndLinkedForm(ZH, `[${target}](${target}.md)`),
+		]);
 	});
 
 	it('多文件载荷但只解析出一个库内文件：只分发一次，不逐文件重复处理', async () => {

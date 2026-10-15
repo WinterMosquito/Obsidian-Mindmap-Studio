@@ -58,6 +58,31 @@ export function urlComparisonForms(url: string): string[] {
 	return forms;
 }
 
+/**
+ * 文件名的 **URL 编码形态**（`encodeURIComponent`）：**编码侧的唯一构造点**。
+ *
+ * 与解码侧（`tryDecodeUri` / `urlComparisonForms`）同属 K28「地址形态判断只经
+ * 本模块」：同一构造此前在 `links/file-lookup`（索引键）、`links/links-tree`
+ * （末段比较）、`services/engine-controller`（引用预检 needle）各写一遍，任一处
+ * 换口径（改用 `encodeURI`、增删形态）其余两处不跟随——现象是「拖入能识别、
+ * 手写解析不到」这类静默失配。
+ *
+ * ⚠ **不可编码时返回 `null`**（2026-10-15 收口）：`encodeURIComponent` 对**孤立
+ * 代理对**等非法序列抛 `URIError`，而 NTFS 允许此类文件名——此前只有索引键侧
+ * （file-lookup）包了 `try`，比较侧（links-tree 的末段比较、engine-controller 的
+ * 引用预检 needle）是**裸调用**：对含该文件名的文件做重命名 / 删除，会在引用更新
+ * **中途抛错**（旧注释写「比较场景不会抛」，与实现不符）。现在「能不能编码」只由
+ * 本函数回答，三处调用方一律按 `null` = **该形态不存在**处理——这不是第二份判定，
+ * 而是同一份判定的**唯一出口**。
+ */
+export function encodedNameForm(name: string): string | null {
+	try {
+		return encodeURIComponent(name);
+	} catch {
+		return null;
+	}
+}
+
 export function isHttpUrl(value: string): boolean {
 	return value.startsWith('http://') || value.startsWith('https://');
 }

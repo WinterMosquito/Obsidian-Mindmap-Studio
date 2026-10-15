@@ -319,8 +319,6 @@ function isImageEmbedTarget(target: string): boolean {
 	return isRenderableImageExtension(name.slice(dot + 1));
 }
 
-
-
 /**
  * 解析可写的**链接通道**字段（三通道 + 嵌入标记）。
  *
@@ -640,7 +638,7 @@ export function buildInlineData(raw: string): InlineData {
  * - 参考式 `[label]:` 后必须是合法 destination（`<…>` 或非空白串，与
  *   CommonMark link reference definition 一致），可选尾部 title（"…"/'…'/(…)）。
  *   `[X]:` 后无 destination 的普通叙述不算（不豁免）。
- * export 为测试白盒钩子。
+ * 生产消费方：links-split 的参考式识别（同一入口，勿在调用方另写一份判定）。
  */
 const LINK_REF_DEF_RE = /^\[([^\]\n]+)\]:[ \t]*(.*)$/;
 
@@ -695,7 +693,7 @@ function buildLineInlineData(raw: string): InlineData {
  *
  * 逐字保留原始换行形态（CRLF 不归一：frontmatter 要原样回写）。
  * 遇到 body 开头又有 ---（用户误加第二次 frontmatter）时只取第一个并 console.warn。
- * export 为测试白盒钩子。
+ * 生产消费方：parseMdOutline（下方）与 document-service 的外部改动检测（同一入口）。
  */
 export function splitFrontmatter(content: string): {
 	body: string;
@@ -792,7 +790,23 @@ function classifyLines(body: string): ParsedLine[] {
 		length: number,
 	): boolean => {
 		const run = char === '~' ? '~' : '`';
-		return new RegExp(`${run}{${length},}[ \\t]*$`).test(restAfterMarker);
+		// 纯字符串扫描，等价于 `${run}{${length},}[ \t]*$`：run 只有两个取值、
+		// length 取值域很小，而本函数**每个围栏行**都会调用——为它每行新建并
+		// 编译一个正则不值得。先剥行尾空白，再数行尾连续同字符的个数
+		let end = restAfterMarker.length;
+		while (end > 0) {
+			const code = restAfterMarker.charCodeAt(end - 1);
+			if (code !== 0x20 /* 空格 */ && code !== 0x09 /* 制表符 */) {
+				break;
+			}
+			end -= 1;
+		}
+		let count = 0;
+		while (end > 0 && restAfterMarker[end - 1] === run) {
+			count += 1;
+			end -= 1;
+		}
+		return count >= length;
 	};
 
 	const pushRaw = (raw: string): void => {
@@ -1105,4 +1119,41 @@ export function parseMdOutline(
 	}
 	flushPlain();
 	return { frontmatter, tree: root };
+}
+
+/**
+ * 解析**剪贴板片段**为若干同级子树（粘贴入口专用）。
+ *
+ * 与整篇解析（`parseMdOutline`）的差异只有**形态归一**——粘进来的是「新
+ * 节点」，不该带源文档的记号语义（2026-10-13 用户裁决）：
+ * - 标题 `#`~`######`（不论几个 `#`）→ **无序节点**，层级改由**缩进**表达
+ *   （`mdType`/`mdLevel` 一并剥掉：留着会让下一次回写又冒出 `#`）；
+ * - 无序标记 `*` / `+`、以及标题/段落（无标记）→ 归一为 `-`；
+ * - **有序项 `1.` 保留**——编号由序列化侧按层重排（与文档回写同一规则）。
+ *
+ * 解析本身（frontmatter 剥除、行内 token、`mdRaw` 逐字原文）完全复用
+ * `parseMdOutline`：层级规则写第二份必然与文档往返漂移（硬规则 5）。
+ *
+ * @returns 片段顶层节点（可直接作为 `INSERT_MULTI_CHILD_NODE` 的 childList）
+ */
+export function parseMdOutlineFragment(text: string): MindMapTreeNode[] {
+	const nodes = parseMdOutline(text, '').tree.children;
+	// 显式栈而非递归：剪贴板文本的缩进深度由外部内容决定，
+	// 递归实现在超深层级上会栈溢出（与 md-serialize 的 walker 同口径）
+	const stack = [...nodes];
+	while (stack.length > 0) {
+		const node = stack.pop()!;
+		const data = node.data as MdNodeData;
+		if (data.mdType === 'heading' || data.mdType === 'plain') {
+			delete data.mdType;
+			delete data.mdLevel;
+		}
+		if (data.mdMarker !== 'ordered') {
+			data.mdMarker = '-';
+		}
+		if (node.children) {
+			stack.push(...node.children);
+		}
+	}
+	return nodes;
 }

@@ -54,8 +54,59 @@ const mocks = vi.hoisted(() => {
 		removeReferencesOnDelete: vi.fn(),
 		// data_change 通道的命令历史上限同步（会话内长大的图收敛到 30MB 预算）
 		syncHistoryLimit: vi.fn(),
+		// —— 视口读写面（防腐层，2026-10-15 收口）——
+		// 桩按**真实语义**转发给假引擎的 view.getTransformData / setTransformData；
+		// 签名口径与 engine/mindmap.viewStateSignature 一致——桩若自己改写口径，
+		// 「签名幂等」用例就不再测产品行为了。
+		applyViewportState: (mindMap: unknown, state: unknown): void => {
+			(
+				mindMap as { view?: { setTransformData?: (s: unknown) => void } } | null
+			)?.view?.setTransformData?.(state);
+		},
+		getViewportSignature: (mindMap: unknown): string | null => {
+			// 读取异常吞在本层并留痕（与真实实现同款）→「无法判定」
+			try {
+				return viewStateSignatureOf(viewportStateOf(mindMap)?.state);
+			} catch (error) {
+				console.warn('读取视口状态失败', error);
+				return null;
+			}
+		},
+		readViewportState: (mindMap: unknown): unknown => {
+			// 同上：引擎未就绪/拒绝时回 null 且留痕，调用方静默跳过（不外抛）
+			try {
+				return viewportStateOf(mindMap);
+			} catch (error) {
+				console.warn('读取视口状态失败', error);
+				return null;
+			}
+		},
+		viewStateSignature: viewStateSignatureOf,
 	};
 });
+
+/** 假引擎的视口状态（`{ transform, state }`）；不可得返回 null */
+function viewportStateOf(mindMap: unknown): { state?: unknown } | null {
+	return (
+		(mindMap as { view?: { getTransformData?: () => { state?: unknown } } } | null)
+			?.view?.getTransformData?.() ?? null
+	);
+}
+
+/** 与 engine/mindmap.viewStateSignature 同口径的签名（桩内不移除该语义） */
+function viewStateSignatureOf(state: unknown): string | null {
+	if (!state || typeof state !== 'object') {
+		return null;
+	}
+	const s = state as { scale?: unknown; x?: unknown; y?: unknown };
+	const scale = Number(s.scale);
+	const x = Number(s.x);
+	const y = Number(s.y);
+	if (!Number.isFinite(scale) || !Number.isFinite(x) || !Number.isFinite(y)) {
+		return null;
+	}
+	return `${scale}|${x}|${y}`;
+}
 
 vi.mock('../src/engine/mindmap', () => mocks);
 // 引用更新入口 = markdown 层的「字段 + 渲染源」双层包装（links-rename）：
@@ -1099,7 +1150,12 @@ describe('EngineController.refresh（引擎重建）', () => {
 describe('EngineController 视口持久化与恢复', () => {
 	it('persistViewport 把引擎视口写入按文件路径的视图状态', () => {
 		const h = readyHarness();
-		const transform = { transform: { x: 3, y: 4, scale: 2 }, state: { b: 2 } };
+		// 视口形状取引擎 `getTransformData()` 的真实形态（hydrate 会按
+		// 「state 对象 + 有限 scale/x/y」校验可用性，见 view-state.isUsableSavedView）
+		const transform = {
+			transform: { x: 3, y: 4, scale: 2 },
+			state: { scale: 2, x: 3, y: 4 },
+		};
 		h.engines[0]!.view.getTransformData.mockReturnValue(transform);
 
 		h.controller.persistViewport();
@@ -1157,7 +1213,11 @@ describe('EngineController 视口持久化与恢复', () => {
 		const h = buildHarness();
 		h.canvas.width = 800;
 		h.canvas.height = 600;
-		const saved = { transform: { x: 9, y: 8, scale: 1.5 }, state: { c: 3 } };
+		// 同上：state 必须含有限 scale/x/y，否则 hydrate 会把该视口剥离
+		const saved = {
+			transform: { x: 9, y: 8, scale: 1.5 },
+			state: { scale: 1.5, x: 9, y: 8 },
+		};
 		h.viewState.hydrate({
 			viewState: { [h.file!.path]: { layout: 'mindMap', view: saved } },
 		});
@@ -1176,7 +1236,11 @@ describe('EngineController 视口持久化与恢复', () => {
 		const h = buildHarness();
 		h.canvas.width = 800;
 		h.canvas.height = 600;
-		const saved = { transform: { x: 9, y: 8, scale: 1.5 }, state: { c: 3 } };
+		// 同上：state 必须含有限 scale/x/y，否则 hydrate 会把该视口剥离
+		const saved = {
+			transform: { x: 9, y: 8, scale: 1.5 },
+			state: { scale: 1.5, x: 9, y: 8 },
+		};
 		h.viewState.hydrate({
 			viewState: { [h.file!.path]: { layout: 'mindMap', view: saved } },
 		});
@@ -1226,7 +1290,11 @@ describe('EngineController 视口持久化与恢复', () => {
 		const h = buildHarness();
 		h.canvas.width = 800;
 		h.canvas.height = 600;
-		const saved = { transform: { x: 9, y: 8, scale: 1.5 }, state: { c: 3 } };
+		// 同上：state 必须含有限 scale/x/y，否则 hydrate 会把该视口剥离
+		const saved = {
+			transform: { x: 9, y: 8, scale: 1.5 },
+			state: { scale: 1.5, x: 9, y: 8 },
+		};
 		h.viewState.hydrate({
 			viewState: { [h.file!.path]: { layout: 'mindMap', view: saved } },
 		});
@@ -1313,13 +1381,20 @@ describe('EngineController 视口持久化与恢复', () => {
 		expect(mocks.fitMindMap).not.toHaveBeenCalled();
 	});
 
-	it('恢复视口抛错时回退 fit 全图（坏视口数据不让内容不可见）', () => {
+	it('引擎拒绝恢复（setTransformData 抛错）时回退 fit 全图', () => {
 		vi.useFakeTimers();
 		const h = buildHarness();
 		h.canvas.width = 800;
 		h.canvas.height = 600;
 		h.viewState.hydrate({
-			viewState: { [h.file!.path]: { view: { transform: { x: 'bad' } } } },
+			viewState: {
+				[h.file!.path]: {
+					view: {
+						transform: { x: 9, y: 8, scale: 1.5 },
+						state: { scale: 1.5, x: 9, y: 8 },
+					},
+				},
+			},
 		});
 		h.controller.initMindMap(makeTree('Root'));
 		const engine = h.engines[0]!;
@@ -1331,6 +1406,30 @@ describe('EngineController 视口持久化与恢复', () => {
 
 		expect(console.error).toHaveBeenCalled();
 		expect(mocks.fitMindMap).toHaveBeenCalledWith(engine);
+	});
+
+	it('畸形视口在 hydrate 处被丢弃：走默认居中，不再每次打开都落 catch 走 fit', () => {
+		vi.useFakeTimers();
+		const h = buildHarness();
+		h.canvas.width = 800;
+		h.canvas.height = 600;
+		// 老数据 / 手改 data.json 的典型坏形态：`state` 缺失（引擎
+		// `Object.keys(viewData.state)` 会抛 TypeError）。丢的是**视口字段**，
+		// 同条目的 layout 照常生效
+		h.viewState.hydrate({
+			viewState: {
+				[h.file!.path]: { layout: 'mindMap', view: { transform: { x: 7 } } },
+			},
+		});
+
+		h.controller.initMindMap(makeTree('Root'));
+		vi.advanceTimersByTime(150);
+
+		const engine = h.engines[0]!;
+		expect(engine.view.setTransformData).not.toHaveBeenCalled();
+		expect(console.error).not.toHaveBeenCalled();
+		expect(mocks.fitMindMap).not.toHaveBeenCalled();
+		expect(mocks.centerContentAtFullScale).toHaveBeenCalledWith(engine);
 	});
 
 	it('默认视口设置抛错时同样回退 fit 全图', () => {

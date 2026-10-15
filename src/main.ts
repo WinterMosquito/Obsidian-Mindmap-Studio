@@ -199,11 +199,7 @@ export default class MindMapStudioPlugin extends Plugin {
 							.setTitle(t(this.settings.language, 'command.createMindMap'))
 							.setIcon('dot-network')
 							.onClick(() => {
-								void createNewMindMap(
-									this.app,
-									this.settings.language,
-									file.path,
-								);
+								void createNewMindMap(this.app, this.settings, file.path);
 							}),
 					);
 				}
@@ -223,10 +219,12 @@ export default class MindMapStudioPlugin extends Plugin {
 		// 属性被**就地**加上时补判（属性面板 / 其它设备同步写回）：metadataCache
 		// 变化即声明变化。反向（删掉声明）不主动把正在编辑的导图视图抽走——声明
 		// 只决定「打开/新声明时怎么进」，运行中不打断用户。
+		// 走**合并窗口**入口：同步回写 / 批量落盘会连发 changed，每次全量扫描都要
+		// 遍历全部 markdown 叶子（见 MindMapAutoOpener.scheduleDeclaredLeavesScan）。
 		this.registerEvent(
 			this.app.metadataCache.on('changed', (file) => {
 				if (file.extension === 'md' && isMindMapFile(this.app, file)) {
-					opener.activateDeclaredLeaves();
+					opener.scheduleDeclaredLeavesScan();
 				}
 			}),
 		);
@@ -296,6 +294,27 @@ export default class MindMapStudioPlugin extends Plugin {
 					.setTitle(t(lang, 'command.openAsMarkdown'))
 					.setIcon('file-text')
 					.onClick(() => {
+						// 该文件已是导图视图（全库至多一个实例，见 onLoadFile 的 P0
+						// 互斥）→ 带到前台并复用视图自带返回入口：恢复进入前编辑/
+						// 阅读模式（与工具栏/命令同语义）、持久化视口。按**文件**
+						// 查找而非活跃 leaf：导图在后台标签时也应切它，而不是顶掉
+						// 当前标签页。
+						for (const leaf of this.app.workspace.getLeavesOfType(
+							VIEW_TYPE,
+						)) {
+							const view = leaf.view;
+							if (
+								view instanceof MindMapView &&
+								view.file?.path === file.path
+							) {
+								this.app.workspace.setActiveLeaf(leaf, {
+									focus: true,
+								});
+								view.backToMarkdown();
+								return;
+							}
+						}
+						// 尚未以导图打开（声明刚写入 / auto-open 未跑）→ 直接切回
 						void openAsMarkdown(
 							this.app,
 							this.app.workspace.getLeaf(false),

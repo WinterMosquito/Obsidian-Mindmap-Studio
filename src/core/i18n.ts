@@ -71,6 +71,9 @@ const ZH = {
 	'menu.editTextModal': '在弹窗中编辑',
 	'menu.addChild': '添加子节点',
 	'menu.addSibling': '添加同级节点',
+	// 与相邻兄弟交换顺序（引擎 UP_NODE / DOWN_NODE；拖拽摆放过的节点位置不跟随）
+	'menu.moveUp': '上移节点',
+	'menu.moveDown': '下移节点',
 	'menu.copyNode': '复制节点',
 	'menu.pasteAsChild': '粘贴为子节点',
 	'menu.addLink': '添加链接',
@@ -96,8 +99,12 @@ const ZH = {
 	'common.nodeMany': '个节点',
 	'common.selectNodeFirst': '请先选择一个节点',
 	'common.rootCannotDelete': '中心节点不可删除',
+	'common.rootCannotMove': '中心节点不可上移或下移',
+	'common.moveAtTop': '已是同级中的第一个节点',
+	'common.moveAtBottom': '已是同级中的最后一个节点',
 	'common.clipboardEmpty': '剪贴板为空',
-	'common.nodeCopied': '节点已复制',
+	// 复制节点的成功提示（2026-10-13 用户裁决：文案就一个字「复制」）
+	'common.nodeCopied': '复制',
 	'common.splitLinksNone': '文档中没有可拆分的混排双链',
 	'common.splitLinksAllDone': '已拆分 {nodes} 个节点、{links} 条链接',
 	'common.savingClipboardImage': '正在保存剪贴板图片…',
@@ -117,7 +124,6 @@ const ZH = {
 	// 「用系统默认应用打开」的失败：主因是系统里没有关联应用，与「文件类型不受支持」
 	// 不同源，故独立成键（见 platform/system-open.surfaceOpenResult）
 	'common.systemOpenFailed': '无法用系统默认应用打开该文件',
-	'common.duplicateFailed': '复制节点失败：',
 	'common.refreshFailed': '应用设置后重绘导图失败，已保留当前视图：',
 	// 官方 Canvas：双击画布空白新建卡片 / 空白右键「新建节点」
 	'menu.newNode': '新建节点',
@@ -178,6 +184,17 @@ const ZH = {
 	'settings.defaultLineStyleDesc': '新建思维导图时使用的默认连线样式（自动＝随布局；仅逻辑结构图/思维导图/组织结构图支持三态切换）',
 	'settings.defaultTheme': '默认主题',
 	'settings.defaultThemeDesc': '新建思维导图时使用的默认主题',
+	'settings.saveLocation': '新建导图的默认位置',
+	'settings.saveLocationDesc':
+		'新建思维导图时保存到哪个文件夹。「跟随 Obsidian 设置」＝使用官方「文件与链接 → 新建笔记的默认位置」',
+	'settings.saveLocation.obsidian': '跟随 Obsidian 设置',
+	'settings.saveLocation.root': '仓库的根目录',
+	'settings.saveLocation.current': '当前文件所在的文件夹',
+	'settings.saveLocation.folder': '指定的文件夹',
+	'settings.saveFolder': '目标文件夹',
+	'settings.saveFolderDesc':
+		'「指定的文件夹」模式下新建导图的保存目录；文件夹不存在时保存到仓库的根目录',
+	'settings.saveFolderPlaceholder': '文件夹路径',
 	'settings.autoSave': '自动保存',
 	'settings.autoSaveDesc': '编辑思维导图时自动保存到笔记',
 	'settings.enableDrag': '启用节点拖拽',
@@ -308,6 +325,8 @@ const EN: Record<TranslationKey, string> = {
 	'menu.editTextModal': 'Edit in dialog',
 	'menu.addChild': 'Add child node',
 	'menu.addSibling': 'Add sibling node',
+	'menu.moveUp': 'Move node up',
+	'menu.moveDown': 'Move node down',
 	'menu.copyNode': 'Copy node',
 	'menu.pasteAsChild': 'Paste as child',
 	'menu.addLink': 'Add link',
@@ -333,8 +352,11 @@ const EN: Record<TranslationKey, string> = {
 	'common.nodeMany': 'nodes',
 	'common.selectNodeFirst': 'Please select a node first',
 	'common.rootCannotDelete': 'The central node cannot be deleted',
+	'common.rootCannotMove': 'The central node cannot be moved',
+	'common.moveAtTop': 'Already the first sibling',
+	'common.moveAtBottom': 'Already the last sibling',
 	'common.clipboardEmpty': 'Clipboard is empty',
-	'common.nodeCopied': 'Node copied',
+	'common.nodeCopied': 'Copy',
 	'common.splitLinksNone': 'No mixed links to split in this document',
 	'common.splitLinksAllDone': 'Split {links} link(s) in {nodes} node(s)',
 	'common.savingClipboardImage': 'Saving clipboard image…',
@@ -352,7 +374,6 @@ const EN: Record<TranslationKey, string> = {
 	'common.nodeCreatedAndLinked': 'Node created and linked to ',
 	'common.cannotOpen': 'Cannot open this file type',
 	'common.systemOpenFailed': 'Could not open the file with the system default app',
-	'common.duplicateFailed': 'Failed to duplicate the node: ',
 	'common.refreshFailed':
 		'Failed to redraw the mind map after applying settings — the current view was kept: ',
 	// Official Canvas: double-click blank canvas / blank context menu to create a node
@@ -417,6 +438,17 @@ const EN: Record<TranslationKey, string> = {
 	'settings.defaultLineStyleDesc': 'Default connector style for new mind maps ("Auto" follows the layout; switchable only for Logical structure / Mind map / Organization chart)',
 	'settings.defaultTheme': 'Default theme',
 	'settings.defaultThemeDesc': 'Default theme when creating a new mind map',
+	'settings.saveLocation': 'Default location for new mind maps',
+	'settings.saveLocationDesc':
+		'Where new mind maps are saved. "Follow Obsidian setting" uses Files and links → Default location for new notes',
+	'settings.saveLocation.obsidian': 'Follow Obsidian setting',
+	'settings.saveLocation.root': 'Vault root',
+	'settings.saveLocation.current': 'Same folder as current file',
+	'settings.saveLocation.folder': 'In the folder specified below',
+	'settings.saveFolder': 'Target folder',
+	'settings.saveFolderDesc':
+		'Folder for new mind maps in the "In the folder specified below" mode; if the folder does not exist, new mind maps are saved to the vault root',
+	'settings.saveFolderPlaceholder': 'Folder path',
 	'settings.autoSave': 'Auto-save',
 	'settings.autoSaveDesc': 'Automatically save the mind map to the note while editing',
 	'settings.enableDrag': 'Enable node dragging',

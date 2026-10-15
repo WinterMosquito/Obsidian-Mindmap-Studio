@@ -47,6 +47,16 @@ export class FileSystemAdapter {
 	}
 }
 
+/**
+ * `normalizePath` 桩：**只做反斜杠→正斜杠**（刻意不实现去重复/首尾斜杠）。
+ *
+ * 为什么不照 d.ts 补全：生产代码会把 `app://` 形态的**资源地址**也交给官方
+ * `normalizePath`（`links/file-lookup.lookupIndexedFile`、`links-resolve`），
+ * 而真实实现的「去重复斜杠」会把它改成 `app:/…`。桩若照做，会改变这些调用点
+ * 在用例里被观测到的实参——那是「桩的保真度」问题而不是产品行为问题，故留待
+ * 调用点收敛（见本批待裁决项）后再一起对齐。依赖它的用例只断言两端都成立的
+ * 形态（反斜杠、空串、类型回退）。
+ */
 export function normalizePath(p: unknown): string {
 	return String(p).replace(/\\/g, '/');
 }
@@ -142,9 +152,35 @@ export class Scope {
 
 export class FileView {
 	leaf: unknown;
+	file: unknown = null;
 
 	constructor(leaf?: unknown) {
 		this.leaf = leaf;
+	}
+
+	/**
+	 * 官方契约最小语义（obsidian.d.ts `FileView.getState()`）：视图状态只携带
+	 * 当前文件路径。实机读出（2026-10-15）的官方实现为
+	 * `{...View.getState()（恒 {}）, file}`——**自定义 state 字段不会自动保留**，
+	 * 视图须自行覆写 getState() 带回（如 MindMapView 的 mdBackMode）。
+	 * `MindMapView.getState` 的 super 调用链与读回断言依赖这一步。
+	 */
+	getState(): Record<string, unknown> {
+		const file = this.file as { path?: unknown } | null;
+		return typeof file?.path === 'string' ? { file: file.path } : {};
+	}
+
+	/**
+	 * 官方契约最小语义（obsidian.d.ts `FileView.setState(state, result)`）：
+	 * 接收传入 state 并落 `file`（真实实现随后经 `loadFile` 触发
+	 * `onLoadFile`，属交互行为不在 mock 面）。`MindMapView.setState` 覆写的
+	 * super 调用链与「读入点」断言依赖这一步。
+	 */
+	async setState(state: unknown, _result?: unknown): Promise<void> {
+		const path = (state as { file?: unknown } | null)?.file;
+		if (typeof path === 'string') {
+			this.file = { path };
+		}
 	}
 }
 

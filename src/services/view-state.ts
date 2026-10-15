@@ -17,6 +17,37 @@ export type PathState = Record<string, unknown>;
 
 const VIEW_STATE_KEY = 'viewState';
 
+/**
+ * 保存的视口（`view` 字段）是否**可用**：`state` 必须是对象且 scale/x/y 为有限数。
+ *
+ * 依据（vendor `View.setTransformData` 实读）：`Object.keys(viewData.state)` 与
+ * `this[prop] = viewData.state[prop]` 都没有守卫——
+ * - `state` 缺失 / 非对象 ⇒ **抛 TypeError**，调用方落 catch 走 fit，而日志是
+ *   「恢复视图状态失败」（排查方向是错的）；
+ * - `state` 是对象但缺 scale/x/y ⇒ 不抛，引擎把任意字段写进视图、视口纹丝不动，
+ *   之后「内容可见性」判定基于**当前默认视口**给结论（可能误判为「已在目标
+ *   视口」而跳过居中）。
+ * 两种形态都恢复不出视口 ⇒ 在 hydrate 处丢弃（**只丢该字段**：同一段条目的
+ * layout / lineStyle 与视口无关，保留）。`transform` 缺失是安全的
+ * （`{...undefined}` = `{}`），不参与判定。
+ *
+ * 比 `engine/mindmap.viewStateSignature` 更严：那个用 `Number()` 兼容手改的
+ * 数字字符串（只为比较），这里决定「能不能交给引擎」，故要求真 number。
+ */
+function isUsableSavedView(view: unknown): boolean {
+	if (!view || typeof view !== 'object') {
+		return false;
+	}
+	const state = (view as { state?: unknown }).state;
+	if (!state || typeof state !== 'object' || Array.isArray(state)) {
+		return false;
+	}
+	const s = state as { scale?: unknown; x?: unknown; y?: unknown };
+	const isFiniteNumber = (value: unknown): boolean =>
+		typeof value === 'number' && Number.isFinite(value);
+	return isFiniteNumber(s.scale) && isFiniteNumber(s.x) && isFiniteNumber(s.y);
+}
+
 export class ViewStateStore {
 	private map = new Map<string, PathState>();
 	private debouncer: Debouncer;
@@ -49,7 +80,7 @@ export class ViewStateStore {
 		const raw = (data as Record<string, unknown>)[VIEW_STATE_KEY];
 		if (!raw || typeof raw !== 'object') {
 			// 误传 viewState 子对象而非 data.json 顶层的防御提示
-			if (typeof data === 'object' && 'layout' in (data as Record<string, unknown>)) {
+			if ('layout' in (data as Record<string, unknown>)) {
 				console.warn(
 					'ViewStateStore.hydrate 期望完整 data.json 对象，疑似收到 viewState 子对象',
 				);
@@ -63,6 +94,11 @@ export class ViewStateStore {
 				const s = state as Record<string, unknown>;
 				// 形状校验：只接受含已知字段的视图状态，丢弃畸形/异常条目
 				// （防手改 data.json、引擎升级后 view 结构变化等导致的坏数据渗入）。
+				// `view` 另做**可用性**校验（见 isUsableSavedView）：不可恢复的形态
+				// 只丢该字段，同条目的 layout / lineStyle 照样生效。
+				if ('view' in s && !isUsableSavedView(s.view)) {
+					delete s.view;
+				}
 				if ('layout' in s || 'lineStyle' in s || 'view' in s) {
 					this.map.set(path, s);
 				}

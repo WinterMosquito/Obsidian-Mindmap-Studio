@@ -32,7 +32,7 @@
  *    「按容器宽度缩放（scale ≤ 1）后的内容高」→ 由本文件写进挂载点高度
  *    （`applyEmbedFit`）⇒ 内容**完整可见**且容器不留空白框。⚠ 容器高度是
  *    **输出**（由比例反算），故**不能**用 `fitMindMap` 的双轴适配。
- *    宽度是**输入**：容器变窄即按新宽度重算（观察器常驻，见 `renderOrWait`）
+ *    宽度是**输入**：容器变窄即按新宽度重算（观察器常驻，见 `initMindMap`）
  *    ——首帧挂载成功也要建观察器，否则高度口径锁死在首帧。
  * ③ **不可拖动、不可缩放**：引擎侧 `enableViewDrag: false`（原生
  *    `isDisableDrag`，切断左键/中键拖动画布）+ 不注册交互插件；宿主侧滚轮
@@ -172,6 +172,12 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		this.remeasure = new ContentRemeasureSession({
 			getMindMap: () => this.mindMap,
 			register: (cleanup) => this.register(cleanup),
+			// 可见性判据（官方 `Element.isShown()`）：嵌入随宿主笔记被切到后台
+			// 时量测恒 0×0，会话据此挂起（同文件视图，见 content-remeasure ④）
+			isVisible: () => this.containerEl.isShown(),
+			// 画布根（未定稿修复 / 登记面清理的作用域，见 content-remeasure ⑤）：
+			// 嵌入挂载点；引擎未建时为 null，会话静默跳过
+			getContentRoot: () => this.canvasEl,
 		});
 		// 自绘内容装配：平台实现固定、宿主相关两项注入（与文件视图同一工厂）
 		this.inlineContentOptions = createInlineContentOptions({
@@ -231,15 +237,22 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		ensureUniqueUids(display);
 		this.pendingTree = display;
 		this.canvasEl = container.createDiv(EMBED_CANVAS_CLASS);
-		this.renderOrWait();
+		this.initMindMap();
 	}
 
 	override onunload(): void {
-		this.disconnectObserver();
+		this.disconnectInitObserver();
 		this.resizeThrottler.cancel();
 		// 会话先收尾（清未决定稿批次），再销毁引擎
 		this.remeasure.dispose();
 		this.destroyInstance();
+		// 卸载即清 DOM（2026-10-14 实机归属分析）：切模式时 Obsidian 会**保留**
+		// 另一套视图子树（隐藏的 `.cm-editor` / `.markdown-preview-view`）——
+		// 已卸载实例若把 `.tmm-embed-canvas` 骨架留在原地（无 svg、无内联
+		// 高度），文档级 `querySelectorAll('.tmm-embed-canvas')` 会把它当成
+		// 「第二个嵌入」，自动化断言随之误判。清空是我们的职责：容器里的
+		// 内容（canvas / notice / outline）全部由本类创建。
+		this.containerEl.empty();
 	}
 
 	/**
@@ -254,10 +267,10 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 	 * 只认**宽度**变化：高度是本文件按内容写的（`applyEmbedFit`），把它也当
 	 * 输入会与自己打架——写完高度就触发一次回调，重排又改高度，来回不收敛。
 	 */
-	private renderOrWait(): void {
+	private initMindMap(): void {
 		const observer = new ResizeObserver(() => {
 			if (!this.mindMap) {
-				this.tryMount();
+				this.tryRender();
 				return;
 			}
 			const width = this.canvasWidth();
@@ -273,29 +286,31 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		});
 		this.observer = observer;
 		observer.observe(this.containerEl);
-		this.register(() => this.disconnectObserver());
-		this.tryMount();
+		this.register(() => this.disconnectInitObserver());
+		this.tryRender();
 	}
 
 	/**
-	 * 尺寸就绪时创建引擎（同步），否则交观察器等待。
-	 * 已挂载（或解析/容器已失效）时返回 true —— 调用方据此不再重复尝试。
+	 * 尺寸就绪时创建引擎（同步），否则交观察器等待（调用方不消费结果）。
+	 *
+	 * 与 `services/engine-controller.tryRender` **同名同责**（零尺寸等待 + 就绪即
+	 * 同步创建）：新增/修改这两处请成对阅读（差异只在代际锁——嵌入侧刻意不复刻，
+	 * 见文件头）。本方法此前叫 `tryMount`，同一职责两个名字在检索时找不到一起。
 	 */
-	private tryMount(): boolean {
+	private tryRender(): void {
 		if (this.mindMap) {
-			return true;
+			return;
 		}
 		const el = this.canvasEl;
 		const tree = this.pendingTree;
 		if (!el || !tree || !el.isConnected) {
-			return false;
+			return;
 		}
 		const rect = el.getBoundingClientRect();
 		if (rect.width === 0 || rect.height === 0) {
-			return false;
+			return;
 		}
 		this.mount(el, tree);
-		return true;
 	}
 
 	/** 引擎实际创建（只读口径，见 CreateMindMapOptions.readonly） */
@@ -317,13 +332,16 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 				lang: config.lang,
 				// 链接跳转与文件视图**同一份判定**（含库内路径 / file:// / 外跳系统应用）
 				onHyperlinkJump: (link) => openHyperlink(this.linkHost(), link),
-				createNodeContent: (node, doc, style, lang) =>
+				// `owner`（本次引擎实例）原样透传——数学段的归属登记靠它，
+				// 本层不解释（见 InlineContentOptions.renderMath）
+				createNodeContent: (node, doc, style, lang, owner) =>
 					buildInlineNodeContent(
 						node,
 						doc,
 						style,
 						lang,
 						this.inlineContentOptions,
+						owner,
 					),
 			});
 		} catch (error) {
@@ -428,6 +446,10 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 			this.fitFrame = null;
 			resizeMindMap(this.mindMap);
 			this.applyEmbedFit();
+			// 可见性自愈（不变式 ④）：放在帧回调里而非 RO 回调内——在 RO 回调里
+			// 同步写布局/重测会留下未投递通知（理由同本方法文件头）；
+			// 嵌入的隐藏→可见必经宽度 0→非 0，故本路径必然被走到
+			this.remeasure.syncVisibility();
 		});
 	}
 
@@ -455,9 +477,12 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 	private renderFailure(lang: Language, error: unknown): void {
 		console.error('渲染 mindmap 代码块失败', this.sourcePath, error);
 		this.destroyInstance();
+		// 尺寸会话一并收尾：创建过程中（字体钩子已装）可能已有定稿入批或在途
+		// 定时器，失败态下再无重测目标——不留悬挂监听（与 onunload 同款收尾）
+		this.remeasure.dispose();
 		// 失败即终态：不再有可挂载的树，摘掉观察器（否则每次容器尺寸变化都会
-		// 回调一次必然失败的 tryMount）
-		this.disconnectObserver();
+		// 回调一次必然失败的 tryRender）
+		this.disconnectInitObserver();
 		const container = this.containerEl;
 		container.empty();
 		container.addClass(EMBED_CONTAINER_CLASS);
@@ -478,11 +503,16 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		this.events.destroy();
 		// 在途延时任务（延时居中 / 布局轮询链）先取消：闭包会触碰引擎实例
 		cancelEngineTimers(this.mindMap);
+		// 引擎归属登记（未定稿数学段）在销毁点按实例身份清（语义见
+		// content-remeasure.forgetEngine）；先 dispose 后本方法时同样幂等
+		if (this.mindMap) {
+			this.remeasure.forgetEngine(this.mindMap);
+		}
 		destroyMindMap(this.mindMap);
 		this.mindMap = null;
 	}
 
-	private disconnectObserver(): void {
+	private disconnectInitObserver(): void {
 		this.observer?.disconnect();
 		this.observer = null;
 	}

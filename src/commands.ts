@@ -4,32 +4,43 @@
  */
 import { MarkdownView, Plugin, setTooltip } from 'obsidian';
 import { MindMapView } from './features/view';
-import { createNewMindMap } from './creation';
+import { createNewMindMap, type NewMindMapSettings } from './creation';
 import { fitMindMap } from './engine/mindmap';
 import { declareAndOpenAsMindMap } from './markdown/md-open';
-import { Language, t } from './core/i18n';
+import { t } from './core/i18n';
 
 /**
  * commands 模块对宿主插件的窄化契约。
- * 仅用 addCommand/addRibbonIcon（Obsidian Plugin 基类）+ settings.language。
+ * 仅用 addCommand/addRibbonIcon（Obsidian Plugin 基类）+ settings（命令文案
+ * 语言 + 新建导图的落点设置，见 `NewMindMapSettings`）。
  * 替代 MindMapStudioPlugin 具体类引用，打破 commands ↔ main 循环。
  */
 interface IPluginCommandsHost extends Plugin {
-	settings: { language: Language };
+	settings: NewMindMapSettings;
 }
 
-/** 命令 id 表（语言变更时按 id 先移除再重注册；id 本身不随语言变化） */
-const COMMAND_IDS = [
-	'create-new-mindmap',
-	'create-mindmap-here',
-	'search-mindmap-nodes',
-	'mindmap-fit-view',
-	'mindmap-arrange',
-	'mindmap-split-links-all',
-	'mindmap-export-png',
-	'mindmap-open-md-as-view',
-	'mindmap-back-to-markdown',
-] as const;
+/**
+ * 命令 id 表（**发布后永不变更**，见 AGENTS.md）：注册点与「语言变更后按 id
+ * 先移除再重注册」（refreshCommandLabels）**共用同一份来源**。
+ *
+ * 此前注册点写字面量、刷新点另抄一份数组：新增/改名命令时漏登记，命令面板会
+ * 残留旧语言的重复项，而 id 是运行时字符串——没有任何门禁能发现（2026-10-15
+ * 审计的收口项）。
+ */
+const COMMAND_IDS = {
+	createNew: 'create-new-mindmap',
+	createHere: 'create-mindmap-here',
+	searchNodes: 'search-mindmap-nodes',
+	fitView: 'mindmap-fit-view',
+	arrange: 'mindmap-arrange',
+	splitLinksAll: 'mindmap-split-links-all',
+	exportImage: 'mindmap-export-png',
+	openMdAsView: 'mindmap-open-md-as-view',
+	backToMarkdown: 'mindmap-back-to-markdown',
+} as const;
+
+/** 全部已注册命令 id（refreshCommandLabels 批量移除用；顺序即本表的书写顺序） */
+const ALL_COMMAND_IDS: readonly string[] = Object.values(COMMAND_IDS);
 
 /**
  * 注册全部命令面板命令（onload 时调用一次；文案取注册时的语言）。
@@ -46,15 +57,15 @@ export function registerCommands(plugin: IPluginCommandsHost): void {
 /** 创建类：新建导图 / 在当前文件夹新建 */
 function registerCreateCommands(plugin: IPluginCommandsHost): void {
 	plugin.addCommand({
-		id: 'create-new-mindmap',
+		id: COMMAND_IDS.createNew,
 		name: t(plugin.settings.language, 'command.createMindMap'),
 		callback: () => {
-			void createNewMindMap(plugin.app, plugin.settings.language);
+			void createNewMindMap(plugin.app, plugin.settings);
 		},
 	});
 
 	plugin.addCommand({
-		id: 'create-mindmap-here',
+		id: COMMAND_IDS.createHere,
 		name: t(plugin.settings.language, 'command.createInCurrentFolder'),
 		checkCallback: (checking) => {
 			const activeFile = plugin.app.workspace.getActiveFile();
@@ -64,7 +75,7 @@ function registerCreateCommands(plugin: IPluginCommandsHost): void {
 			if (activeFile) {
 				void createNewMindMap(
 					plugin.app,
-					plugin.settings.language,
+					plugin.settings,
 					activeFile.parent?.path ?? '',
 				);
 			}
@@ -76,7 +87,7 @@ function registerCreateCommands(plugin: IPluginCommandsHost): void {
 /** 视图类：搜索节点 / 适应画布 / 整理 / 批量拆分混排双链 */
 function registerViewCommands(plugin: IPluginCommandsHost): void {
 	plugin.addCommand({
-		id: 'search-mindmap-nodes',
+		id: COMMAND_IDS.searchNodes,
 		name: t(plugin.settings.language, 'command.searchNodes'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
@@ -93,7 +104,7 @@ function registerViewCommands(plugin: IPluginCommandsHost): void {
 	});
 
 	plugin.addCommand({
-		id: 'mindmap-fit-view',
+		id: COMMAND_IDS.fitView,
 		name: t(plugin.settings.language, 'command.fitCanvas'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
@@ -110,7 +121,7 @@ function registerViewCommands(plugin: IPluginCommandsHost): void {
 	});
 
 	plugin.addCommand({
-		id: 'mindmap-arrange',
+		id: COMMAND_IDS.arrange,
 		name: t(plugin.settings.language, 'command.arrange'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
@@ -125,7 +136,7 @@ function registerViewCommands(plugin: IPluginCommandsHost): void {
 	// 混排双链拆分（批量）：扫描全文，把所有混排节点的双链一次拆完（含未编辑的存量节点）；
 	// 单节点场景由「编辑后自动拆分」覆盖（见 links-split / view-split-links）
 	plugin.addCommand({
-		id: 'mindmap-split-links-all',
+		id: COMMAND_IDS.splitLinksAll,
 		name: t(plugin.settings.language, 'command.splitLinksAll'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
@@ -145,7 +156,7 @@ function registerViewCommands(plugin: IPluginCommandsHost): void {
 function registerDocumentCommands(plugin: IPluginCommandsHost): void {
 	plugin.addCommand({
 		// ID 按契约发布后不变（语义已从「导出 PNG」扩展为「导出图片，可选 PNG/SVG」）
-		id: 'mindmap-export-png',
+		id: COMMAND_IDS.exportImage,
 		name: t(plugin.settings.language, 'command.exportImage'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
@@ -164,7 +175,7 @@ function registerDocumentCommands(plugin: IPluginCommandsHost): void {
 	// 任意 md：当前 markdown 视图（编辑/阅读均可）→ 导图视图
 	// （声明为导图的文件已由自动打开切入，本命令服务于「手动预览普通笔记」）
 	plugin.addCommand({
-		id: 'mindmap-open-md-as-view',
+		id: COMMAND_IDS.openMdAsView,
 		name: t(plugin.settings.language, 'command.openAsMindMap'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
@@ -177,12 +188,12 @@ function registerDocumentCommands(plugin: IPluginCommandsHost): void {
 			}
 			void declareAndOpenAsMindMap(plugin.app, view.leaf, file, plugin.settings.language);
 			return true;
-			},
-			});
+		},
+	});
 
 	// md 文档：从导图视图切回 Markdown（并把导图声明持久降级为 Markdown）
 	plugin.addCommand({
-		id: 'mindmap-back-to-markdown',
+		id: COMMAND_IDS.backToMarkdown,
 		name: t(plugin.settings.language, 'command.backToMarkdown'),
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
@@ -211,7 +222,7 @@ export function addMindMapRibbonIcon(
 		'network',
 		t(plugin.settings.language, 'command.createMindMap'),
 		() => {
-			void createNewMindMap(plugin.app, plugin.settings.language);
+			void createNewMindMap(plugin.app, plugin.settings);
 		},
 	);
 }
@@ -225,7 +236,7 @@ export function refreshCommandLabels(
 	plugin: IPluginCommandsHost,
 	ribbonEl: HTMLElement | null,
 ): void {
-	for (const id of COMMAND_IDS) {
+	for (const id of ALL_COMMAND_IDS) {
 		plugin.removeCommand(id);
 	}
 	registerCommands(plugin);

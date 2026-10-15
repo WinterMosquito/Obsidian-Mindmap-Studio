@@ -22,7 +22,11 @@
  * 失效后下一次查询（含失效事件的同批处理）会重建，时序上无竞态。
  */
 import { App, TFile, normalizePath } from 'obsidian';
-import { isRemoteOrDataUrl, urlComparisonForms } from '../domain/url';
+import {
+	encodedNameForm,
+	isRemoteOrDataUrl,
+	urlComparisonForms,
+} from '../domain/url';
 
 /**
  * 把**单个文件**的全部形态键写入索引：
@@ -42,10 +46,11 @@ function writeFileEntries(
 	index.set(file.path, file);
 	const name = file.name;
 	index.set(name, file);
-	try {
-		index.set(encodeURIComponent(name), file);
-	} catch {
-		// 个别文件名编码失败，跳过该形态
+	// 编码形态可能不存在（孤立代理对等非法序列，见 domain/url.encodedNameForm）：
+	// 该形态跳过，其余键照建
+	const encodedName = encodedNameForm(name);
+	if (encodedName !== null) {
+		index.set(encodedName, file);
 	}
 	const segments = file.path.split('/');
 	for (let i = 2; i <= segments.length; i++) {

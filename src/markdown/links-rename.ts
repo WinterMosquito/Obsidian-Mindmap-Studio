@@ -29,6 +29,7 @@
 import { App, TFile } from 'obsidian';
 import { isRenderableImageTarget } from '../core/constants';
 import { walkTree } from '../domain/tree';
+import { isNodeTextEdited } from '../domain/md-meta';
 import { parseWikilink } from '../domain/wikilink';
 import {
 	isTrashedPath,
@@ -85,9 +86,9 @@ function rebuildRenamedRaw(
 	if (typeof raw !== 'string' || !raw) {
 		return;
 	}
-	// 未编辑守卫（与 serialize.rawOk 的文本判据同源）：已编辑节点的渲染源是
-	// data.text，其链接要么已随编辑改写、要么本就由保存侧合成承载
-	if (data.text !== data.mdDerivedText) {
+	// 未编辑守卫（与 serialize.rawOk 共用同一判据，见 domain/md-meta.isNodeTextEdited）：
+	// 已编辑节点的渲染源是 data.text，其链接要么已随编辑改写、要么本就由保存侧合成承载
+	if (isNodeTextEdited(data.text, data.mdDerivedText)) {
 		return;
 	}
 	let spliced = '';

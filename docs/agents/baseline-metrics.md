@@ -44,7 +44,7 @@
 | --- | --- | --- | --- |
 | G-01 | 类型检查 + 生产构建 | `BUILD_EXIT=0` | `npm run build` |
 | G-02 | Lint（0 warning 门禁） | `LINT_EXIT=0` | `npm run lint` |
-| G-03 | 单测 | 68 文件 / **1922** 用例全通过（2026-10-12 复测） | `npx vitest run` |
+| G-03 | 单测 | 80 文件 / **2146** 用例全通过（2026-10-15 复测） | `npx vitest run` |
 | G-04 | 死代码 | `KNIP_EXIT=0` | `npm run check:dead-code` |
 | G-05 | 文档同步契约 | 4 passed | `npx vitest run tests/agents-md-sync.test.ts` |
 | G-06 | 渲染契约（无头 Chrome） | `✓ 视觉验证通过`（2026-10-11 修复后） | `npm run verify:visual -- --require-chrome` |
@@ -157,7 +157,7 @@ npx esbuild src/main.ts --bundle --format=cjs --target=es2021 --tree-shaking=tru
 | S-03 | 分支密度 Top5 | `mindmap.ts` 208、`md-serialize.ts` 122、`node-inline-content.ts` 91、`md-outline.ts` 88、`math-jax.ts` 85 | `grep -oE "if\|for\|while\|catch" <file> \| wc -l`（**逐文件**统计、按计数降序取 5；该正则含标识符内出现，如 `verify` 里的 `if`，故只作横向排序口径） |
 | S-04 | features 横向 import | **41**（`view-context` 23 + `view-common` 5 除外），`view-node-actions` 被 6 处依赖 | `grep -rhoP "from './[a-z-]+'" src/features` |
 | S-05 | `view.ts` 规模 | 1252 行 / 17 自有方法 / 21 私有字段 / 39 import | `awk 'END{print NR}' src/features/view.ts`；`grep -cP "^\t[a-zA-Z]+\(" …`；`grep -cP "^\tprivate [a-zA-Z]+[?!]?\s*[:=]" …`；`grep -c "^import" …` |
-| S-06 | 超过 300 行的文件 | **23**（与 AGENTS.md 豁免表的 23 行登记一致） | 逐文件 `awk 'END{print NR}'`；或 `npx vitest run tests/agents-md-sync.test.ts` |
+| S-06 | 超过 300 行的文件 | **23**（2026-10-09 读数；当时与 AGENTS.md 豁免表一致） | 逐文件 `awk 'END{print NR}'`；或 `npx vitest run tests/agents-md-sync.test.ts`。**2026-10-15 复核**：现为 **24** 个（新增 `features/content-remeasure.ts`、`platform/prism-code.ts`），AGENTS.md 豁免表 24 行、`docs/agents/architecture.md` 同表已补齐 24 行 |
 | S-07 | `addEventListener` 出现 | **31** 处 | `grep -rno "addEventListener" src --include=*.ts \| wc -l` |
 | S-08 | `console.` 调用 | **78** 处 | `grep -rno "console\." src --include=*.ts \| wc -l` |
 | S-09 | src / tests 规模 | 76 文件 23,148 行 / 68 文件 34,992 行 | `find src -name "*.ts" \| xargs wc -l` |
@@ -337,6 +337,14 @@ node scripts/gen-perf-fixture.mjs --out "<vault>/real-5000.md"   # seed 20261005
 | D 自动拆分调度 | `scheduleAutoSplitCheck`(1071) `cancelAutoSplitCheck`(1080) | 1071→1090 = **19** |
 
 四簇行跨度合计 = **347 行**（占 1252 行的 28%）；上一版（1250 行基准）为 337 行——差额全部来自 C 簇（引用更新组合在本轮工作树中 +10 行）。
+
+> **2026-10-15 订正，行号已失效（勿据上表直接定位）**：A 簇（内容重测调度器）已于
+> 2026-10-11 **外置**为 `features/content-remeasure.ts`——`scheduleContentRemeasure` /
+> `flushContentRemeasure` / `retryDeferredContentRemeasure` / `remeasureSettledContentNodes` /
+> `installMathFontsHook` 在 `view.ts` 中**已不存在**（同名能力见 `content-remeasure.ts`），
+> 故上表 A 簇行号与「346→479」跨度只反映 2026-10-09 那一份 `view.ts`；B/C/D 三簇行号亦
+> 随其后各批改动前移。U-05 的**结论不变**（不投入），但如需复算，请以当前
+> `view.ts`（1137 行）与 `content-remeasure.ts`（502 行）为对象重跑同一算法。
 
 **这是上界，不是「可下沉量」**：B 簇含 `loadMindMapFromFile`（加载编排，必须留在视图）整段 88 行，A 簇含若干方法签名与守卫。若只计「被指认为可下沉的块」（如 `loadMindMapFromFile` 内的图片探测块 `:831-855` 约 25 行 + 两个独立小方法），量级降至约 **284 行**（= 347 − 88 + 25，沿用上一版同一算法）。原方案文档里的「约 310 行」是子代理估算（**B 级**），现已被本表替换为可复算的数字。
 

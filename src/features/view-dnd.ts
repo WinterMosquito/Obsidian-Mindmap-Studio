@@ -11,7 +11,6 @@
  */
 import { Notice, Platform, type TFile, type TFolder } from 'obsidian';
 import {
-	isEmbeddableAttachmentExtension,
 	isImageExtension,
 	isRenderableImageExtension,
 	MAX_IMAGE_SIZE_MB,
@@ -31,13 +30,13 @@ import {
 	applyNodeAttachment,
 	applyNodeImage,
 	createImageChildNode,
-	newDocLinkFor,
+	planAttachmentLink,
+	planDocLink,
 } from './view-node-actions';
 import { insertChildNodeWithData } from './view-common';
 import { t } from '../core/i18n';
 import { fileUrlFromAbsolutePath } from '../domain/url';
 import {
-	formatWikilink,
 	isDocumentExtension,
 	wikilinkTargetIsAttachment,
 } from '../domain/wikilink';
@@ -157,27 +156,13 @@ async function insertFileChildNode(
 		await createImageChildNode(view, target, file);
 		return;
 	}
-	const embed = isEmbeddableAttachmentExtension(file.extension);
 	if (wikilinkTargetIsAttachment(file.name)) {
-		insertChildNodeWithData(view, target, {
-			text: file.name,
-			attachmentUrl: view.app.vault.getResourcePath(file),
-			attachmentName: file.name,
-			mdAttachmentLinkpath: file.path,
-			mdLinkStyle: 'wiki',
-			...(embed ? { mdEmbed: true } : {}),
-		});
+		// 附件载荷与「单文件拖入」共用同一个 plan（字段集收口在 view-node-actions）
+		insertChildNodeWithData(view, target, planAttachmentLink(view, file).data);
 		return;
 	}
-	// 文档：`.md` 可省略扩展名（与 handleDroppedDocument 同口径）
-	const text =
-		file.extension.toLowerCase() === 'md' ? file.basename : file.name;
-	insertChildNodeWithData(view, target, {
-		text,
-		mdWikiLinkpath: newDocLinkFor(view, file, formatWikilink(text)),
-		mdLinkStyle: 'wiki',
-		mdLinkText: text,
-	});
+	// 文档载荷同样走 planDocLink（单一判定，形态跟随官方「使用 \[\[Wikilinks\]\]」）
+	insertChildNodeWithData(view, target, planDocLink(view, file).data);
 }
 
 /**
@@ -237,27 +222,16 @@ function handleDroppedAttachment(
 	file: TFile,
 	selected: MindMapNode | null,
 ): void {
+	// 载荷与提示同走一个 plan（字段集与 `!` 判定收口在 view-node-actions）
+	const plan = planAttachmentLink(view, file);
 	if (selected) {
 		applyNodeAttachment(view, selected, file);
-		new Notice(`${t(view.lang, 'common.linkedTo')} [[${file.name}]]`);
+		new Notice(`${t(view.lang, 'common.linkedTo')} ${plan.notice}`);
 		return;
 	}
-	const root = getRenderRoot(view.mindMap);
-	// 可嵌入的附件（PDF/音视频）默认写嵌入语法 `![[…]]`，与 Obsidian 拖放一致
-	// （见 view-node-actions.applyNodeAttachment 与 core/constants）
-	const embed = isEmbeddableAttachmentExtension(file.extension);
-	if (
-		insertChildNodeWithData(view, root, {
-			text: file.name,
-			attachmentUrl: view.app.vault.getResourcePath(file),
-			attachmentName: file.name,
-			mdAttachmentLinkpath: file.path,
-			mdLinkStyle: 'wiki',
-			...(embed ? { mdEmbed: true } : {}),
-		})
-	) {
+	if (insertChildNodeWithData(view, getRenderRoot(view.mindMap), plan.data)) {
 		new Notice(
-			`${t(view.lang, 'common.nodeCreatedAndLinked')} [[${file.name}]]`,
+			`${t(view.lang, 'common.nodeCreatedAndLinked')} ${plan.notice}`,
 		);
 	}
 }
@@ -268,32 +242,20 @@ async function handleDroppedDocument(
 	file: TFile,
 	selected: MindMapNode | null,
 ): Promise<void> {
-	// 官方链接语法：`.md` 可省略扩展名（`[[笔记]]` ≡ `[[笔记.md]]`），canvas/base
-	// 等非 Markdown 文件**必须带扩展名**（`[[画布.canvas]]`），否则 Obsidian 会
-	// 当作不存在的笔记 —— 故文档链接目标一律按扩展名取，勿统一用 basename。
-	const target = file.extension.toLowerCase() === 'md' ? file.basename : file.name;
-	// 路径形态跟随官方「New link format」：默认 shortest ＝ 上面的 basename 口径；
-	// 用户选了相对/绝对路径（或存在同名文件）时按官方换算（见 newDocLinkFor）
-	const link = newDocLinkFor(view, file, formatWikilink(target));
+	// 一次判定：链接串（含官方 New link format 路径形态）、载荷与提示写法同源
+	//（扩展名口径、Wikilinks 分支见 view-node-actions.planDocLink）
+	const plan = planDocLink(view, file);
 	if (selected) {
 		// 与解析侧同通道（mdWikiLinkpath）→ 显示自绘文档页图标
-		applyDocWikiLink(view, selected, link, target);
-		new Notice(`${t(view.lang, 'common.linkedTo')} [[${target}]]`);
-	} else {
-		// 原逻辑：挂到根节点下并链接（通过 appointNodes 指定父节点，
-		// 不依赖激活列表；初始数据直接携带文本与链接）
-		const root = getRenderRoot(view.mindMap);
-		if (
-			insertChildNodeWithData(view, root, {
-				text: target,
-				// 文档双链走 mdWikiLinkpath 通道（自绘文档图标，不写 hyperlink）
-				mdWikiLinkpath: link,
-				mdLinkStyle: 'wiki',
-				mdLinkText: target,
-			})
-		) {
-			new Notice(`${t(view.lang, 'common.nodeCreatedAndLinked')} [[${target}]]`);
-		}
+		applyDocWikiLink(view, selected, plan.link, plan.target);
+		new Notice(`${t(view.lang, 'common.linkedTo')} ${plan.notice}`);
+		return;
+	}
+	// 挂到根节点下并链接（通过 appointNodes 指定父节点，不依赖激活列表）
+	if (insertChildNodeWithData(view, getRenderRoot(view.mindMap), plan.data)) {
+		new Notice(
+			`${t(view.lang, 'common.nodeCreatedAndLinked')} ${plan.notice}`,
+		);
 	}
 }
 
@@ -502,17 +464,9 @@ async function attachImportedFiles(
 		await createImageChildNode(view, selected, extra);
 	}
 	for (const document of documents) {
-		// 官方链接语法：`.md` 可省略扩展名（与 handleDroppedDocument 同口径）
-		const target =
-			document.extension.toLowerCase() === 'md'
-				? document.basename
-				: document.name;
-		applyDocWikiLink(
-			view,
-			selected,
-			newDocLinkFor(view, document, formatWikilink(target)),
-			target,
-		);
+		// 目标名 / 路径形态 / 形态分支同走 planDocLink（单一判定，勿在此重算）
+		const plan = planDocLink(view, document);
+		applyDocWikiLink(view, selected, plan.link, plan.target);
 	}
 	for (const attachment of attachments) {
 		applyNodeAttachment(view, selected, attachment);

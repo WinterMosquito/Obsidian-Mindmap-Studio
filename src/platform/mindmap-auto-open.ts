@@ -17,12 +17,20 @@
  */
 import type { Component, TFile, Workspace, WorkspaceLeaf } from 'obsidian';
 import { MarkdownView } from 'obsidian';
-import { CORE_VIEW_TYPE } from '../core/constants';
+import { AUTO_OPEN_SCAN_DEBOUNCE_MS, CORE_VIEW_TYPE } from '../core/constants';
+import { createDebouncer, type Debouncer } from '../core/concurrency';
 import { openAsMindMap } from '../markdown/md-open';
 
 export class MindMapAutoOpener {
 	/** 宿主组件（register 时注入）：启动恢复定时器随其注销清理 */
 	private host: Component | null = null;
+	/**
+	 * 全量扫描的防抖器（`core/concurrency` 的既有调度原语；卸载时取消，见 `register`）。
+	 * 用原语而非手写 `setTimeout`：窗口语义（重置 / 取消 / 幂等）与其它调度点同源。
+	 */
+	private readonly scanDebouncer: Debouncer = createDebouncer(
+		AUTO_OPEN_SCAN_DEBOUNCE_MS,
+	);
 
 	constructor(
 		private readonly workspace: Workspace,
@@ -35,10 +43,15 @@ export class MindMapAutoOpener {
 	/** 注册运行期自动切换事件（插件 onload 调用；事件随 Component 清理） */
 	register(component: Component): void {
 		this.host = component;
+		// 卸载清理：未决的扫描不再触发（`cancel` 幂等，与启动档位定时器同款收尾）
+		component.register(() => this.scanDebouncer.cancel());
 		// 运行期兜底：任何文件打开时，若它是声明为导图且当前在 markdown 视图，
 		// 也切到导图视图（与 active-leaf-change 互补）。
+		// **防抖触发**：启动恢复逐叶开文件、批量开标签会连发多次 file-open，而每次
+		// 全量扫描都要遍历全部 markdown 叶子 + 逐叶读 frontmatter 判据（metadataCache
+		// 查询）——整个突发扫一次即可（见 scheduleDeclaredLeavesScan）。
 		component.registerEvent(
-			this.workspace.on('file-open', () => this.activateDeclaredLeaves()),
+			this.workspace.on('file-open', () => this.scheduleDeclaredLeavesScan()),
 		);
 		component.registerEvent(
 			this.workspace.on('active-leaf-change', (leaf) => {
@@ -61,6 +74,28 @@ export class MindMapAutoOpener {
 			// 插件卸载后不得再扫描/切换视图：随宿主组件注销清理未触发的定时器
 			this.host?.register(() => window.clearTimeout(id));
 		});
+	}
+
+	/**
+	 * 全量扫描的**防抖**入口（`file-open` 与 `metadataCache.changed` 的共同入口）。
+	 *
+	 * 语义（`createDebouncer`）：窗口内的后续触发**重置**计时，突发结束后
+	 * `AUTO_OPEN_SCAN_DEBOUNCE_MS` 落地一次。为什么不用「首次触发即计时」的节流：
+	 * 启动恢复 / 批量同步会在数百毫秒内连发几十次事件，节流会按窗口数各扫一遍
+	 *（每次全量扫描 = 全部 markdown 叶子 × frontmatter 判据读取），防抖则
+	 * **整个突发只扫一次**；而单次打开文件两者都是「一窗口后落地」，用户感知一致。
+	 *
+	 * 已知边界（2026-10-15 登记，未改行为）：防抖只有「重置」而无**最长等待**，
+	 * 若事件以小于窗口的间隔**持续**到达（极大批量同步），兜底扫描会被无限推迟。
+	 * 用户可感的主路径不受影响（`active-leaf-change → autoSwitch` 不防抖）。
+	 * 要彻底消除该饥饿需给共享原语 `createDebouncer` 加 maxWait（另议，不属本轮）。
+	 *
+	 * 与 `scheduleStartupRestore` 的分工：启动档位（400/1500/3500ms）要的是「早/中/晚
+	 * 各试一次」的**固定节奏**，故仍直调 `activateDeclaredLeaves`；本方法只服务突发型
+	 * 触发。两者共用同一个扫描实现，不产生第二份判定。
+	 */
+	scheduleDeclaredLeavesScan(): void {
+		this.scanDebouncer.schedule(() => this.activateDeclaredLeaves());
 	}
 
 	/**
