@@ -2,7 +2,7 @@
  * 行内数学「字面占位串」形态回归（`core/math-placeholder`）。
  *
  * 该模块的存在理由就是**构建与撤回共用同一模板**：此前
- * `features/node-inline-content.buildMathElement`（构建）与
+ * `features/node-inline-html.buildMathElement`（构建）与
  * `platform/math-jax.attemptPlace`（产物未就绪时同步撤回）各写字面模板，
  * 值相同却无约束——断链即出现「撤回后与构建形态不一致」的静默分叉（占位既是
  * 回退态也是屏上可见文本）。
@@ -39,7 +39,9 @@ describe('formatMathPlaceholder（占位形态单一来源）', () => {
 
 	it('构建与撤回两处都经本模块（源码级：不得重新内联字面模板）', () => {
 		const consumers = [
-			'src/features/node-inline-content.ts',
+			// 2026-10-16：构建侧（buildMathElement）随 DOM 装配外置到
+			// node-inline-html——契约随之指向新文件（仍是同一份「必须经本模块」）。
+			'src/features/node-inline-html.ts',
 			'src/platform/math-jax.ts',
 		];
 		for (const rel of consumers) {

@@ -11,9 +11,13 @@
  * 精确命中——故 `tree.ts` 不会被 `links-tree.ts` 这类粘连子串误命中
  * （朴素 includes 会误判，本文件刻意不用）。
  *
- * 契约二（行数漂移）：「文件规模与豁免」表的登记行数与实测的偏差不得超
- * min(+15%, +50 行)——拦截「快照整体失真」（2026-10-02 修复前 15 个文件
- * 偏离最多 204 行，债务指标已失去度量意义），而非拦截正常演进。
+ * 契约二（行数漂移，**双向**）：「文件规模与豁免」表的登记行数与实测的偏差
+ * 不得超 min(+15%, +50 行)——拦截「快照整体失真」（2026-10-02 修复前 15 个
+ * 文件偏离最多 204 行，债务指标已失去度量意义），而非拦截正常演进。
+ *
+ * 2026-10-16 补**偏小一侧**：原判定只查 `actual > limit`，于是**陈旧偏高的
+ * 登记值永不报警**——拆分后 `engine/mindmap.ts` 实测 712 行却仍登记 2911，
+ * 门禁全程绿灯（靠人工核对全表才发现）。现两侧同判。
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -168,20 +172,23 @@ describe('AGENTS.md 同步契约：代码文件登记完备性', () => {
 			if (actual === null) {
 				continue;
 			}
-			const limit = Math.min(
-				Math.round(declaredLines * (1 + DRIFT_RATIO)),
-				declaredLines + DRIFT_LINES,
+			// 两侧共用同一份余量（取原「偏大」口径，见契约二）：
+			// 实测偏大 ⇒ 忘了随改动刷新登记值；实测偏小 ⇒ 文件缩小后登记值陈旧。
+			const allowance = Math.min(
+				Math.round(declaredLines * DRIFT_RATIO),
+				DRIFT_LINES,
 			);
-			if (actual > limit) {
+			if (Math.abs(actual - declaredLines) > allowance) {
 				drifted.push(
-					`${rel}：登记 ${declaredLines} 行，实测 ${actual} 行（上限 ${limit}）`,
+					`${rel}：登记 ${declaredLines} 行，实测 ${actual} 行` +
+						`（偏差 ${actual - declaredLines}，容许 ±${allowance}）`,
 				);
 			}
 		}
 		expect(
 			drifted,
-			`以下文件实际行数已明显超过 AGENTS.md 豁免表的登记值，` +
-				`请更新「文件规模与豁免」表的行数列（阈值 min(+15%, +${DRIFT_LINES} 行)）：\n${drifted.join('\n')}`,
+			`以下文件的实测行数与 AGENTS.md 豁免表的登记值偏离超阈，` +
+				`请更新「文件规模与豁免」表的行数列（阈值 ±min(+15%, +${DRIFT_LINES} 行)）：\n${drifted.join('\n')}`,
 		).toEqual([]);
 	});
 
