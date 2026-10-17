@@ -82,7 +82,6 @@ export {
 	inlineContentPreview,
 } from './node-inline-tokenize';
 export type {
-	InlineContentDocument,
 	InlineContentOptions,
 	InlineSegment,
 } from './node-inline-tokenize';
