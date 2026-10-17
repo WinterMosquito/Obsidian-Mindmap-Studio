@@ -10,7 +10,7 @@
  */
 import { Menu, Plugin, TFile, TFolder } from 'obsidian';
 import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, SETTINGS_APPLY_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS, CODE_BLOCK_LANGUAGE } from './core/constants';
-import { createDebouncer } from './core/concurrency';
+import { createDebouncer, createSerialQueue } from './core/concurrency';
 import {
 	MindMapStudioSettings,
 	MindMapStudioSettingTab,
@@ -102,6 +102,11 @@ export default class MindMapStudioPlugin extends Plugin {
 	viewState = new ViewStateStore((state) => {
 		return this.dataWriter.write({ viewState: state });
 	}, VIEW_STATE_PERSIST_MS);
+	/**
+	 * 属性键全库迁移的串行队列：语言连续切换会并发启动两次迁移，
+	 * 交错改写会让部分文件停在旧语言的键上（见 `refreshLanguageUi`）。
+	 */
+	private readonly propertyKeyMigration = createSerialQueue();
 	/** Vault 文件事件同步服务（rename/delete/create） */
 	private vaultSync!: VaultSyncService;
 
@@ -167,10 +172,22 @@ export default class MindMapStudioPlugin extends Plugin {
 		this.ribbonEl = addMindMapRibbonIcon(this);
 
 		this.statusBarEl = this.addStatusBarItem();
-		this.statusBarEl.setText(t(this.settings.language, 'common.mindMap'));
+		this.refreshStatusBarLabel();
 
-		// 视图切换后状态栏跟随激活视图：导图视图刷新计数，其余清空
-		// （此前切到非导图视图后残留上一个导图的节点计数）
+		this.registerStatusBarFollower();
+		this.registerFileMenu();
+
+		this.registerAutoOpen();
+		this.registerVaultSync();
+
+		this.addSettingTab(new MindMapStudioSettingTab(this.app, this));
+	}
+
+	/**
+	 * 视图切换后状态栏跟随激活视图：导图视图刷新计数，其余清空。
+	 * （此前切到非导图视图后残留上一个导图的节点计数）
+	 */
+	private registerStatusBarFollower(): void {
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
 				const view = this.app.workspace.getActiveViewOfType(MindMapView);
@@ -181,10 +198,18 @@ export default class MindMapStudioPlugin extends Plugin {
 				}
 			}),
 		);
+	}
 
-		// 文件右键：md 文件互斥一项（声明为导图 → 「以 Markdown 打开」降级；
-		// 普通笔记 → 「以思维导图打开」，即「任意笔记可预览为导图」入口）；
-		// 文件夹右键：新建思维导图。
+	/**
+	 * 文件右键菜单：
+	 * - md 文件**互斥一项**（声明为导图 →「以 Markdown 打开」降级；普通笔记 →
+	 *   「以思维导图打开」，即「任意笔记可预览为导图」入口），分支见
+	 *   `addMarkdownFileMenuItems`；
+	 * - 文件夹 → 新建思维导图。这是「在某个文件夹新建导图」的**唯一**入口：
+	 *   此前的 file-explorer「新建」菜单注入是同一动作的第二入口，且依赖未公开
+	 *   私有 API（`view.fileCreator`），已于 2026-10-09 减法移除。
+	 */
+	private registerFileMenu(): void {
 		this.registerEvent(
 			this.app.workspace.on('file-menu', (menu, file) => {
 				if (file instanceof TFile) {
@@ -205,10 +230,16 @@ export default class MindMapStudioPlugin extends Plugin {
 				}
 			}),
 		);
+	}
 
-		// 声明式自动打开：frontmatter 声明为导图的文件以 markdown 视图出现时，
-		// 自动切入导图视图（运行期事件 + 启动多档延时恢复）。打开方式不再记入
-		// data.json——文件属性即声明，没有第二份状态可失配。
+	/**
+	 * 声明式自动打开：frontmatter 声明为导图的文件以 markdown 视图出现时，自动
+	 * 切入导图视图（运行期事件 + 启动多档延时恢复）。打开方式不记入 data.json
+	 * ——文件属性即声明，没有第二份状态可失配。
+	 *
+	 * `opener` 只在本方法内被事件回调与启动恢复引用，故不必成为类字段。
+	 */
+	private registerAutoOpen(): void {
 		const opener = new MindMapAutoOpener(
 			this.app.workspace,
 			(file) => isMindMapFile(this.app, file),
@@ -229,19 +260,21 @@ export default class MindMapStudioPlugin extends Plugin {
 			}),
 		);
 
-		// 启动后恢复「声明为导图」的叶子。
-		// 「在某个文件夹新建导图」只保留**一个**入口：上方官方 `file-menu` 的文件夹
-		// 右键项（`TFolder` 分支）。此前的 file-explorer「新建」菜单注入是同一动作的
-		// 第二入口、且依赖未公开私有 API（`view.fileCreator`），已于 2026-10-09 减法移除。
+		// 启动后恢复「声明为导图」的叶子。onLayoutReady 不可注销（返回 void，
+		// 非 EventRef），故由 `unloaded` 自行判定
 		this.app.workspace.onLayoutReady(() => {
 			if (this.unloaded) {
 				return;
 			}
 			opener.scheduleStartupRestore();
 		});
+	}
 
-		// Vault 文件事件同步（重命名/删除/创建时更新打开导图的引用与查找缓存，
-		// 并经 hooks 迁移/清理视图状态键——事件单一注册入口，避免双订阅）
+	/**
+	 * Vault 文件事件同步（重命名/删除时更新打开导图的引用与查找缓存，并经 hooks
+	 * 迁移/清理按路径键存的视图状态）。事件走**单一注册入口**，避免双订阅。
+	 */
+	private registerVaultSync(): void {
 		this.vaultSync = new VaultSyncService(this.app);
 		this.vaultSync.attach(this, {
 			onRename: (file, oldPath) => {
@@ -258,7 +291,29 @@ export default class MindMapStudioPlugin extends Plugin {
 			},
 		});
 
-		this.addSettingTab(new MindMapStudioSettingTab(this.app, this));
+		this.pruneStaleViewStates();
+	}
+
+	/**
+	 * 启动期补一次「插件没在跑时删掉的文件」的视图状态清理。
+	 *
+	 * 运行期的 `onDelete` 覆盖不到这种情况（插件禁用/未启动期间的删除）；放在
+	 * `onLayoutReady` 之后：库索引此时已就绪，不会把有效键误判为缺失（同
+	 * `registerAutoOpen` 的 onLayoutReady + unloaded 守卫口径）。
+	 */
+	private pruneStaleViewStates(): void {
+		this.app.workspace.onLayoutReady(() => {
+			if (this.unloaded) {
+				return;
+			}
+			this.viewState.pruneMissingPaths((path) => {
+				// 存在性检查（**非解析**）：`resolvePathToFile` 是形态路由（别名/
+				// 同名/编码变体会解析到别处），恰好不能回答「这个键指向的文件还在
+				// 不在」——误用它会把有效键判成缺失，删掉用户的布局/视口。
+				// eslint-disable-next-line no-restricted-syntax -- 存在性检查（非解析），理由见上
+				return this.app.vault.getAbstractFileByPath(path) !== null;
+			});
+		});
 	}
 
 	override onunload(): void {
@@ -280,6 +335,27 @@ export default class MindMapStudioPlugin extends Plugin {
 	}
 
 	/**
+	 * 把该文件已在**任意**标签打开的导图视图带到前台，并复用视图自带的返回入口
+	 * （恢复进入前的编辑/阅读模式、持久化视口——与工具栏/命令同语义）。
+	 *
+	 * 按**文件**查找而非活跃 leaf：导图在后台标签时也应切它，而不是顶掉当前标签页；
+	 * 全库至多一个导图实例（见 onLoadFile 的 P0 互斥），故命中即停。
+	 *
+	 * @returns 是否命中；未命中时调用方走 `openAsMarkdown` 降级路径
+	 */
+	private revealOpenMindMap(file: TFile): boolean {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+			const view = leaf.view;
+			if (view instanceof MindMapView && view.file?.path === file.path) {
+				this.app.workspace.setActiveLeaf(leaf, { focus: true });
+				view.backToMarkdown();
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * md 文件的右键项（**互斥**一项，避免同名动作两种行为）：
 	 * - 声明为导图（frontmatter `类型`/`Type` = `Mindmap`）→「以 Markdown 打开」，
 	 *   点击**持久降级**（属性改写为 `Markdown`），此后不再自动进导图视图；
@@ -294,34 +370,17 @@ export default class MindMapStudioPlugin extends Plugin {
 					.setTitle(t(lang, 'command.openAsMarkdown'))
 					.setIcon('file-text')
 					.onClick(() => {
-						// 该文件已是导图视图（全库至多一个实例，见 onLoadFile 的 P0
-						// 互斥）→ 带到前台并复用视图自带返回入口：恢复进入前编辑/
-						// 阅读模式（与工具栏/命令同语义）、持久化视口。按**文件**
-						// 查找而非活跃 leaf：导图在后台标签时也应切它，而不是顶掉
-						// 当前标签页。
-						for (const leaf of this.app.workspace.getLeavesOfType(
-							VIEW_TYPE,
-						)) {
-							const view = leaf.view;
-							if (
-								view instanceof MindMapView &&
-								view.file?.path === file.path
-							) {
-								this.app.workspace.setActiveLeaf(leaf, {
-									focus: true,
-								});
-								view.backToMarkdown();
-								return;
-							}
+						// 已是本文件的导图视图 → 复用其返回入口；否则（声明刚写入 /
+						// auto-open 未跑）直接切回 Markdown
+						if (!this.revealOpenMindMap(file)) {
+							void openAsMarkdown(
+								this.app,
+								this.app.workspace.getLeaf(false),
+								file,
+								'source',
+								lang,
+							);
 						}
-						// 尚未以导图打开（声明刚写入 / auto-open 未跑）→ 直接切回
-						void openAsMarkdown(
-							this.app,
-							this.app.workspace.getLeaf(false),
-							file,
-							'source',
-							lang,
-						);
 					}),
 			);
 			return;
@@ -409,12 +468,9 @@ export default class MindMapStudioPlugin extends Plugin {
 			this.settings,
 		);
 		this.appliedSettingsSnapshot = { ...this.settings };
-		this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
-			const view = leaf.view;
-			if (view instanceof MindMapView) {
-				view.refreshToolbar();
-				view.applySettingsChange(changedKeys);
-			}
+		this.forEachMindMapView((view) => {
+			view.refreshToolbar();
+			view.applySettingsChange(changedKeys);
 		});
 	}
 
@@ -428,18 +484,40 @@ export default class MindMapStudioPlugin extends Plugin {
 	 */
 	refreshLanguageUi(): void {
 		refreshCommandLabels(this, this.ribbonEl);
-		this.statusBarEl?.setText(t(this.settings.language, 'common.mindMap'));
-		this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
+		this.refreshStatusBarLabel();
+		this.forEachMindMapView((view) => {
+			view.refreshSearchBarLabels();
+		});
+		// 全库迁移：键名随语言收敛（异步、逐个文件；单文件失败只留痕）。
+		// 经串行队列：连续切换语言会并发启动两次迁移，交错改写会让部分文件停在旧键上。
+		void this.propertyKeyMigration(() =>
+			migrateMindMapPropertyKeys(this.app, this.settings.language),
+		).catch((error) => {
+			console.error('迁移思维导图属性键失败:', error);
+		});
+	}
+
+	/**
+	 * 遍历当前打开的导图视图（类型窄化只此一份）。
+	 *
+	 * 设置应用与语言刷新都要「对每个导图 leaf 做同一件事」，此前各自抄了一遍
+	 * `getLeavesOfType + instanceof MindMapView`——漏掉窄化就会把非导图视图
+	 * 当导图调方法。
+	 */
+	private forEachMindMapView(visit: (view: MindMapView) => void): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
 			const view = leaf.view;
 			if (view instanceof MindMapView) {
-				view.refreshSearchBarLabels();
+				visit(view);
 			}
-		});
-		// 全库迁移：键名随语言收敛（异步、逐个文件；单文件失败只留痕）
-		void migrateMindMapPropertyKeys(this.app, this.settings.language).catch(
-			(error) => {
-				console.error('迁移思维导图属性键失败:', error);
-			},
-		);
+		}
+	}
+
+	/**
+	 * 状态栏文案随语言刷新（onload 首绘与语言变更共用）。
+	 * 元素缺失时静默：onunload 已置空，服务层亦按惰性取值器跳过。
+	 */
+	private refreshStatusBarLabel(): void {
+		this.statusBarEl?.setText(t(this.settings.language, 'common.mindMap'));
 	}
 }

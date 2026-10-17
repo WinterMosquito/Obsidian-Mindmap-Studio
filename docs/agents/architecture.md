@@ -5,7 +5,7 @@
 
 ## 代码结构
 
-**分组与分层（依赖单向；许可集与 lint 机械强制见 K51）**：
+**分组与分层（依赖单向；许可集由 lint + 静态依赖图测试机械强制，见 K51）**：
 
 | 层 | 组 | 定位 |
 |---|---|---|
@@ -111,11 +111,12 @@ src/
                     #   私有结构防御式访问，失败退化为修复前行为
     system-open.ts  #   系统默认应用打开库内文件（桌面端 shell.openPath）
     vault-prefs.ts  #   官方库级偏好读取（useMarkdownLinks / newLinkFormat；getConfig 内部接口）
-    export-css-vars.ts # 导出 SVG 的 Obsidian CSS 变量注入（K99）：取宿主实际生效值以
-                    #   <style> 注入克隆 SVG 根——修复「导出环境变量缺失 → 字体回退
-                    #   → 度量漂移 → foreignObject 固定高度裁切」（多行节点/LaTeX 节点）
-    export-foreign-object-padding.ts # 导出 SVG 的 foreignObject 几何余量（K106）：宽 +12/高 +20——
-                    #   兜底 `<img>` 解码环境与主文档的 ~2px 文本度量偏差（临界节点换行被裁）
+    export-svg-postprocess.ts # 导出 SVG 后处理收口（2026-10-17 合并原 export-svg-style /
+                    #   export-css-vars / export-foreign-object-padding）：platform 单入口
+                    #   postProcessExportSvg ＝ foreignObject 几何余量（K106，宽 +12/高 +20，
+                    #   兜底 `<img>` 解码环境的文本度量偏差）→ Obsidian CSS 变量注入
+                    #   （K99/K105，取宿主实际生效值，修复字体回退导致的裁切）；共用
+                    #   `<style>` 注入原语 appendSvgStyle（数学导出链亦引用）
     math-jax.ts     #   行内数学渲染（官方 loadMathJax 通道；**实机 1.13.7 的 MathJax 3.2.2
                     #   仅有 tex2chtml**，见 K85；**1.14+ 为 MathJax 4.1.3，tex2chtml
                     #   仍在、tex2svg 仍缺，见 K113**）；**就绪判据＝本段字符的规则已
@@ -310,8 +311,9 @@ tests/
                        #   保存 null 与「保存期间引擎换代」守卫、失败转用户提示）
   view-export.test.ts  # PNG 导出（结果三态分流：Blob → 延迟回收对象 URL / data URL 直下 /
                        #   null 不下载；倍率与文件名（basename，缺省 mindmap）透传；失败转提示）
-  export-fo-padding.test.ts # 导出 foreignObject 几何余量（K106：全 FO 宽 +12/高 +20、原样返回、
-                       #   非法尺寸跳过、无 FO / 形态不符 no-op）
+  export-svg-postprocess.test.ts # 导出 SVG 后处理（K106 几何余量 + platform 单入口）：
+                      #   全 FO 宽 +12/高 +20、原样返回、非法尺寸跳过、无 FO / 形态不符 no-op；
+                      #   单入口一次完成「几何 → CSS 变量注入」
   math-jax-export-pin.test.ts # 导出数学容器高度钉扎（K107：数量一致时逐钉 height（画布缩放归一 /
                        #   2 位小数 / !important）、域优先与全文退回、数量不符与形态不符 no-op、单元素不可测跳过）
   language-refresh.test.ts # 语言切换刷新（t/tf、语言下拉项、状态栏文案、命令标签刷新）

@@ -8,11 +8,11 @@ import { Menu, Notice } from 'obsidian';
 import {
 	ENGINE_COMMANDS,
 	findNodeByDom,
-	fitMindMap,
 	getNodeDataString,
 	getRenderRoot,
 	resetZoom,
 } from '../engine/mindmap';
+import { fitToScreen } from './view-viewport';
 import {
 	addImageToActiveNode,
 	addLinkToActiveNode,
@@ -37,7 +37,7 @@ import { t } from '../core/i18n';
 import { writeClipboardText } from '../platform/clipboard';
 import { renderHyperlink } from '../markdown/md-serialize';
 import type { MdNodeData } from '../core/node-data';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode } from '../core/engine-types';
 import type { MindMapViewContext } from './view-context';
 
 /** 注册右键菜单监听（引擎重建时随 initMindMap 调用） */
@@ -98,7 +98,7 @@ export function setupContextMenu(view: MindMapViewContext): void {
 			item
 				.setTitle(t(view.lang, 'command.fitCanvas'))
 				.setIcon('maximize')
-				.onClick(() => fitMindMap(view.mindMap)),
+				.onClick(() => fitToScreen(view)),
 		);
 		menu.addItem((item) =>
 			item

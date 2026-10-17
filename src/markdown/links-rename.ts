@@ -42,7 +42,7 @@ import {
 import { buildInlineData, tokenizeInline } from './md-outline';
 import type { MdNodeData } from '../core/node-data';
 import type { InlineToken } from './md-outline';
-import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../core/engine-types';
 
 /**
  * 重命名引用（字段 + 渲染源）。返回是否有变更（由调用方触发保存）。

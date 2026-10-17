@@ -17,7 +17,7 @@ import { resolvePathToFile } from '../links/links-resolve';
 import type {
 	MindMapTreeNode,
 	SetNodeImageOptions,
-} from '../../vendor/simple-mind-map.cjs';
+} from '../core/engine-types';
 import type { MdNodeData } from '../core/node-data';
 
 /**

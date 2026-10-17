@@ -16,7 +16,7 @@ import {
 	type ExportImageFormat,
 	type SaveLocation,
 } from './core/constants';
-import { Language, LANGUAGE_OPTIONS, t } from './core/i18n';
+import { Language, LANGUAGE_OPTIONS, t, type TranslationKey } from './core/i18n';
 import { createWarnOnce } from './core/errors';
 
 /**
@@ -24,7 +24,7 @@ import { createWarnOnce } from './core/errors';
  * 仅包含设置面板实际使用的成员（读写设置 + 持久化 + 视图刷新）。
  * 替代此前的 MindMapStudioPlugin 具体类引用，打破 main ↔ settings 循环依赖。
  */
-interface IPluginSettingsHost {
+interface SettingsHost {
 	settings: MindMapStudioSettings;
 	scheduleSettingsPersist(): void;
 	applySettingsToViews(): void;
@@ -112,10 +112,12 @@ export function reportDroppedSettings(dropped: readonly string[]): void {
 }
 
 /**
- * 校验/归一化从 data.json 读出的设置。历史或手工数据可能含非法类型
- * （如 language:'fr'、exportScale:'2'、enableDrag:'yes'），
+ * 校验/归一化从 data.json 读出的设置。历史或手工数据可能含坏值
+ * （如 language:'fr'、enableDrag:'yes'、exportScale:'abc'），
  * 直接 Object.assign 会让坏值覆盖默认值并流入运算（NaN/错误语言回退）。
- * 只采纳「类型正确 + 取值合法」的键，其余用默认值。
+ * 只采纳「类型正确 + 取值合法」的键，其余用默认值；数值键额外**宽容**
+ * 纯数字字符串（历史 data.json 里的 `"2"` / `" 3 "` → Number 转换后按钳制域校验，
+ * 见 tests/settings.test.ts「数字字符串宽容转换」；此前注释误把 `'2'` 列为被回退）。
  *
  * @param report 可选出参：填入被回退/钳制的键（调用方交给
  *   `reportDroppedSettings` 留痕；纯函数语义不变，不传即零开销）。
@@ -139,17 +141,26 @@ export function sanitizeSettings(
 		}
 		return undefined;
 	};
+	/**
+	 * 数值候选：数字原型，或**非空白**数字字符串（历史 data.json 的 `"2"` / `" 3 "`）；
+	 * 其余一律 NaN（由调用方判定回退）。拆出来是为了让 `pickNumber` 只表达
+	 * 「缺失 → 跳过、非有限 → 留痕回退」这一层语义。
+	 */
+	const toNumber = (value: unknown): number => {
+		if (typeof value === 'number') {
+			return value;
+		}
+		if (typeof value === 'string' && value.trim() !== '') {
+			return Number(value);
+		}
+		return Number.NaN;
+	};
 	const pickNumber = (key: keyof MindMapStudioSettings): number | undefined => {
 		const value = raw[key];
 		if (value === undefined) {
 			return undefined;
 		}
-		const num =
-			typeof value === 'number'
-				? value
-				: typeof value === 'string' && value.trim() !== ''
-					? Number(value)
-					: NaN;
+		const num = toNumber(value);
 		if (Number.isFinite(num)) {
 			return num;
 		}
@@ -198,14 +209,9 @@ export function sanitizeSettings(
 		}
 		return clamped;
 	};
-	const language = pickString('language');
-	const finalLanguage =
-		language === 'zh' || language === 'en'
-			? language
-			: DEFAULT_SETTINGS.language;
-	if (language !== undefined && finalLanguage !== language) {
-		drop('language');
-	}
+	// 语言：白名单取自 `LANGUAGE_OPTIONS`（与设置面板下拉同源），非法值回退默认并留痕
+	const language =
+		pickFrom('language', LANGUAGE_OPTIONS) ?? DEFAULT_SETTINGS.language;
 	// ⚠ 报告必须在**对象字面量求值之后**回填：pick* 是在字面量里被调用的
 	//（写在 return 之前会拿到空的 dropped）。
 	const settings: MindMapStudioSettings = {
@@ -239,7 +245,7 @@ export function sanitizeSettings(
 		exportImageFormat:
 			pickFrom('exportImageFormat', EXPORT_IMAGE_FORMAT_OPTIONS) ??
 			DEFAULT_SETTINGS.exportImageFormat,
-		language: finalLanguage,
+		language,
 	};
 	if (report) {
 		report.dropped.push(...dropped);
@@ -247,14 +253,32 @@ export function sanitizeSettings(
 	return settings;
 }
 
-/** 变更后需要即时应用到已打开视图的设置项 */
-const LIVE_REFRESH_SETTING_KEYS = new Set<string>([
+/**
+ * 变更后需要即时应用到已打开视图的设置项。
+ *
+ * 以 `as const satisfies` 声明（而非 `Set<string>`）：键名写错或混入非设置字段
+ * 会在编译期报错；差集函数因此可按字面量联合索引设置对象，不再需要
+ * `key as keyof MindMapStudioSettings` 强转。
+ */
+const LIVE_REFRESH_SETTING_KEYS = [
 	'defaultLayout',
 	'defaultLineStyle',
 	'defaultTheme',
 	'enableDrag',
 	'language',
-]);
+] as const satisfies readonly (keyof MindMapStudioSettings)[];
+
+type LiveRefreshSettingKey = (typeof LIVE_REFRESH_SETTING_KEYS)[number];
+
+/** 即时刷新键的查表集合（避免每次线性扫描；也免去对字面量数组做类型断言） */
+const LIVE_REFRESH_KEY_SET: ReadonlySet<string> = new Set(
+	LIVE_REFRESH_SETTING_KEYS,
+);
+
+/** 设置面板写回分流：该键是否属于「即时刷新」类 */
+function isLiveRefreshKey(key: string): key is LiveRefreshSettingKey {
+	return LIVE_REFRESH_KEY_SET.has(key);
+}
 
 /**
  * 相对「上次已应用」的设置快照，算出本次真正变化的 LIVE_REFRESH 键（首次应用 = 全部）。
@@ -274,11 +298,7 @@ export function diffLiveRefreshKeys(
 ): Set<string> {
 	const changed = new Set<string>();
 	for (const key of LIVE_REFRESH_SETTING_KEYS) {
-		if (
-			previous === null ||
-			previous[key as keyof MindMapStudioSettings] !==
-				next[key as keyof MindMapStudioSettings]
-		) {
+		if (previous === null || previous[key] !== next[key]) {
 			changed.add(key);
 		}
 	}
@@ -287,15 +307,29 @@ export function diffLiveRefreshKeys(
 
 /** 设置面板 */
 export class MindMapStudioSettingTab extends PluginSettingTab {
-	declare plugin: Plugin & IPluginSettingsHost;
+	declare plugin: Plugin & SettingsHost;
 
-	constructor(app: App, plugin: Plugin & IPluginSettingsHost) {
+	constructor(app: App, plugin: Plugin & SettingsHost) {
 		super(app, plugin);
 	}
 
 	/** 当前界面语言 */
 	private get lang(): Language {
 		return this.plugin.settings.language;
+	}
+
+	/**
+	 * 选项表 → 官方 dropdown 的 `{ value: label }` 映射（按当前语言取词）。
+	 *
+	 * 设置页有 5 个下拉共用这一形态；此前每处各写一遍 `Object.fromEntries(map)`，
+	 * 改取词口径（如回退策略）时得改 5 遍。
+	 */
+	private localizedOptions(
+		options: readonly { value: string; label: TranslationKey }[],
+	): Record<string, string> {
+		return Object.fromEntries(
+			options.map((option) => [option.value, t(this.lang, option.label)]),
+		);
 	}
 
 	/**
@@ -307,35 +341,12 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 	 * 契约（对齐宿主签名），不代表运行期存在旧版本分支。
 	 */
 	override getSettingDefinitions(): SettingDefinitionItem[] {
-		const layoutOptions = Object.fromEntries(
-			LAYOUT_OPTIONS.map((option) => [
-				option.value,
-				t(this.lang, option.label),
-			]),
-		);
-		const lineStyleOptions = Object.fromEntries(
-			LINE_STYLE_OPTIONS.map((option) => [
-				option.value,
-				t(this.lang, option.label),
-			]),
-		);
-		const themeOptions = Object.fromEntries(
-			THEME_OPTIONS.map((option) => [
-				option.value,
-				t(this.lang, option.label),
-			]),
-		);
-		const saveLocationOptions = Object.fromEntries(
-			SAVE_LOCATION_OPTIONS.map((option) => [
-				option.value,
-				t(this.lang, option.label),
-			]),
-		);
-		const exportImageFormatOptions = Object.fromEntries(
-			EXPORT_IMAGE_FORMAT_OPTIONS.map((option) => [
-				option.value,
-				t(this.lang, option.label),
-			]),
+		const layoutOptions = this.localizedOptions(LAYOUT_OPTIONS);
+		const lineStyleOptions = this.localizedOptions(LINE_STYLE_OPTIONS);
+		const themeOptions = this.localizedOptions(THEME_OPTIONS);
+		const saveLocationOptions = this.localizedOptions(SAVE_LOCATION_OPTIONS);
+		const exportImageFormatOptions = this.localizedOptions(
+			EXPORT_IMAGE_FORMAT_OPTIONS,
 		);
 		// 语言下拉选项（label 用语言自身的名字，不随界面语言变化）
 		const languageOptions = Object.fromEntries(
@@ -465,7 +476,7 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 		// 防抖落盘：滑块等高频控件逐档触发，写盘在 main 侧合并为一次
 		//（内存设置已经 sanitizeSettings 即时生效，不受防抖影响）
 		this.plugin.scheduleSettingsPersist();
-		if (LIVE_REFRESH_SETTING_KEYS.has(key)) {
+		if (isLiveRefreshKey(key)) {
 			this.plugin.applySettingsToViews();
 		}
 		// 语言切换后：命令面板/丝带/状态栏/搜索栏文案随语言刷新，
@@ -487,5 +498,4 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 			this.refreshDomState();
 		}
 	}
-
 }

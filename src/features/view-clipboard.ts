@@ -31,7 +31,7 @@ import { serializeSubtreesToOutline } from '../markdown/md-serialize';
 import { t, type Language, type TranslationKey } from '../core/i18n';
 import { isTextEntryTarget, type PasteClipboardHost } from './view-common';
 import { isAnyNodeEditing } from './node-inline-editor';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode } from '../core/engine-types';
 
 /**
  * 复制当前选中节点（及其整棵子树）到系统剪贴板。

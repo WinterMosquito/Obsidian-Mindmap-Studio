@@ -774,15 +774,11 @@ class MindMapNode {
           )
         }
         if (async) {
-          // 销毁断链守卫（2026-09-25 自有补丁）：分片链在引擎 destroy
-          // （el 置 null，见 index.js destroy）后仍留在 setTimeout 队列里，
-          // 缺守卫时会继续在游离 DOM 上白跑（5000 节点图实测可多跑数百毫秒
-          // 无效渲染）。el 已置空即停止派发——实例已死，回调链无消费者，
-          // isRendering 等状态随实例一并作废。
-          setTimeout(() => {
-            if (!this.mindMap.el) return
-            renderChild()
-          }, 0)
+          // 【自有补丁 12 · 2026-10-17】改走 renderer 的**批量调度器**：原实现
+          // 「每子节点一个 setTimeout(0)」在嵌套定时器 4ms 钳制下，整树可见时
+          // 累计 20–38s（5000 节点 fit 实测），绝大部分是排队延迟而非渲染。
+          // 销毁断链守卫上移到 Render.drainAsyncRenderQueue（每批一次判 el）。
+          this.renderer.enqueueAsyncRenderTask(renderChild)
         } else {
           renderChild()
         }

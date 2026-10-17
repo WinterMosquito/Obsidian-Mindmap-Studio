@@ -48,7 +48,7 @@ import {
 	parseWikilink,
 	wikilinkTargetIsAttachment,
 } from '../domain/wikilink';
-import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../core/engine-types';
 import type { MdTokenSegment } from '../domain/md-meta';
 import type { MdNodeData } from '../core/node-data';
 

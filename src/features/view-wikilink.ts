@@ -23,7 +23,7 @@ import { Keymap } from 'obsidian';
 import { HOVER_LINK_EVENT, VIEW_TYPE } from '../core/constants';
 import { formatWikilink, wikilinkLinkpath } from '../domain/wikilink';
 import { getNodeDataString, getNodeGroupEl } from '../engine/mindmap';
-import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { HyperlinkOpenMode, MindMapViewContext } from './view-context';
 
 /** 悬停防抖（与附件预览共用状态字段，互斥触发） */

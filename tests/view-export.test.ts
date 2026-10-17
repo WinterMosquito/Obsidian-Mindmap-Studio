@@ -37,7 +37,7 @@ vi.mock('../src/engine/mindmap', () => ({ exportMindMapImage: exportMock }));
 vi.mock('../src/core/errors', () => ({ notifyError: notifyErrorMock }));
 
 import { exportImage, exportImageAs } from '../src/features/view-export';
-import { injectObsidianCssVarsIntoExportSvg } from '../src/platform/export-css-vars';
+import { injectObsidianCssVarsIntoExportSvg } from '../src/platform/export-svg-postprocess';
 
 /** 下载锚点桩：createEl('a') 返回它，记录 href/download/click */
 const anchor = { href: '', download: '', click: vi.fn<() => void>() };

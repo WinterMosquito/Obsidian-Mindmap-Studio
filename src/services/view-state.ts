@@ -157,6 +157,32 @@ export class ViewStateStore {
 		this.schedulePersist();
 	}
 
+	/**
+	 * 启动期清理：剔除指向**已不存在文件**的键，返回被剔除的路径。
+	 *
+	 * 为什么需要补这一步：运行期的 `onDelete` 只在插件存活期间生效，插件被
+	 * 禁用/未启动时从库中删除（或移出）的文件，其键会永久残留并随 data.json
+	 * 无界增长（实测库中出现过 2 个指向已删文件的键）。故只在**启动**补一次，
+	 * 不与运行期事件处理重复。
+	 *
+	 * @param isExistingPath 路径是否仍指向库内文件——由调用方注入，
+	 *   store 自身不引入 App 依赖（与 persist 注入同口径，便于直测）。
+	 * @returns 被剔除的路径列表（空表示无残留）
+	 */
+	pruneMissingPaths(isExistingPath: (path: string) => boolean): string[] {
+		const removed: string[] = [];
+		for (const path of [...this.map.keys()]) {
+			if (!isExistingPath(path)) {
+				this.map.delete(path);
+				removed.push(path);
+			}
+		}
+		if (removed.length > 0) {
+			this.schedulePersist();
+		}
+		return removed;
+	}
+
 	private patch(path: string, partial: PathState): void {
 		this.map.set(path, { ...(this.map.get(path) ?? {}), ...partial });
 		this.schedulePersist();

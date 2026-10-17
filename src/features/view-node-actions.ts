@@ -49,7 +49,7 @@ import {
 } from './node-inline-editor';
 import { requireActiveNode, insertChildNodeWithData, applyInlineRawMeta } from './view-common';
 import { readNodeDataString, type MdNodeData } from '../core/node-data';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode } from '../core/engine-types';
 import type {
 	MindMapViewContext,
 	ViewNodeEditContext,

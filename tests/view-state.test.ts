@@ -9,6 +9,8 @@
  *   （后续变更不得回头改写已交给写盘器的对象）；
  * - flushNow：取消未决防抖并立即写盘；persist 返回 Promise 时原样透传
  *   （卸载路径靠它持有在途写盘），无未决变更时返回 undefined。
+ * - pruneMissingPaths：启动期剔除指向已删文件的键（运行期 `onDelete` 补不到
+ *   插件未运行期间的删除），无残留时不写盘（避免每次启动都写一次 data.json）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ViewStateStore } from '../src/services/view-state';
@@ -339,6 +341,74 @@ describe('ViewStateStore 变更与防抖写盘', () => {
 		await vi.advanceTimersByTimeAsync(100);
 		expect(persist).toHaveBeenCalledTimes(1);
 		expect(persist).toHaveBeenCalledWith({ [PATH_B]: { lineStyle: 'curve' } });
+	});
+});
+
+describe('ViewStateStore.pruneMissingPaths（启动期清理离线删除的残留键）', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('只剔除指向不存在文件的键，保留其余并写盘一次', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 100);
+		store.hydrate({
+			viewState: {
+				[PATH_A]: { layout: 'mindMap' },
+				'gone.mindmap.md': { layout: 'fishbone' },
+				[PATH_B]: { lineStyle: 'curve' },
+			},
+		});
+
+		const removed = store.pruneMissingPaths((path) => path !== 'gone.mindmap.md');
+
+		expect(removed).toEqual(['gone.mindmap.md']);
+		expect(store.getLayout('gone.mindmap.md')).toBeUndefined();
+		expect(store.getLayout(PATH_A)).toBe('mindMap');
+
+		await vi.advanceTimersByTimeAsync(100);
+		expect(persist).toHaveBeenCalledTimes(1);
+		expect(persist).toHaveBeenCalledWith({
+			[PATH_A]: { layout: 'mindMap' },
+			[PATH_B]: { lineStyle: 'curve' },
+		});
+	});
+
+	it('全部仍存在：不剔除、不写盘', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 100);
+		store.hydrate({ viewState: { [PATH_A]: { layout: 'mindMap' } } });
+
+		expect(store.pruneMissingPaths(() => true)).toEqual([]);
+
+		await vi.advanceTimersByTimeAsync(100);
+		expect(persist).not.toHaveBeenCalled();
+	});
+
+	it('空映射：返回空数组且不写盘（全新库 / 无历史状态）', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 100);
+
+		expect(store.pruneMissingPaths(() => false)).toEqual([]);
+
+		await vi.advanceTimersByTimeAsync(100);
+		expect(persist).not.toHaveBeenCalled();
+	});
+
+	it('幂等：连续两次调用，第二次无残留可剔除也不重复写盘', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 100);
+		store.hydrate({ viewState: { gone: { layout: 'x' } } });
+
+		expect(store.pruneMissingPaths(() => false)).toEqual(['gone']);
+		expect(store.pruneMissingPaths(() => false)).toEqual([]);
+
+		await vi.advanceTimersByTimeAsync(100);
+		expect(persist).toHaveBeenCalledTimes(1);
+		expect(persist).toHaveBeenCalledWith({});
 	});
 });
 

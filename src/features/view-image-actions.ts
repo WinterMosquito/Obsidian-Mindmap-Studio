@@ -19,7 +19,7 @@ import {
 	isExternalImageRef,
 } from '../domain/url';
 import { readNodeDataString, type MdNodeData } from '../core/node-data';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode } from '../core/engine-types';
 import type { MindMapViewContext } from './view-context';
 import { insertChildNodeWithData, requireActiveNode } from './view-common';
 

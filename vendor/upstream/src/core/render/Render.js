@@ -42,6 +42,19 @@ import { lineStyleProps } from '../../theme/default'
 import { CONSTANTS, ERROR_TYPES } from '../../constants/constant'
 import { Polygon } from '@svgdotjs/svg.js'
 
+/**
+ * 【自有补丁 12 · 2026-10-17】异步分片渲染的单批时间预算（ms）。
+ *
+ * 背景：`MindMapNode.render` 的 async 通道原为「每子节点一个 `setTimeout(0)`」。
+ * Chromium 对**嵌套**定时器有 4ms 下限（HTML 规范的 timer nesting clamp）——
+ * 分片链逐层嵌套，故 5000 节点「整树可见」（fit / 缩放）实测 **20–38s**，
+ * 其中绝大部分是 5000 × ~4ms 的排队延迟，而非渲染本身（同步整树装配实测
+ * ≈1.1s，见 vendor/BUILD.md 补丁 6/12）。改为「一个宏任务批量消费队列」后
+ * 总时长回到工作量量级，且每批之间浏览器仍可绘制（UI 不冻结）。
+ * 预算取 8ms ≈ 半个 16.7ms 帧，留出绘制余量。
+ */
+const ASYNC_RENDER_BATCH_MS = 8
+
 // 布局列表
 const layouts = {
   // 逻辑结构图
@@ -99,6 +112,11 @@ class Render {
     // 防抖定时器
     this.emitNodeActiveEventTimer = null
     this.renderTimer = null
+    // 【自有补丁 12】异步分片渲染的任务队列与驱动器（见 enqueueAsyncRenderTask）
+    this.asyncRenderQueue = []
+    // tick 是否已排/正在跑（drain 期间保持 true，见 drainAsyncRenderQueue）
+    this.asyncRenderTickActive = false
+    this.asyncRenderChannel = null
     // 根节点
     this.root = null
     // 文本编辑框，需要再bindEvent之前实例化，否则单击事件只能触发隐藏文本编辑框，而无法保存文本修改
@@ -767,6 +785,86 @@ class Render {
       )
     })
     this.emitNodeActiveEvent()
+  }
+
+  /**
+   * 【自有补丁 12 · 2026-10-17】异步渲染任务入队 + 驱动器。
+   *
+   * 语义与「每任务一个 setTimeout」等价：FIFO 执行，每个任务完成自己那段子树后
+   * 回调（`node_tree_render_end` 仍由根回调触发）；实例销毁后（`mindMap.el`
+   * 置空）立刻清队，不留游离渲染。
+   *
+   * 宏任务载体用 **MessageChannel** 而不是 `setTimeout(0)`：后者在嵌套调用下被
+   * 钳到 4ms（HTML 规范），批量派发仍会累计成几十秒；postMessage 不受该钳制。
+   * 环境无 MessageChannel 时退回 setTimeout（语义不变，只是退化为原延迟）。
+   */
+  enqueueAsyncRenderTask(task) {
+    this.asyncRenderQueue.push(task)
+    // tick 在途（含正在 drain）时不再派发：drain 内递归入队是常态，若按
+    // 「有没有排队」重新派发，每层子树都会多排一个空 tick（批次翻倍）
+    if (this.asyncRenderTickActive) {
+      return
+    }
+    this.asyncRenderTickActive = true
+    this.postAsyncRenderTick()
+  }
+
+  /** 派发下一次批量消费（载体选择见 enqueueAsyncRenderTask） */
+  postAsyncRenderTick() {
+    if (!this.asyncRenderChannel && typeof MessageChannel === 'function') {
+      this.asyncRenderChannel = new MessageChannel()
+      this.asyncRenderChannel.port1.onmessage = () => {
+        this.drainAsyncRenderQueue()
+      }
+    }
+    if (this.asyncRenderChannel) {
+      this.asyncRenderChannel.port2.postMessage(0)
+    } else {
+      setTimeout(() => {
+        this.drainAsyncRenderQueue()
+      }, 0)
+    }
+  }
+
+  /**
+   * 一次批量消费：预算内连续执行，超预算让出（下一批由 postAsyncRenderTick 续）。
+   *
+   * 任务抛错时**显式续跑**：原实现每个任务独立宏任务，一个抛错只丢自己那条链；
+   * 改共享队列后不接住就会整树挂起（`isRendering` 卡 true ⇒ 后续渲染全废）。
+   * 错误照常上报，不吞。
+   */
+  drainAsyncRenderQueue() {
+    const queue = this.asyncRenderQueue
+    // 销毁断链（原「每任务判 el」的等价集中版）：实例已死即丢弃队列
+    if (!this.mindMap.el) {
+      queue.length = 0
+      this.asyncRenderTickActive = false
+      return
+    }
+    const start = performance.now()
+    while (queue.length) {
+      const task = queue.shift()
+      try {
+        task()
+      } catch (error) {
+        // 单个节点渲染失败不得让整树挂起：共享队列不接住就再没人消费，
+        // isRendering 会卡在 true ⇒ 后续渲染全废。错误照常上报，不吞。
+        console.error(error)
+      }
+      // 会话中途销毁（任务内 destroy）也立即停，不再在游离 DOM 上白跑
+      if (!this.mindMap.el) {
+        queue.length = 0
+        break
+      }
+      if (performance.now() - start > ASYNC_RENDER_BATCH_MS) {
+        break
+      }
+    }
+    if (queue.length) {
+      this.postAsyncRenderTick()
+      return
+    }
+    this.asyncRenderTickActive = false
   }
 
   // 当某个自定义节点内容改变后，可以调用该方法实时更新该节点大小和整体节点的定位

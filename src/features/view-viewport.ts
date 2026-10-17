@@ -27,7 +27,10 @@
  * 所有引擎内部操作经 `engine/mindmap` 的具名函数（防腐收口），本模块只做
  * 「选区 → 视口」的换算。
  */
+import { Notice } from 'obsidian';
+import { tf } from '../core/i18n';
 import {
+	countMindMapNodes,
 	fitMindMap,
 	getActiveNodes,
 	getNodeGroupEl,
@@ -37,12 +40,13 @@ import {
 import type { MindMapViewContext } from './view-context';
 
 /**
- * 视口手势所需的视图面（引擎实例 + 事件绑定器 + 画布元素）。
+ * 视口手势所需的视图面（引擎实例 + 事件绑定器 + 画布元素 + 语言）。
  * 刻意取 `MindMapViewContext` 的**子集**：快捷键宿主等窄接口也能直接传入。
+ * `lang` 仅为大图 fit 的一次性提示（见 `fitToScreen`）。
  */
 export type ViewportContext = Pick<
 	MindMapViewContext,
-	'mindMap' | 'engineEvents' | 'canvasEl'
+	'mindMap' | 'engineEvents' | 'canvasEl' | 'lang'
 >;
 
 /** 缩放到选区时留出的边距比例（0.88 ≈ 四周各留 6% 画布） */
@@ -125,7 +129,25 @@ export function zoomToSelection(view: ViewportContext): boolean {
 	return true;
 }
 
-/** `Shift+1`：缩放到全览（官方 Zoom to fit；无选区概念） */
+/**
+ * `Shift+1` / 工具栏 / 右键 / 命令面板：适应画布（官方 Zoom to fit；无选区概念）。
+ *
+ * **用户触发的 fit 唯一入口**：此前四处各自直调 `fitMindMap`，大图口径无处安放。
+ * 引擎自动路径（首帧默认视口、恢复失败回退、整理后 fit）仍直调 `fitMindMap`——
+ * 那些是后台行为，不该弹提示。
+ *
+ * 大图（> `HEAVY_FIT_NODE_THRESHOLD`）由引擎侧抬**最小可读比例**
+ * （`engine/mindmap-viewport.LARGE_MAP_MIN_FIT_SCALE`），此时「适应画布」不再承诺
+ * 一屏装下全部节点，故补一句提示。是否钳制**只问引擎**（`fitMindMap` 的返回值）：
+ * 在 UI 侧按节点数另算阈值，会在「节点很多但内容本来就适配」时说出与事实相反的
+ * 提示；节点计数也只在这条罕见的钳制分支里做，常规 fit 零额外遍历。
+ */
 export function fitToScreen(view: ViewportContext): void {
-	fitMindMap(view.mindMap);
+	const mindMap = view.mindMap;
+	if (!mindMap || fitMindMap(mindMap) !== 'clamped') {
+		return;
+	}
+	new Notice(
+		tf(view.lang, 'common.fitClamped', { count: countMindMapNodes(mindMap) }),
+	);
 }

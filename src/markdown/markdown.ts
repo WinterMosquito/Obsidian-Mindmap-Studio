@@ -8,7 +8,7 @@ import { generateUid } from '../core/constants';
 import { t, type Language } from '../core/i18n';
 import { buildMindMapFrontmatter } from '../domain/mindmap-property';
 import { walkTree } from '../domain/tree';
-import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../core/engine-types';
 
 /**
  * 新建思维导图的默认正文：**属性声明块 + 标准 Markdown 大纲**。

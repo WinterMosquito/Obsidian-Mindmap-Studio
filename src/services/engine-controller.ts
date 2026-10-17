@@ -10,11 +10,12 @@
  * - 交互特性装配（拖拽/粘贴/右键/wikilink）通过 setupFeatures 回调交还视图。
  */
 import { Notice } from 'obsidian';
-import {
+import type {
 	MindMap,
 	MindMapNode,
+	MindMapNodeData,
 	MindMapTreeNode,
-} from '../../vendor/simple-mind-map.cjs';
+} from '../core/engine-types';
 import {
 	applyThemeConfig,
 	applyViewportState,
@@ -48,7 +49,6 @@ import { EventBinder } from '../core/event-binder';
 import { t } from '../core/i18n';
 import type { App, TFile } from 'obsidian';
 import type { Language } from '../core/i18n';
-import type { MindMapNodeData } from '../../vendor/simple-mind-map.cjs';
 import type { ViewStateStore } from './view-state';
 
 /** 引擎创建选项（设置读取与布局 fallback 由视图负责） */

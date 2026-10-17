@@ -23,7 +23,7 @@ import { ensureUniqueUids } from '../markdown/markdown';
 import { isNodeTextEdited } from '../domain/md-meta';
 import { insertChildNodeWithData } from './view-common';
 import { t, tf } from '../core/i18n';
-import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { MdNodeData } from '../core/node-data';
 import type { MindMapViewContext } from './view-context';
 

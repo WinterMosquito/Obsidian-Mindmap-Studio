@@ -341,8 +341,12 @@ export function shouldEnablePerformanceMode(
 
 /**
  * 打开分片渲染阈值（2026-09-25 性能轮方案 B）：节点数 ≥ 此值时引擎 `_render`
- * 整树渲染走既有 async 通道（`MindMapNode.render` 的第三参数——每子节点一个
- * 宏任务），把 1s 级同步冻结拆成短任务链，打开大图时 UI 保持响应。
+ * 整树渲染走既有 async 通道（`MindMapNode.render` 的第三参数），把 1s 级同步
+ * 冻结拆成短任务链，打开大图时 UI 保持响应。
+ *
+ * 通道载体**补丁 12 起**是「任务队列 + MessageChannel 批量消费（8ms/批）」；
+ * 补丁 6 的原实现是「每子节点一个 `setTimeout(0)`」，被 HTML 的嵌套定时器
+ * 4ms 下限放大（5000 节点整树可见实测 20–38s），已废弃。
  *
  * 阈值依据（实测账本）：同步打开耗时 ∝ 节点数（5000 节点 ≈ 1.15s，K72）；
  * 千节点级同步冻结约 230ms 已接近可感边缘，故取 1000。分片的总时长代价与
@@ -350,6 +354,23 @@ export function shouldEnablePerformanceMode(
  * 引擎侧只读 opt.renderAsync（不存在 = 同步，行为与上游一致，见补丁 6）。
  */
 export const RENDER_ASYNC_NODE_THRESHOLD = 1000;
+
+/**
+ * 「适应画布」的大图阈值（2026-10-17 实机读数 + 产品裁决）：节点数超过它**且**
+ * 真 fit 比例低于可读下限时，fit 抬到下限并给一句提示（判据与提示各在一处：
+ * `engine/mindmap-viewport.LARGE_MAP_MIN_FIT_SCALE` 决定是否钳制并回吐
+ * `clamped`，`features/view-viewport.fitToScreen` 只负责转述）。
+ *
+ * 依据：fit 的目标是「整树可见」，而剪枝（`pruneSubtreeEnabled`）在全部可见时
+ * 必然解除 ⇒ 整树一次性装配进 DOM。实测 500 节点 0.55s、1000 节点 0.94s、
+ * 5000 节点在**补丁 12 之前 20–38s**（每子节点一个 `setTimeout`，被嵌套定时器
+ * 4ms 下限放大；对照关掉剪枝仍 19.7s ⇒ 成本是排队+装配，不是剪枝本身）。
+ *
+ * 1–2k 属可接受范围（亚秒、全览仍有信息量），故自 2000 起才可能启用下限。
+ * 补丁 12（批量消费）后大图的整树装配已回到秒内，但 5000 节点真 fit 比例约
+ * 0.03（文字 <1px）没有信息量，因此**下限仍然保留**——两件事各自独立成立。
+ */
+export const HEAVY_FIT_NODE_THRESHOLD = 2000;
 
 /**
  * Obsidian 能在标签页中渲染、不会出现空白页的扩展名（md/canvas/PDF/图片/纯文本·代码）。

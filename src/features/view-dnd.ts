@@ -40,7 +40,7 @@ import {
 	isDocumentExtension,
 	wikilinkTargetIsAttachment,
 } from '../domain/wikilink';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode } from '../core/engine-types';
 import type { MindMapViewContext } from './view-context';
 
 /** 注册画布拖拽监听（引擎重建时随 initMindMap 调用） */

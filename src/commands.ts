@@ -2,12 +2,12 @@
  * 用户入口注册：命令面板命令与丝带图标。
  * 生命周期（registerView、事件监听、设置面板）由 main.ts 负责。
  */
-import { MarkdownView, Plugin, setTooltip } from 'obsidian';
+import { MarkdownView, Plugin, setTooltip, type TFile } from 'obsidian';
 import { MindMapView } from './features/view';
 import { createNewMindMap, type NewMindMapSettings } from './creation';
-import { fitMindMap } from './engine/mindmap';
+import { fitToScreen } from './features/view-viewport';
 import { declareAndOpenAsMindMap } from './markdown/md-open';
-import { t } from './core/i18n';
+import { t, type TranslationKey } from './core/i18n';
 
 /**
  * commands 模块对宿主插件的窄化契约。
@@ -15,7 +15,7 @@ import { t } from './core/i18n';
  * 语言 + 新建导图的落点设置，见 `NewMindMapSettings`）。
  * 替代 MindMapStudioPlugin 具体类引用，打破 commands ↔ main 循环。
  */
-interface IPluginCommandsHost extends Plugin {
+interface CommandsHost extends Plugin {
 	settings: NewMindMapSettings;
 }
 
@@ -39,8 +39,10 @@ const COMMAND_IDS = {
 	backToMarkdown: 'mindmap-back-to-markdown',
 } as const;
 
+type CommandId = (typeof COMMAND_IDS)[keyof typeof COMMAND_IDS];
+
 /** 全部已注册命令 id（refreshCommandLabels 批量移除用；顺序即本表的书写顺序） */
-const ALL_COMMAND_IDS: readonly string[] = Object.values(COMMAND_IDS);
+const ALL_COMMAND_IDS: readonly CommandId[] = Object.values(COMMAND_IDS);
 
 /**
  * 注册全部命令面板命令（onload 时调用一次；文案取注册时的语言）。
@@ -48,14 +50,55 @@ const ALL_COMMAND_IDS: readonly string[] = Object.values(COMMAND_IDS);
  * 编排壳：按类别分组注册（创建 / 视图 / 导出与文档模式）——纯移动，
  * 调用顺序 = 拆分前的注册顺序，各条命令内容不变。
  */
-export function registerCommands(plugin: IPluginCommandsHost): void {
+export function registerCommands(plugin: CommandsHost): void {
 	registerCreateCommands(plugin);
 	registerViewCommands(plugin);
 	registerDocumentCommands(plugin);
 }
 
+/** 「作用于当前导图视图」的命令描述 */
+interface MindMapViewCommand {
+	id: string;
+	/** 命令面板文案键（文案取注册时的语言，语言变更经 removeCommand + 重注册刷新） */
+	nameKey: TranslationKey;
+	/**
+	 * 是否要求引擎已就绪才可用（默认 `true`）。
+	 * 引擎未就绪时多数动作静默无效果，暴露成「可用却无反应」比不可用更差；
+	 * 整理命令例外——它自己会提示「未加载」。
+	 */
+	requireEngine?: boolean;
+	run: (view: MindMapView) => void;
+}
+
+/**
+ * 注册一条「作用于当前导图视图」的命令：取视图、引擎就绪判定、
+ * `checkCallback` 的 checking/执行分流（**唯一实现**）。
+ *
+ * 此前五条命令各写一遍同一骨架，差异只藏在「判不判 mindMap」「执行什么」两点。
+ */
+function addMindMapViewCommand(
+	plugin: CommandsHost,
+	{ id, nameKey, requireEngine = true, run }: MindMapViewCommand,
+): void {
+	plugin.addCommand({
+		id,
+		name: t(plugin.settings.language, nameKey),
+		checkCallback: (checking) => {
+			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
+			if (!view || (requireEngine && !view.mindMap)) {
+				return false;
+			}
+			if (checking) {
+				return true;
+			}
+			run(view);
+			return true;
+		},
+	});
+}
+
 /** 创建类：新建导图 / 在当前文件夹新建 */
-function registerCreateCommands(plugin: IPluginCommandsHost): void {
+function registerCreateCommands(plugin: CommandsHost): void {
 	plugin.addCommand({
 		id: COMMAND_IDS.createNew,
 		name: t(plugin.settings.language, 'command.createMindMap'),
@@ -69,106 +112,82 @@ function registerCreateCommands(plugin: IPluginCommandsHost): void {
 		name: t(plugin.settings.language, 'command.createInCurrentFolder'),
 		checkCallback: (checking) => {
 			const activeFile = plugin.app.workspace.getActiveFile();
+			// 无活动文件即不可用：此前非 checking 分支是「什么都不做却返回 true」
+			if (!activeFile) {
+				return false;
+			}
 			if (checking) {
-				return Boolean(activeFile);
+				return true;
 			}
-			if (activeFile) {
-				void createNewMindMap(
-					plugin.app,
-					plugin.settings,
-					activeFile.parent?.path ?? '',
-				);
-			}
+			void createNewMindMap(
+				plugin.app,
+				plugin.settings,
+				activeFile.parent?.path ?? '',
+			);
 			return true;
 		},
 	});
 }
 
 /** 视图类：搜索节点 / 适应画布 / 整理 / 批量拆分混排双链 */
-function registerViewCommands(plugin: IPluginCommandsHost): void {
-	plugin.addCommand({
+function registerViewCommands(plugin: CommandsHost): void {
+	// 搜索栏与 fit 在引擎未就绪时静默无效果 → 按「引擎就绪」判定可用性
+	addMindMapViewCommand(plugin, {
 		id: COMMAND_IDS.searchNodes,
-		name: t(plugin.settings.language, 'command.searchNodes'),
-		checkCallback: (checking) => {
-			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
-			// 引擎未就绪时搜索栏无法工作（openSearchBar 静默返回），视为不可用
-			if (!view?.mindMap) {
-				return false;
-			}
-			if (checking) {
-				return true;
-			}
+		nameKey: 'command.searchNodes',
+		run: (view) => {
 			view.openSearchBar();
-			return true;
 		},
 	});
 
-	plugin.addCommand({
+	addMindMapViewCommand(plugin, {
 		id: COMMAND_IDS.fitView,
-		name: t(plugin.settings.language, 'command.fitCanvas'),
-		checkCallback: (checking) => {
-			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
-			// 引擎未就绪时 fit 静默无效果，视为不可用（避免"可用却无反应"）
-			if (!view?.mindMap) {
-				return false;
-			}
-			if (checking) {
-				return true;
-			}
-			fitMindMap(view.mindMap);
-			return true;
+		nameKey: 'command.fitCanvas',
+		run: (view) => {
+			fitToScreen(view);
 		},
 	});
 
-	plugin.addCommand({
+	// 整理不占用「引擎就绪」判定：它自身会提示「未加载」并中止
+	addMindMapViewCommand(plugin, {
 		id: COMMAND_IDS.arrange,
-		name: t(plugin.settings.language, 'command.arrange'),
-		checkCallback: (checking) => {
-			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
-			if (checking) {
-				return Boolean(view);
-			}
-			view?.arrangeMindMap();
-			return true;
+		nameKey: 'command.arrange',
+		requireEngine: false,
+		run: (view) => {
+			view.arrangeMindMap();
 		},
 	});
 
 	// 混排双链拆分（批量）：扫描全文，把所有混排节点的双链一次拆完（含未编辑的存量节点）；
 	// 单节点场景由「编辑后自动拆分」覆盖（见 links-split / view-split-links）
-	plugin.addCommand({
+	addMindMapViewCommand(plugin, {
 		id: COMMAND_IDS.splitLinksAll,
-		name: t(plugin.settings.language, 'command.splitLinksAll'),
-		checkCallback: (checking) => {
-			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
-			if (!view?.mindMap) {
-				return false;
-			}
-			if (checking) {
-				return true;
-			}
+		nameKey: 'command.splitLinksAll',
+		run: (view) => {
 			view.splitAllLinksInDocument();
-			return true;
 		},
 	});
 }
 
+/**
+ * 文档类命令的共同判据：目标视图里必须有 `.md` 文件。
+ * 两个入口（以导图打开 / 切回 Markdown）此前各写一遍同样的 `!file || extension` 判定。
+ */
+function isMarkdownFile(file: TFile | null | undefined): file is TFile {
+	if (!file) {
+		return false;
+	}
+	return file.extension === 'md';
+}
+
 /** 导出与 md 文档模式：导出图片（PNG/SVG）/ md 打开为导图 / 切回 Markdown */
-function registerDocumentCommands(plugin: IPluginCommandsHost): void {
-	plugin.addCommand({
+function registerDocumentCommands(plugin: CommandsHost): void {
+	addMindMapViewCommand(plugin, {
 		// ID 按契约发布后不变（语义已从「导出 PNG」扩展为「导出图片，可选 PNG/SVG」）
 		id: COMMAND_IDS.exportImage,
-		name: t(plugin.settings.language, 'command.exportImage'),
-		checkCallback: (checking) => {
-			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
-			// 引擎未就绪时导出静默无效果，视为不可用（避免"可用却无反应"）
-			if (!view?.mindMap) {
-				return false;
-			}
-			if (checking) {
-				return true;
-			}
+		nameKey: 'command.exportImage',
+		run: (view) => {
 			void view.exportImage();
-			return true;
 		},
 	});
 
@@ -180,13 +199,18 @@ function registerDocumentCommands(plugin: IPluginCommandsHost): void {
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
 			const file = view?.file;
-			if (!file || file.extension !== 'md') {
+			if (!view || !isMarkdownFile(file)) {
 				return false;
 			}
 			if (checking) {
 				return true;
 			}
-			void declareAndOpenAsMindMap(plugin.app, view.leaf, file, plugin.settings.language);
+			void declareAndOpenAsMindMap(
+				plugin.app,
+				view.leaf,
+				file,
+				plugin.settings.language,
+			);
 			return true;
 		},
 	});
@@ -198,7 +222,7 @@ function registerDocumentCommands(plugin: IPluginCommandsHost): void {
 		checkCallback: (checking) => {
 			const view = plugin.app.workspace.getActiveViewOfType(MindMapView);
 			const file = view?.file;
-			if (!file || file.extension !== 'md') {
+			if (!view || !isMarkdownFile(file)) {
 				return false;
 			}
 			if (checking) {
@@ -216,7 +240,7 @@ function registerDocumentCommands(plugin: IPluginCommandsHost): void {
  * `setTooltip` 更新提示文案
  */
 export function addMindMapRibbonIcon(
-	plugin: IPluginCommandsHost,
+	plugin: CommandsHost,
 ): HTMLElement {
 	return plugin.addRibbonIcon(
 		'network',
@@ -233,7 +257,7 @@ export function addMindMapRibbonIcon(
  * 丝带图标无移除 API，经官方 `setTooltip` 就地更新提示文案。
  */
 export function refreshCommandLabels(
-	plugin: IPluginCommandsHost,
+	plugin: CommandsHost,
 	ribbonEl: HTMLElement | null,
 ): void {
 	for (const id of ALL_COMMAND_IDS) {

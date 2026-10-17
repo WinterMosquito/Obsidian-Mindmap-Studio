@@ -439,10 +439,12 @@ export function createMindMap(
 			},
 			{
 				// 打开分片渲染（性能轮方案 B，补丁 6）：把 `_render` 整树
-				// 渲染接入引擎既有 async 通道（每子节点一个宏任务），打开/重建大图时
-				// 消除 1s 级 UI 冻结。显式传 renderAsync 优先（bench 对照用），否则按
-				// 节点数阈值判据。字段未入 d.cts，经 Object.assign 注入（同
-				// createNodePrefixContent 口径）。
+				// 渲染接入引擎既有 async 通道——**补丁 12 起**该通道为「任务队列 +
+				// MessageChannel 批量消费（8ms/批）」，不再是「每子节点一个
+				// setTimeout」（后者被嵌套定时器 4ms 下限放大，5000 节点整树可见
+				// 实测 20–38s）。打开/重建大图时消除 1s 级 UI 冻结。显式传
+				// renderAsync 优先（bench 对照用），否则按节点数阈值判据。字段未入
+				// d.cts，经 Object.assign 注入（同 createNodePrefixContent 口径）。
 				renderAsync:
 					options.renderAsync ?? nodeCount >= RENDER_ASYNC_NODE_THRESHOLD,
 				// 导出 SVG 后处理：把文档级 MathJax 样式注入克隆 SVG（契约与背景见

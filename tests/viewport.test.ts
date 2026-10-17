@@ -22,6 +22,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
 import {
+	HEAVY_FIT_NODE_THRESHOLD,
 	RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,
 	RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS,
 	RESET_LAYOUT_VIEWPORT_DELAY_MS,
@@ -29,6 +30,7 @@ import {
 import {
 	arrangeMindMap,
 	centerContentAtFullScale,
+	fitMindMap,
 	isContentVisibleInCanvas,
 	resetZoom,
 } from '../src/engine/mindmap';
@@ -501,5 +503,70 @@ describe('arrangeMindMap（执行 RESET_LAYOUT 后适应画布）', () => {
 	it('引擎缺失 / 无 execCommand 时返回 false', () => {
 		expect(arrangeMindMap(null)).toBe(false);
 		expect(arrangeMindMap({} as unknown as MindMap)).toBe(false);
+	});
+});
+
+/**
+ * 大图 fit 的比例下限（2026-10-17 产品裁决，`engine/mindmap-viewport`）。
+ *
+ * 为什么必须钉住：真 fit 对大图会算出 0.03 量级（文字 < 1px，看等于没看），且
+ * 「整树可见」会强制解除剪枝、把数千节点一次装配进 DOM。下限只对
+ * **> `HEAVY_FIT_NODE_THRESHOLD`** 生效——阈值以下（1–2k，亚秒级）必须保持真 fit，
+ * 否则「适应画布」会变成「只显示中心一块」，属功能回退。
+ */
+describe('fitMindMap · 大图比例下限（LARGE_MAP_MIN_FIT_SCALE）', () => {
+	/**
+	 * 宽树桩：画布 800×600、内容盒 20000×20000 ⇒ 真 fit 比例 0.03（低于下限 0.1）。
+	 * 节点数由 children 数量控制（`countMindMapNodes` 遍历渲染树）。
+	 */
+	function makeWideMindMap(nodeCount: number) {
+		const setScale = vi.fn<(scale: number) => void>();
+		const translateXY = vi.fn<(x: number, y: number) => void>();
+		const children = Array.from({ length: nodeCount - 1 }, () => ({
+			left: 0,
+			top: 0,
+			width: 1,
+			height: 1,
+			children: [],
+		}));
+		const mindMap = {
+			width: 800,
+			height: 600,
+			opt: { openPerformance: true, fitPadding: 0 },
+			view: { setScale, translateXY, fit: vi.fn() },
+			draw: {
+				transform: () => ({
+					scaleX: 1,
+					scaleY: 1,
+					translateX: 0,
+					translateY: 0,
+				}),
+			},
+			renderer: {
+				root: { left: 0, top: 0, width: 20000, height: 20000, children },
+				forceLoadNode: vi.fn(),
+			},
+		} as unknown as MindMap;
+		return { mindMap, setScale, translateXY };
+	}
+
+	it('超过阈值（阈值 + 1）：比例抬到可读下限 0.1，并回吐 clamped', () => {
+		vi.useFakeTimers();
+		const { mindMap, setScale } = makeWideMindMap(HEAVY_FIT_NODE_THRESHOLD + 1);
+
+		expect(fitMindMap(mindMap)).toBe('clamped');
+
+		expect(setScale).toHaveBeenCalledTimes(1);
+		expect(setScale).toHaveBeenCalledWith(0.1);
+	});
+
+	it('恰好等于阈值：不抬比例（真 fit 的 0.03 原样保留），回吐 fit', () => {
+		vi.useFakeTimers();
+		const { mindMap, setScale } = makeWideMindMap(HEAVY_FIT_NODE_THRESHOLD);
+
+		expect(fitMindMap(mindMap)).toBe('fit');
+
+		expect(setScale).toHaveBeenCalledTimes(1);
+		expect(setScale.mock.calls[0]?.[0]).toBeCloseTo(0.03, 6);
 	});
 });

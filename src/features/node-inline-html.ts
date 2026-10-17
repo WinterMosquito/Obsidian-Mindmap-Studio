@@ -19,7 +19,7 @@ import type { PipeTableAlign } from '../domain/pipe-table';
 import type { NodeContentStyle } from '../engine/mindmap';
 import { formatMathPlaceholder } from '../core/math-placeholder';
 import { fontMeasureKey } from '../core/measure-cache';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode } from '../core/engine-types';
 import {
 	MAX_INLINE_CONTENT_CHARS,
 	buildInlineSegments,

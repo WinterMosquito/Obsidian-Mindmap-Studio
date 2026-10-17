@@ -162,12 +162,24 @@ function fakeHolder(
 	};
 }
 
-/** 渲染产物桩（代表 mjx-container）；cloneNode 支撑产物缓存复用（P4） */
-function fakeRendered(name: string): Node {
-	const node = {
+/**
+ * 渲染产物桩（代表 mjx-container）；cloneNode 支撑产物缓存复用（P4）。
+ *
+ * `style` 可选：块级公式的节点内边距收敛（`placeProduct`）会写 `style.margin`，
+ * 传入对象即可断言写入结果（不传 = 无 `style`，生产侧有守卫、跳过）。
+ */
+function fakeRendered(name: string, style?: Record<string, string>): Node {
+	const node: {
+		nodeName: string;
+		cloneNode: () => Node;
+		style?: Record<string, string>;
+	} = {
 		nodeName: name,
-		cloneNode: (): Node => fakeRendered(`${name}#clone`),
+		cloneNode: (): Node => fakeRendered(`${name}#clone`, style),
 	};
+	if (style) {
+		node.style = style;
+	}
 	return node as unknown as Node;
 }
 
@@ -257,6 +269,38 @@ describe('renderMathWithMathJax（实机 API 面回归）', () => {
 
 		expect(tex2chtml).toHaveBeenCalledWith('E=mc^2', { display: true });
 		expect(holder.children).toHaveLength(1);
+	});
+
+	it('块级公式：产物上下外边距收敛为 0.2em 0（节点内不额外撑高）；行内不写 margin', async () => {
+		// 阅读视图的 `mjx-container[display]` 规则给 0.7em 上下外边距，节点内会把
+		// 单公式节点撑高近一倍（实机 44px → 88px）；收敛在放置产物时写入，且必须
+		// 内联（导出 SVG 不注入插件 styles.css）。
+		const blockStyle: Record<string, string> = {};
+		const inlineStyle: Record<string, string> = {};
+		const tex2chtml = vi.fn((_tex: string, options?: { display?: boolean }) =>
+			options?.display
+				? fakeRendered('BLOCK', blockStyle)
+				: fakeRendered('INLINE', inlineStyle),
+		);
+		vi.stubGlobal('window', { MathJax: { tex2chtml } });
+		const blockHolder = fakeHolder();
+		const inlineHolder = fakeHolder();
+		const { renderMathWithMathJax } = await loadModule();
+
+		renderMathWithMathJax(
+			'a^2',
+			blockHolder as unknown as HTMLElement,
+			true,
+		);
+		renderMathWithMathJax(
+			'b^2',
+			inlineHolder as unknown as HTMLElement,
+			false,
+		);
+		await flush();
+
+		expect(blockStyle.margin).toBe('0.2em 0');
+		expect(inlineStyle.margin).toBeUndefined();
 	});
 
 	it('兼容回退：仅 tex2svg 时仍可替换', async () => {

@@ -17,7 +17,7 @@
  * - 反例代价：增量维护要覆盖引擎**自带快捷键**（Tab/Enter/Shift+Tab/Del/Backspace
  *   直接 execCommand 插入删除，绕过插件包装）与整树替换路径，漏一处即长期漂移。
  */
-import { countTreeNodes, getRenderRoot } from '../engine/mindmap';
+import { countMindMapNodes } from '../engine/mindmap';
 import { createThrottler, type Throttler } from '../core/concurrency';
 import type { MindMapViewContext } from './view-context';
 
@@ -61,7 +61,7 @@ export function updateStatusBar(view: StatusViewContext): void {
 			return;
 		}
 		try {
-			const count = countTreeNodes(getRenderRoot(view.mindMap));
+			const count = countMindMapNodes(view.mindMap);
 			view.plugin.statusBar.showNodeCount(count);
 		} catch {
 			view.plugin.statusBar.clear();

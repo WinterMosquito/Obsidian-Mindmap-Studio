@@ -9,7 +9,7 @@
  * - MindMapView 结构化实现（implements），无运行时改动。
  */
 import type { App, TFile, WorkspaceLeaf } from 'obsidian';
-import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { EventBinder } from '../core/event-binder';
 import type { Language } from '../core/i18n';
 import type { StatusBarService } from '../services/status-bar';

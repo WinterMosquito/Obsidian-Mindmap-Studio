@@ -161,6 +161,8 @@ vi.mock('../src/engine/mindmap', () => ({
 	ENGINE_COMMANDS: ENGINE,
 	findNodeByDom: findNodeByDomMock,
 	fitMindMap: fitMindMapMock,
+	// 大图 fit 的计数入口（fitToScreen 经此判断是否提示+让帧）：0 节点 ⇒ 同步 fit
+	countMindMapNodes: (): number => 0,
 	resetZoom: resetZoomMock,
 	getNodeDataString: getNodeDataStringMock,
 	startNodeTextEdit: startNodeTextEditMock,

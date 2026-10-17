@@ -85,6 +85,8 @@ vi.mock('../src/engine/mindmap', () => ({
 	},
 	arrangeMindMap: engineMocks.arrangeMindMap,
 	fitMindMap: engineMocks.fitMindMap,
+	// 大图 fit 的计数入口（fitToScreen 经此判断是否提示+让帧）：0 节点 ⇒ 同步 fit
+	countMindMapNodes: (): number => 0,
 	resetZoom: engineMocks.resetZoom,
 	zoomInMindMap: engineMocks.zoomInMindMap,
 	zoomOutMindMap: engineMocks.zoomOutMindMap,

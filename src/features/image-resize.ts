@@ -33,7 +33,7 @@ import {
 	previewNodeImageSize,
 	setNodeImageSize,
 } from '../engine/mindmap';
-import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { MdNodeData } from '../core/node-data';
 import type { MindMapViewContext } from './view-context';
 import {

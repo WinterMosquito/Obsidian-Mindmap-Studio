@@ -24,7 +24,7 @@ import { createDebouncer, createSerialQueue } from '../core/concurrency';
 import { parseMdOutline, splitFrontmatter, UTF8_BOM } from '../markdown/md-outline';
 import { serializeMdBody } from '../markdown/md-serialize';
 import { walkResolveImagePaths } from '../media/images-path';
-import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../core/engine-types';
 
 /** 单次文档加载结果（视图据此前导引擎并更新自身文档状态） */
 export interface DocumentLoadResult {

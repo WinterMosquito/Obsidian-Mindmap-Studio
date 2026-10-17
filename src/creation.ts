@@ -5,7 +5,7 @@
  * Obsidian markdown 视图；本模块负责流程（命名、落盘、打开），并在创建后自动
  * 把当前标签切换到导图视图（openAsMindMap）。
  */
-import { App, Notice, normalizePath, type TFolder } from 'obsidian';
+import { App, Notice, normalizePath, type TFile, type TFolder } from 'obsidian';
 import { notifyError } from './core/errors';
 import { t } from './core/i18n';
 import {
@@ -43,7 +43,7 @@ export async function createNewMindMap(
 	// 点「新建思维导图」即触发）。空串是合法取值，故用 ?? —— 只有 undefined
 	// 才表示「未指定」。
 	const folder =
-		folderPath ?? folderPathOf(resolveNewMindMapFolder(app, settings));
+		folderPath ?? toFolderPath(resolveNewMindMapFolder(app, settings));
 	const defaultName = buildDefaultMindMapName(language);
 	const name = await openNameInputModal(
 		app,
@@ -54,25 +54,32 @@ export async function createNewMindMap(
 	if (name === null) {
 		return; // 用户取消
 	}
+	// 用户可能在弹窗里连扩展名一起输入：容忍 `.md` 后缀，不产生 `x.md.md`
+	const baseName = (name || defaultName).replace(/\.md$/i, '');
+	const fileName = ensureUniqueFileName(app, folder, `${baseName}.md`);
+	const path = toVaultPath(folder, fileName);
+	// 新建内容为标准 Markdown 大纲；中心主题 = 文件名（虚拟文档根）
+	const content = createDefaultMarkdownContent(language);
+
+	let file: TFile;
 	try {
-		// 用户可能在弹窗里连扩展名一起输入：容忍 `.md` 后缀，不产生 `x.md.md`
-		const baseName = (name || defaultName).replace(/\.md$/i, '');
-		const fileName = await ensureUniqueFileName(
-			app,
-			folder,
-			`${baseName}.md`,
-		);
-		const path = vaultPath(folder, fileName);
-		// 新建内容为标准 Markdown 大纲；中心主题 = 文件名（虚拟文档根）
-		const content = createDefaultMarkdownContent(language);
-		const file = await app.vault.create(path, content);
-		// 打开并自动切入导图视图（Obsidian 默认会以 markdown 打开 .md 文件）
+		file = await app.vault.create(path, content);
+	} catch (error) {
+		// 尚未落盘：提示「创建失败」准确，用户可直接重试
+		notifyError(language, 'command.createFailed', error);
+		return;
+	}
+	new Notice(t(language, 'command.created'));
+
+	try {
+		// 打开并自动切入导图视图（Obsidian 默认会以 markdown 打开 .md 文件）。
+		// `openAsMindMap` 自身已吞掉视图切换失败，本段只会接住 `openFile` 的失败。
 		const leaf = app.workspace.getLeaf(false);
 		await leaf.openFile(file);
 		await openAsMindMap(leaf, file);
-		new Notice(t(language, 'command.created'));
 	} catch (error) {
-		notifyError(language, 'command.createFailed', error);
+		// 文件已在库里，只是没能打开：沿用「创建失败」会诱导重试并产生重复文件
+		notifyError(language, 'command.openFailed', error);
 	}
 }
 
@@ -128,30 +135,30 @@ function resolveNewMindMapFolder(
  * `TFolder.isRoot()` 判定并归一，不比较路径字符串（路径比较还要处理大小写与
  * NFC，而 `getFolderByPath` 自称 case sensitive）。
  */
-function folderPathOf(folder: TFolder): string {
+function toFolderPath(folder: TFolder): string {
 	return folder.isRoot() ? '' : folder.path;
 }
 
 /**
  * 库内路径拼接：库根目录的 folder 是**空串**，故不能无条件`${folder}/${name}`
- * —— 那会产出带前导斜杠的 `/name.mindmap.md`。有前导斜杠**并非不可用**（官方
+ * —— 那会产出带前导斜杠的 `/name.md`。有前导斜杠**并非不可用**（官方
  * `normalizePath` 承诺剥离，见 d.ts 示例），此处只是不想让「库根」这一档在
  * 落点字符串里留下前导斜杠，保持与库内相对路径同一形态。
  *
  * 全库只有本文件需要「folder + 文件名 → 新建目标路径」，故就地定义，
  * 不另立收口（AGENTS.md硬规则 5：不造第二份判定）。
  */
-function vaultPath(folder: string, name: string): string {
+function toVaultPath(folder: string, name: string): string {
 	return normalizePath(folder ? `${folder}/${name}` : name);
 }
 
 /** 同一目录下重名时自动追加序号（Obsidian 惯例：名称 1、名称 2...）。
- *  序号插在扩展名之前（名称 1.md）。 */
-async function ensureUniqueFileName(
+ *  序号插在扩展名之前（名称 1.md）。纯同步查询（`getFileByPath`/`getFolderByPath`）。 */
+function ensureUniqueFileName(
 	app: App,
 	folder: string,
 	fileName: string,
-): Promise<string> {
+): string {
 	// 拆分 stem 与扩展名（调用方保证传入 `*.md`；无扩展名时整体当 stem）
 	const stem = fileName.replace(/\.[^.]+$/, '') || fileName;
 	const extension = fileName.slice(stem.length);
@@ -160,8 +167,8 @@ async function ensureUniqueFileName(
 	// 性能：候选路径存在性检查代替全库路径 Set 构建（大库下每次创建 O(1)）；
 	// 类型化 getter 成对使用（官方推荐，替代易混淆的 getAbstractFileByPath）
 	while (
-		app.vault.getFileByPath(vaultPath(folder, candidate)) ??
-		app.vault.getFolderByPath(vaultPath(folder, candidate))
+		app.vault.getFileByPath(toVaultPath(folder, candidate)) ??
+		app.vault.getFolderByPath(toVaultPath(folder, candidate))
 	) {
 		candidate = `${stem} ${index}${extension}`;
 		index++;

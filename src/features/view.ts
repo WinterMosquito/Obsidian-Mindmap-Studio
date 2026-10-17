@@ -20,8 +20,7 @@ import {
 } from 'obsidian';
 import { Language, t } from '../core/i18n';
 import { readNodeDataString } from '../core/node-data';
-import { injectObsidianCssVarsIntoExportSvg } from '../platform/export-css-vars';
-import { padForeignObjectsForExport } from '../platform/export-foreign-object-padding';
+import { postProcessExportSvg } from '../platform/export-svg-postprocess';
 import {
 	injectMathStylesIntoExportSvg,
 	pinMathContainerHeightsInExportSvg,
@@ -30,7 +29,7 @@ import { refreshPrismTokenColors } from '../platform/prism-code';
 import { updatesInternalLinksOnRename } from '../platform/vault-prefs';
 import { createDebouncer, createThrottler, type Debouncer } from '../core/concurrency';
 import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
-import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../core/engine-types';
 import { createWarnOnce, notifyError } from '../core/errors';
 import {
 	applyImageSizeCorrectionsToEngine,
@@ -395,18 +394,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 					owner,
 				);
 			},
-			// 导出 SVG 后处理链（按序应用）：foreignObject 几何余量（几何校正
-			// 最先落地——`<img>` 解码环境与主文档存在 ~2px 级文本度量偏差，
-			// 临界节点会换行被裁，加宽/加高兜底，见 K106）→ Obsidian CSS 变量
-			// 注入（字体度量与屏上一致，修复多行节点/LaTeX 节点导出被裁）→
-			// MathJax 字形样式注入 → 数学容器高度钉扎（K107——导出环境 MJX
-			// 字体缺失使容器盒子膨胀 ~1.8 倍、下方文字下移压到节点底边框线，
-			// 钉为屏上实测高度使纵向流一致）→ 复制按钮隐身。后处理项分居
-			// platform 与 features，services 层不依赖 features（K51），故链在
-			// 组合根装配后注入。
+			// 导出 SVG 后处理链（按序应用）：platform 单入口（几何余量 → CSS 变量
+			// 注入，顺序由 postProcessExportSvg 保证，见 K99 / K106）→ MathJax 字形
+			// 样式注入 → 数学容器高度钉扎（K107——导出环境 MJX 字体缺失使容器膨胀
+			// ~1.8 倍、文字下移压到节点底边框）→ 复制按钮隐身。链尾项分居 platform
+			// 与 features（K51），故在组合根装配后注入。
 			exportSvgTransforms: [
-				padForeignObjectsForExport,
-				injectObsidianCssVarsIntoExportSvg,
+				postProcessExportSvg,
 				injectMathStylesIntoExportSvg,
 				pinMathContainerHeightsInExportSvg,
 				hideCopyButtonsInExportSvg,

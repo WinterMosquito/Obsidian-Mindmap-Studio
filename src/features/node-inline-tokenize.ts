@@ -16,7 +16,7 @@ import { matchPipeTable, type PipeTable } from '../domain/pipe-table';
 import { isSchemeUrl, isUrlLikeText } from '../domain/url';
 import { isNodeTextEdited } from '../domain/md-meta';
 import { tokenDisplay, tokenizeInline, type InlineToken } from '../markdown/md-outline';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode } from '../core/engine-types';
 
 export interface InlineContentDocument {
 	createElement(tag: string): HTMLElement;

@@ -12,7 +12,7 @@ import { composeNodeContent } from '../markdown/md-serialize';
 import { formatWikilink, linkDisplayText } from '../domain/wikilink';
 import type { App } from 'obsidian';
 import type { MdNodeData } from '../core/node-data';
-import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { MindMapViewContext, ViewNodeEditContext } from './view-context';
 
 /**

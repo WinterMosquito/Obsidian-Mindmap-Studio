@@ -19,7 +19,7 @@
  */
 
 import { App } from 'obsidian';
-import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../core/engine-types';
 import {
 	isIndentedCodeLine,
 	isRenderableImageExtension,

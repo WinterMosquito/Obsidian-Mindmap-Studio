@@ -6,7 +6,30 @@
  * 依赖 `mindmap-timers` 的 `scheduleEngineTimer`（补正兜底定时器）。
  */
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
+import { HEAVY_FIT_NODE_THRESHOLD } from '../core/constants';
+import { countMindMapNodes } from './mindmap-nodes';
 import { scheduleEngineTimer } from './mindmap-timers';
+
+/**
+ * 大图 fit 的**最小可读比例**（产品裁决 2026-10-17）。
+ *
+ * 起因：`适应画布` 的目标是「整树可见」，而剪枝在全部可见时必然解除 ⇒ 数千节点
+ * 一次装配（补丁 12 之前实测 5000 节点 20–38s；补丁 12 后仍需约 1s，且 DOM 会
+ * 涨到全树）。而 5000 节点的真 fit 比例约 **0.03**——文字 < 1px，看到等于没看到。
+ * 故节点数 > `HEAVY_FIT_NODE_THRESHOLD` 时把比例抬到可读下限、视口只覆盖内容
+ * 中心：既保留「一键回到全局视野」的作用，又不为一张看不清的图付全树装配。
+ * 阈值以下不受影响（1–2k 的 fit 亚秒级，全览仍有意义）。
+ */
+const LARGE_MAP_MIN_FIT_SCALE = 0.1;
+
+/**
+ * `fitMindMap` 的结果。
+ *
+ * `clamped` = **本次真的抬了可读下限**（因而是「没显示全部节点」的唯一判据）。
+ * 调用方据此决定要不要解释——**不要**在 UI 侧按节点数另算一遍阈值：那会在
+ * 「节点很多但内容本来就适配」（比例 ≥ 下限、未钳制）时说出与事实相反的提示。
+ */
+type FitOutcome = 'fit' | 'clamped' | 'skipped';
 
 /**
  * 容器的实时矩形（left/top/width/height，CSS 像素；不可得返回 null）。
@@ -199,10 +222,18 @@ function flushPendingLayoutRender(mindMap: MindMap): void {
  * 尺寸刚变化（布局切基准是异步的，见 flushPendingLayoutRender）与首帧几何
  * 未收敛（fit 触发的重渲染会按稳定态尺寸重跑布局）——不补正都会留下残差、
  * 被 resetZoom 按 1/scale 放大（见 scheduleCenteringCorrection）。
+ *
+ * 大图（> `HEAVY_FIT_NODE_THRESHOLD`）有**比例下限** `LARGE_MAP_MIN_FIT_SCALE`
+ * （2026-10-17 产品裁决）：真 fit 比例会落到 0.03 量级（文字不可读），且「整树
+ * 可见」会强制解除剪枝、把数千节点一次装配进 DOM（补丁 12 前 20–38s）。抬高
+ * 下限后视口只覆盖内容中心，用户拿到的是可读的一屏。
+ *
+ * @returns `clamped` = 本次真的抬了下限（调用方据此解释「没显示全部节点」）；
+ *   `skipped` = 引擎缺失或 fit 抛错（已记日志）；`fit` = 正常适应。
  */
-export function fitMindMap(mindMap: MindMap | null): void {
+export function fitMindMap(mindMap: MindMap | null): FitOutcome {
 	if (!mindMap) {
-		return;
+		return 'skipped';
 	}
 	try {
 		// 引擎 fit 用缓存的 elRect 换算，先同步到实时容器（首帧窗口内
@@ -211,20 +242,24 @@ export function fitMindMap(mindMap: MindMap | null): void {
 		// 见 JSDoc：只补平移（缩放由内容尺寸决定、与布局基准无关，无需重算）
 		scheduleCenteringCorrection(mindMap);
 		if (mindMap.opt?.openPerformance) {
-			if (fitPerformanceMindMapFromData(mindMap)) {
-				return;
+			const dataOutcome = fitPerformanceMindMapFromData(mindMap);
+			if (dataOutcome) {
+				return dataOutcome;
 			}
 			// 数据层几何不可得：回退全量装配（旧路径）
 			mindMap.renderer.forceLoadNode?.();
 		}
 		mindMap.view?.fit();
+		return 'fit';
 	} catch (error) {
 		console.error('适应画布失败', error);
+		return 'skipped';
 	}
 }
 
 /**
- * 数据层 fit（性能模式专用）：返回是否已处理（false = 调用方回退旧路径）。
+ * 数据层 fit（性能模式专用）：返回本次结果，`null` = 数据层几何不可得、
+ * 由调用方回退旧路径（forceLoadNode + vendor fit）。
  *
  * - 目标缩放 = `min(1, 可用宽/盒宽, 可用高/盒高)`（等价 vendor fit 的 flag 1/2/3）；
  * - 平移 = 内容中心 → 画布中心（见 fitMindMap 的中心推导）；
@@ -234,32 +269,41 @@ export function fitMindMap(mindMap: MindMap | null): void {
  *   `translateXY`（居中走共享实现 centerContentByDataBox）——两者都无条件
  *   emit `view_data_change`，性能模式下每次都是一轮分片整树渲染（K70）。
  */
-function fitPerformanceMindMapFromData(mindMap: MindMap): boolean {
+function fitPerformanceMindMapFromData(
+	mindMap: MindMap,
+): Exclude<FitOutcome, 'skipped'> | null {
 	const size = getCanvasSize(mindMap);
 	const box = measureContentBoxFromData(mindMap);
 	const current = readDrawTransform(mindMap);
 	if (!size || !box || !current || box.width <= 0 || box.height <= 0) {
-		return false;
+		return null;
 	}
 	const padding = Number(mindMap.opt?.fitPadding ?? 0) || 0;
 	const availableWidth = Math.max(1, size.width - padding * 2);
 	const availableHeight = Math.max(1, size.height - padding * 2);
-	const targetScale = Math.min(
+	const fitScale = Math.min(
 		1,
 		availableWidth / box.width,
 		availableHeight / box.height,
 	);
+	// 大图给可读下限（见 LARGE_MAP_MIN_FIT_SCALE）：比例被抬起后内容超出视口，
+	// 但居中仍按数据层内容中心算，用户看到的是一屏可读的中心区域。
+	// 小图（fit 比例本就 ≥ 下限）由 `&&` 短路，**不做** O(n) 的节点计数。
+	const clamped =
+		fitScale < LARGE_MAP_MIN_FIT_SCALE &&
+		countMindMapNodes(mindMap) > HEAVY_FIT_NODE_THRESHOLD;
+	const targetScale = clamped ? LARGE_MAP_MIN_FIT_SCALE : fitScale;
 	const scaleAligned = Math.abs(current.scaleX - targetScale) < 1e-6;
 	if (!scaleAligned) {
 		mindMap.view?.setScale(targetScale);
 	}
 	const after = scaleAligned ? current : readDrawTransform(mindMap);
 	if (!after) {
-		return false; // 变换读取异常：交给调用方回退（旧路径会重新装配，至少功能可用）
+		return null; // 变换读取异常：交给调用方回退（旧路径会重新装配，至少功能可用）
 	}
 	// 居中复用共享实现（含 ε 零调用短路；读数现取，即 setScale 之后的变换）
 	centerContentByDataBox(mindMap);
-	return true;
+	return clamped ? 'clamped' : 'fit';
 }
 
 /**

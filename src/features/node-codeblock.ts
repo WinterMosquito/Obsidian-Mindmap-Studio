@@ -15,7 +15,7 @@
 import { writeClipboardText } from '../platform/clipboard';
 import { CODE_BLOCK_CLASS, CODE_COPY_CLASS } from './node-inline-content';
 import type { EventBinder } from '../core/event-binder';
-import type { MindMap } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap } from '../core/engine-types';
 
 /** 复制按钮命中：构建侧类名的单一来源（node-inline-content 导出） */
 const COPY_BUTTON_SELECTOR = `.${CODE_COPY_CLASS}`;

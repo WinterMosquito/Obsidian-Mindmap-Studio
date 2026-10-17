@@ -27,14 +27,14 @@ import {
 	updateStatusBar,
 } from '../src/features/view-status';
 
-const { countTreeNodesMock, getRenderRootMock } = vi.hoisted(() => ({
-	countTreeNodesMock: vi.fn<(root: unknown) => number>(),
-	getRenderRootMock: vi.fn<(mindMap: unknown) => unknown>(),
+const { countMindMapNodesMock } = vi.hoisted(() => ({
+	// 唯一计数入口（`engine/mindmap.countMindMapNodes`）：桩它即同时覆盖
+	// 「取渲染根 + 遍历计数」两步，状态栏模块不再自己拼这两步
+	countMindMapNodesMock: vi.fn<(mindMap: unknown) => number>(),
 }));
 
 vi.mock('../src/engine/mindmap', () => ({
-	countTreeNodes: countTreeNodesMock,
-	getRenderRoot: getRenderRootMock,
+	countMindMapNodes: countMindMapNodesMock,
 }));
 
 /** 节流窗口（与 src/features/view-status.ts 的 STATUS_BAR_THROTTLE_MS 一致） */
@@ -79,10 +79,7 @@ function destroyEngine(view: MindMapViewContext): void {
 beforeEach(() => {
 	vi.useFakeTimers();
 	vi.setSystemTime(EPOCH_START_MS);
-	countTreeNodesMock.mockReset();
-	getRenderRootMock.mockReset();
-	// getRenderRoot 默认返回一个「非空渲染根」，计数由 countTreeNodes 假实现决定
-	getRenderRootMock.mockReturnValue({});
+	countMindMapNodesMock.mockReset();
 });
 
 afterEach(() => {
@@ -96,9 +93,8 @@ describe('updateStatusBar（节流与降级）', () => {
 		updateStatusBar(view);
 		vi.advanceTimersByTime(THROTTLE_MS * 3);
 
-		// 零开销路径：连渲染根都不取
-		expect(getRenderRootMock).not.toHaveBeenCalled();
-		expect(countTreeNodesMock).not.toHaveBeenCalled();
+		// 零开销路径：连计数入口都不进（不取渲染根、不遍历）
+		expect(countMindMapNodesMock).not.toHaveBeenCalled();
 		expect(statusBar.showNodeCount).not.toHaveBeenCalled();
 		expect(statusBar.clear).not.toHaveBeenCalled();
 	});
@@ -109,26 +105,26 @@ describe('updateStatusBar（节流与降级）', () => {
 
 		// 同步清空（不排尾随：没有可刷新的内容）
 		expect(statusBar.clear).toHaveBeenCalledTimes(1);
-		expect(countTreeNodesMock).not.toHaveBeenCalled();
+		expect(countMindMapNodesMock).not.toHaveBeenCalled();
 		vi.advanceTimersByTime(THROTTLE_MS * 2);
 		expect(statusBar.clear).toHaveBeenCalledTimes(1);
 	});
 
 	it('首次调用立即计数并展示（不被节流窗口推迟）', () => {
 		const { view, statusBar } = makeView();
-		countTreeNodesMock.mockReturnValue(7);
+		countMindMapNodesMock.mockReturnValue(7);
 
 		updateStatusBar(view);
 
 		// 同步断言：不推进时间就已经展示，说明是「立即执行」而非尾随
-		expect(countTreeNodesMock).toHaveBeenCalledTimes(1);
+		expect(countMindMapNodesMock).toHaveBeenCalledTimes(1);
 		expect(statusBar.showNodeCount).toHaveBeenCalledWith(7);
 	});
 
 	it('窗口内连续三次：只排一次尾随，尾随按 299ms 边界补一次并取最新值', () => {
 		const { view, statusBar } = makeView();
 		// 首次 1，尾随执行时重新计数得 42（证明不是复用第一次的结果）
-		countTreeNodesMock.mockReturnValueOnce(1).mockReturnValueOnce(42);
+		countMindMapNodesMock.mockReturnValueOnce(1).mockReturnValueOnce(42);
 
 		updateStatusBar(view); // t=0 立即执行
 		vi.advanceTimersByTime(100); // t=100
@@ -139,11 +135,11 @@ describe('updateStatusBar（节流与降级）', () => {
 
 		// 尾随在「本窗口末」触发：199ms 仍不触发，第 200ms 恰好触发一次
 		vi.advanceTimersByTime(199);
-		expect(countTreeNodesMock).toHaveBeenCalledTimes(1);
+		expect(countMindMapNodesMock).toHaveBeenCalledTimes(1);
 		expect(statusBar.showNodeCount).toHaveBeenCalledTimes(1);
 
 		vi.advanceTimersByTime(1);
-		expect(countTreeNodesMock).toHaveBeenCalledTimes(2);
+		expect(countMindMapNodesMock).toHaveBeenCalledTimes(2);
 		expect(statusBar.showNodeCount).toHaveBeenCalledTimes(2);
 		expect(statusBar.showNodeCount).toHaveBeenNthCalledWith(1, 1);
 		expect(statusBar.showNodeCount).toHaveBeenNthCalledWith(2, 42);
@@ -155,7 +151,7 @@ describe('updateStatusBar（节流与降级）', () => {
 
 	it('尾随执行后窗口重置：下一次调用立即可见（不必再等一个窗口）', () => {
 		const { view, statusBar } = makeView();
-		countTreeNodesMock.mockReturnValue(1);
+		countMindMapNodesMock.mockReturnValue(1);
 
 		updateStatusBar(view); // 立即
 		updateStatusBar(view); // 排尾随
@@ -165,13 +161,13 @@ describe('updateStatusBar（节流与降级）', () => {
 		// trailingResetsWindow=true：尾随已经展示了最新状态 → 窗口归零
 		updateStatusBar(view);
 		expect(statusBar.showNodeCount).toHaveBeenCalledTimes(3);
-		expect(countTreeNodesMock).toHaveBeenCalledTimes(3);
+		expect(countMindMapNodesMock).toHaveBeenCalledTimes(3);
 	});
 
 	it('不同视图各自独立节流（节流器按视图持有）', () => {
 		const first = makeView();
 		const second = makeView();
-		countTreeNodesMock.mockReturnValue(2);
+		countMindMapNodesMock.mockReturnValue(2);
 
 		// 两个视图在同一时刻各自立即执行：互不占用对方的窗口
 		updateStatusBar(first.view);
@@ -193,23 +189,22 @@ describe('updateStatusBar（节流与降级）', () => {
 
 	it('尾随触发时引擎已被销毁：清空状态栏，不触碰已销毁实例', () => {
 		const { view, statusBar } = makeView();
-		countTreeNodesMock.mockReturnValue(3);
+		countMindMapNodesMock.mockReturnValue(3);
 
 		updateStatusBar(view); // 立即 → 3
 		updateStatusBar(view); // 排尾随
 		destroyEngine(view); // 尾随落地前引擎被销毁（视图刷新）
 		vi.advanceTimersByTime(THROTTLE_MS);
 
-		// 回调内重查 mindMap：改为清空，且不再遍历（countTreeNodes 仍只被调一次）
+		// 回调内重查 mindMap：改为清空，且不再计数（计数入口仍只进过一次）
 		expect(statusBar.clear).toHaveBeenCalledTimes(1);
-		expect(countTreeNodesMock).toHaveBeenCalledTimes(1);
+		expect(countMindMapNodesMock).toHaveBeenCalledTimes(1);
 		expect(statusBar.showNodeCount).toHaveBeenCalledTimes(1);
-		expect(getRenderRootMock).toHaveBeenCalledTimes(1);
 	});
 
 	it('计数抛错：清空状态栏且异常不外抛', () => {
 		const { view, statusBar } = makeView();
-		countTreeNodesMock.mockImplementation(() => {
+		countMindMapNodesMock.mockImplementation(() => {
 			throw new Error('引擎内部状态异常');
 		});
 
@@ -220,7 +215,7 @@ describe('updateStatusBar（节流与降级）', () => {
 
 	it('尾随执行期间抛错：同样降级为清空，不冒泡到定时器回调', () => {
 		const { view, statusBar } = makeView();
-		countTreeNodesMock.mockReturnValueOnce(5).mockImplementation(() => {
+		countMindMapNodesMock.mockReturnValueOnce(5).mockImplementation(() => {
 			throw new Error('尾随执行时引擎异常');
 		});
 
@@ -238,14 +233,14 @@ describe('updateStatusBar（节流与降级）', () => {
 describe('cancelStatusBarUpdate（视图关闭清理）', () => {
 	it('取消未决尾随：关闭后不再有刷新落到已销毁视图', () => {
 		const { view, statusBar } = makeView();
-		countTreeNodesMock.mockReturnValue(5);
+		countMindMapNodesMock.mockReturnValue(5);
 
 		updateStatusBar(view); // 立即执行 → 1 次展示
 		updateStatusBar(view); // 排尾随
 		cancelStatusBarUpdate(view); // onClose 清理
 
 		vi.advanceTimersByTime(THROTTLE_MS * 2);
-		expect(countTreeNodesMock).toHaveBeenCalledTimes(1);
+		expect(countMindMapNodesMock).toHaveBeenCalledTimes(1);
 		expect(statusBar.showNodeCount).toHaveBeenCalledTimes(1);
 		expect(statusBar.clear).not.toHaveBeenCalled();
 	});
@@ -257,7 +252,7 @@ describe('cancelStatusBarUpdate（视图关闭清理）', () => {
 
 	it('取消只清尾随、不破坏节流器：视图复用后再次更新仍能立即展示', () => {
 		const { view, statusBar } = makeView();
-		countTreeNodesMock.mockReturnValue(4);
+		countMindMapNodesMock.mockReturnValue(4);
 
 		updateStatusBar(view); // 立即
 		cancelStatusBarUpdate(view); // 无未决尾随也安全

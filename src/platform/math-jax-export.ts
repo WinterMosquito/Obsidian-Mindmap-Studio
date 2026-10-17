@@ -7,7 +7,7 @@
  * 由渲染侧 flush 保证（代码层无状态读取）。
  */
 import { createWarnOnce } from '../core/errors';
-import { appendSvgStyle } from './export-svg-style';
+import { appendSvgStyle } from './export-svg-postprocess';
 
 /**
  * MathJax 注入的 CHTML 样式表元素 id（字形与 @font-face 的载体）。
@@ -237,7 +237,7 @@ export function pinMathContainerHeightsInExportSvg(
 		}
 		try {
 			// 直接调用 + 异常兜底（形态不符 → TypeError → 跳过该元素），与
-			// export-foreign-object-padding 的查询形态同款写法
+			// export-svg-postprocess（padForeignObjectsForExport）的查询形态同款写法
 			(cloneList[i] as { style?: CSSStyleDeclaration }).style?.setProperty(
 				'height',
 				`${Math.round(height * 100) / 100}px`,

@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
 	getNodeGroupEl: vi.fn((): unknown => null),
 	panMindMap: vi.fn(),
 	zoomMindMapAt: vi.fn(),
+	/** 大图 fit 的计数入口：默认 0（= 远低于阈值，走同步 fit） */
+	countMindMapNodes: vi.fn((): number => 0),
 }));
 
 vi.mock('../src/engine/mindmap', () => ({
@@ -36,6 +38,7 @@ vi.mock('../src/engine/mindmap', () => ({
 	getNodeGroupEl: mocks.getNodeGroupEl,
 	panMindMap: mocks.panMindMap,
 	zoomMindMapAt: mocks.zoomMindMapAt,
+	countMindMapNodes: mocks.countMindMapNodes,
 }));
 
 interface DomRegistration {
@@ -260,5 +263,48 @@ describe('fitToScreen（官方 Shift+1）', () => {
 		fitToScreen(view);
 
 		expect(mocks.fitMindMap).toHaveBeenCalledWith(mindMap);
+	});
+});
+
+/**
+ * 大图提示的判据来源：**只信引擎返回值**（`fitMindMap` 的 `clamped`）。
+ *
+ * 为什么不在 UI 侧按节点数判断：节点多但内容本就适配（fit 比例 ≥ 可读下限）时，
+ * 按节点数判断会说「已按最小可读比例居中」——与事实相反。而节点计数是 O(n)，
+ * 只在真正钳制（罕见）时才需要，故断言 `countMindMapNodes` 的调用次数即可
+ * 证明分支走对（Notice 在测试环境是空实现，不作为断言对象）。
+ */
+describe('fitToScreen 大图提示', () => {
+	beforeEach(() => {
+		mocks.fitMindMap.mockClear();
+		mocks.fitMindMap.mockReturnValue('fit');
+		mocks.countMindMapNodes.mockClear();
+		mocks.countMindMapNodes.mockReturnValue(5000);
+	});
+
+	it('引擎返回 fit：不提示、不取节点数（常规路径零额外遍历）', () => {
+		const mindMap = {} as MindMap;
+
+		fitToScreen({ mindMap } as unknown as ViewportContext);
+
+		expect(mocks.fitMindMap).toHaveBeenCalledWith(mindMap);
+		expect(mocks.countMindMapNodes).not.toHaveBeenCalled();
+	});
+
+	it('引擎返回 clamped：提示里带一次节点数（只数一次）', () => {
+		mocks.fitMindMap.mockReturnValue('clamped');
+		const mindMap = {} as MindMap;
+
+		fitToScreen({ mindMap } as unknown as ViewportContext);
+
+		expect(mocks.fitMindMap).toHaveBeenCalledTimes(1);
+		expect(mocks.countMindMapNodes).toHaveBeenCalledTimes(1);
+	});
+
+	it('引擎缺失：既不 fit 也不计数、不抛', () => {
+		fitToScreen({ mindMap: null } as unknown as ViewportContext);
+
+		expect(mocks.fitMindMap).not.toHaveBeenCalled();
+		expect(mocks.countMindMapNodes).not.toHaveBeenCalled();
 	});
 });

@@ -549,17 +549,11 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		'node-inline-editor.ts',
 	).replaceAll('\\', '/');
 	// 导出 SVG 后处理链的模块（与生产 view.ts 的 exportSvgTransforms 同源同序）
-	const exportPaddingModule = join(
+	const exportPostprocessModule = join(
 		ROOT,
 		'src',
 		'platform',
-		'export-foreign-object-padding.ts',
-	).replaceAll('\\', '/');
-	const exportCssVarsModule = join(
-		ROOT,
-		'src',
-		'platform',
-		'export-css-vars.ts',
+		'export-svg-postprocess.ts',
 	).replaceAll('\\', '/');
 	const mathJaxModule = join(ROOT, 'src', 'platform', 'math-jax.ts').replaceAll(
 		'\\',
@@ -583,16 +577,15 @@ import { buildInlineNodeContent, segmentCacheStats } from ${JSON.stringify(inlin
 import { gateNodeWidthHandles } from ${JSON.stringify(nodeWidthModule)};
 import { hideCopyButtonsInExportSvg, registerCodeBlockInteractions } from ${JSON.stringify(codeblockModule)};
 import { openNodeInlineEditor } from ${JSON.stringify(inlineEditorModule)};
-import { padForeignObjectsForExport } from ${JSON.stringify(exportPaddingModule)};
-import { injectObsidianCssVarsIntoExportSvg } from ${JSON.stringify(exportCssVarsModule)};
+import { postProcessExportSvg } from ${JSON.stringify(exportPostprocessModule)};
 import { injectMathStylesIntoExportSvg, pinMathContainerHeightsInExportSvg } from ${JSON.stringify(mathJaxModule)};
 import { EMBED_CANVAS_CLASS, EMBED_NOTICE_CLASS, EMBED_OUTLINE_CLASS, MindmapEmbedRenderChild } from ${JSON.stringify(mindmapCodeblockModule)};
 
 const scenarios = ${serialized};
 
 // 与生产 view.ts 的 exportSvgTransforms 同链同序：本探针据此验证导出 SVG 的
-// 「CSS 变量注入 + MathJax 字形样式注入 + 几何余量 + 复制按钮隐身」端到端落地。
-const exportSvgTransforms = [padForeignObjectsForExport, injectObsidianCssVarsIntoExportSvg, injectMathStylesIntoExportSvg, pinMathContainerHeightsInExportSvg, hideCopyButtonsInExportSvg];
+// 「几何余量 + CSS 变量注入（platform 单入口）+ MathJax 字形样式注入 + 复制按钮隐身」端到端落地。
+const exportSvgTransforms = [postProcessExportSvg, injectMathStylesIntoExportSvg, pinMathContainerHeightsInExportSvg, hideCopyButtonsInExportSvg];
 
 const options = {
 	layout: 'logicalStructure',
@@ -3067,7 +3060,7 @@ window.setTimeout(() => {
 // 屏上测宽固定 → 自绘内容一旦依赖类样式，导出 PNG 就会掉排版并溢出/错位。
 // 故断言导出 SVG 里自绘根元素 / 锚点 / 轻标记元素都带**内联样式**；并进一步断言
 // 导出后处理链（exportSvgTransforms）注入的 <style> 真落进产物——
-//   · cssVarsInjected：CSS 变量注入（export-css-vars，含 --font-interface）；
+//   · cssVarsInjected：CSS 变量注入（export-svg-postprocess，含 --font-interface）；
 //   · mathInjected：MathJax 字形样式注入（math-jax，含 mjx-c 且已剥离 @font-face）。
 const exportProbe = document.createElement('pre');
 exportProbe.id = 'export-probe';
@@ -3948,7 +3941,7 @@ function buildPageSource({
 		<!-- 导出样式注入的前置（真机由 Obsidian / MathJax 提供，无头环境须补齐，
 		     否则导出后处理链恒为安全 no-op、export 探针无从验证）：
 		     ① document.win.createSvg（Obsidian 的 Document 扩展，appendSvgStyle 依赖）；
-		     ② :root CSS 变量（值 = 自绘内容兜底值，几何零扰动，供 export-css-vars 注入）；
+		     ② :root CSS 变量（值 = 自绘内容兜底值，几何零扰动，供 export-svg-postprocess 注入）；
 		     ③ #MJX-CHTML-styles 假样式表（供 math-jax 的 readMathJaxCss 读取）。 -->
 		<style id="verify-export-css-vars">:root{--font-interface:sans-serif;--font-monospace:monospace;}</style>
 		<style id="MJX-CHTML-styles">.mjx-c.mjx-c1D438::before{content:"E";padding:0.68em 0.764em 0 0;}</style>

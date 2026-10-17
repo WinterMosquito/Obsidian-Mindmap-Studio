@@ -21,7 +21,7 @@
  * 3) 行内轻标记（** * ` ~~ HTML）不剥离，原样保留（无损往返）。
  */
 
-import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../core/engine-types';
 import {
 	formatWikilink,
 	linkDisplayText,

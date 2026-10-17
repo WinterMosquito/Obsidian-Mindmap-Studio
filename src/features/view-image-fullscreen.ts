@@ -6,7 +6,7 @@
  */
 import { App, Modal } from 'obsidian';
 import { t, type Language } from '../core/i18n';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode } from '../core/engine-types';
 import type { MindMapViewContext } from './view-context';
 
 /** 打开节点图片的全屏查看（灯箱）；节点无图片时不动作 */

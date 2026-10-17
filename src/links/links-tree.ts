@@ -19,7 +19,7 @@ import { walkTree } from '../domain/tree';
 import { formatWikilink, parseWikilink } from '../domain/wikilink';
 import type { WikilinkParts } from '../domain/wikilink';
 import { hasNodeReference, readNodeDataString } from '../core/node-data';
-import type { MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapTreeNode } from '../core/engine-types';
 import type { MdNodeData } from '../core/node-data';
 
 /** Obsidian 库内回收站目录（vault 根下的 .trash） */

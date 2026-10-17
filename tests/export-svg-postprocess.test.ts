@@ -1,17 +1,24 @@
 /**
- * export-foreign-object-padding 回归（K106）：导出前为克隆 SVG 的每个
- * foreignObject 增加几何余量（宽 +12 / 高 +20）。
+ * 导出 SVG 后处理的回归（platform/export-svg-postprocess）：
  *
- * 背景：`<img>` 解码的 SVG 出口渲染与主文档存在文本度量偏差（轻量节点
- * ~2px、标点密集长文本行可达 ~12px），临界节点换行后被 foreignObject
- * 固定高度裁切、长文本行末字符贴右线（用户实拍）。余量按分布上界取值，
- * 实际效果（padW 2 即恢复单行）已在实机扫描验证；本文件锁定契约：
+ * 1. **foreignObject 几何余量**（K106）：克隆 SVG 的每个 FO 宽 +12 / 高 +20。
+ *    背景：`<img>` 解码的 SVG 出口渲染与主文档存在文本度量偏差（轻量节点
+ *    ~2px、标点密集长文本行可达 ~12px），临界节点换行后被固定高度裁切、
+ *    长文本行末字符贴右线（用户实拍）。余量按分布上界取值，实际效果
+ *    （padW 2 即恢复单行）已在实机扫描验证。
+ * 2. **platform 单入口**（`postProcessExportSvg`）：几何余量 → CSS 变量注入，
+ *    顺序由实现保证、原样返回同一对象（引擎要求）。
+ *
+ * 契约：
  * - 全部 FO 宽 +12、高 +20，且**原样返回同一对象**（引擎要求）；
  * - 尺寸属性缺失/非法（null / 非数字）→ 跳过该 FO，其余照常处理；
  * - 无 FO / 形态不符（null / 缺 node / 无 querySelectorAll）→ 安全 no-op。
  */
-import { describe, expect, it, vi } from 'vitest';
-import { padForeignObjectsForExport } from '../src/platform/export-foreign-object-padding';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+	padForeignObjectsForExport,
+	postProcessExportSvg,
+} from '../src/platform/export-svg-postprocess';
 
 /** 伪造 FO 元素（getAttribute/setAttribute 基于内存 store，写入可断言） */
 function makeFO(attrs: Record<string, string | null>) {
@@ -70,5 +77,42 @@ describe('padForeignObjectsForExport（导出 FO 几何余量，K106）', () => 
 		expect(padForeignObjectsForExport(malformedB)).toBe(malformedB);
 		expect(padForeignObjectsForExport(malformedC)).toBe(malformedC);
 		expect(padForeignObjectsForExport(malformedD)).toBe(malformedD);
+	});
+});
+
+describe('postProcessExportSvg（platform 单入口：几何 → 变量）', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('一次调用完成 FO 加宽与 CSS 变量注入，并原样返回同一对象', () => {
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				name === '--font-interface' ? 'Inter' : '',
+		}));
+		const fo = makeFO({ width: '100', height: '40' });
+		const styleEl = { textContent: '' };
+		const root = {
+			querySelectorAll: vi.fn(() => [fo]),
+			appendChild: vi.fn(),
+			ownerDocument: { win: { createSvg: () => styleEl } },
+		};
+		const svgElement = { node: root };
+
+		const returned = postProcessExportSvg(svgElement);
+
+		expect(returned, '原样返回（引擎要求）').toBe(svgElement);
+		expect(fo.snapshot()).toEqual({ width: '112', height: '60' });
+		expect(root.appendChild).toHaveBeenCalledTimes(1);
+		expect(styleEl.textContent).toBe('svg { --font-interface: Inter; }');
+	});
+
+	it('两步各自 no-op（形态不符 / 宿主不可用）时仍原样返回、不抛错', () => {
+		const malformedA = null;
+		const malformedB = { node: {} };
+
+		expect(postProcessExportSvg(malformedA)).toBe(malformedA);
+		expect(postProcessExportSvg(malformedB)).toBe(malformedB);
 	});
 });

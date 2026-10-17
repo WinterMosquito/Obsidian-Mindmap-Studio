@@ -691,15 +691,59 @@ let pumpScheduled = false;
  * @returns true = 已就绪并定稿；false = 保持待定
  */
 function attemptPlace(item: PendingMath): boolean {
-	const { holder, rendered, tex, display } = item;
-	if (!holder.isConnected) {
+	if (!item.holder.isConnected) {
 		return false; // 等挂载（由泵轮询）
 	}
 	if (item.ruleWait && flushGeneration === item.failedGeneration) {
 		return false; // 已确认规则未就绪：等下一次 flush 完成（runFlush 会再泵）
 	}
+	placeProduct(item);
+	return settleProduct(item);
+}
+
+/**
+ * 块级公式在节点内的上下外边距（em，随节点字号缩放）。
+ *
+ * 阅读视图的 `mjx-container[display="true"]` 规则给 **0.7em** 上下外边距（13px
+ * 字号实测 9.1px×2），在节点内会把「只有一条公式」的节点从 44px 撑到 88px
+ * （2026-10-17 实机：`_probe-math-100.md` 8 个块级公式节点，内容根 93×88，
+ * 产物 61×44 + 上下 9.1px）。节点内空间按节点计，段落间距语义不成立，故收敛
+ * 到 0.2em：保留一点点视觉呼吸，不再额外撑高节点。
+ */
+const DISPLAY_MATH_MARGIN = '0.2em 0';
+
+/**
+ * 把产物**放进 holder**：只写 DOM，**不读任何布局**。
+ *
+ * 与就绪判定（`settleProduct`）拆开的理由（2026-10-17 实机测量）：
+ * flush 完成后待定段同批替换，若每段「写完立刻读矩形」，上一次写入造成的
+ * 布局失效会让下一次读取强制同步布局——128 段实测该轮长任务 **129ms**。
+ * 循环内集中完成写入、循环外统一判定，首次读取只触发一次布局，其余读取
+ * 命中浏览器布局缓存。
+ */
+function placeProduct(item: PendingMath): void {
+	const { holder, rendered, display } = item;
 	holder.replaceChildren(rendered);
 	holder.classList.add(MATH_RENDERED_HOLDER_CLASS);
+	if (!display) {
+		return;
+	}
+	// 块级公式：收敛阅读视图带进来的 0.7em 上下外边距。**内联**写入而非
+	// styles.css 类规则——导出 PNG/SVG 不注入插件样式表（同 CONTENT_STYLES
+	// 的口径），类规则会让导出图与屏上不一致。
+	const container = rendered as Partial<HTMLElement>;
+	if (container.style) {
+		container.style.margin = DISPLAY_MATH_MARGIN;
+	}
+}
+
+/**
+ * 就绪判定与收尾：成功 → 入缓存 + 通知定稿；失败 → **同步撤回字面** + 排队 flush。
+ *
+ * @returns true = 已就绪并定稿；false = 已撤回为字面、等待下一次 flush
+ */
+function settleProduct(item: PendingMath): boolean {
+	const { holder, rendered, tex, display } = item;
 	if (isProductReady(holder)) {
 		rememberRenderedMath(tex, display, rendered);
 		notifyMathSettled(holder);
@@ -738,6 +782,9 @@ function schedulePump(holder: HTMLElement): void {
  * （不空转插入/测量）。预算或重试耗尽即放弃——**保持可见的字面**并告警一次。
  */
 function pumpPending(): void {
+	// **两阶段**：先集中写 DOM（不读布局），再集中判定（见 `placeProduct`）。
+	// 阶段①放置与阶段②判定之间不得插入任何布局读取，否则批量化失效。
+	const placed: PendingMath[] = [];
 	for (const item of Array.from(pendingMath)) {
 		if (!item.holder.isConnected) {
 			item.mountPumpsLeft -= 1;
@@ -749,7 +796,11 @@ function pumpPending(): void {
 		if (item.ruleWait && flushGeneration === item.failedGeneration) {
 			continue; // 等 flush（runFlush 完成后会再泵）
 		}
-		if (attemptPlace(item)) {
+		placeProduct(item);
+		placed.push(item);
+	}
+	for (const item of placed) {
+		if (settleProduct(item)) {
 			pendingMath.delete(item);
 			continue;
 		}

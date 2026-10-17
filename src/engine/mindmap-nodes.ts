@@ -214,6 +214,20 @@ export function getRenderRoot(mindMap: MindMap | null): MindMapNode | null {
 	return mindMap?.renderer.root ?? null;
 }
 
+/**
+ * 整棵**渲染树**的节点数（大图判定、状态栏计数共用口径）。
+ *
+ * 为什么按渲染树而不是 DOM：性能模式的 `removeSelf` 只把 group 摘下、不改
+ * `parent.children`（实证见 `features/view-status` 文件头），故渲染树恒为全量
+ * ——视口外节点照样计数，也不受剪枝影响，零 DOM 查询。
+ *
+ * 此前「`countTreeNodes(getRenderRoot(mm))`」这层组合在 3 处各写一遍（状态栏、
+ * 大图 fit 提示、fit 比例下限），新增调用方一律走本函数。
+ */
+export function countMindMapNodes(mindMap: MindMap | null): number {
+	return countTreeNodes(getRenderRoot(mindMap));
+}
+
 /** 节点渲染 group 的根 DOM 元素（hover-link 等场景的锚点；group 为引擎内部字段） */
 export function getNodeGroupEl(node: MindMapNode): Element | null {
 	const group = (node as unknown as { group?: { node?: Element } }).group;

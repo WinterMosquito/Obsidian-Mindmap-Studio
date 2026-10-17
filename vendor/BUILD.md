@@ -45,8 +45,8 @@
   （svg.js 横幅，`main.js` 同步保留）——逐库声明义务由 `vendor/THIRD-PARTY-NOTICES.md`
   承担（主载体），内联注释仅为补充佐证；其 §3 已按实测口径更新。
 
-**产物字节级身份**（2026-10-13 测量缓存 0×0 防写/自愈守卫后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
-`9f0074885714bdf5737020de7a8c0ec870bd87761244b5356a84ca4610e8083e`（413,558 B），
+**产物字节级身份**（2026-10-17 补丁 12 异步分片批量消费后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
+`859052727f7197f05669eef7091247705c072c3c00675b6c2f50a660939f4a89`（414,469 B），
 由 `tests/vendor-contract.test.ts` 断言。**重新打包后必须同步更新此处与该测试里的常量**——
 它是最外层护栏：其余契约断言（导出类 / 原型方法 / 命令名 / 事件名令牌）都只钉在
 **API 面**上，对字节改动无感。（缺口来源：本文件第 22 行要求「不可手工编辑」，
@@ -156,7 +156,9 @@ wrapper 保持块级宽度语义）→ **一次 reflow** → 尺寸写入补丁 
 
 **补丁 6｜`upstream/src/core/render/Render.js` + `MindMapNode.js` · 打开分片渲染（async 通道激活）**
 `_render` 的整树渲染调用原为同步（`root.render(cb)`）；激活引擎**既有** async 通道
-（`MindMapNode.render` 第三参数——每子节点一个宏任务。**非新机制**：性能模式视口变化
+（`MindMapNode.render` 第三参数——每子节点一个宏任务。**2026-10-17 补丁 12 修订**：该
+通道的载体已从「每节点一个 `setTimeout(0)`」改为「队列 + MessageChannel 批量消费」，
+回调契约不变，原因见补丁 12。**非新机制**：性能模式视口变化
 路径 `onViewDataChange` 一直以 async=true 运行，见 `Render.js` bindEvent）：
 `opt.renderAsync` 为真时改走 `root.render(cb, false, true)`。打开/重建大图时主线程
 最坏阻塞从「整树单块」（5000 节点 ≈ 1137ms）降到「单节点块」（≈0.2ms）。
@@ -286,6 +288,31 @@ uid 集合，与 `attachedNodes` 中实际挂在 DOM 上的 uid 集合逐一比�
 
 **诊断常驻**（沿用补丁 5 先例）：`window.__PRUNE_STATS__ = { fired, skippedSubtrees, enabled }`
 ——覆盖率判据：`fired > 0` 说明剪枝真的在热路径上；`enabled=false` 说明被失效面正确禁用。
+
+**补丁 12｜`upstream/src/core/render/Render.js` + `node/MindMapNode.js` · 异步分片改为批量消费（嵌套定时器 4ms 钳制）**
+**立项依据**（2026-10-17 实机）：`适应画布` 在 5000 节点上实测 **27.5s / 38.0s**
+（同机 500→0.55s、1000→0.94s），期间主线程长阻塞（`obsidian eval` 静默挂起 15s+）。
+对照：**关掉剪枝仍 19.7s** ⇒ 成本不在剪枝；补丁 6 记录「单节点块 ≈0.2ms」
+⇒ 5000×0.2ms≈1s，与实测差约 20s，差值正是 **`setTimeout` 的嵌套钳制**
+（HTML 规范：嵌套深度 >5 后每次至少 4ms）——分片链逐层嵌套 ⇒ 5000 次排队 × 4ms。
+**做法**：`MindMapNode.render` 的 async 分支不再各自 `setTimeout(0)`，改为
+`renderer.enqueueAsyncRenderTask(task)`；`Render` 新增队列 + **MessageChannel** 载体
+（postMessage 不受 4ms 钳制；无 MessageChannel 时退回 `setTimeout`，只是退化为原延迟）
++ 每批 **8ms** 时间预算（半个帧，留绘制余量）。语义保持：FIFO、每任务完成自己那段
+子树后回调、`node_tree_render_end` 仍由根回调触发；销毁断链从「逐任务判 `mindMap.el`」
+上移为「每批判一次」（任务内 destroy 也立即停）；任务抛错时**显式续跑**（原实现一任务
+一宏任务，一个抛错只丢自己那条链；共享队列不接住会整树挂起、`isRendering` 卡 true
+⇒ 后续渲染全废），错误照常 `console.error` 不吞。
+**tick 去重**（同日自查）：drain 期间 `asyncRenderTickActive` 保持为真——递归渲染在
+drain 内继续入队是常态，若按「队列空否」重新派发，每层子树都会多排一个空 tick
+（批次翻倍）。空队列时收尾清零。
+**实机实测**（5000 节点 · 逻辑结构图 · 同会话）：
+| 指标 | 补丁 12 前 | 补丁 12 后 |
+| --- | --- | --- |
+| 剪枝 → 全树可见（DOM 1 → 5000） | 27.5s / 38.0s | **820ms** |
+| `适应画布`（5000，含下节的 0.1 比例下限） | 27.5s，DOM 5000 | **52ms**，DOM 393 |
+| `node_tree_render_end` 次数 | — | 1（契约不变） |
+**边界**：批内任务仍同步串行——单批 8ms 内的阻塞属「工作量」而非「排队」，不在本补丁范围。
 
 **已否决的假设（2026-10-05 实测证伪，勿重做）｜`transform()` 读取器 memo 化（补丁 11 的前一版）**
 假设：「视口剔除判据 `checkIsInClient` 每节点每次渲染都调 `mindMap.draw.transform()`，
@@ -467,3 +494,4 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
 | 2026-10-13 | 0.14.0-fix.3 + 补丁 ×11 | 补丁 4 修订（**测量缓存 0×0 防写 + 命中 0 自愈**）：测量容器挂在 `mindMap.el` 内，leaf 切后台（`display:none`）时测量恒 0×0 且 `fontsReady=true` 照写缓存——键（内容 outerHTML，模块级跨会话存活）被 0 污染后，数学节点每次重建（`getCachedMath` 同步放产物 → outerHTML 与坏键相同）永远命中 0，foreignObject/布局 0×0、连线收束成一点，`reRender`/重开均无法自愈（实机复现 + 截图）。守卫：`measureCachePut` 拒写 0（自绘内容根元素自带 padding，合法尺寸不可能为 0）；`measureCacheGet` 命中 0 视同未命中并剔除（存量坏缓存自愈）。补丁 5 预测量经同一 put 写入，自动覆盖；诊断计数不变。sha256/字节数同步（`9f007488…` / 413,558 B） |
 | 2026-10-05 | 0.14.0-fix.3 + 补丁 ×10 | 补丁 10（视口可见集合未变时短路）：性能模式 `view_data_change` 无条件触发的全树分片重绘，实机 5001 节点 **70.8ms/次 → 短路后 0.6ms**（仅签名计算，零渲染事件）；移除监听对照 **0 次**（收益上限）；可见集合真变化时仍正常重绘；签名与 `checkIsInClient` 同式 + transform 提出循环（0.6ms vs 朴素 12.1ms）；sha256/字节数同步（`f51a257a…` / 411,736 B） |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×9 | 许可声明口径修正（**无产物变更，sha256 不变**）：`THIRD-PARTY-NOTICES.md` §3 与本文档的「内联注释覆盖」表述改为**实测口径**——`--legal-comments=inline` 实际仅保留 **1 段**（svg.js 横幅，`main.js` 同），逐库声明义务由 `THIRD-PARTY-NOTICES.md` 承担（主载体）、内联注释仅为补充佐证；`.github/workflows/release.yml` 注释同步（原「0 命中」为 2026-09-17 审计时点口径）并移除指向已删审计文档的悬空引用 |
+| 2026-10-17 | 0.14.0-fix.3 + 补丁 ×12 | 补丁 12（**异步分片改批量消费**）：async 通道原为「每子节点一个 `setTimeout(0)`」，命中 HTML 嵌套定时器 4ms 下限——5000 节点「整树可见」实测 **27.5–38s**（关掉剪枝仍 19.7s ⇒ 排除剪枝；按补丁 6 的单节点 ≈0.2ms 推算，差值即排队延迟）。改为队列 + **MessageChannel** 批量消费（8ms/批；无 MessageChannel 退回 `setTimeout`），回调、`node_tree_render_end`、销毁断链语义均保持，任务抛错显式续跑。实机：剪枝 → 全树可见（5000 节点）**27.5–38s → 820ms**；`适应画布` **27.5s → 52ms**（配合插件侧 `LARGE_MAP_MIN_FIT_SCALE = 0.1`，DOM 5000 → 393；1000 节点仍走真 fit，比例 0.034 不受影响）。sha256/字节数同步（`85905272…` / 414,469 B） |

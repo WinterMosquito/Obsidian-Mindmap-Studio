@@ -59,6 +59,8 @@ vi.mock('../src/engine/mindmap', () => ({
 	// 视口手势（Shift+1/Shift+2 → view-viewport）依赖的面：本文件只验证
 	// 「注册了哪些键」，不触发处理器；桩上仅为 import 链完整
 	fitMindMap: vi.fn(),
+	// 大图 fit 的计数入口（fitToScreen 经此判断是否提示+让帧）：0 节点 ⇒ 同步 fit
+	countMindMapNodes: (): number => 0,
 	getActiveNodes: vi.fn((): unknown[] => []),
 	getNodeGroupEl: vi.fn((): Element | null => null),
 	panMindMap: vi.fn(),

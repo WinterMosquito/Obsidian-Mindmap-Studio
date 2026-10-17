@@ -46,6 +46,15 @@
  * ⑥ **零尺寸等待不加代际锁**：`RenderChild` 一次性——块体重渲即换新实例、
  *    unload 断开观察器，不存在文件视图那类「过期 tree 覆盖当前文件」的跨文件
  *    竞态，故**刻意**不复刻 `EngineController.initMindMap` 的代际机制。
+ *
+ * ## 已知限制（2026-10-17 实机登记）
+ * 同一 leaf 在「阅读视图 ↔ 源码视图」间来回切换后，Obsidian 会**同时保留**两侧
+ * 挂载点（CM 的 `.cm-preview-code-block` 与阅读视图各一份），本模块于是各建一个
+ * 只读引擎：隐藏侧高度 0、`isShown()` 为假（尺寸量测已由 content-remeasure 挂起），
+ * 残留成本≈一个引擎的内存；切到别的文件即随 RenderChild 卸载回收（实测引擎数
+ * 2 → 1）。**刻意不做**「可见才建引擎」的门控：要与宿主双视图的生命周期抢时序，
+ * 回归面（可能「切回来仍空白」）大于收益。若将来出现内存问题再按该方案重开，
+ * 判据 `containerEl.isShown()` 已具备。
  */
 import { App, MarkdownRenderChild } from 'obsidian';
 import { CODE_BLOCK_MAX_NODES } from '../core/constants';
@@ -78,7 +87,7 @@ import {
 } from './node-inline-content';
 import { isResolvedWikiLinkpath, openHyperlink } from './view-link-navigator';
 import type { MindMapLinkHost } from './view-context';
-import type { MindMap, MindMapTreeNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapTreeNode } from '../core/engine-types';
 
 /** 外层容器类名（styles.css 的尺寸规则与 verify:visual 断言共用） */
 export const EMBED_CONTAINER_CLASS = 'tmm-embed';
@@ -101,7 +110,7 @@ const EMBED_FIT_SETTLE_DELAY_MS = 150;
 const EMBED_FIT_PADDING = 12;
 
 /**
- * 嵌入渲染所需的**最窄设置面**（窄化契约，同 `IPluginCommandsHost` 手法）：
+ * 嵌入渲染所需的**最窄设置面**（窄化契约，同 `CommandsHost` 手法）：
  * 只取四项，且由组合根取值——features 不引 `settings`（组合根禁令）。
  */
 export interface MindmapEmbedConfig {

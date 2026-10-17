@@ -56,7 +56,7 @@ import {
 import { applyRawToNode } from '../markdown/md-line-write';
 import { composeNodeContent } from '../markdown/md-serialize';
 import type { MdNodeData } from '../core/node-data';
-import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { ViewNodeEditContext } from './view-context';
 
 /** 编辑器最小/最大高度（像素）：节点矮也不小于 40；内容多不超 240（内部滚动） */

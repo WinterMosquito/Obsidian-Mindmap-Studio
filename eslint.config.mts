@@ -10,6 +10,11 @@ import obsidianmd from 'eslint-plugin-obsidianmd';
 import globals from 'globals';
 import { parser } from 'typescript-eslint';
 import { plainTextParser } from './scripts/plain-text-parser.mjs';
+import {
+	COMBO_ROOT_SPECIFIER_PATTERN,
+	MODULE_GROUPS,
+	forbiddenSpecifierPatterns,
+} from './scripts/module-boundaries.mjs';
 import { globalIgnores, defineConfig } from 'eslint/config';
 
 /**
@@ -71,48 +76,16 @@ const OFFICIAL_RESTRICTED_IMPORT_PATTERNS = [
 ];
 
 /* —— 模块依赖矩阵（K51）机械强制 ——
-   L1/L2 各模块组只允许依赖矩阵许可集（见 AGENTS.md K51）；组内相对引用
-   （./x）不受影响。组合根（main/commands/settings/creation）只能被组合根
-   引用，下层引入口在此拦下。 */
-type ModuleGroup =
-	| 'domain'
-	| 'core'
-	| 'links'
-	| 'markdown'
-	| 'media'
-	| 'engine'
-	| 'platform'
-	| 'ui'
-	| 'services'
-	| 'features';
+   **矩阵本体不在此文件**：唯一定义在 scripts/module-boundaries.mjs，由本文件
+   （生成 zone 块）与 tests/module-boundaries.test.ts（校验解析后的真实依赖图）
+   共同消费——两处各写一份必然漂移（硬规则 5）。
+
+   本规则只能看**说明符形态**：组内相对引用（`./x`）不受矩阵限制，故组内成环
+   它看不见；成环与「绕过字面量匹配的深层路径」由那份静态图测试兜住。 */
+type ModuleGroup = (typeof MODULE_GROUPS)[number];
 
 /**
- * 「会被禁止跨组导入」的组清单 —— **有意不含 `domain`**。
- *
- * domain 是零依赖层（下方独立配置块约束它不得导入任何外部包），其余每一层都
- * 允许依赖它，所以它永远不该出现在某组的 `forbidden` 里。若把它加进本清单，
- * 会让 core/links/… 全部禁止导入 domain，与 K51 依赖矩阵正好相反。
- *
- * 它出现在 `ModuleGroup` 里是因为 `boundary()` 的两个形参都用该类型，且 9 个
- * 边界块里有 8 个把 `'domain'` 列为 allowed（本文件纳入 tsc 后，
- * 此前 `'domain'` 因不在联合类型中而完全逃过类型检查）。
- */
-const ALL_GROUPS: ModuleGroup[] = [
-	'core',
-	'links',
-	'markdown',
-	'media',
-	'engine',
-	'platform',
-	'ui',
-	'services',
-	'features',
-];
-
-const COMBO_ROOT_PATTERNS = ['../main', '../commands', '../settings', '../creation'];
-
-/**
- * 生成一个模块组的边界块：allowed 之外的同层组与组合根一律禁止
+ * 生成一个模块组的边界块：矩阵许可集之外的同层组与组合根一律禁止。
  *
  * 返回值标注 `Linter.Config`：本文件纳入 `tsc --noEmit` 后，
  * 不标注时 `rules` 里的 `['error', { patterns }]` 会被推断成
@@ -120,34 +93,16 @@ const COMBO_ROOT_PATTERNS = ['../main', '../commands', '../settings', '../creati
  * 导致展开进 `defineConfig([...])` 时报 TS2345。标注同时也让
  * `patterns` 的元素形状真正被 ESLint 的 `RuleConfig` 检查。
  */
-function boundary(
-	group: ModuleGroup,
-	allowed: ModuleGroup[],
-): Linter.Config {
-	const forbidden = ALL_GROUPS.filter((g) => g !== group && !allowed.includes(g));
+function boundary(group: ModuleGroup): Linter.Config {
 	const patterns = [
 		// 官方 7 条依赖禁令必须先接入：该规则是**替换**语义，
 		// 只写下面项目自有 patterns 会把官方禁令整体挤掉（见本表注释）。
 		...OFFICIAL_RESTRICTED_IMPORT_PATTERNS,
-		...(forbidden.length > 0
-			? [
-					{
-						group: forbidden.flatMap((g) => [
-							`../${g}`,
-							`../${g}/*`,
-							`../${g}/**`,
-						]),
-						message: `src/${group}/ 只允许依赖 ${['domain', ...allowed].join(' / ')}（依赖矩阵见 AGENTS.md K51）`,
-					},
-				]
-			: []),
+		...forbiddenSpecifierPatterns(group),
 		{
-			group: COMBO_ROOT_PATTERNS,
+			...COMBO_ROOT_SPECIFIER_PATTERN,
 			// 类型引用豁免：视图上下文契约需要 settings 的类型（编译期擦除、
 			// 无运行时耦合）；值导入仍一律禁止。
-			allowTypeImports: true,
-			message:
-				'组合根（main/commands/settings/creation）只能被组合根本身引用（见 K51）',
 		},
 	];
 	return {
@@ -158,35 +113,10 @@ function boundary(
 	};
 }
 
-const moduleBoundaryBlocks = [
-	boundary('core', ['domain']),
-	boundary('links', ['core', 'domain']),
-	boundary('markdown', ['core', 'links', 'domain']),
-	boundary('media', ['core', 'links', 'domain']),
-	boundary('engine', ['core', 'domain']),
-	boundary('platform', ['core', 'links', 'markdown', 'domain']),
-	boundary('ui', ['core', 'links', 'media', 'domain']),
-	boundary('services', [
-		'core',
-		'links',
-		'markdown',
-		'media',
-		'engine',
-		'platform',
-		'domain',
-	]),
-	boundary('features', [
-		'core',
-		'links',
-		'markdown',
-		'media',
-		'engine',
-		'platform',
-		'ui',
-		'services',
-		'domain',
-	]),
-];
+/** 9 个边界块＝除 domain 外的全部组（domain 由下方独立的零依赖块约束） */
+const moduleBoundaryBlocks = MODULE_GROUPS.filter(
+	(group) => group !== 'domain',
+).map((group) => boundary(group));
 
 export default defineConfig(
 	globalIgnores([

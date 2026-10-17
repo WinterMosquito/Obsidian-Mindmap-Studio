@@ -27,8 +27,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { App } from 'obsidian';
 import { createNewMindMap, type NewMindMapSettings } from '../src/creation';
 
+/** 用例间清空 mock 调用记录（两个 describe 共用，故置于文件级） */
+beforeEach(() => {
+	vi.clearAllMocks();
+});
+
 /** 弹窗确认后返回的文件名（不含扩展名，`.md` 由 creation 补） */
 const TYPED_NAME = '测试导图';
+
+/** 错误提示通道：用于区分「创建失败」与「已创建但打开失败」两条错误边界 */
+const errors = vi.hoisted(() => ({ notifyError: vi.fn() }));
+vi.mock('../src/core/errors', () => errors);
 
 vi.mock('../src/ui/modal-name', () => ({
 	openNameInputModal: vi.fn(async () => TYPED_NAME),
@@ -73,6 +82,10 @@ interface StubOptions {
 	readonly folders?: readonly FolderStub[];
 	/** 已存在的文件路径集合（供重名序号分支命中） */
 	readonly existingPaths?: ReadonlySet<string>;
+	/** 落盘即失败（`vault.create` 抛错：无任何副作用） */
+	readonly createFails?: boolean;
+	/** 落盘成功但打开失败（`leaf.openFile` 抛错：文件已在库中） */
+	readonly openFileFails?: boolean;
 }
 
 /** 记录型 App 桩 */
@@ -96,6 +109,9 @@ function createStubApp(options: StubOptions = {}): StubApp {
 	const app = {
 		vault: {
 			create: vi.fn(async (path: string, content: string) => {
+				if (options.createFails) {
+					throw new Error('创建失败（桩）');
+				}
 				created.push({ path, content });
 				return { path };
 			}),
@@ -120,7 +136,13 @@ function createStubApp(options: StubOptions = {}): StubApp {
 		},
 		workspace: {
 			getActiveFile: vi.fn(() => activeFile),
-			getLeaf: vi.fn(() => ({ openFile: vi.fn(async () => undefined) })),
+			getLeaf: vi.fn(() => ({
+				openFile: vi.fn(async () => {
+					if (options.openFileFails) {
+						throw new Error('打开失败（桩）');
+					}
+				}),
+			})),
 		},
 	};
 	return {
@@ -149,10 +171,6 @@ function expectedFileName(): string {
 }
 
 describe('新建思维导图的落点判定', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-	});
-
 	describe('显式落点（右键文件夹 /「在当前文件夹新建」）：不受设置影响', () => {
 		it('库根目录：空串是合法落点，既不回落默认解析也不产生前导斜杠', async () => {
 			const stub = createStubApp({ parentFallback: folderStub('别处的目录') });
@@ -280,5 +298,42 @@ describe('新建思维导图的落点判定', () => {
 		// 首次探针用库根口径（不带前导斜杠），命中后追加序号 1
 		expect(stub.probedPaths[0]).toBe(expectedFileName());
 		expect(stub.created[0]?.path).toBe('测试导图 1.md');
+	});
+});
+
+/**
+ * 错误边界（2026-10-17）：创建与打开是**两段**副作用——
+ * - `vault.create` 失败：库里什么都没有，提示「创建失败」准确；
+ * - `leaf.openFile` 失败：文件已在库中，沿用「创建失败」会诱导用户重试，
+ *   在同目录产生 `名称 1.md` 之类的重复文件。
+ */
+describe('创建与打开的错误边界', () => {
+	it('创建失败：提示「创建失败」，不产生文件', async () => {
+		const stub = createStubApp({ createFails: true });
+
+		await createNewMindMap(stub.app, settingsStub(), '');
+
+		expect(stub.created).toHaveLength(0);
+		expect(errors.notifyError).toHaveBeenCalledTimes(1);
+		expect(errors.notifyError).toHaveBeenCalledWith(
+			'zh',
+			'command.createFailed',
+			expect.any(Error),
+		);
+	});
+
+	it('打开失败：文件保留在库中，提示「已创建但打开失败」而非「创建失败」', async () => {
+		const stub = createStubApp({ openFileFails: true });
+
+		await createNewMindMap(stub.app, settingsStub(), '');
+
+		// 文件已落盘：不得因打开失败而被回滚，也不得重报创建失败
+		expect(stub.created).toHaveLength(1);
+		expect(errors.notifyError).toHaveBeenCalledTimes(1);
+		expect(errors.notifyError).toHaveBeenCalledWith(
+			'zh',
+			'command.openFailed',
+			expect.any(Error),
+		);
 	});
 });

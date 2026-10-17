@@ -7,12 +7,12 @@ import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../core/constants';
 import {
 	arrangeMindMap as arrangeMindMapEngine,
 	ENGINE_COMMANDS,
-	fitMindMap,
 	resetZoom,
 	supportsLineStyleSwitch,
 	zoomInMindMap,
 	zoomOutMindMap,
 } from '../engine/mindmap';
+import { fitToScreen } from './view-viewport';
 import { openSearchBar } from './view-search';
 import { exportImage } from './view-export';
 import {
@@ -152,7 +152,7 @@ function buildToolbarRightGroup(
 		() => resetZoom(view.mindMap),
 	);
 	createToolButton(rightGroup, t(view.lang, 'command.fitCanvas'), 'maximize', () =>
-		fitMindMap(view.mindMap),
+		fitToScreen(view),
 	);
 	createToolButton(rightGroup, t(view.lang, 'toolbar.zoomIn'), 'zoom-in', () =>
 		zoomInMindMap(view.mindMap),

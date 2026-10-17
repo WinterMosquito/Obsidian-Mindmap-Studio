@@ -19,7 +19,7 @@
  * `reRender([])` 不重建自绘内容，故松手时才校正；宽度本身是实时跟随的。
  */
 import { isCustomNodeContent, refreshNodeCustomContent } from '../engine/mindmap';
-import type { MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import type { MindMapNode } from '../core/engine-types';
 import type { MindMapViewContext } from './view-context';
 
 /**
