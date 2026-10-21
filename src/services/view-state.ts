@@ -19,6 +19,12 @@ import { VIEW_STATE_PERSIST_MS } from '../core/constants';
 
 export type PathState = Record<string, unknown>;
 
+/**
+ * 按文件记的四项偏好键——既是 `viewState` 条目里的字段名，也是导图顶栏的
+ * 四个维度（布局 / 连线 / 配色 / 边框）。命名与字段一一对应，勿再起别名。
+ */
+export type PreferenceKey = 'layout' | 'lineStyle' | 'palette' | 'themeStyle';
+
 /** 视图按文件记忆的四项偏好（全部有全局默认值或内置默认值） */
 export interface FilePreferences {
 	layout: string;
@@ -153,43 +159,55 @@ export class ViewStateStore {
 		return Object.fromEntries(this.map);
 	}
 
-	getLayout(path: string): string | undefined {
-		const layout = this.map.get(path)?.layout;
-		return typeof layout === 'string' ? layout : undefined;
+	/**
+	 * 读取某项「按文件偏好」；未记过 / 非字符串一律 `undefined`（由视图回落默认）。
+	 *
+	 * 四项取值同构，故只留这一个实现；下面的具名 getter 只提供语义与注释，
+	 * 不再各写一遍 `typeof === 'string'`（那是典型的「第四处忘了改」位置）。
+	 */
+	getPreference(path: string, key: PreferenceKey): string | undefined {
+		const value = this.map.get(path)?.[key];
+		return typeof value === 'string' ? value : undefined;
 	}
 
-	setLayout(path: string, layout: string): void {
-		this.patch(path, { layout });
+	/** 写入某项「按文件偏好」（顶栏切换后调用；与 `view` 字段共用 `patch` 合并语义） */
+	setPreference(path: string, key: PreferenceKey, value: string): void {
+		this.patch(path, { [key]: value });
+	}
+
+	getLayout(path: string): string | undefined {
+		return this.getPreference(path, 'layout');
+	}
+
+	setLayout(path: string, value: string): void {
+		this.setPreference(path, 'layout', value);
 	}
 
 	/** 连线样式偏好（auto/curve/direct/straight；非法值由解析层回落布局默认） */
 	getLineStyle(path: string): string | undefined {
-		const lineStyle = this.map.get(path)?.lineStyle;
-		return typeof lineStyle === 'string' ? lineStyle : undefined;
+		return this.getPreference(path, 'lineStyle');
 	}
 
-	setLineStyle(path: string, lineStyle: string): void {
-		this.patch(path, { lineStyle });
+	setLineStyle(path: string, value: string): void {
+		this.setPreference(path, 'lineStyle', value);
 	}
 
 	/** 配色（按文件）：顶栏切换后写入，未设置时由视图回落 `DEFAULT_PALETTE` */
 	getPalette(path: string): string | undefined {
-		const palette = this.map.get(path)?.palette;
-		return typeof palette === 'string' ? palette : undefined;
+		return this.getPreference(path, 'palette');
 	}
 
-	setPalette(path: string, palette: string): void {
-		this.patch(path, { palette });
+	setPalette(path: string, value: string): void {
+		this.setPreference(path, 'palette', value);
 	}
 
 	/** 节点外观主题（按文件）：顶栏切换后写入，未设置时回落 `DEFAULT_THEME_STYLE` */
 	getThemeStyle(path: string): string | undefined {
-		const themeStyle = this.map.get(path)?.themeStyle;
-		return typeof themeStyle === 'string' ? themeStyle : undefined;
+		return this.getPreference(path, 'themeStyle');
 	}
 
-	setThemeStyle(path: string, themeStyle: string): void {
-		this.patch(path, { themeStyle });
+	setThemeStyle(path: string, value: string): void {
+		this.setPreference(path, 'themeStyle', value);
 	}
 
 	getView(path: string): unknown {

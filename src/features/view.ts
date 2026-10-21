@@ -43,7 +43,10 @@ import {
 	applyImageSizeCorrectionsToEngine,
 	getRenderRoot,
 } from '../engine/mindmap';
-import { resolveFilePreferences } from '../services/view-state';
+import {
+	resolveFilePreferences,
+	type PreferenceKey,
+} from '../services/view-state';
 import { ContentRemeasureSession } from './content-remeasure';
 import {
 	collectImageSizeCorrections,
@@ -146,6 +149,19 @@ const RESIZE_THROTTLE_MS = 100;
  * - `language`：引擎无 `lang` 选项，语言在创建期被闭包捕获两处（默认节点文案与
  *   自绘钩子的 `lang` 实参），重建才能让两者一致（UI 侧另有 `refreshLanguageUi`）。
  */
+/**
+ * 顶栏维度 → 会话字段名（`MindMapView` 上的私有字段）。
+ *
+ * 与 `PreferenceKey` 用 `satisfies` 绑死：新增一个按文件记的维度时，漏写这里
+ * 或写错字段名都会编译失败（`commitPreference` 靠它定位写入目标）。
+ */
+const SESSION_FIELDS = {
+	layout: 'currentLayout',
+	lineStyle: 'currentLineStyle',
+	palette: 'currentPalette',
+	themeStyle: 'currentThemeStyle',
+} as const satisfies Record<PreferenceKey, string>;
+
 const IN_PLACE_REFRESH_KEYS = new Set([
 	'defaultTheme',
 	'defaultThemeStyle',
@@ -708,10 +724,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 避免某一维回落到硬编码默认而漏掉设置项（2026-10-21 themeStyle 踩过此坑）
 		const prefs = resolveFilePreferences({
 			saved: {
-				layout: this.plugin.viewState.getLayout(file.path),
-				lineStyle: this.plugin.viewState.getLineStyle(file.path),
-				themeStyle: this.plugin.viewState.getThemeStyle(file.path),
-				palette: this.plugin.viewState.getPalette(file.path),
+				layout: this.plugin.viewState.getPreference(file.path, 'layout'),
+				lineStyle: this.plugin.viewState.getPreference(file.path, 'lineStyle'),
+				themeStyle: this.plugin.viewState.getPreference(file.path, 'themeStyle'),
+				palette: this.plugin.viewState.getPreference(file.path, 'palette'),
 			},
 			defaults: {
 				layout: this.plugin.settings.defaultLayout,
@@ -720,10 +736,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				palette: DEFAULT_PALETTE,
 			},
 		});
+		// 归一放在**入口**：脏值止步于此，后续 `resolve*` 只负责兜底，
+		// 不再各写一次 normalize（那是「新增维度时漏一处」的高发位置）
 		this.currentLayout = prefs.layout;
-		this.currentLineStyle = prefs.lineStyle;
-		this.currentThemeStyle = prefs.themeStyle;
-		this.currentPalette = prefs.palette;
+		this.currentLineStyle = normalizeLineStylePreference(prefs.lineStyle);
+		this.currentThemeStyle = normalizeThemeStyle(prefs.themeStyle);
+		this.currentPalette = normalizePalette(prefs.palette);
 		try {
 			const doc = await this.documents.load(file);
 			// 加载期间文件已切换：丢弃过期结果
@@ -795,52 +813,25 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 	}
 
-	/** 本次引擎创建所用布局（fallback 默认值并回写会话字段） */
+	// ---- 四个「按文件偏好」的读取兜底 ----
+	// 会话字段在 `loadMindMapFromFile` 里已按文件合成并归一；这里只兜「引擎在
+	// load 之前就被创建」的极端时序（返回默认值，不回写会话字段——回写会让
+	// 「尚未读到文件」与「文件就是这么设的」两种状态混为一谈）。
+
 	private resolveLayout(): string {
-		const layout = this.currentLayout || this.plugin.settings.defaultLayout;
-		this.currentLayout = layout;
-		return layout;
+		return this.currentLayout ?? this.plugin.settings.defaultLayout;
 	}
 
-	/**
-	 * 本次引擎创建所用连线样式偏好（归一后回写会话字段）。
-	 *
-	 * 归一而非直取：存量 `data.json` 可能仍是 `auto` / `direct`（两态收敛前写入），
-	 * 直接透传会让工具栏出现「无选中项」并把旧词汇写回状态存储。
-	 */
 	private resolveLineStyle(): string {
-		const lineStyle = normalizeLineStylePreference(
-			this.currentLineStyle ?? this.plugin.settings.defaultLineStyle,
-		);
-		this.currentLineStyle = lineStyle;
-		return lineStyle;
+		return this.currentLineStyle ?? this.plugin.settings.defaultLineStyle;
 	}
 
-	/**
-	 * 本次引擎创建所用配色（归一后回写会话字段）。
-	 *
-	 * 与布局/连线样式同口径按文件取：`viewState[<路径>].palette` 优先，
-	 * 缺省回落 `DEFAULT_PALETTE`（＝改造前的蓝）。归一而非直取：手改
-	 * `data.json` 或配色表收缩后，未知 id 不得落到工具栏成「空白选中项」。
-	 */
 	private resolvePalette(): string {
-		const palette = normalizePalette(this.currentPalette ?? DEFAULT_PALETTE);
-		this.currentPalette = palette;
-		return palette;
+		return this.currentPalette ?? DEFAULT_PALETTE;
 	}
 
-	/**
-	 * 本次引擎创建所用节点外观主题（归一后回写会话字段）。
-	 *
-	 * 与布局/连线样式同口径按文件取：`viewState[<路径>].themeStyle` 优先，
-	 * 缺省回落 `DEFAULT_THEME_STYLE`（＝存量带框外观）。
-	 */
 	private resolveThemeStyle(): string {
-		const themeStyle = normalizeThemeStyle(
-			this.currentThemeStyle ?? this.plugin.settings.defaultThemeStyle,
-		);
-		this.currentThemeStyle = themeStyle;
-		return themeStyle;
+		return this.currentThemeStyle ?? this.plugin.settings.defaultThemeStyle;
 	}
 
 	/**
@@ -921,66 +912,81 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/** 标题重命名已委托 TitleRenamer（view-title-renamer.ts） */
 
 	/**
-	 * 切换布局（工具栏调用）：更新会话字段 + 立即写入视图状态存储
-	 * （布局不写入正文，存 data.json 按文件路径恢复）。
+	 * 提交一项顶栏偏好：归一 → 会话字段 → 应用引擎 → 持久化到当前文件。
+	 *
+	 * 四个维度（布局 / 连线 / 配色 / 边框）是同构的，差异只有三处：归一函数、
+	 * 引擎通道（布局/连线各有专法，配色与边框共用 `applyTheme`）、会话字段名。
+	 * 收在一处后，新增维度不会漏掉「归一」或「持久化」——这两步在复制时最易丢。
 	 */
-	applyLayout(value: string): void {
-		this.currentLayout = value;
-		this.engine.setLayout(value);
-		// 连线样式选项面随布局变化（固定直线布局收窄为「直线」单项）
-		syncLineStyleOptions(this, value, this.resolveLineStyle());
+	private commitPreference(config: {
+		key: PreferenceKey;
+		value: string;
+		normalize: (value: string) => string;
+		applyToEngine: (value: string) => void;
+	}): void {
+		const next = config.normalize(config.value);
+		this[SESSION_FIELDS[config.key]] = next;
+		config.applyToEngine(next);
 		if (this.file) {
-			this.plugin.viewState.setLayout(this.file.path, value);
+			this.plugin.viewState.setPreference(this.file.path, config.key, next);
 		}
 	}
 
 	/**
-	 * 切换连线样式偏好（工具栏调用）：归一 + 更新会话字段 + 立即写入视图状态存储
-	 * （两态：折线 / 曲线；不写入正文）。
+	 * 切换布局（工具栏调用）：布局不写入正文，存 data.json 按文件路径恢复。
+	 */
+	applyLayout(value: string): void {
+		this.commitPreference({
+			key: 'layout',
+			value,
+			// 布局选项表是白名单，但工具栏只会给出表内值——此处不做归一
+			normalize: (next) => next,
+			applyToEngine: (next) => {
+				this.engine.setLayout(next);
+				// 连线样式选项面随布局变化（固定直线布局收窄为「直线」单项）
+				syncLineStyleOptions(this, next, this.resolveLineStyle());
+			},
+		});
+	}
+
+	/**
+	 * 切换连线样式偏好（工具栏调用；两态：折线 / 曲线，不写入正文）。
 	 *
 	 * **写入前归一**（不只信调用方）：本方法在 `MindMapViewContext` 上对任意字符串
 	 * 开放；若未来新入口传旧词汇（`auto` / `direct`），把旧值写回 `data.json` 会与
-	 * 「读取侧归一」分叉，让脏值在文件里复利。归一函数是唯一口径
-	 * （`constants.normalizeLineStylePreference`）。
+	 * 「读取侧归一」分叉，让脏值在文件里复利。归一口径唯一源
+	 * `constants.normalizeLineStylePreference`，由 `commitPreference` 统一执行。
 	 */
 	applyLineStyle(value: string): void {
-		const lineStyle = normalizeLineStylePreference(value);
-		this.currentLineStyle = lineStyle;
-		this.engine.setLineStyle(lineStyle);
-		if (this.file) {
-			this.plugin.viewState.setLineStyle(this.file.path, lineStyle);
-		}
+		this.commitPreference({
+			key: 'lineStyle',
+			value,
+			normalize: normalizeLineStylePreference,
+			applyToEngine: (next) => this.engine.setLineStyle(next),
+		});
 	}
 
 	/**
-	 * 切换配色（顶栏调用）：归一 + 更新会话字段 + 重算主题配置 + 写入视图状态存储。
-	 *
-	 * 走 `engine.applyTheme()` 而非重建引擎：配色只改 `themeConfig` 的色板，
-	 * 与「主题色」同一通道（原地换肤）。**按文件记**——与布局/连线样式同形态，
-	 * 不是全局设置（`data.json` 的 `viewState[<路径>].palette`）。
+	 * 切换配色（顶栏调用）：走 `engine.applyTheme()` 原地换肤（不重建引擎），
+	 * 按文件记在 `data.json` 的 `viewState[<路径>].palette`。
 	 */
 	applyPalette(value: string): void {
-		const palette = normalizePalette(value);
-		this.currentPalette = palette;
-		this.engine.applyTheme();
-		if (this.file) {
-			this.plugin.viewState.setPalette(this.file.path, palette);
-		}
+		this.commitPreference({
+			key: 'palette',
+			value,
+			normalize: normalizePalette,
+			applyToEngine: () => this.engine.applyTheme(),
+		});
 	}
 
-	/**
-	 * 切换节点外观主题（顶栏调用）：归一 + 更新会话字段 + 重算主题配置 + 写状态。
-	 *
-	 * 与 `applyPalette` 同构：走 `engine.applyTheme()` 原地换肤（不重建引擎），
-	 * **按文件记**在 `data.json` 的 `viewState[<路径>].themeStyle`。
-	 */
+	/** 切换节点外观主题（顶栏调用）：与 `applyPalette` 同构，按文件记在 `themeStyle`。 */
 	applyThemeStyle(value: string): void {
-		const themeStyle = normalizeThemeStyle(value);
-		this.currentThemeStyle = themeStyle;
-		this.engine.applyTheme();
-		if (this.file) {
-			this.plugin.viewState.setThemeStyle(this.file.path, themeStyle);
-		}
+		this.commitPreference({
+			key: 'themeStyle',
+			value,
+			normalize: normalizeThemeStyle,
+			applyToEngine: () => this.engine.applyTheme(),
+		});
 	}
 
 	/**

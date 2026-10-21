@@ -207,14 +207,29 @@ export type ThemeStyleId = (typeof THEME_STYLE_OPTIONS)[number]['value'];
 export const DEFAULT_THEME_STYLE: ThemeStyleId = 'default';
 
 /**
+ * 从选项表挑出合法值；未知 / 非字符串 / 空串一律回退 `fallback`。
+ *
+ * 各维度 `normalize*` 的唯一实现——**不要**为某个维度再写一份 `find` + 三元，
+ * 那会让「回退到哪个默认值」散成多份判断（`THEME_STYLE_OPTIONS` 与
+ * `PALETTE_OPTIONS` 的默认值来源不同，靠调用方传入的 `fallback` 区分）。
+ */
+function pickOption<T extends string>(
+	value: unknown,
+	options: readonly { value: T }[],
+	fallback: T,
+): T {
+	const match = options.find((option) => option.value === value);
+	return match ? match.value : fallback;
+}
+
+/**
  * 脏值归一（渲染侧兜底）：不在白名单内（未知 id / 手改 data.json / 空串 /
  * 非字符串）一律回退默认主题——与 `normalizeLineStylePreference` 同口径。
  * 设置读取侧的诊断（丢弃非法值并留痕）仍走 `settings.sanitizeSettings` 的
  * `pickFrom`，两者目的不同：此处保证渲染入口永不因脏值失败。
  */
 export function normalizeThemeStyle(value: unknown): ThemeStyleId {
-	const match = THEME_STYLE_OPTIONS.find((option) => option.value === value);
-	return match ? match.value : DEFAULT_THEME_STYLE;
+	return pickOption(value, THEME_STYLE_OPTIONS, DEFAULT_THEME_STYLE);
 }
 
 /**
@@ -263,8 +278,7 @@ export const DEFAULT_PALETTE: PaletteId = 'default';
  * 一律回退默认配色——与 `normalizeThemeStyle` 同口径。
  */
 export function normalizePalette(value: unknown): PaletteId {
-	const match = PALETTE_OPTIONS.find((option) => option.value === value);
-	return match ? match.value : DEFAULT_PALETTE;
+	return pickOption(value, PALETTE_OPTIONS, DEFAULT_PALETTE);
 }
 
 /**
