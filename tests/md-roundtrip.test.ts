@@ -937,6 +937,26 @@ describe('rawOk 未编辑检测分支矩阵', () => {
 		const app = makeVaultApp([makeTFile('附件/new.png')]);
 		expect(serializeMdBody(tree, app)).toBe('- ![[附件/new.png]]');
 	});
+
+	it('⑯ 拖拽调宽（image 已转资源地址）→ 保留原引用写法，只改尺寸', () => {
+		// 2026-10-20 实机实测：`![[sample-icon.svg]]` 拖宽后曾被扩写成
+		// `![[fixtures/assets/sample-icon.svg|190]]`——用户只改尺寸，引用写法却被
+		// 无关改写（子文件夹裸名引用尤其明显）。
+		const { tree, data } = firstChild('- ![[a.png]]\n');
+		data.image = 'app://local/附件/a.png';
+		data.imageSize = { width: 190, height: 190, custom: true };
+		const app = makeVaultApp([makeTFile('附件/a.png')]);
+		expect(serializeMdBody(tree, app)).toBe('- ![[a.png|190]]');
+	});
+
+	it('⑰ 目标已指向别的文件（字段不一致）→ 仍写当前图片的真实路径', () => {
+		// 防御「换图但 mdImageTarget 未同步」的脏数据：写原文会指向另一张图。
+		const { tree, data } = firstChild('- ![[旧.png]]\n');
+		data.image = 'app://local/新/current.png';
+		data.imageSize = { width: 120, height: 120, custom: true };
+		const app = makeVaultApp([makeTFile('旧.png'), makeTFile('新/current.png')]);
+		expect(serializeMdBody(tree, app)).toBe('- ![[新/current.png|120]]');
+	});
 });
 
 // ---------------------------------------------------------------------------

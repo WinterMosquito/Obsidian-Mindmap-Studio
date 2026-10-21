@@ -447,14 +447,30 @@ function renderImage(data: MdNodeData, app: App | null): string | null {
 	if (data.mdImageStyle === 'md') {
 		return `![${alt}${imageSizeSuffix(data)}](${target || image})`;
 	}
-	if (target && image === target) {
-		return formatEmbedWikilink(target, pipe);
-	}
-	if (app) {
-		const file = resolvePathToFile(image, app);
-		if (file) {
-			return formatEmbedWikilink(file.path, pipe);
+	// **库内 wikilink 的目标串**：仍指向「当前这张图」时保留解析期原文
+	// （`mdImageTarget`），只有它已指向别的文件 / 无法解析时才回落
+	// `image` 的真实库内路径。
+	//
+	// 为什么优先原文（2026-10-20 实机实测）：拖拽调宽走合成回写，此前按
+	// `resolvePathToFile(image).path` 写，`![[sample-icon.svg|190]]` 被扩写成
+	// `![[fixtures/assets/sample-icon.svg|190]]`——用户只改了尺寸，引用写法却被
+	// 无关改写（子文件夹裸名引用尤其刺眼）。
+	//
+	// 为什么不能无条件用原文：文件重命名后 `mdImageTarget` 可能是旧值（与上方
+	// external 分支注释同一风险），写原文会留下悬空引用（回归用例「图片文件
+	// 重命名后 → 合成写新路径」）。判据是**两份解析结果是否同一文件**。
+	//
+	// `image` 无法反查（图片已不在库中 / 未带 app）时保持旧口径（原样写 `image`）：
+	// 上游 `links-split` 等处的「宁可不动，也不把 app:// 写进笔记」兜底依赖它。
+	const imageFile = app ? resolvePathToFile(image, app) : null;
+	if (app && imageFile) {
+		const targetFile = target ? resolvePathToFile(target, app) : null;
+		const targetIsStale =
+			targetFile === null || targetFile.path !== imageFile.path;
+		if (target && !targetIsStale) {
+			return formatEmbedWikilink(target, pipe);
 		}
+		return formatEmbedWikilink(imageFile.path, pipe);
 	}
 	return formatEmbedWikilink(image, pipe);
 }
