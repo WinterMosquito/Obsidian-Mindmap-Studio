@@ -77,7 +77,14 @@ export interface CreateMindMapOptions {
 	layout: string;
 	/** 连线样式偏好（折线 straight / 曲线 curve；两态由设置与工具栏共同约束） */
 	lineStyle: string;
+	/** 主题色偏好（default/light/dark —— 只决定明暗色板） */
 	themePref: string;
+	/**
+	 * 节点外观主题（`core/constants.THEME_STYLE_OPTIONS` 的 id）。
+	 * 与 `themePref` **正交**：themePref 管配色，本项管节点形态（填充/边框）。
+	 * 设为必填而非缺省：新增调用点漏传会静默丢掉用户的主题选择。
+	 */
+	themeStyle: string;
 	isDark: boolean;
 	enableDrag: boolean;
 	/**
@@ -348,7 +355,12 @@ export function createMindMap(
 				data,
 				layout: options.layout,
 				theme: 'default',
-				themeConfig: getThemeConfig(dark, options.layout, options.lineStyle),
+				themeConfig: getThemeConfig(
+					dark,
+					options.layout,
+					options.lineStyle,
+					options.themeStyle,
+				),
 				// 不在创建时 fit 全图：打开后的默认视口由 centerContentAtFullScale
 				// 统一设置（100% + **整体内容**居中）。注意引擎布局默认
 				// initRootNodePosition=[center,center]，首次布局会把根节点摆在
@@ -550,28 +562,48 @@ export function resizeMindMap(mindMap: MindMap | null): void {
 }
 
 /**
- * 按「当前亮暗 + 主题偏好 + 布局 + 连线样式偏好」重算主题配置并写入引擎实例。
+ * 重算主题配置所需的**全部**外观输入（当前亮暗 + 主题色 + 布局 + 连线样式 +
+ * 主题）。
+ *
+ * 为什么是对象而不是五个位置参数：四个维度里有四个都是 `string`，
+ * 漏传/错序在编译期无法发现（`themePref` 与 `themeStyle` 尤其容易互换），
+ * 而它们各自对应一个用户可见设置。对象形态让「新增外观维度」只需加一个键，
+ * 调用点由类型检查兜住。
+ */
+export interface ThemeConfigInput {
+	/** 宿主当前亮暗（`App.isDarkMode()`），与 `themePref` 经 `isDarkTheme` 合成 */
+	isDark: boolean;
+	/** 主题色偏好（default/light/dark） */
+	themePref: string;
+	layout: string;
+	/** 连线样式偏好（straight/curve） */
+	lineStyle: string;
+	/** 节点外观主题 id（default/borderless） */
+	themeStyle: string;
+}
+
+/**
+ * 按 `ThemeConfigInput` 重算主题配置并写入引擎实例。
  *
  * 收口理由：`mindMap.setThemeConfig` 是引擎**内部形态**的唯一写入通道，
  * 而引擎内部访问只允许出现在 engine/ 层——此前 `services/engine-controller`
  * 直接调它，本次新增的代码块嵌入也要在 `css-change` 时原地换肤，两处各写一次
  * 就是第二份收口，故提到此处。
- *
- * `isDark` 传**宿主当前亮暗**（`App.isDarkMode()`），`themePref` 是设置里的
- * 主题偏好（default/light/dark）——两者经 `isDarkTheme` 合成真正的亮暗。
  */
 export function applyThemeConfig(
 	mindMap: MindMap | null,
-	isDark: boolean,
-	themePref: string,
-	layout: string,
-	lineStyle: string,
+	input: ThemeConfigInput,
 ): void {
 	if (!mindMap) {
 		return;
 	}
 	mindMap.setThemeConfig(
-		getThemeConfig(isDarkTheme(themePref, isDark), layout, lineStyle),
+		getThemeConfig(
+			isDarkTheme(input.themePref, input.isDark),
+			input.layout,
+			input.lineStyle,
+			input.themeStyle,
+		),
 	);
 }
 

@@ -273,6 +273,7 @@ function buildHarness(
 			layout: 'logicalStructure',
 			lineStyle: 'straight',
 			themePref: 'default',
+			themeStyle: 'default',
 			enableDrag: false,
 		})),
 		openHyperlink: vi.fn(),
@@ -1524,13 +1525,13 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 		// resize 经防腐入口（零尺寸守卫在 mindmap 层，调用方不再直接摸 mindMap.resize）
 		expect(mocks.resizeMindMap).toHaveBeenCalledWith(h.engines[0]);
 		// 连线样式随布局联动：主题配置按本次布局（而非视图会话字段）重算并写入
-		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(
-			h.engines[0],
-			false,
-			'default',
-			'mindMap',
-			'straight',
-		);
+		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(h.engines[0], {
+			isDark: false,
+			themePref: 'default',
+			layout: 'mindMap',
+			lineStyle: 'straight',
+			themeStyle: 'default',
+		});
 		// 切换布局后自动整理一次（无引擎的那次早退不算）
 		expect(mocks.arrangeMindMap).toHaveBeenCalledTimes(1);
 		expect(mocks.arrangeMindMap).toHaveBeenCalledWith(h.engines[0]);
@@ -1544,13 +1545,13 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 		const h = readyHarness();
 		h.controller.setLineStyle('curve');
 
-		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(
-			h.engines[0],
-			false,
-			'default',
-			'logicalStructure',
-			'curve',
-		);
+		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(h.engines[0], {
+			isDark: false,
+			themePref: 'default',
+			layout: 'logicalStructure',
+			lineStyle: 'curve',
+			themeStyle: 'default',
+		});
 	});
 
 	it('applyTheme 经防腐入口写入主题配置（亮暗/偏好合成在 engine 层）', () => {
@@ -1558,13 +1559,13 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 
 		h.controller.applyTheme();
 
-		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(
-			h.engines[0],
-			false,
-			'default',
-			'logicalStructure',
-			'straight',
-		);
+		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(h.engines[0], {
+			isDark: false,
+			themePref: 'default',
+			layout: 'logicalStructure',
+			lineStyle: 'straight',
+			themeStyle: 'default',
+		});
 	});
 
 	it('applyTheme 无引擎时不读取设置项（避免无谓的主题计算）', () => {

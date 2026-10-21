@@ -4,10 +4,14 @@
  */
 import {
 	DEFAULT_LINE_STYLE,
+	DEFAULT_THEME_STYLE,
 	IMAGE_HEIGHT,
 	IMAGE_WIDTH,
 	normalizeLineStylePreference,
+	normalizeThemeStyle,
 } from '../core/constants';
+import type { ThemeStyleId } from '../core/constants';
+import { THEME_STYLE_PRESETS } from './mindmap-theme-presets';
 
 const BORDER_RADIUS = 5;
 /** 节点水平内边距：略大于引擎默认值（15），仅作左右留白 */
@@ -100,8 +104,13 @@ export function resolveLineStyle(
 }
 
 /**
- * 主题配置唯一实现：亮/暗配色、字号与布局连线样式（背景色、三级字号、lineStyle）
- * 由 variant 参数统一表达，视图主题是唯一调用方。
+ * 主题配置唯一实现：亮/暗配色、字号、布局连线样式与节点外观主题
+ * （背景色、三级字号、lineStyle、themeStyle）由 variant 参数统一表达，
+ * 视图主题是唯一调用方。
+ *
+ * 合并顺序固定为「色板默认 → 主题覆盖」：主题只能在节点填充/描边上做减法，
+ * 不能改字体度量与连线——那两项分别由 `variant.fontSizes` / `variant.lineStyle`
+ * 单一来源表达，主题越权就会与「主题色 / 布局 / 连线偏好」三方打架。
  */
 function buildThemeConfig(
 	isDark: boolean,
@@ -109,9 +118,13 @@ function buildThemeConfig(
 		background: string;
 		fontSizes: { root: number; second: number; node: number };
 		lineStyle: 'curve' | 'straight';
+		themeStyle: ThemeStyleId;
 	},
 ): Record<string, unknown> {
 	const colors: ThemeColors = isDark ? DARK_COLORS : LIGHT_COLORS;
+	// themeStyle 已由 normalizeThemeStyle 归一为合法 id；`Record<ThemeStyleId, …>`
+	// 又保证键完整（漏写即编译失败）——故此处不需要第二道兜底分支
+	const preset = THEME_STYLE_PRESETS[variant.themeStyle];
 	return {
 		backgroundColor: variant.background,
 		imgMaxWidth: IMAGE_WIDTH,
@@ -125,6 +138,7 @@ function buildThemeConfig(
 			borderWidth: 0,
 			borderRadius: BORDER_RADIUS,
 			paddingX: NODE_PADDING_X,
+			...preset.root,
 		},
 		second: {
 			fillColor: colors.secondFill,
@@ -134,6 +148,7 @@ function buildThemeConfig(
 			borderWidth: 1,
 			borderRadius: BORDER_RADIUS,
 			paddingX: NODE_PADDING_X,
+			...preset.second,
 		},
 		node: {
 			fillColor: colors.nodeFill,
@@ -143,6 +158,7 @@ function buildThemeConfig(
 			borderWidth: 1,
 			borderRadius: BORDER_RADIUS,
 			paddingX: NODE_PADDING_X,
+			...preset.node,
 		},
 		lineColor: colors.line,
 		lineWidth: 1.5,
@@ -181,15 +197,19 @@ function buildThemeConfig(
  * （2026-09-28 K97：未设置尺寸按图片原始大小展示、长边超 `IMAGE_MAX_SIDE_PX`
  * 等比缩，见 `media/images-path.fitImageWithinMaxSide`）。
  * lineStyle = 偏好解析结果（两态：折线 / 曲线；固定直线布局恒折线，见 resolveLineStyle）。
+ * themeStyle = 节点外观主题（`default` / `borderless`）；与 isDark 正交，
+ * 脏值经 `normalizeThemeStyle` 回退默认，保证渲染入口不因手改 data.json 失败。
  */
 export function getThemeConfig(
 	isDark: boolean,
 	layout: string,
 	lineStylePreference: string = DEFAULT_LINE_STYLE,
+	themeStyle: string = DEFAULT_THEME_STYLE,
 ): Record<string, unknown> {
 	return buildThemeConfig(isDark, {
 		background: isDark ? '#1e1e1e' : '#ffffff',
 		fontSizes: { root: 16, second: 14, node: 13 },
 		lineStyle: resolveLineStyle(lineStylePreference, layout),
+		themeStyle: normalizeThemeStyle(themeStyle),
 	});
 }

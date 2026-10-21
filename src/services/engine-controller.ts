@@ -56,7 +56,10 @@ interface EngineSetupOptions {
 	layout: string;
 	/** 连线样式偏好（两态：折线 straight / 曲线 curve） */
 	lineStyle: string;
+	/** 主题色偏好（default/light/dark） */
 	themePref: string;
+	/** 节点外观主题 id（default/borderless；与 themePref 正交） */
+	themeStyle: string;
 	enableDrag: boolean;
 	// 性能模式与阈值**不经过设置**（2026-10-09 减法：常开 + 常量阈值），
 	// 故不在此列——`createMindMap` 的缺省值即判据
@@ -309,6 +312,7 @@ export class EngineController {
 				layout: options.layout,
 				lineStyle: options.lineStyle,
 				themePref: options.themePref,
+				themeStyle: options.themeStyle,
 				isDark: this.deps.isDark(),
 				enableDrag: options.enableDrag,
 				lang: this.deps.getLang(),
@@ -542,8 +546,7 @@ export class EngineController {
 			return;
 		}
 		this.mindMap.setLayout(value);
-		const setup = this.deps.getSetupOptions();
-		this.writeThemeConfig(value, setup.lineStyle, setup.themePref);
+		this.writeThemeConfig({ layout: value });
 		// 切换后自动整理一次：清掉自由拖拽留下的自定义坐标（否则旧布局下手动摆过的
 		// 节点会带着坐标留在新布局里），并以「适应画布」收尾（引擎 setLayout 内部
 		// 会把视口变换归零，不 fit 会让画面停在左上角）。
@@ -558,8 +561,7 @@ export class EngineController {
 		if (!this.mindMap) {
 			return;
 		}
-		const setup = this.deps.getSetupOptions();
-		this.writeThemeConfig(setup.layout, value, setup.themePref);
+		this.writeThemeConfig({ lineStyle: value });
 	}
 
 	/** 应用主题（深色判定按当前主题偏好重算；连线样式随偏好与布局） */
@@ -567,18 +569,28 @@ export class EngineController {
 		if (!this.mindMap) {
 			return;
 		}
-		const setup = this.deps.getSetupOptions();
-		this.writeThemeConfig(setup.layout, setup.lineStyle, setup.themePref);
+		this.writeThemeConfig();
 	}
 
-	/** 按布局 + 连线样式偏好 + 主题偏好重算主题配置并写入引擎 */
+	/**
+	 * 按「布局 + 连线样式 + 主题色 + 主题」重算主题配置并写入引擎。
+	 *
+	 * 入参只收**本次要覆盖的维度**：其余键从 `getSetupOptions` 现取，
+	 * 调用方不必先取一份完整设置再 spread，也就不会顺手传进 `enableDrag`
+	 * 这类与主题无关的键（写主题的函数不该知道拖拽开关）。
+	 */
 	private writeThemeConfig(
-		layout: string,
-		lineStyle: string,
-		themePref: string,
+		overrides: Partial<Pick<EngineSetupOptions, 'layout' | 'lineStyle'>> = {},
 	): void {
+		const setup = { ...this.deps.getSetupOptions(), ...overrides };
 		// 引擎内部写入收口在 mindmap.applyThemeConfig（视图与代码块嵌入共用）
-		applyThemeConfig(this.mindMap, this.deps.isDark(), themePref, layout, lineStyle);
+		applyThemeConfig(this.mindMap, {
+			isDark: this.deps.isDark(),
+			themePref: setup.themePref,
+			layout: setup.layout,
+			lineStyle: setup.lineStyle,
+			themeStyle: setup.themeStyle,
+		});
 	}
 
 	resize(): void {

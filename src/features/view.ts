@@ -143,6 +143,7 @@ const RESIZE_THROTTLE_MS = 100;
  */
 const IN_PLACE_REFRESH_KEYS = new Set([
 	'defaultTheme',
+	'themeStyle',
 	'defaultLayout',
 	'defaultLineStyle',
 ]);
@@ -363,6 +364,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				layout: this.resolveLayout(),
 				lineStyle: this.resolveLineStyle(),
 				themePref: this.plugin.settings.defaultTheme,
+				themeStyle: this.plugin.settings.themeStyle,
 				enableDrag: this.plugin.settings.enableDrag,
 				// 性能模式与阈值不再由设置传入（2026-10-09 减法）：引擎缺省
 				// 即「开启 + PERFORMANCE_NODE_THRESHOLD」，无需在此复述
@@ -898,8 +900,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			this.engine.refresh();
 			return;
 		}
-		if (changedKeys.has('defaultTheme')) {
-			// 主题偏好（默认/强制亮/强制暗）变更 → 引擎原地换 themeConfig
+		if (changedKeys.has('defaultTheme') || changedKeys.has('themeStyle')) {
+			// 主题色（明暗）或主题（节点外观）变更 → 引擎原地换 themeConfig
 			this.applyTheme();
 		}
 	}

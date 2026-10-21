@@ -243,6 +243,7 @@ describe('跨文件契约', () => {
 			layout: 'logicalStructure',
 			lineStyle: 'auto',
 			themePref: 'default',
+			themeStyle: 'default',
 			isDark: false,
 			enableDrag: true,
 			readonly: true,
@@ -262,6 +263,7 @@ describe('跨文件契约', () => {
 			layout: 'logicalStructure',
 			lineStyle: 'auto',
 			themePref: 'default',
+			themeStyle: 'default',
 			isDark: false,
 			enableDrag: true,
 			lang: 'zh',
@@ -287,23 +289,34 @@ describe('跨文件契约', () => {
 			},
 		};
 
-		// 宿主为亮色但偏好强制暗色 → 取暗色配置
-		applyThemeConfig(
-			fake as never,
-			false,
-			'dark',
-			'logicalStructure',
-			'auto',
-		);
+		// 宿主为亮色但偏好强制暗色 → 取暗色配置；主题（节点外观）原样透传
+		applyThemeConfig(fake as never, {
+			isDark: false,
+			themePref: 'dark',
+			layout: 'logicalStructure',
+			lineStyle: 'auto',
+			themeStyle: 'borderless',
+		});
 
 		expect(calls).toEqual([
-			getThemeConfig(isDarkTheme('dark', false), 'logicalStructure', 'auto'),
+			getThemeConfig(
+				isDarkTheme('dark', false),
+				'logicalStructure',
+				'auto',
+				'borderless',
+			),
 		]);
 	});
 
 	it('applyThemeConfig：引擎为 null 时安全 no-op', () => {
 		expect(() =>
-			applyThemeConfig(null, true, 'default', 'mindMap', 'curve'),
+			applyThemeConfig(null, {
+				isDark: true,
+				themePref: 'default',
+				layout: 'mindMap',
+				lineStyle: 'curve',
+				themeStyle: 'default',
+			}),
 		).not.toThrow();
 	});
 });

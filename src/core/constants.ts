@@ -160,12 +160,62 @@ export interface ThemeOption {
 	label: TranslationKey;
 }
 
-/** 主题选项 */
+/** 主题色选项（明暗配色；与「主题」是两个正交维度，见 `THEME_STYLE_OPTIONS`） */
 export const THEME_OPTIONS: ThemeOption[] = [
 	{ value: 'default', label: 'theme.default' },
 	{ value: 'light', label: 'theme.forceLight' },
 	{ value: 'dark', label: 'theme.forceDark' },
 ];
+
+/**
+ * 「主题色」（明暗配色）与「主题」（节点外观风格）是**两个正交维度**：
+ * - 主题色 = `THEME_OPTIONS`（跟随 Obsidian / 强制亮 / 强制暗），只决定色板；
+ * - 主题 = `THEME_STYLE_OPTIONS`（本表），只决定节点外观（是否绘制填充/边框）。
+ *
+ * 二者在设置面板紧邻呈现，但持久化字段（`defaultTheme` / `themeStyle`）与
+ * 渲染通道各自独立：给主题加选项不动任何色值，改配色也不动节点形态。
+ *
+ * **新增主题的规范**（唯一源在本表 + `engine/mindmap-theme-presets.ts` 的
+ * `THEME_STYLE_PRESETS`，两者由 `Record<ThemeStyleId, …>` 在编译期强制对齐）：
+ * 1. `value` 一旦发布**永不更名**——它会写进 `data.json`，改名即用户设置失效；
+ * 2. 显示名只走 `label`（i18n 键，中英必须成对），不在数据里写文案；
+ * 3. 主题只能表达**全局**外观：不得引入节点级样式（本插件节点样式无持久化位，
+ *    Markdown 是唯一真相）；
+ * 4. 主题是纯视图态：不碰 Markdown、`mdRaw` 与节点数据。
+ */
+export interface ThemeStyleOption {
+	value: string;
+	label: TranslationKey;
+}
+
+/**
+ * 主题选项（设置面板下拉与 sanitizeSettings 白名单共用；顺序＝界面顺序）。
+ *
+ * `as const` 让**本表成为 id 的唯一源**：`ThemeStyleId` 由它派生，
+ * `THEME_STYLE_PRESETS` 又用 `Record<ThemeStyleId, …>` 反向约束——新增主题只加
+ * 数组一项，漏写外观配置即编译失败，不存在「类型与选项表两处维护」的漂移面。
+ */
+export const THEME_STYLE_OPTIONS = [
+	{ value: 'default', label: 'themeStyle.default' },
+	{ value: 'borderless', label: 'themeStyle.borderless' },
+] as const satisfies readonly ThemeStyleOption[];
+
+/** 主题 id（从选项表派生；勿手写第二份字面量联合） */
+export type ThemeStyleId = (typeof THEME_STYLE_OPTIONS)[number]['value'];
+
+/** 新建导图与脏值归一使用的默认主题（＝存量外观，升级观感零变化） */
+export const DEFAULT_THEME_STYLE: ThemeStyleId = 'default';
+
+/**
+ * 脏值归一（渲染侧兜底）：不在白名单内（未知 id / 手改 data.json / 空串 /
+ * 非字符串）一律回退默认主题——与 `normalizeLineStylePreference` 同口径。
+ * 设置读取侧的诊断（丢弃非法值并留痕）仍走 `settings.sanitizeSettings` 的
+ * `pickFrom`，两者目的不同：此处保证渲染入口永不因脏值失败。
+ */
+export function normalizeThemeStyle(value: unknown): ThemeStyleId {
+	const match = THEME_STYLE_OPTIONS.find((option) => option.value === value);
+	return match ? match.value : DEFAULT_THEME_STYLE;
+}
 
 /**
  * 导出图片格式的**唯一来源**（settings 设置项 / engine 导出参数 / features 入口

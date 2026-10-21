@@ -184,8 +184,11 @@ const ZH = {
 	'settings.defaultLayoutDesc': '新建思维导图时使用的默认布局',
 	'settings.defaultLineStyle': '默认连线样式',
 	'settings.defaultLineStyleDesc': '新建思维导图时使用的默认连线样式（折线 / 曲线；仅逻辑结构图/思维导图/组织结构图可切换）',
-	'settings.defaultTheme': '默认主题',
-	'settings.defaultThemeDesc': '新建思维导图时使用的默认主题',
+	'settings.defaultTheme': '主题色',
+	'settings.defaultThemeDesc':
+		'导图的明暗配色：跟随 Obsidian / 强制亮色 / 强制暗色',
+	'settings.themeStyle': '主题',
+	'settings.themeStyleDesc': '导图的节点外观主题（与主题色互不影响）',
 	'settings.saveLocation': '新建导图的默认位置',
 	'settings.saveLocationDesc':
 		'新建思维导图时保存到哪个文件夹。「跟随 Obsidian 设置」＝使用官方「文件与链接 → 新建笔记的默认位置」',
@@ -230,9 +233,11 @@ const ZH = {
 	'lineStyle.fixedStraight': '直线',
 
 	// ===== 主题选项 =====
-	'theme.default': '默认（跟随 Obsidian 配色）',
+	'theme.default': '跟随 Obsidian',
 	'theme.forceLight': '强制亮色',
 	'theme.forceDark': '强制暗色',
+	'themeStyle.default': '默认',
+	'themeStyle.borderless': '无边框',
 
 	// ===== 搜索栏按钮提示 =====
 	'search.prev': '上一个 (Shift+Enter)',
@@ -440,8 +445,12 @@ const EN: Record<TranslationKey, string> = {
 	'settings.defaultLayoutDesc': 'Default layout when creating a new mind map',
 	'settings.defaultLineStyle': 'Default line style',
 	'settings.defaultLineStyleDesc': 'Default connector style for new mind maps (Elbow / Curve; switchable only for Logical structure / Mind map / Organization chart)',
-	'settings.defaultTheme': 'Default theme',
-	'settings.defaultThemeDesc': 'Default theme when creating a new mind map',
+	'settings.defaultTheme': 'Theme color',
+	'settings.defaultThemeDesc':
+		'Light/dark palette for mind maps: follow Obsidian / force light / force dark',
+	'settings.themeStyle': 'Theme',
+	'settings.themeStyleDesc':
+		'Node appearance theme for mind maps (independent of theme color)',
 	'settings.saveLocation': 'Default location for new mind maps',
 	'settings.saveLocationDesc':
 		'Where new mind maps are saved. "Follow Obsidian setting" uses Files and links → Default location for new notes',
@@ -487,9 +496,11 @@ const EN: Record<TranslationKey, string> = {
 	'lineStyle.fixedStraight': 'Straight',
 
 	// ===== 主题选项 =====
-	'theme.default': 'Default (use Obsidian color scheme)',
+	'theme.default': 'Follow Obsidian',
 	'theme.forceLight': 'Force light',
 	'theme.forceDark': 'Force dark',
+	'themeStyle.default': 'Default',
+	'themeStyle.borderless': 'Borderless',
 
 	// ===== 搜索栏按钮提示 =====
 	'search.prev': 'Previous (Shift+Enter)',

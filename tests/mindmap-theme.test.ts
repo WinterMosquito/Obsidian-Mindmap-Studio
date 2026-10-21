@@ -109,3 +109,87 @@ describe('getThemeConfig（lineStyle 两态：偏好 / 布局 / 默认）', () =
 		).toBe(true);
 	});
 });
+
+describe('getThemeConfig（主题：节点外观，与主题色正交）', () => {
+	/** 读取某一层级的节点 token（getThemeConfig 返回 Record<string, unknown>） */
+	const tokenOf = (
+		config: Record<string, unknown>,
+		level: 'root' | 'second' | 'node',
+	): Record<string, unknown> => config[level] as Record<string, unknown>;
+
+	it('默认主题沿用色板：second/node 有填充与 1px 描边（存量观感，升级零变化）', () => {
+		for (const isDark of [false, true]) {
+			const config = getThemeConfig(isDark, 'logicalStructure');
+			for (const level of ['second', 'node'] as const) {
+				const token = tokenOf(config, level);
+				expect(token.fillColor, `${isDark}/${level}`).not.toBe('transparent');
+				expect(token.borderWidth, `${isDark}/${level}`).toBe(1);
+			}
+		}
+	});
+
+	it('无边框主题：second/node 填充与描边一起消失（只去描边会留一层淡灰底）', () => {
+		for (const isDark of [false, true]) {
+			const config = getThemeConfig(
+				isDark,
+				'logicalStructure',
+				'straight',
+				'borderless',
+			);
+			for (const level of ['second', 'node'] as const) {
+				const token = tokenOf(config, level);
+				expect(token.fillColor, `${isDark}/${level}`).toBe('transparent');
+				expect(token.borderColor, `${isDark}/${level}`).toBe('transparent');
+				expect(token.borderWidth, `${isDark}/${level}`).toBe(0);
+			}
+		}
+	});
+
+	it('无边框主题不动根节点（保留主题色填充作视觉锚点）', () => {
+		const root = tokenOf(
+			getThemeConfig(false, 'logicalStructure', 'straight', 'borderless'),
+			'root',
+		);
+		expect(root.fillColor).toBe('#4a90d9');
+		expect(root.borderWidth).toBe(0);
+	});
+
+	it('主题不得越权改字体度量与连线（各有单一来源）', () => {
+		const config = getThemeConfig(
+			false,
+			'logicalStructure',
+			'straight',
+			'borderless',
+		);
+		expect(tokenOf(config, 'node').fontSize).toBe(13);
+		expect(tokenOf(config, 'second').fontSize).toBe(14);
+		expect(config.marginX).toBe(60);
+		expect(config.marginY).toBe(24);
+		expect(config.lineWidth).toBe(1.5);
+	});
+
+	it('主题与主题色、连线偏好互不干扰（三维正交）', () => {
+		const light = getThemeConfig(false, 'mindMap', 'curve', 'borderless');
+		const dark = getThemeConfig(true, 'mindMap', 'curve', 'borderless');
+		for (const config of [light, dark]) {
+			expect(tokenOf(config, 'node').fillColor).toBe('transparent');
+			expect(config.lineStyle).toBe('curve');
+		}
+		// 明暗色板仍在起作用（文字色随主题色变化）
+		expect(tokenOf(light, 'root').fillColor).not.toBe(
+			tokenOf(dark, 'root').fillColor,
+		);
+	});
+
+	it('脏值/未知 id 回退默认主题（手改 data.json 不致渲染失败）', () => {
+		for (const value of ['nope', '', 'BORDERLESS', 'default ']) {
+			const config = getThemeConfig(
+				false,
+				'logicalStructure',
+				'straight',
+				value,
+			);
+			expect(tokenOf(config, 'node').borderWidth, value).toBe(1);
+		}
+	});
+});

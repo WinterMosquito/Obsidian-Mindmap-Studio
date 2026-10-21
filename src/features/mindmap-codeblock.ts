@@ -111,12 +111,15 @@ const EMBED_FIT_PADDING = 12;
 
 /**
  * 嵌入渲染所需的**最窄设置面**（窄化契约，同 `CommandsHost` 手法）：
- * 只取四项，且由组合根取值——features 不引 `settings`（组合根禁令）。
+ * 只取五项，且由组合根取值——features 不引 `settings`（组合根禁令）。
  */
 export interface MindmapEmbedConfig {
 	layout: string;
 	lineStyle: string;
+	/** 主题色（明暗配色） */
 	themePref: string;
+	/** 节点外观主题（与 themePref 正交） */
+	themeStyle: string;
 	lang: Language;
 }
 
@@ -331,6 +334,7 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 				layout: config.layout,
 				lineStyle: config.lineStyle,
 				themePref: config.themePref,
+				themeStyle: config.themeStyle,
 				isDark: this.app.isDarkMode(),
 				enableDrag: false,
 				// 只读嵌入：引擎原生 readonly（命令/编辑全禁）+ 不注册任何交互插件
@@ -377,13 +381,13 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		this.registerEvent(
 			this.app.workspace.on('css-change', () => {
 				const next = this.getConfig();
-				applyThemeConfig(
-					this.mindMap,
-					this.app.isDarkMode(),
-					next.themePref,
-					next.layout,
-					next.lineStyle,
-				);
+				applyThemeConfig(this.mindMap, {
+					isDark: this.app.isDarkMode(),
+					themePref: next.themePref,
+					layout: next.layout,
+					lineStyle: next.lineStyle,
+					themeStyle: next.themeStyle,
+				});
 				refreshPrismTokenColors(el);
 			}),
 		);

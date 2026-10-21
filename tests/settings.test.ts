@@ -63,6 +63,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLayout: 'mindMap',
 			defaultLineStyle: 'curve',
 			defaultTheme: 'dark',
+			themeStyle: 'borderless',
 			saveLocation: 'folder',
 			saveFolder: '笔记/导图',
 			autoSave: false,
@@ -76,6 +77,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLayout: 'mindMap',
 			defaultLineStyle: 'curve',
 			defaultTheme: 'dark',
+			themeStyle: 'borderless',
 			saveLocation: 'folder',
 			saveFolder: '笔记/导图',
 			autoSave: false,
@@ -85,6 +87,22 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			exportImageFormat: 'svg',
 			language: 'en',
 		});
+	});
+
+	it('themeStyle 白名单：合法主题保留，未知值与旧数据回退默认（升级零变化）', () => {
+		expect(sanitizeSettings({ themeStyle: 'borderless' }).themeStyle).toBe(
+			'borderless',
+		);
+		expect(sanitizeSettings({ themeStyle: 'default' }).themeStyle).toBe(
+			'default',
+		);
+		for (const bad of ['nope', '', 'BORDERLESS', 42, null]) {
+			expect(sanitizeSettings({ themeStyle: bad }).themeStyle, String(bad)).toBe(
+				'default',
+			);
+		}
+		// 缺省（存量 data.json 无此键）同样落到默认主题
+		expect(sanitizeSettings({}).themeStyle).toBe('default');
 	});
 
 	it('defaultLineStyle 白名单：两态保留，旧词汇 auto/direct 与坏值回退折线', () => {
@@ -304,6 +322,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLayout: 'fishbone',
 			defaultLineStyle: DEFAULT_SETTINGS.defaultLineStyle,
 			defaultTheme: DEFAULT_SETTINGS.defaultTheme,
+			themeStyle: DEFAULT_SETTINGS.themeStyle,
 			saveLocation: DEFAULT_SETTINGS.saveLocation,
 			saveFolder: DEFAULT_SETTINGS.saveFolder,
 			exportScale: DEFAULT_SETTINGS.exportScale,
@@ -325,6 +344,7 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 		'defaultLayout',
 		'defaultLineStyle',
 		'defaultTheme',
+		'themeStyle',
 		'enableDrag',
 		'language',
 	];
