@@ -20,7 +20,9 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint → `lint:css`
 
 发布流程（`.github/workflows/release.yml`）**自带门禁**：tag push **不会**触发 `lint.yml`
 （其 `on.push` 只匹配 branches，不匹配 tag），故 `release.yml` 在构建前先跑
-`check:release` + `npm test` + `npm run lint` + `npm run lint:css`——任一失败即不产出 release。
+「tag == `manifest.json` 版本」与「`docs/release-notes-<tag>.md` 存在」两条硬校验，再跑
+`check:release` + `npm test` + `npm run lint` + `npm run lint:css` + `npm run lint:scanner` +
+`npm run check:dead-code`——任一失败即不产出 release（缺发布说明自 2026-10-13 起不再回退自动生成）。
 （官方 `obsidianmd/obsidian-workflows` 的 release 模式同样在 tag 上强制跑一遍校验；
 本项目用自有脚本等价承接，不引入 scanner 那套被钉死的依赖版本。）
 
@@ -39,8 +41,9 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint → `lint:css`
 
 **发布元数据护栏（`scripts/check-release-metadata.mjs`）**：本仓库 eslint 把 `versions.json`
 放进 `globalIgnores`，而官方对它有 **error 级**形状校验（JSON 非法或非对象即阻断其 release）
-⇒ 此前没有任何替代检查。脚本校验四项：`versions.json` 形状与 semver、`manifest.version`
-在表内、**当前版本**的值 == `manifest.minAppVersion`、README 有有效内容。
+⇒ 此前没有任何替代检查。脚本校验五项：`versions.json` 形状与 semver、`manifest.version`
+在表内、**当前版本**的值 == `manifest.minAppVersion`、README 有有效内容、License 存在且非空
+（缺失 = error、识别不出 OSI 许可 = warn，对齐官方 repo-checks，见 K109）。
 **不要**把它改成「所有版本的值都等于 `minAppVersion`」——历史版本可以合法地要求更低的
 app 版本，唯一正确的不变式是「当前版本」那一条。
 

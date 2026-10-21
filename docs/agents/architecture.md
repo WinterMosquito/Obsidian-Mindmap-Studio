@@ -100,10 +100,11 @@ src/
     mindmap-clipboard.ts # 选中子树的复制/剪切/粘贴（顶层去重 + 文档序 + 剥 uid + 过滤根节点）
     mindmap-search.ts    # 搜索子系统收口（searchMindMap 等 6 函数）
     mindmap-export.ts    # 导出 PNG/SVG（doExport 内部形态收口）
-    mindmap-theme-presets.ts # 主题（节点外观）数据表：THEME_STYLE_PRESETS 只放数据、零分支，
-                    #   由 Record<ThemeStyleId, …> 绑死 core/constants.THEME_STYLE_OPTIONS
-                    #   （id 由该表 as const 派生）；只能覆盖节点填充/描边——字号/间距/连线
-                    #   各有单一来源，主题不得越权
+    mindmap-theme-presets.ts # 外观预设**数据表**（只放数据、零分支）：THEME_STYLE_PRESETS（节点外观，
+                    #   由 Record<ThemeStyleId, …> 绑死 core/constants.THEME_STYLE_OPTIONS）
+                    #   + PALETTES（6 套配色，Record<PaletteId, …> 绑死 PALETTE_OPTIONS；每套
+                    #   只给 5 个填充/线色，文字色仍按明暗定）；主题只能覆盖节点填充/描边——
+                    #   字号/间距/连线各有单一来源，不得越权
     mindmap-theme.ts #  主题管线（buildThemeConfig 唯一实现：色板 + 主题覆盖合并；参数化差异：
                     #   亮/暗 + 连线样式 + 主题；resolveLineStyle 两态偏好解析〔折线/曲线，
                     #   固定直线布局恒折线〕，归一在 core/constants.normalizeLineStylePreference）
@@ -159,8 +160,9 @@ src/
                         #   解析只做图片地址解析，不做尺寸归一（视图走 aspect 校正）；写盘归属：树快照与 frontmatter 按**该次写盘的文件**取（getSnapshotFor/getFrontmatterFor），不同文件不并入同一批次——core 不 await onUnloadFile，换文件期间的排空必须同源
     engine-controller.ts# 引擎实例生命周期 + 防腐收口（renderer 内部不外泄）；
                         #   导出 SVG 后处理链经 deps.exportSvgTransforms 由组合根注入（K51）
-    view-state.ts   #   按文件路径持久化布局/连线样式/视口到插件 data.json（ViewStateStore）
-                    #   （openAs 已于 2026-10-12 退役：打开方式由文件属性声明承载）
+    view-state.ts   #   按文件路径持久化布局/连线样式/配色/边框/视口到插件 data.json（ViewStateStore；
+                    #   四项外观偏好共用 getPreference/setPreference，缺省值由 resolveFilePreferences
+                    #   统一给；openAs 已于 2026-10-12 退役：打开方式由文件属性声明承载）
     status-bar.ts   #   StatusBarService 契约 + 插件层实现（节点计数展示/清空，DOM 归插件层）
   features/         # L3 UI 特性与视图控制器
     view.ts         # Controller：Obsidian 生命周期编排、service 装配、链接跳转、标题重命名
@@ -171,11 +173,13 @@ src/
                     #   恒 0×0）、由隐藏转可见四路自愈（挂起 holders 重新入批 / 暂存重试补做 /
                     #   字体批次补做 / 塌陷节点症状重测）；自愈拍到期时若又隐藏则保留脏标记
                     #   ⑤ 未定稿修复（弃段症状修复 + 登记面清理，见 platform/math-jax）
-    view-*.ts       # 17 个交互特性各自一文件：工具栏（view-toolbar.ts）/ 拖拽（view-dnd.ts）/
+    view-*.ts       # 18 个交互特性各自一文件：工具栏（view-toolbar.ts）/ 拖拽（view-dnd.ts）/
                     #   右键（view-context-menu.ts）/ 搜索（view-search.ts）/ 导出（view-export.ts）/
                     #   状态栏（view-status.ts）/ 图片灯箱（view-image-fullscreen.ts）/
                     #   图片动作（view-image-actions.ts）/ wikilink 交互（view-wikilink.ts）/
                     #   链接跳转（view-link-navigator.ts）/ 粘贴（view-paste.ts）/
+                    #   剪贴板（view-clipboard.ts：子树复制/剪切/粘贴以**纯 Markdown 大纲**走
+                    #   系统剪贴板，序列化/解析复用往返实现）/
                     #   节点操作（view-node-actions.ts）/ 标题重命名（view-title-renamer.ts）/
                     #   快捷键（view-hotkeys.ts：F2 编辑当前节点 / Delete 删除节点 / Shift+1/2 缩放）/
                     #   节点宽度（view-node-width.ts：拖宽结束 → 重建自绘内容；手柄门禁
@@ -247,7 +251,8 @@ tests/
   concurrency.test.ts  # 并发原语回归（串行队列/防抖/节流：错误传播、尾随保证、重置、窗口重置）
   url.test.ts          # URL 谓词边界（各语义的协议形态与否决集）
   save-pipeline.test.ts# SavePipeline 竞态回归（写入中再触发排空、失败上报、防抖/守卫、无差异写盘跳过）
-  view-state.test.ts   # ViewStateStore（hydrate 形状校验、布局/连线样式/视口按文件存取、防抖写盘、flushNow）
+  view-state.test.ts   # ViewStateStore（hydrate 形状校验、布局/连线样式/配色/边框/视口按文件存取、防抖写盘、flushNow）
+                       #   + resolveFilePreferences（四维缺省值同源，themeStyle 不许回落硬编码 default）
   settings.test.ts     # sanitizeSettings（类型/取值校验、坏值回退默认）
   settings-persist.test.ts # 设置写回防抖（滑块突发合并、内存即时生效）
   engine-controller.test.ts # EngineController（初始化代际锁、ResizeObserver 零尺寸等待、装配/销毁、引用预检、拖拽抑制、refresh/视口）
@@ -328,11 +333,17 @@ tests/
   modal-input.test.ts  # 命名/链接弹窗（预填与焦点、空白确认、settle 幂等、联想接线）
   plain-text-parser.test.ts # LICENSE parser（LF/CRLF 行 token、剥离 \r 的有意差异、防回退护栏）
   agents-md-sync.test.ts # 文档同步契约：src/** 与 tests/** 每个文件都必须登记在 AGENTS.md（漏登记即红灯）
+  module-boundaries.test.ts # 模块依赖图性质：按**解析后的真实路径**判层（组内成环 / 深层路径 /
+                       #   新一级目录未登记——lint 结构上表达不了的三类）+ 组合根禁令；矩阵唯一定义在
+                       #   `scripts/module-boundaries.mjs`，与 eslint zone 块同源
+  docs-standard.test.ts # 标准文档一致性：目录 = 标题序列 / 每节「> 规则：」摘要 / `path#符号` 指针存在 /
+                       #   附录版本 = `manifest.json` / 退役术语 / 白名单 ↔ 映射表对齐
   setup.ts             # vitest 全局 setup：Node 环境 window 桩（fake timers 生效）
   mocks/obsidian.ts    # obsidian 最小 mock（vitest alias，包本身无运行时 JS）
 docs/
   markdown-mindmap-standard.md  # Markdown ↔ 思维导图映射规则（权威标准）
-  release-notes-<tag>.md        # 各版本发布说明（中英双语；release.yml 按 tag 取用，缺失回退自动生成）
+  release-notes-<tag>.md        # 各版本发布说明（中英双语；release.yml 按 tag 取用）。
+                    #   **缺失即硬失败**（2026-10-13 起 tag 门禁校验存在性，不再回退自动生成）
 ```
 
 ### 文件规模与豁免（超限须登记）
@@ -381,7 +392,7 @@ docs/
 
 **口径（2026-10-04 统一）**：以 `tests/agents-md-sync.test.ts` 的 `countSourceLines` 为**唯一口径** —— `readFileSync(path,'utf8').split('\n')`，末尾换行不计行。⚠ **不要用 PowerShell `(Get-Content … | Measure-Object -Line).Lines`**：该 cmdlet 统计的是「非空行」以外的另一套计数，与本口径在多数文件上差 1–4%，会让登记值与实测对不上（实测曾因此误判「登记值整体失真」）。重测命令见下。
 
-全部 **27 个超限文件均已登记理由**（2026-10-16 补登记：engine/ 层内拆分新增 `mindmap-viewport.ts` / `mindmap-nodes.ts`，features/ 由 `node-inline-content.ts` 拆出 `node-inline-tokenize.ts` / `node-inline-html.ts`（原文件 1834 → 90、已移出本表）；其中 `math-jax.ts` / `links-tree.ts` / `links-resolve.ts` / `node-inline-editor.ts` / `document-service.ts` / `mindmap-codeblock.ts` 分属各批补登记；`content-remeasure.ts` / `prism-code.ts` 于 **2026-10-15** 补登记——此前本表 22 行、`AGENTS.md` 表 24 行，两表不一致、本行数字也与实测不符，本轮按 `countSourceLines` 实测对账后补齐）。
+全部 **28 个超限文件均已登记理由**（2026-10-16 补登记：engine/ 层内拆分新增 `mindmap-viewport.ts` / `mindmap-nodes.ts`，features/ 由 `node-inline-content.ts` 拆出 `node-inline-tokenize.ts` / `node-inline-html.ts`（原文件 1834 → 87，已移出本表）；其中 `math-jax.ts` / `links-tree.ts` / `links-resolve.ts` / `node-inline-editor.ts` / `document-service.ts` / `mindmap-codeblock.ts` 分属各批补登记；`content-remeasure.ts` / `prism-code.ts` 于 **2026-10-15** 补登记——此前本表 22 行、`AGENTS.md` 表 24 行，两表不一致、本行数字也与实测不符，本轮按 `countSourceLines` 实测对账后补齐）。
 
 **判定分两层**（勿再写成「不以数字为准」——那样与下述测试契约自相矛盾）：
 1. **是否已登记理由**（人工/文档层）—— 未登记者一律视为待偿还债务。
