@@ -44,10 +44,10 @@
 | --- | --- | --- | --- |
 | G-01 | 类型检查 + 生产构建 | `BUILD_EXIT=0` | `npm run build` |
 | G-02 | Lint（0 warning 门禁） | `LINT_EXIT=0` | `npm run lint` |
-| G-03 | 单测 | **81 文件 / 2172 用例**全通过（2026-10-20 复测） | `npx vitest run` |
+| G-03 | 单测 | **82 文件 / 2205 用例**全通过（2026-10-21 复测） | `npx vitest run` |
 | G-04 | 死代码 | `KNIP_EXIT=0` | `npm run check:dead-code` |
 | G-05 | 文档同步契约 | 4 passed | `npx vitest run tests/agents-md-sync.test.ts` |
-| G-06 | 渲染契约（无头 Chrome） | `✓ 视觉验证通过`（2026-10-20 复测） | `npm run verify:visual -- --require-chrome` |
+| G-06 | 渲染契约（无头 Chrome） | `✓ 视觉验证通过`（15 场景 / 19 探针；2026-10-21 复测） | `npm run verify:visual -- --require-chrome` |
 
 ---
 
@@ -78,8 +78,8 @@
 
 | 指标ID | 指标 | 值 | 复现命令 |
 | --- | --- | --- | --- |
-| P-01 | 发布产物 | **625,647 B** | `ls -l main.js` |
-| P-02 | gzip 后 | **184,235 B** | `gzip -c main.js \| wc -c` |
+| P-01 | 发布产物 | **627,228 B**（2026-10-21 复测） | `ls -l main.js` |
+| P-02 | gzip 后 | **184,743 B**（2026-10-21 复测） | `gzip -c main.js \| wc -c` |
 | P-03 | vendor 源文件 | **414,469 B**（LF 归一；raw 414,572 B） | `ls -l vendor/simple-mind-map.cjs`；LF 归一后计字节 |
 | P-04 | **gzip 分组占比**（消融实测，见 §3.2） | vendor **117,526 B（66.9%）** / 自有（含 i18n）**58,179 B（33.1%）**（**2026-10-09 消融读数，2026-10-20 未重测**） | 消融构建 + `gzip -c \| wc -c` |
 
@@ -158,15 +158,15 @@ npx esbuild src/main.ts --bundle --format=cjs --target=es2021 --tree-shaking=tru
 | S-02 | `as unknown as` | **34**（`engine/` 层占 23，其中 `mindmap-viewport.ts` 9、`mindmap-nodes.ts` 8） | `grep -rho "as unknown as" src --include=*.ts \| wc -l` |
 | S-03 | 分支密度 Top5 | `mindmap-viewport.ts` 151、`md-serialize.ts` 149、`md-outline.ts` 101、`math-jax.ts` 90、`node-inline-tokenize.ts` 73 | `grep -oE "if\|for\|while\|catch" <file> \| wc -l`（**逐文件**统计、按计数降序取 5；该正则含标识符内出现，如 `verify` 里的 `if`，故只作横向排序口径） |
 | S-04 | features 横向 import | **58**（总 86 边，`view-context` 21 + `view-common` 7 除外），`view-node-actions` 被 6 处依赖 | `grep -rhoP "from './[a-z-]+'" src/features` |
-| S-05 | `view.ts` 规模 | **1131** 行 / 17 自有方法 / **17** 私有字段 / 41 import | `awk 'END{print NR}' src/features/view.ts`；`grep -cP "^\t[a-zA-Z]+\(" …`；`grep -cP "^\tprivate [a-zA-Z]+[?!]?\s*[:=]" …`；`grep -c "^import" …` |
-| S-06 | 超过 300 行的文件 | **27**（2026-10-20 实测；与 AGENTS.md 豁免表、`docs/agents/architecture.md` 同表**逐行一致**） | 逐文件 `awk 'END{print NR}'`；或 `npx vitest run tests/agents-md-sync.test.ts` |
+| S-05 | `view.ts` 规模 | **1149** 行 / 17 自有方法 / **17** 私有字段 / 41 import（2026-10-21 复测行数） | `awk 'END{print NR}' src/features/view.ts`；`grep -cP "^\t[a-zA-Z]+\(" …`；`grep -cP "^\tprivate [a-zA-Z]+[?!]?\s*[:=]" …`；`grep -c "^import" …` |
+| S-06 | 超过 300 行的文件 | **28**（2026-10-21 实测；与 AGENTS.md 豁免表、`docs/agents/architecture.md` 同表**逐行一致**） | 逐文件 `awk 'END{print NR}'`；或 `npx vitest run tests/agents-md-sync.test.ts` |
 | S-07 | `addEventListener` 出现 | **31** 处 | `grep -rno "addEventListener" src --include=*.ts \| wc -l` |
 | S-08 | `console.` 调用 | **87** 处 | `grep -rno "console\." src --include=*.ts \| wc -l` |
-| S-09 | src / tests 规模 | **93 文件 27,902 行 / 83 文件 40,295 行** | `find src -name "*.ts" \| xargs wc -l` |
-| S-10 | i18n 键 | ZH **192** / EN **192**（对齐） | 统计 `src/core/i18n.ts` 两段字面量键（`^\t'` 行；ZH 段以 `} as const;` 收尾、EN 段以 `};` 收尾，**按段切分**，勿用单一结束标记） |
-| S-11 | 设置 | 接口 **11** 项声明 / `DEFAULT_SETTINGS` **11** 键 / 面板走 `getSettingDefinitions()` | 取 `export interface MindMapStudioSettings` 与 `DEFAULT_SETTINGS` 两段内的字段行（文件为 CRLF，行尾 `\r` 需先剥离） |
-| S-12 | **循环依赖**（§4.1） | **编译期与运行时均为 0 个环**；**93** 文件 / **445** 条 src 内部依赖边（其中仅类型边 **92** 条） | 自建 Tarjan 检测脚本（见 §4.1 口径与盲区） |
-| S-13 | **圈复杂度**（§4.2） | ≥9 共 **81** 个函数；≥15 共 30；≥20 共 15；≥30 共 5 | ESLint Node API 覆盖 `complexity` 规则（CLI `--rule` 在 flat config 下已不可用，见 §4.2） |
+| S-09 | src / tests 规模 | **94 文件 28,311 行 / 84 文件 40,881 行**（2026-10-21 复测） | `find src -name "*.ts" \| xargs wc -l` |
+| S-10 | i18n 键 | ZH **195** / EN **195**（对齐；2026-10-21 复测） | 统计 `src/core/i18n.ts` 两段字面量键（`^\t'` 行；ZH 段以 `} as const;` 收尾、EN 段以 `};` 收尾，**按段切分**，勿用单一结束标记） |
+| S-11 | 设置 | 接口 **12** 项声明 / `DEFAULT_SETTINGS` **12** 键 / 面板走 `getSettingDefinitions()`（2026-10-21 复测） | 取 `export interface MindMapStudioSettings` 与 `DEFAULT_SETTINGS` 两段内的字段行（文件为 CRLF，行尾 `\r` 需先剥离） |
+| S-12 | **循环依赖**（§4.1） | **编译期与运行时均为 0 个环**；**94** 文件 / **450** 条 src 内部依赖边（其中仅类型边 **93** 条；2026-10-21 复测，口径同 §4.1） | 自建 Tarjan 检测脚本（见 §4.1 口径与盲区） |
+| S-13 | **圈复杂度**（§4.2） | ≥9 共 **81** 个函数；≥15 共 30；≥20 共 15；≥30 共 5（2026-10-20 读数，2026-10-21 未重测） | ESLint Node API 覆盖 `complexity` 规则（CLI `--rule` 在 flat config 下已不可用，见 §4.2） |
 
 ### 4.1 循环依赖（实测）
 
@@ -184,7 +184,7 @@ npx esbuild src/main.ts --bundle --format=cjs --target=es2021 --tree-shaking=tru
 
 **方法论更正（2026-10-09）**：上述 2026-10-08 的 `grep "from './view'"` 之所以「无命中」，是因为该字面量出现在 `view-context.ts` 的**头注释**里（第 4 行）。**检测器若不先去注释**，会把注释里的那句 `import type { MindMapView } from './view'` 当成真导入，造出假边 `view-context.ts → view.ts`，进而把 24 个 `view-*` 模块连成一个假环（本轮实测复现过该假环）。结论（0 环）不变，但**复现命令必须包含去注释步骤**，否则下一位复测者会看到 1 个环。
 
-规模：**93** 文件 / **445** 条 src 内部依赖边（其中仅类型边 **92** 条）。另有 **10 处**指向 `vendor/simple-mind-map.cjs` 的跨出边（**10 个文件**：`engine/` 层 9 个 + `core/engine-types.ts` 的 type-only），**不计入 src 图**（2026-10-20 实测；2026-09 那一轮为 28 处 / 27 文件，engine 层拆分为 8 个子模块后被收拢）。
+规模：**94** 文件 / **450** 条 src 内部依赖边（其中仅类型边 **93** 条；2026-10-21 复测）。另有 **10 处**指向 `vendor/simple-mind-map.cjs` 的跨出边（**10 个文件**：`engine/` 层 9 个 + `core/engine-types.ts` 的 type-only），**不计入 src 图**（2026-10-20 实测；2026-09 那一轮为 28 处 / 27 文件，engine 层拆分为 8 个子模块后被收拢）。
 
 **检测器盲区已逐一核实**：`src/` 内**无**无 `from` 的副作用导入、**无**动态 `import(`；`export * from` 现有 **5 处**（全部在 `engine/mindmap.ts` 的 barrel），**已按边计入**整图，故 DAG 结论仍可靠。
 
