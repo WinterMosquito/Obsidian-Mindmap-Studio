@@ -311,6 +311,9 @@ node scripts/gen-perf-fixture.mjs --out "<vault>/fixtures/bench/realistic-5000.m
 | 数学公式渲染 | `math-verify.mindmap.md` 截图：`E=mc²`、`sin x` 与 `cos x`、`√(a²+b²)`、`∫₀¹x²dx` 均为公式而非字面 | 通过 |
 | 设置面板声明式 | `src/settings.ts:192` 的 `getSettingDefinitions()`；官方 `obsidian.d.ts:9246`，`display()` 自 1.13 起弃用（`obsidian.d.ts:9300-9303`） | 通过，与 `minAppVersion 1.13.0` 自洽 |
 
+> **2026-10-21 增补**：连线样式已收敛为**两态**（`straight` 折线 / `curve` 曲线，默认折线；`auto` /
+> `direct` 下线）——上表「4 种连线样式」是 10-07 的历史读数，现况以 README 设置表与 K16 为准。
+
 ### 7.2 未核销（需指针交互，CLI 无法驱动）
 
 | README 条目 | 缺口 | 测量方法 |

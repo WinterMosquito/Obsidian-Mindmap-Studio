@@ -118,25 +118,42 @@ export const LAYOUT_OPTIONS: LayoutOption[] = [
 ];
 
 /**
- * 连线样式偏好：auto＝随布局（布局默认见 mindmap-theme.lineStyleForLayout：
- * 四种直线布局取 straight、两种曲线布局取 curve）；其余三值强制指定。
- * 引擎三态（curve 曲线 / direct 直连 / straight 正交折线）仅对逻辑结构图、
- * 思维导图、组织结构图生效；目录组织图/时间轴/鱼骨图为布局类原生直线。
+ * 连线样式偏好：折线（straight，正交折线）/ 曲线（curve）。
+ *
+ * 2026-10-21 收敛（用户裁决）：原四态砍掉两项——
+ * - `auto`（随布局）下线：默认值已固定为折线，「跟随布局」不再有信息量；
+ * - `direct`（直连）下线：与折线的观感差异不足以再占一个用户选项。
+ *
+ * 存量 `data.json` 里的 auto / direct / 未知值由 `normalizeLineStylePreference`
+ * 在**读取侧**归一为折线（不批量改写用户数据，下一次切换样式时自然落盘）。
+ *
+ * 固定直线布局（目录组织图 / 时间轴 / 鱼骨图）由布局类自行绘制直线、`lineStyle`
+ * 对其无效；工具栏对这三者只显示「直线」描述（`lineStyle.fixedStraight`），
+ * 不作为可选项。
  */
-type LineStylePreference = 'auto' | 'curve' | 'direct' | 'straight';
+type LineStylePreference = 'straight' | 'curve';
+
+/** 新建导图与脏值归一使用的默认连线样式：折线 */
+export const DEFAULT_LINE_STYLE: LineStylePreference = 'straight';
 
 export interface LineStyleOption {
 	value: LineStylePreference;
 	label: TranslationKey;
 }
 
-/** 连线样式选项（工具栏选择器与设置面板共用） */
+/** 连线样式选项（工具栏选择器与设置面板共用；顺序＝界面顺序：折线在上） */
 export const LINE_STYLE_OPTIONS: LineStyleOption[] = [
-	{ value: 'auto', label: 'lineStyle.auto' },
-	{ value: 'curve', label: 'lineStyle.curve' },
-	{ value: 'direct', label: 'lineStyle.direct' },
 	{ value: 'straight', label: 'lineStyle.straight' },
+	{ value: 'curve', label: 'lineStyle.curve' },
 ];
+
+/**
+ * 存量 / 脏值归一：只有 `curve` 保留，其余（`auto` / `direct` / 未知 / 空串 /
+ * 非字符串）一律折线——与默认值同源，避免「默认折线、脏值却回曲线」的第二份口径。
+ */
+export function normalizeLineStylePreference(value: unknown): LineStylePreference {
+	return value === 'curve' ? 'curve' : DEFAULT_LINE_STYLE;
+}
 
 export interface ThemeOption {
 	value: string;

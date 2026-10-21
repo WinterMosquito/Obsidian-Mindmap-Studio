@@ -28,7 +28,11 @@ import {
 import { refreshPrismTokenColors } from '../platform/prism-code';
 import { updatesInternalLinksOnRename } from '../platform/vault-prefs';
 import { createDebouncer, createThrottler, type Debouncer } from '../core/concurrency';
-import { AUTO_SPLIT_CHECK_DELAY_MS, VIEW_TYPE } from '../core/constants';
+import {
+	AUTO_SPLIT_CHECK_DELAY_MS,
+	normalizeLineStylePreference,
+	VIEW_TYPE,
+} from '../core/constants';
 import type { MindMap, MindMapNode } from '../core/engine-types';
 import { createWarnOnce, notifyError } from '../core/errors';
 import {
@@ -222,7 +226,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	private currentLayout: string | null = null;
 	/**
-	 * 当前连线样式偏好（auto/curve/direct/straight，auto＝随布局）。
+	 * 当前连线样式偏好（straight 折线 / curve 曲线；2026-10-21 收敛为两态）。
 	 * 与布局同口径：按文件路径持久化到视图状态存储，由本类经
 	 * applyLineStyle/resolveLineStyle 维护。
 	 */
@@ -683,7 +687,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.currentLayout =
 			this.plugin.viewState.getLayout(file.path) ??
 			this.plugin.settings.defaultLayout;
-		// 连线样式偏好同口径按文件取（auto＝随布局）
+		// 连线样式偏好同口径按文件取（两态：折线 / 曲线）
 		this.currentLineStyle =
 			this.plugin.viewState.getLineStyle(file.path) ??
 			this.plugin.settings.defaultLineStyle;
@@ -765,10 +769,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		return layout;
 	}
 
-	/** 本次引擎创建所用连线样式偏好（fallback 默认值并回写会话字段） */
+	/**
+	 * 本次引擎创建所用连线样式偏好（归一后回写会话字段）。
+	 *
+	 * 归一而非直取：存量 `data.json` 可能仍是 `auto` / `direct`（两态收敛前写入），
+	 * 直接透传会让工具栏出现「无选中项」并把旧词汇写回状态存储。
+	 */
 	private resolveLineStyle(): string {
-		const lineStyle =
-			this.currentLineStyle || this.plugin.settings.defaultLineStyle;
+		const lineStyle = normalizeLineStylePreference(
+			this.currentLineStyle ?? this.plugin.settings.defaultLineStyle,
+		);
 		this.currentLineStyle = lineStyle;
 		return lineStyle;
 	}
@@ -848,7 +858,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	applyLayout(value: string): void {
 		this.currentLayout = value;
 		this.engine.setLayout(value);
-		// 连线样式选项面随布局变化（固定直线布局收窄为「自动」单项）
+		// 连线样式选项面随布局变化（固定直线布局收窄为「直线」单项）
 		syncLineStyleOptions(this, value, this.resolveLineStyle());
 		if (this.file) {
 			this.plugin.viewState.setLayout(this.file.path, value);
@@ -857,7 +867,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	/**
 	 * 切换连线样式偏好（工具栏调用）：更新会话字段 + 立即写入视图状态存储
-	 * （auto＝随布局；不写入正文）。
+	 * （两态：折线 / 曲线；不写入正文）。
 	 */
 	applyLineStyle(value: string): void {
 		this.currentLineStyle = value;

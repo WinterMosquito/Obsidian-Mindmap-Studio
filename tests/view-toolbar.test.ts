@@ -202,7 +202,7 @@ function makeView(options: { withToolbar?: boolean } = {}): Harness {
 		applyLayout,
 		applyLineStyle,
 		plugin: {
-			settings: { defaultLayout: 'mindMap', defaultLineStyle: 'auto' },
+			settings: { defaultLayout: 'mindMap', defaultLineStyle: 'straight' },
 		},
 	} as unknown as MindMapViewContext;
 	return {
@@ -552,52 +552,52 @@ describe('buildToolbar（连线样式选择器）', () => {
 		buildToolbar(h.view);
 		const select = h.view.lineStyleSelect as unknown as FakeEl;
 
-		expect(select.value).toBe('auto'); // plugin.settings.defaultLineStyle
+		expect(select.value).toBe('straight'); // plugin.settings.defaultLineStyle
 		expect(select.onchange).toBeTypeOf('function');
 
-		select.value = 'direct';
+		select.value = 'curve';
 		select.onchange?.();
-		expect(h.applyLineStyle).toHaveBeenCalledWith('direct');
+		expect(h.applyLineStyle).toHaveBeenCalledWith('curve');
 		expect(h.applyLineStyle).toHaveBeenCalledTimes(1);
 	});
 
-	it('固定直线布局（时间轴）：选项面收窄为单项「自动」', () => {
+	it('固定直线布局（时间轴）：选项面收窄为单项「直线」（不是「自动」）', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 
-		syncLineStyleOptions(h.view, 'timeline', 'direct');
+		syncLineStyleOptions(h.view, 'timeline', 'curve');
 
 		const select = h.view.lineStyleSelect as unknown as FakeEl;
 		const options = select.children.filter((child) => child.tag === 'option');
 		expect(options).toHaveLength(1);
-		expect(options[0]!.value).toBe('auto');
-		expect(options[0]!.text).toBe(t('zh', 'lineStyle.auto'));
-		expect(select.value).toBe('auto');
+		expect(options[0]!.value).toBe('straight');
+		expect(options[0]!.text).toBe(t('zh', 'lineStyle.fixedStraight'));
+		expect(select.value).toBe('straight');
 	});
 
-	it('切回支持三态的布局：恢复四项并回填文件偏好（不因固定布局丢失）', () => {
+	it('切回支持切换的布局：恢复两项并回填文件偏好（不因固定布局丢失）', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		const select = h.view.lineStyleSelect as unknown as FakeEl;
 
-		syncLineStyleOptions(h.view, 'timeline', 'direct');
-		syncLineStyleOptions(h.view, 'organizationStructure', 'direct');
+		syncLineStyleOptions(h.view, 'timeline', 'curve');
+		syncLineStyleOptions(h.view, 'organizationStructure', 'curve');
 
 		const options = select.children.filter((child) => child.tag === 'option');
 		expect(options.map((option) => option.value)).toEqual(
 			LINE_STYLE_OPTIONS.map((option) => option.value),
 		);
-		expect(select.value).toBe('direct');
+		expect(select.value).toBe('curve');
 	});
 
-	it('脏偏好（不在选项表内）回落 auto，不产生空白选中态', () => {
+	it('脏偏好（不在选项表内）归一为折线，不产生空白选中态', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 
 		syncLineStyleOptions(h.view, 'mindMap', 'zigzag');
 
 		const select = h.view.lineStyleSelect as unknown as FakeEl;
-		expect(select.value).toBe('auto');
+		expect(select.value).toBe('straight');
 	});
 });
 

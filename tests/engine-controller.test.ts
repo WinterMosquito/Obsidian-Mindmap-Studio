@@ -271,7 +271,7 @@ function buildHarness(
 		),
 		getSetupOptions: vi.fn(() => ({
 			layout: 'logicalStructure',
-			lineStyle: 'auto',
+			lineStyle: 'straight',
 			themePref: 'default',
 			enableDrag: false,
 		})),
@@ -458,7 +458,7 @@ describe('EngineController.initMindMap（初始化入口与零尺寸等待）', 
 		expect(h.controller.mindMap).toBe(h.engines[0]);
 		expect(h.deps.onEngineReady).toHaveBeenCalledWith(
 			'logicalStructure',
-			'auto',
+			'straight',
 		);
 	});
 
@@ -1529,7 +1529,7 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 			false,
 			'default',
 			'mindMap',
-			'auto',
+			'straight',
 		);
 		// 切换布局后自动整理一次（无引擎的那次早退不算）
 		expect(mocks.arrangeMindMap).toHaveBeenCalledTimes(1);
@@ -1538,18 +1538,18 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 
 	it('setLineStyle 按当前会话布局重算主题配置（偏好即时生效、无引擎时静默）', () => {
 		const empty = buildHarness();
-		expect(() => empty.controller.setLineStyle('direct')).not.toThrow();
+		expect(() => empty.controller.setLineStyle('curve')).not.toThrow();
 		expect(mocks.applyThemeConfig).not.toHaveBeenCalled();
 
 		const h = readyHarness();
-		h.controller.setLineStyle('direct');
+		h.controller.setLineStyle('curve');
 
 		expect(mocks.applyThemeConfig).toHaveBeenCalledWith(
 			h.engines[0],
 			false,
 			'default',
 			'logicalStructure',
-			'direct',
+			'curve',
 		);
 	});
 
@@ -1563,7 +1563,7 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 			false,
 			'default',
 			'logicalStructure',
-			'auto',
+			'straight',
 		);
 	});
 

@@ -6,6 +6,7 @@ import {
 	type SettingDefinitionItem,
 } from 'obsidian';
 import {
+	DEFAULT_LINE_STYLE,
 	EXPORT_IMAGE_FORMAT_OPTIONS,
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
@@ -65,8 +66,9 @@ export interface MindMapStudioSettings {
 
 export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	defaultLayout: 'logicalStructure',
-	// auto：随布局（四种直线布局 straight、两种曲线布局 curve），保持既有观感
-	defaultLineStyle: 'auto',
+	// 折线（正交折线）：2026-10-21 用户裁决——连线样式收敛为折线/曲线两态，
+	// 新建默认折线；存量的 auto/direct 在读取侧归一为折线（见 constants 归一函数）
+	defaultLineStyle: DEFAULT_LINE_STYLE,
 	defaultTheme: 'default',
 	// 默认跟随官方「新建笔记的默认位置」（经 getNewFileParent 完整生效）——
 	// 与引入本设置前的行为一致；另三档为用户显式覆盖

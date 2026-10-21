@@ -65,20 +65,28 @@
 ### 引擎行为、视口与布局
 
 - [K15] 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动），**自动整理后走「适应画布」**（`arrangeMindMap` 的 RESET_LAYOUT 延时回调 → `fitMindMap`：性能模式走**数据层 fit**（布局几何并集算缩放与居中，零 DOM 装配，2026-10-02，见 K110 ⑥）；常规模式沿用引擎 `view.fit()`）。首帧窗口内的三个坑（陈旧容器几何 / 根节点居中中间态 / 图片回灌改动包围盒）见 K64。
-- [K16] **连线样式（偏好 + 布局联动）**：六种布局中**四种为直线**——组织结构图经 `lineStyle: 'straight'`
-  生效（引擎为该布局实现三态 `renderLine` 分派：curve 曲线 / direct 直连 / straight 正交折线，
-  三态仅对逻辑结构图/思维导图/组织结构图可见效果）；目录组织图/时间轴/鱼骨图**布局类本身即直线
-  绘制**（只输出 M/L 路径、不接受 `lineStyle`，登记在 `lineStyleForLayout` 清单里仅作如实声明，
-  **勿**误以为「只有组织结构图是直线」）；逻辑结构图/思维导图为圆滑曲线。
-  偏好在 `constants.LINE_STYLE_OPTIONS`（auto/curve/direct/straight），解析唯一实现在
-  `mindmap-theme.resolveLineStyle`（auto 与坏值回落布局默认）；生效链路＝设置 `defaultLineStyle`
+- [K16] **连线样式（两态：折线 / 曲线；2026-10-21 用户裁决收敛）**：可选样式只剩 `straight`
+  （折线，正交折线）与 `curve`（曲线）——`auto`（随布局）与 `direct`（直连）下线：默认值固定为
+  折线，「跟随布局」不再有信息量，直连与折线的差异不足以再占一个选项。引擎仍实现三态 `renderLine`
+  分派（curve / direct / straight），但只有逻辑结构图/思维导图/组织结构图可见效果；目录组织图/
+  时间轴/鱼骨图**由布局类本身绘制直线**（只输出 M/L 路径、不接受 `lineStyle`，**勿**误以为
+  「只有组织结构图是直线」）。
+  偏好在 `constants.LINE_STYLE_OPTIONS`（顺序＝界面顺序：折线在前、曲线在后；默认
+  `DEFAULT_LINE_STYLE`＝折线），归一唯一实现在 `constants.normalizeLineStylePreference`
+  （`auto` / `direct` / 未知 / 空串 → 折线），解析唯一实现在 `mindmap-theme.resolveLineStyle`
+  （固定直线布局恒 `straight`，不把无效偏好透传给引擎）；生效链路＝设置 `defaultLineStyle`
   → 按文件 `viewState.lineStyle` 覆盖 → 工具栏连线下拉 `view.applyLineStyle`
   → `EngineController.setLineStyle` 重算主题配置（`setThemeConfig` 的「仅连线类属性」差异走
-  轻量重绘）。**工具栏选项面随布局收窄**：`supportsLineStyleSwitch` 为假的固定直线布局，
-  下拉只显示单项「自动」（`lineStyle.auto`，语义＝连线由布局决定）——这是**纯显示收窄**，
-  文件里的偏好既不写入也不丢失，切回支持三态的布局后恢复；选项面重建统一走
-  `view-toolbar.syncLineStyleOptions`（buildToolbar / applyLayout / onEngineReady 三处调用）。
-  **勿**在别处硬编码 `lineStyle` 或各自拼选项。
+  轻量重绘）。
+  **工具栏选项面随布局收窄**：`supportsLineStyleSwitch` 为假的固定直线布局，下拉只显示单项
+  **「直线」**（`lineStyle.fixedStraight`，语义＝连线由布局固有绘制，不再用会让人误以为可选的
+  「自动」）——这是**纯显示收窄**，文件里的偏好既不写入也不丢失，切回可切换布局后按会话偏好恢复；
+  选项面重建统一走 `view-toolbar.syncLineStyleOptions`（buildToolbar / applyLayout /
+  onEngineReady 三处调用）。
+  **存量数据**：`data.json` 里的 `auto` / `direct` 在**读取侧**归一为折线（不批量改写用户文件，
+  下次切换样式时自然落盘）。**勿**在别处硬编码 `lineStyle` 或各自拼选项。回归：
+  `tests/mindmap-theme.test.ts`（两态 + 旧词汇归一 + 固定布局恒折线）、
+  `tests/view-toolbar.test.ts`（两项 / 单项直线 / 脏值归一）、`tests/settings.test.ts`（白名单与默认值）。
 - [K17] **根节点连线衔接**：主题配置设 `rootLineStartPositionKeepSameInCurve: true`——引擎**默认从节点
   中心起画**，根节点→首层子节点的曲线在节点内部就已偏出、从上/下边缘**斜穿而出**（衔接呈
   「斜戳」观感）；其余层级本就以边缘为起点。开启后根节点与其它层级一致：右缘水平出发再展开。

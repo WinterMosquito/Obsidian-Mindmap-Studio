@@ -183,7 +183,7 @@ const ZH = {
 	'settings.defaultLayout': '默认布局',
 	'settings.defaultLayoutDesc': '新建思维导图时使用的默认布局',
 	'settings.defaultLineStyle': '默认连线样式',
-	'settings.defaultLineStyleDesc': '新建思维导图时使用的默认连线样式（自动＝随布局；仅逻辑结构图/思维导图/组织结构图支持三态切换）',
+	'settings.defaultLineStyleDesc': '新建思维导图时使用的默认连线样式（折线 / 曲线；仅逻辑结构图/思维导图/组织结构图可切换）',
 	'settings.defaultTheme': '默认主题',
 	'settings.defaultThemeDesc': '新建思维导图时使用的默认主题',
 	'settings.saveLocation': '新建导图的默认位置',
@@ -224,10 +224,10 @@ const ZH = {
 	'layout.fishbone': '鱼骨图',
 
 	// ===== 连线样式 =====
-	'lineStyle.auto': '自动',
 	'lineStyle.curve': '曲线',
-	'lineStyle.direct': '直连',
 	'lineStyle.straight': '折线',
+	// 固定直线布局（目录组织图/时间轴/鱼骨图）的描述：连线由布局类绘制、不可切换
+	'lineStyle.fixedStraight': '直线',
 
 	// ===== 主题选项 =====
 	'theme.default': '默认（跟随 Obsidian 配色）',
@@ -439,7 +439,7 @@ const EN: Record<TranslationKey, string> = {
 	'settings.defaultLayout': 'Default layout',
 	'settings.defaultLayoutDesc': 'Default layout when creating a new mind map',
 	'settings.defaultLineStyle': 'Default line style',
-	'settings.defaultLineStyleDesc': 'Default connector style for new mind maps ("Auto" follows the layout; switchable only for Logical structure / Mind map / Organization chart)',
+	'settings.defaultLineStyleDesc': 'Default connector style for new mind maps (Elbow / Curve; switchable only for Logical structure / Mind map / Organization chart)',
 	'settings.defaultTheme': 'Default theme',
 	'settings.defaultThemeDesc': 'Default theme when creating a new mind map',
 	'settings.saveLocation': 'Default location for new mind maps',
@@ -481,10 +481,10 @@ const EN: Record<TranslationKey, string> = {
 	'layout.fishbone': 'Fishbone',
 
 	// ===== Line style =====
-	'lineStyle.auto': 'Auto',
 	'lineStyle.curve': 'Curve',
-	'lineStyle.direct': 'Direct',
 	'lineStyle.straight': 'Elbow',
+	// 固定直线布局（目录组织图/时间轴/鱼骨图）的描述：连线由布局类绘制、不可切换
+	'lineStyle.fixedStraight': 'Straight',
 
 	// ===== 主题选项 =====
 	'theme.default': 'Default (use Obsidian color scheme)',

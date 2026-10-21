@@ -101,7 +101,8 @@ src/
     mindmap-search.ts    # 搜索子系统收口（searchMindMap 等 6 函数）
     mindmap-export.ts    # 导出 PNG/SVG（doExport 内部形态收口）
     mindmap-theme.ts #  主题配置（buildThemeConfig 唯一实现，视图主题参数化差异：
-                    #   亮/暗 + 连线样式；lineStyleForLayout 布局默认、resolveLineStyle 偏好解析）
+                    #   亮/暗 + 连线样式；resolveLineStyle 两态偏好解析〔折线/曲线，
+                    #   固定直线布局恒折线〕，归一在 core/constants.normalizeLineStylePreference）
   platform/         # L1 Obsidian 平台集成
     vault-sync.ts   #   库事件同步单一入口（引用更新、索引失效；插件侧补充处理经 hooks 注入）
     mindmap-auto-open.ts # 声明驱动自动打开（active-leaf-change/file-open/metadataCache
@@ -250,7 +251,7 @@ tests/
   event-binder.test.ts # EventBinder（注册即记录/销毁即清理：参数透传、监听器身份、幂等、单点抛错不阻断）
   persistence.test.ts  # PluginDataWriter（写前重读合并不丢键、串行队列、内部吞错）
   feature-helpers.test.ts # 特性纯函数（image-resize 等比缩放钳制）
-  mindmap-theme.test.ts # 主题配置（布局→连线样式映射、切换判定 supportsLineStyleSwitch、偏好解析与透传）
+  mindmap-theme.test.ts # 主题配置（两态偏好解析与旧词汇归一、切换判定 supportsLineStyleSwitch、主题透传）
   mindmap-wiki-icon.test.ts # 文档页图标 tooltip 与别名同口径（`docWikiLinkDisplay`，含负向自检）
   engine-history-limit.test.ts # 命令历史上限按 30MB 预算反推（500 节点⇒163 条 / 2000 节点⇒40 条、单调不增、地板 30、上限引擎默认 500）
   feature-teardown.test.ts # 交互会话收尾（图片调宽的临时 window 监听随视图关闭清理）
@@ -305,7 +306,7 @@ tests/
   view-dnd.test.ts     # 拖入分发（图片/笔记/附件/外部导入、两分支与提示）
   view-search.test.ts  # 搜索栏（装配/防抖/回绕/零命中计数/防抖窗口内跳转）
   view-status.test.ts  # 状态栏计数（节流与尾随、销毁/抛错降级、关闭清理）
-  view-toolbar.test.ts # 工具栏装配（分组/图标/命令接线、布局与连线样式选择器（固定布局收窄为单项）、自动整理分支、重建）
+  view-toolbar.test.ts # 工具栏装配（分组/图标/命令接线、布局与连线样式选择器（固定布局收窄为单项「直线」）、自动整理分支、重建）
   view-paste.test.ts   # 粘贴分发（容器监听与窗口兜底两入口、三道豁免（已消费/容器内/输入框）、
                        #   图片识别与接管、命名约定保存（覆盖系统临时名）、无节点提示、
                        #   保存 null 与「保存期间引擎换代」守卫、失败转用户提示）
@@ -346,7 +347,7 @@ docs/
 | `src/markdown/md-serialize.ts` | 1248 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆）。2026-10-12（K119）：无显示名段的**锚点插入点**与替换型 slot 共用同一遍行内拼装（区间占用判定只有一份），拆开会让两种定位各持一套冲突规则 |
 | `src/markdown/md-outline.ts` | 1159 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移。2026-10-12（K119）：首图与 icon-only URL 也登记台账段并附**上下文锚点**（`tokenAnchors`），与其余 token 段同源 |
 | `src/core/i18n.ts` | 565 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
-| `src/features/view.ts` | 1131 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；**主**业务已外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。**数学校准会话已于 2026-10-11 外置为 `features/content-remeasure.ts`**（原「已知偏离：L264–452 仍留在视图层、尚未排期」就此关闭）——外置同时补上架构文档要求的两件事：`dispose()` 生命周期（取消未决批次）与会话直测（`tests/content-remeasure.test.ts` 9 例）。再拆剩余部分会把「生命周期编排顺序集中可见」这一收口点摊到多文件。**2026-10-15 增至 1122**（此前登记 1086）：`mdBackMode` **跨会话保留**——读取点前移到 `setState` 覆写（官方 `view.getState()` 不保留传入 state，经 `leaf.getViewState()` 读回是**恒失败链路**，模式与布局保存都会丢）、`getState` 覆写回吐 `mdBackMode`；取值白名单收在 `readMdBackMode` 一处 |
+| `src/features/view.ts` | 1141 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；**主**业务已外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。**数学校准会话已于 2026-10-11 外置为 `features/content-remeasure.ts`**（原「已知偏离：L264–452 仍留在视图层、尚未排期」就此关闭）——外置同时补上架构文档要求的两件事：`dispose()` 生命周期（取消未决批次）与会话直测（`tests/content-remeasure.test.ts` 9 例）。再拆剩余部分会把「生命周期编排顺序集中可见」这一收口点摊到多文件。**2026-10-15 增至 1122**（此前登记 1086）：`mdBackMode` **跨会话保留**——读取点前移到 `setState` 覆写（官方 `view.getState()` 不保留传入 state，经 `leaf.getViewState()` 读回是**恒失败链路**，模式与布局保存都会丢）、`getState` 覆写回吐 `mdBackMode`；取值白名单收在 `readMdBackMode` 一处。**2026-10-21 增至 1141**：连线样式两态收敛（`resolveLineStyle` 读取侧归一存量 `auto`/`direct`） |
 | `src/services/engine-controller.ts` | 806 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。与 `mindmap.ts` **同性质**——拆开即把私有访问面摊开，故同样必须豁免 |
 | `src/media/images-path.ts` | 637 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一），**从 images.ts 拆出**的产物；导出函数共享同一套路径与尺寸不变式，再拆会摊成跨文件的隐式协议 |
 | `src/features/image-resize.ts` | 432 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链（无常驻监听、帧内 DOM 直写、手势独占），拆开会让状态机与 DOM 手柄跨文件失配 |
@@ -354,7 +355,7 @@ docs/
 | `src/features/view-dnd.ts` | 553 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配 |
 | `src/main.ts` | 523 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。业务逻辑已全部外置（见文件头），拆开 onload 会破坏「装配顺序集中可见」的可读性收益；当前超线 51 行 |
 | `src/markdown/links-split.ts` | 487 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。与 `md-outline` / `md-serialize` 同性质 |
-| `src/core/constants.ts` | 568 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件，互有基表派生；「可链接附件」「系统媒体」两份白名单已于 2026-09-15 删除——附件口径收敛到 `domain/wikilink.wikilinkTargetIsAttachment`）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音 |
+| `src/core/constants.ts` | 585 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件，互有基表派生；「可链接附件」「系统媒体」两份白名单已于 2026-09-15 删除——附件口径收敛到 `domain/wikilink.wikilinkTargetIsAttachment`）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音。**2026-10-21 增至 585**：连线样式两态收敛（`LINE_STYLE_OPTIONS` 砍至折线/曲线、新增 `DEFAULT_LINE_STYLE` 与 `normalizeLineStylePreference`） |
 | `src/settings.ts` | 501 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。`sanitizeSettings` 被 data.json 加载与面板写回共用（已在「代码结构」清单登记） |
 | `src/features/node-inline-tokenize.ts` | 1081 | 段序列切分（**纯逻辑，无 DOM**）：行内 token → 段序列（轻标记 / 围栏代码块 / 缩进代码 / 语言码规范化 / 数学 / 链接 / 表格块）+ 段缓存 + 接管判定 `resolveSelfDrawSource` + 截断 `clampSegments` + 预览 `inlineContentPreview` |
 | `src/features/node-inline-html.ts` | 723 | 段序列 → HTML **装配**：类名/锚点属性契约 + 内联样式常量表（**导出保真契约** K53 ⑤，引擎导出不注入插件 CSS）+ 文本段/锚点/表格/代码块/数学元素。复杂度仍是「取值表 × 契约」，且两条契约在此完整可见 |

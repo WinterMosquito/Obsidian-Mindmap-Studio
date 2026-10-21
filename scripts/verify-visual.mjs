@@ -365,8 +365,11 @@ const LAYOUT_PROBE_LAYOUTS = [
 ];
 
 /**
- * 布局探针契约：曲线 = 支持三态分派的两种布局（auto 偏好下取 curve）；
- * 其余四种为布局类固有直线（不接受 lineStyle）。
+ * 布局探针契约（2026-10-21 两态收敛后）：
+ * - 逻辑结构图 / 思维导图 → 传 `lineStyle: 'curve'`，应全为曲线路径；
+ * - 组织结构图 / 目录组织图 / 时间轴 / 鱼骨图 → 传 `lineStyle: 'straight'`，
+ *   应零曲线（后三者由布局类固有直线绘制、本就不接受 lineStyle）。
+ * 探针显式指定偏好（不再依赖已下线的 auto），断言与偏好一一对应。
  */
 const LAYOUT_PROBE_CONTRACTS = [
 	{ layout: 'logicalStructure', curves: true },
@@ -589,7 +592,7 @@ const exportSvgTransforms = [postProcessExportSvg, injectMathStylesIntoExportSvg
 
 const options = {
 	layout: 'logicalStructure',
-	lineStyle: 'auto',
+	lineStyle: 'straight',
 	themePref: 'default',
 	isDark: false,
 	enableDrag: true,
@@ -699,7 +702,7 @@ const embedApp = {
 };
 const embedConfig = () => ({
 	layout: 'logicalStructure',
-	lineStyle: 'auto',
+	lineStyle: 'straight',
 	themePref: 'default',
 	lang: 'zh',
 });
@@ -1404,7 +1407,8 @@ window.setTimeout(() => {
 		holder.style.height = '600px';
 		document.body.appendChild(holder);
 		try {
-			layoutMaps[layout] = { holder, map: createMindMap(holder, ${JSON.stringify(LAYOUT_PROBE_TREE)}, { ...options, layout }) };
+			const probeLineStyle = layout === 'logicalStructure' || layout === 'mindMap' ? 'curve' : 'straight';
+			layoutMaps[layout] = { holder, map: createMindMap(holder, ${JSON.stringify(LAYOUT_PROBE_TREE)}, { ...options, layout, lineStyle: probeLineStyle }) };
 		} catch (error) {
 			layoutMaps[layout] = { holder, error: 'createMindMap 抛错: ' + String(error) };
 		}
@@ -6214,7 +6218,7 @@ document.body.appendChild(holder);
 
 const options = {
 	layout: 'logicalStructure',
-	lineStyle: 'auto',
+	lineStyle: 'straight',
 	themePref: 'default',
 	isDark: false,
 	enableDrag: true,

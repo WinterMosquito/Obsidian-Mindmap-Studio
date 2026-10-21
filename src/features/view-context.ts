@@ -161,7 +161,7 @@ export interface MindMapViewContext
 	backToMarkdown(): void;
 	/** 应用指定布局（布局选择器变更时） */
 	applyLayout(layout: string): void;
-	/** 应用指定连线样式偏好（连线样式选择器变更时；auto＝随布局） */
+	/** 应用指定连线样式偏好（连线样式选择器变更时；两态：折线 / 曲线） */
 	applyLineStyle(lineStyle: string): void;
 
 	// ---- 插件能力（窄化）----

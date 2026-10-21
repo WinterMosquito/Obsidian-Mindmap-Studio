@@ -54,7 +54,7 @@ import type { ViewStateStore } from './view-state';
 /** 引擎创建选项（设置读取与布局 fallback 由视图负责） */
 interface EngineSetupOptions {
 	layout: string;
-	/** 连线样式偏好（auto/curve/direct/straight；auto＝随布局） */
+	/** 连线样式偏好（两态：折线 straight / 曲线 curve） */
 	lineStyle: string;
 	themePref: string;
 	enableDrag: boolean;

@@ -61,7 +61,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 	it('类型与取值全部合法的键原样保留', () => {
 		const out = sanitizeSettings({
 			defaultLayout: 'mindMap',
-			defaultLineStyle: 'direct',
+			defaultLineStyle: 'curve',
 			defaultTheme: 'dark',
 			saveLocation: 'folder',
 			saveFolder: '笔记/导图',
@@ -74,7 +74,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		});
 		expect(out).toEqual({
 			defaultLayout: 'mindMap',
-			defaultLineStyle: 'direct',
+			defaultLineStyle: 'curve',
 			defaultTheme: 'dark',
 			saveLocation: 'folder',
 			saveFolder: '笔记/导图',
@@ -87,16 +87,20 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		});
 	});
 
-	it('defaultLineStyle 白名单校验：合法值保留、非法/坏类型回退 auto', () => {
-		expect(sanitizeSettings({ defaultLineStyle: 'direct' }).defaultLineStyle).toBe(
-			'direct',
+	it('defaultLineStyle 白名单：两态保留，旧词汇 auto/direct 与坏值回退折线', () => {
+		expect(sanitizeSettings({ defaultLineStyle: 'curve' }).defaultLineStyle).toBe(
+			'curve',
 		);
-		expect(sanitizeSettings({ defaultLineStyle: 'zigzag' }).defaultLineStyle).toBe(
-			DEFAULT_SETTINGS.defaultLineStyle,
-		);
-		expect(sanitizeSettings({ defaultLineStyle: 42 }).defaultLineStyle).toBe(
-			DEFAULT_SETTINGS.defaultLineStyle,
-		);
+		expect(
+			sanitizeSettings({ defaultLineStyle: 'straight' }).defaultLineStyle,
+		).toBe('straight');
+		// 2026-10-21 两态收敛：auto（随布局）/ direct（直连）不再是合法值
+		for (const legacy of ['auto', 'direct', 'zigzag', 42]) {
+			expect(
+				sanitizeSettings({ defaultLineStyle: legacy }).defaultLineStyle,
+				String(legacy),
+			).toBe(DEFAULT_SETTINGS.defaultLineStyle);
+		}
 	});
 
 	it('结果键集恒等于设置键集：未知键不混入，缺键有默认值', () => {

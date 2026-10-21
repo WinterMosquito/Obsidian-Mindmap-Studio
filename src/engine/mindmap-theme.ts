@@ -2,7 +2,12 @@
  * simple-mind-map 引擎主题配置：亮/暗色配色、视图主题。
  * 从 mindmap.ts 拆出。
  */
-import { IMAGE_HEIGHT, IMAGE_WIDTH } from '../core/constants';
+import {
+	DEFAULT_LINE_STYLE,
+	IMAGE_HEIGHT,
+	IMAGE_WIDTH,
+	normalizeLineStylePreference,
+} from '../core/constants';
 
 const BORDER_RADIUS = 5;
 /** 节点水平内边距：略大于引擎默认值（15），仅作左右留白 */
@@ -58,33 +63,12 @@ export function getDocIconColor(isDark: boolean): string {
 }
 
 /**
- * 直线连线布局清单（六种布局中四种为直线）：
- * - 组织结构图：须经 `lineStyle: 'straight'` 生效——引擎为该布局实现了三态
- *   renderLine（按 lineStyle 分派 curve/direct/straight），straight 绘制
- *   「父节点底部 → 竖直主干 → 水平分叉 → 子节点顶部」的正交折线；
- * - 目录组织图 / 时间轴 / 鱼骨图：布局类本身即直线绘制（renderLine 只输出
- *   M/L 直线路径、不接受 lineStyle），此处的 straight 对其无副作用，
- *   登记在清单里以如实表达「直线布局」语义；
- * 其余两种（逻辑结构图 / 思维导图）为圆滑曲线。
- * 键必须与 constants.LAYOUT_OPTIONS 的 value 一致。
- */
-const STRAIGHT_LINE_LAYOUTS: ReadonlySet<string> = new Set([
-	'organizationStructure',
-	'catalogOrganization',
-	'timeline',
-	'fishbone',
-]);
-
-/** 指定布局的默认连线样式（curve 圆滑曲线 / straight 直线） */
-export function lineStyleForLayout(layout: string): 'curve' | 'straight' {
-	return STRAIGHT_LINE_LAYOUTS.has(layout) ? 'straight' : 'curve';
-}
-
-/**
- * 支持连线样式三态切换的布局（引擎为其实现 renderLine 的
- * curve/direct/straight 分派）：逻辑结构图、思维导图、组织结构图。
+ * 支持连线样式切换的布局：逻辑结构图、思维导图、组织结构图。
+ * 引擎为这三种实现 renderLine 的 curve/direct/straight 分派；插件对外只暴露
+ * 折线 / 曲线两态（direct 与 auto 已于 2026-10-21 下线，
+ * 见 core/constants.LINE_STYLE_OPTIONS）。
  * 其余三种（目录组织图/时间轴/鱼骨图）的连线由布局类固定为直线，
- * `lineStyle` 对其无效——工具栏据此收窄选项面（只显示「自动」）。
+ * `lineStyle` 对其无效——工具栏据此收窄为单项「直线」描述（不是「自动」）。
  */
 const SWITCHABLE_LINE_STYLE_LAYOUTS: ReadonlySet<string> = new Set([
 	'logicalStructure',
@@ -98,19 +82,21 @@ export function supportsLineStyleSwitch(layout: string): boolean {
 }
 
 /**
- * 连线样式解析：显式偏好（curve/direct/straight，仅对支持三态的布局可见效果）
- * 直接采用；auto（以及 data.json 手改出的未知值）回落布局默认——脏值行为仍是
- * 当前布局的稳妥默认，不把非法值透传给引擎。
+ * 连线样式解析（2026-10-21 收敛为两态）：
+ * - 支持切换的布局（逻辑结构图 / 思维导图 / 组织结构图）→ 偏好的归一结果；
+ * - 固定直线布局（目录组织图 / 时间轴 / 鱼骨图）→ 恒 `straight`：连线由布局类
+ *   自行绘制、`lineStyle` 对其无效，如实表达现状而不是把无效偏好透传给引擎。
+ *
+ * 脏值（`auto` / `direct` / 未知 / 空串）由 `normalizeLineStylePreference` 归一为
+ * 折线——与默认值同源，不再有「随布局」这条第二口径。
  */
 export function resolveLineStyle(
 	preference: string,
 	layout: string,
-): 'curve' | 'direct' | 'straight' {
-	return preference === 'curve' ||
-		preference === 'direct' ||
-		preference === 'straight'
-		? preference
-		: lineStyleForLayout(layout);
+): 'curve' | 'straight' {
+	return supportsLineStyleSwitch(layout)
+		? normalizeLineStylePreference(preference)
+		: 'straight';
 }
 
 /**
@@ -122,7 +108,7 @@ function buildThemeConfig(
 	variant: {
 		background: string;
 		fontSizes: { root: number; second: number; node: number };
-		lineStyle: 'curve' | 'direct' | 'straight';
+		lineStyle: 'curve' | 'straight';
 	},
 ): Record<string, unknown> {
 	const colors: ThemeColors = isDark ? DARK_COLORS : LIGHT_COLORS;
@@ -160,7 +146,7 @@ function buildThemeConfig(
 		},
 		lineColor: colors.line,
 		lineWidth: 1.5,
-		// 连线样式由布局决定（四种直线布局见 lineStyleForLayout；其中目录组织图/
+		// 连线样式由偏好解析而来（resolveLineStyle：两态折线/曲线；目录组织图/
 		// 时间轴/鱼骨图由布局类自行绘制直线、不受本值影响）+ 收紧间距：视觉重量随
 		// 层级递减、提升一屏信息量。引擎运行时支持（vendor bundle 已验证
 		// marginX/marginY/lineStyle/curve/straight/rootLineStartPositionKeepSameInCurve），
@@ -194,12 +180,12 @@ function buildThemeConfig(
  * vendor 未定义）；自然尺寸/参数尺寸路径均走 `custom:true`、完全绕过它
  * （2026-09-28 K97：未设置尺寸按图片原始大小展示、长边超 `IMAGE_MAX_SIDE_PX`
  * 等比缩，见 `media/images-path.fitImageWithinMaxSide`）。
- * lineStyle = 偏好解析结果（auto 时随布局，见 resolveLineStyle）。
+ * lineStyle = 偏好解析结果（两态：折线 / 曲线；固定直线布局恒折线，见 resolveLineStyle）。
  */
 export function getThemeConfig(
 	isDark: boolean,
 	layout: string,
-	lineStylePreference: string = 'auto',
+	lineStylePreference: string = DEFAULT_LINE_STYLE,
 ): Record<string, unknown> {
 	return buildThemeConfig(isDark, {
 		background: isDark ? '#1e1e1e' : '#ffffff',

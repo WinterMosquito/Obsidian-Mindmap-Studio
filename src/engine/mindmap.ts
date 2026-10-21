@@ -75,7 +75,7 @@ export * from './mindmap-export';
 
 export interface CreateMindMapOptions {
 	layout: string;
-	/** 连线样式偏好（auto/curve/direct/straight；auto＝随布局） */
+	/** 连线样式偏好（折线 straight / 曲线 curve；两态由设置与工具栏共同约束） */
 	lineStyle: string;
 	themePref: string;
 	isDark: boolean;

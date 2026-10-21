@@ -182,7 +182,7 @@ Everything lives in **Settings → MindMap Studio** (stored locally in the plugi
 |---|---|---|
 | Language | 中文 | UI language — switching it also rewrites mind-map property keys vault-wide (`类型` ⇄ `Type`) |
 | Default layout | Logical structure | Used when creating a new mind map (six layouts: Logical structure / Mind map / Organization chart / Catalog organization / Timeline / Fishbone) |
-| Default line style | Auto | Used when creating a new mind map ("Auto" follows the layout; switchable only for Logical structure / Mind map / Organization chart) |
+| Default line style | Elbow | Used when creating a new mind map (Elbow / Curve; switchable only for Logical structure / Mind map / Organization chart — the other three layouts draw native straight connectors) |
 | Default theme | Default | Used when creating a new mind map: Default (follows Obsidian's colour scheme) / Force light / Force dark |
 | Default location for new mind maps | Follow Obsidian setting | Where **Create new mind map** puts the file: Follow Obsidian setting / Vault folder / Same folder as current file / In the folder specified below |
 | Target folder | (empty) | Used by the "specified folder" mode above only (**only visible for that mode**); an unresolvable folder falls back to the vault root (no folders are auto-created) |

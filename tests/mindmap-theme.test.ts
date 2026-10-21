@@ -1,47 +1,22 @@
 /**
  * mindmap-theme 回归：布局/偏好 → 连线样式解析与主题配置产出。
  *
- * 事实基线（对照 vendor bundle 的布局类实现）：
- * - 六种布局中**四种为直线**：组织结构图经 `lineStyle: 'straight'` 生效
- *   （引擎为该布局实现三态 renderLine 分派，straight 为「父节点底部 → 竖直主干
- *   → 水平分叉 → 子节点顶部」的正交折线）；目录组织图 / 时间轴 / 鱼骨图的
- *   布局类本身即直线绘制（renderLine 只输出 M/L 路径、不接受 lineStyle）——
- *   登记在同一清单里是如实声明，对其渲染无副作用；
- * - 逻辑结构图 / 思维导图为圆滑曲线。**「其余五种都是曲线」是错误认知**。
- * - 三态（curve/direct/straight）仅对逻辑结构图/思维导图/组织结构图可见效果；
- *   auto（含未知坏值）回落布局默认——脏 data.json 不把非法值透传给引擎。
+ * 事实基线（2026-10-21 连线样式收敛为两态）：
+ * - 可选样式只有**折线（straight，正交折线）/ 曲线（curve）**；`auto`（随布局）
+ *   与 `direct`（直连）已下线，存量值在读取侧归一为折线。
+ * - 逻辑结构图 / 思维导图 / 组织结构图支持切换（引擎为该三者实现三态 renderLine，
+ *   折线绘制「父节点底部 → 竖直主干 → 水平分叉 → 子节点顶部」）；
+ *   目录组织图 / 时间轴 / 鱼骨图的布局类本身即直线绘制（renderLine 只输出 M/L
+ *   路径、不接受 lineStyle）——`resolveLineStyle` 对这三者恒返回 straight。
  *
  * 本模块零 vendor 依赖（仅常量与类型），可直接单测。
  */
 import { describe, expect, it } from 'vitest';
 import {
 	getThemeConfig,
-	lineStyleForLayout,
 	resolveLineStyle,
 	supportsLineStyleSwitch,
 } from '../src/engine/mindmap-theme';
-
-describe('lineStyleForLayout（布局 → 布局默认连线样式）', () => {
-	it('组织结构图经 lineStyle 得直线（引擎该布局支持 curve/direct/straight 三态）', () => {
-		expect(lineStyleForLayout('organizationStructure')).toBe('straight');
-	});
-
-	it('目录组织图 / 时间轴 / 鱼骨图同为直线布局（布局类本身即直线，登记保持一致语义）', () => {
-		for (const layout of ['catalogOrganization', 'timeline', 'fishbone']) {
-			expect(lineStyleForLayout(layout), layout).toBe('straight');
-		}
-	});
-
-	it('逻辑结构图与思维导图为圆滑曲线', () => {
-		for (const layout of ['logicalStructure', 'mindMap']) {
-			expect(lineStyleForLayout(layout), layout).toBe('curve');
-		}
-	});
-
-	it('未知布局回落曲线（引擎侧同名非法值回落 logicalStructure）', () => {
-		expect(lineStyleForLayout('unknownLayout')).toBe('curve');
-	});
-});
 
 describe('supportsLineStyleSwitch（布局是否支持三态切换）', () => {
 	it('逻辑结构图 / 思维导图 / 组织结构图支持切换', () => {
@@ -66,50 +41,62 @@ describe('supportsLineStyleSwitch（布局是否支持三态切换）', () => {
 });
 
 describe('resolveLineStyle（偏好 + 布局 → 实际连线样式）', () => {
-	it('显式偏好直接采用（三态对支持三态的布局可见效果）', () => {
+	it('两态偏好直接采用：curve 保留、straight 保留（支持切换的布局）', () => {
 		expect(resolveLineStyle('curve', 'organizationStructure')).toBe('curve');
-		expect(resolveLineStyle('direct', 'logicalStructure')).toBe('direct');
+		expect(resolveLineStyle('curve', 'logicalStructure')).toBe('curve');
 		expect(resolveLineStyle('straight', 'mindMap')).toBe('straight');
 	});
 
-	it('auto / 未知值 / 空串回落布局默认（四种直线布局 straight、两种曲线布局 curve）', () => {
-		for (const preference of ['auto', 'zigzag', '']) {
-			expect(resolveLineStyle(preference, 'organizationStructure'), preference).toBe(
-				'straight',
-			);
-			expect(resolveLineStyle(preference, 'catalogOrganization'), preference).toBe(
-				'straight',
-			);
+	it('旧词汇与脏值归一为折线（auto / direct / 未知 / 空串）', () => {
+		for (const preference of ['auto', 'direct', 'zigzag', '']) {
 			expect(resolveLineStyle(preference, 'logicalStructure'), preference).toBe(
-				'curve',
+				'straight',
 			);
-			expect(resolveLineStyle(preference, 'mindMap'), preference).toBe('curve');
+			expect(resolveLineStyle(preference, 'mindMap'), preference).toBe(
+				'straight',
+			);
+			expect(
+				resolveLineStyle(preference, 'organizationStructure'),
+				preference,
+			).toBe('straight');
 		}
 	});
 
-	it('auto 偏好下布局切换即改变实际样式（组织结构图 → 直线）', () => {
-		expect(resolveLineStyle('auto', 'mindMap')).toBe('curve');
-		expect(resolveLineStyle('auto', 'organizationStructure')).toBe('straight');
+	it('固定直线布局恒 straight（lineStyle 对其无效：不把偏好透传给引擎）', () => {
+		for (const layout of ['catalogOrganization', 'timeline', 'fishbone']) {
+			expect(resolveLineStyle('curve', layout), layout).toBe('straight');
+			expect(resolveLineStyle('straight', layout), layout).toBe('straight');
+		}
 	});
 });
 
-describe('getThemeConfig（lineStyle 随偏好与布局透传）', () => {
-	it('auto：四种直线布局 straight、两种曲线布局 curve（亮/暗配色下一致）', () => {
+describe('getThemeConfig（lineStyle 两态：偏好 / 布局 / 默认）', () => {
+	it('不传偏好＝折线（新默认），亮/暗一致', () => {
 		for (const isDark of [false, true]) {
-			for (const layout of [
-				'organizationStructure',
-				'catalogOrganization',
-				'timeline',
-				'fishbone',
-			]) {
-				expect(getThemeConfig(isDark, layout).lineStyle, layout).toBe(
-					'straight',
-				);
-			}
-			for (const layout of ['logicalStructure', 'mindMap']) {
-				expect(getThemeConfig(isDark, layout).lineStyle, layout).toBe('curve');
-			}
+			expect(getThemeConfig(isDark, 'logicalStructure').lineStyle).toBe(
+				'straight',
+			);
+			expect(getThemeConfig(isDark, 'mindMap').lineStyle).toBe('straight');
 		}
+	});
+
+	it('曲线偏好对支持切换的布局生效；固定直线布局仍为折线', () => {
+		expect(getThemeConfig(false, 'logicalStructure', 'curve').lineStyle).toBe(
+			'curve',
+		);
+		expect(
+			getThemeConfig(false, 'organizationStructure', 'curve').lineStyle,
+		).toBe('curve');
+		expect(getThemeConfig(false, 'fishbone', 'curve').lineStyle).toBe(
+			'straight',
+		);
+	});
+
+	it('旧词汇 auto / direct 归一为折线（存量 data.json 不清盘也能正确显示）', () => {
+		expect(getThemeConfig(false, 'mindMap', 'auto').lineStyle).toBe('straight');
+		expect(getThemeConfig(false, 'mindMap', 'direct').lineStyle).toBe(
+			'straight',
+		);
 	});
 
 	it('根节点连线起点在右缘（修复根节点衔接的关键开关，勿回退）', () => {
@@ -120,16 +107,5 @@ describe('getThemeConfig（lineStyle 随偏好与布局透传）', () => {
 		expect(
 			getThemeConfig(true, 'mindMap').rootLineStartPositionKeepSameInCurve,
 		).toBe(true);
-	});
-
-	it('显式偏好覆盖布局默认（direct/straight/curve；不传参数等同 auto）', () => {
-		expect(getThemeConfig(false, 'mindMap', 'direct').lineStyle).toBe('direct');
-		expect(getThemeConfig(false, 'mindMap', 'straight').lineStyle).toBe(
-			'straight',
-		);
-		expect(
-			getThemeConfig(false, 'organizationStructure', 'curve').lineStyle,
-		).toBe('curve');
-		expect(getThemeConfig(false, 'mindMap').lineStyle).toBe('curve');
 	});
 });

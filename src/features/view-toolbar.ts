@@ -3,7 +3,11 @@
  * 节点操作（链接/图片/删除）委托给 view-node-actions.ts。
  */
 import { Notice, setIcon, setTooltip } from 'obsidian';
-import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../core/constants';
+import {
+	LAYOUT_OPTIONS,
+	LINE_STYLE_OPTIONS,
+	normalizeLineStylePreference,
+} from '../core/constants';
 import {
 	arrangeMindMap as arrangeMindMapEngine,
 	ENGINE_COMMANDS,
@@ -131,7 +135,7 @@ function buildToolbarCenterGroup(
 		view.plugin.settings.defaultLineStyle,
 	);
 	lineStyleSelect.onchange = () => {
-		// 连线样式偏好持久化到视图状态存储（auto＝随布局；正文不写入）
+		// 连线样式偏好持久化到视图状态存储（两态：折线 / 曲线；正文不写入）
 		view.applyLineStyle(lineStyleSelect.value);
 	};
 }
@@ -167,10 +171,12 @@ function buildToolbarRightGroup(
 }
 
 /**
- * 按布局重建连线样式选项集（工具栏「连线」下拉）：
- * - 支持三态切换的布局（逻辑结构图/思维导图/组织结构图）：完整四项，值＝当前偏好；
- * - 固定直线布局（目录组织图/时间轴/鱼骨图）：仅一项「自动」——连线由布局类固定、
- *   不可切换，控件只表达现状；文件里的偏好不受影响，切回支持三态的布局后恢复显示。
+ * 按布局重建连线样式选项集（工具栏「连线」下拉，2026-10-21 收敛为两态）：
+ * - 支持切换的布局（逻辑结构图/思维导图/组织结构图）：**折线、曲线**两项，
+ *   顺序即界面顺序（折线在上），值＝偏好归一结果；
+ * - 固定直线布局（目录组织图/时间轴/鱼骨图）：仅一项「**直线**」——连线由布局类
+ *   固定、不可切换，控件只表达**现状**（不再用「自动」这种会让人以为可选的措辞）。
+ *   文件里的偏好不受影响：切回支持切换的布局后按会话偏好恢复显示。
  */
 export function syncLineStyleOptions(
 	view: MindMapViewContext,
@@ -188,18 +194,14 @@ export function syncLineStyleOptions(
 			optionEl.value = option.value;
 			optionEl.setText(t(view.lang, option.label));
 		});
-		// 脏 data.json 的未知偏好不落到 select.value（会显示空白），回落 auto
-		select.value = LINE_STYLE_OPTIONS.some(
-			(option) => option.value === preference,
-		)
-			? preference
-			: 'auto';
+		// 脏 data.json 的未知偏好不落到 select.value（会显示空白）：归一为折线
+		select.value = normalizeLineStylePreference(preference);
 		return;
 	}
 	const optionEl = select.createEl('option');
-	optionEl.value = 'auto';
-	optionEl.setText(t(view.lang, 'lineStyle.auto'));
-	select.value = 'auto';
+	optionEl.value = 'straight';
+	optionEl.setText(t(view.lang, 'lineStyle.fixedStraight'));
+	select.value = 'straight';
 }
 
 /** 创建工具栏按钮（提示/图标/点击回调） */
