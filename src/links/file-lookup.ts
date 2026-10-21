@@ -27,6 +27,7 @@ import {
 	isRemoteOrDataUrl,
 	urlComparisonForms,
 } from '../domain/url';
+import { formatLinkPath, type LinkPathFormat } from '../domain/wikilink';
 
 /**
  * 把**单个文件**的全部形态键写入索引：
@@ -84,6 +85,39 @@ export function buildFileLookupIndex(
  */
 export const VALIDATE_MIN_INTERVAL_MS = 500;
 
+/** 计数表 +1（表缺失时无动作：缓存尚未建立，重建时自然统计） */
+function increment(counts: Map<string, number> | null, key: string): void {
+	if (!counts) {
+		return;
+	}
+	counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+/**
+ * 同名冲突查询（**basename 与含扩展名两张表共用的唯一实现**）：命中缓存计数
+ * 即零扫描；缓存未建立时回落一次 `getFiles` 扫描（读取失败按无冲突处理，
+ * fail-open 不阻断新建引用）。
+ *
+ * @param key     计数表的键（`file.basename` 或 `file.name`）
+ * @param sameName 判定「另一个文件是否同名」——必须与 `key` 同一口径
+ */
+function hasConflict(
+	key: string,
+	counts: Map<string, number> | null,
+	app: App,
+	file: TFile,
+	sameName: (other: TFile) => boolean,
+): boolean {
+	if (!counts) {
+		try {
+			return app.vault.getFiles().some((other) => other !== file && sameName(other));
+		} catch {
+			return false;
+		}
+	}
+	return (counts.get(key) ?? 0) > 1;
+}
+
 /**
  * 全库文件查找索引服务：「多种地址形态 → TFile」的 O(1) 查找缓存。
  * 命中快路径不重扫文件列表（新鲜度由库事件增量/失效保证）；
@@ -93,11 +127,21 @@ export class FileLookupIndexService {
 	private cache: Map<string, TFile> | null = null;
 	private cacheCount = 0;
 	/**
-	 * basename（去扩展名）→ 库内文件数：同名冲突判断用。
+	 * basename（去扩展名）→ 库内文件数：**文档链接**的同名冲突判断用
+	 * （`[[笔记]]` 省略扩展名）。
 	 * 与 cache 同生命周期——重建时统计、增量补建时递增，查询零扫描
 	 * （替代调用方每次新建链接都 getFiles + some 的全量扫描）。
 	 */
 	private basenameCounts: Map<string, number> | null = null;
+	/**
+	 * 文件名（**含扩展名**）→ 库内文件数：**图片 / 附件 / 带扩展名引用**的
+	 * 同名冲突判断用。
+	 *
+	 * 为什么必须与 basename 分开：`![[a.png]]` 带扩展名，与 `a.md` / `a.jpg`
+	 * **不构成歧义**；用去扩展名计数会把它们误判为冲突、把引用无谓拉成完整路径
+	 * （2026-10-21 审核发现，与官方「shortest unique path」相悖）。
+	 */
+	private nameCounts: Map<string, number> | null = null;
 	/** 上次实际执行数量比对的时刻；null = 尚未比对（首次 validate 一定执行） */
 	private lastValidateAt: number | null = null;
 
@@ -161,49 +205,49 @@ export class FileLookupIndexService {
 		}
 		writeFileEntries(app, cache, file);
 		this.cacheCount++;
-		const counts = this.basenameCounts;
-		if (counts) {
-			const key = file.basename;
-			counts.set(key, (counts.get(key) ?? 0) + 1);
-		}
+		increment(this.basenameCounts, file.basename);
+		increment(this.nameCounts, file.name);
 	}
 
 	/**
-	 * 库内是否存在与 file **同名（basename，另一路径）**的文件。
+	 * 库内是否存在与 file **同名（basename，去扩展名，另一路径）**的文件。
 	 *
-	 * 命中共享索引的 basename 计数（零扫描）；索引尚未建立时回落一次
-	 * getFiles 扫描——与调用方原口径完全一致（读取失败按无冲突处理，
-	 * fail-open 不阻断新建链接）。
+	 * 用于**省略扩展名的引用**（`[[笔记]]`）。命中共享索引的 basename 计数
+	 * （零扫描）；索引尚未建立时回落一次 `getFiles` 扫描——读取失败按无冲突
+	 * 处理（fail-open 不阻断新建链接）。
 	 */
 	hasBasenameConflict(app: App, file: TFile): boolean {
-		const counts = this.basenameCounts;
-		if (!counts) {
-			try {
-				return app.vault
-					.getFiles()
-					.some(
-						(other) => other !== file && other.basename === file.basename,
-					);
-			} catch {
-				return false;
-			}
-		}
-		return (counts.get(file.basename) ?? 0) > 1;
+		const key = file.basename;
+		return hasConflict(key, this.basenameCounts, app, file, (other) => other.basename === key);
+	}
+
+	/**
+	 * 库内是否存在与 file **同名（文件名含扩展名，另一路径）**的文件。
+	 *
+	 * 用于**带扩展名的引用**（`![[a.png]]` / `[[a.canvas]]`）：`a.png` 与
+	 * `a.md`、`a.jpg` **不构成歧义**，不能沿用去扩展名的 basename 计数
+	 * （否则引用会被无谓拉成完整路径，与官方「shortest unique path」相悖）。
+	 */
+	hasNameConflict(app: App, file: TFile): boolean {
+		const key = file.name;
+		return hasConflict(key, this.nameCounts, app, file, (other) => other.name === key);
 	}
 
 	/** 构建索引并更新缓存计数（files 可传入已扫描的文件列表避免重复扫描） */
 	private rebuild(app: App, files?: TFile[]): Map<string, TFile> {
 		const list = files ?? app.vault.getFiles();
 		const index = new Map<string, TFile>();
-		const counts = new Map<string, number>();
+		const basenames = new Map<string, number>();
+		const names = new Map<string, number>();
 		for (const file of list) {
 			writeFileEntries(app, index, file);
-			const key = file.basename;
-			counts.set(key, (counts.get(key) ?? 0) + 1);
+			increment(basenames, file.basename);
+			increment(names, file.name);
 		}
 		this.cache = index;
 		this.cacheCount = list.length;
-		this.basenameCounts = counts;
+		this.basenameCounts = basenames;
+		this.nameCounts = names;
 		return index;
 	}
 
@@ -212,12 +256,54 @@ export class FileLookupIndexService {
 		this.cache = null;
 		this.cacheCount = 0;
 		this.basenameCounts = null;
+		this.nameCounts = null;
 		this.lastValidateAt = null;
 	}
 }
 
 /** 插件级单例：全库唯一 vault，缓存全局共享（vault-sync 在库事件时失效） */
 export const fileLookupIndex = new FileLookupIndexService();
+
+/**
+ * 新建引用的**路径形态**：跟随官方 `设置 → 文件与链接 → New link format`。
+ *
+ * - `shortest`（默认）：最短**唯一**路径——库内存在同名文件时退化为完整路径，
+ *   否则只写文件名（官方帮助 `Settings.md` "shortest unique path"）。**同名的口径
+ *   随引用形态**：省略 `.md` 的文档链接按**去扩展名 basename** 判（`[[a]]` ↔ `a.md`）；
+ *   带扩展名的图片 / 附件 / `.canvas` 等按**文件名（含扩展名）**判——`a.png` 与
+ *   `a.md`、`a.jpg` 不构成歧义，不能共用 basename 口径（2026-10-21 修正）；
+ * - `relative`：相对引用方（当前 .md）的路径；
+ * - `absolute`：库根起的完整路径。
+ *
+ * **只用于新建**：既有引用改写沿用用户原始写法（`md-serialize` 保留
+ * `mdImageTarget` 的口径、`links-tree` 的引用更新），本函数不参与。
+ *
+ * **唯一实现**：文档链接（`features/view-node-actions`）与图片引用
+ * （`features/view-image-actions`）共用——两侧各写一份「读设置 + 判同名 + 拼路径」
+ * 必然漂移（2026-10-20 审计：图片侧此前直接写 `file.path`，无视该设置）。
+ *
+ * @param options.omitMarkdownExtension 文档链接可省 `.md`（Obsidian 解析规则，
+ *        且官方只在 `shortest` 档省略）；图片/附件必须带扩展名，传 false。
+ */
+export function newReferencePath(
+	app: App,
+	file: TFile,
+	sourcePath: string,
+	format: LinkPathFormat,
+	options: { omitMarkdownExtension?: boolean } = {},
+): string {
+	const omitMd =
+		options.omitMarkdownExtension === true &&
+		format === 'shortest' &&
+		/\.md$/i.test(file.path);
+	const target = omitMd ? file.path.replace(/\.md$/i, '') : file.path;
+	const ambiguous =
+		format === 'shortest' &&
+		(omitMd
+			? fileLookupIndex.hasBasenameConflict(app, file)
+			: fileLookupIndex.hasNameConflict(app, file));
+	return formatLinkPath(target, sourcePath, format, ambiguous);
+}
 
 /**
  * 通过索引把任意地址形态解析为库内 TFile（O(1)，索引缺失键时按后缀回退）。

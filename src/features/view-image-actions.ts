@@ -10,9 +10,13 @@ import {
 	createSetNodeImageOptions,
 } from '../media/images-path';
 import { resolvePathToFile } from '../links/links-resolve';
+import { newReferencePath } from '../links/file-lookup';
 import { openImageEditorModal } from '../ui/modal-image';
 import { saveImageToVault } from '../media/images-save';
-import { prefersMarkdownLinks } from '../platform/vault-prefs';
+import {
+	preferredLinkPathFormat,
+	prefersMarkdownLinks,
+} from '../platform/vault-prefs';
 import { notifyError } from '../core/errors';
 import {
 	isAppResourceUrl,
@@ -103,7 +107,13 @@ export async function applyNodeImage(
 	node: MindMapNode,
 	url: string,
 ): Promise<void> {
-	const { display, mdTarget } = normalizeImageReference(url, view.app);
+	const style = imageMdStyle(view.app);
+	const { display, mdTarget } = normalizeImageReference(
+		url,
+		view.app,
+		view.file?.path ?? '',
+		style,
+	);
 	const engine = view.mindMap;
 	if (!engine) return;
 	const options = await createNaturalSizeSetNodeImageOptions(display);
@@ -122,7 +132,7 @@ export async function applyNodeImage(
 	}
 	if (mdTarget) {
 		data.mdImageTarget = mdTarget;
-		data.mdImageStyle = imageMdStyle(view.app);
+		data.mdImageStyle = style;
 	} else {
 		delete data.mdImageTarget;
 		delete data.mdImageStyle;
@@ -168,6 +178,7 @@ export async function createImageChildNode(
 	if (view.mindMap !== engine) {
 		return false;
 	}
+	const style = imageMdStyle(view.app);
 	const inserted = insertChildNodeWithData(view, parent, {
 		text: '',
 		image: options.url,
@@ -177,8 +188,8 @@ export async function createImageChildNode(
 			height: options.height,
 			custom: options.custom,
 		},
-		mdImageTarget: file.path,
-		mdImageStyle: imageMdStyle(view.app),
+		mdImageTarget: imageMdTarget(file, view.app, view.file?.path ?? '', style),
+		mdImageStyle: style,
 	});
 	if (inserted) {
 		view.scheduleSave();
@@ -198,20 +209,48 @@ function imageMdStyle(app: App): 'md' | 'wiki' {
 	return prefersMarkdownLinks(app) ? 'md' : 'wiki';
 }
 
+/**
+ * 图片引用的**回写目标**（仅新建/换图时决定写什么；既有引用由 `mdImageTarget`
+ * 原样保留，见 `md-serialize` 的合成回写口径）。
+ *
+ * - wiki 形态：跟随官方「New link format」——最短**唯一**路径（同名文件退化为
+ *   完整路径）、相对路径或绝对路径；实现只有 `links/file-lookup.newReferencePath`
+ *   一份，与文档链接共用；
+ * - md 形态：`![alt](路径)` 的目标由笔记位置解析，写完整库内路径（既有口径，
+ *   官方帮助未对该形态的路径写法单列，不做未经核实的改写）。
+ *
+ * 图片必须带扩展名（Obsidian 对非 `.md` 嵌入的解析规则），故不省略 `.md`。
+ */
+function imageMdTarget(
+	file: TFile,
+	app: App,
+	sourcePath: string,
+	style: 'md' | 'wiki',
+): string {
+	return style === 'md'
+		? file.path
+		: newReferencePath(app, file, sourcePath, preferredLinkPathFormat(app));
+}
+
 /** 引用归一：显示地址 + md 回写目标 */
 function normalizeImageReference(
 	url: string,
 	app: App,
+	sourcePath: string,
+	style: 'md' | 'wiki',
 ): { display: string; mdTarget: string | null } {
 	if (!url) return { display: '', mdTarget: null };
 	if (isAppResourceUrl(url)) {
 		const file = resolvePathToFile(url, app);
-		return { display: url, mdTarget: file?.path ?? null };
+		return {
+			display: url,
+			mdTarget: file ? imageMdTarget(file, app, sourcePath, style) : null,
+		};
 	}
 	if (isExternalImageRef(url)) return { display: url, mdTarget: null };
 	const file = resolvePathToFile(url, app);
 	return {
 		display: file ? app.vault.getResourcePath(file) : url,
-		mdTarget: file ? file.path : url.trim(),
+		mdTarget: file ? imageMdTarget(file, app, sourcePath, style) : url.trim(),
 	};
 }

@@ -18,6 +18,7 @@ import {
 	fileLookupIndex,
 	FileLookupIndexService,
 	lookupIndexedFile,
+	newReferencePath,
 	VALIDATE_MIN_INTERVAL_MS,
 } from '../src/links/file-lookup';
 
@@ -372,5 +373,107 @@ describe('lookupIndexedFile（形态匹配）', () => {
 		} finally {
 			error.mockRestore();
 		}
+	});
+});
+
+describe('newReferencePath（新建引用的路径形态：官方 New link format）', () => {
+	beforeEach(() => fileLookupIndex.invalidate());
+
+	it('shortest：库内唯一 → 只写文件名（官方「最短唯一路径」）', () => {
+		const files = [file('assets/a.png'), file('notes/n.md')];
+		const { app } = fakeApp(files);
+		fileLookupIndex.validate(app);
+		expect(newReferencePath(app, files[0]!, 'notes/n.md', 'shortest')).toBe(
+			'a.png',
+		);
+	});
+
+	it('shortest：存在同名文件 → 退化为完整路径（否则可能指向另一个同名文件）', () => {
+		const files = [file('one/a.png'), file('two/a.png')];
+		const { app } = fakeApp(files);
+		fileLookupIndex.validate(app);
+		expect(newReferencePath(app, files[0]!, 'notes/n.md', 'shortest')).toBe(
+			'one/a.png',
+		);
+	});
+
+	it('relative：相对引用方笔记所在目录', () => {
+		const files = [file('assets/a.png')];
+		const { app } = fakeApp(files);
+		expect(newReferencePath(app, files[0]!, 'notes/n.md', 'relative')).toBe(
+			'../assets/a.png',
+		);
+	});
+
+	it('absolute：库根起的完整路径', () => {
+		const files = [file('assets/a.png')];
+		const { app } = fakeApp(files);
+		expect(newReferencePath(app, files[0]!, 'notes/n.md', 'absolute')).toBe(
+			'assets/a.png',
+		);
+	});
+
+	it('图片：同 stem 不同扩展名不算同名（`a.png` 与 `a.jpg` 不歧义）', () => {
+		// 2026-10-21 审核修复：此前沿用去扩展名 basename 计数，`a.png` 与 `a.jpg`
+		// 被误判冲突 → 图片引用被无谓拉成完整路径（与官方「shortest unique」相悖）。
+		const files = [file('one/a.png'), file('two/a.jpg')];
+		const { app } = fakeApp(files);
+		fileLookupIndex.validate(app);
+		expect(newReferencePath(app, files[0]!, 'notes/n.md', 'shortest')).toBe(
+			'a.png',
+		);
+	});
+
+	it('图片：`a.png` 与 `a.md` 同 stem 也不冲突（引用带扩展名）', () => {
+		const files = [file('assets/a.png'), file('notes/a.md')];
+		const { app } = fakeApp(files);
+		fileLookupIndex.validate(app);
+		expect(newReferencePath(app, files[0]!, 'notes/n.md', 'shortest')).toBe(
+			'a.png',
+		);
+	});
+
+	it('文档链接仍按去扩展名 basename 判同名（`[[a]]` ↔ `a.md`）', () => {
+		const files = [file('one/a.md'), file('two/a.md')];
+		const { app } = fakeApp(files);
+		fileLookupIndex.validate(app);
+		expect(
+			newReferencePath(app, files[0]!, 'notes/n.md', 'shortest', {
+				omitMarkdownExtension: true,
+			}),
+		).toBe('one/a');
+	});
+
+	it('带扩展名的文档（`.canvas`）按文件名判同名，不因同名 .md 被拉长', () => {
+		const files = [file('one/a.canvas'), file('two/a.md')];
+		const { app } = fakeApp(files);
+		fileLookupIndex.validate(app);
+		expect(
+			newReferencePath(app, files[0]!, 'notes/n.md', 'shortest', {
+				omitMarkdownExtension: true,
+			}),
+		).toBe('a.canvas');
+	});
+
+	it('文档链接可省 .md（仅 shortest 档）；图片引用必须带扩展名', () => {
+		const files = [file('notes/target.md'), file('assets/a.png')];
+		const { app } = fakeApp(files);
+		fileLookupIndex.validate(app);
+		expect(
+			newReferencePath(app, files[0]!, 'notes/n.md', 'shortest', {
+				omitMarkdownExtension: true,
+			}),
+			'shortest：文档链接省 .md',
+		).toBe('target');
+		expect(
+			newReferencePath(app, files[0]!, 'notes/n.md', 'absolute', {
+				omitMarkdownExtension: true,
+			}),
+			'absolute：官方不省 .md，保持完整路径',
+		).toBe('notes/target.md');
+		expect(
+			newReferencePath(app, files[1]!, 'notes/n.md', 'shortest'),
+			'图片不带省略选项 → 恒带扩展名',
+		).toBe('a.png');
 	});
 });

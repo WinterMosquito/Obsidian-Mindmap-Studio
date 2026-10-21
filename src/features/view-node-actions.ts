@@ -27,14 +27,13 @@ import { openNodeTextModal } from '../ui/modal-text';
 import { markNodeNeedLayout } from '../engine/mindmap';
 import { notifyError } from '../core/errors';
 import { isEmbeddableAttachmentExtension } from '../core/constants';
-import { fileLookupIndex } from '../links/file-lookup';
+import { newReferencePath } from '../links/file-lookup';
 import { resolvePathToFile } from '../links/links-resolve';
 import { t, type TranslationKey } from '../core/i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
 import { composeNodeContent, isPureLinkNode } from '../markdown/md-serialize';
 
 import {
-	formatLinkPath,
 	formatWikilink,
 	isDocumentExtension,
 	linkDisplayText,
@@ -264,32 +263,13 @@ export function planDocLink(
  * 新建文档链接的**路径形态**：跟随官方「New link format」（默认最短路径）。
  *
  * 只影响**新建**——既有链接改写沿用原始前缀（links-tree 的引用更新口径）。
- * `shortest` 的唯一性判据：`getFirstLinkpathDest` 语义下同名文件会**优先命中
- * 当前文件**，官方口径是「最短**唯一**路径」，故库内存在同名文件时退化为完整
- * 路径（否则指向的文件可能与用户所选不同）。
+ * 读设置 / 同名消歧 / 三档拼接的唯一实现在 `links/file-lookup.newReferencePath`
+ * （与图片引用共用，那里有完整的官方口径注释）；本处只声明文档链接可省 `.md`。
  */
 function newDocLinkpath(file: TFile, sourcePath: string, app: App): string {
-	const format = preferredLinkPathFormat(app);
-	// 官方「最短路径」对 `.md` 省略扩展名（Obsidian 解析规则），其余带扩展名
-	const isMarkdown = file.extension.toLowerCase() === 'md';
-	const target =
-		format === 'shortest' && isMarkdown
-			? file.path.replace(/\.md$/i, '')
-			: file.path;
-	const ambiguous = format === 'shortest' && hasBasenameConflict(file, app);
-	return formatLinkPath(target, sourcePath, format, ambiguous);
-}
-
-/**
- * 库内是否存在**同名**文件（不同目录）——最短路径会指向歧义目标，官方口径是
- * 「最短**唯一**路径」，故退化为带目录的路径。
- *
- * 性能：查询下沉到共享文件索引的 basename 计数（缓存命中零扫描）——此前每次
- * 新建文档链接都 getFiles 全量拷贝 + some 扫描，拖入多个文件时逐次付。
- * 索引尚未建立 / 读取失败时由服务回落原口径（按「无冲突」处理，fail-open）。
- */
-function hasBasenameConflict(file: TFile, app: App): boolean {
-	return fileLookupIndex.hasBasenameConflict(app, file);
+	return newReferencePath(app, file, sourcePath, preferredLinkPathFormat(app), {
+		omitMarkdownExtension: true,
+	});
 }
 
 /**

@@ -18,7 +18,10 @@
   图标——这是跟随官方设置的代价，由用户显式选择）。设置经 `vault.getConfig('useMarkdownLinks')`
   读取（**未进官方 d.ts 的内部接口**），读取失败/不存在按官方默认处理；重命名改写同样支持 md 形态
   （`links-tree.mdTargetRenamed`，否则这类链接改名后失效）。`New link format` 的最短路径偏好已天然
-  满足（新建链接用 basename），改写时沿用用户原有前缀（见 `renamedWikilink`）。历史依据：审计文档
+  满足（新建链接用 basename），改写时沿用用户原有前缀（见 `renamedWikilink`）。**2026-10-20**：
+  「读设置 + 同名消歧 + 三档拼接」上收为 `links/file-lookup.newReferencePath`，**文档链接与图片
+  引用共用**——此前图片侧直接写 `file.path`（绝对路径），在默认 `shortest` 库中与 Obsidian 的
+  生成写法不一致（裸名引用被扩写）；md 形态（`![alt](路径)`）仍写完整库内路径。历史依据：审计文档
   `docs/external-audit-2026-09-08.md` §5.2/§7.4（该文档已从工作树移除，需要时用
   `git log --diff-filter=D -- docs/external-audit-2026-09-08.md` 从历史取回）。
 - [K2] 渲染层定位：正文保持纯 Markdown；布局/视口/打开偏好存 `data.json`（`viewState`，按文件路径），不写入文件。
@@ -1516,3 +1519,9 @@
   - **⚠ 调用形式订正（2026-10-20 实测）**：旧口径写的裸 `bash -lc '…'` 在本机**会落到 WSL**，不可用。实测证据：① `bash -lc 'echo $HOME; uname -s'` → `HOME=/home/legion`、`Linux`；② `Get-Command bash -All` 只回 `C:\Users\LEGION\AppData\Local\Microsoft\WindowsApps\bash.exe`（WSL App Execution Alias）；③ PATH 中 Git 项只有 `C:\Program Files\Git\cmd`（该目录无 `bash.exe`），`C:\Program Files\Git\bin` **不在** PATH。故 `bash` 永远不可能解析到 Git Bash，必须写全路径。
   - **理由**：① 与既有生态一致——探针脚本（`scripts/probe-*.sh`）本就是 bash，`grep` / `sed` / `tail` 等 Unix 工具直接可用（同日实测：PowerShell 里 `ls -la | head` 报「术语 'head' 不被识别」，须改写为 `Select-Object -First`）；② 单引号语义可预测，`obsidian eval --code='…'` 的内联 JS 在**单层** bash 下不易被破坏（K107 ④ 的 PowerShell 单引号经验对单层调用仍有效）。
   - **注意（双层调用仍会坏引号）**：经 PowerShell → bash **双层**传递时，内联 `--code='…'` 的引号与中文参数会静默损坏——`obsidian eval` 一律把 JS 包装进 `.sh` / `.mjs` **脚本文件**再执行（本仓库 `scripts/probe-*.sh` 即此模式的落地）。
+
+- [K126] **渲染保真与引用形态一日批（2026-10-20，四批均为实机取证 + 用户裁决）**：
+  - **① 粗体标记体跨对吞并**：`**粗一** 与 **粗二**` 整行被吞成一段粗体、裸 `**` 外露。根因：`MARKUP_RE` 的 `bold` 分支只在标记体**首字符后**判定一次 `(?!\*\*)`，随后 `[^\n]*` 贪婪回溯到行内**最后一个** `**`；既有用例 `**a** b **c**` 因标记体单字符恰好触发守卫而全绿（假绿）。修法：标记体改逐字符 temper（`(?:(?!\*\*)[^\n])*`），`boldU` 同步 `(?!__)`（此前 `[^_\n]*` 排除 `_`，`__粗 _斜_ 粗__` 同样外露）。
+  - **② `image-resize` 收敛 + 跨 realm 判定**：`instanceof SVGImageElement` 对 popout 窗口（另一 realm）恒 false ⇒ 手柄永不出现、帧内预览静默不写。判定上收 `engine/mindmap-nodes.isNodeImageElement`（标签名 + 取矩形能力），与 `previewNodeImageSize` 共用；同批把 setup/teardown 的清理三行、帧内与收尾的「引擎代际」判据各收口一份。
+  - **③ 调宽回写不再扩写引用**：合成回写原按 `resolvePathToFile(image).path` 写，`![[sample-icon.svg]]` 拖宽后变成 `![[fixtures/assets/sample-icon.svg|190]]`。现优先保留 `mdImageTarget`（仍指向同一文件时），仅目标失效 / 指向别的文件才回落真实路径；`image` 无法反查库内路径时保持旧口径（`links-split` 的「宁可不动」兜底依赖它）。
+  - **④ 新建图片的路径形态跟随官方 `New link format`**：此前 `normalizeImageReference` 直接写 `file.path`（绝对），无视设置。现与文档链接共用 `links/file-lookup.newReferencePath`（`shortest` 最短**唯一** / `relative` / `absolute`；**同名口径随引用形态**——省略 `.md` 的文档链接按去扩展名 basename，带扩展名的图片 / 附件 / `.canvas` 按文件名，`a.png` 与 `a.md`/`a.jpg` 不算同名，2026-10-21 审核修复此前复用 basename 计数导致的误判）；实机两档：库内唯一 → `![[sample-icon.svg|160]]`，存在同名 → `![[fixtures/assets/sample-icon.svg|160]]`。**存量引用不因后来出现同名文件而改写**（实测 Obsidian 只在重命名/移动时更新链接；改写未编辑行会破 `mdRaw` 逐字保真）——用户裁决「维持现状」，方案「保存时自动消歧存量」**已否决**。

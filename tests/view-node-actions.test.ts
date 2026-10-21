@@ -1509,14 +1509,16 @@ describe('图片操作（re-export 契约与自兜错误）', () => {
 			expect.any(Function),
 			'zh',
 		);
-		// 显示走资源地址（app://），回写目标仍是库内路径
+		// 显示走资源地址（app://），回写目标跟随官方「New link format」
 		expect(aspectImageOptionsMock).toHaveBeenCalledWith('app://local/assets/图.png');
 		expect(callArgs(execCommand)).toEqual([
 			ENGINE.SET_NODE_IMAGE,
 			node,
 			{ aspect: true },
 		]);
-		expect(dataOf(node).mdImageTarget).toBe('assets/图.png');
+		// 默认 shortest + 库内唯一 ⇒ 只写文件名（与 Obsidian 生成链接的写法一致；
+		// 2026-10-20 起图片新建/换图不再无条件写完整库内路径）
+		expect(dataOf(node).mdImageTarget).toBe('图.png');
 		expect(scheduleSave).toHaveBeenCalled();
 	});
 
@@ -1560,8 +1562,9 @@ describe('图片操作（re-export 契约与自兜错误）', () => {
  * - 初始数据一次给全：image/imageTitle/imageSize 与引擎 SET_NODE_IMAGE 命令的
  *   写入面一致（vendor `setNodeImage` 实测；缺 imageSize 会让 createImgNode →
  *   getImgShowSize 解构 TypeError、该节点渲染链中断）；
- * - md 回写字段与 applyNodeImage 同口径：mdImageTarget 取库内路径、mdImageStyle
- *   跟随官方「Use \[\[Wikilinks\]\]」（图片写入形态只有这一份判定）；
+ * - md 回写字段与 applyNodeImage 同口径：mdImageTarget 取**新建引用的路径形态**
+ *   （官方「New link format」，默认 shortest = 最短唯一路径；md 形态仍写完整
+ *   路径）、mdImageStyle 跟随官方「Use \[\[Wikilinks\]\]」（同一份判定）；
  * - 探测尺寸期间引擎换代 → 不插入、不保存、返回 false（静默丢失守卫）；
  * - 引擎缺失（视图重建中）→ 返回 false。
  */
@@ -1591,8 +1594,9 @@ describe('createImageChildNode（图片建节点的唯一入口）', () => {
 				image: 'app://local/attachments/b.png',
 				imageTitle: '探测标题',
 				imageSize: { width: 100, height: 60, custom: true },
-				mdImageTarget: 'attachments/b.png',
-				// 官方默认开「使用 [[Wikilinks]]」→ 回写 `![[attachments/b.png|100x60]]`
+				// 官方默认：Wikilinks 开 + New link format = shortest（唯一 ⇒ 只写文件名）
+				// ⇒ 回写 `![[b.png|100x60]]`
+				mdImageTarget: 'b.png',
 				mdImageStyle: 'wiki',
 				isActive: false,
 			},
