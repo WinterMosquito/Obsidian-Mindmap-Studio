@@ -4,9 +4,13 @@
  */
 import { Notice, setIcon, setTooltip } from 'obsidian';
 import {
+	DEFAULT_PALETTE,
+	DEFAULT_THEME_STYLE,
 	LAYOUT_OPTIONS,
 	LINE_STYLE_OPTIONS,
 	normalizeLineStylePreference,
+	PALETTE_OPTIONS,
+	THEME_STYLE_OPTIONS,
 } from '../core/constants';
 import {
 	arrangeMindMap as arrangeMindMapEngine,
@@ -24,7 +28,7 @@ import {
 	addLinkToActiveNode,
 	deleteActiveNode,
 } from './view-node-actions';
-import { t } from '../core/i18n';
+import { t, type TranslationKey } from '../core/i18n';
 import type { MindMapViewContext } from './view-context';
 
 /**
@@ -91,7 +95,44 @@ function buildToolbarLeftGroup(
 	});
 }
 
-/** 中组：布局与连线样式下拉（连线选项面随布局重建，见 syncLineStyleOptions） */
+/**
+ * 追加「标签 + 固定选项面的下拉」（布局 / 配色共用）。
+ *
+ * **连线样式不走这里**：它的选项面随布局重建（`syncLineStyleOptions`），初始
+ * 构建只是其中一次——套进本函数会把「静态构建」与「动态重建」两套逻辑叠在
+ * 一起。这里只收「选项固定、变更即回调」的那一类。
+ *
+ * 返回值交给调用方落到 `view.<x>Select`（视图契约引用），本函数不碰 view 字段：
+ * 字段的判空语义属于 `refreshToolbar` 的生命周期，不该散进构建工具。
+ */
+function appendFixedSelect(
+	view: MindMapViewContext,
+	centerGroup: HTMLElement,
+	spec: {
+		label: TranslationKey;
+		cls: string;
+		options: readonly { value: string; label: TranslationKey }[];
+		initialValue: string;
+		onChange: (value: string) => void;
+	},
+): HTMLSelectElement {
+	centerGroup.createSpan('mindmap-toolbar-label').setText(
+		t(view.lang, spec.label),
+	);
+	const select = centerGroup.createEl('select', { cls: spec.cls });
+	spec.options.forEach((option) => {
+		const optionEl = select.createEl('option');
+		optionEl.value = option.value;
+		optionEl.setText(t(view.lang, option.label));
+	});
+	select.value = spec.initialValue;
+	select.onchange = () => {
+		spec.onChange(select.value);
+	};
+	return select;
+}
+
+/** 中组：布局 / 连线样式 / 配色（连线选项面随布局重建，见 syncLineStyleOptions） */
 function buildToolbarCenterGroup(
 	view: MindMapViewContext,
 	toolbar: HTMLElement,
@@ -99,31 +140,23 @@ function buildToolbarCenterGroup(
 	const centerGroup = toolbar.createDiv(
 		'mindmap-toolbar-group mindmap-toolbar-center',
 	);
-	centerGroup.createSpan('mindmap-toolbar-label').setText(t(view.lang, 'toolbar.layout'));
-	// 局部量持有 select：选项面与初值设置都用它（`view.layoutSelect` 只是暴露给
-	// 视图契约的引用，供外部读）。同函数内不混用非空断言与判空——`refreshToolbar`
-	// 重建时会重新执行本函数，闭包不会持有旧元素。
-	const layoutSelect = centerGroup.createEl('select', {
+	// 局部量 = 本函数内的唯一引用（`view.layoutSelect` 只是暴露给视图契约，供外部读）。
+	// 同函数内不混用非空断言与判空——`refreshToolbar` 重建时会重新执行本函数。
+	view.layoutSelect = appendFixedSelect(view, centerGroup, {
+		label: 'toolbar.layout',
 		cls: 'mindmap-layout-select',
-	});
-	view.layoutSelect = layoutSelect;
-	LAYOUT_OPTIONS.forEach((option) => {
-		const optionEl = layoutSelect.createEl('option');
-		optionEl.value = option.value;
-		optionEl.setText(t(view.lang, option.label));
-	});
-	layoutSelect.value = view.plugin.settings.defaultLayout;
-	layoutSelect.onchange = () => {
+		options: LAYOUT_OPTIONS,
 		// 布局持久化到视图状态存储（.mindmap.md 正文不写入布局）
-		view.applyLayout(layoutSelect.value);
-	};
+		initialValue: view.plugin.settings.defaultLayout,
+		onChange: (value) => view.applyLayout(value),
+	});
 
 	centerGroup.createDiv('mindmap-toolbar-separator');
 	centerGroup.createSpan('mindmap-toolbar-label').setText(
 		t(view.lang, 'toolbar.lineStyle'),
 	);
-	// 视图契约引用照旧（`syncLineStyleOptions` 经 view 读它，且它可能在工具栏尚未
-	// 构建时就被调用——那里的判空是必要的）；本函数内一律用局部量，同上。
+	// 连线样式的选项面**随布局重建**，故不走 appendFixedSelect：这里只建控件，
+	// 选项面交给 syncLineStyleOptions（写法的判空在其内部，见该函数注释）。
 	const lineStyleSelect = centerGroup.createEl('select', {
 		cls: 'mindmap-line-style-select',
 	});
@@ -138,6 +171,28 @@ function buildToolbarCenterGroup(
 		// 连线样式偏好持久化到视图状态存储（两态：折线 / 曲线；正文不写入）
 		view.applyLineStyle(lineStyleSelect.value);
 	};
+
+	centerGroup.createDiv('mindmap-toolbar-separator');
+	// 配色按文件记（与布局/连线同形态）、全局设置里没有这一项；初始先落默认，
+	// 引擎就绪后由 onEngineReady 按当前文件的实际配色校正
+	view.paletteSelect = appendFixedSelect(view, centerGroup, {
+		label: 'toolbar.palette',
+		cls: 'mindmap-palette-select',
+		options: PALETTE_OPTIONS,
+		initialValue: DEFAULT_PALETTE,
+		onChange: (value) => view.applyPalette(value),
+	});
+
+	centerGroup.createDiv('mindmap-toolbar-separator');
+	// 主题（节点外观）同样按文件记、由顶栏切换——它已从全局设置移到此处，
+	// 故设置面板里只剩「主题」（＝明暗配色）一项
+	view.themeSelect = appendFixedSelect(view, centerGroup, {
+		label: 'toolbar.themeStyle',
+		cls: 'mindmap-theme-select',
+		options: THEME_STYLE_OPTIONS,
+		initialValue: DEFAULT_THEME_STYLE,
+		onChange: (value) => view.applyThemeStyle(value),
+	});
 }
 
 /** 右组：画布控制与导出（顺序左→右：重置缩放 → 适应画布 → 放大 → 缩小 → 导出） */

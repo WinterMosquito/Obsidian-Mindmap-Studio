@@ -274,6 +274,7 @@ function buildHarness(
 			lineStyle: 'straight',
 			themePref: 'default',
 			themeStyle: 'default',
+			palette: 'default',
 			enableDrag: false,
 		})),
 		openHyperlink: vi.fn(),
@@ -1531,6 +1532,7 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 			layout: 'mindMap',
 			lineStyle: 'straight',
 			themeStyle: 'default',
+			palette: 'default',
 		});
 		// 切换布局后自动整理一次（无引擎的那次早退不算）
 		expect(mocks.arrangeMindMap).toHaveBeenCalledTimes(1);
@@ -1551,6 +1553,7 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 			layout: 'logicalStructure',
 			lineStyle: 'curve',
 			themeStyle: 'default',
+			palette: 'default',
 		});
 	});
 
@@ -1565,6 +1568,7 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 			layout: 'logicalStructure',
 			lineStyle: 'straight',
 			themeStyle: 'default',
+			palette: 'default',
 		});
 	});
 

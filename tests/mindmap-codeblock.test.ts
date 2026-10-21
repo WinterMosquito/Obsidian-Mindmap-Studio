@@ -244,6 +244,7 @@ describe('跨文件契约', () => {
 			lineStyle: 'auto',
 			themePref: 'default',
 			themeStyle: 'default',
+			palette: 'default',
 			isDark: false,
 			enableDrag: true,
 			readonly: true,
@@ -264,6 +265,7 @@ describe('跨文件契约', () => {
 			lineStyle: 'auto',
 			themePref: 'default',
 			themeStyle: 'default',
+			palette: 'default',
 			isDark: false,
 			enableDrag: true,
 			lang: 'zh',
@@ -296,6 +298,7 @@ describe('跨文件契约', () => {
 			layout: 'logicalStructure',
 			lineStyle: 'auto',
 			themeStyle: 'borderless',
+			palette: 'amber',
 		});
 
 		expect(calls).toEqual([
@@ -304,6 +307,7 @@ describe('跨文件契约', () => {
 				'logicalStructure',
 				'auto',
 				'borderless',
+				'amber',
 			),
 		]);
 	});
@@ -316,7 +320,21 @@ describe('跨文件契约', () => {
 				layout: 'mindMap',
 				lineStyle: 'curve',
 				themeStyle: 'default',
+				palette: 'default',
 			}),
 		).not.toThrow();
+	});
+
+	it('嵌入不吃按文件记的两项（配色 / 主题）：两处恒传默认值', () => {
+		const source = readFileSync(
+			new URL('../src/features/mindmap-codeblock.ts', import.meta.url),
+			'utf8',
+		);
+		// 两处换肤（创建期 + css-change）都必须是默认值
+		expect(source.match(/palette: DEFAULT_PALETTE/g)?.length).toBe(2);
+		expect(source.match(/themeStyle: DEFAULT_THEME_STYLE/g)?.length).toBe(2);
+		// 嵌入面不得读用户设置，也不得从 config 透传这两项
+		expect(source).not.toMatch(/settings\.(palette|themeStyle)/);
+		expect(source).not.toMatch(/themeStyle: (config|next)\.themeStyle/);
 	});
 });

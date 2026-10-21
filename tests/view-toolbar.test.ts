@@ -18,7 +18,14 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import { LAYOUT_OPTIONS, LINE_STYLE_OPTIONS } from '../src/core/constants';
+import {
+	DEFAULT_PALETTE,
+	DEFAULT_THEME_STYLE,
+	LAYOUT_OPTIONS,
+	LINE_STYLE_OPTIONS,
+	PALETTE_OPTIONS,
+	THEME_STYLE_OPTIONS,
+} from '../src/core/constants';
 import { t } from '../src/core/i18n';
 import {
 	arrangeMindMap,
@@ -513,7 +520,7 @@ describe('buildToolbar（布局选择器）', () => {
 });
 
 describe('buildToolbar（连线样式选择器）', () => {
-	it('居中分组：布局与连线两个标签 + 分隔符 + 两项样式（折线在上，对应 LINE_STYLE_OPTIONS）', () => {
+	it('居中分组：布局 / 连线 / 配色 / 主题四个标签 + 三个分隔符 + 各项选项（值对应选项表）', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		const center = groupOf(h.toolbarEl, 'mindmap-toolbar-center');
@@ -522,12 +529,14 @@ describe('buildToolbar（连线样式选择器）', () => {
 		expect(labels.map((label) => label.text)).toEqual([
 			t('zh', 'toolbar.layout'),
 			t('zh', 'toolbar.lineStyle'),
+			t('zh', 'toolbar.palette'),
+			t('zh', 'toolbar.themeStyle'),
 		]);
 		expect(
-			center.children.some((child) =>
+			center.children.filter((child) =>
 				child.classes.includes('mindmap-toolbar-separator'),
 			),
-		).toBe(true);
+		).toHaveLength(3);
 
 		const select = h.view.lineStyleSelect;
 		expect(select).not.toBeNull();
@@ -545,6 +554,37 @@ describe('buildToolbar（连线样式选择器）', () => {
 		expect(options.map((option) => option.text)).toEqual(
 			LINE_STYLE_OPTIONS.map((option) => t('zh', option.label)),
 		);
+
+		// 配色下拉：六项（首项「默认」）、初始落 DEFAULT_PALETTE、变更走 applyPalette
+		const paletteSelect = h.view.paletteSelect;
+		expect(paletteSelect).not.toBeNull();
+		expect((paletteSelect as unknown as FakeEl).classes).toEqual([
+			'mindmap-palette-select',
+		]);
+		const paletteOptions = (paletteSelect as unknown as FakeEl).children.filter(
+			(child) => child.tag === 'option',
+		);
+		expect(paletteOptions.map((option) => option.value)).toEqual(
+			PALETTE_OPTIONS.map((option) => option.value),
+		);
+		expect(paletteOptions.map((option) => option.text)).toEqual(
+			PALETTE_OPTIONS.map((option) => t('zh', option.label)),
+		);
+		expect((paletteSelect as unknown as FakeEl).value).toBe(DEFAULT_PALETTE);
+
+		// 主题下拉（节点外观）：从全局设置移到顶栏后的落点
+		const themeSelect = h.view.themeSelect;
+		expect(themeSelect).not.toBeNull();
+		expect((themeSelect as unknown as FakeEl).classes).toEqual([
+			'mindmap-theme-select',
+		]);
+		const themeOptions = (themeSelect as unknown as FakeEl).children.filter(
+			(child) => child.tag === 'option',
+		);
+		expect(themeOptions.map((option) => option.value)).toEqual(
+			THEME_STYLE_OPTIONS.map((option) => option.value),
+		);
+		expect((themeSelect as unknown as FakeEl).value).toBe(DEFAULT_THEME_STYLE);
 	});
 
 	it('初始值取插件设置 defaultLineStyle，变更时调 applyLineStyle(当前值)', () => {

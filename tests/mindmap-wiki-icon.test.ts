@@ -136,6 +136,7 @@ const BASE_OPTIONS: CreateMindMapOptions = {
 	lineStyle: 'auto',
 	themePref: 'default',
 	themeStyle: 'default',
+	palette: 'default',
 	isDark: false,
 	enableDrag: false,
 	// 性能模式/阈值不再传（2026-10-09 减法）：缺省即「常开 + 常量阈值」，

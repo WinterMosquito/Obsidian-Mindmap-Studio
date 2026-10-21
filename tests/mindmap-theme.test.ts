@@ -193,3 +193,91 @@ describe('getThemeConfig（主题：节点外观，与主题色正交）', () =>
 		}
 	});
 });
+
+describe('getThemeConfig（配色：色相方案，与明暗 / 主题三维正交）', () => {
+	const PALETTE_IDS = [
+		'default',
+		'mint',
+		'amber',
+		'wisteria',
+		'forest',
+		'slate',
+	] as const;
+
+	const tokenOf = (
+		config: Record<string, unknown>,
+		level: 'root' | 'second' | 'node',
+	): Record<string, unknown> => config[level] as Record<string, unknown>;
+
+	const configOf = (
+		isDark: boolean,
+		palette: string,
+		themeStyle = 'default',
+	): Record<string, unknown> =>
+		getThemeConfig(isDark, 'logicalStructure', 'straight', themeStyle, palette);
+
+	it('默认配色为蓝，逐值与改造前一致（升级零变化）', () => {
+		const light = getThemeConfig(false, 'logicalStructure');
+		expect(tokenOf(light, 'root').fillColor).toBe('#4a90d9');
+		expect(tokenOf(light, 'second').fillColor).toBe('#f1f5f9');
+		expect(tokenOf(light, 'node').fillColor).toBe('#f8fafc');
+		expect(tokenOf(light, 'second').borderColor).toBe('#cbd5e1');
+		expect(light.lineColor).toBe('#94a3b8');
+
+		const dark = getThemeConfig(true, 'logicalStructure');
+		expect(tokenOf(dark, 'root').fillColor).toBe('#2d2d2d');
+		expect(dark.lineColor).toBe('#4a4a4a');
+	});
+
+	it('六套配色都产出完整九键色板，且亮暗两档成对（root / line 不同）', () => {
+		for (const palette of PALETTE_IDS) {
+			const light = configOf(false, palette);
+			const dark = configOf(true, palette);
+			for (const level of ['root', 'second', 'node'] as const) {
+				expect(tokenOf(light, level).fillColor, `${palette}/light/${level}`).toMatch(
+					/^#[0-9a-f]{6}$/,
+				);
+				expect(tokenOf(dark, level).fillColor, `${palette}/dark/${level}`).toMatch(
+					/^#[0-9a-f]{6}$/,
+				);
+			}
+			expect(tokenOf(light, 'root').fillColor, palette).not.toBe(
+				tokenOf(dark, 'root').fillColor,
+			);
+			expect(light.lineColor, palette).not.toBe(dark.lineColor);
+		}
+	});
+
+	it('文字色不随配色变（三档按明暗固定，避免彩色底配错字）', () => {
+		const lightRootTexts = new Set(
+			PALETTE_IDS.map((p) => tokenOf(configOf(false, p), 'root').color),
+		);
+		const darkRootTexts = new Set(
+			PALETTE_IDS.map((p) => tokenOf(configOf(true, p), 'root').color),
+		);
+		expect(lightRootTexts.size).toBe(1);
+		expect(darkRootTexts.size).toBe(1);
+	});
+
+	it('配色与无边框主题正交：root 保留配色、second/node 被置透明', () => {
+		const config = configOf(false, 'mint', 'borderless');
+		expect(tokenOf(config, 'root').fillColor).toBe('#2e9e8f');
+		expect(tokenOf(config, 'node').fillColor).toBe('transparent');
+		expect(tokenOf(config, 'second').borderWidth).toBe(0);
+	});
+
+	it('配色与明暗正交：每套配色在亮/暗下都生效且互不相同', () => {
+		const lightRoots = PALETTE_IDS.map(
+			(p) => tokenOf(configOf(false, p), 'root').fillColor,
+		);
+		// 六套 root 互不相同（否则说明某套配色没被读到，退回同一个值）
+		expect(new Set(lightRoots).size).toBe(PALETTE_IDS.length);
+	});
+
+	it('未知 / 空 / 大小写不符的配色回退「默认」（手改 data.json 不致渲染失败）', () => {
+		const defaultRoot = tokenOf(configOf(false, 'default'), 'root').fillColor;
+		for (const bad of ['nope', '', 'DEFAULT', 'mint ']) {
+			expect(tokenOf(configOf(false, bad), 'root').fillColor, bad).toBe(defaultRoot);
+		}
+	});
+});

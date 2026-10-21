@@ -153,7 +153,6 @@ export default class MindMapStudioPlugin extends Plugin {
 							layout: this.settings.defaultLayout,
 							lineStyle: this.settings.defaultLineStyle,
 							themePref: this.settings.defaultTheme,
-							themeStyle: this.settings.themeStyle,
 							lang: this.settings.language,
 						}),
 					),

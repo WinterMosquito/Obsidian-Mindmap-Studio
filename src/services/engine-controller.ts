@@ -60,6 +60,8 @@ interface EngineSetupOptions {
 	themePref: string;
 	/** 节点外观主题 id（default/borderless；与 themePref 正交） */
 	themeStyle: string;
+	/** 配色 id（default/mint/…；与 themePref、themeStyle 三维正交） */
+	palette: string;
 	enableDrag: boolean;
 	// 性能模式与阈值**不经过设置**（2026-10-09 减法：常开 + 常量阈值），
 	// 故不在此列——`createMindMap` 的缺省值即判据
@@ -313,6 +315,7 @@ export class EngineController {
 				lineStyle: options.lineStyle,
 				themePref: options.themePref,
 				themeStyle: options.themeStyle,
+				palette: options.palette,
 				isDark: this.deps.isDark(),
 				enableDrag: options.enableDrag,
 				lang: this.deps.getLang(),
@@ -590,6 +593,7 @@ export class EngineController {
 			layout: setup.layout,
 			lineStyle: setup.lineStyle,
 			themeStyle: setup.themeStyle,
+			palette: setup.palette,
 		});
 	}
 

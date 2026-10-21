@@ -57,7 +57,11 @@
  * 判据 `containerEl.isShown()` 已具备。
  */
 import { App, MarkdownRenderChild } from 'obsidian';
-import { CODE_BLOCK_MAX_NODES } from '../core/constants';
+import {
+	CODE_BLOCK_MAX_NODES,
+	DEFAULT_PALETTE,
+	DEFAULT_THEME_STYLE,
+} from '../core/constants';
 import { createThrottler } from '../core/concurrency';
 import { EventBinder } from '../core/event-binder';
 import { t, tf, type Language } from '../core/i18n';
@@ -111,15 +115,17 @@ const EMBED_FIT_PADDING = 12;
 
 /**
  * 嵌入渲染所需的**最窄设置面**（窄化契约，同 `CommandsHost` 手法）：
- * 只取五项，且由组合根取值——features 不引 `settings`（组合根禁令）。
+ * 只取四项，且由组合根取值——features 不引 `settings`（组合根禁令）。
+ *
+ * **不含 `themeStyle` / `palette`**：这两项已改为**按文件**记在 `viewState`
+ * （顶栏切换），嵌入是笔记正文里的只读小盒、没有「当前文件」的身份，故恒用
+ * `DEFAULT_THEME_STYLE` / `DEFAULT_PALETTE`（2026-10-21 用户裁决）。
  */
 export interface MindmapEmbedConfig {
 	layout: string;
 	lineStyle: string;
-	/** 主题色（明暗配色） */
+	/** 主题（明暗配色） */
 	themePref: string;
-	/** 节点外观主题（与 themePref 正交） */
-	themeStyle: string;
 	lang: Language;
 }
 
@@ -334,7 +340,10 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 				layout: config.layout,
 				lineStyle: config.lineStyle,
 				themePref: config.themePref,
-				themeStyle: config.themeStyle,
+				// 嵌入**不吃**按文件记的两项（用户裁决）：正文里的只读小盒恒用
+				// 默认外观与基准配色，顶栏切换只影响文件视图
+				themeStyle: DEFAULT_THEME_STYLE,
+				palette: DEFAULT_PALETTE,
 				isDark: this.app.isDarkMode(),
 				enableDrag: false,
 				// 只读嵌入：引擎原生 readonly（命令/编辑全禁）+ 不注册任何交互插件
@@ -386,7 +395,9 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 					themePref: next.themePref,
 					layout: next.layout,
 					lineStyle: next.lineStyle,
-					themeStyle: next.themeStyle,
+					// 同 mount：嵌入恒用默认外观与基准配色，不跟顶栏的两项
+					themeStyle: DEFAULT_THEME_STYLE,
+					palette: DEFAULT_PALETTE,
 				});
 				refreshPrismTokenColors(el);
 			}),

@@ -8,12 +8,48 @@
  * 状态：
  * - layout: 布局类型（logicalStructure/mindMap/...）
  * - lineStyle: 连线样式偏好（auto/curve/direct/straight；auto＝随布局）
+ * - palette: 配色（default/mint/amber/wisteria/forest/slate；**按文件记**，
+ *   由导图顶栏切换——配色不是全局设置，见 `core/constants.PALETTE_OPTIONS`）
+ * - themeStyle: 节点外观主题（default/borderless；**按文件记**，由导图顶栏切换——
+ *   同样不是全局设置，见 `core/constants.THEME_STYLE_OPTIONS`）
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）
  */
 import { createDebouncer, type Debouncer } from '../core/concurrency';
 import { VIEW_STATE_PERSIST_MS } from '../core/constants';
 
 export type PathState = Record<string, unknown>;
+
+/** 视图按文件记忆的四项偏好（全部有全局默认值或内置默认值） */
+export interface FilePreferences {
+	layout: string;
+	lineStyle: string;
+	themeStyle: string;
+	palette: string;
+}
+
+/**
+ * 「按文件偏好 + 全局默认」的合成——**四个维度必须同时给默认值**（类型强制），
+ * 视图与新建流程共用这一处。
+ *
+ * 为什么收成一个函数：四个维度各自在视图里写一遍 `getX(path) ?? 默认`，
+ * 极易在某一维写成「硬编码默认」而不是「settings 默认」——2026-10-21 的
+ * `themeStyle` 就犯过这个错（回落 `DEFAULT_THEME_STYLE` 而非
+ * `settings.defaultThemeStyle`，导致「默认边框样式」对新建导图无效）。
+ * 并排写在一处后，缺省值写错一眼可见，且由单测锁死。
+ *
+ * 纯函数、零依赖：`saved` 只收「该文件是否记过」，未记过（undefined）即用默认。
+ */
+export function resolveFilePreferences(input: {
+	saved: Partial<FilePreferences>;
+	defaults: FilePreferences;
+}): FilePreferences {
+	return {
+		layout: input.saved.layout ?? input.defaults.layout,
+		lineStyle: input.saved.lineStyle ?? input.defaults.lineStyle,
+		themeStyle: input.saved.themeStyle ?? input.defaults.themeStyle,
+		palette: input.saved.palette ?? input.defaults.palette,
+	};
+}
 
 const VIEW_STATE_KEY = 'viewState';
 
@@ -99,7 +135,13 @@ export class ViewStateStore {
 				if ('view' in s && !isUsableSavedView(s.view)) {
 					delete s.view;
 				}
-				if ('layout' in s || 'lineStyle' in s || 'view' in s) {
+				if (
+					'layout' in s ||
+					'lineStyle' in s ||
+					'palette' in s ||
+					'themeStyle' in s ||
+					'view' in s
+				) {
 					this.map.set(path, s);
 				}
 			}
@@ -128,6 +170,26 @@ export class ViewStateStore {
 
 	setLineStyle(path: string, lineStyle: string): void {
 		this.patch(path, { lineStyle });
+	}
+
+	/** 配色（按文件）：顶栏切换后写入，未设置时由视图回落 `DEFAULT_PALETTE` */
+	getPalette(path: string): string | undefined {
+		const palette = this.map.get(path)?.palette;
+		return typeof palette === 'string' ? palette : undefined;
+	}
+
+	setPalette(path: string, palette: string): void {
+		this.patch(path, { palette });
+	}
+
+	/** 节点外观主题（按文件）：顶栏切换后写入，未设置时回落 `DEFAULT_THEME_STYLE` */
+	getThemeStyle(path: string): string | undefined {
+		const themeStyle = this.map.get(path)?.themeStyle;
+		return typeof themeStyle === 'string' ? themeStyle : undefined;
+	}
+
+	setThemeStyle(path: string, themeStyle: string): void {
+		this.patch(path, { themeStyle });
 	}
 
 	getView(path: string): unknown {

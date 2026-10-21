@@ -81,10 +81,19 @@ export interface CreateMindMapOptions {
 	themePref: string;
 	/**
 	 * 节点外观主题（`core/constants.THEME_STYLE_OPTIONS` 的 id）。
-	 * 与 `themePref` **正交**：themePref 管配色，本项管节点形态（填充/边框）。
+	 * 与 `themePref` **正交**：themePref 管明暗，本项管节点形态（填充/边框）。
 	 * 设为必填而非缺省：新增调用点漏传会静默丢掉用户的主题选择。
 	 */
 	themeStyle: string;
+	/**
+	 * 配色（`core/constants.PALETTE_OPTIONS` 的 id）：只换整套色板的色相，
+	 * 与 `themePref`（明暗）、`themeStyle`（形态）三维正交。
+	 *
+	 * ⚠ **```mindmap 嵌入恒传 `DEFAULT_PALETTE`**——嵌入是笔记正文里的只读小盒，
+	 * 用户换配色属于「我的导图长什么样」，不该把正文里的嵌入一起染色（用户裁决
+	 * 2026-10-21）。嵌入侧因此不新增设置字段。
+	 */
+	palette: string;
 	isDark: boolean;
 	enableDrag: boolean;
 	/**
@@ -360,6 +369,7 @@ export function createMindMap(
 					options.layout,
 					options.lineStyle,
 					options.themeStyle,
+					options.palette,
 				),
 				// 不在创建时 fit 全图：打开后的默认视口由 centerContentAtFullScale
 				// 统一设置（100% + **整体内容**居中）。注意引擎布局默认
@@ -415,7 +425,7 @@ export function createMindMap(
 							el.ownerDocument,
 							wikiLink,
 							title,
-							getDocIconColor(dark),
+							getDocIconColor(dark, options.palette),
 							(link) => options.onHyperlinkJump?.(link, node),
 						),
 						width: WIKI_DOC_ICON_SIZE,
@@ -580,6 +590,8 @@ export interface ThemeConfigInput {
 	lineStyle: string;
 	/** 节点外观主题 id（default/borderless） */
 	themeStyle: string;
+	/** 配色 id（default/mint/amber/wisteria/forest/slate） */
+	palette: string;
 }
 
 /**
@@ -603,6 +615,7 @@ export function applyThemeConfig(
 			input.layout,
 			input.lineStyle,
 			input.themeStyle,
+			input.palette,
 		),
 	);
 }

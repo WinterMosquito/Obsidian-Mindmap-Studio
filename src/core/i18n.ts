@@ -62,6 +62,8 @@ const ZH = {
 	'toolbar.insertImage': '添加图片',
 	'toolbar.layout': '布局：',
 	'toolbar.lineStyle': '连线：',
+	'toolbar.palette': '配色：',
+	'toolbar.themeStyle': '边框：',
 	'toolbar.zoomIn': '放大',
 	'toolbar.zoomOut': '缩小',
 	'toolbar.resetZoom': '重置缩放（100%）',
@@ -184,11 +186,12 @@ const ZH = {
 	'settings.defaultLayoutDesc': '新建思维导图时使用的默认布局',
 	'settings.defaultLineStyle': '默认连线样式',
 	'settings.defaultLineStyleDesc': '新建思维导图时使用的默认连线样式（折线 / 曲线；仅逻辑结构图/思维导图/组织结构图可切换）',
-	'settings.defaultTheme': '主题色',
+	'settings.defaultTheme': '主题',
 	'settings.defaultThemeDesc':
 		'导图的明暗配色：跟随 Obsidian / 强制亮色 / 强制暗色',
-	'settings.themeStyle': '主题',
-	'settings.themeStyleDesc': '导图的节点外观主题（与主题色互不影响）',
+	'settings.defaultThemeStyle': '默认边框样式',
+	'settings.defaultThemeStyleDesc':
+		'新建思维导图的边框样式（单篇导图可在顶栏「边框」随时切换）',
 	'settings.saveLocation': '新建导图的默认位置',
 	'settings.saveLocationDesc':
 		'新建思维导图时保存到哪个文件夹。「跟随 Obsidian 设置」＝使用官方「文件与链接 → 新建笔记的默认位置」',
@@ -236,8 +239,14 @@ const ZH = {
 	'theme.default': '跟随 Obsidian',
 	'theme.forceLight': '强制亮色',
 	'theme.forceDark': '强制暗色',
-	'themeStyle.default': '默认',
+	'themeStyle.default': '有边框',
 	'themeStyle.borderless': '无边框',
+	'palette.default': '默认',
+	'palette.mint': '薄荷',
+	'palette.amber': '琥珀',
+	'palette.wisteria': '紫藤',
+	'palette.forest': '森林',
+	'palette.slate': '石板',
 
 	// ===== 搜索栏按钮提示 =====
 	'search.prev': '上一个 (Shift+Enter)',
@@ -323,6 +332,8 @@ const EN: Record<TranslationKey, string> = {
 	'toolbar.insertImage': 'Add image',
 	'toolbar.layout': 'Layout: ',
 	'toolbar.lineStyle': 'Line style: ',
+	'toolbar.palette': 'Palette: ',
+	'toolbar.themeStyle': 'Border: ',
 	'toolbar.zoomIn': 'Zoom in',
 	'toolbar.zoomOut': 'Zoom out',
 	'toolbar.resetZoom': 'Reset zoom (100%)',
@@ -445,12 +456,12 @@ const EN: Record<TranslationKey, string> = {
 	'settings.defaultLayoutDesc': 'Default layout when creating a new mind map',
 	'settings.defaultLineStyle': 'Default line style',
 	'settings.defaultLineStyleDesc': 'Default connector style for new mind maps (Elbow / Curve; switchable only for Logical structure / Mind map / Organization chart)',
-	'settings.defaultTheme': 'Theme color',
+	'settings.defaultTheme': 'Theme',
 	'settings.defaultThemeDesc':
 		'Light/dark palette for mind maps: follow Obsidian / force light / force dark',
-	'settings.themeStyle': 'Theme',
-	'settings.themeStyleDesc':
-		'Node appearance theme for mind maps (independent of theme color)',
+	'settings.defaultThemeStyle': 'Default border style',
+	'settings.defaultThemeStyleDesc':
+		'Border style for new mind maps (each map can switch it anytime from the "Border" dropdown in the toolbar)',
 	'settings.saveLocation': 'Default location for new mind maps',
 	'settings.saveLocationDesc':
 		'Where new mind maps are saved. "Follow Obsidian setting" uses Files and links → Default location for new notes',
@@ -499,8 +510,14 @@ const EN: Record<TranslationKey, string> = {
 	'theme.default': 'Follow Obsidian',
 	'theme.forceLight': 'Force light',
 	'theme.forceDark': 'Force dark',
-	'themeStyle.default': 'Default',
+	'themeStyle.default': 'Bordered',
 	'themeStyle.borderless': 'Borderless',
+	'palette.default': 'Default',
+	'palette.mint': 'Mint',
+	'palette.amber': 'Amber',
+	'palette.wisteria': 'Wisteria',
+	'palette.forest': 'Forest',
+	'palette.slate': 'Slate',
 
 	// ===== 搜索栏按钮提示 =====
 	'search.prev': 'Previous (Shift+Enter)',

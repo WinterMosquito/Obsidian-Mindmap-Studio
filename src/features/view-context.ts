@@ -118,6 +118,10 @@ export interface ViewDomContext {
 	layoutSelect: HTMLSelectElement | null;
 	/** 连线样式选择器（view-toolbar 构建并持有） */
 	lineStyleSelect: HTMLSelectElement | null;
+	/** 配色选择器（view-toolbar 构建并持有；按文件记，非全局设置） */
+	paletteSelect: HTMLSelectElement | null;
+	/** 主题选择器（view-toolbar 构建并持有；按文件记，非全局设置） */
+	themeSelect: HTMLSelectElement | null;
 }
 
 /**
@@ -163,6 +167,10 @@ export interface MindMapViewContext
 	applyLayout(layout: string): void;
 	/** 应用指定连线样式偏好（连线样式选择器变更时；两态：折线 / 曲线） */
 	applyLineStyle(lineStyle: string): void;
+	/** 应用指定配色（配色选择器变更时；按文件写入 `data.json` 的 `viewState`） */
+	applyPalette(palette: string): void;
+	/** 应用指定主题（主题选择器变更时；按文件写入 `data.json` 的 `viewState`） */
+	applyThemeStyle(themeStyle: string): void;
 
 	// ---- 插件能力（窄化）----
 	readonly plugin: ViewPluginContext;

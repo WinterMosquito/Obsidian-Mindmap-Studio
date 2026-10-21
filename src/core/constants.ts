@@ -218,6 +218,56 @@ export function normalizeThemeStyle(value: unknown): ThemeStyleId {
 }
 
 /**
+ * 配色（色相方案）——与「主题色」（明暗）、「主题」（节点形态）**三维正交**：
+ * - 主题色（`THEME_OPTIONS`）决定亮/暗色板；
+ * - 主题（`THEME_STYLE_OPTIONS`）决定节点是否绘制填充/描边；
+ * - 配色（本表）决定整套色板的色相。
+ *
+ * 每套配色必须在 `engine/mindmap-theme-presets.ts` 的 `PALETTES` 里同时给出
+ * light / dark 两档（`Record<PaletteId, …>` 编译期强制）。
+ * **文字色不随配色变**（三档共用、按明暗定），故每套只维护 5 个填充/线色。
+ *
+ * 规范同主题：id 发布即冻结（写进 `data.json`）；新增配色＝本表加一项 +
+ * `PALETTES` 加两档 + i18n 一对，渲染代码零改动。
+ */
+export interface PaletteOption {
+	value: string;
+	label: TranslationKey;
+}
+
+/**
+ * 配色选项（顺序＝界面顺序；首项「默认」＝本特性引入前的蓝色基准）。
+ *
+ * ⚠ 与「主题色」「主题」不同，**配色不是全局设置**：它按文件记在
+ * `data.json` 的 `viewState[<路径>].palette`，由导图顶栏切换（与布局/连线样式
+ * 同一种「按文件记忆」形态）。故本表只供工具栏与白名单使用，不进
+ * `MindMapStudioSettings`。
+ */
+export const PALETTE_OPTIONS = [
+	{ value: 'default', label: 'palette.default' },
+	{ value: 'mint', label: 'palette.mint' },
+	{ value: 'amber', label: 'palette.amber' },
+	{ value: 'wisteria', label: 'palette.wisteria' },
+	{ value: 'forest', label: 'palette.forest' },
+	{ value: 'slate', label: 'palette.slate' },
+] as const satisfies readonly PaletteOption[];
+
+/** 配色 id（从选项表派生；勿手写第二份字面量联合） */
+export type PaletteId = (typeof PALETTE_OPTIONS)[number]['value'];
+
+/** 未设置时的配色（＝本特性引入前的蓝色基准，升级观感零变化） */
+export const DEFAULT_PALETTE: PaletteId = 'default';
+
+/**
+ * 脏值归一（渲染侧兜底）：未知 id / 手改 data.json / 空串 / 非字符串
+ * 一律回退默认配色——与 `normalizeThemeStyle` 同口径。
+ */
+export function normalizePalette(value: unknown): PaletteId {
+	const match = PALETTE_OPTIONS.find((option) => option.value === value);
+	return match ? match.value : DEFAULT_PALETTE;
+}
+
+/**
  * 导出图片格式的**唯一来源**（settings 设置项 / engine 导出参数 / features 入口
  * 共用本类型，勿各自再写一份 `'png' | 'svg'`）。
  */

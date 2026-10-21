@@ -30,7 +30,11 @@ import { updatesInternalLinksOnRename } from '../platform/vault-prefs';
 import { createDebouncer, createThrottler, type Debouncer } from '../core/concurrency';
 import {
 	AUTO_SPLIT_CHECK_DELAY_MS,
+	DEFAULT_PALETTE,
+	DEFAULT_THEME_STYLE,
 	normalizeLineStylePreference,
+	normalizePalette,
+	normalizeThemeStyle,
 	VIEW_TYPE,
 } from '../core/constants';
 import type { MindMap, MindMapNode } from '../core/engine-types';
@@ -39,6 +43,7 @@ import {
 	applyImageSizeCorrectionsToEngine,
 	getRenderRoot,
 } from '../engine/mindmap';
+import { resolveFilePreferences } from '../services/view-state';
 import { ContentRemeasureSession } from './content-remeasure';
 import {
 	collectImageSizeCorrections,
@@ -143,7 +148,7 @@ const RESIZE_THROTTLE_MS = 100;
  */
 const IN_PLACE_REFRESH_KEYS = new Set([
 	'defaultTheme',
-	'themeStyle',
+	'defaultThemeStyle',
 	'defaultLayout',
 	'defaultLineStyle',
 ]);
@@ -170,6 +175,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	searchCountEl: HTMLElement | null = null;
 	layoutSelect: HTMLSelectElement | null = null;
 	lineStyleSelect: HTMLSelectElement | null = null;
+	paletteSelect: HTMLSelectElement | null = null;
+	themeSelect: HTMLSelectElement | null = null;
 	/** 当前深色主题（css-change 时重算；仅本类与引擎控制器装配面使用） */
 	private isDark = false;
 
@@ -232,6 +239,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * applyLineStyle/resolveLineStyle 维护。
 	 */
 	private currentLineStyle: string | null = null;
+	/**
+	 * 当前配色（色相方案）。与布局/连线样式同口径：**按文件**持久化到视图状态
+	 * 存储（不是全局设置），由本类经 `applyPalette` / `resolvePalette` 维护。
+	 */
+	private currentPalette: string | null = null;
+	/**
+	 * 当前节点外观主题（default/borderless）。同样**按文件**记在视图状态存储，
+	 * 由本类经 `applyThemeStyle` / `resolveThemeStyle` 维护。
+	 */
+	private currentThemeStyle: string | null = null;
 	/**
 	 * 自动拆分混排双链的延后检查计时器（引擎 data_change 后触发）。
 	 * 视图关闭必须清理：回调会操作引擎与节点数据。
@@ -364,7 +381,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				layout: this.resolveLayout(),
 				lineStyle: this.resolveLineStyle(),
 				themePref: this.plugin.settings.defaultTheme,
-				themeStyle: this.plugin.settings.themeStyle,
+				// 主题与配色都按文件记（viewState），不是设置项
+				themeStyle: this.resolveThemeStyle(),
+				palette: this.resolvePalette(),
 				enableDrag: this.plugin.settings.enableDrag,
 				// 性能模式与阈值不再由设置传入（2026-10-09 减法）：引擎缺省
 				// 即「开启 + PERFORMANCE_NODE_THRESHOLD」，无需在此复述
@@ -685,14 +704,26 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	private async loadMindMapFromFile(file: TFile): Promise<void> {
 		this.loadingFilePath = file.path;
-		// 布局取自视图状态存储（按文件路径）；不再跨文件沿用上一文件的布局
-		this.currentLayout =
-			this.plugin.viewState.getLayout(file.path) ??
-			this.plugin.settings.defaultLayout;
-		// 连线样式偏好同口径按文件取（两态：折线 / 曲线）
-		this.currentLineStyle =
-			this.plugin.viewState.getLineStyle(file.path) ??
-			this.plugin.settings.defaultLineStyle;
+		// 四项「按文件偏好」一次合成：缺省值统一在 resolveFilePreferences 里给，
+		// 避免某一维回落到硬编码默认而漏掉设置项（2026-10-21 themeStyle 踩过此坑）
+		const prefs = resolveFilePreferences({
+			saved: {
+				layout: this.plugin.viewState.getLayout(file.path),
+				lineStyle: this.plugin.viewState.getLineStyle(file.path),
+				themeStyle: this.plugin.viewState.getThemeStyle(file.path),
+				palette: this.plugin.viewState.getPalette(file.path),
+			},
+			defaults: {
+				layout: this.plugin.settings.defaultLayout,
+				lineStyle: this.plugin.settings.defaultLineStyle,
+				themeStyle: this.plugin.settings.defaultThemeStyle,
+				palette: DEFAULT_PALETTE,
+			},
+		});
+		this.currentLayout = prefs.layout;
+		this.currentLineStyle = prefs.lineStyle;
+		this.currentThemeStyle = prefs.themeStyle;
+		this.currentPalette = prefs.palette;
 		try {
 			const doc = await this.documents.load(file);
 			// 加载期间文件已切换：丢弃过期结果
@@ -786,6 +817,33 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
+	 * 本次引擎创建所用配色（归一后回写会话字段）。
+	 *
+	 * 与布局/连线样式同口径按文件取：`viewState[<路径>].palette` 优先，
+	 * 缺省回落 `DEFAULT_PALETTE`（＝改造前的蓝）。归一而非直取：手改
+	 * `data.json` 或配色表收缩后，未知 id 不得落到工具栏成「空白选中项」。
+	 */
+	private resolvePalette(): string {
+		const palette = normalizePalette(this.currentPalette ?? DEFAULT_PALETTE);
+		this.currentPalette = palette;
+		return palette;
+	}
+
+	/**
+	 * 本次引擎创建所用节点外观主题（归一后回写会话字段）。
+	 *
+	 * 与布局/连线样式同口径按文件取：`viewState[<路径>].themeStyle` 优先，
+	 * 缺省回落 `DEFAULT_THEME_STYLE`（＝存量带框外观）。
+	 */
+	private resolveThemeStyle(): string {
+		const themeStyle = normalizeThemeStyle(
+			this.currentThemeStyle ?? this.plugin.settings.defaultThemeStyle,
+		);
+		this.currentThemeStyle = themeStyle;
+		return themeStyle;
+	}
+
+	/**
 	 * 回灌挂起的图片尺寸校正（首帧后）。
 	 *
 	 * 三条调用路径合起来覆盖全部时序（谁最后就绪谁生效）：
@@ -849,6 +907,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			this.layoutSelect.value = layout;
 		}
 		syncLineStyleOptions(this, layout, lineStyle);
+		if (this.paletteSelect) {
+			// resolvePalette 已把脏值归一，这里直接落到控件（避免空白选中项）
+			this.paletteSelect.value = this.currentPalette ?? DEFAULT_PALETTE;
+		}
+		if (this.themeSelect) {
+			// 同上：resolveThemeStyle 已归一
+			this.themeSelect.value =
+				this.currentThemeStyle ?? DEFAULT_THEME_STYLE;
+		}
 	}
 
 	/** 标题重命名已委托 TitleRenamer（view-title-renamer.ts） */
@@ -886,6 +953,37 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
+	 * 切换配色（顶栏调用）：归一 + 更新会话字段 + 重算主题配置 + 写入视图状态存储。
+	 *
+	 * 走 `engine.applyTheme()` 而非重建引擎：配色只改 `themeConfig` 的色板，
+	 * 与「主题色」同一通道（原地换肤）。**按文件记**——与布局/连线样式同形态，
+	 * 不是全局设置（`data.json` 的 `viewState[<路径>].palette`）。
+	 */
+	applyPalette(value: string): void {
+		const palette = normalizePalette(value);
+		this.currentPalette = palette;
+		this.engine.applyTheme();
+		if (this.file) {
+			this.plugin.viewState.setPalette(this.file.path, palette);
+		}
+	}
+
+	/**
+	 * 切换节点外观主题（顶栏调用）：归一 + 更新会话字段 + 重算主题配置 + 写状态。
+	 *
+	 * 与 `applyPalette` 同构：走 `engine.applyTheme()` 原地换肤（不重建引擎），
+	 * **按文件记**在 `data.json` 的 `viewState[<路径>].themeStyle`。
+	 */
+	applyThemeStyle(value: string): void {
+		const themeStyle = normalizeThemeStyle(value);
+		this.currentThemeStyle = themeStyle;
+		this.engine.applyTheme();
+		if (this.file) {
+			this.plugin.viewState.setThemeStyle(this.file.path, themeStyle);
+		}
+	}
+
+	/**
 	 * 应用设置变更（LIVE_REFRESH 键的**变更子集**，由 `diffLiveRefreshKeys` 产出）：
 	 * 能原地生效的绝不重建引擎。
 	 *
@@ -900,8 +998,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			this.engine.refresh();
 			return;
 		}
-		if (changedKeys.has('defaultTheme') || changedKeys.has('themeStyle')) {
-			// 主题色（明暗）或主题（节点外观）变更 → 引擎原地换 themeConfig
+		if (changedKeys.has('defaultTheme')) {
+			// 主题（明暗）变更 → 引擎原地换 themeConfig
+			// （边框与配色不是设置项：按文件记，走顶栏 applyThemeStyle / applyPalette；
+			//   defaultThemeStyle 只影响新建导图，这里重算也不会改动当前文件）
 			this.applyTheme();
 		}
 	}

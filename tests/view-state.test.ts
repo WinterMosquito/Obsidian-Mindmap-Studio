@@ -13,7 +13,10 @@
  *   插件未运行期间的删除），无残留时不写盘（避免每次启动都写一次 data.json）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ViewStateStore } from '../src/services/view-state';
+import {
+	resolveFilePreferences,
+	ViewStateStore,
+} from '../src/services/view-state';
 import { VIEW_STATE_PERSIST_MS } from '../src/core/constants';
 
 const PATH_A = 'notes/a.mindmap.md';
@@ -244,6 +247,96 @@ describe('ViewStateStore 连线样式（按文件补丁式存取）', () => {
 		const store = new ViewStateStore(() => {});
 		store.setLayout(PATH_A, 'mindMap');
 		expect(store.getLineStyle(PATH_A)).toBeUndefined();
+	});
+});
+
+describe('ViewStateStore 配色（按文件记，非全局设置）', () => {
+	it('setPalette / getPalette 按路径读写，与布局共存于同一条目', () => {
+		const store = new ViewStateStore(() => {});
+		store.setLayout(PATH_A, 'mindMap');
+		store.setPalette(PATH_A, 'mint');
+
+		expect(store.getPalette(PATH_A)).toBe('mint');
+		expect(store.getPalette(PATH_B)).toBeUndefined();
+		expect(store.serialize()).toEqual({
+			[PATH_A]: { layout: 'mindMap', palette: 'mint' },
+		});
+	});
+
+	it('hydrate 保留 palette 条目；非字符串值由 getter 兜底为 undefined', () => {
+		const store = new ViewStateStore(() => {});
+		store.hydrate({
+			viewState: {
+				[PATH_A]: { palette: 'forest' },
+				[PATH_B]: { palette: 7 },
+			},
+		});
+
+		expect(store.getPalette(PATH_A)).toBe('forest');
+		// 条目本身有效（含 palette 键）故被保留，坏值由 getter 兜底
+		expect(store.getPalette(PATH_B)).toBeUndefined();
+	});
+});
+
+describe('resolveFilePreferences（按文件偏好 + 全局默认的合成）', () => {
+	const defaults = {
+		layout: 'mindMap',
+		lineStyle: 'curve',
+		themeStyle: 'borderless',
+		palette: 'mint',
+	};
+
+	it('文件无任何记录：四项全部取默认（新建导图遵循设置）', () => {
+		expect(resolveFilePreferences({ saved: {}, defaults })).toEqual(defaults);
+	});
+
+	it('文件记过的维度取记录、未记过的取默认（逐维独立，不互相牵连）', () => {
+		const out = resolveFilePreferences({
+			saved: { themeStyle: 'default', palette: 'slate' },
+			defaults,
+		});
+		expect(out).toEqual({
+			layout: 'mindMap',
+			lineStyle: 'curve',
+			themeStyle: 'default',
+			palette: 'slate',
+		});
+	});
+
+	it('回归：themeStyle 缺省值必须是 defaults.themeStyle，而不是硬编码 default', () => {
+		// 2026-10-21 的缺陷：视图 load 时回落 `DEFAULT_THEME_STYLE`('default')，
+		// 使「默认边框样式」设为 borderless 后新建导图仍渲染带框。
+		const out = resolveFilePreferences({ saved: {}, defaults });
+		expect(out.themeStyle).toBe('borderless');
+		expect(out.themeStyle).not.toBe('default');
+	});
+});
+
+describe('ViewStateStore 主题（按文件记，非全局设置）', () => {
+	it('setThemeStyle / getThemeStyle 按路径读写，与布局/配色共存于同一条目', () => {
+		const store = new ViewStateStore(() => {});
+		store.setLayout(PATH_A, 'mindMap');
+		store.setPalette(PATH_A, 'mint');
+		store.setThemeStyle(PATH_A, 'borderless');
+
+		expect(store.getThemeStyle(PATH_A)).toBe('borderless');
+		expect(store.getThemeStyle(PATH_B)).toBeUndefined();
+		expect(store.serialize()).toEqual({
+			[PATH_A]: { layout: 'mindMap', palette: 'mint', themeStyle: 'borderless' },
+		});
+	});
+
+	it('hydrate 保留 themeStyle 条目；非字符串值由 getter 兜底为 undefined', () => {
+		const store = new ViewStateStore(() => {});
+		store.hydrate({
+			viewState: {
+				[PATH_A]: { themeStyle: 'borderless' },
+				[PATH_B]: { themeStyle: 1 },
+			},
+		});
+
+		expect(store.getThemeStyle(PATH_A)).toBe('borderless');
+		expect(store.getThemeStyle(PATH_B)).toBeUndefined();
 	});
 });
 

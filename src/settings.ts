@@ -40,14 +40,14 @@ export interface MindMapStudioSettings {
 	defaultLayout: string;
 	/** 默认连线样式（auto/curve/direct/straight；auto＝随布局） */
 	defaultLineStyle: string;
-	/** 主题色（明暗配色）：default＝跟随 Obsidian / light / dark */
+	/** 主题（明暗配色）：default＝跟随 Obsidian / light / dark */
 	defaultTheme: string;
 	/**
-	 * 节点外观主题（与 `defaultTheme` **正交**）：`default`＝存量带框外观，
-	 * `borderless`＝去掉 second/node 的填充与描边。取值范围见
-	 * `core/constants.THEME_STYLE_OPTIONS`（新增主题唯一源，id 发布即冻结）。
+	 * 默认边框样式（即节点外观 `themeStyle`）：只作用于**新建**导图的初始值，
+	 * 单篇导图由顶栏「边框」下拉按文件覆盖（`viewState[<路径>].themeStyle`）。
+	 * 取值范围见 `core/constants.THEME_STYLE_OPTIONS`（id 发布即冻结）。
 	 */
-	themeStyle: string;
+	defaultThemeStyle: string;
 	/**
 	 * 新建导图的默认保存位置（四态，见 `core/constants` 的 `SaveLocation`）。
 	 * 默认 `obsidian`：完整跟随官方「设置 → 文件与链接 → 新建笔记的默认位置」；
@@ -79,8 +79,8 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	// 新建默认折线；存量的 auto/direct 在读取侧归一为折线（见 constants 归一函数）
 	defaultLineStyle: DEFAULT_LINE_STYLE,
 	defaultTheme: 'default',
-	// 默认＝存量观感（带框节点）：升级后视觉零变化，主题由用户显式选择
-	themeStyle: DEFAULT_THEME_STYLE,
+	// 新建导图默认带框（＝存量观感）；单篇由顶栏「边框」覆盖
+	defaultThemeStyle: DEFAULT_THEME_STYLE,
 	// 默认跟随官方「新建笔记的默认位置」（经 getNewFileParent 完整生效）——
 	// 与引入本设置前的行为一致；另三档为用户显式覆盖
 	saveLocation: 'obsidian',
@@ -236,9 +236,10 @@ export function sanitizeSettings(
 			DEFAULT_SETTINGS.defaultLineStyle,
 		defaultTheme:
 			pickFrom('defaultTheme', THEME_OPTIONS) ?? DEFAULT_SETTINGS.defaultTheme,
-		themeStyle:
-			pickFrom('themeStyle', THEME_STYLE_OPTIONS) ??
-			DEFAULT_SETTINGS.themeStyle,
+		defaultThemeStyle:
+			pickFrom('defaultThemeStyle', THEME_STYLE_OPTIONS) ??
+			DEFAULT_SETTINGS.defaultThemeStyle,
+
 		saveLocation:
 			pickFrom('saveLocation', SAVE_LOCATION_OPTIONS) ??
 			DEFAULT_SETTINGS.saveLocation,
@@ -280,7 +281,7 @@ const LIVE_REFRESH_SETTING_KEYS = [
 	'defaultLayout',
 	'defaultLineStyle',
 	'defaultTheme',
-	'themeStyle',
+	'defaultThemeStyle',
 	'enableDrag',
 	'language',
 ] as const satisfies readonly (keyof MindMapStudioSettings)[];
@@ -403,21 +404,21 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 						},
 					},
 					{
+						name: t(this.lang, 'settings.defaultThemeStyle'),
+						desc: t(this.lang, 'settings.defaultThemeStyleDesc'),
+						control: {
+							type: 'dropdown',
+							key: 'defaultThemeStyle',
+							options: themeStyleOptions,
+						},
+					},
+					{
 						name: t(this.lang, 'settings.defaultTheme'),
 						desc: t(this.lang, 'settings.defaultThemeDesc'),
 						control: {
 							type: 'dropdown',
 							key: 'defaultTheme',
 							options: themeOptions,
-						},
-					},
-					{
-						name: t(this.lang, 'settings.themeStyle'),
-						desc: t(this.lang, 'settings.themeStyleDesc'),
-						control: {
-							type: 'dropdown',
-							key: 'themeStyle',
-							options: themeStyleOptions,
 						},
 					},
 					{

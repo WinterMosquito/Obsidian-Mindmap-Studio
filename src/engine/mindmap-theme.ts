@@ -4,54 +4,39 @@
  */
 import {
 	DEFAULT_LINE_STYLE,
+	DEFAULT_PALETTE,
 	DEFAULT_THEME_STYLE,
 	IMAGE_HEIGHT,
 	IMAGE_WIDTH,
 	normalizeLineStylePreference,
+	normalizePalette,
 	normalizeThemeStyle,
 } from '../core/constants';
-import type { ThemeStyleId } from '../core/constants';
-import { THEME_STYLE_PRESETS } from './mindmap-theme-presets';
+import type { PaletteId, ThemeStyleId } from '../core/constants';
+import { PALETTES, THEME_STYLE_PRESETS } from './mindmap-theme-presets';
 
 const BORDER_RADIUS = 5;
 /** 节点水平内边距：略大于引擎默认值（15），仅作左右留白 */
 const NODE_PADDING_X = 16;
 
-interface ThemeColors {
-	primary: string;
-	rootFill: string;
-	rootText: string;
-	secondFill: string;
-	secondText: string;
-	nodeFill: string;
-	nodeText: string;
-	border: string;
-	line: string;
-}
-
-const LIGHT_COLORS: ThemeColors = {
-	primary: '#4a90d9',
-	rootFill: '#4a90d9',
+/**
+ * 文字色三档——**不随配色变**，只按明暗定。
+ *
+ * 完整九键色板 = `PALETTES[<配色>][<亮|暗>]` 的 5 个填充/线色 + 本处的 3 个
+ * 文字色。这样新增配色只需 5 个 hex，且不会出现「某套配色的浅底配错深字」
+ * 这类不可读组合（文字色的对比度只需按明暗校核一次）。
+ */
+const TEXT_LIGHT = {
 	rootText: '#ffffff',
-	secondFill: '#f1f5f9',
 	secondText: '#1e293b',
-	nodeFill: '#f8fafc',
 	nodeText: '#64748b',
-	border: '#cbd5e1',
-	line: '#94a3b8',
-};
+} as const;
 
-const DARK_COLORS: ThemeColors = {
-	primary: '#555555',
-	rootFill: '#2d2d2d',
+const TEXT_DARK = {
 	rootText: '#e0e0e0',
-	secondFill: '#252525',
 	secondText: '#d0d0d0',
-	nodeFill: '#1e1e1e',
 	nodeText: '#a0a0a0',
-	border: '#3f3f3f',
-	line: '#4a4a4a',
-};
+} as const;
 
 /** 判断指定主题偏好下是否使用暗色配色 */
 export function isDarkTheme(themePref: string, isDark: boolean): boolean {
@@ -59,11 +44,14 @@ export function isDarkTheme(themePref: string, isDark: boolean): boolean {
 }
 
 /**
- * 双链文档自绘图标（节点前缀内容）的描边色：与主题色板同源，
- * 避免在 mindmap.ts 里手写色值。亮色用品牌主蓝，暗色用 nodeText 中性灰。
+ * 双链文档自绘图标（节点前缀内容）的描边色：与**当前配色**同源，
+ * 避免在 mindmap.ts 里手写色值。亮色用该配色的根节点主色，暗色用 nodeText 中性灰
+ * （暗色下各配色的 rootFill 都很深，拿它当图标色会看不见）。
  */
-export function getDocIconColor(isDark: boolean): string {
-	return isDark ? DARK_COLORS.nodeText : LIGHT_COLORS.primary;
+export function getDocIconColor(isDark: boolean, palette: string): string {
+	return isDark
+		? TEXT_DARK.nodeText
+		: PALETTES[normalizePalette(palette)].light.rootFill;
 }
 
 /**
@@ -119,11 +107,13 @@ function buildThemeConfig(
 		fontSizes: { root: number; second: number; node: number };
 		lineStyle: 'curve' | 'straight';
 		themeStyle: ThemeStyleId;
+		palette: PaletteId;
 	},
 ): Record<string, unknown> {
-	const colors: ThemeColors = isDark ? DARK_COLORS : LIGHT_COLORS;
-	// themeStyle 已由 normalizeThemeStyle 归一为合法 id；`Record<ThemeStyleId, …>`
-	// 又保证键完整（漏写即编译失败）——故此处不需要第二道兜底分支
+	// 两个 id 均已由 normalize* 归一为合法值；`Record<…, …>` 又保证键完整
+	//（漏写即编译失败）——故此处不需要第二道兜底分支
+	const colors = PALETTES[variant.palette][isDark ? 'dark' : 'light'];
+	const text = isDark ? TEXT_DARK : TEXT_LIGHT;
 	const preset = THEME_STYLE_PRESETS[variant.themeStyle];
 	return {
 		backgroundColor: variant.background,
@@ -131,7 +121,7 @@ function buildThemeConfig(
 		imgMaxHeight: IMAGE_HEIGHT,
 		root: {
 			fillColor: colors.rootFill,
-			color: colors.rootText,
+			color: text.rootText,
 			fontSize: variant.fontSizes.root,
 			fontWeight: 'bold',
 			borderColor: 'transparent',
@@ -142,7 +132,7 @@ function buildThemeConfig(
 		},
 		second: {
 			fillColor: colors.secondFill,
-			color: colors.secondText,
+			color: text.secondText,
 			fontSize: variant.fontSizes.second,
 			borderColor: colors.border,
 			borderWidth: 1,
@@ -152,7 +142,7 @@ function buildThemeConfig(
 		},
 		node: {
 			fillColor: colors.nodeFill,
-			color: colors.nodeText,
+			color: text.nodeText,
 			fontSize: variant.fontSizes.node,
 			borderColor: colors.border,
 			borderWidth: 1,
@@ -199,17 +189,21 @@ function buildThemeConfig(
  * lineStyle = 偏好解析结果（两态：折线 / 曲线；固定直线布局恒折线，见 resolveLineStyle）。
  * themeStyle = 节点外观主题（`default` / `borderless`）；与 isDark 正交，
  * 脏值经 `normalizeThemeStyle` 回退默认，保证渲染入口不因手改 data.json 失败。
+ * palette = 配色（色相方案，`default` / `mint` / …）；与 isDark、themeStyle 三维正交，
+ * 只换 5 个填充/线色，脏值经 `normalizePalette` 回退 `default`。
  */
 export function getThemeConfig(
 	isDark: boolean,
 	layout: string,
 	lineStylePreference: string = DEFAULT_LINE_STYLE,
 	themeStyle: string = DEFAULT_THEME_STYLE,
+	palette: string = DEFAULT_PALETTE,
 ): Record<string, unknown> {
 	return buildThemeConfig(isDark, {
 		background: isDark ? '#1e1e1e' : '#ffffff',
 		fontSizes: { root: 16, second: 14, node: 13 },
 		lineStyle: resolveLineStyle(lineStylePreference, layout),
 		themeStyle: normalizeThemeStyle(themeStyle),
+		palette: normalizePalette(palette),
 	});
 }
