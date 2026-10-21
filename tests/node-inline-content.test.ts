@@ -228,6 +228,50 @@ describe('轻标记扩展（显示层，不回写）', () => {
 		expect(shape('**a** b **c**')).toEqual(['bold:a', ' b ', 'bold:c']);
 	});
 
+	// 2026-10-20 实机实测缺陷：上一条用例的标记体都是**单字符**，首字符后紧跟
+	// `**` 恰好触发 `(?!\*\*)` 守卫；标记体多字符时守卫只判定一次，`[^\n]*`
+	// 贪婪回溯到行内**最后一个** `**`，整行被吞成一段粗体（`**粗一** 与 **粗二**`
+	// → `<strong>粗一** 与 **粗二</strong>`，屏幕上露出裸 `**`）。
+	// 修法：标记体改为逐字符 temper（`(?:(?!\*\*)[^\n])*`）。
+	it('多字符标记体的多枚粗体不合并（`**粗一** 与 **粗二**` 仍是两段）', () => {
+		expect(shape('**粗一** 与 **粗二**')).toEqual([
+			'bold:粗一',
+			' 与 ',
+			'bold:粗二',
+		]);
+		expect(shape('**a b** 与 **c d**')).toEqual(['bold:a b', ' 与 ', 'bold:c d']);
+	});
+
+	it('多枚粗体与斜体/行内码同处一行时各自成段', () => {
+		expect(shape('**粗一** 与 *斜* 与 **粗二**')).toEqual([
+			'bold:粗一',
+			' 与 ',
+			'italic:斜',
+			' 与 ',
+			'bold:粗二',
+		]);
+	});
+
+	it('下划线版与星号版对称：多枚粗体不合并、粗体内嵌斜体', () => {
+		// 标记体此前写死 `[^_\n]*`（**排除** `_`），与星号版不对称：
+		// `__粗 _斜_ 粗__` 外层失配、屏幕上露出裸 `__`（2026-10-20 实机实测）。
+		expect(shape('__粗一__ 与 __粗二__')).toEqual([
+			'bold:粗一',
+			' 与 ',
+			'bold:粗二',
+		]);
+		const segments = buildInlineSegments('__粗 _斜_ 粗__');
+		expect(segments).toHaveLength(1);
+		const nested = segments[0]!;
+		expect(nested.style).toBe('bold');
+		expect(nested.text).toBe('粗 _斜_ 粗');
+		expect(nested.children).toEqual([
+			{ kind: 'text', text: '粗 ' },
+			{ kind: 'text', text: '斜', style: 'italic' },
+			{ kind: 'text', text: ' 粗' },
+		]);
+	});
+
 	it('斜体包粗体 `*斜 **粗** 尾*`：外层斜体认到成对 `**`，内层粗体生效', () => {
 		// 此前 ital 的标记体排除 `*`，外层失配后正则会在 `**粗**` 内部凑出假的
 		// `<em>粗</em>` 把一行切碎、星号外露。现允许标记体内出现**成对** `**`
