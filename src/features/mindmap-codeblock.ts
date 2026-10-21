@@ -57,11 +57,7 @@
  * 判据 `containerEl.isShown()` 已具备。
  */
 import { App, MarkdownRenderChild } from 'obsidian';
-import {
-	CODE_BLOCK_MAX_NODES,
-	DEFAULT_PALETTE,
-	DEFAULT_THEME_STYLE,
-} from '../core/constants';
+import { CODE_BLOCK_MAX_NODES, DEFAULT_PALETTE } from '../core/constants';
 import { createThrottler } from '../core/concurrency';
 import { EventBinder } from '../core/event-binder';
 import { t, tf, type Language } from '../core/i18n';
@@ -117,15 +113,18 @@ const EMBED_FIT_PADDING = 12;
  * 嵌入渲染所需的**最窄设置面**（窄化契约，同 `CommandsHost` 手法）：
  * 只取四项，且由组合根取值——features 不引 `settings`（组合根禁令）。
  *
- * **不含 `themeStyle` / `palette`**：这两项已改为**按文件**记在 `viewState`
- * （顶栏切换），嵌入是笔记正文里的只读小盒、没有「当前文件」的身份，故恒用
- * `DEFAULT_THEME_STYLE` / `DEFAULT_PALETTE`（2026-10-21 用户裁决）。
+ * `themeStyle` 取**全局默认**（设置项 `defaultThemeStyle`，由组合根注入），
+ * 与 `layout` / `lineStyle` 同性质：嵌入没有「当前文件」身份、拿不到顶栏那份
+ * 按文件记的值，但仍应遵守用户的默认外观（2026-10-21 用户订正）。
+ * `palette` **没有全局默认**（只有按文件记），故恒用 `DEFAULT_PALETTE`。
  */
 export interface MindmapEmbedConfig {
 	layout: string;
 	lineStyle: string;
 	/** 主题（明暗配色） */
 	themePref: string;
+	/** 边框样式：取全局设置 `defaultThemeStyle`（非顶栏按文件值） */
+	themeStyle: string;
 	lang: Language;
 }
 
@@ -340,9 +339,9 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 				layout: config.layout,
 				lineStyle: config.lineStyle,
 				themePref: config.themePref,
-				// 嵌入**不吃**按文件记的两项（用户裁决）：正文里的只读小盒恒用
-				// 默认外观与基准配色，顶栏切换只影响文件视图
-				themeStyle: DEFAULT_THEME_STYLE,
+				// 边框跟随**全局默认**（与 layout / lineStyle 同性质）；配色只有
+				// 按文件记的值、没有全局默认，故恒用基准蓝
+				themeStyle: config.themeStyle,
 				palette: DEFAULT_PALETTE,
 				isDark: this.app.isDarkMode(),
 				enableDrag: false,
@@ -395,8 +394,8 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 					themePref: next.themePref,
 					layout: next.layout,
 					lineStyle: next.lineStyle,
-					// 同 mount：嵌入恒用默认外观与基准配色，不跟顶栏的两项
-					themeStyle: DEFAULT_THEME_STYLE,
+					// 同 mount：边框跟全局默认、配色恒基准蓝（都不读顶栏按文件值）
+					themeStyle: next.themeStyle,
 					palette: DEFAULT_PALETTE,
 				});
 				refreshPrismTokenColors(el);

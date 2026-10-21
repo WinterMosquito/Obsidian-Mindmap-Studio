@@ -325,16 +325,24 @@ describe('跨文件契约', () => {
 		).not.toThrow();
 	});
 
-	it('嵌入不吃按文件记的两项（配色 / 主题）：两处恒传默认值', () => {
+	it('嵌入的边框跟全局默认、配色恒基准蓝：两处都不读顶栏按文件值', () => {
 		const source = readFileSync(
 			new URL('../src/features/mindmap-codeblock.ts', import.meta.url),
 			'utf8',
 		);
-		// 两处换肤（创建期 + css-change）都必须是默认值
+		// 两处换肤（创建期 + css-change）：边框从 config 透传（＝ settings.defaultThemeStyle）
+		expect(source.match(/themeStyle: (config|next)\.themeStyle/g)?.length).toBe(2);
+		// 配色只有按文件记的值、没有全局默认 → 两处恒用基准蓝
 		expect(source.match(/palette: DEFAULT_PALETTE/g)?.length).toBe(2);
-		expect(source.match(/themeStyle: DEFAULT_THEME_STYLE/g)?.length).toBe(2);
-		// 嵌入面不得读用户设置，也不得从 config 透传这两项
-		expect(source).not.toMatch(/settings\.(palette|themeStyle)/);
-		expect(source).not.toMatch(/themeStyle: (config|next)\.themeStyle/);
+		// 嵌入面不得直接读 settings（取值一律由组合根注入 config）
+		expect(source).not.toMatch(/settings\.(palette|themeStyle|defaultThemeStyle)/);
+		// 注入端：组合根必须取**全局默认**，不能硬编码、也不能取顶栏按文件值
+		const mainSource = readFileSync(
+			new URL('../src/main.ts', import.meta.url),
+			'utf8',
+		);
+		expect(mainSource).toMatch(
+			/themeStyle: this\.settings\.defaultThemeStyle/,
+		);
 	});
 });
