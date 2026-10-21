@@ -132,6 +132,8 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把「声明�
 
 ## 代码结构索引
 
+> 详录（架构与豁免理由 / K 裁决 / 基线数字 / 测试与 CI / 发布流程）见 `docs/agents/`：**场景 → 文件**见下方「我要查」表；**要不要通读某份**（规模）、冲突听谁的（权威边界）、`conventions.md` 怎么找，见 `docs/agents/README.md`。
+
 **组合根**（4）：`commands.ts` `creation.ts` `main.ts` `settings.ts`
 **domain/**（7）：`md-meta.ts` `mindmap-property.ts` `pipe-table.ts` `tree.ts` `url.ts` `wiki-display.ts` `wikilink.ts`
 **core/**（10）：`concurrency.ts` `constants.ts` `engine-types.ts` `errors.ts` `event-binder.ts` `i18n.ts` `math-placeholder.ts` `measure-cache.ts` `node-data.ts` `persistence.ts`
@@ -655,9 +657,10 @@ Obsidian 社区插件（TypeScript → esbuild → `main.js`）。把「声明�
 docs/
   markdown-mindmap-standard.md   # Markdown ↔ 思维导图映射规则（**权威标准**，改往返格式须同步）
   markdown-mindmap-history.md    # 标准文档的历史修订存档（事实修正 ①–⑰ 与当时实机记录原文，正文不复述）
+  agents/README.md               # 读取补充：各文件规模 / 权威边界 / conventions 五组 / 常见误读
   agents/architecture.md         # 模块职责、数据流、依赖矩阵、豁免理由详录
   agents/baseline-metrics.md     # 可复现基线（门禁/打开性能/体积归因/静态指标/核销台账）
-  agents/conventions.md          # 关键约定 K1–K125 全文（含实测账本与踩坑记录）
+  agents/conventions.md          # 关键约定 K1–K127 全文（含实测账本与踩坑记录）
   agents/testing.md              # 测试分层、CI 矩阵、CSS 检查、发布元数据护栏
   agents/process.md              # 新增功能检查清单、发布流程、安全合规
   release-notes-<tag>.md         # 各版本发布说明（中英双语；release.yml 按 tag 取用）
@@ -670,3 +673,6 @@ docs/
 | 某个测试该加在哪一层、CI 怎么跑 | `docs/agents/testing.md` |
 | 改 Markdown 映射规则的权威定义 | `docs/markdown-mindmap-standard.md` |
 | 发布流程、版本号、资产清单 | `docs/agents/process.md` |
+
+> 决定「要不要通读某份」时看 `docs/agents/README.md`：它给规模、权威边界（冲突听谁的）、
+> `conventions.md` 的五组划分，以及四条已被踩过的误读。

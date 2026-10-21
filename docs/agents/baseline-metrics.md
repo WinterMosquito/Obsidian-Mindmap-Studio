@@ -162,7 +162,7 @@ npx esbuild src/main.ts --bundle --format=cjs --target=es2021 --tree-shaking=tru
 | S-06 | 超过 300 行的文件 | **28**（2026-10-21 实测；与 AGENTS.md 豁免表、`docs/agents/architecture.md` 同表**逐行一致**） | 逐文件 `awk 'END{print NR}'`；或 `npx vitest run tests/agents-md-sync.test.ts` |
 | S-07 | `addEventListener` 出现 | **31** 处 | `grep -rno "addEventListener" src --include=*.ts \| wc -l` |
 | S-08 | `console.` 调用 | **87** 处 | `grep -rno "console\." src --include=*.ts \| wc -l` |
-| S-09 | src / tests 规模 | **94 文件 28,311 行 / 84 文件 40,881 行**（2026-10-21 复测） | `find src -name "*.ts" \| xargs wc -l` |
+| S-09 | src / tests 规模 | **94 文件 28,311 行 / 84 文件 40,881 行**（2026-10-21 复测；行数按 `countSourceLines`——直接 `wc -l` 得 28,310 / 40,877，差 1 / 4 来自末尾无换行的文件） | `find src -name "*.ts" \| wc -l`（文件数）；行数用 `countSourceLines` 口径 |
 | S-10 | i18n 键 | ZH **195** / EN **195**（对齐；2026-10-21 复测） | 统计 `src/core/i18n.ts` 两段字面量键（`^\t'` 行；ZH 段以 `} as const;` 收尾、EN 段以 `};` 收尾，**按段切分**，勿用单一结束标记） |
 | S-11 | 设置 | 接口 **12** 项声明 / `DEFAULT_SETTINGS` **12** 键 / 面板走 `getSettingDefinitions()`（2026-10-21 复测） | 取 `export interface MindMapStudioSettings` 与 `DEFAULT_SETTINGS` 两段内的字段行（文件为 CRLF，行尾 `\r` 需先剥离） |
 | S-12 | **循环依赖**（§4.1） | **编译期与运行时均为 0 个环**；**94** 文件 / **450** 条 src 内部依赖边（其中仅类型边 **93** 条；2026-10-21 复测，口径同 §4.1） | 自建 Tarjan 检测脚本（见 §4.1 口径与盲区） |
