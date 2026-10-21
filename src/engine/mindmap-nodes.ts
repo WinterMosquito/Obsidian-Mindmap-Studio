@@ -428,6 +428,28 @@ export function setNodeImageSize(
 }
 
 /**
+ * 节点图片元素判定：按**标签名 + 取矩形能力**，不用 `instanceof SVGImageElement`。
+ *
+ * popout（「在新窗口打开」）里的元素来自**另一个 realm**，对主窗口构造器的
+ * `instanceof` 恒为 false。该判定散在调用点会裂成两种半失效：帧内预览静默不生效
+ * （图不跟手）、hover 手柄永不出现——同一个图片元素、两条通道。故收在此处：
+ * `previewNodeImageSize`（本模块）与 `features/image-resize` 共用同一实现。
+ */
+export function isNodeImageElement(value: unknown): value is SVGImageElement {
+	const el = value as
+		| { tagName?: unknown; getBoundingClientRect?: unknown }
+		| null
+		| undefined;
+	if (!el || typeof el.tagName !== 'string') {
+		return false;
+	}
+	return (
+		el.tagName.toLowerCase() === 'image' &&
+		typeof el.getBoundingClientRect === 'function'
+	);
+}
+
+/**
  * 帧内**预览**节点图片尺寸：直写渲染中 `<image>` 的 `width/height`。
  *
  * 为什么不下沉到引擎数据（2026-10-02 重构）：旧实现是「改 `data.imageSize` +
@@ -453,7 +475,7 @@ export function previewNodeImageSize(
 	try {
 		const group = getNodeGroupEl(node);
 		const imageEl = group?.querySelector('image');
-		if (!(imageEl instanceof SVGImageElement)) {
+		if (!isNodeImageElement(imageEl)) {
 			return;
 		}
 		imageEl.setAttribute('width', String(width));

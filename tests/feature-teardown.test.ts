@@ -116,8 +116,13 @@ function makeView(binder: EngineBinderStub, win: unknown, mindMap = {} as MindMa
 	return { view, scheduleSave };
 }
 
-/** SVG <image> 桩：currentNodeImageEl 用 instanceof SVGImageElement 判定真伪 */
+/**
+ * SVG <image> 桩：生产侧按**标签名**判定真伪（`engine/mindmap-nodes.isNodeImageElement`，
+ * 见 `src/features/image-resize.ts` 的跨 realm 说明），故这里必须带 `tagName`。
+ */
 class FakeSvgImageElement {
+	/** 标签名：生产的判定通道（不再是 instanceof，无需 stub 全局构造器） */
+	readonly tagName = 'image';
 	/** 属性写入记录：帧内预览的 DOM 直写观测面（width/height） */
 	readonly attrs = new Map<string, string>();
 
@@ -154,8 +159,6 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 		mainWindow = makeWindowStub();
 		canvasWindow = makeWindowStub();
 		vi.stubGlobal('window', mainWindow.win);
-		// Node 环境没有 SVGImageElement 全局：补齐后才能构造「真图片元素」
-		vi.stubGlobal('SVGImageElement', FakeSvgImageElement);
 	});
 
 	afterEach(() => {
@@ -552,6 +555,52 @@ describe('image-resize 会话收尾（调宽中途关闭视图）', () => {
 		setupImageResize(harness.view);
 		expect(canvasWindow.listenerCount()).toBe(0);
 		expect(harness.handleEl.remove).toHaveBeenCalledTimes(1);
+	});
+
+	it('跨 realm 的 <image>（popout 窗口）也能点亮手柄：判定按标签名而非 instanceof', () => {
+		// 弹出窗口的元素属于另一个 realm，不满足主窗口构造器的 `instanceof`；
+		// 旧实现（`instanceof SVGImageElement`）在此恒为 false ⇒ 手柄永不出现。
+		// 这里用「只有标签名 + 取矩形能力」的异 realm 替身锁住判定通道。
+		const harness = makeResizeView();
+		setupImageResize(harness.view);
+		const foreignImage = {
+			tagName: 'IMAGE',
+			getBoundingClientRect: () => ({
+				left: 0,
+				top: 0,
+				right: 300,
+				bottom: 200,
+				width: 300,
+				height: 200,
+			}),
+		};
+
+		harness.binder.fire('node_img_mouseenter', harness.node, { node: foreignImage }, {});
+
+		expect(harness.handleEl.classList.add).toHaveBeenCalledWith('is-visible');
+		// 定位口径不变：图右下角内侧（right/bottom 各内缩 HANDLE_SIZE_PX * 1.25 = 15）
+		expect(harness.handleEl.style.left).toBe('285px');
+		expect(harness.handleEl.style.top).toBe('185px');
+	});
+
+	it('非 <image> 元素不点亮手柄（标签判定不放宽成「任意带矩形的对象」）', () => {
+		const harness = makeResizeView();
+		setupImageResize(harness.view);
+		const textEl = {
+			tagName: 'text',
+			getBoundingClientRect: () => ({
+				left: 0,
+				top: 0,
+				right: 100,
+				bottom: 20,
+				width: 100,
+				height: 20,
+			}),
+		};
+
+		harness.binder.fire('node_img_mouseenter', harness.node, { node: textEl }, {});
+
+		expect(harness.handleEl.classList.add).not.toHaveBeenCalled();
 	});
 
 	it('未装配手柄/画布（视图未初始化）时收尾安全，不抛异常', () => {

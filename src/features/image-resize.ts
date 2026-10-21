@@ -13,6 +13,10 @@
  * - 无常驻监听：hover（node_img_mouseenter/mouseleave）驱动手柄显隐，
  *   拖拽会话期间才挂 window mousemove/mouseup（捕获阶段、手势独占），
  *   结束即移除；
+ * - **图片元素按标签名判定**（`engine/mindmap-nodes.isNodeImageElement`），不用
+ *   `instanceof SVGImageElement`：popout 窗口的元素属于另一个 realm，`instanceof`
+ *   恒 false ⇒ 手柄在弹出窗口永不出现。该判定与帧内预览共用一份实现（同一元素、
+ *   两条通道，分开写必然只修好一条）；
  * - **帧内预览走 DOM 直写**（2026-10-02 重构）：直接改渲染中 `<image>` 的
  *   `width/height`（与引擎渲染同源属性，SVG 用户单位 = content px）——每次
  *   引擎写入都是**整树**重排，rAF 合帧只能把频率压到「每帧一次」，大图仍
@@ -30,6 +34,7 @@
 import {
 	getDrawTransform,
 	getNodeGroupEl,
+	isNodeImageElement,
 	previewNodeImageSize,
 	setNodeImageSize,
 } from '../engine/mindmap';
@@ -99,17 +104,13 @@ function getState(view: MindMapViewContext): ImageResizeState {
 /** 引擎图片事件的第 2 参：SVG.js <image> 包装（.node 为原生 DOM 元素） */
 function imageElOf(imageLike: unknown): SVGImageElement | null {
 	const raw = (imageLike as { node?: unknown } | null | undefined)?.node;
-	return raw instanceof SVGImageElement ? raw : null;
+	return isNodeImageElement(raw) ? raw : null;
 }
 
 /** 查询节点当前渲染的图片元素（引擎重渲染会重建元素，需实时取） */
 function currentNodeImageEl(node: MindMapNode): SVGImageElement | null {
-	const group = getNodeGroupEl(node);
-	if (!group) {
-		return null;
-	}
-	const el = group.querySelector('image');
-	return el instanceof SVGImageElement ? el : null;
+	const el = getNodeGroupEl(node)?.querySelector('image');
+	return isNodeImageElement(el) ? el : null;
 }
 
 /**
@@ -155,6 +156,19 @@ function hideHandle(view: MindMapViewContext): void {
 	state.handleEl?.classList.remove('is-visible');
 }
 
+/**
+ * 移除手柄 DOM 并清空悬停目标（**重建与收尾共用**）。
+ *
+ * `setupImageResize`（引擎重建）与 `teardownImageResize`（视图关闭）此前各抄一份
+ * 「remove + 置空 + 清悬停」三步，两处一旦不同步就会留悬空手柄或死悬停目标。
+ */
+function disposeHandle(view: MindMapViewContext): void {
+	const state = getState(view);
+	state.handleEl?.remove();
+	state.handleEl = null;
+	state.hoverNode = null;
+}
+
 /** 计算等比缩放后的尺寸（以水平拖动为主导；上下限按比例联动钳制，宽高比恒定） */
 export function computeResizedSize(
 	session: Pick<ResizeSession, 'startClientX' | 'startWidth' | 'startHeight' | 'scale'>,
@@ -177,6 +191,17 @@ function sameSize(
 	return (
 		a !== null && b !== null && a.width === b.width && a.height === b.height
 	);
+}
+
+/**
+ * 会话是否仍可写：**引擎重建**（再次 setup）或**视图已换引擎**时，旧会话的节点
+ * 不再属于当前引擎，帧回调与收尾提交都必须短路。
+ *
+ * 帧内（applyPending）与收尾（endSession）曾各写一遍 `mindMap !== session.engine`，
+ * 两处判据必须永远同源——漂移的结果是「帧内不写、收尾照写」，用陈旧节点覆盖新引擎。
+ */
+function sessionIsLive(view: MindMapViewContext, session: ResizeSession): boolean {
+	return view.mindMap !== null && view.mindMap === session.engine;
 }
 
 /**
@@ -205,9 +230,8 @@ function commitFinalSize(
 function applyPending(view: MindMapViewContext, session: ResizeSession): void {
 	const pending = session.pending;
 	session.pending = null;
-	const mindMap = view.mindMap;
 	// 陈旧帧（引擎已重建/会话已收尾）不得写入：节点不属于当前引擎
-	if (!pending || !mindMap || mindMap !== session.engine) {
+	if (!pending || !sessionIsLive(view, session)) {
 		return;
 	}
 	session.applied = pending;
@@ -231,26 +255,17 @@ function endSession(view: MindMapViewContext): void {
 	}
 	// 撤监听 + 取消在途帧（幂等；capture 标志由原语按注册同款摘除）
 	session.drag.end();
-	// 补写最终尺寸并**把整次调宽记成一条历史**：
-	// - 帧内只做 DOM 直写预览（不动数据、不进历史、不派发 data_change）；
-	// - 收尾统一走一次引擎命令 → 一条历史（一次 Ctrl+Z 撤回整次调宽）+ 一次
-	//   保存调度 + 一次布局归位（帧内未重排的节点外框在此校正）。
-	// 注意判据是「本次拖动作过预览 + 与起始尺寸有净变化」，**不是**与最后一帧
-	// 预览值是否相同：最后一帧往往恰好就是最终值，若按「值相同则不提交」处理，
-	// 整次调宽将**完全进不了历史**（撤销无从回退）。
-	// 净变化为 0（拖回原尺寸）时不提交：DOM 直写值与起始一致、无遗留偏差。
-	// 引擎已重建时跳过：旧会话的节点不属于当前引擎。
-	const mindMap = view.mindMap;
+	// 补写最终尺寸并**把整次调宽记成一条历史**：帧内只做 DOM 直写预览，收尾走
+	// 一次引擎命令 → 一条历史（一次 Ctrl+Z 撤回整次）+ 一次保存调度 + 一次布局归位。
+	// 判据是「本次作过预览（applied 非空）+ 与起始尺寸有净变化」，**不是**与最后一帧
+	// 预览值比较：最后一帧往往就是最终值，按「值相同则不提交」处理会让整次调宽
+	// 完全进不了历史（撤销无从回退）；净变化为 0（拖回原尺寸）不提交。
 	const finalSize = session.latest ?? session.applied;
 	if (
 		session.applied !== null &&
 		finalSize &&
-		!sameSize(
-			{ width: session.startWidth, height: session.startHeight },
-			finalSize,
-		) &&
-		mindMap &&
-		mindMap === session.engine
+		!sameSize({ width: session.startWidth, height: session.startHeight }, finalSize) &&
+		sessionIsLive(view, session)
 	) {
 		commitFinalSize(session, finalSize);
 	}
@@ -268,7 +283,8 @@ function startSession(
 	event: MouseEvent,
 ): void {
 	const state = getState(view);
-	if (state.session || !view.mindMap) {
+	const mindMap = view.mindMap;
+	if (state.session || !mindMap) {
 		return;
 	}
 	const imageEl = currentNodeImageEl(node);
@@ -276,13 +292,13 @@ function startSession(
 		return;
 	}
 	const rect = imageEl.getBoundingClientRect();
-	const scale = getDrawTransform(view.mindMap).scaleX;
+	const scale = getDrawTransform(mindMap).scaleX;
 	if (rect.width <= 0 || rect.height <= 0 || scale <= 0) {
 		return;
 	}
 	const session: ResizeSession = {
 		node,
-		engine: view.mindMap,
+		engine: mindMap,
 		startClientX: event.clientX,
 		startWidth: rect.width / scale,
 		startHeight: rect.height / scale,
@@ -326,31 +342,16 @@ function startSession(
 	state.session = session;
 }
 
-/** 注册图片拖拽调宽（引擎就绪后随 setupFeatures 调用；随 engineEvents 销毁清理） */
-export function setupImageResize(view: MindMapViewContext): void {
-	const mindMap = view.mindMap;
-	if (!mindMap || !view.canvasEl) {
-		return;
-	}
-	const state = getState(view);
-	// 引擎重建可能发生在调宽会话进行中：先收尾旧会话、移除旧手柄，
-	// 避免残留的 window 监听与悬空手柄作用于新引擎实例。
-	endSession(view);
-	state.handleEl?.remove();
-	state.handleEl = null;
-	state.hoverNode = null;
-
-	// 手柄 DOM：画布容器内绝对定位（容器 position:relative）
-	const handle = view.canvasEl.createDiv('mindmap-img-resize-handle');
-	state.handleEl = handle;
-
+/** 建手柄 DOM 并绑指针事件（画布容器内绝对定位；容器 position:relative） */
+function createHandleEl(canvasEl: HTMLElement, view: MindMapViewContext): HTMLDivElement {
+	const handle = canvasEl.createDiv('mindmap-img-resize-handle');
 	// 指针在图片与手柄间移动时保持手柄可见
 	handle.addEventListener('mouseenter', () => {
-		const s = getState(view);
-		if (!s.session && s.hoverNode) {
-			const imageEl = currentNodeImageEl(s.hoverNode);
+		const state = getState(view);
+		if (!state.session && state.hoverNode) {
+			const imageEl = currentNodeImageEl(state.hoverNode);
 			if (imageEl) {
-				showHandle(view, s.hoverNode, imageEl);
+				showHandle(view, state.hoverNode, imageEl);
 			}
 		}
 	});
@@ -358,12 +359,22 @@ export function setupImageResize(view: MindMapViewContext): void {
 	handle.addEventListener('mousedown', (event) => {
 		event.preventDefault();
 		event.stopPropagation();
-		const s = getState(view);
-		if (s.hoverNode) {
-			startSession(view, s.hoverNode, event);
+		const state = getState(view);
+		if (state.hoverNode) {
+			startSession(view, state.hoverNode, event);
 		}
 	});
+	return handle;
+}
 
+/**
+ * 绑引擎侧事件：图片 hover 显隐手柄、节点拖拽期间隐藏。
+ *
+ * 注册顺序（`node_img_mouseenter` → `node_img_mouseleave` → `node_dragging`）是
+ * `tests/feature-teardown.test.ts` 的观测面，也是「hover 驱动、无命中测试轮询」
+ * 这一形态的来源——调整顺序属于行为变更，不是重排。
+ */
+function bindImageHoverEvents(view: MindMapViewContext, mindMap: MindMap): void {
 	// hover 显隐（引擎图片元素事件；args: [node, imageEl, event]）
 	view.engineEvents.onEngine(mindMap, 'node_img_mouseenter', (...args: unknown[]) => {
 		const node = args[0] as MindMapNode | undefined;
@@ -392,6 +403,21 @@ export function setupImageResize(view: MindMapViewContext): void {
 	});
 }
 
+/** 注册图片拖拽调宽（引擎就绪后随 setupFeatures 调用；随 engineEvents 销毁清理） */
+export function setupImageResize(view: MindMapViewContext): void {
+	const mindMap = view.mindMap;
+	const canvasEl = view.canvasEl;
+	if (!mindMap || !canvasEl) {
+		return;
+	}
+	// 引擎重建可能发生在调宽会话进行中：先收尾旧会话、移除旧手柄，
+	// 避免残留的 window 监听与悬空手柄作用于新引擎实例。
+	endSession(view);
+	disposeHandle(view);
+	getState(view).handleEl = createHandleEl(canvasEl, view);
+	bindImageHoverEvents(view, mindMap);
+}
+
 /**
  * 视图关闭时的收尾：结束进行中的调宽会话并移除手柄 DOM。
  *
@@ -402,8 +428,5 @@ export function setupImageResize(view: MindMapViewContext): void {
  */
 export function teardownImageResize(view: MindMapViewContext): void {
 	endSession(view);
-	const state = getState(view);
-	state.handleEl?.remove();
-	state.handleEl = null;
-	state.hoverNode = null;
+	disposeHandle(view);
 }
