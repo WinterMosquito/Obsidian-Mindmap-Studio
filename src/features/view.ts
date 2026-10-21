@@ -866,14 +866,20 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
-	 * 切换连线样式偏好（工具栏调用）：更新会话字段 + 立即写入视图状态存储
+	 * 切换连线样式偏好（工具栏调用）：归一 + 更新会话字段 + 立即写入视图状态存储
 	 * （两态：折线 / 曲线；不写入正文）。
+	 *
+	 * **写入前归一**（不只信调用方）：本方法在 `MindMapViewContext` 上对任意字符串
+	 * 开放；若未来新入口传旧词汇（`auto` / `direct`），把旧值写回 `data.json` 会与
+	 * 「读取侧归一」分叉，让脏值在文件里复利。归一函数是唯一口径
+	 * （`constants.normalizeLineStylePreference`）。
 	 */
 	applyLineStyle(value: string): void {
-		this.currentLineStyle = value;
-		this.engine.setLineStyle(value);
+		const lineStyle = normalizeLineStylePreference(value);
+		this.currentLineStyle = lineStyle;
+		this.engine.setLineStyle(lineStyle);
 		if (this.file) {
-			this.plugin.viewState.setLineStyle(this.file.path, value);
+			this.plugin.viewState.setLineStyle(this.file.path, lineStyle);
 		}
 	}
 

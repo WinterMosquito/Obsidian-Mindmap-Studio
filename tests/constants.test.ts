@@ -15,6 +15,9 @@
 import { describe, expect, it } from 'vitest';
 import {
 	canOpenInObsidian,
+	DEFAULT_LINE_STYLE,
+	LINE_STYLE_OPTIONS,
+	normalizeLineStylePreference,
 	shouldEnablePerformanceMode,
 } from '../src/core/constants';
 import { isDocumentExtension, wikilinkTargetIsAttachment } from '../src/domain/wikilink';
@@ -90,5 +93,37 @@ describe('shouldEnablePerformanceMode — 性能模式阈值判据（创建期�
 		expect(shouldEnablePerformanceMode(499)).toBe(false);
 		// 显式传 enabled=false 仍可关闭（引擎级覆盖通道，供 verify:visual 探针用）
 		expect(shouldEnablePerformanceMode(5000, false)).toBe(false);
+	});
+});
+
+describe('连线样式选项（两态：折线在上、默认折线）', () => {
+	/**
+	 * 顺序是**产品需求**（2026-10-21 用户裁决：折线在上、曲线在下），故用字面量钉死。
+	 * 工具栏用例只断言「与常量一致」，挡不住常量自身被调换——这里补上独立锁定。
+	 */
+	it('选项顺序固定为 折线 → 曲线', () => {
+		expect(LINE_STYLE_OPTIONS.map((option) => option.value)).toEqual([
+			'straight',
+			'curve',
+		]);
+	});
+
+	it('默认折线；存量 auto / direct 与脏值一律归一为折线，curve 保留', () => {
+		expect(DEFAULT_LINE_STYLE).toBe('straight');
+		for (const dirty of [
+			'auto',
+			'direct',
+			'zigzag',
+			'',
+			42,
+			null,
+			undefined,
+		]) {
+			expect(normalizeLineStylePreference(dirty), String(dirty)).toBe(
+				'straight',
+			);
+		}
+		expect(normalizeLineStylePreference('curve')).toBe('curve');
+		expect(normalizeLineStylePreference('straight')).toBe('straight');
 	});
 });

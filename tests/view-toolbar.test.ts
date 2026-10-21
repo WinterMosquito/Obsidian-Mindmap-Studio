@@ -513,7 +513,7 @@ describe('buildToolbar（布局选择器）', () => {
 });
 
 describe('buildToolbar（连线样式选择器）', () => {
-	it('居中分组：布局与连线两个标签 + 分隔符 + 四项样式（对应 LINE_STYLE_OPTIONS）', () => {
+	it('居中分组：布局与连线两个标签 + 分隔符 + 两项样式（折线在上，对应 LINE_STYLE_OPTIONS）', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		const center = groupOf(h.toolbarEl, 'mindmap-toolbar-center');
