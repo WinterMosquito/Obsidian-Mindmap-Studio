@@ -158,6 +158,11 @@ export function renderHyperlink(data: MdNodeData): string | null {
 	return formatWikilink(hyperlink);
 }
 
+// ---------------------------------------------------------------------------
+// 图片族：尺寸参数 / 嵌入标签 / 「图片是否已在 mdRaw」的特征判定 / renderImage
+// （三者相互引用，故连续放置；与链接族之间只共享 `rawOk` 入口）
+// ---------------------------------------------------------------------------
+
 /**
  * 图片自定义尺寸的回写参数（官方嵌入语法 `|宽度` / `|宽x高`；无自定义返回 null）。
  * 高度只在源行本就写了显式高度（`mdImageHeight`）时回写：拖拽调宽只写
@@ -296,6 +301,111 @@ function rawImageMatches(
 }
 
 /**
+ * 图片尺寸参数的**仅尺寸**后缀（md 图片 `![alt|宽x高](url)` 用）。
+ * 与 embedLabelSuffix 的差别：无尺寸时返回空串——md 形态的 alt 走 `![alt]` 位置，
+ * 不能再套 `|alt`（否则写出 `![alt|alt](url)`）。
+ */
+function imageSizeSuffix(data: MdNodeData): string {
+	const size = customImageSize(data);
+	if (size === null) {
+		return '';
+	}
+	return `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
+}
+
+/** 行内 token 渲染：图片（仅合成路径使用） */
+function renderImage(data: MdNodeData, app: App | null): string | null {
+	const image = data.image;
+	if (typeof image !== 'string' || !image) {
+		return null;
+	}
+	// 官方嵌入尺寸参数：`|宽度`（仅宽、等比缩放）或 `|宽x高`（显式双参数，
+	// 见官方帮助「Embed files」`![[图|640x480]]` / `![alt|100x145](url)`）。
+	const sizeSuffix = embedLabelSuffix(data);
+	// `formatEmbedWikilink` 的管道参数**不含**前导 `|`，而 `embedLabelSuffix`
+	// 的返回值带（它同时供 `![alt|尺寸](url)` 直接后接）——故显式去前缀，
+	// 否则会写出 `![[a.png||250]]`（2026-10-07 回归实测）。
+	const pipe = sizeSuffix.startsWith('|') ? sizeSuffix.slice(1) : sizeSuffix;
+	// 外链 md 图片的 alt：官方语法 `![alt|宽x高](url)`，alt 与尺寸共存
+	const rawAlt = data.mdImageAlt;
+	const alt = typeof rawAlt === 'string' ? rawAlt : '';
+	const target =
+		typeof data.mdImageTarget === 'string' ? data.mdImageTarget : '';
+	// 外链/协议地址（http/data/blob/file）不是库内文件：官方只有 `![alt|尺寸](url)`
+	// 一种形态；写成 `![[url]]` 会被 Obsidian 当成不存在的库内文件（图失效、alt 丢）。
+	// **该判定必须排在「image === target」之前**——外链图片的 target 与 image 相等，
+	// 否则拖拽调宽（尺寸落成 custom:true）后外链会被回写成 wikilink。
+	if (isExternalImageRef(image) || isExternalImageRef(target)) {
+		// alt 与尺寸可共存（`![alt|300](url)`），故用「仅尺寸」后缀，不能再套
+		// embedLabelSuffix（无尺寸时它返回 `|alt`，会写出 `![alt|alt](url)`）。
+		// 回写地址：优先当前 image（它就是引擎里的那张图）；只有 image 已是资源
+		// 地址（app://）而原始引用才是外链时，才回落到 mdImageTarget（解析期快照
+		// 可能已过期——「换图」后它仍指向旧图）。
+		return `![${alt}${imageSizeSuffix(data)}](${isExternalImageRef(image) ? image : target})`;
+	}
+	// **库内图片的 md 形态**：官方「使用 \[\[Wikilinks\]\]」关闭时新建的图写
+	// `![alt|尺寸](路径)`（该设置同时管 links 与 images，见 platform/vault-prefs）。
+	// 形态由解析期记录 / 新建时按设置写入（md-meta.mdImageStyle），缺省按 wiki。
+	if (data.mdImageStyle === 'md') {
+		return `![${alt}${imageSizeSuffix(data)}](${target || image})`;
+	}
+	// **库内 wikilink 的目标串**：仍指向「当前这张图」时保留解析期原文
+	// （`mdImageTarget`），只有它已指向别的文件 / 无法解析时才回落
+	// `image` 的真实库内路径。
+	//
+	// 为什么优先原文（2026-10-20 实机实测）：拖拽调宽走合成回写，此前按
+	// `resolvePathToFile(image).path` 写，`![[sample-icon.svg|190]]` 被扩写成
+	// `![[fixtures/assets/sample-icon.svg|190]]`——用户只改了尺寸，引用写法却被
+	// 无关改写（子文件夹裸名引用尤其刺眼）。
+	//
+	// 为什么不能无条件用原文：文件重命名后 `mdImageTarget` 可能是旧值（与上方
+	// external 分支注释同一风险），写原文会留下悬空引用（回归用例「图片文件
+	// 重命名后 → 合成写新路径」）。判据是**两份解析结果是否同一文件**。
+	//
+	// `image` 无法反查（图片已不在库中 / 未带 app）时保持旧口径（原样写 `image`）：
+	// 上游 `links-split` 等处的「宁可不动，也不把 app:// 写进笔记」兜底依赖它。
+	const imageFile = app ? resolvePathToFile(image, app) : null;
+	if (app && imageFile) {
+		const targetFile = target ? resolvePathToFile(target, app) : null;
+		const targetIsStale =
+			targetFile === null || targetFile.path !== imageFile.path;
+		if (target && !targetIsStale) {
+			return formatEmbedWikilink(target, pipe);
+		}
+		return formatEmbedWikilink(imageFile.path, pipe);
+	}
+	return formatEmbedWikilink(image, pipe);
+}
+
+/** 图片当前库内路径（view 把 image 解析为资源地址后反查）；无则原样 */
+function imageVaultPath(data: MdNodeData, app: App | null): string | null {
+	const image = data.image;
+	if (typeof image !== 'string' || !image) {
+		return null;
+	}
+	if (app) {
+		return resolvePathToFile(image, app)?.path ?? null;
+	}
+	return image;
+}
+
+/**
+ * 图片的「文件名显示名」（历史兼容：旧版本解析曾把文件名回退为纯图节点
+ * 文本，经「插入/更换图片」同步的遗留数据仍可能命中；现行解析不再产生）。
+ */
+function imageSelfText(data: MdNodeData): string | null {
+	const target = data.mdImageTarget;
+	if (!target) {
+		return null;
+	}
+	return target.split('/').pop() ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// 链接族：引用特征匹配 / 内联 token 台账 / 显示名
+// ---------------------------------------------------------------------------
+
+/**
  * mdRaw 中是否已含该链接引用。
  * URL 类特征按原文出现判断（裸 URL / `<url>` / `[text](url)` 均合法）；
  * 库内双链/附件按 `[[…]]` 边界匹配——此前用裸子串，节点文本恰好含同名串时
@@ -402,95 +512,6 @@ function inlineTokens(data: MdNodeData, app: App | null): string[] {
 	return out;
 }
 
-/**
- * 图片尺寸参数的**仅尺寸**后缀（md 图片 `![alt|宽x高](url)` 用）。
- * 与 embedLabelSuffix 的差别：无尺寸时返回空串——md 形态的 alt 走 `![alt]` 位置，
- * 不能再套 `|alt`（否则写出 `![alt|alt](url)`）。
- */
-function imageSizeSuffix(data: MdNodeData): string {
-	const size = customImageSize(data);
-	if (size === null) {
-		return '';
-	}
-	return `|${size.width}${size.height !== null ? `x${size.height}` : ''}`;
-}
-
-/** 行内 token 渲染：图片（仅合成路径使用） */
-function renderImage(data: MdNodeData, app: App | null): string | null {
-	const image = data.image;
-	if (typeof image !== 'string' || !image) {
-		return null;
-	}
-	// 官方嵌入尺寸参数：`|宽度`（仅宽、等比缩放）或 `|宽x高`（显式双参数，
-	// 见官方帮助「Embed files」`![[图|640x480]]` / `![alt|100x145](url)`）。
-	const sizeSuffix = embedLabelSuffix(data);
-	// `formatEmbedWikilink` 的管道参数**不含**前导 `|`，而 `embedLabelSuffix`
-	// 的返回值带（它同时供 `![alt|尺寸](url)` 直接后接）——故显式去前缀，
-	// 否则会写出 `![[a.png||250]]`（2026-10-07 回归实测）。
-	const pipe = sizeSuffix.startsWith('|') ? sizeSuffix.slice(1) : sizeSuffix;
-	// 外链 md 图片的 alt：官方语法 `![alt|宽x高](url)`，alt 与尺寸共存
-	const rawAlt = data.mdImageAlt;
-	const alt = typeof rawAlt === 'string' ? rawAlt : '';
-	const target =
-		typeof data.mdImageTarget === 'string' ? data.mdImageTarget : '';
-	// 外链/协议地址（http/data/blob/file）不是库内文件：官方只有 `![alt|尺寸](url)`
-	// 一种形态；写成 `![[url]]` 会被 Obsidian 当成不存在的库内文件（图失效、alt 丢）。
-	// **该判定必须排在「image === target」之前**——外链图片的 target 与 image 相等，
-	// 否则拖拽调宽（尺寸落成 custom:true）后外链会被回写成 wikilink。
-	if (isExternalImageRef(image) || isExternalImageRef(target)) {
-		// alt 与尺寸可共存（`![alt|300](url)`），故用「仅尺寸」后缀，不能再套
-		// embedLabelSuffix（无尺寸时它返回 `|alt`，会写出 `![alt|alt](url)`）。
-		// 回写地址：优先当前 image（它就是引擎里的那张图）；只有 image 已是资源
-		// 地址（app://）而原始引用才是外链时，才回落到 mdImageTarget（解析期快照
-		// 可能已过期——「换图」后它仍指向旧图）。
-		return `![${alt}${imageSizeSuffix(data)}](${isExternalImageRef(image) ? image : target})`;
-	}
-	// **库内图片的 md 形态**：官方「使用 \[\[Wikilinks\]\]」关闭时新建的图写
-	// `![alt|尺寸](路径)`（该设置同时管 links 与 images，见 platform/vault-prefs）。
-	// 形态由解析期记录 / 新建时按设置写入（md-meta.mdImageStyle），缺省按 wiki。
-	if (data.mdImageStyle === 'md') {
-		return `![${alt}${imageSizeSuffix(data)}](${target || image})`;
-	}
-	// **库内 wikilink 的目标串**：仍指向「当前这张图」时保留解析期原文
-	// （`mdImageTarget`），只有它已指向别的文件 / 无法解析时才回落
-	// `image` 的真实库内路径。
-	//
-	// 为什么优先原文（2026-10-20 实机实测）：拖拽调宽走合成回写，此前按
-	// `resolvePathToFile(image).path` 写，`![[sample-icon.svg|190]]` 被扩写成
-	// `![[fixtures/assets/sample-icon.svg|190]]`——用户只改了尺寸，引用写法却被
-	// 无关改写（子文件夹裸名引用尤其刺眼）。
-	//
-	// 为什么不能无条件用原文：文件重命名后 `mdImageTarget` 可能是旧值（与上方
-	// external 分支注释同一风险），写原文会留下悬空引用（回归用例「图片文件
-	// 重命名后 → 合成写新路径」）。判据是**两份解析结果是否同一文件**。
-	//
-	// `image` 无法反查（图片已不在库中 / 未带 app）时保持旧口径（原样写 `image`）：
-	// 上游 `links-split` 等处的「宁可不动，也不把 app:// 写进笔记」兜底依赖它。
-	const imageFile = app ? resolvePathToFile(image, app) : null;
-	if (app && imageFile) {
-		const targetFile = target ? resolvePathToFile(target, app) : null;
-		const targetIsStale =
-			targetFile === null || targetFile.path !== imageFile.path;
-		if (target && !targetIsStale) {
-			return formatEmbedWikilink(target, pipe);
-		}
-		return formatEmbedWikilink(imageFile.path, pipe);
-	}
-	return formatEmbedWikilink(image, pipe);
-}
-
-/** 图片当前库内路径（view 把 image 解析为资源地址后反查）；无则原样 */
-function imageVaultPath(data: MdNodeData, app: App | null): string | null {
-	const image = data.image;
-	if (typeof image !== 'string' || !image) {
-		return null;
-	}
-	if (app) {
-		return resolvePathToFile(image, app)?.path ?? null;
-	}
-	return image;
-}
-
 /** 由 hyperlink 提取"目标特征串"（用于判断 mdRaw 中是否已含该链接） */
 function hyperlinkFeature(hyperlink: string): string | null {
 	if (!hyperlink) {
@@ -536,18 +557,6 @@ function nodeLinkDisplay(data: MdNodeData): string | null {
 		return hyperlink;
 	}
 	return linkDisplayText(hyperlink);
-}
-
-/**
- * 图片的「文件名显示名」（历史兼容：旧版本解析曾把文件名回退为纯图节点
- * 文本，经「插入/更换图片」同步的遗留数据仍可能命中；现行解析不再产生）。
- */
-function imageSelfText(data: MdNodeData): string | null {
-	const target = data.mdImageTarget;
-	if (!target) {
-		return null;
-	}
-	return target.split('/').pop() ?? null;
 }
 
 /**
