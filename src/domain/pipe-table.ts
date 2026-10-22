@@ -112,7 +112,11 @@ export function matchPipeTable(
  */
 function splitPipeRow(line: string): string[] | null {
 	const cells: string[] = [];
+	// 游标切片而非逐字符累加：只有遇到 `\` / `|` 才把 `[pending, index)` 整段
+	// 切进 `current`，普通字符一律留在原串里（逐字符 `+=` 在长行上是 O(n) 次
+	// 中间串分配，表格行长度由用户内容决定）。
 	let current = '';
+	let pending = 0;
 	let sawPipe = false;
 	for (let index = 0; index < line.length; index++) {
 		const char = line[index] ?? '';
@@ -120,32 +124,32 @@ function splitPipeRow(line: string): string[] | null {
 			const next = line[index + 1] ?? '';
 			// `\|` → 字面 `|`：帮助的写法（别名 `[[X\|别名]]`、图片缩放 `![[x.png\|200]]`）
 			if (next === '|') {
-				current += '|';
+				current += line.slice(pending, index) + '|';
 				index += 1;
+				pending = index + 1;
 				continue;
 			}
 			// `\\` 成对跳过：否则 `a\\|b` 里的 `\\` 会被读成转义、其后的 `|` 不再切分。
 			// 两字符原样保留——`\\` → `\` 是行内管线（MARKUP_RE 的 escaped 分支）的事
 			if (next === '\\') {
-				current += '\\\\';
+				current += line.slice(pending, index) + '\\\\';
 				index += 1;
+				pending = index + 1;
 				continue;
 			}
-			current += char;
 			continue;
 		}
 		if (char === '|') {
 			sawPipe = true;
-			cells.push(current);
+			cells.push(current + line.slice(pending, index));
 			current = '';
-			continue;
+			pending = index + 1;
 		}
-		current += char;
 	}
 	if (!sawPipe) {
 		return null;
 	}
-	cells.push(current);
+	cells.push(current + line.slice(pending));
 	// 外框管道（帮助：可有可无）：只在原文确实以该管道起止时丢弃切出来的空串，
 	// 否则 `| a | | b |` 这类「空格单元格」会被误删
 	if (line.trimStart().startsWith('|') && (cells[0] ?? '').trim() === '') {
