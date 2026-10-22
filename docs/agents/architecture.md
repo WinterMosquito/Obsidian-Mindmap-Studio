@@ -356,7 +356,7 @@ docs/
 
 | 文件 | 行数 | 豁免理由 |
 |---|---|---|
-| `src/engine/mindmap.ts` | 759 | 引擎防腐层**入口（barrel）**。2026-10-16 口径订正：收口点是「**层**」（`engine/`）而非「文件」——拆分为**层内多文件**不摊开跨层访问面，故原「拆分即违约」不再成立；改为层内分片 + `mindmap.ts` 作唯一对外 barrel（调用方 `import ... from '../engine/mindmap'` 不变）。本文件保留实例创建/生命周期/编排与 re-export |
+| `src/engine/mindmap.ts` | 623 | 引擎防腐层**入口（barrel）**。2026-10-16 口径订正：收口点是「**层**」（`engine/`）而非「文件」——拆分为**层内多文件**不摊开跨层访问面，故原「拆分即违约」不再成立；改为层内分片 + `mindmap.ts` 作唯一对外 barrel（调用方 `import ... from '../engine/mindmap'` 不变）。本文件保留实例创建/生命周期/编排与 re-export |
 | `src/engine/mindmap-viewport.ts` | 1058 | 画布几何与视口防腐面（2026-10-16 自 `mindmap.ts` 拆出）：实时容器几何同步、数据层/DOM 双口径内容盒测量、`fitMindMap`、居中与「渲染落地后居中补正」（3 秒窗口 + 几何指纹收敛判据）、缩放/平移、视口状态读写与签名。与 `math-jax` 同性质——就绪/几何口径只此一处，拆开会让该口径跨文件漂移（K64/K70 实机产物） |
 | `src/engine/mindmap-nodes.ts` | 748 | 节点查询与工具 + 文本编辑防腐面（2026-10-16 自 `mindmap.ts` 拆出）：节点/DOM 反查（`findNodeByDom`/`resolveNodesByDoms`）、节点文本与图片尺寸、自绘内容重建、兄弟上/下移、`renderer.textEdit`/`node_dblclick` 收口 |
 | `src/markdown/md-serialize.ts` | 915 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆）。2026-10-12（K119）：无显示名段的**锚点插入点**与替换型 slot 共用同一遍行内拼装（区间占用判定只有一份），拆开会让两种定位各持一套冲突规则 |

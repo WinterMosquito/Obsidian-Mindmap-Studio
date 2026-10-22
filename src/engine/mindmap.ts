@@ -33,20 +33,14 @@ import type { Language } from '../core/i18n';
 import { docWikiLinkDisplay, type WikiAliasSource } from '../domain/wiki-display';
 import {
 	RENDER_ASYNC_NODE_THRESHOLD,
-	RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,
-	RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS,
-	RESET_LAYOUT_VIEWPORT_DELAY_MS,
 	shouldEnablePerformanceMode,
 } from '../core/constants';
 import {
-	ENGINE_COMMANDS,
 	removeEngineShortcut,
 	shortcutGateAllows,
 } from './mindmap-commands';
-import { scheduleEngineTimer } from './mindmap-timers';
 import { applyHistoryLimitOnCreate } from './mindmap-history';
-import { fitMindMap } from './mindmap-viewport';
-import { countTreeNodes, getRenderRoot } from './mindmap-nodes';
+import { countTreeNodes } from './mindmap-nodes';
 
 // 对外 API 转发（调用方一律 `import ... from '../engine/mindmap'`）。
 // 两种写法**各有用途，勿统一**：
@@ -72,6 +66,9 @@ export * from './mindmap-nodes';
 export * from './mindmap-clipboard';
 export * from './mindmap-search';
 export * from './mindmap-export';
+// 「自动整理」族已拆到独立文件，仍由本 barrel 对外转出（调用方 import 路径不变）
+export { arrangeMindMap } from './mindmap-arrange';
+import { buildWikiDocIcon, WIKI_DOC_ICON_SIZE } from './mindmap-icons';
 
 export interface CreateMindMapOptions {
 	layout: string;
@@ -235,66 +232,6 @@ const PERFORMANCE_CONFIG = {
 	padding: 150,
 	removeNodeWhenOutCanvas: true,
 } as const;
-
-const WIKI_DOC_ICON_SIZE = 18;
-/** 图标 viewBox 边长（路径按 24 网格绘制，缩放到 WIKI_DOC_ICON_SIZE 显示） */
-const WIKI_DOC_ICON_VIEWBOX = 24;
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
-/** 文档页图标（折角页 + 页脚线，feather file-text 风格） */
-const WIKI_DOC_ICON_PATH =
-	'M6 2h8l5 5v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm8 0v5h5M9 13h6M9 17h6';
-
-/**
- * 构造文档页图标（`<svg>` 根元素，见上方契约说明）。
- *
- * `doc` 必须是**画布所在的 document**（调用点传 `el.ownerDocument`），
- * 不能用全局 `document`：同一视图可被拖入 popout 窗口，此时全局 document
- * 与画布所在文档并非同一个；跨文档创建再挂载的 SVG 在 popout 中不渲染、
- * 也不响应事件。元素级 API 的 `ownerDocument` 永远指向元素自己的文档，
- * 是 popout 场景下的正确来源。
- */
-function buildWikiDocIcon(
-	doc: Document,
-	link: string,
-	title: string,
-	color: string,
-	onOpen: (link: string) => void,
-): SVGSVGElement {
-	const svg = doc.createElementNS(SVG_NS, 'svg');
-	svg.setAttribute('xmlns', SVG_NS);
-	svg.setAttribute('width', String(WIKI_DOC_ICON_SIZE));
-	svg.setAttribute('height', String(WIKI_DOC_ICON_SIZE));
-	svg.setAttribute(
-		'viewBox',
-		`0 0 ${WIKI_DOC_ICON_VIEWBOX} ${WIKI_DOC_ICON_VIEWBOX}`,
-	);
-	svg.classList.add('mindmap-wiki-doc-icon');
-	const path = doc.createElementNS(SVG_NS, 'path');
-	path.setAttribute('d', WIKI_DOC_ICON_PATH);
-	path.setAttribute('fill', 'none');
-	path.setAttribute('stroke', color);
-	path.setAttribute('stroke-width', '2');
-	path.setAttribute('stroke-linecap', 'round');
-	path.setAttribute('stroke-linejoin', 'round');
-	svg.appendChild(path);
-	// 透明命中区：扩大可点范围至整个图标方块（细线难点中）
-	const hit = doc.createElementNS(SVG_NS, 'rect');
-	hit.setAttribute('width', String(WIKI_DOC_ICON_VIEWBOX));
-	hit.setAttribute('height', String(WIKI_DOC_ICON_VIEWBOX));
-	hit.setAttribute('fill', 'transparent');
-	svg.appendChild(hit);
-	const tip = doc.createElementNS(SVG_NS, 'title');
-	tip.textContent = title || link;
-	svg.appendChild(tip);
-	svg.addEventListener('click', (event) => {
-		// 阻断节点选中语义：图标点击 = 打开目标
-		event.stopPropagation();
-		onOpen(link);
-	});
-	return svg;
-}
 
 /**
  * 解析节点当前生效的字号/颜色/字重（自绘节点内容用）。
@@ -683,77 +620,4 @@ export function applyPerformanceMode(
 		console.error('切换性能模式失败', error);
 		return false;
 	}
-}
-
-/**
- * 自动整理：清除所有节点被自由拖拽后的自定义位置，
- * 重新按当前布局算法计算位置，使各主题以合理间距对齐摆放，
- * 最后适应画布（fit 全图：整体缩放居中，整理结果一览无余）。
- *
- * 注意：使用引擎内置的「重置布局」（RESET_LAYOUT 命令）而非全量 setData。
- * 旧实现 getData()+delete+setData 会经 handleData / renderer.setData 重新初始化
- * 布局，可能重排 children 从而打乱用户手动排好的节点顺序；
- * resetLayout 只逐个节点清除 customLeft/customTop 后重渲染，不触碰 children 顺序，
- * 因此不会打乱手动排好的顺序。
- *
- * 渲染窗口守卫（K67）：引擎 `Renderer._render` 渲染期会**先把 `renderer.root` 置 null**、
- * 再由异步布局回填（分片执行，跨多个宏任务，见 `RESET_LAYOUT_ROOT_WAIT_*` 注释）。
- * 窗口期内执行 RESET_LAYOUT 会遍历 null 根并在回调首行抛
- * `TypeError: Cannot set properties of null (setting 'customLeft')`（用户实测）。
- * 故 root 缺失时不是立即执行，而是等回填后再执行（超上限只记日志、不抛）。
- * 返回 true = 已受理（含延后到本轮渲染结束的情形）。
- */
-export function arrangeMindMap(mindMap: MindMap | null): boolean {
-	if (!mindMap) {
-		return false;
-	}
-	try {
-		if (typeof mindMap.execCommand !== 'function') {
-			return false;
-		}
-		if (getRenderRoot(mindMap)) {
-			execResetLayoutAndFit(mindMap);
-			return true;
-		}
-		waitRenderRootThenArrange(mindMap);
-		return true;
-	} catch (error) {
-		console.error('自动整理失败', error);
-		return false;
-	}
-}
-
-/** RESET_LAYOUT + 延时 fit（成功路径唯一实现：即时执行与等待回填两条路径共用） */
-function execResetLayoutAndFit(mindMap: MindMap): void {
-	mindMap.execCommand(ENGINE_COMMANDS.RESET_LAYOUT);
-	scheduleEngineTimer(
-		mindMap,
-		() => fitMindMap(mindMap),
-		RESET_LAYOUT_VIEWPORT_DELAY_MS,
-	);
-}
-
-/**
- * 渲染窗口期内（root 暂缺）轮询等待回填后再整理（K67）。
- * 超时（渲染链中断等异常态）只记日志：与既有的 catch 口径一致，
- * 不向调用方抛错、不打断视图交互。
- */
-function waitRenderRootThenArrange(mindMap: MindMap): void {
-	const deadline = Date.now() + RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS;
-	const attempt = (): void => {
-		if (getRenderRoot(mindMap)) {
-			try {
-				execResetLayoutAndFit(mindMap);
-			} catch (error) {
-				console.error('自动整理失败', error);
-			}
-			return;
-		}
-		if (Date.now() >= deadline) {
-			console.error('自动整理失败：渲染根在等待上限内未回填');
-			return;
-		}
-		scheduleEngineTimer(mindMap, attempt, RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS);
-	};
-	scheduleEngineTimer(mindMap, attempt, RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS);
 }
