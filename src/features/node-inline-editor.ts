@@ -179,17 +179,7 @@ export function openNodeInlineEditor(
 	const data = node.getData() as MdNodeData;
 	const initialValue = composeNodeContent(data, view.app);
 
-	// 官方 Elements API 创建（规则 obsidianmd/prefer-create-el）：
-	// `doc.body.createEl` 立即挂载，样式/取值在同一同步块内完成，无闪烁
-	const el = doc.body.createEl('textarea', {
-		cls: EDITOR_CLASS,
-		attr: {
-			spellcheck: 'false',
-			'aria-label': t(view.lang, 'modal.text.title'),
-		},
-	});
-	Object.assign(el.style, EDITOR_STYLES);
-	el.value = initialValue;
+	const el = createEditorEl(doc, view, initialValue);
 
 	/** 点击编辑器外（含拖拽/右键开始）：提交（capture 先于其他处理，
 	 * 对齐官方「Select anywhere outside the card to stop editing」） */
@@ -214,60 +204,9 @@ export function openNodeInlineEditor(
 	sessions.set(mindMap, session);
 
 	/** 重定位（节点 group 已随引擎重建/删除时提交关闭） */
-	const applyRect = (): void => {
-		if (!session.active) {
-			return;
-		}
-		const target = getNodeGroupEl(session.node);
-		if (!target) {
-			commitSession(view, session);
-			return;
-		}
-		const rect = target.getBoundingClientRect();
-		el.style.left = `${Math.floor(rect.left)}px`;
-		el.style.top = `${Math.floor(rect.top)}px`;
-		el.style.width = `${Math.max(Math.floor(rect.width), MIN_EDITOR_WIDTH)}px`;
-		el.style.minHeight = `${MIN_EDITOR_HEIGHT}px`;
-		el.style.maxHeight = `${MAX_EDITOR_HEIGHT}px`;
-		const height = Math.min(
-			Math.max(Math.floor(rect.height), MIN_EDITOR_HEIGHT),
-			MAX_EDITOR_HEIGHT,
-		);
-		el.style.height = `${height}px`;
-	};
+	const applyRect = (): void => placeEditor(el, session, view);
 
-	// 键盘：IME 组合态短路；语义见 resolveInlineEditKey；事件不外泄
-	// （引擎快捷键与 Obsidian scope 快捷键都不应在编辑器内生效）
-	el.addEventListener('keydown', (event) => {
-		event.stopPropagation();
-		if (event.isComposing || event.key === 'Process') {
-			return;
-		}
-		const action = resolveInlineEditKey(event);
-		if (action === 'none' || action === 'newline') {
-			return;
-		}
-		event.preventDefault();
-		commitSession(view, session);
-	});
-	el.addEventListener('keyup', (event) => {
-		event.stopPropagation();
-	});
-	// 编辑器内点击不冒泡（引擎 body_click / svg_mousedown 语义不受影响）
-	el.addEventListener('mousedown', (event) => {
-		event.stopPropagation();
-	});
-	el.addEventListener('click', (event) => {
-		event.stopPropagation();
-	});
-	// 多行自适应（上限内滚动）
-	el.addEventListener('input', () => {
-		Object.assign(el.style, { height: 'auto' });
-		el.style.height = `${Math.min(
-			Math.max(el.scrollHeight, MIN_EDITOR_HEIGHT),
-			MAX_EDITOR_HEIGHT,
-		)}px`;
-	});
+	bindEditorInput(el, view, session);
 
 	doc.addEventListener('mousedown', onDocMouseDown, true);
 
@@ -287,6 +226,98 @@ export function openNodeInlineEditor(
 	el.focus();
 	// 光标置末尾（对齐弹窗原文模式的「追加式编辑最常见，避免误输入覆盖整段」）
 	el.setSelectionRange(initialValue.length, initialValue.length);
+}
+
+/**
+ * 创建编辑器元素（官方 Elements API，规则 `obsidianmd/prefer-create-el`）：
+ * `doc.body.createEl` 立即挂载，样式与取值在同一同步块内完成，无闪烁。
+ */
+function createEditorEl(
+	doc: Document,
+	view: ViewNodeEditContext,
+	initialValue: string,
+): HTMLTextAreaElement {
+	const el = doc.body.createEl('textarea', {
+		cls: EDITOR_CLASS,
+		attr: {
+			spellcheck: 'false',
+			'aria-label': t(view.lang, 'modal.text.title'),
+		},
+	});
+	Object.assign(el.style, EDITOR_STYLES);
+	el.value = initialValue;
+	return el;
+}
+
+/**
+ * 把编辑器摆到节点 group 的位置与尺寸上（首次显示 / 缩放 / 整树重建后都调它）。
+ *
+ * 节点 group 已随引擎重建或删除时**提交关闭**——没有定位依据就不该继续编辑。
+ */
+function placeEditor(
+	el: HTMLTextAreaElement,
+	session: InlineEditorSession,
+	view: ViewNodeEditContext,
+): void {
+	if (!session.active) {
+		return;
+	}
+	const target = getNodeGroupEl(session.node);
+	if (!target) {
+		commitSession(view, session);
+		return;
+	}
+	const rect = target.getBoundingClientRect();
+	el.style.left = `${Math.floor(rect.left)}px`;
+	el.style.top = `${Math.floor(rect.top)}px`;
+	el.style.width = `${Math.max(Math.floor(rect.width), MIN_EDITOR_WIDTH)}px`;
+	el.style.minHeight = `${MIN_EDITOR_HEIGHT}px`;
+	el.style.maxHeight = `${MAX_EDITOR_HEIGHT}px`;
+	const height = Math.min(
+		Math.max(Math.floor(rect.height), MIN_EDITOR_HEIGHT),
+		MAX_EDITOR_HEIGHT,
+	);
+	el.style.height = `${height}px`;
+}
+
+/**
+ * 编辑器输入面：键盘（IME 组合态短路，语义见 `resolveInlineEditKey`；事件不外泄
+ * ——引擎快捷键与 Obsidian scope 快捷键都不应在编辑器内生效）、点击不冒泡
+ * （引擎 `body_click` / `svg_mousedown` 语义不受影响）、多行自适应（上限内滚动）。
+ */
+function bindEditorInput(
+	el: HTMLTextAreaElement,
+	view: ViewNodeEditContext,
+	session: InlineEditorSession,
+): void {
+	el.addEventListener('keydown', (event) => {
+		event.stopPropagation();
+		if (event.isComposing || event.key === 'Process') {
+			return;
+		}
+		const action = resolveInlineEditKey(event);
+		if (action === 'none' || action === 'newline') {
+			return;
+		}
+		event.preventDefault();
+		commitSession(view, session);
+	});
+	el.addEventListener('keyup', (event) => {
+		event.stopPropagation();
+	});
+	el.addEventListener('mousedown', (event) => {
+		event.stopPropagation();
+	});
+	el.addEventListener('click', (event) => {
+		event.stopPropagation();
+	});
+	el.addEventListener('input', () => {
+		Object.assign(el.style, { height: 'auto' });
+		el.style.height = `${Math.min(
+			Math.max(el.scrollHeight, MIN_EDITOR_HEIGHT),
+			MAX_EDITOR_HEIGHT,
+		)}px`;
+	});
 }
 
 /**
