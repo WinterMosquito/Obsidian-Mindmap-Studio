@@ -351,60 +351,13 @@ export class ContentRemeasureSession {
 		// 落到节点上就是「公式节点连线收束」。本批 holders 原样挂起，
 		// 等可见后由 syncVisibility 重新入批（同一套回退链，不重复实现）。
 		if (!this.host.isVisible()) {
-			this.hiddenPending ??= new Set<HTMLElement>();
-			for (const holder of holders) {
-				this.hiddenPending.add(holder);
-			}
-			this.wasHidden = true;
+			this.deferWhileHidden(holders);
 			return;
 		}
-		const nodes: MindMapNode[] = [];
-		const unresolvedHolders: HTMLElement[] = [];
-		// 批量反查：一次遍历建「group → 节点」表 + 逐 holder 沿祖先链查表，取代
-		// 逐 holder 全树 walkTree（O(holder 数 × 节点数)）。逐位置对应，故「未命中」
-		// 语义与逐个反查完全一致（落空的 holder 仍进 unresolvedHolders，走下面
-		// 「产物元素反查 / 延后重试」两条回退）。
-		const resolved = resolveNodesByDoms(mindMap, holders);
-		for (const [i, holder] of holders.entries()) {
-			const node = resolved[i] ?? null;
-			if (!node) {
-				unresolvedHolders.push(holder);
-				continue;
-			}
-			nodes.push(node);
-			this.settledNodes.add(node);
-		}
-		if (unresolvedHolders.length > 0) {
-			// 反查一（K100/K104）：holder 可能已随引擎重渲染脱离（图片回灌 K96 的
-			// 补灌触发全树重建），改按**产物元素**反查——选择器三通道覆盖我方数学
-			// holder 类、CHTML 容器与**代码块高亮 holder**（2026-10-07 审查修复：
-			// 此前缺代码块通道，且兜底「捞到别的数学节点」会让本批代码块静默跳过、
-			// 不重测也不告警）。⚠ 兜底是**过包含**的（返回全部产物所在节点）⇒ 若
-			// 本批 holder 彻底消失且其产物也不在活 DOM 里，仍会被静默跳过
-			//（K100 既有边界，未改设计）。
-			// 去重改用 Set：nodes 随循环增长，`includes` 会让本轮退化为 O(n²)
-			const seen = new Set(nodes);
-			for (const node of findNodesByContentProducts(mindMap)) {
-				if (seen.has(node)) {
-					continue;
-				}
-				seen.add(node);
-				nodes.push(node);
-				this.settledNodes.add(node);
-			}
-			if (nodes.length === 0) {
-				if (!this.deferredRetried) {
-					// 全部落空且尚未重试：**大概率是引擎渲染窗口**——`Renderer._render`
-					// 期间 `renderer.root` 为 null（K67），两条解析路径必然全空。
-					// 暂存 holders，等 node_tree_render_end（root 回填）重试，不告警。
-					this.deferred = new Set(unresolvedHolders);
-					return;
-				}
-				// 重试后仍全空：真的定位不到 → 告警一次（静默跳过会让问题无痕退化）
-				this.warnUnresolved(
-					'自绘内容节点（公式/代码块）尺寸同步未能定位归属节点，内容可能被裁剪',
-				);
-			}
+		const { nodes, unresolved } = this.collectResolvedNodes(mindMap, holders);
+		if (unresolved.length > 0 && this.recoverByProducts(mindMap, nodes, unresolved)) {
+			// 全部落空且尚未重试：已暂存 holders，等 root 回填后重试，本轮就此结束
+			return;
 		}
 		// 本轮有命中（或无需重试）：清暂存与重试标记
 		this.deferred = null;
@@ -412,6 +365,85 @@ export class ContentRemeasureSession {
 		if (nodes.length > 0) {
 			refreshNodesCustomContent(mindMap, nodes);
 		}
+	}
+
+	/** 隐藏态不测量（不变式 ④）：本批 holders 原样挂起，等可见后由 syncVisibility 重新入批 */
+	private deferWhileHidden(holders: readonly HTMLElement[]): void {
+		this.hiddenPending ??= new Set<HTMLElement>();
+		for (const holder of holders) {
+			this.hiddenPending.add(holder);
+		}
+		this.wasHidden = true;
+	}
+
+	/**
+	 * holder → 节点：批量反查（一次遍历建「group → 节点」表 + 逐 holder 沿祖先链
+	 * 查表），取代逐 holder 全树 walkTree（O(holder 数 × 节点数)）。
+	 *
+	 * 逐位置对应，故「未命中」语义与逐个反查完全一致：落空的 holder 进
+	 * `unresolved`，由调用方走「产物元素反查 / 延后重试」两条回退。
+	 */
+	private collectResolvedNodes(
+		mindMap: MindMap,
+		holders: readonly HTMLElement[],
+	): { nodes: MindMapNode[]; unresolved: HTMLElement[] } {
+		const nodes: MindMapNode[] = [];
+		const unresolved: HTMLElement[] = [];
+		const resolved = resolveNodesByDoms(mindMap, holders);
+		for (const [i, holder] of holders.entries()) {
+			const node = resolved[i] ?? null;
+			if (!node) {
+				unresolved.push(holder);
+				continue;
+			}
+			nodes.push(node);
+			this.settledNodes.add(node);
+		}
+		return { nodes, unresolved };
+	}
+
+	/**
+	 * 反查一（K100/K104）：holder 可能已随引擎重渲染脱离（图片回灌 K96 的补灌触发
+	 * 全树重建），改按**产物元素**反查——选择器三通道覆盖我方数学 holder 类、
+	 * CHTML 容器与**代码块高亮 holder**（2026-10-07 审查修复：此前缺代码块通道，
+	 * 且兜底「捞到别的数学节点」会让本批代码块静默跳过、不重测也不告警）。
+	 *
+	 * ⚠ 兜底是**过包含**的（返回全部产物所在节点）⇒ 若本批 holder 彻底消失且其
+	 * 产物也不在活 DOM 里，仍会被静默跳过（K100 既有边界，未改设计）。
+	 *
+	 * @returns true = 全部落空且尚未重试，holders 已暂存待 `retryDeferred`
+	 *   （**调用方直接 return**）；false = 走正常收尾
+	 */
+	private recoverByProducts(
+		mindMap: MindMap,
+		nodes: MindMapNode[],
+		unresolved: readonly HTMLElement[],
+	): boolean {
+		// 去重改用 Set：nodes 随循环增长，`includes` 会让本轮退化为 O(n²)
+		const seen = new Set(nodes);
+		for (const node of findNodesByContentProducts(mindMap)) {
+			if (seen.has(node)) {
+				continue;
+			}
+			seen.add(node);
+			nodes.push(node);
+			this.settledNodes.add(node);
+		}
+		if (nodes.length > 0) {
+			return false;
+		}
+		if (!this.deferredRetried) {
+			// 全部落空且尚未重试：**大概率是引擎渲染窗口**——`Renderer._render`
+			// 期间 `renderer.root` 为 null（K67），两条解析路径必然全空。
+			// 暂存 holders，等 node_tree_render_end（root 回填）重试，不告警。
+			this.deferred = new Set(unresolved);
+			return true;
+		}
+		// 重试后仍全空：真的定位不到 → 告警一次（静默跳过会让问题无痕退化）
+		this.warnUnresolved(
+			'自绘内容节点（公式/代码块）尺寸同步未能定位归属节点，内容可能被裁剪',
+		);
+		return false;
 	}
 
 	/**
