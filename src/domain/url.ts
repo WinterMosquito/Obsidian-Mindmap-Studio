@@ -101,6 +101,9 @@ export function isAppResourceUrl(value: string): boolean {
 	return value.startsWith('app://');
 }
 
+/** 资源地址剥离 query/锚点的截断点（非全局，`search` 可复用同一实例）。 */
+const PATH_STOP_RE = /[?#]/;
+
 /**
  * 资源地址（`app://`）的**库内路径候选**（只提取、不保证存在）。
  *
@@ -123,7 +126,7 @@ export function resourceUrlPathCandidates(url: string): string[] {
 		return [];
 	}
 	let path = rest.slice(slash + 1);
-	const cut = path.search(/[?#]/);
+	const cut = path.search(PATH_STOP_RE);
 	if (cut !== -1) {
 		path = path.slice(0, cut);
 	}
@@ -139,8 +142,14 @@ export function isHyperlinkProtocolUrl(value: string): boolean {
 	);
 }
 
+/**
+ * `scheme://` 形态（大小写不敏感）。预编译而非写在函数体内：本谓词在
+ * `node-inline-tokenize` 里**逐 token** 调用，字面量每次求值都会新建 RegExp 实例。
+ */
+const SCHEME_URL_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
+
 export function isSchemeUrl(value: string): boolean {
-	return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value);
+	return SCHEME_URL_RE.test(value);
 }
 
 /**
@@ -226,6 +235,9 @@ export function absolutePathFromFileUrl(url: string): string | null {
 	return `//${path}`;
 }
 
+/** 独立成串 URL 的形态（白名单 scheme）。预编译：token 切分逐 token 调用。 */
+const URL_LIKE_TEXT_RE = /^(?:https?:\/\/|ftp:\/\/|obsidian:\/\/)\S+$/;
+
 /**
  * 独立成串的 URL 文本（scheme:// + 非空白，整串即一个地址，无其他词语）。
  * 语义与 md-outline INLINE_RE 的裸 URL 分支一致（scheme 白名单同步），
@@ -233,5 +245,5 @@ export function absolutePathFromFileUrl(url: string): string | null {
  * URL 本体不进节点文本。
  */
 export function isUrlLikeText(value: string): boolean {
-	return /^(?:https?:\/\/|ftp:\/\/|obsidian:\/\/)\S+$/.test(value);
+	return URL_LIKE_TEXT_RE.test(value);
 }
