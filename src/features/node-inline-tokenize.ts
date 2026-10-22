@@ -722,9 +722,19 @@ function splitLineSpans(raw: string): LineSpan[] {
  * `splitMarkedText` 的子调用会改写它的 `lastIndex`，直接复用（含 `matchAll` 对
  * 原正则 `lastIndex` 的隐式读取）会从错误位置起扫。
  */
+/**
+ * `protectedRanges` 的**专用扫描器**：与 `MARKUP_RE` 同源（`source`/`flags` 单一
+ * 来源不变）但**独立实例**，避免两个消费方互相踩 `lastIndex`。
+ *
+ * 提到模块级只建一次：此前每个 raw 文本都 `new RegExp(MARKUP_RE.source, …)`，
+ * 即**逐节点重新编译一次**。本函数是叶子（不重入、不嵌套调用），故共享一份实例
+ * 只需每次调用前归零 `lastIndex`——与原先「新建后归零」等价。
+ */
+const PROTECTED_SCAN_RE = new RegExp(MARKUP_RE.source, MARKUP_RE.flags);
+
 function protectedRanges(raw: string): LineSpan[] {
 	const ranges: LineSpan[] = [];
-	const scanner = new RegExp(MARKUP_RE.source, MARKUP_RE.flags);
+	const scanner = PROTECTED_SCAN_RE;
 	scanner.lastIndex = 0;
 	for (const match of raw.matchAll(scanner)) {
 		const groups = match.groups ?? {};
