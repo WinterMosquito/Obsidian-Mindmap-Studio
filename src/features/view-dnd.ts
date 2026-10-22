@@ -306,91 +306,19 @@ async function handleExternalFilesDrop(
 	}
 
 	// 落点解析：有选中主题 → 全部文件归它；未选中 → 仅「全是图片」可在渲染根下
-	// 逐张新建图片节点，其余要求先选中（见上方归属规则）
+	// 逐张新建图片节点，其余要求先选中（见上方归属规则）。
+	// 三处「无处可挂」的提示与返回都收在 resolveDropHost 里（返回 null 即已提示）。
 	const toRoot = selected === null;
-	let host: MindMapNode | null = selected;
+	const host = resolveDropHost(view, files, selected);
 	if (!host) {
-		if (!files.every(isDroppedImage)) {
-			new Notice(t(view.lang, 'common.selectNodeBeforeDrop'));
-			return;
-		}
-		host = getRenderRoot(engine);
-		if (!host) {
-			// 引擎初始化中间态：没有可挂载的根（与粘贴图片同口径提示）
-			new Notice(t(view.lang, 'common.notLoaded'));
-			return;
-		}
+		return;
 	}
 
 	// ② / ③ 入库：**任意文件都导入**（与 Obsidian 的拖放一致——它会把文件复制进
 	// 「附件默认位置」再插入链接；解析侧对「非文档扩展名」一视同仁按附件处理，
 	// 故不存在「引不了」的类型，白名单已于 2026-09-15 取消）。
-	const incoming: readonly File[] = files;
-	new Notice(
-		`${t(view.lang, 'common.importing')} ${incoming.length} ${t(
-			view.lang,
-			'common.filesToVault',
-		)}`,
-	);
-	// 修复文件名乱码：优先用 text/uri-list 解码出的真实文件名
-	// （File.name 在部分 Windows 来源下被系统 ANSI 代码页错误解码）。
-	// 仅当数量一致时按序对应，避免文件名错位。
-	const realNames = extractDroppedFileNames(dataTransfer);
-	const useRealNames = realNames.length === incoming.length;
-	const sourcePath = view.file?.path ?? '';
-	// 顺序保存：文件名保持原名，重名由入库通道的序号兜底处理；
-	// 顺序写入避免同名文件并发保存时互相覆盖。逐个容错：单个失败不影响其余。
-	const saved: TFile[] = [];
-	let failedCount = 0;
-	let firstError: unknown = null;
-	for (let index = 0; index < incoming.length; index++) {
-		const file = incoming[index];
-		if (!file) {
-			continue;
-		}
-		const preferredName = useRealNames ? realNames[index] : undefined;
-		const isImage = isDroppedImage(file);
-		try {
-			// 图片与附件共用入库通道（同一串行队列 + 同一落点规则）
-			const result = isImage
-				? await saveImageToVault({
-						app: view.app,
-						sourcePath,
-						file,
-						maxSizeMB: MAX_IMAGE_SIZE_MB,
-						preferredName,
-						lang: view.lang,
-					})
-				: await saveAttachmentToVault({
-						app: view.app,
-						sourcePath,
-						file,
-						preferredName,
-						lang: view.lang,
-					});
-			if (result) {
-				saved.push(result);
-			} else {
-				failedCount++;
-			}
-		} catch (error) {
-			failedCount++;
-			firstError ??= error;
-		}
-	}
-	// 只有「抛异常」这一路径才由本层汇总提示。入库通道（images-save）对每个失败
-	// 已经弹过Notice（attachment.chooseImage / tooLarge）或 notifyError
-	// （attachment.saveFailed）并 return null，那种情况 firstError 仍是 null——
-	// 若按failedCount > 0 无条件再弹一次，用户会看到两条提示，且第二条正文是
-	// notifyError 拼上的 String(null) 字面量「null」。
-	if (firstError !== null) {
-		console.error('导入拖入的文件失败', firstError);
-		notifyError(view.lang, 'common.importFileFailed', firstError);
-	} else if (failedCount > 0) {
-		console.warn(
-			`导入拖入的文件失败 ${failedCount} 个（原因已由入库通道逐条提示）`,
-		);
-	}
+	// 逐个容错与失败汇总的判据收在 importDroppedIntoVault 里（见其注释）。
+	const saved = await importDroppedIntoVault(view, dataTransfer, files);
 	// 归属：图片首张挂到所选节点（保持单图拖入的原行为），其余各新建子节点承载。
 	// 此前循环对同一节点反复 applyNodeImage（SET_NODE_IMAGE 覆盖图片字段），
 	// 多图拖入只有最后一张存活——静默丢图。
@@ -429,6 +357,116 @@ async function handleExternalFilesDrop(
 		}
 		new Notice(lines.join('\n'), 5000);
 	}
+}
+
+/**
+ * 拖放落点解析：有选中主题 → 全部文件归它；未选中主题时**只允许「全是图片」**
+ * （图片可独占节点，落在渲染根下逐张新建），其余一律要求先选中。
+ *
+ * 归属规则见 `handleExternalFilesDrop` 的文件头：只有「全是图片」允许无归属，
+ * 含非图片的载荷不做「部分贴入」。
+ *
+ * @returns null = 无处可挂（**提示已由本函数发出**，调用方直接 return）
+ */
+function resolveDropHost(
+	view: MindMapViewContext,
+	files: readonly File[],
+	selected: MindMapNode | null,
+): MindMapNode | null {
+	if (selected) {
+		return selected;
+	}
+	if (!files.every(isDroppedImage)) {
+		new Notice(t(view.lang, 'common.selectNodeBeforeDrop'));
+		return null;
+	}
+	const root = getRenderRoot(view.mindMap);
+	if (!root) {
+		// 引擎初始化中间态：没有可挂载的根（与粘贴图片同口径提示）
+		new Notice(t(view.lang, 'common.notLoaded'));
+		return null;
+	}
+	return root;
+}
+
+/**
+ * 把拖入的外部文件**逐个入库**（图片与附件共用同一条串行队列与落点规则）。
+ *
+ * 三条纪律：
+ * - **顺序保存**：文件名保持原名、重名由入库通道的序号兜底；顺序写入避免同名
+ *   文件并发保存时互相覆盖；
+ * - **逐个容错**：单个失败不影响其余（失败计数只用于汇总日志）；
+ * - **汇总提示只看「抛异常」这一路**：入库通道对每个失败已经弹过 Notice 或
+ *   `notifyError` 并 return null，那种情况 `firstError` 仍是 null——若按
+ *   `failedCount > 0` 无条件再弹一次，用户会看到两条提示，且第二条正文是
+ *   `notifyError` 拼上的 `String(null)` 字面量「null」。
+ *
+ * @returns 已入库的文件（保持拖入顺序；失败项不在其中）
+ */
+async function importDroppedIntoVault(
+	view: MindMapViewContext,
+	dataTransfer: DataTransfer,
+	incoming: readonly File[],
+): Promise<TFile[]> {
+	new Notice(
+		`${t(view.lang, 'common.importing')} ${incoming.length} ${t(
+			view.lang,
+			'common.filesToVault',
+		)}`,
+	);
+	// 修复文件名乱码：优先用 text/uri-list 解码出的真实文件名
+	// （File.name 在部分 Windows 来源下被系统 ANSI 代码页错误解码）。
+	// 仅当数量一致时按序对应，避免文件名错位。
+	const realNames = extractDroppedFileNames(dataTransfer);
+	const useRealNames = realNames.length === incoming.length;
+	const sourcePath = view.file?.path ?? '';
+	const saved: TFile[] = [];
+	let failedCount = 0;
+	let firstError: unknown = null;
+	for (let index = 0; index < incoming.length; index++) {
+		const file = incoming[index];
+		if (!file) {
+			continue;
+		}
+		const preferredName = useRealNames ? realNames[index] : undefined;
+		const isImage = isDroppedImage(file);
+		try {
+			// 图片与附件共用入库通道（同一串行队列 + 同一落点规则）
+			const result = isImage
+				? await saveImageToVault({
+						app: view.app,
+						sourcePath,
+						file,
+						maxSizeMB: MAX_IMAGE_SIZE_MB,
+						preferredName,
+						lang: view.lang,
+					})
+				: await saveAttachmentToVault({
+						app: view.app,
+						sourcePath,
+						file,
+						preferredName,
+						lang: view.lang,
+					});
+			if (result) {
+				saved.push(result);
+			} else {
+				failedCount++;
+			}
+		} catch (error) {
+			failedCount++;
+			firstError ??= error;
+		}
+	}
+	if (firstError !== null) {
+		console.error('导入拖入的文件失败', firstError);
+		notifyError(view.lang, 'common.importFileFailed', firstError);
+	} else if (failedCount > 0) {
+		console.warn(
+			`导入拖入的文件失败 ${failedCount} 个（原因已由入库通道逐条提示）`,
+		);
+	}
+	return saved;
 }
 
 /**
