@@ -48,10 +48,10 @@ import {
 	type PreferenceKey,
 } from '../services/view-state';
 import { ContentRemeasureSession } from './content-remeasure';
+import { LoadSession } from './view-load-session';
 import {
 	collectImageSizeCorrections,
 	ensureDefaultImageSizes,
-	type ImageSizeCorrection,
 } from '../media/images-path';
 import { openAsMarkdown } from '../markdown/md-open';
 import { registerWikilinkInteractions } from './view-wikilink';
@@ -222,28 +222,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/** 窗口级 paste 监听器（须按同一函数引用移除；`registerDomEvent` 同样只在卸载时清理） */
 	private pasteHandler: ((event: ClipboardEvent) => void) | null = null;
 	/**
-	 * 视图装配完成信号：onOpen 进入时重建、DOM 装配完成后 resolve。
-	 * onLoadFile 与 onOpen 的调用时序 Obsidian 不保证，onLoadFile 据此
-	 * 等待装配完成（替代原 10ms setTimeout 轮询的 waitForReady）。
+	 * 加载会话状态（whenReady / 加载去重路径 / 首帧初始化帧 / 挂起的图片校正）。
+	 * 四个字段被 onOpen 与 onLoadFile 两个入口读写，时序契约见
+	 * view-load-session.ts 的文件头；本类只保留编排。
 	 */
-	private whenReady: Promise<void> = new Promise(() => {});
-	/**
-	 * 文件加载去重：onOpen 与 onLoadFile 都会为同一文件触发加载
-	 * （Obsidian 对 FileView 的调用时序不保证），记录进行中的加载路径，
-	 * 避免同一文件被重复读取、重复创建引擎实例。
-	 */
-	private loadingFilePath: string | null = null;
-	/**
-	 * 待执行的引擎初始化帧（loadMindMapFromFile 用 rAF 等首帧布局就绪）。
-	 * 必须可取消：视图关闭/文件切换后该回调仍会执行，届时容器可能仍在 DOM
-	 * 且尺寸非零，会在已关闭的视图上建出完整引擎实例（无人销毁）。
-	 */
-	private pendingInitRaf: number | null = null;
-	/**
-	 * 挂起的「图片尺寸校正」结果（探测在首帧前起步、首帧后回灌，见加载序列注释）。
-	 * 引擎尚未创建时留待 onEngineReady；文件切换/卸载时丢弃。
-	 */
-	private pendingImageCorrections: ImageSizeCorrection[] | null = null;
+	readonly loadSession = new LoadSession();
 	/**
 	 * 当前布局（持久化到文件的唯一来源；不依赖 getData() 返回活引用还是深拷贝）。
 	 * 由本类经 applyLayout/resolveLayout 维护（工具栏变更走 applyLayout 方法）。
@@ -513,7 +496,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	override async onOpen(): Promise<void> {
 		// 重建装配信号（onClose→onOpen 周期中旧信号作废）
 		let resolveReady!: () => void;
-		this.whenReady = new Promise<void>((resolve) => {
+		this.loadSession.whenReady = new Promise<void>((resolve) => {
 			resolveReady = resolve;
 		});
 		const { containerEl } = this;
@@ -623,7 +606,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				return (
 					other instanceof MindMapView &&
 					other !== this &&
-					(other.loadingFilePath ?? other.file?.path) === file.path
+					(other.loadSession.loadingFilePath ?? other.file?.path) === file.path
 				);
 			});
 		if (duplicateLeaf) {
@@ -658,7 +641,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			timeoutId = window.setTimeout(() => resolve('timeout'), READY_TIMEOUT_MS);
 		});
 		const result = await Promise.race([
-			this.whenReady.then(() => 'ready' as const),
+			this.loadSession.whenReady.then(() => 'ready' as const),
 			readyTimeout,
 		]);
 		// 正常路径下定时器必须撤掉：否则每次打开文件都留下一个 10s 的空转
@@ -674,14 +657,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 		// onOpen 已为同一文件启动加载（读取中或已完成）时跳过，
 		// 避免同一文件被读取两次、引擎实例被创建两次。
-		if (this.loadingFilePath === file.path) {
+		if (this.loadSession.loadingFilePath === file.path) {
 			return;
 		}
 		await this.loadMindMapFromFile(file);
 	}
 
 	override async onUnloadFile(file: TFile): Promise<void> {
-		const unloadingPath = this.loadingFilePath;
+		const unloadingPath = this.loadSession.loadingFilePath;
 		this.engine.invalidateInit();
 		this.cancelPendingInit();
 		this.savePipeline.cancelTimer();
@@ -698,28 +681,25 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.frontmatterByPath.delete(file.path);
 		// 挂起的图片尺寸校正属于本文件：文件已卸载，丢弃（引擎随后销毁，
 		// 回灌会落空，留着只会在新文件上误判）
-		this.pendingImageCorrections = null;
+		this.loadSession.pendingImageCorrections = null;
 		// 数学重测节点同属本引擎：随引擎销毁一并丢弃（否则跨文件累积持有旧节点）
 		this.contentRemeasure.resetNodes();
 		// 文件切换后允许再次加载同一路径（新会话）。仅清理「仍属于本次卸载」的
 		// 标记：await 期间可能已开始加载新文件（onLoadFile），无条件置空会把
 		// 新加载的代际标记抹掉，其 rAF 守卫随即判为过期 → 导图不渲染。
-		if (this.loadingFilePath === unloadingPath) {
-			this.loadingFilePath = null;
+		if (this.loadSession.loadingFilePath === unloadingPath) {
+			this.loadSession.loadingFilePath = null;
 		}
 		this.engine.destroyInstance();
 	}
 
 	/** 取消尚未执行的引擎初始化帧（幂等） */
 	private cancelPendingInit(): void {
-		if (this.pendingInitRaf !== null) {
-			this.containerEl.win.cancelAnimationFrame(this.pendingInitRaf);
-			this.pendingInitRaf = null;
-		}
+		this.loadSession.cancelInitFrame(this.containerEl.win);
 	}
 
 	private async loadMindMapFromFile(file: TFile): Promise<void> {
-		this.loadingFilePath = file.path;
+		this.loadSession.loadingFilePath = file.path;
 		// 四项「按文件偏好」一次合成：缺省值统一在 resolveFilePreferences 里给，
 		// 避免某一维回落到硬编码默认而漏掉设置项（2026-10-21 themeStyle 踩过此坑）
 		const prefs = resolveFilePreferences({
@@ -745,7 +725,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		try {
 			const doc = await this.documents.load(file);
 			// 加载期间文件已切换：丢弃过期结果
-			if (this.loadingFilePath !== file.path) {
+			if (this.loadSession.loadingFilePath !== file.path) {
 				return;
 			}
 			this.frontmatterByPath.set(file.path, doc.frontmatter);
@@ -771,10 +751,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			void collectImageSizeCorrections(tree)
 				.then((corrections) => {
 					// 加载期间文件已切换：丢弃过期结果
-					if (this.loadingFilePath !== file.path) {
+					if (this.loadSession.loadingFilePath !== file.path) {
 						return;
 					}
-					this.pendingImageCorrections = corrections;
+					this.loadSession.pendingImageCorrections = corrections;
 					if (this.applyPendingImageCorrections()) {
 						this.engine.scheduleViewportRecenter();
 					}
@@ -796,10 +776,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			this.cancelPendingInit();
 			// 引擎即将重建：先提交内联编辑（节点对象随重建失效，输入不能丢）
 			closeInlineEditor(this);
-			this.pendingInitRaf = this.containerEl.win.requestAnimationFrame(
+			this.loadSession.pendingInitRaf = this.containerEl.win.requestAnimationFrame(
 				() => {
-					this.pendingInitRaf = null;
-					if (this.loadingFilePath !== file.path) {
+					this.loadSession.pendingInitRaf = null;
+					if (this.loadSession.loadingFilePath !== file.path) {
 						return;
 					}
 					this.engine.initMindMap(tree);
@@ -807,7 +787,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			);
 		} catch (error) {
 			// 文件可能已被删除/损坏：保持视图可用并提示，避免半加载状态
-			this.loadingFilePath = null;
+			this.loadSession.loadingFilePath = null;
 			console.error('加载思维导图失败:', file.path, error);
 			new Notice(`${t(this.lang, 'common.notLoaded')}`);
 		}
@@ -853,7 +833,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 *   调用方据此排补居中——否则首帧居中会停在旧包围盒上（打开即偏移）。
 	 */
 	private applyPendingImageCorrections(): boolean {
-		const corrections = this.pendingImageCorrections;
+		const corrections = this.loadSession.pendingImageCorrections;
 		const mindMap = this.mindMap;
 		if (
 			!corrections ||
@@ -863,7 +843,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		) {
 			return false;
 		}
-		this.pendingImageCorrections = null;
+		this.loadSession.pendingImageCorrections = null;
 		applyImageSizeCorrectionsToEngine(mindMap, corrections);
 		return true;
 	}
@@ -1188,7 +1168,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.engine.invalidateInit();
 		this.cancelPendingInit();
 		// 关闭后不再允许任何加载结果被应用（rAF 守卫依赖该字段）
-		this.loadingFilePath = null;
+		this.loadSession.loadingFilePath = null;
 		this.savePipeline.cancelTimer();
 		this.cancelAutoSplitCheck();
 		this.resizeThrottler.cancel();
@@ -1199,7 +1179,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 必须在 savePipeline.save() 之前——调宽会话收尾会调度一次保存。
 		teardownImageResize(this);
 		// 挂起装配信号：关闭后到达的 onLoadFile 等待下一次 onOpen（原轮询语义）
-		this.whenReady = new Promise(() => {});
+		this.loadSession.whenReady = new Promise(() => {});
 		// 内联编辑会话提交（同 onUnloadFile：输入必须先落数据再写盘）
 		closeInlineEditor(this);
 		this.engine.persistViewport();
