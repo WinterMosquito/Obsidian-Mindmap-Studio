@@ -12,8 +12,7 @@
  * linkpath = `|` 之前整段；target = linkpath 中 `#` 之前；
  * block = `#` 之后、`|` 之前；alias = 第一个 `|` 之后。
  *
- * 另提供链接改写原语 withWikilinkAlias（保留目标/区块，只换别名），供
- * 「纯双链节点编辑 = 改别名」的回写路径使用——链接文本的拼接一律走本模块，
+ * 链接文本的拼接一律走本模块的 `formatWikilink` / `formatEmbedWikilink`，
  * 勿在调用方手写 `[[…|…]]` 模板串。
  */
 
@@ -78,24 +77,6 @@ export function formatWikilink(linkpath: string, alias?: string): string {
  */
 export function formatEmbedWikilink(linkpath: string, pipe?: string): string {
 	return pipe ? `![[${linkpath}|${pipe}]]` : `![[${linkpath}]]`;
-}
-
-/**
- * 改写维基链接的别名：目标与区块原样保留，只替换 `|` 之后整段。
- *
- * - `withWikilinkAlias('[[笔记]]', '别名')` → `[[笔记|别名]]`
- * - `withWikilinkAlias('[[笔记#标题|旧]]', '新')` → `[[笔记#标题|新]]`
- * - alias 为空/全空白 → 去掉别名段：`[[笔记#标题]]`
- * - 非 `[[...]]` 完整形态、或 linkpath 为空（`[[|别名]]`）→ 原样返回
- *
- * 用途：纯双链节点的「编辑节点 = 改别名」回写（见 md-serialize）。
- */
-export function withWikilinkAlias(link: string, alias: string): string {
-	const parts = parseWikilink(link);
-	if (!parts || !parts.linkpath) {
-		return link;
-	}
-	return formatWikilink(parts.linkpath, alias.trim() || undefined);
 }
 
 /**
@@ -214,6 +195,23 @@ export function formatLinkPath(
 }
 
 /**
+ * linkpath 的**默认显示名**：末段去 `.md`（别名与链接语法都不参与）。
+ *
+ * 两个消费方共用：`linkDisplayText`（已解析出 parts）与
+ * `wiki-display.effectiveDocWikiLink`（判断「新别名 == 默认显示名」时省略别名段）。
+ * 后者若再走一遍 `withWikilinkAlias` + `linkDisplayText`，保存路径上每节点要
+ * 多两次整串正则——故下沉到此处，口径仍只有一份。
+ *
+ * 不用 `split('/')` 与正则：本函数在 md-outline / md-serialize 的**逐链接**
+ * 路径上，数组分配与 RegExp 执行都是纯开销。
+ */
+export function linkpathDisplayName(linkpath: string): string {
+	const slash = linkpath.lastIndexOf('/');
+	const name = slash === -1 ? linkpath : linkpath.slice(slash + 1);
+	return name.endsWith('.md') ? name.slice(0, -3) : name;
+}
+
+/**
  * 链接的「可见文本」（Obsidian 双链语义）：
  * 别名优先；否则取 linkpath 末段并去 .md 扩展（笔记显示名）；
  * 非维基链接（URL / 库内路径）原样可见。
@@ -226,10 +224,5 @@ export function linkDisplayText(link: string): string {
 	if (parts.alias) {
 		return parts.alias;
 	}
-	// 末段取法与去扩展名都不走 `split('/')` / 正则：本函数在 md-outline 与
-	// md-serialize 的**逐链接**路径上，数组分配与 RegExp 执行都属纯开销。
-	const linkpath = parts.linkpath;
-	const slash = linkpath.lastIndexOf('/');
-	const name = slash === -1 ? linkpath : linkpath.slice(slash + 1);
-	return name.endsWith('.md') ? name.slice(0, -3) : name;
+	return linkpathDisplayName(parts.linkpath);
 }

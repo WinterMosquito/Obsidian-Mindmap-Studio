@@ -16,7 +16,12 @@
  */
 
 import { isNodeTextEdited, type MdNodeMeta } from './md-meta';
-import { linkDisplayText, withWikilinkAlias } from './wikilink';
+import {
+	formatWikilink,
+	linkDisplayText,
+	linkpathDisplayName,
+	parseWikilink,
+} from './wikilink';
 
 /**
  * 判定所需的最小数据面：md 元数据 + 引擎侧字段（`text` / 附件名）。
@@ -31,6 +36,9 @@ export interface WikiAliasSource extends MdNodeMeta {
 	attachmentUrl?: string;
 	attachmentName?: string;
 }
+
+/** 别名里不允许出现的字符（Obsidian 的 `[[..]]` 内不得含方括号）。 */
+const UNSAFE_ALIAS_RE = /[[\]]/;
 
 /**
  * 「纯双链节点被编辑」→ 新别名（回写 `[[目标|新别名]]` 的依据）。
@@ -70,7 +78,7 @@ export function editedWikilinkAlias(data: WikiAliasSource): string | null {
 		return null;
 	}
 	const alias = text.trim();
-	if (/[[\]]/.test(alias)) {
+	if (UNSAFE_ALIAS_RE.test(alias)) {
 		return null;
 	}
 	// 文档通道：文档双链 `[[笔记]]` 与**文档嵌入** `![[笔记]]` 同适用——
@@ -110,9 +118,16 @@ export function effectiveDocWikiLink(
 	if (alias === null) {
 		return wikiLink;
 	}
-	const bare = withWikilinkAlias(wikiLink, '');
-	const redundant = alias === '' || alias === linkDisplayText(bare);
-	return withWikilinkAlias(wikiLink, redundant ? '' : alias);
+	// 只解析一次：原实现走 `withWikilinkAlias` ×2 + `linkDisplayText` ×1，
+	// 同一串在保存路径上被整串正则跑三遍。守门条件与 `withWikilinkAlias`
+	// 一致（非 `[[…]]` 或 linkpath 为空 ⇒ 原样返回）。
+	const parts = parseWikilink(wikiLink);
+	if (!parts || !parts.linkpath) {
+		return wikiLink;
+	}
+	const redundant =
+		alias === '' || alias === linkpathDisplayName(parts.linkpath);
+	return formatWikilink(parts.linkpath, redundant ? undefined : alias);
 }
 
 /**
