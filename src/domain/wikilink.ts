@@ -123,6 +123,23 @@ export function isDocumentExtension(extension: string): boolean {
 }
 
 /**
+ * 取 linkpath 的 target 段（`|` 之前、`#` 之前）。
+ *
+ * 与 `parseWikilink` **同判**：含 `]` 的畸形串不拆分、整串当 target——
+ * 那正是整串正则 `[^\]]+` 失配后的回退分支。故此处无需先拼 `[[…]]` 再解析，
+ * 省掉每节点一次字符串拼接 + 一次正则执行。
+ */
+function targetOfLinkpath(linkpath: string): string {
+	if (linkpath.includes(']')) {
+		return linkpath;
+	}
+	const pipe = linkpath.indexOf('|');
+	const path = pipe === -1 ? linkpath : linkpath.slice(0, pipe);
+	const hash = path.indexOf('#');
+	return hash === -1 ? path : path.slice(0, hash);
+}
+
+/**
  * wikilink 目标是否为「附件」（非文档类文件）。
  * Obsidian 语义：target 末段含扩展名且非文档类（md/canvas/base）→ 附件
  * （pdf/图片/音视频/压缩包等）；无扩展名或文档类扩展名 → 文档。
@@ -131,7 +148,7 @@ export function isDocumentExtension(extension: string): boolean {
  * 与指向文档的节点（自绘文档页图标）在视觉上区分。
  */
 export function wikilinkTargetIsAttachment(linkpath: string): boolean {
-	const target = parseWikilink(`[[${linkpath}]]`)?.target ?? linkpath;
+	const target = targetOfLinkpath(linkpath);
 	const name = target.split('/').pop() ?? '';
 	const dot = name.lastIndexOf('.');
 	if (dot <= 0) {
@@ -209,6 +226,10 @@ export function linkDisplayText(link: string): string {
 	if (parts.alias) {
 		return parts.alias;
 	}
-	const name = parts.linkpath.split('/').pop() ?? '';
-	return name.replace(/\.md$/, '');
+	// 末段取法与去扩展名都不走 `split('/')` / 正则：本函数在 md-outline 与
+	// md-serialize 的**逐链接**路径上，数组分配与 RegExp 执行都属纯开销。
+	const linkpath = parts.linkpath;
+	const slash = linkpath.lastIndexOf('/');
+	const name = slash === -1 ? linkpath : linkpath.slice(slash + 1);
+	return name.endsWith('.md') ? name.slice(0, -3) : name;
 }

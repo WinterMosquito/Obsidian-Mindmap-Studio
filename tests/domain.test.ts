@@ -258,6 +258,13 @@ describe('wikilinkTargetIsAttachment', () => {
 		expect(parseWikilink('[[a]b.png]]')).toBeNull();
 		expect(wikilinkTargetIsAttachment('a]b.png')).toBe(true);
 	});
+
+	it('畸形（含 `]`）且含 `|` / `#`：整串当 target，不先按管道切', () => {
+		// 锁定回退分支的等价性：`[[a]b|c.pdf]]` 整串正则失配 ⇒ 回退用**整串**，
+		// 故 `|` 之后的 `.pdf` 仍决定分流；若实现改成「先切 |」会判成文档。
+		expect(wikilinkTargetIsAttachment('a]b|c.pdf')).toBe(true);
+		expect(wikilinkTargetIsAttachment('a]b#x.pdf')).toBe(true);
+	});
 });
 
 describe('linkDisplayText', () => {
