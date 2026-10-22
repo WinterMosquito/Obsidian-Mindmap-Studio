@@ -33,14 +33,17 @@ export function createSerialQueue(): SerialQueue {
  * 失败后不再派发新任务（在途任务自然完成，结果被丢弃）。
  * 用于把无界 Promise.all（如整树图片探测的解码风暴）压到固定并发。
  */
+/** 非 `Error` 抛出物 → `Error`：整体拒绝只有一个原因形态（`Promise.all` 语义）。 */
+function asError(error: unknown): Error {
+	return error instanceof Error ? error : new Error(String(error));
+}
+
 export function mapWithConcurrency<T, R>(
 	items: readonly T[],
 	limit: number,
 	worker: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
 	return new Promise((resolve, reject) => {
-		const toError = (error: unknown): Error =>
-			error instanceof Error ? error : new Error(String(error));
 		const results = new Array<R>(items.length);
 		const maxActive = Math.max(1, limit);
 		let next = 0;
@@ -58,7 +61,7 @@ export function mapWithConcurrency<T, R>(
 					running = worker(items[index]!, index);
 				} catch (error) {
 					rejected = true;
-					reject(toError(error));
+					reject(asError(error));
 					return;
 				}
 				running.then(
@@ -68,14 +71,13 @@ export function mapWithConcurrency<T, R>(
 						}
 						results[index] = value;
 						active--;
+						// 收尾判定只在 `launch` 末尾一处（此处不再重复一份）：
+						// 末个任务完成时 `launch` 的 while 不进入、其尾检即 resolve。
 						launch();
-						if (active === 0 && next >= items.length) {
-							resolve(results);
-						}
 					},
 					(error) => {
 						rejected = true;
-						reject(toError(error));
+						reject(asError(error));
 					},
 				);
 			}
