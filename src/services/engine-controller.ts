@@ -52,6 +52,7 @@ import type {
 	EngineSetupOptions,
 } from './engine-controller-deps';
 import { ViewportSession } from './engine-controller-viewport';
+import { buildCreateOptions } from './engine-controller-options';
 
 // 依赖契约已拆到同模块的 `engine-controller-deps`，此处**转出**保持既有
 // import 路径不变（`features/view.ts` 等按 `from './services/engine-controller'` 取类型）。
@@ -185,49 +186,7 @@ export class EngineController {
 			this.destroyInstance();
 			canvasEl.empty();
 			const options = this.deps.getSetupOptions();
-			/** 节点内联内容渲染器（缺省 = 不开启引擎自绘节点内容通道） */
-			const nodeContentRenderer = this.deps.createNodeContent ?? null;
-			/** 导出 SVG 后处理链（组合根注入，按序应用；空链 = 不注册钩子） */
-			const exportSvgTransforms = this.deps.exportSvgTransforms ?? [];
-			/** 快捷键前置钩子（剪贴板三键回收；缺省 = 引擎快捷键行为不变） */
-			const beforeShortcutRun = this.deps.beforeShortcutRun ?? null;
-			this.mindMap = createMindMap(canvasEl, tree, {
-				layout: options.layout,
-				lineStyle: options.lineStyle,
-				themePref: options.themePref,
-				themeStyle: options.themeStyle,
-				palette: options.palette,
-				isDark: this.deps.isDark(),
-				enableDrag: options.enableDrag,
-				lang: this.deps.getLang(),
-				onHyperlinkJump: (link) => this.deps.openHyperlink(link),
-				// 快捷键前置钩子（剪贴板三键回收，见 deps.beforeShortcutRun）：
-				// 包一层箭头——deps 上的回调脱离对象后才不会触发 unbound-method
-				beforeShortcutRun: beforeShortcutRun
-					? (key, nodes) => beforeShortcutRun(key, nodes)
-					: null,
-				// 节点内联内容（方案 B 原型）：缺省时引擎两键为 false/null，全部走默认文本。
-				// 包一层箭头：方法引用脱离对象会触发 unbound-method（deps 未持有 this 语义）。
-				// `owner`（本次引擎实例）由 createMindMap 注入并沿构建链透传，
-				// 本层只做转发（语义见 CreateMindMapOptions.createNodeContent）
-				createNodeContent: nodeContentRenderer
-					? (node, doc, style, lang, owner) =>
-							nodeContentRenderer(node, doc, style, lang, owner)
-					: null,
-				// 导出 SVG 后处理链（组合根注入，按序应用）：MathJax CHTML 逐字符
-				// 样式注入克隆 SVG——否则导出图中 `<mjx-c>` 无 `::before` 字形规则、
-				// 渲染为空白（用户导出 PNG 实测）；随后复制按钮隐身
-				// （styles.css 图标规则删除后，「变量间接层」隐式隐身机制退役）。
-				// services 层不直接依赖 features（K51），链在 view.ts 装配后注入。
-				handleExportSvg:
-					exportSvgTransforms.length > 0
-						? (svg: unknown) =>
-								exportSvgTransforms.reduce<unknown>(
-									(acc, transform) => transform(acc),
-									svg,
-								)
-						: null,
-			});
+			this.mindMap = createMindMap(canvasEl, tree, buildCreateOptions(this.deps, options));
 			this.engineEvents.onEngine(this.mindMap, 'data_change', () => {
 				this.deps.onRootDataChanged();
 				this.deps.onDataChanged();
