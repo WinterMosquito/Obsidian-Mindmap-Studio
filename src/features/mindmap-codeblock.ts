@@ -332,6 +332,27 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 
 	/** 引擎实际创建（只读口径，见 CreateMindMapOptions.readonly） */
 	private mount(el: HTMLElement, tree: MindMapTreeNode): void {
+		const mindMap = this.createEmbedEngine(el, tree);
+		if (!mindMap) {
+			return;
+		}
+		this.mindMap = mindMap;
+		this.bindEmbedEvents(mindMap, el);
+		mindMap.render();
+		this.observedWidth = this.canvasWidth();
+		this.scheduleEmbedSettleFit();
+	}
+
+	/**
+	 * 建只读引擎实例（**唯一**创建点）。
+	 *
+	 * @returns null = 建失败（畸形块体/引擎异常），已由 `renderFailure` 给出
+	 *   可见提示并清理半初始化实例；调用方直接放弃本次挂载
+	 */
+	private createEmbedEngine(
+		el: HTMLElement,
+		tree: MindMapTreeNode,
+	): MindMap | null {
 		const config = this.getConfig();
 		let mindMap: MindMap;
 		try {
@@ -368,23 +389,31 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		} catch (error) {
 			// 畸形块体/引擎异常：清半初始化实例并给可见提示（异常不逃出渲染管线）
 			this.renderFailure(config.lang, error);
-			return;
+			return null;
 		}
-		this.mindMap = mindMap;
-		// 代码块复制按钮（节点内围栏块）——与视图**同一份交互实现**，宿主面
-		// 窄化为「引擎实例 + 绑定器」（复制按钮否则是看得见点不动的死件）
+		return mindMap;
+	}
+
+	/**
+	 * 绑与引擎同罪的两类事件（引擎生命周期内有效，`destroyInstance` 一次性清理）。
+	 *
+	 * ① 复制按钮交互（节点内围栏块）——与视图**同一份交互实现**，宿主面窄化为
+	 *    「引擎实例 + 绑定器」（否则复制按钮是看得见点不动的死件）；
+	 * ② 渲染落地：定稿尺寸重试（渲染窗口内 holder 未定位，K104）+ 按内容重算
+	 *    高度并按宽度适配（幂等 K70——已在目标态时零调用）；
+	 * ③ 主题换肤：官方 `css-change` → 原地写主题配置 + 重探测 token 内联色
+	 *    （不重建引擎）。
+	 */
+	private bindEmbedEvents(mindMap: MindMap, el: HTMLElement): void {
 		registerCodeBlockInteractions({
 			mindMap,
 			engineEvents: this.events,
 		});
-		// 渲染落地：① 定稿尺寸重试（渲染窗口内 holder 未定位，K104）
-		//           ② 按内容重算高度 + 按宽度适配（幂等 K70——已在目标态时零调用）
 		this.events.onEngine(mindMap, 'node_tree_render_end', () => {
 			this.remeasure.retryDeferred();
 			this.applyEmbedFit();
 		});
-		// 主题换肤：官方 `css-change` → 原地写主题配置 + 重探测 token 内联色
-		// （不重建引擎）。每实例一条监听、由 Component 生命周期摘除——
+		// 每实例一条监听、由 Component 生命周期摘除——
 		// **不建"活动嵌入注册表"**：官方生命周期已保证清理，中央表是第二份收口。
 		this.registerEvent(
 			this.app.workspace.on('css-change', () => {
@@ -401,10 +430,13 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 				refreshPrismTokenColors(el);
 			}),
 		);
-		mindMap.render();
-		this.observedWidth = this.canvasWidth();
-		// 兜底补算：布局晚变（面板 settle / 字体就绪）而不再有渲染结束事件时
-		// 再算一次（与事件里那次幂等：已在目标态即零写入）
+	}
+
+	/**
+	 * 兜底补算：布局晚变（面板 settle / 字体就绪）而不再有渲染结束事件时再算
+	 * 一次（与事件里那次幂等：已在目标态即零写入）。
+	 */
+	private scheduleEmbedSettleFit(): void {
 		const timer = window.setTimeout(() => {
 			this.applyEmbedFit();
 		}, EMBED_FIT_SETTLE_DELAY_MS);
