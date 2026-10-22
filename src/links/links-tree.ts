@@ -43,9 +43,12 @@ export interface ReferenceTargets {
 	readonly linkTargets: readonly string[];
 }
 
+/** 笔记扩展名（`stripMd` 逐引用调用，正则只建一次） */
+const MD_EXT_RE = /\.md$/;
+
 /** 去除 Markdown 笔记扩展名 */
 function stripMd(path: string): string {
-	return path.replace(/\.md$/, '');
+	return path.replace(MD_EXT_RE, '');
 }
 
 /** 文件是否位于库内回收站 */
@@ -217,6 +220,10 @@ function urlMatchesTarget(
 	paths: readonly string[],
 	names: readonly string[],
 ): boolean {
+	// 编码形态只与 `name` 有关，与 `form` 无关：原先算在内层，按
+	// 「形态数 × 名数」重复调用 encodeURIComponent；提到循环外只算一次。
+	// 不可编码（孤立代理对等非法序列）＝该形态不存在，`null` 与任何串都不等。
+	const encodedNames = names.map((name) => encodedNameForm(name));
 	for (const form of urlComparisonForms(url)) {
 		for (const path of paths) {
 			if (form === path || form.endsWith(path)) {
@@ -224,14 +231,8 @@ function urlMatchesTarget(
 			}
 		}
 		const lastSegment = form.split('/').pop() ?? '';
-		for (const name of names) {
-			if (lastSegment === name) {
-				return true;
-			}
-			// 编码形态不可得（孤立代理对等非法序列）＝该形态不存在：不匹配即可，
-			// **绝不抛出**——本函数在「重命名 / 删除」的引用更新路径上（2026-10-15）
-			const encodedName = encodedNameForm(name);
-			if (encodedName !== null && lastSegment === encodedName) {
+		for (let i = 0; i < names.length; i++) {
+			if (lastSegment === names[i] || lastSegment === encodedNames[i]) {
 				return true;
 			}
 		}
