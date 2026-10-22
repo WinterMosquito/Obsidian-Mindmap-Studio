@@ -53,9 +53,14 @@ function writeFileEntries(
 	if (encodedName !== null) {
 		index.set(encodedName, file);
 	}
+	// 路径后缀（兼容绝对路径 / 历史数据形态）：从末段向左逐级拼接，跳过 1 段
+	// （basename 已单独写入）。逐级 `slice(-i).join('/')` 每层要一枚临时数组，
+	// 全量重建时按「文件数 × 路径深度」放大。
 	const segments = file.path.split('/');
-	for (let i = 2; i <= segments.length; i++) {
-		index.set(segments.slice(-i).join('/'), file);
+	let suffix = segments[segments.length - 1] ?? '';
+	for (let i = segments.length - 2; i >= 0; i--) {
+		suffix = `${segments[i]}/${suffix}`;
+		index.set(suffix, file);
 	}
 	try {
 		index.set(app.vault.getResourcePath(file), file);
@@ -351,9 +356,17 @@ function lookupCandidates(
 		if (hit) {
 			return hit;
 		}
+		// 由短到长逐级回退（末段 → 末两段 → …）：先判末段、再逐层向左拼接，
+		// 与 `slice(-i).join('/')` 的候选序完全一致，但每层省掉一枚临时数组。
 		const segments = candidate.replace(/\\/g, '/').split('/');
-		for (let i = 1; i <= segments.length; i++) {
-			const suffixHit = index.get(segments.slice(-i).join('/'));
+		let suffix = segments[segments.length - 1] ?? '';
+		const basenameHit = index.get(suffix);
+		if (basenameHit) {
+			return basenameHit;
+		}
+		for (let i = segments.length - 2; i >= 0; i--) {
+			suffix = `${segments[i]}/${suffix}`;
+			const suffixHit = index.get(suffix);
 			if (suffixHit) {
 				return suffixHit;
 			}
