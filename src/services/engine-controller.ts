@@ -51,6 +51,7 @@ import type {
 	EngineControllerDeps,
 	EngineSetupOptions,
 } from './engine-controller-deps';
+import { ViewportSession } from './engine-controller-viewport';
 
 // 依赖契约已拆到同模块的 `engine-controller-deps`，此处**转出**保持既有
 // import 路径不变（`features/view.ts` 等按 `from './services/engine-controller'` 取类型）。
@@ -98,32 +99,12 @@ export class EngineController {
 	 * 代际作废/引擎销毁时断开，不会跨生命周期泄漏。
 	 */
 	private initObserver: ResizeObserver | null = null;
-	/** 上次节点拖拽结束时间（拖拽后误触 click 的灯箱抑制） */
-	private lastNodeDragEndAt = 0;
-	/** 首帧后的视口恢复定时器（销毁/作废时取消，避免对已销毁引擎求值） */
-	private viewportTimer: number | null = null;
 	/**
-	 * 补居中定时器（图片尺寸回灌等首帧后才落定的几何变化）。
-	 * 仅当打开时设置的是默认视口（未恢复保存视口、用户未移动）时才生效。
+	 * 视口会话状态（定时器 / 默认签名 / 重算预算 / 恢复态 / 拖拽时戳）。
+	 * 六个字段的三个读写时机（创建 / 销毁 / 交互）见
+	 * `engine-controller-viewport.ts` 的文件头；本类只保留算法，状态一律经它读写。
 	 */
-	private recenterTimer: number | null = null;
-	/**
-	 * 默认视口签名（scale|x|y；null＝无默认视口：已恢复保存视口、用户已移动
-	 * 或读取失败）。补居中据此判定「当前视口是否仍是打开时自动设置的那个」。
-	 */
-	private defaultViewSignature: string | null = null;
-	/**
-	 * 首帧窗口剩余的「默认视口重算」次数：引擎布局把根节点摆在与画布尺寸
-	 * 相关的位置（initRootNodePosition 默认 [center,center]），首次布局与
-	 * resize 触发的再布局都会让内容整体位移——窗口内每次布局落地都重算
-	 * （见 renderMindMap）。用尽即停手：之后的重渲染不再抢视口。
-	 */
-	private initialViewportRecalcBudget = 0;
-	/**
-	 * 本会话打开时恢复了用户保存的视口：停用一切自动化视口干预
-	 * （首帧重算、落界校验回退、补居中），绝不覆盖用户的缩放/平移。
-	 */
-	private restoredSavedViewport = false;
+	readonly viewport = new ViewportSession();
 	/** 命令历史上限同步的节流器（随引擎生命周期，销毁时取消） */
 	private readonly historyLimitThrottler = createThrottler(
 		HISTORY_LIMIT_SYNC_THROTTLE_MS,
@@ -283,7 +264,7 @@ export class EngineController {
 					// 拖拽刚结束（落点仍在图片上）时浏览器仍会触发 click：
 					// 忽略，避免拖拽节点后误开灯箱
 					if (
-						Date.now() - this.lastNodeDragEndAt <
+						Date.now() - this.viewport.lastNodeDragEndAt <
 						IMAGE_CLICK_DRAG_SUPPRESS_MS
 					) {
 						return;
@@ -292,7 +273,7 @@ export class EngineController {
 				},
 			);
 			this.engineEvents.onEngine(this.mindMap, 'node_dragend', () => {
-				this.lastNodeDragEndAt = Date.now();
+				this.viewport.lastNodeDragEndAt = Date.now();
 			});
 			// 附件图标点击（双链指向附件）：引擎仅派发事件不自行打开，
 			// 由视图按 Obsidian 语义打开目标（ Obsidian 可渲染开标签页 /
@@ -315,25 +296,15 @@ export class EngineController {
 			// _render），与布局同帧提交，浏览器不会绘制中间态；再布局（resize
 			// 会按新画布尺寸重摆根节点、图片回灌会改节点尺寸）也按此重算。
 			// 重算次数由 initialViewportRecalcBudget 限定，用尽即停手。
-			this.initialViewportRecalcBudget = 2;
+			this.viewport.beginInitialWindow();
 			this.engineEvents.onEngine(
 				this.mindMap,
 				'node_tree_render_end',
 				() => {
-					if (
-						this.restoredSavedViewport ||
-						this.initialViewportRecalcBudget <= 0
-					) {
-						return;
+					// 判定与扣减在会话里（「是否还能重算」只有一份）
+					if (this.viewport.canRecalcOnRender(this.viewSignature())) {
+						this.restoreOrFitViewport();
 					}
-					const applied = this.defaultViewSignature;
-					if (applied !== null && this.viewSignature() !== applied) {
-						// 视口已不是打开时自动设置的那个（用户平移/缩放）：停手
-						this.initialViewportRecalcBudget = 0;
-						return;
-					}
-					this.initialViewportRecalcBudget--;
-					this.restoreOrFitViewport();
 				},
 			);
 			this.mindMap.render();
@@ -342,11 +313,11 @@ export class EngineController {
 			// 兜底：布局晚变（工具栏重建、工作区 settle）而不再有布局事件时，
 			// 最后再应用一次（与布局事件里那次幂等：几何未变则平移量为 0）；
 			// 并补一次重算预算，覆盖本次 resize 触发的再布局。
-			this.cancelViewportTimer();
-			this.viewportTimer = window.setTimeout(() => {
-				this.viewportTimer = null;
-				this.initialViewportRecalcBudget = Math.max(
-					this.initialViewportRecalcBudget,
+			this.viewport.cancelRestore();
+			this.viewport.restoreTimer = window.setTimeout(() => {
+				this.viewport.restoreTimer = null;
+				this.viewport.recalcBudget = Math.max(
+					this.viewport.recalcBudget,
 					1,
 				);
 				this.restoreOrFitViewport();
@@ -388,12 +359,8 @@ export class EngineController {
 	/** 销毁引擎实例并清理其作用域的全部 DOM/引擎事件 */
 	destroyInstance(): void {
 		this.disconnectInitObserver();
-		this.cancelViewportTimer();
-		this.cancelRecenterTimer();
+		this.viewport.reset();
 		this.historyLimitThrottler.cancel();
-		this.defaultViewSignature = null;
-		this.initialViewportRecalcBudget = 0;
-		this.restoredSavedViewport = false;
 		this.engineEvents.destroy();
 		// 在途延时任务（延时 fit / 渲染根轮询链 / 文本编辑宏任务）先取消：
 		// 它们的闭包会触碰引擎实例，销毁后到期会在空实例上白跑（轮询链还会续排）。
@@ -415,28 +382,11 @@ export class EngineController {
 	invalidateInit(): void {
 		this.initSeq++;
 		this.disconnectInitObserver();
-		this.cancelViewportTimer();
-		this.cancelRecenterTimer();
-		this.defaultViewSignature = null;
-		this.initialViewportRecalcBudget = 0;
-		this.restoredSavedViewport = false;
+		this.viewport.reset();
 	}
 
-	/** 取消首帧后的视口恢复（幂等） */
-	private cancelViewportTimer(): void {
-		if (this.viewportTimer !== null) {
-			window.clearTimeout(this.viewportTimer);
-			this.viewportTimer = null;
-		}
-	}
-
-	/** 取消挂起的补居中（幂等） */
-	private cancelRecenterTimer(): void {
-		if (this.recenterTimer !== null) {
-			window.clearTimeout(this.recenterTimer);
-			this.recenterTimer = null;
-		}
-	}
+	// 取消两个视口定时器的方法已随状态移入 `ViewportSession`
+	// （`cancelRestore` / `cancelRecenter`），此处不再保留转发壳。
 
 	/**
 	 * 应用布局（仅引擎侧；会话字段与持久化由视图负责）。
@@ -564,8 +514,8 @@ export class EngineController {
 					savedSignature !== null &&
 					savedSignature === this.viewSignature()
 				) {
-					this.defaultViewSignature = null;
-					this.restoredSavedViewport = true;
+					this.viewport.defaultSignature = null;
+					this.viewport.restoredSaved = true;
 					return;
 				}
 				applyViewportState(mindMap, savedView);
@@ -574,23 +524,23 @@ export class EngineController {
 				// 放弃恢复、回退默认居中；无法判定则保持（fail-open）。
 				if (isContentVisibleInCanvas(mindMap) === false) {
 					centerContentAtFullScale(mindMap);
-					this.defaultViewSignature = this.viewSignature();
-					this.restoredSavedViewport = false;
+					this.viewport.defaultSignature = this.viewSignature();
+					this.viewport.restoredSaved = false;
 				} else {
 					// 恢复的是用户自己的视口：禁用补居中与首帧重算，不覆盖
-					this.defaultViewSignature = null;
-					this.restoredSavedViewport = true;
+					this.viewport.defaultSignature = null;
+					this.viewport.restoredSaved = true;
 				}
 			} else {
 				centerContentAtFullScale(mindMap);
-				this.defaultViewSignature = this.viewSignature();
-				this.restoredSavedViewport = false;
+				this.viewport.defaultSignature = this.viewSignature();
+				this.viewport.restoredSaved = false;
 			}
 		} catch (error) {
 			console.error('恢复视图状态失败', error);
 			fitMindMap(mindMap);
-			this.defaultViewSignature = null;
-			this.restoredSavedViewport = false;
+			this.viewport.defaultSignature = null;
+			this.viewport.restoredSaved = false;
 		}
 	}
 
@@ -605,22 +555,22 @@ export class EngineController {
 		if (!this.mindMap) {
 			return;
 		}
-		this.cancelRecenterTimer();
-		this.recenterTimer = window.setTimeout(() => {
-			this.recenterTimer = null;
-			const signature = this.defaultViewSignature;
+		this.viewport.cancelRecenter();
+		this.viewport.recenterTimer = window.setTimeout(() => {
+			this.viewport.recenterTimer = null;
+			const signature = this.viewport.defaultSignature;
 			const mindMap = this.mindMap;
-			if (!mindMap || signature === null || this.restoredSavedViewport) {
+			if (!mindMap || signature === null || this.viewport.restoredSaved) {
 				return;
 			}
 			if (this.viewSignature() !== signature) {
 				// 用户已移动/缩放视口：不打扰
-				this.defaultViewSignature = null;
+				this.viewport.defaultSignature = null;
 				return;
 			}
 			// 几何可能又变（图片落定、容器 settle）：重新对齐后居中
 			centerContentAtFullScale(mindMap);
-			this.defaultViewSignature = this.viewSignature();
+			this.viewport.defaultSignature = this.viewSignature();
 		}, VIEWPORT_RECENTER_DELAY_MS);
 	}
 
