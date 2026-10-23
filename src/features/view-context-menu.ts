@@ -3,6 +3,9 @@
  * 菜单动作（链接/图片/删除等）委托给 view-node-actions.ts；
  * 剪贴板三项（复制节点 / 粘贴为子节点 / 粘贴节点）走 view-clipboard——
  * 那里是系统剪贴板（Markdown 文本）的**唯一**收口，勿在本文件另开一条。
+ *
+ * 另承载**外观两项的级联入口**（布局 / 配色，`addChoiceMenu`）：节点右键与
+ * 空白右键共用同一份；边框 / 连线不在这里（它们在右缘竖栏的开关按钮上）。
  */
 import { Menu, Notice } from 'obsidian';
 import {
@@ -12,6 +15,7 @@ import {
 	getRenderRoot,
 	resetZoom,
 } from '../engine/mindmap';
+import { LAYOUT_OPTIONS, PALETTE_OPTIONS } from '../core/constants';
 import { fitToScreen } from './view-viewport';
 import {
 	addImageToActiveNode,
@@ -33,12 +37,92 @@ import {
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { nodeLink } from './view-wikilink';
 import { arrangeMindMap } from './view-toolbar';
-import { t } from '../core/i18n';
+import { t, type TranslationKey } from '../core/i18n';
 import { writeClipboardText } from '../platform/clipboard';
 import { renderHyperlink } from '../markdown/md-serialize';
 import type { MdNodeData } from '../core/node-data';
 import type { MindMapNode } from '../core/engine-types';
 import type { MindMapViewContext } from './view-context';
+
+/**
+ * 追加一个「勾选当前值」的**级联菜单**（用户口中的「二级菜单」）。
+ *
+ * ## 为什么不用 `MenuItem.setSubmenu`
+ * 官方 `obsidian.d.ts` **没有** 这个方法。实测里给它挂上 `setSubmenu` 后宿主确实
+ * 会加 `has-submenu` 类，但悬停/点击**都不会展开**（2026-10-23 实机复现），
+ * 属未声明的内部方法 —— 不可依赖。
+ *
+ * ## 官方支持的做法
+ * 父项 `onClick((evt) => 子菜单.showAtMouseEvent(evt))`：子菜单弹在光标处，
+ * 全程只用 d.ts 里声明过的 `Menu` / `onClick` / `showAtMouseEvent` /
+ * `showAtPosition`。代价是没有悬停箭头，故**当前值靠子项勾选态**表达
+ * （父项标题只给名字；2026-10-23 复核：不拼「布局：逻辑结构图」，
+ * 现有用例按标题精确匹配，且勾选态已足够）。
+ * 键盘触发时 `evt` 没有坐标，用菜单项矩形当锚点，避免弹到屏幕左上角。
+ *
+ * 勾选态一律**现算**（`spec.current` 由调用方从 `resolve*` 取），不缓存第二份
+ * 状态——外观只存 `data.json` 的 `viewState[路径]` 一处。
+ */
+function addChoiceMenu(
+	menu: Menu,
+	view: MindMapViewContext,
+	spec: {
+		title: TranslationKey;
+		icon: string;
+		current: string;
+		options: readonly { value: string; label: TranslationKey }[];
+		onPick: (value: string) => void;
+	},
+): void {
+	const submenu = new Menu();
+	for (const option of spec.options) {
+		submenu.addItem((item) =>
+			item
+				.setTitle(t(view.lang, option.label))
+				.setChecked(option.value === spec.current)
+				.onClick(() => spec.onPick(option.value)),
+		);
+	}
+	menu.addItem((item) =>
+		item.setTitle(t(view.lang, spec.title)).setIcon(spec.icon).onClick((evt) => {
+			if ('clientX' in evt) {
+				submenu.showAtMouseEvent(evt);
+				return;
+			}
+			// 键盘触发没有鼠标坐标：用**被激活的菜单项**矩形当锚点
+			// （弹到 0,0 会跑到屏幕左上角，与操作位置脱节）
+			const target = evt.target;
+			const rect =
+				target instanceof HTMLElement ? target.getBoundingClientRect() : null;
+			submenu.showAtPosition(
+				rect ? { x: rect.left, y: rect.bottom } : { x: 0, y: 0 },
+			);
+		}),
+	);
+}
+
+/**
+ * 视图级外观菜单：**布局 / 配色**（空白右键与节点右键共用同一份）。
+ *
+ * 连线与边框不在这里——它们已升为右缘竖栏的**开关按钮**（点一下互切），
+ * 菜单里再放一份就成了第二个入口（2026-10-23 用户裁决）。
+ */
+function addLayoutPaletteMenus(menu: Menu, view: MindMapViewContext): void {
+	addChoiceMenu(menu, view, {
+		title: 'toolbar.layout',
+		icon: 'layout-dashboard',
+		current: view.resolvePreference('layout'),
+		options: LAYOUT_OPTIONS,
+		onPick: (value) => view.applyLayout(value),
+	});
+	addChoiceMenu(menu, view, {
+		title: 'toolbar.palette',
+		icon: 'palette',
+		current: view.resolvePreference('palette'),
+		options: PALETTE_OPTIONS,
+		onPick: (value) => view.applyPalette(value),
+	});
+}
 
 /** 注册右键菜单监听（引擎重建时随 initMindMap 调用） */
 export function setupContextMenu(view: MindMapViewContext): void {
@@ -106,15 +190,21 @@ export function setupContextMenu(view: MindMapViewContext): void {
 				.setIcon('sparkles')
 				.onClick(() => arrangeMindMap(view)),
 		);
+		// 外观四项拆两处入口：**布局 / 配色**在此处（与节点右键共用的级联菜单），
+		// **边框 / 连线**在右缘竖栏的开关按钮（屏上不重复提供）。
+		// 勾选态＝当前生效值（`resolve*` 现算，不存第二份状态）。
+		menu.addSeparator();
+		addLayoutPaletteMenus(menu, view);
+		menu.addSeparator();
 		menu.addItem((item) =>
 			item
-				.setTitle(t(view.lang, 'toolbar.undoShort'))
+				.setTitle(t(view.lang, 'toolbar.undo'))
 				.setIcon('undo')
 				.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.BACK)),
-		);
-		menu.addItem((item) =>
-			item
-				.setTitle(t(view.lang, 'toolbar.redoShort'))
+				);
+				menu.addItem((item) =>
+				item
+				.setTitle(t(view.lang, 'toolbar.redo'))
 				.setIcon('redo')
 				.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD)),
 		);
@@ -275,6 +365,10 @@ function showNodeContextMenu(
 			);
 		}
 	}
+	// 视图级外观（布局 / 配色）：与空白右键**同一份**菜单，节点右键也能直接改，
+	// 不必先取消选中再点空白处（2026-10-23 用户要求）。
+	menu.addSeparator();
+	addLayoutPaletteMenus(menu, view);
 	menu.addSeparator();
 	menu.addItem((item) =>
 		item

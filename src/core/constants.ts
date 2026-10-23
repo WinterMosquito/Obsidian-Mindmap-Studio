@@ -254,8 +254,8 @@ export interface PaletteOption {
  * 配色选项（顺序＝界面顺序；首项「默认」＝本特性引入前的蓝色基准）。
  *
  * ⚠ 与「主题色」「主题」不同，**配色不是全局设置**：它按文件记在
- * `data.json` 的 `viewState[<路径>].palette`，由导图顶栏切换（与布局/连线样式
- * 同一种「按文件记忆」形态）。故本表只供工具栏与白名单使用，不进
+ * `data.json` 的 `viewState[<路径>].palette`，由右键菜单「配色」级联切换（与布局 /
+ * 连线样式同一种「按文件记忆」形态）。故本表只供右键菜单与白名单使用，不进
  * `MindMapStudioSettings`。
  */
 export const PALETTE_OPTIONS = [

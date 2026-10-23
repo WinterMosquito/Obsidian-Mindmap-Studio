@@ -1,17 +1,27 @@
 /**
- * 工具栏逻辑：构建/重建工具栏、工具按钮、自动整理。从 view.ts 拆出。
- * 节点操作（链接/图片/删除）委托给 view-node-actions.ts。
+ * 工具栏：**右缘竖排图标栈**（2026-10-22 第三版排布，对齐 Obsidian Canvas）。
+ *
+ * ## 布局
+ * **四组**从右上方自上而下（组间 8px 间距，组内 32×32 图标）：
+ * 1. 文档：返回 Markdown / 导出图片
+ * 2. 外观：边框 / 连线（**状态开关**，点一下切到另一个值）
+ * 3. 视图：放大 / 重置缩放 / 总览全局 / 整理 / 缩小
+ * 4. 历史：撤销 / 重做
+ *
+ * ## 为什么这么排
+ * - 外观四项拆两处入口：**边框 / 连线**是两态开关，留在屏上一点即切；
+ *   **布局 / 配色**要「从多个值里选一个」，移入**右键菜单的二级菜单**
+ *   （`view-context-menu.ts`），屏上不再占位；
+ * - 顺序对齐 Canvas 右栏（缩放四件 → 撤销 → 重做），用户的鼠标行程可复用肌肉记忆；
+ * - 节点级动作（＋子节点 / ＋同级 / 删除 / 插入链接 / 插入图片）一直在右键菜单里，
+ *   屏上不重复提供。
+ *
+ * ## 穿透语义
+ * 外层 `.mindmap-toolbar` 只是**穿透层**（`position:absolute; inset:0; pointer-events:none`），
+ * 各组 `.mindmap-hud` 各自 `pointer-events:auto`——画布的拖拽/滚轮不受影响。
+ * DOM 顺序即键盘 Tab 序。
  */
 import { Notice, setIcon, setTooltip } from 'obsidian';
-import {
-	DEFAULT_PALETTE,
-	DEFAULT_THEME_STYLE,
-	LAYOUT_OPTIONS,
-	LINE_STYLE_OPTIONS,
-	normalizeLineStylePreference,
-	PALETTE_OPTIONS,
-	THEME_STYLE_OPTIONS,
-} from '../core/constants';
 import {
 	arrangeMindMap as arrangeMindMapEngine,
 	ENGINE_COMMANDS,
@@ -21,245 +31,195 @@ import {
 	zoomOutMindMap,
 } from '../engine/mindmap';
 import { fitToScreen } from './view-viewport';
-import { openSearchBar } from './view-search';
 import { exportImage } from './view-export';
-import {
-	addImageToActiveNode,
-	addLinkToActiveNode,
-	deleteActiveNode,
-} from './view-node-actions';
-import { t, type TranslationKey } from '../core/i18n';
+import { t } from '../core/i18n';
 import type { MindMapViewContext } from './view-context';
 
-/**
- * 构建工具栏（左：编辑/插入；中：布局；右：画布/导入导出）。
- *
- * 编排壳：三个分组各自独立构建、按原序调用——纯移动，DOM 创建顺序不变。
- */
+/** 构建工具栏（右缘四组，顺序 = DOM 顺序 = Tab 序） */
 export function buildToolbar(view: MindMapViewContext): void {
 	const toolbar = view.toolbarEl;
 	if (!toolbar) {
 		return;
 	}
-	buildToolbarLeftGroup(view, toolbar);
-	buildToolbarCenterGroup(view, toolbar);
-	buildToolbarRightGroup(view, toolbar);
-}
-
-/** 左组：编辑/插入（md 文档模式返回入口 → 节点增删 → 撤销重做 → 整理 → 搜索/链接/图片） */
-function buildToolbarLeftGroup(
-	view: MindMapViewContext,
-	toolbar: HTMLElement,
-): void {
-	const leftGroup = toolbar.createDiv('mindmap-toolbar-group');
-	// 返回 Markdown 编辑/阅读的入口：本视图承载的**任何** md 都可用
-	//（声明为导图的文件点击即持久降级，普通笔记开为导图时点击即原样返回）
-	createToolButton(
-		leftGroup,
-		t(view.lang, 'toolbar.backToMarkdown'),
-		'file-text',
-		() => view.backToMarkdown(),
-	);
-	leftGroup.createDiv('mindmap-toolbar-separator');
-	createToolButton(leftGroup, t(view.lang, 'toolbar.addChild'), 'plus', () => {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE);
-	});
-	createToolButton(leftGroup, t(view.lang, 'toolbar.addSibling'), 'circle-plus', () => {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.INSERT_NODE);
-	});
-	createToolButton(leftGroup, t(view.lang, 'toolbar.deleteNode'), 'trash-2', () => {
-		deleteActiveNode(view);
-	});
-	leftGroup.createDiv('mindmap-toolbar-separator');
-	createToolButton(leftGroup, t(view.lang, 'toolbar.undo'), 'undo', () => {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
-	});
-	createToolButton(leftGroup, t(view.lang, 'toolbar.redo'), 'redo', () => {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
-	});
-	createToolButton(
-		leftGroup,
-		t(view.lang, 'toolbar.arrange'),
-		'sparkles',
-		() => arrangeMindMap(view),
-	);
-	leftGroup.createDiv('mindmap-toolbar-separator');
-	createToolButton(leftGroup, t(view.lang, 'toolbar.search'), 'search', () =>
-		openSearchBar(view),
-	);
-	createToolButton(leftGroup, t(view.lang, 'toolbar.insertLink'), 'link', () => {
-		void addLinkToActiveNode(view);
-	});
-	createToolButton(leftGroup, t(view.lang, 'toolbar.insertImage'), 'image', () => {
-		void addImageToActiveNode(view);
-	});
+	const rail = toolbar.createDiv('mindmap-hud mindmap-hud--rail');
+	buildDocumentGroup(view, rail);
+	buildAppearanceGroup(view, rail);
+	buildViewportGroup(view, rail);
+	buildHistoryGroup(view, rail);
 }
 
 /**
- * 追加「标签 + 固定选项面的下拉」（布局 / 配色共用）。
+ * 组 2：外观开关 —— 边框 / 连线（**点一下切到另一个值**，直接写回 `data.json`）。
  *
- * **连线样式不走这里**：它的选项面随布局重建（`syncLineStyleOptions`），初始
- * 构建只是其中一次——套进本函数会把「静态构建」与「动态重建」两套逻辑叠在
- * 一起。这里只收「选项固定、变更即回调」的那一类。
+ * 这两个是**状态**而非动作：图标本身表达当前值（实线/虚线方框、直线/曲线），
+ * 屏上不摆文字（32px 竖栏摆不下，撑宽会挤掉画布），tooltip 只报名字。
  *
- * 返回值交给调用方落到 `view.<x>Select`（视图契约引用），本函数不碰 view 字段：
- * 字段的判空语义属于 `refreshToolbar` 的生命周期，不该散进构建工具。
+ * 写入走 `view.applyThemeStyle` / `view.applyLineStyle`：与右键菜单里的
+ * 布局 / 配色共用 `commitPreference` 这一处收口（归一 → 应用引擎 →
+ * 记 `viewState[路径]` → 落盘），不在这里另写一份持久化。
  */
-function appendFixedSelect(
+function buildAppearanceGroup(
 	view: MindMapViewContext,
-	centerGroup: HTMLElement,
-	spec: {
-		label: TranslationKey;
-		cls: string;
-		options: readonly { value: string; label: TranslationKey }[];
-		initialValue: string;
-		onChange: (value: string) => void;
-	},
-): HTMLSelectElement {
-	centerGroup.createSpan('mindmap-toolbar-label').setText(
-		t(view.lang, spec.label),
-	);
-	const select = centerGroup.createEl('select', { cls: spec.cls });
-	spec.options.forEach((option) => {
-		const optionEl = select.createEl('option');
-		optionEl.value = option.value;
-		optionEl.setText(t(view.lang, option.label));
-	});
-	select.value = spec.initialValue;
-	select.onchange = () => {
-		spec.onChange(select.value);
-	};
-	return select;
-}
-
-/** 中组：布局 / 连线样式 / 配色（连线选项面随布局重建，见 syncLineStyleOptions） */
-function buildToolbarCenterGroup(
-	view: MindMapViewContext,
-	toolbar: HTMLElement,
+	rail: HTMLElement,
 ): void {
-	const centerGroup = toolbar.createDiv(
-		'mindmap-toolbar-group mindmap-toolbar-center',
-	);
-	// 局部量 = 本函数内的唯一引用（`view.layoutSelect` 只是暴露给视图契约，供外部读）。
-	// 同函数内不混用非空断言与判空——`refreshToolbar` 重建时会重新执行本函数。
-	view.layoutSelect = appendFixedSelect(view, centerGroup, {
-		label: 'toolbar.layout',
-		cls: 'mindmap-layout-select',
-		options: LAYOUT_OPTIONS,
-		// 布局持久化到视图状态存储（.mindmap.md 正文不写入布局）
-		initialValue: view.plugin.settings.defaultLayout,
-		onChange: (value) => view.applyLayout(value),
+	const group = rail.createDiv('mindmap-hud-group');
+
+	/**
+	 * 边框：图标随状态切换（有边框＝实线方框／无边框＝虚线方框）。
+	 * 悬停文案**极简**——只报名字，状态由图标本身表达（用户 2026-10-23 裁决）。
+	 */
+	createToggleRow(group, {
+		describe: () => ({
+			icon:
+				view.resolvePreference('themeStyle') === 'borderless'
+					? 'square-dashed'
+					: 'square',
+			tooltip: t(view.lang, 'toolbar.themeStyle'),
+		}),
+		toggle: () =>
+			view.applyThemeStyle(
+				view.resolvePreference('themeStyle') === 'borderless'
+					? 'default'
+					: 'borderless',
+			),
 	});
 
-	centerGroup.createDiv('mindmap-toolbar-separator');
-	centerGroup.createSpan('mindmap-toolbar-label').setText(
-		t(view.lang, 'toolbar.lineStyle'),
-	);
-	// 连线样式的选项面**随布局重建**，故不走 appendFixedSelect：这里只建控件，
-	// 选项面交给 syncLineStyleOptions（写法的判空在其内部，见该函数注释）。
-	const lineStyleSelect = centerGroup.createEl('select', {
-		cls: 'mindmap-line-style-select',
-	});
-	view.lineStyleSelect = lineStyleSelect;
-	// 初始按全局默认布局构建选项面；引擎就绪后由 onEngineReady 按文件实际布局校正
-	syncLineStyleOptions(
-		view,
-		view.plugin.settings.defaultLayout,
-		view.plugin.settings.defaultLineStyle,
-	);
-	lineStyleSelect.onchange = () => {
-		// 连线样式偏好持久化到视图状态存储（两态：折线 / 曲线；正文不写入）
-		view.applyLineStyle(lineStyleSelect.value);
-	};
-
-	centerGroup.createDiv('mindmap-toolbar-separator');
-	// 配色按文件记（与布局/连线同形态）、全局设置里没有这一项；初始先落默认，
-	// 引擎就绪后由 onEngineReady 按当前文件的实际配色校正
-	view.paletteSelect = appendFixedSelect(view, centerGroup, {
-		label: 'toolbar.palette',
-		cls: 'mindmap-palette-select',
-		options: PALETTE_OPTIONS,
-		initialValue: DEFAULT_PALETTE,
-		onChange: (value) => view.applyPalette(value),
-	});
-
-	centerGroup.createDiv('mindmap-toolbar-separator');
-	// 主题（节点外观）同样按文件记、由顶栏切换——它已从全局设置移到此处，
-	// 故设置面板里只剩「主题」（＝明暗配色）一项
-	view.themeSelect = appendFixedSelect(view, centerGroup, {
-		label: 'toolbar.themeStyle',
-		cls: 'mindmap-theme-select',
-		options: THEME_STYLE_OPTIONS,
-		initialValue: DEFAULT_THEME_STYLE,
-		onChange: (value) => view.applyThemeStyle(value),
+	// 固定直线布局（目录组织图 / 时间轴 / 鱼骨图）的连线由布局固有绘制，
+	// 切了也没用——按钮置灰，不给假的可切换态。
+	if (!supportsLineStyleSwitch(view.resolvePreference('layout'))) {
+		createToggleRow(group, {
+			describe: () => ({
+				icon: 'slash',
+				tooltip: t(view.lang, 'toolbar.lineStyle'),
+			}),
+			disabled: true,
+		});
+		return;
+	}
+	createToggleRow(group, {
+		describe: () => ({
+			// 直线 `slash` / 曲线 `spline`：单笔画成对。
+			// （试过 `tilde`——Obsidian 内置 Lucide **没有**该图标，setIcon 静默渲染空 svg，
+			//  实测 svg.innerHTML 长度 0；这里记一笔，别再拿它当"更简单的曲线"。）
+			icon:
+				view.resolvePreference('lineStyle') === 'curve' ? 'spline' : 'slash',
+			tooltip: t(view.lang, 'toolbar.lineStyle'),
+		}),
+		toggle: () =>
+			view.applyLineStyle(
+				view.resolvePreference('lineStyle') === 'curve' ? 'straight' : 'curve',
+			),
 	});
 }
 
-/** 右组：画布控制与导出（顺序左→右：重置缩放 → 适应画布 → 放大 → 缩小 → 导出） */
-function buildToolbarRightGroup(
-	view: MindMapViewContext,
-	toolbar: HTMLElement,
-): void {
-	const rightGroup = toolbar.createDiv(
-		'mindmap-toolbar-group mindmap-toolbar-right',
+/** 组 1：文档 —— 返回 Markdown / 导出图片 */
+function buildDocumentGroup(view: MindMapViewContext, rail: HTMLElement): void {
+	const group = rail.createDiv('mindmap-hud-group');
+	// 返回 Markdown：本视图承载的**任何** md 都可用（声明为导图的文件点击即持久降级）
+	createToolButton(group, t(view.lang, 'toolbar.backToMarkdown'), 'file-text', () =>
+		view.backToMarkdown(),
 	);
-	// 顺序（左→右）：重置缩放 → 适应画布 → 放大 → 缩小 → 导出
-	createToolButton(
-		rightGroup,
-		t(view.lang, 'toolbar.resetZoom'),
-		'rotate-ccw',
-		() => resetZoom(view.mindMap),
-	);
-	createToolButton(rightGroup, t(view.lang, 'command.fitCanvas'), 'maximize', () =>
-		fitToScreen(view),
-	);
-	createToolButton(rightGroup, t(view.lang, 'toolbar.zoomIn'), 'zoom-in', () =>
-		zoomInMindMap(view.mindMap),
-	);
-	createToolButton(rightGroup, t(view.lang, 'toolbar.zoomOut'), 'zoom-out', () =>
-		zoomOutMindMap(view.mindMap),
-	);
-	rightGroup.createDiv('mindmap-toolbar-separator');
-	createToolButton(rightGroup, t(view.lang, 'toolbar.exportImage'), 'image', () => {
+	createToolButton(group, t(view.lang, 'toolbar.exportImage'), 'image', () => {
 		void exportImage(view);
 	});
 }
 
-/**
- * 按布局重建连线样式选项集（工具栏「连线」下拉，2026-10-21 收敛为两态）：
- * - 支持切换的布局（逻辑结构图/思维导图/组织结构图）：**折线、曲线**两项，
- *   顺序即界面顺序（折线在上），值＝偏好归一结果；
- * - 固定直线布局（目录组织图/时间轴/鱼骨图）：仅一项「**直线**」——连线由布局类
- *   固定、不可切换，控件只表达**现状**（不再用「自动」这种会让人以为可选的措辞）。
- *   文件里的偏好不受影响：切回支持切换的布局后按会话偏好恢复显示。
- */
-export function syncLineStyleOptions(
-	view: MindMapViewContext,
-	layout: string,
-	preference: string,
-): void {
-	const select = view.lineStyleSelect;
-	if (!select) {
-		return;
-	}
-	select.empty();
-	if (supportsLineStyleSwitch(layout)) {
-		LINE_STYLE_OPTIONS.forEach((option) => {
-			const optionEl = select.createEl('option');
-			optionEl.value = option.value;
-			optionEl.setText(t(view.lang, option.label));
-		});
-		// 脏 data.json 的未知偏好不落到 select.value（会显示空白）：归一为折线
-		select.value = normalizeLineStylePreference(preference);
-		return;
-	}
-	const optionEl = select.createEl('option');
-	optionEl.value = 'straight';
-	optionEl.setText(t(view.lang, 'lineStyle.fixedStraight'));
-	select.value = 'straight';
+/** 组 3：视图 —— 放大 / 重置缩放 / 总览全局 / 整理 / 缩小（对齐 Canvas 右栏顺序） */
+function buildViewportGroup(view: MindMapViewContext, rail: HTMLElement): void {
+	const group = rail.createDiv('mindmap-hud-group');
+	createToolButton(group, t(view.lang, 'toolbar.zoomIn'), 'zoom-in', () =>
+		zoomInMindMap(view.mindMap),
+	);
+	createToolButton(group, t(view.lang, 'toolbar.resetZoom'), 'rotate-ccw', () =>
+		resetZoom(view.mindMap),
+	);
+	createToolButton(group, t(view.lang, 'toolbar.tipFit'), 'maximize', () =>
+		fitToScreen(view),
+	);
+	// 整理：与右键菜单的「自动整理」是**同一动作**，故复用同一下游 `arrangeMindMap`
+	// 与同一枚图标 `sparkles`（同一能力在屏上/菜单里换图标会让人当成两个功能）。
+	// 位置夹在「总览」与「缩小」之间：两者都是视口动作，整理会连视口一起 fit，
+	// 放右侧紧邻缩小可避免它被读成「布局选择」（布局在右键级联菜单里）。
+	createToolButton(group, t(view.lang, 'toolbar.tipArrange'), 'sparkles', () =>
+		arrangeMindMap(view),
+	);
+	createToolButton(group, t(view.lang, 'toolbar.zoomOut'), 'zoom-out', () =>
+		zoomOutMindMap(view.mindMap),
+	);
 }
 
-/** 创建工具栏按钮（提示/图标/点击回调） */
+/** 组 4：历史 —— 撤销 / 重做 */
+function buildHistoryGroup(view: MindMapViewContext, rail: HTMLElement): void {
+	const group = rail.createDiv('mindmap-hud-group');
+	// 撤销/重做：竖栏只放图标，tooltip 只报动作名（快捷键由命令面板/热键承载）
+	createToolButton(group, t(view.lang, 'toolbar.undo'), 'undo', () => {
+		view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
+	});
+	createToolButton(group, t(view.lang, 'toolbar.redo'), 'redo', () => {
+		view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+	});
+}
+
+/** 「状态开关」的显示态：图标与 tooltip 都随当前状态（`describe` 每次重算） */
+interface ToggleRowState {
+	icon: string;
+	tooltip: string;
+}
+
+/** 可点的开关：必须给 `toggle` */
+interface ToggleRowLive {
+	/** 按**当前**状态给出图标与提示（切换后要重算，不能只在构建时算一次） */
+	describe: () => ToggleRowState;
+	toggle: () => void;
+}
+
+/** 置灰的开关：固定直线布局下的连线由布局固有绘制，切了也无效 ⇒ 没有可执行动作 */
+interface ToggleRowDisabled {
+	describe: () => ToggleRowState;
+	disabled: true;
+}
+
+type ToggleRowSpec = ToggleRowLive | ToggleRowDisabled;
+
+/**
+ * 创建「状态开关」按钮：**只显示图标**，图标本身随状态切换
+ * （有边框 `square` ↔ 无边框 `square-dashed`；折线 `slash` ↔ 曲线 `spline`）。
+ *
+ * 屏上不摆文字：两个按钮在 32×32 的竖栏里，文字会把组撑宽、挤掉画布；
+ * tooltip 只报名字、状态由图标表达（用户 2026-10-23 裁决）。
+ */
+function createToggleRow(
+	container: HTMLElement,
+	spec: ToggleRowSpec,
+): HTMLButtonElement {
+	const initial = spec.describe();
+	if (!('toggle' in spec)) {
+		// 置灰态不走 createToolButton：它必然挂 onclick，这里要的是一个没有动作的按钮
+		const disabledButton = container.createEl('button', {
+			cls: 'mindmap-tool-btn',
+		});
+		setIcon(disabledButton, initial.icon);
+		setTooltip(disabledButton, initial.tooltip);
+		disabledButton.disabled = true;
+		disabledButton.addClass('is-disabled');
+		return disabledButton;
+	}
+	const button = createToolButton(container, initial.tooltip, initial.icon, () => {
+		spec.toggle();
+		// 外观变更**不重建工具栏**，所以点击后必须自己把图标/提示同步到新状态，
+		// 否则按钮会一直显示点击前的样子（2026-10-23 实机踩到）。
+		syncState();
+	});
+	/** 按当前状态回写图标与提示（构建时一次，之后每次切换一次） */
+	function syncState(): void {
+		const state = spec.describe();
+		setIcon(button, state.icon);
+		setTooltip(button, state.tooltip);
+	}
+	return button;
+}
+
+/** 创建工具按钮（提示/图标/点击回调） */
 function createToolButton(
 	container: HTMLElement,
 	tooltip: string,
@@ -274,7 +234,7 @@ function createToolButton(
 	return button;
 }
 
-/** 自动整理（需求 3）：重新按布局算法对齐摆放各主题并适配画布 */
+/** 自动整理（画布右键菜单 / 命令面板入口）：重新按布局算法对齐并适配画布 */
 export function arrangeMindMap(view: MindMapViewContext): void {
 	if (!view.mindMap) {
 		new Notice(t(view.lang, 'common.notLoaded'));

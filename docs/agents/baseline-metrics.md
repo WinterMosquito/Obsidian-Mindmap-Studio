@@ -18,8 +18,8 @@
 | Node | v24.22.0 | `node -v` |
 | Chrome | `C:\Program Files\Google\Chrome\Application\chrome.exe`（无头 `--headless=old`） | `scripts/verify-visual.mjs:281` 的 `findChrome()` |
 | 库（实机） | **`D:\Obsidian\Mindmap测试仓库`**（vault 名 = 目录名；2026-10-20 复测库）；§7 的 2026-10-07 台账仍在旧库 `C:\Users\LEGION\OneDrive\Obsidian\Mindmap` | `obsidian vault="Mindmap测试仓库" eval code="app.vault.getName()"` |
-| 记录日期 | 2026-10-07（首版）；2026-10-08（第一次全表复测）；2026-10-09（全表复测）；**2026-10-20 全表复测**（§1–§6 全部重跑；§3.2 消融与 §7 实机核销未重测，见各自小节） | - |
-| 构建指纹（本次复测） | `main.js` sha256 `787a849a…77677b01`（625,647 B）｜ `vendor/simple-mind-map.cjs` sha256 `85905272…f4a89`（414,469 B，**LF 归一后**；raw 414,572 B） | `sha256sum main.js`；vendor 按 LF 归一后计算（`check-env.ps1` 同口径） |
+| 记录日期 | 2026-10-07（首版）；2026-10-08（第一次全表复测）；2026-10-09（全表复测）；**2026-10-20 全表复测**（§1–§6 全部重跑；§3.2 消融与 §7 实机核销未重测，见各自小节）；2026-10-22 **局部复测**（仅 S-09 / G-03 / P-01 / P-02 与 main.js 指纹，重构序列 R0–R34 结项后；其余行仍为 10-20/10-21 读数）；**2026-10-23 局部复测**（S-06 / S-09 / S-10 随 K129+K130 批次复算，其余行仍为上轮读数） | - |
+| 构建指纹（本次复测） | `main.js` sha256 `50573aec…c669dc`（632,940 B）｜ `vendor/simple-mind-map.cjs` sha256 `85905272…f4a89`（414,469 B，**LF 归一后**；raw 414,572 B） | `sha256sum main.js`；vendor 按 LF 归一后计算（`check-env.ps1` 同口径） |
 
 **读数与指纹的绑定关系（重要）**：上表指纹是本次复测所用构建。**§1–§6 的数字均由各自「复现命令」在该构建上实测**；§5 的实机读数同在**该构建**上重测（三件套已复制到 `D:\Obsidian\Mindmap测试仓库\.obsidian\plugins\mindmap-studio\` 并 `obsidian vault="Mindmap测试仓库" plugin:reload id=mindmap-studio`，`dev:errors` 无报错），**窗口可见**（实测 `document.hidden === false`，无 rAF 垫片）；§3.2 消融、§7 实机核销与 §8.1 行跨度未随本次复测（原因见各自小节）。
 
@@ -44,10 +44,10 @@
 | --- | --- | --- | --- |
 | G-01 | 类型检查 + 生产构建 | `BUILD_EXIT=0` | `npm run build` |
 | G-02 | Lint（0 warning 门禁） | `LINT_EXIT=0` | `npm run lint` |
-| G-03 | 单测 | **82 文件 / 2219 用例**全通过（2026-10-21 复测） | `npx vitest run` |
+| G-03 | 单测 | **83 文件 / 2236 用例**全通过（2026-10-23 复测；+1 文件 `math-jax-fonts.test.ts`、+14 用例＝字体内联 9 + 注入链 1 + 连接线两批的用例回归，另 +3 用例＝预取与失败缓存、+2 用例＝属性键迁移的值守卫） | `npx vitest run` |
 | G-04 | 死代码 | `KNIP_EXIT=0` | `npm run check:dead-code` |
 | G-05 | 文档同步契约 | 4 passed | `npx vitest run tests/agents-md-sync.test.ts` |
-| G-06 | 渲染契约（无头 Chrome） | `✓ 视觉验证通过`（15 场景 / 19 探针；2026-10-21 复测） | `npm run verify:visual -- --require-chrome` |
+| G-06 | 渲染契约（无头 Chrome） | `✓ 视觉验证通过`（15 场景 / 19 探针；2026-10-23 复测，退出码 0） | `npm run verify:visual -- --require-chrome` |
 
 ---
 
@@ -78,12 +78,14 @@
 
 | 指标ID | 指标 | 值 | 复现命令 |
 | --- | --- | --- | --- |
-| P-01 | 发布产物 | **627,228 B**（2026-10-21 复测） | `ls -l main.js` |
-| P-02 | gzip 后 | **184,743 B**（2026-10-21 复测） | `gzip -c main.js \| wc -c` |
+| P-01 | 发布产物 | **637,082 B**（2026-10-23 复测；含导出 SVG 的 MathJax 字体内联模块；较上一条读数 +279 B＝属性键迁移的值守卫） | `ls -l main.js` |
+| P-02 | gzip 后 | **188,182 B**（2026-10-23 复测） | `gzip -c main.js \| wc -c` |
 | P-03 | vendor 源文件 | **414,469 B**（LF 归一；raw 414,572 B） | `ls -l vendor/simple-mind-map.cjs`；LF 归一后计字节 |
 | P-04 | **gzip 分组占比**（消融实测，见 §3.2） | vendor **117,526 B（66.9%）** / 自有（含 i18n）**58,179 B（33.1%）**（**2026-10-09 消融读数，2026-10-20 未重测**） | 消融构建 + `gzip -c \| wc -c` |
 
 ### 3.1 归因（方案 OPT-01A）
+
+> **2026-10-23 注**：本小节的归因读数取自 2026-10-09 的构建（发布产物 625,647 B），此后发布产物已增至 **637,082 B**（见 P-01）。结论（vendor ≈ 2/3、自有侧最大项是 `core/i18n.ts`）未变；要精确归因请按本节命令重跑——**输出到 `.tmp-analyze`，绝不覆盖发布产物**。
 
 归因构建（**输出到独立目录，绝不覆盖发布产物**）：
 
@@ -158,12 +160,12 @@ npx esbuild src/main.ts --bundle --format=cjs --target=es2021 --tree-shaking=tru
 | S-02 | `as unknown as` | **34**（`engine/` 层占 23，其中 `mindmap-viewport.ts` 9、`mindmap-nodes.ts` 8） | `grep -rho "as unknown as" src --include=*.ts \| wc -l` |
 | S-03 | 分支密度 Top5 | `mindmap-viewport.ts` 151、`md-serialize.ts` 149、`md-outline.ts` 101、`math-jax.ts` 90、`node-inline-tokenize.ts` 73 | `grep -oE "if\|for\|while\|catch" <file> \| wc -l`（**逐文件**统计、按计数降序取 5；该正则含标识符内出现，如 `verify` 里的 `if`，故只作横向排序口径） |
 | S-04 | features 横向 import | **58**（总 86 边，`view-context` 21 + `view-common` 7 除外），`view-node-actions` 被 6 处依赖 | `grep -rhoP "from './[a-z-]+'" src/features` |
-| S-05 | `view.ts` 规模 | **1149** 行 / 17 自有方法 / **17** 私有字段 / 41 import（2026-10-21 复测行数） | `awk 'END{print NR}' src/features/view.ts`；`grep -cP "^\t[a-zA-Z]+\(" …`；`grep -cP "^\tprivate [a-zA-Z]+[?!]?\s*[:=]" …`；`grep -c "^import" …` |
-| S-06 | 超过 300 行的文件 | **28**（2026-10-21 实测；与 AGENTS.md 豁免表、`docs/agents/architecture.md` 同表**逐行一致**） | 逐文件 `awk 'END{print NR}'`；或 `npx vitest run tests/agents-md-sync.test.ts` |
+| S-05 | `view.ts` 规模 | **1223** 行 / 19 自有方法 / **15** 私有字段 / 43 import（2026-10-23 复测；四个 `resolve*()` 合并为 `resolvePreference` 后方法与字段各 −3 / −2） | `awk 'END{print NR}' src/features/view.ts`；`grep -cP "^\t[a-zA-Z]+\(" …`；`grep -cP "^\tprivate [a-zA-Z]+[?!]?\s*[:=]" …`；`grep -c "^import" …` |
+| S-06 | 超过 300 行的文件 | **30**（2026-10-23 实测；本批新增 `features/view-context-menu.ts` 380 行、`markdown/md-open.ts` 303 行；与 AGENTS.md 豁免表、`docs/agents/architecture.md` 同表**逐行一致**。计数须逐文件 `countSourceLines` 复算——`agents-md-sync.test.ts` 只守登记值漂移阈值，不改总数） | 逐文件 `countSourceLines`（`readFileSync(…,'utf8').split('\n')`，末尾换行不计）；或 `npx vitest run tests/agents-md-sync.test.ts`（仅漂移） |
 | S-07 | `addEventListener` 出现 | **31** 处 | `grep -rno "addEventListener" src --include=*.ts \| wc -l` |
-| S-08 | `console.` 调用 | **87** 处 | `grep -rno "console\." src --include=*.ts \| wc -l` |
-| S-09 | src / tests 规模 | **94 文件 28,796 行 / 84 文件 41,134 行**（2026-10-21 复测；行数按 `countSourceLines`——直接 `wc -l` 会少 1～4 行，来自末尾无换行的文件） | `find src -name "*.ts" \| wc -l`（文件数）；行数用 `countSourceLines` 口径 |
-| S-10 | i18n 键 | ZH **203** / EN **203**（对齐；2026-10-21 复测） | 统计 `src/core/i18n.ts` 两段字面量键（`^\t'` 行；ZH 段以 `} as const;` 收尾、EN 段以 `};` 收尾，**按段切分**，勿用单一结束标记） |
+| S-08 | `console.` 调用 | **88** 处（2026-10-23 复测；+1＝属性键迁移的目标键占用告警） | `grep -rno "console\." src --include=*.ts \| wc -l` |
+| S-09 | src / tests 规模 | **110 文件 29,909 行 / 85 文件 41,512 行**（2026-10-23 复测；+2 `src/platform/math-jax-{fonts,export-clip}.ts`、+1 `tests/math-jax-fonts.test.ts`。行数按 `countSourceLines`——直接 `wc -l` 会少 1～4 行，来自末尾无换行的文件） | `find src -name "*.ts" \| wc -l`（文件数）；行数用 `countSourceLines` 口径 |
+| S-10 | i18n 键 | ZH **206** / EN **206**（对齐；2026-10-23 复测。+4 个 `settings.group*` 分组标题，−`settings.title` / `toolbar.undoShort` / `toolbar.redoShort`，净 +3） | 统计 `src/core/i18n.ts` 两段字面量键（`^\t'` 行；ZH 段以 `} as const;` 收尾、EN 段以 `};` 收尾，**按段切分**，勿用单一结束标记） |
 | S-11 | 设置 | 接口 **12** 项声明 / `DEFAULT_SETTINGS` **12** 键 / 面板走 `getSettingDefinitions()`（2026-10-21 复测；边框与配色已改为按文件记，`defaultThemeStyle` 只提供新建时的初始值） | 取 `export interface MindMapStudioSettings` 与 `DEFAULT_SETTINGS` 两段内的字段行（文件为 CRLF，行尾 `\r` 需先剥离） |
 | S-12 | **循环依赖**（§4.1） | **编译期与运行时均为 0 个环**；**94** 文件 / **450** 条 src 内部依赖边（其中仅类型边 **93** 条；2026-10-21 复测，口径同 §4.1） | 自建 Tarjan 检测脚本（见 §4.1 口径与盲区） |
 | S-13 | **圈复杂度**（§4.2） | ≥9 共 **81** 个函数；≥15 共 30；≥20 共 15；≥30 共 5（2026-10-20 读数，2026-10-21 未重测） | ESLint Node API 覆盖 `complexity` 规则（CLI `--rule` 在 flat config 下已不可用，见 §4.2） |
@@ -304,7 +306,7 @@ node scripts/gen-perf-fixture.mjs --out "<vault>/fixtures/bench/realistic-5000.m
 | --- | --- | --- |
 | 6 种布局 | `layoutSelect.options` = `logicalStructure` / `mindMap` / `organizationStructure` / `catalogOrganization` / `timeline` / `fishbone` | 通过，6/6 |
 | 4 种连线样式 | `lineStyleOptions` = `auto` / `curve` / `direct` / `straight` | 通过，4/4 |
-| 工具栏 15 个控件 | 切换回 Markdown、添加子节点 (Tab)、添加同级节点 (Enter)、删除节点 (Delete)、撤销、重做、自动整理、搜索节点 (Ctrl+F)、添加链接、添加图片、重置缩放（100%）、适应画布、放大、缩小、导出 PNG | 通过，与 Everyday actions 表逐行对应 |
+| 工具栏 15 个控件 | 切换回 Markdown、添加子节点 (Tab)、添加同级节点 (Enter)、删除节点 (Delete)、撤销、重做、自动整理、搜索节点 (Ctrl+F)、添加链接、添加图片、重置缩放（100%）、适应画布、放大、缩小、导出 PNG | 通过，与 Everyday actions 表逐行对应（**2026-10-22 起顶栏改为右缘图标栈 + 右键二级菜单，本行为当时实测记录**：`layoutSelect.options` 等表述已随控件下线失效，同名列改由 `view-context.resolve*` 提供） |
 | 搜索框 | `view.searchInput` 存在 | 入口在，**搜索行为本身未测** |
 | 命令 9 个 | `mindmap-studio:` 命令数组 | 通过，含 README 提到的 Split all mixed links / Switch to Markdown / Export PNG |
 | 拆分混排链接命令 | 实机执行 `mindmap-studio:mindmap-split-links-all` 无错误，写回后文件仍为合法 Markdown | 通过 |

@@ -199,7 +199,6 @@ function makeView(
 			options.withBar === false ? null : (bar as unknown as HTMLElement),
 		searchInput: null,
 		searchCountEl: null,
-		layoutSelect: null,
 		mindMap: options.withMindMap === false ? null : mindMap,
 		engineEvents: binder,
 		viewEvents: binder,

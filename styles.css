@@ -10,51 +10,78 @@
   height: 100%;
   width: 100%;
   overflow: hidden;
+  /* 三块浮层（.mindmap-toolbar 的绝对定位子元素）以本容器为参照系 */
+  position: relative;
 }
 
-/* 工具栏 */
+/* 工具栏：三块浮层（顶部居中 / 右缘竖排 / 底栏左下），见 view-toolbar.ts 文件头。
+   本元素只是**穿透层**：不占布局高度、不拦截画布事件；三块子容器各自 pointer-events:auto。 */
 .mindmap-toolbar {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
+/* 右缘图标栈：外层只管定位与「组间 8px」——对齐 Obsidian Canvas 的 .canvas-controls */
+.mindmap-hud {
+  position: absolute;
+  top: 8px;
+  inset-inline-end: 8px;
   display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
-  background: var(--background-secondary);
-  border-bottom: 1px solid var(--background-modifier-border);
-  flex-shrink: 0;
-  flex-wrap: wrap;
-  min-height: 40px;
+  flex-direction: column;
+  /* 每组各自贴合内容宽度并整体右对齐：纯图标组 33px，带文字的「外观」组更宽，
+     避免被 flex 拉伸后图标组右侧留一条空白 */
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: auto;
 }
 
-.mindmap-toolbar-group {
+/* 栈内每组：一张浮起卡片，组内按钮用 1px 分隔线粘成一体。
+   实测 Canvas：`.canvas-control-group` 是 padding:0 / overflow:hidden，
+   条目 32×32、radius 0，4 项组高 131 = 32×4 + 1×3（分隔线）。 */
+.mindmap-hud-group {
   display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.mindmap-toolbar-center {
-  flex: 1;
-  justify-content: center;
-}
-
-.mindmap-toolbar-right {
-  /* 逻辑属性：Obsidian 1.14.0 起工作区整体随 RTL 语言翻转（v1.14.md），
-     物理 margin-left 不会跟着翻。inline-start 在 LTR=左、RTL=右，
-     两向都把该分组推到 flex 行末端。 */
-  margin-inline-start: auto;
-}
-
-.mindmap-toolbar-separator {
-  width: 1px;
-  height: 20px;
+  flex-direction: column;
+  /* 分隔线不用 border：让组底色从 1px 缝里透出来，少维护一处状态 */
+  gap: 1px;
+  padding: 0;
   background: var(--background-modifier-border);
-  margin: 0 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-s);
+  overflow: hidden;
+  /* 半透明：会盖住画布边缘节点，留一点透光；交互时转实心 */
+  opacity: 0.95;
+  transition: opacity 120ms ease;
 }
 
-.mindmap-toolbar-label {
-  font-size: 12px;
+.mindmap-hud-group:hover,
+.mindmap-hud-group:focus-within {
+  opacity: 1;
+}
+
+/* 组内按钮：铺满 32×32、直角（圆角交给组容器裁切），主背景底色把 1px 缝读作分隔线 */
+.mindmap-hud-group .mindmap-tool-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 0;
+  background: var(--background-primary);
+}
+
+.mindmap-hud-group .mindmap-tool-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* 固定直线布局下的「连线」：切了也无效，置灰且吞掉 hover */
+.mindmap-hud-group .mindmap-tool-btn.is-disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mindmap-hud-group .mindmap-tool-btn.is-disabled:hover {
+  background: var(--background-primary);
   color: var(--text-muted);
-  /* 同上：逻辑方向，随宿主 RTL 翻转 */
-  margin-inline-end: 4px;
 }
 
 /* 工具按钮 */
@@ -184,35 +211,39 @@
 /* ========== 移动端适配 ========== */
 
 @media (max-width: 600px) {
-  .mindmap-toolbar {
-    padding: 4px 6px;
-    gap: 2px;
+  .mindmap-hud {
+    gap: 6px;
+  }
+
+  .mindmap-hud-group {
+    padding: 3px;
   }
 
   .mindmap-tool-btn {
     width: 28px;
     height: 28px;
   }
-
-  .mindmap-toolbar-separator {
-    margin: 0 3px;
-  }
-
-  .mindmap-toolbar-label {
-    display: none;
-  }
 }
 
 /* ========== 搜索栏 ========== */
 
+/* 搜索栏：底部居中的临时浮条（2026-10-22 从流内一条改为浮层）。
+   打开时不再挤占画布高度；层级高于三块 HUD，避免被其遮挡。 */
 .mindmap-search-bar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 21;
   display: flex;
   align-items: center;
   gap: 8px;
+  max-width: calc(100% - 32px);
   padding: 6px 12px;
-  background: var(--background-secondary);
-  border-bottom: 1px solid var(--background-modifier-border);
-  flex-shrink: 0;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-s);
 }
 
 .mindmap-search-bar-hidden {
@@ -572,4 +603,13 @@
 .mindmap-wiki-doc-icon {
   display: block;
   cursor: pointer;
+}
+
+/* ========== 插件设置面板 ========== */
+/* 说明文字里的换行按字面保留：官方设置项的描述是**单个文本节点**且
+   `white-space: normal`（实测 2026-10-22），`\n` 会被折叠成空格；
+   改成 pre-line 后「一句话做什么 / 一句话代价」才能分行显示。
+   作用域限定在插件自己的设置页（settings.ts 在渲染时给容器加了类）。 */
+.mindmap-settings-tab .setting-item-description {
+  white-space: pre-line;
 }

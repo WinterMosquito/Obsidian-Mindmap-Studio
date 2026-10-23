@@ -37,6 +37,9 @@ const READ_KEYS = ['type', '类型'] as const;
 /** 归一后的触发值（避免每次比较都做一次 toLowerCase） */
 const NORMALIZED_TYPE_VALUE = MINDMAP_TYPE_VALUE.toLowerCase();
 
+/** 归一后的降级值（迁键时同样属于「插件写的值」，见 `isMindMapDeclarationValue`） */
+const NORMALIZED_MARKDOWN_VALUE = MINDMAP_MARKDOWN_VALUE.toLowerCase();
+
 /**
  * 属性值归一为可比较的字符串数组。
  * 数组形态 = 官方属性面板解析出的多值属性；单值按一项处理；`null`/`undefined`
@@ -79,6 +82,22 @@ export function isMindMapProperty(frontmatter: unknown): boolean {
 export function isMindMapPropertyKey(key: string): boolean {
 	const lowered = key.trim().toLowerCase();
 	return READ_KEYS.some((known) => known === lowered);
+}
+
+/**
+ * 是否为**本插件写的声明值**（`Mindmap` / `Markdown`，大小写不敏感）。
+ *
+ * 只给「会改写用户文件」的场合用（语言切换的键名迁移、升级/降级前的权威判据）：
+ * 插件两条写入路径只会写这两个值，故值不在此列的同名属性（`类型: wiki`、
+ * `类型: 笔记`）是**别人的数据**，任何迁移都必须原样放过——按**键名**全库改名
+ * 会连同值一起改写，属破坏性操作（2026-10-23 实测踩到）。
+ */
+export function isMindMapDeclarationValue(value: unknown): boolean {
+	return normalizePropertyValues(value).some(
+		(candidate) =>
+			candidate === NORMALIZED_TYPE_VALUE ||
+			candidate === NORMALIZED_MARKDOWN_VALUE,
+	);
 }
 
 /**

@@ -19,6 +19,7 @@ import { notifyError } from '../core/errors';
 import { type Language } from '../core/i18n';
 import {
 	convergeMindMapPropertyKey,
+	isMindMapDeclarationValue,
 	isMindMapProperty,
 	isMindMapPropertyKey,
 	mindMapPropertyKey,
@@ -247,8 +248,13 @@ export async function openAsMarkdown(
  *
  * 这是「改语言时键名随语言走」的唯一入口。要点：
  * - 只改**键名**（值 `Mindmap`/`Markdown` 原样保留）；
+ * - **只认本插件写的值**（`isMindMapDeclarationValue`）：`类型: wiki` 这类同名但
+ *   语义无关的属性属于用户数据，按键名全库改名会把它变成 `Type: wiki`
+ *   （2026-10-23 实测踩到，本库 10 页笔记被改）；
+ * - 目标键已被**非声明值**占用时整文件跳过（`converge` 会把值迁到目标键上、
+ *   直接覆盖那条无关属性）；
  * - 已是唯一目标键 → 免写（避免每次切语言全库重写）；
- * - 只触碰含声明键的文件，逐个 `processFrontMatter`（YAML 由官方序列化）；
+ * - 只触碰含声明的文件，逐个 `processFrontMatter`（YAML 由官方序列化）；
  *   单文件失败只留痕（`console.error`）并继续——一次迁移不因个别文件半途而废。
  *
  * 键名收敛的原子实现见 `domain/mindmap-property.convergeMindMapPropertyKey`。
@@ -263,12 +269,24 @@ export async function migrateMindMapPropertyKeys(
 		if (!frontmatter) {
 			continue;
 		}
-		const keys = Object.keys(frontmatter).filter(isMindMapPropertyKey);
+		const keys = Object.keys(frontmatter).filter(
+			(key) =>
+				isMindMapPropertyKey(key) && isMindMapDeclarationValue(frontmatter[key]),
+		);
 		if (keys.length === 0) {
 			continue;
 		}
 		// 已是唯一目标键 → 无需改写（迁移的常见路径，必须免写）
 		if (keys.length === 1 && keys[0] === target) {
+			continue;
+		}
+		// 目标键被非声明值占着（`类型: wiki` + `Type: Mindmap` 这类混用库）⇒ 跳过：
+		// converge 会把声明值迁到目标键上并覆盖那条无关属性。
+		if (
+			frontmatter[target] !== undefined &&
+			!isMindMapDeclarationValue(frontmatter[target])
+		) {
+			console.warn('属性键迁移跳过（目标键已被非导图属性占用）:', file.path);
 			continue;
 		}
 		try {

@@ -37,7 +37,7 @@ describe('i18n.t（按语言取文案）', () => {
 		['command.createMindMap', '新建思维导图', 'Create new mind map'],
 		['command.openAsMindMap', '以思维导图打开', 'Open as mind map'],
 		['toolbar.searchPlaceholder', '搜索节点…', 'Search nodes…'],
-		['toolbar.resetZoom', '重置缩放（100%）', 'Reset zoom (100%)'],
+		['toolbar.resetZoom', '重置', 'Reset'],
 		['menu.removeText', '移除文本', 'Remove text'],
 		['menu.resetZoom', '重置缩放', 'Reset zoom'],
 		['lineStyle.straight', '折线', 'Elbow'],

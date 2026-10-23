@@ -53,8 +53,12 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 `--dump-dom` 快照经 `if: always()` 步骤归档成 artifact，失败时可直接下载定位。
 浏览器缺失仍然直接失败（`--require-chrome`），不静默跳过。
 
+> **obsidian 替身必须与源码的具名导入同步**：`verify:visual` 把真实 `src/**` 打进浏览器，
+> 任何模块新增 `import { x } from 'obsidian'` 都要在 `scripts/verify-visual.mjs` 的
+> `OBSIDIAN_SHIM_SOURCE` 补同名导出，否则会停在构建阶段 `No matching export … for import "x"`
+> （2026-10-23 因 `platform/math-jax-fonts.ts` 新增 `requestUrl` 踩到；同期 `tests/mocks/obsidian.ts` 也要补）。
 - `verify:visual`：把 `src/engine/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
-  `styles.css` 在无头 Chrome 里渲染 **15 个场景**（plain / doc / url / empty / attach / docnode / long / inline / markup / syntax / math / codeblock / paragraph / table / hugeline；2026-10-21 实测）并断言 `--dump-dom`——三类链接图标分流与
+  `styles.css` 在无头 Chrome 里渲染 **15 个场景**（plain / doc / url / empty / attach / docnode / long / inline / markup / syntax / math / codeblock / paragraph / table / hugeline；2026-10-23 复测，逐项 ✓ 计 34 条 = 15 + 19）并断言 `--dump-dom`——三类链接图标分流与
   图标尺寸（18×18）、回形针标题、画布铺满容器、节点测宽随文本（不被容器拉平）、
   仅轻标记（无链接）节点也走自绘（`markup` 场景）、**轻标记扩展与隐藏语法**（`syntax`
   场景：`==高亮==`→`<mark>`、`__粗__`→`<strong>`、`\*转义\*` 消费反斜杠、

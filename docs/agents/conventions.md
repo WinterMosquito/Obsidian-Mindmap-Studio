@@ -1,4 +1,4 @@
-# 关键约定 K1–K128（详录）
+# 关键约定 K1–K130（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -85,18 +85,21 @@
   `DEFAULT_LINE_STYLE`＝折线），归一唯一实现在 `constants.normalizeLineStylePreference`
   （`auto` / `direct` / 未知 / 空串 → 折线），解析唯一实现在 `mindmap-theme.resolveLineStyle`
   （固定直线布局恒 `straight`，不把无效偏好透传给引擎）；生效链路＝设置 `defaultLineStyle`
-  → 按文件 `viewState.lineStyle` 覆盖 → 工具栏连线下拉 `view.applyLineStyle`
+  → 按文件 `viewState.lineStyle` 覆盖 → 右栏「连线」开关 `view.applyLineStyle`
   → `EngineController.setLineStyle` 重算主题配置（`setThemeConfig` 的「仅连线类属性」差异走
   轻量重绘）。
-  **工具栏选项面随布局收窄**：`supportsLineStyleSwitch` 为假的固定直线布局，下拉只显示单项
+  **连线开关随布局收窄**：`supportsLineStyleSwitch` 为假的固定直线布局，右栏连线按钮**置灰**并只以「直线」作提示
   **「直线」**（`lineStyle.fixedStraight`，语义＝连线由布局固有绘制，不再用会让人误以为可选的
-  「自动」）——这是**纯显示收窄**，文件里的偏好既不写入也不丢失，切回可切换布局后按会话偏好恢复；
-  选项面重建统一走 `view-toolbar.syncLineStyleOptions`（buildToolbar / applyLayout /
-  onEngineReady 三处调用）。
+  「自动」）——这是**纯交互收窄**，文件里的偏好既不写入也不丢失，切回可切换布局后按会话偏好恢复；
+  选项面自 2026-10-22 起**不再常驻**：**连线与边框**升为右缘竖栏的开关按钮
+  （`view-toolbar.buildAppearanceGroup`，点一下互切并写回 `viewState`），
+  **布局与配色**留在右键的级联菜单（`view-context-menu.addLayoutPaletteMenus`，
+  空白右键与节点右键共用同一份）——屏上已无 select，故不再有「重建选项面」这一步。
+  固定直线布局下连线开关置灰（`supportsLineStyleSwitch` 判据仍在）。
   **存量数据**：`data.json` 里的 `auto` / `direct` 在**读取侧**归一为折线（不批量改写用户文件，
   下次切换样式时自然落盘）。**勿**在别处硬编码 `lineStyle` 或各自拼选项。回归：
   `tests/mindmap-theme.test.ts`（两态 + 旧词汇归一 + 固定布局恒折线）、
-  `tests/view-toolbar.test.ts`（两项 / 单项直线 / 脏值归一）、`tests/settings.test.ts`（白名单与默认值）。
+  `tests/view-toolbar.test.ts`（开关互切与图标状态 / 固定布局置灰）、`tests/settings.test.ts`（白名单与默认值）。
 - [K17] **根节点连线衔接**：主题配置设 `rootLineStartPositionKeepSameInCurve: true`——引擎**默认从节点
   中心起画**，根节点→首层子节点的曲线在节点内部就已偏出、从上/下边缘**斜穿而出**（衔接呈
   「斜戳」观感）；其余层级本就以边缘为起点。开启后根节点与其它层级一致：右缘水平出发再展开。
@@ -154,6 +157,13 @@
   性能模式与引擎结构不可得 ⇒ `null`＝**fail-open** 保持原状，不误伤合法视口）；`fitMindMap` 同样先同步几何再 fit。
   回归：`tests/viewport.test.ts`（实时容器优先 / `resize` 早于写视口 / 可见性三态）、`tests/engine-controller.test.ts`
   （保存视口被判定不可见则回退居中且不 fit）、`verify:visual` 的 viewport 探针。
+- [K130] **导出图数学完整性的根治＝内联 MathJax 字体（2026-10-23，用户裁决「不计成本、执行 A」+ 实机取证 + 对照实验）**：
+  ① **根因**：MathJax 的 stretchy 结构（矩阵/行列式竖线、根号横线、分式线、`\left(…\right)` 括号、cases 大括号、`Σ`/`∫` 的延伸部）**全靠自制字体**（`MJX-TEX-SO` / `MJX-TEX-S1..4` 等）拼装；导出 SVG 在 `<img>` 解码的 secure static mode 里**禁外部资源** ⇒ `app://obsidian.md/lib/mathjax/**` 字体加载不了、只剩系统 fallback ⇒ 这些结构整片消失（屏上一切正常）。此前只放宽 `mjx-c` 的 clip 纵向窗（`math-jax-export-clip.ts`）能救「普通字符被裁下半」，**救不了结构性缺字**——用户实拍行列式竖线与分式线全无。
+  ② **B 方案（导出改 SVG 输出）不可行**：实测宿主 MathJax 4.1.3 只暴露 `tex2chtml` / `tex2chtmlPromise` / `tex2mml` / `tex2mmlPromise` / `typeset*` / `chtmlStylesheet`，**没有 `tex2svg` / `tex2svgPromise`**（Obsidian 只打包了 CHTML 输出）。走 B 只能自带 SVG 输出运行时（约 +0.6–1 MB bundle、`vendor/` 构建、与宿主版本对齐），收益仅是导出体积更小 ⇒ 否决。
+  ③ **A 方案（采用）**：`platform/math-jax-fonts.ts` 预取全部 `@font-face`（路径从 CSS 现取、不硬编码；`requestUrl` 优先 + `window.fetch` 兜底 `app://`；24 个 woff2 实测 **5.6 ms / 303,836 B → base64 405,144 字符**），导出时**按克隆里出现的 `TEX-*` class 裁剪**，只把实际用到的族替换成 `data:` URI（`ZERO`/`BRK` 恒需）；实测探针图 **42,789 → 277,868 B（5 族）**，单行公式约 +10 KB 量级。
+  ④ **时序**：引擎的 `handleBeingExportSvg` 是**同步**的 ⇒ `features/view-export.exportImageAs` 在导出前 `await primeExportMathFonts()`（幂等、并发去重、失败不抛）；未就绪 / 读取失败 → 自动回退「剥离 @font-face + 放宽 clip」的旧行为（不比修复前差）。**失败按「样式表内容」缓存（2026-10-23 补）**：同一份 CSS 已经失败过就直接 `false`，不再重发 2×N 个请求；但**不能**记成会话级不可用——首次导出常发生在 MathJax 尚未挂载时（`readMathJaxCss()` 为空 ⇒ 本轮注定失败），内容一变（首次挂载 / 版本切换）即重试。
+  ⑤ **私有触点登记（规则 9）**：`app://` 取字体字节 + 字体 URL 随宿主变化；防御式实现（任一候选失败即回退、失败只告警一次），且裁剪依据缺失时 `withInlinedMathFonts` 返回 null 而非注入半套样式。
+  ⑥ 回归：`tests/math-jax-fonts.test.ts`（解析 / 裁剪 / 内联 / 回退 9 例 + 预取与失败缓存 3 例）、`tests/math-jax.test.ts` 的「字体快照就绪」用例（走**真实预取**：`requestUrl` 桩返回 3 字节 ⇒ 断言 `data:font/woff2;base64,QUFB`，勿再为测试单开注入口）；实机 PNG+SVG 双路径验收记录见测试库 `10-wiki/log.md`（2026-10-23 条）。
 
 ### 架构边界与单一来源
 
@@ -294,7 +304,7 @@
   `engine.refresh()`（performanceMode / performanceThreshold 同日改为原地切换，见 K60；**2026-10-09：这两个设置项
   已删**，路由表随之只剩 `defaultTheme` 原地 + `enableDrag` / `language` 重建，见 K117）。**为什么 ② 可以跳过**：会话字段
   `currentLayout`/`currentLineStyle` 在 `loadMindMapFromFile` 就按「文件显式选择 ?? 默认值」定值，
-  之后 `resolveLayout/resolveLineStyle` 读的都是会话字段 ⇒ **改默认值对已打开的图本就不生效**
+  之后 `resolvePreference('layout')` / `resolvePreference('lineStyle')` 读的都是会话字段 ⇒ **改默认值对已打开的图本就不生效**
   （重建一轮也不会改变任何渲染），与「默认值只对新打开的文件生效」的产品语义一致——旧路径在这两个键上
   是**纯浪费**。**边界**：默认值变更**不写入** viewState（那是「本文件的显式选择」，仅工具栏切换时写）；
   `changedKeys` 为空集时视图什么都不做；防抖（250ms）保留——滑块档位仍会反复触发应用。
@@ -1416,7 +1426,10 @@
   `md-open.migrateMindMapPropertyKeys` **全库**把已有声明的键**重命名为当前语言的键**
   （`类型` ⇄ `Type`，只改键名、值不动、已是目标键免写）；否则「只加新键」会让 `Type` 与
   `类型` 并存（属性面板两把键同现）。升级/降级回调内再做一次权威判据（防 MetadataCache 滞后
-  导致的误判新增第二把键）。
+  导致的误判新增第二把键）。**2026-10-23 补：迁移必须先判值**——`isMindMapDeclarationValue`
+  只认插件写过的值（`Mindmap` / `Markdown`），同名属性（`类型: wiki` / `类型: 笔记`）属于用户
+  数据，按键名全库改名会把值一起改掉（实测把测试库 10 页 `类型: wiki` 写成 `Type: wiki`）；
+  目标键已被非声明值占用时整文件跳过并 `console.warn`（`converge` 会覆盖那条无关属性）。
   ⑤ **零兼容**：存量 `.mindmap.md` 不再被识别为导图——作为普通 md 打开、**内容零改动**，不会
   损坏。改名 + 补属性的一次性迁移工具属本条的**第二阶段（P2）**，尚未落地。
   ⑥ **教训**：判据从「文件名」（同步、无 IO）换成「内容声明」时，官方 MetadataCache 是唯一
@@ -1568,3 +1581,10 @@
     2. **`services/view-state`**：四个 getter 的 `typeof === 'string'` 与四个 setter 的 `patch` 收成 `getPreference` / `setPreference`（键类型 `PreferenceKey = 'layout' | 'lineStyle' | 'palette' | 'themeStyle'`）；具名 getter/setter 保留为**一行薄封装**，只承担语义与注释。
     3. **`features/view`**：`resolve*` 的归一**前移到 `loadMindMapFromFile` 入口**（脏值止步于此），四个 `resolve` 退化为 `?? 默认` 兜底；`apply*` 收成 `commitPreference({ key, value, normalize, applyToEngine })`——归一 → 会话字段 → 引擎通道 → 持久化四步只写一次，维度靠 `SESSION_FIELDS`（`as const satisfies Record<PreferenceKey, string>`）映射到私有字段，漏写即编译失败。
   - **验证**：全量 82 文件 2219 用例仍然全绿（重构不改行为）；实机一次改四个下拉，`viewState` 条目落盘为 `{ layout: 'mindMap', lineStyle: 'curve', palette: 'amber', themeStyle: 'borderless' }`——证明 `SESSION_FIELDS` 映射无误（这是该重构唯一的新风险点，也是最需要实机取证的一点）。行数：`view.ts` 1249 → 1255、`constants.ts` 685 → 699（注释增量大于代码减量，两表已回填）。
+- [K129] **UI 组装面：右缘竖栏 + 右键级联（2026-10-22~23，多轮用户裁决 + 实机取证）**：导图视图的控件从「一条 40px 顶栏」彻底改为**右缘竖排图标**，并做了两处「入口二选一」的收口——同一能力不在两处重复提供。
+  - **① 现状（唯一口径）**：`view-toolbar.buildToolbar` 产出**四组**（DOM 顺序＝Tab 序）—— 文档（返回 / 导出）→ 外观开关（连线 / 边框，**点一下互切**）→ 视图（放大 / 重置 / 总览 / **整理** / 缩小）→ 历史（撤销 / 重做）。**整理**（2026-10-23 新增，位于「总览」与「缩小」之间）与右键菜单的**自动整理**是同一动作：共用 `view-toolbar.arrangeMindMap` 与同一枚 `sparkles` 图标，tooltip 只有两个字「整理」（比菜单标题「自动整理」短，`toolbar.tipArrange` 与 `toolbar.tipFit` 同族）。`.mindmap-toolbar` 只是 `pointer-events:none` 的**穿透层**，每组 `.mindmap-hud-group` 才是 `pointer-events:auto` 的浮起卡片；组内按钮用 `gap:1px` + 组底色透出分隔线（对齐 Canvas `.canvas-control-group`：`padding:0`、条目 32×32、radius 0）。
+  - **② 入口二选一**：**连线 / 边框**在竖栏当开关（写 `viewState`），右键菜单里**不再有**这两项；**布局 / 配色**留在右键的级联菜单（`addLayoutPaletteMenus`），**空白右键与节点右键共用同一份实现**。屏上没有任何 `select` —— `ViewDomContext` 的 4 个 `*Select` 字段已删除，改为只读方法现算（菜单勾选态现算，不缓存第二份状态）。**2026-10-23 收敛（R3）**：四个 `resolve*()` 合成一个 `resolvePreference(key: PreferenceKey)`——读取侧与写入侧 `commitPreference({ key, … })` 以同一个键为中心对称，`MindMapViewContext` 接口面 −3；新增一项偏好时两侧各加一行。
+  - **③ 「二级菜单」只能用官方 API 级联**：`MenuItem.setSubmenu` **不在** `obsidian.d.ts` 里。给它挂上后宿主会加 `has-submenu` 类，但**悬停 / 点击都不会展开**（2026-10-23 实机复现）——所以判断"某个 API 是否生效"**不能看它自己加的类名，要验可观察行为**。现在的做法：父项 `onClick((evt) => 子菜单.showAtMouseEvent(evt))`（键盘触发退回 `showAtPosition`），全程只用 d.ts 声明过的 `Menu` / `onClick` / `showAtMouseEvent` / `showAtPosition`。
+  - **④ `setIcon` 对不存在的图标名静默失败**：换图标时试过 `tilde`（~ 形曲线），Obsidian 内置 Lucide **没有**该图标 → 渲染出**空 `<svg>`**，无报错、无告警（实测 `svg.innerHTML` 长度 0）。**换图标的验收动作**＝实机读 `button.querySelector('svg').innerHTML` 非空；现用 `slash`（一条斜直线）+ `spline`（曲线）表达连线样式。
+  - **⑤ 开关类按钮的自我同步**：外观变更**不重建工具栏**，所以开关按钮的图标 / 提示必须在 `toggle()` 之后**自己重算**（`describe()` 现算 + `applyState()`），否则会出现"数据变了、按钮还显示旧值"（2026-10-23 实机踩到）。固定直线布局下连线开关**置灰**（`is-disabled` + `disabled` + 不挂 `onclick`），不给假交互。
+  - **⑥ 回归**：`tests/view-toolbar.test.ts`（四组结构 / 图标接线 / 开关互切与图标状态 / 固定布局置灰 / 「外观四项不在屏上」反向断言）、`tests/view-context-menu.test.ts`（空白菜单 9 项、节点菜单 13 项与 `G.tail` 顺序、级联弹出与勾选、**菜单里不得再出现连线/边框**）。

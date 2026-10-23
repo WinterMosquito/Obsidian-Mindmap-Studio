@@ -14,7 +14,7 @@ import type { EventBinder } from '../core/event-binder';
 import type { Language } from '../core/i18n';
 import type { StatusBarService } from '../services/status-bar';
 import type { MindMapStudioSettings } from '../settings';
-import type { ViewStateStore } from '../services/view-state';
+import type { PreferenceKey, ViewStateStore } from '../services/view-state';
 
 /**
  * view-* 模块所需的插件能力窄化视图（结构化匹配，不依赖 main.ts 插件类）。
@@ -114,14 +114,6 @@ export interface ViewDomContext {
 	searchBarEl: HTMLElement | null;
 	searchInput: HTMLInputElement | null;
 	searchCountEl: HTMLElement | null;
-	/** 布局选择器（view-toolbar 构建并持有） */
-	layoutSelect: HTMLSelectElement | null;
-	/** 连线样式选择器（view-toolbar 构建并持有） */
-	lineStyleSelect: HTMLSelectElement | null;
-	/** 配色选择器（view-toolbar 构建并持有；按文件记，非全局设置） */
-	paletteSelect: HTMLSelectElement | null;
-	/** 主题选择器（view-toolbar 构建并持有；按文件记，非全局设置） */
-	themeSelect: HTMLSelectElement | null;
 }
 
 /**
@@ -163,14 +155,21 @@ export interface MindMapViewContext
 	openHyperlink(link: string, mode?: HyperlinkOpenMode): void;
 	/** 切回 Markdown 编辑（工具栏/命令入口；并把导图声明持久降级为 Markdown） */
 	backToMarkdown(): void;
-	/** 应用指定布局（布局选择器变更时） */
+	/** 应用指定布局（右键菜单「布局」级联菜单变更时） */
 	applyLayout(layout: string): void;
-	/** 应用指定连线样式偏好（连线样式选择器变更时；两态：折线 / 曲线） */
+	/** 应用指定连线样式偏好（右栏「连线」开关变更时；两态：折线 / 曲线） */
 	applyLineStyle(lineStyle: string): void;
-	/** 应用指定配色（配色选择器变更时；按文件写入 `data.json` 的 `viewState`） */
+	/** 应用指定配色（右键菜单「配色」级联菜单变更时；按文件写入 `data.json` 的 `viewState`） */
 	applyPalette(palette: string): void;
-	/** 应用指定主题（主题选择器变更时；按文件写入 `data.json` 的 `viewState`） */
+	/** 应用指定边框样式（右栏「边框」开关变更时；按文件写入 `data.json` 的 `viewState`） */
 	applyThemeStyle(themeStyle: string): void;
+	/**
+	 * 当前生效的某项按文件偏好（归一后）。
+	 *
+	 * 与写入侧 `apply*` 共用 `PreferenceKey`：右键菜单勾选态与竖栏开关都从这一处读，
+	 * 不再为四个维度各开一个方法（接口面 −3）。
+	 */
+	resolvePreference(key: PreferenceKey): string;
 
 	// ---- 插件能力（窄化）----
 	readonly plugin: ViewPluginContext;

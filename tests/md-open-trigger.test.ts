@@ -188,6 +188,29 @@ describe('语言切换迁移 migrateMindMapPropertyKeys（键名随语言收敛�
 		expect(writes).toHaveLength(0);
 	});
 
+	it('同名但不是声明值（`类型: wiki`）→ 一律不动（只认 Mindmap / Markdown）', async () => {
+		// 2026-10-23 实机踩到：按键名全库扫描会把 `类型: wiki` 改成 `Type: wiki`，
+		// 值与键一起被改、用户笔记被破坏。
+		const { app, writes } = makeVaultApp([
+			{ path: 'wiki.md', frontmatter: { 类型: 'wiki', title: 'x' } },
+			{ path: 'en-wiki.md', frontmatter: { Type: 'wiki' } },
+			{ path: 'num.md', frontmatter: { 类型: 42 } },
+		]);
+		await migrateMindMapPropertyKeys(app, 'en');
+		expect(writes).toHaveLength(0);
+	});
+
+	it('目标键被非声明值占用 → 整文件跳过并留痕，不覆盖用户属性', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const { app, writes } = makeVaultApp([
+			{ path: 'mix.md', frontmatter: { 类型: 'wiki', Type: 'Mindmap' } },
+		]);
+		await migrateMindMapPropertyKeys(app, 'zh');
+		expect(writes, '覆盖会把 `类型: wiki` 抹成 Mindmap').toHaveLength(0);
+		expect(warn).toHaveBeenCalledTimes(1);
+		warn.mockRestore();
+	});
+
 	it('两键并存 → 收敛为唯一语言键（取首个键的值）', async () => {
 		const { app, writes } = makeVaultApp([
 			{ path: 'a.md', frontmatter: { 类型: 'Mindmap', Type: 'Markdown' } },

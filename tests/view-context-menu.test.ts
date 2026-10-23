@@ -18,6 +18,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { t, type TranslationKey } from '../src/core/i18n';
+import { LAYOUT_OPTIONS, PALETTE_OPTIONS } from '../src/core/constants';
 import type { MindMapViewContext } from '../src/features/view-context';
 import { setupContextMenu } from '../src/features/view-context-menu';
 
@@ -25,10 +26,16 @@ import { setupContextMenu } from '../src/features/view-context-menu';
 interface MenuItemStub {
 	title: string;
 	icon: string;
-	click: (() => void) | null;
+	/** onClick 回调（级联菜单靠它拿事件坐标） */
+	click: ((evt?: MouseEvent) => void) | null;
+	/** 勾选态（外观选项用 setChecked 表达「当前生效值」） */
+	checked: boolean | null;
+	isLabel: boolean;
 	setTitle(title: string): MenuItemStub;
 	setIcon(icon: string): MenuItemStub;
-	onClick(cb: () => void): MenuItemStub;
+	setChecked(checked: boolean | null): MenuItemStub;
+	setIsLabel(isLabel: boolean): MenuItemStub;
+	onClick(cb: (evt?: MouseEvent) => void): MenuItemStub;
 }
 
 const { FakeMenu, ENGINE } = vi.hoisted(() => {
@@ -37,6 +44,13 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 		items: MenuItemStub[] = [];
 		separators = 0;
 		shownAt: { x: number; y: number } | null = null;
+		/** 级联菜单：父项点击后子菜单在此记录弹出所用的事件 */
+		shownAtMouseEvent: MouseEvent | null = null;
+		/** 全局单调序号：区分「创建顺序」与「弹出顺序」（级联菜单两者不同） */
+		static seq = 0;
+		readonly seq = ++FakeMenuClass.seq;
+		/** 弹出序号（0＝从未弹出）；取最近弹出的菜单按它排序 */
+		shownSeq = 0;
 
 		constructor() {
 			FakeMenuClass.instances.push(this);
@@ -47,12 +61,22 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 				title: '',
 				icon: '',
 				click: null,
+				checked: null,
+				isLabel: false,
 				setTitle(title) {
 					this.title = title;
 					return this;
 				},
 				setIcon(icon) {
 					this.icon = icon;
+					return this;
+				},
+				setChecked(checked) {
+					this.checked = checked;
+					return this;
+				},
+				setIsLabel(isLabel) {
+					this.isLabel = isLabel;
 					return this;
 				},
 				onClick(cb2) {
@@ -74,6 +98,13 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 			this.shownAt = pos;
 		}
 
+		/** 级联菜单的官方入口：把子菜单弹在触发事件的光标处 */
+		showAtMouseEvent(evt: MouseEvent): this {
+			this.shownAtMouseEvent = evt;
+			this.shownSeq = ++FakeMenuClass.seq;
+			return this;
+		}
+
 		/** 当前菜单条目标题（按添加顺序） */
 		titles(): string[] {
 			return this.items.map((entry) => entry.title);
@@ -88,13 +119,13 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 			return found;
 		}
 
-		/** 按标题点击条目 */
-		click(title: string): void {
+		/** 按标题点击条目（级联菜单的父项会用到事件坐标） */
+		click(title: string, evt?: MouseEvent): void {
 			const found = this.item(title);
 			if (!found.click) {
 				throw new Error(`菜单项不可点击：${title}`);
 			}
-			found.click();
+			found.click(evt);
 		}
 	}
 	// 命令名取值与 src/engine/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的
@@ -165,6 +196,11 @@ vi.mock('../src/engine/mindmap', () => ({
 	countMindMapNodes: (): number => 0,
 	resetZoom: resetZoomMock,
 	getNodeDataString: getNodeDataStringMock,
+	// 外观「连线」二级菜单按布局现算选项集（三态布局为真，其余固定直线）
+	supportsLineStyleSwitch: (layout: string): boolean =>
+		layout === 'logicalStructure' ||
+		layout === 'mindMap' ||
+		layout === 'organizationStructure',
 	startNodeTextEdit: startNodeTextEditMock,
 }));
 
@@ -258,11 +294,29 @@ function makeView(options: { canvasEl?: unknown; mindMap?: unknown } = {}) {
 	const mindMap =
 		options.mindMap === undefined ? { execCommand, render } : options.mindMap;
 	const canvasEl = options.canvasEl === undefined ? { tag: 'canvas' } : options.canvasEl;
+	// 外观四项：屏上已无下拉，菜单勾选态由 resolvePreference 现算、变更走 apply*
+	const applyLayout = vi.fn<(value: string) => void>();
+	const applyLineStyle = vi.fn<(value: string) => void>();
+	const applyPalette = vi.fn<(value: string) => void>();
+	const applyThemeStyle = vi.fn<(value: string) => void>();
+	// 按文件偏好的当前值（菜单勾选态经 resolvePreference 读这一份）
+	const preferences = {
+		layout: 'logicalStructure',
+		lineStyle: 'straight',
+		palette: 'default',
+		themeStyle: 'default',
+	} as const;
 	const raw = {
 		mindMap,
 		canvasEl,
 		engineEvents: binder,
 		lang: 'zh',
+		applyLayout,
+		applyLineStyle,
+		applyPalette,
+		applyThemeStyle,
+		resolvePreference: (key: keyof typeof preferences): string =>
+			preferences[key],
 	};
 	return {
 		view: raw as unknown as MindMapViewContext,
@@ -271,6 +325,10 @@ function makeView(options: { canvasEl?: unknown; mindMap?: unknown } = {}) {
 		execCommand,
 		render,
 		canvasEl,
+		applyLayout,
+		applyLineStyle,
+		applyPalette,
+		applyThemeStyle,
 	};
 }
 
@@ -287,9 +345,16 @@ function fakeContextMenuEvent(closestResult: unknown) {
 
 type MenuInstance = InstanceType<typeof FakeMenu>;
 
-/** 取最近创建的菜单（不存在则抛错，避免断言静默通过） */
+/**
+ * 取最近**显示出来**的菜单（不存在则抛错，避免断言静默通过）。
+ *
+ * 注意：外观四项是二级菜单，`addChoiceMenu` 会先 `new Menu()` 建子菜单再挂到父项上，
+ * 所以「最后创建的实例」往往是子菜单。只有真正 `showAtPosition` 的那个才是主菜单。
+ */
 function lastMenu(): MenuInstance {
-	const menu = FakeMenu.instances.at(-1);
+	const menu = [...FakeMenu.instances]
+		.reverse()
+		.find((entry) => entry.shownAt !== null);
 	if (!menu) {
 		throw new Error('菜单未创建');
 	}
@@ -455,7 +520,15 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		imageBtn: [zh('menu.addImage')],
 		imageBlock: [zh('menu.viewImageFullscreen'), zh('menu.removeImage')],
 		removeText: [zh('menu.removeText')],
-		del: [zh('menu.deleteNode')],
+		/**
+		 * 节点菜单末尾一段：视图级外观（布局 / 配色，与空白右键同一份）→ 删除节点。
+		 * 顺序敏感：外观在删除**之前**，删除恒为最后一项。
+		 */
+		tail: [
+			zh('toolbar.layout'),
+			zh('toolbar.palette'),
+			zh('menu.deleteNode'),
+		],
 	} as const;
 
 	interface FormCase {
@@ -476,7 +549,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		{
 			name: '空节点（无文本/无链接/无图片）',
 			data: {},
-			expected: [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.del],
+			expected: [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.tail],
 			hasClear: false,
 			hasImageBlock: false,
 			hasRemoveText: false,
@@ -484,7 +557,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		{
 			name: '纯文本节点',
 			data: { text: '项目规划' },
-			expected: [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.del],
+			expected: [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.tail],
 			hasClear: false,
 			hasImageBlock: false,
 			hasRemoveText: false,
@@ -499,7 +572,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				...G.linkActions,
 				...G.clear,
 				...G.imageBtn,
-				...G.del,
+				...G.tail,
 			],
 			hasClear: true,
 			hasImageBlock: false,
@@ -515,7 +588,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				...G.linkActions,
 				...G.clear,
 				...G.imageBtn,
-				...G.del,
+				...G.tail,
 			],
 			hasClear: true,
 			hasImageBlock: false,
@@ -534,7 +607,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				...G.linkActions,
 				...G.clear,
 				...G.imageBtn,
-				...G.del,
+				...G.tail,
 			],
 			hasClear: true,
 			hasImageBlock: false,
@@ -549,7 +622,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				...G.link,
 				...G.imageBtn,
 				...G.imageBlock,
-				...G.del,
+				...G.tail,
 			],
 			hasClear: false,
 			hasImageBlock: true,
@@ -564,7 +637,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				...G.link,
 				...G.imageBtn,
 				...G.imageBlock,
-				...G.del,
+				...G.tail,
 			],
 			hasClear: false,
 			hasImageBlock: true,
@@ -580,7 +653,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				...G.imageBtn,
 				...G.imageBlock,
 				...G.removeText,
-				...G.del,
+				...G.tail,
 			],
 			hasClear: false,
 			hasImageBlock: true,
@@ -602,7 +675,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				...G.imageBtn,
 				...G.imageBlock,
 				...G.removeText,
-				...G.del,
+				...G.tail,
 			],
 			hasClear: true,
 			hasImageBlock: true,
@@ -611,7 +684,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		{
 			name: '根节点（中心主题）：条目与普通节点相同',
 			data: { text: '中心主题' },
-			expected: [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.del],
+			expected: [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.tail],
 			hasClear: false,
 			hasImageBlock: false,
 			hasRemoveText: false,
@@ -648,17 +721,17 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 				expect(titles).not.toContain(zh('menu.removeText'));
 			}
 			// 基础条目恒在
-			for (const title of [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.del]) {
+			for (const title of [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.tail]) {
 				expect(titles).toContain(title);
 			}
 		},
 	);
 
-	it('双通道节点：分离器恒为 4 条（链接/图片块只增条目、不改分组）', () => {
+	it('双通道节点：分离器恒为 5 条（链接/图片块只增条目、不改分组；外观与删除各占一段）', () => {
 		const { menu } = openNodeMenu(
 			fakeNode({ mdWikiLinkpath: '[[笔记]]', image: 'app://x.png', text: '图' }),
 		);
-		expect(menu.separators).toBe(4);
+		expect(menu.separators).toBe(5);
 	});
 
 	it('右键先激活节点（引擎无 ACTIVE_NODE 命令），并按指针坐标定位菜单', () => {
@@ -803,7 +876,7 @@ describe('画布空白右键菜单', () => {
 		return { ...harness, event };
 	}
 
-	it('未命中节点：画布菜单条目与顺序（新建节点/粘贴/重置缩放/适应画布/整理/撤销/重做）', () => {
+	it('未命中节点：画布菜单条目与顺序（新建/粘贴 ─ 缩放三件 ─ 外观四项 ─ 撤销/重做）', () => {
 		const { event } = fireCanvas(null);
 		const menu = lastMenu();
 		expect(event.preventDefault).toHaveBeenCalledTimes(1);
@@ -813,17 +886,20 @@ describe('画布空白右键菜单', () => {
 			zh('menu.resetZoom'),
 			zh('command.fitCanvas'),
 			zh('toolbar.arrange'),
-			zh('toolbar.undoShort'),
-			zh('toolbar.redoShort'),
+			// 视图级外观只剩布局 / 配色（连线与边框已升为右缘竖栏的开关按钮）
+			zh('toolbar.layout'),
+			zh('toolbar.palette'),
+			zh('toolbar.undo'),
+			zh('toolbar.redo'),
 		]);
-		expect(menu.separators).toBe(1);
+		expect(menu.separators).toBe(3);
 		expect(menu.shownAt).toEqual({ x: 120, y: 240 });
 		expect(menu.item(zh('menu.pasteNode')).icon).toBe('clipboard');
 		expect(menu.item(zh('menu.resetZoom')).icon).toBe('rotate-ccw');
 		expect(menu.item(zh('command.fitCanvas')).icon).toBe('maximize');
 		expect(menu.item(zh('toolbar.arrange')).icon).toBe('sparkles');
-		expect(menu.item(zh('toolbar.undoShort')).icon).toBe('undo');
-		expect(menu.item(zh('toolbar.redoShort')).icon).toBe('redo');
+		expect(menu.item(zh('toolbar.undo')).icon).toBe('undo');
+		expect(menu.item(zh('toolbar.redo')).icon).toBe('redo');
 	});
 
 	it('画布菜单点击：粘贴挂到根（node=null）、重置缩放/适应画布/整理/撤销/重做各就各位', () => {
@@ -842,12 +918,58 @@ describe('画布空白右键菜单', () => {
 		menu.click(zh('toolbar.arrange'));
 		expect(arrangeMindMapMock).toHaveBeenCalledWith(view);
 
-		menu.click(zh('toolbar.undoShort'));
+		menu.click(zh('toolbar.undo'));
 		expect(execCommand).toHaveBeenCalledWith(ENGINE.BACK);
 
-		menu.click(zh('toolbar.redoShort'));
+		menu.click(zh('toolbar.redo'));
 		expect(execCommand).toHaveBeenCalledWith(ENGINE.FORWARD);
 		expect(execCommand).toHaveBeenCalledTimes(2);
+	});
+
+	it('外观四项＝级联菜单：点父项在光标处弹子菜单，选项勾选当前值', () => {
+		const { applyLayout, applyPalette } = fireCanvas(null);
+		const menu = lastMenu();
+		/** 最近**弹出**的菜单＝刚才点开的子菜单（按弹出序号，不是创建顺序） */
+		const lastShown = () =>
+			FakeMenu.instances
+				.filter((entry) => entry.shownAtMouseEvent !== null)
+				.sort((a, b) => a.shownSeq - b.shownSeq)
+				.at(-1);
+
+		menu.click(zh('toolbar.layout'), {
+			clientX: 30,
+			clientY: 40,
+		} as MouseEvent);
+		const layoutMenu = lastShown();
+		expect(layoutMenu?.items).toHaveLength(LAYOUT_OPTIONS.length);
+		// 勾选态只有一处为真（当前布局），且落在对应选项上
+		const checked = layoutMenu?.items.filter((entry) => entry.checked === true);
+		expect(checked).toHaveLength(1);
+		expect(checked?.[0]?.title).toBe(zh('layout.logical'));
+		expect(layoutMenu?.shownAtMouseEvent).toMatchObject({
+			clientX: 30,
+			clientY: 40,
+		});
+
+		layoutMenu?.click(zh('layout.mindMap'));
+		expect(applyLayout).toHaveBeenCalledWith('mindMap');
+
+		menu.click(zh('toolbar.palette'), {
+			clientX: 1,
+			clientY: 2,
+		} as MouseEvent);
+		const paletteMenu = lastShown();
+		expect(paletteMenu?.items).toHaveLength(PALETTE_OPTIONS.length);
+		paletteMenu?.click(zh('palette.mint'));
+		expect(applyPalette).toHaveBeenCalledWith('mint');
+
+		// 连线与边框**不在**菜单里：它们已是右缘竖栏的开关按钮（防回潮）
+		expect(menu.titles().some((title) => title.startsWith(zh('toolbar.lineStyle')))).toBe(
+			false,
+		);
+		expect(
+			menu.titles().some((title) => title.startsWith(zh('toolbar.themeStyle'))),
+		).toBe(false);
 	});
 
 	it('命中节点元素：改走节点菜单（避免双菜单或菜单丢失），仍阻止默认菜单', () => {
@@ -882,7 +1004,7 @@ describe('画布空白右键菜单', () => {
 		harness.binder.fireDom('contextmenu', fakeContextMenuEvent(null));
 		const menu = lastMenu();
 		expect(menu.titles()).toContain(zh('menu.pasteNode'));
-		expect(() => menu.click(zh('toolbar.undoShort'))).not.toThrow();
+		expect(() => menu.click(zh('toolbar.undo'))).not.toThrow();
 		expect(harness.execCommand).not.toHaveBeenCalled();
 	});
 });

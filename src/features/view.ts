@@ -31,7 +31,6 @@ import { createDebouncer, createThrottler, type Debouncer } from '../core/concur
 import {
 	AUTO_SPLIT_CHECK_DELAY_MS,
 	DEFAULT_PALETTE,
-	DEFAULT_THEME_STYLE,
 	normalizeLineStylePreference,
 	normalizePalette,
 	normalizeThemeStyle,
@@ -85,12 +84,7 @@ import {
 	refreshSearchBarLabels,
 } from './view-search';
 import { exportImage } from './view-export';
-import {
-	arrangeMindMap,
-	buildToolbar,
-	refreshToolbar,
-	syncLineStyleOptions,
-} from './view-toolbar';
+import { arrangeMindMap, buildToolbar, refreshToolbar } from './view-toolbar';
 import { setupDragAndDrop } from './view-dnd';
 import { setupContextMenu } from './view-context-menu';
 import { registerViewHotkeys } from './view-hotkeys';
@@ -150,7 +144,7 @@ const RESIZE_THROTTLE_MS = 100;
  *   自绘钩子的 `lang` 实参），重建才能让两者一致（UI 侧另有 `refreshLanguageUi`）。
  */
 /**
- * 顶栏维度 → 会话字段名（`MindMapView` 上的私有字段）。
+ * 外观维度 → 会话字段名（`MindMapView` 上的私有字段）。
  *
  * 与 `PreferenceKey` 用 `satisfies` 绑死：新增一个按文件记的维度时，漏写这里
  * 或写错字段名都会编译失败（`commitPreference` 靠它定位写入目标）。
@@ -189,10 +183,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	searchBarEl: HTMLElement | null = null;
 	searchInput: HTMLInputElement | null = null;
 	searchCountEl: HTMLElement | null = null;
-	layoutSelect: HTMLSelectElement | null = null;
-	lineStyleSelect: HTMLSelectElement | null = null;
-	paletteSelect: HTMLSelectElement | null = null;
-	themeSelect: HTMLSelectElement | null = null;
+	// 外观四项（布局/连线/配色/边框）不再有屏上下拉，故无 select 字段——
+	// 当前值经 `resolvePreference(key)` 现算给右键勾选态与竖栏开关。
 	/** 当前深色主题（css-change 时重算；仅本类与引擎控制器装配面使用） */
 	private isDark = false;
 
@@ -229,23 +221,23 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	readonly loadSession = new LoadSession();
 	/**
 	 * 当前布局（持久化到文件的唯一来源；不依赖 getData() 返回活引用还是深拷贝）。
-	 * 由本类经 applyLayout/resolveLayout 维护（工具栏变更走 applyLayout 方法）。
+	 * 由本类经 applyLayout / resolvePreference 维护。
 	 */
 	private currentLayout: string | null = null;
 	/**
 	 * 当前连线样式偏好（straight 折线 / curve 曲线；2026-10-21 收敛为两态）。
 	 * 与布局同口径：按文件路径持久化到视图状态存储，由本类经
-	 * applyLineStyle/resolveLineStyle 维护。
+	 * applyLineStyle / resolvePreference 维护。
 	 */
 	private currentLineStyle: string | null = null;
 	/**
 	 * 当前配色（色相方案）。与布局/连线样式同口径：**按文件**持久化到视图状态
-	 * 存储（不是全局设置），由本类经 `applyPalette` / `resolvePalette` 维护。
+	 * 存储（不是全局设置），由本类经 `applyPalette` / `resolvePreference` 维护。
 	 */
 	private currentPalette: string | null = null;
 	/**
 	 * 当前节点外观主题（default/borderless）。同样**按文件**记在视图状态存储，
-	 * 由本类经 `applyThemeStyle` / `resolveThemeStyle` 维护。
+	 * 由本类经 `applyThemeStyle` / `resolvePreference` 维护。
 	 */
 	private currentThemeStyle: string | null = null;
 	/**
@@ -377,12 +369,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			getLang: () => this.lang,
 			isDark: () => this.isDark,
 			getSetupOptions: () => ({
-				layout: this.resolveLayout(),
-				lineStyle: this.resolveLineStyle(),
+				layout: this.resolvePreference('layout'),
+				lineStyle: this.resolvePreference('lineStyle'),
 				themePref: this.plugin.settings.defaultTheme,
 				// 主题与配色都按文件记（viewState），不是设置项
-				themeStyle: this.resolveThemeStyle(),
-				palette: this.resolvePalette(),
+				themeStyle: this.resolvePreference('themeStyle'),
+				palette: this.resolvePreference('palette'),
 				enableDrag: this.plugin.settings.enableDrag,
 				// 性能模式与阈值不再由设置传入（2026-10-09 减法）：引擎缺省
 				// 即「开启 + PERFORMANCE_NODE_THRESHOLD」，无需在此复述
@@ -467,8 +459,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// 拖左右边框改宽结束 → 重建自绘内容（节点高度方能跟随新宽度）
 				setupNodeWidthRefresh(this);
 			},
-			onEngineReady: (layout, lineStyle) =>
-				this.onEngineReady(layout, lineStyle),
+			onEngineReady: () => this.onEngineReady(),
 			onReferencesChanged: () => {
 				this.scheduleSave();
 			},
@@ -793,25 +784,25 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 	}
 
-	// ---- 四个「按文件偏好」的读取兜底 ----
+	// ---- 「按文件偏好」的读取兜底 ----
 	// 会话字段在 `loadMindMapFromFile` 里已按文件合成并归一；这里只兜「引擎在
 	// load 之前就被创建」的极端时序（返回默认值，不回写会话字段——回写会让
 	// 「尚未读到文件」与「文件就是这么设的」两种状态混为一谈）。
+	//
+	// 四项同构（会话字段 ?? 默认值），与写入侧 `commitPreference` 以
+	// `PreferenceKey` 为中心对称：新增一项偏好时两处各加一行即可。
 
-	private resolveLayout(): string {
-		return this.currentLayout ?? this.plugin.settings.defaultLayout;
-	}
-
-	private resolveLineStyle(): string {
-		return this.currentLineStyle ?? this.plugin.settings.defaultLineStyle;
-	}
-
-	private resolvePalette(): string {
-		return this.currentPalette ?? DEFAULT_PALETTE;
-	}
-
-	private resolveThemeStyle(): string {
-		return this.currentThemeStyle ?? this.plugin.settings.defaultThemeStyle;
+	resolvePreference(key: PreferenceKey): string {
+		switch (key) {
+			case 'layout':
+				return this.currentLayout ?? this.plugin.settings.defaultLayout;
+			case 'lineStyle':
+				return this.currentLineStyle ?? this.plugin.settings.defaultLineStyle;
+			case 'palette':
+				return this.currentPalette ?? DEFAULT_PALETTE;
+			case 'themeStyle':
+				return this.currentThemeStyle ?? this.plugin.settings.defaultThemeStyle;
+		}
 	}
 
 	/**
@@ -848,8 +839,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		return true;
 	}
 
-	/** 引擎就绪收尾：同步布局/连线样式选择器；md 模式重建工具栏补返回按钮 */
-	private onEngineReady(layout: string, lineStyle: string): void {
+	/** 引擎就绪收尾：重建工具栏（连线开关态跟随文件布局）；md 模式补返回按钮 */
+	private onEngineReady(): void {
 		// 数学重测集合换新：引擎（重）建后节点对象全部是新实例，旧引用已随上一
 		// 个引擎销毁而失效——不清则 ① 旧节点被长期持有（换文件/设置刷新累积成
 		// 内存泄漏）；② 字体钩子会对**已销毁**的节点调重测（2026-09-28 复核修复）。
@@ -874,25 +865,20 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				this.contentRemeasure.retryDeferred();
 			});
 		}
-		if (this.layoutSelect) {
-			this.layoutSelect.value = layout;
-		}
-		syncLineStyleOptions(this, layout, lineStyle);
-		if (this.paletteSelect) {
-			// resolvePalette 已把脏值归一，这里直接落到控件（避免空白选中项）
-			this.paletteSelect.value = this.currentPalette ?? DEFAULT_PALETTE;
-		}
-		if (this.themeSelect) {
-			// 同上：resolveThemeStyle 已归一
-			this.themeSelect.value =
-				this.currentThemeStyle ?? DEFAULT_THEME_STYLE;
-		}
+		// 外观四项（布局 / 连线 / 配色 / 边框）已移入右键菜单的二级菜单：
+		// 勾选态在读菜单时按 `resolve*` 现算，引擎就绪时不再需要回填控件。
+		// 但**可用性**不能读时现算：右缘竖栏的连线开关是否置灰由布局决定，它写在
+		// 竖栏的构建流程里，而 `onOpen` 建栏早于文件加载（那时 `resolvePreference()`
+		// 读到的还是全局默认布局）。此刻文件偏好已合成（`currentLayout` 取自
+		// `viewState`），重建一次让开关态跟上——否则默认布局为固定直线布局时
+		// 打开任何导图都会永久置灰（2026-10-23 修复）。
+		this.refreshToolbar();
 	}
 
 	/** 标题重命名已委托 TitleRenamer（view-title-renamer.ts） */
 
 	/**
-	 * 提交一项顶栏偏好：归一 → 会话字段 → 应用引擎 → 持久化到当前文件。
+	 * 提交一项外观偏好：归一 → 会话字段 → 应用引擎 → 持久化到当前文件。
 	 *
 	 * 四个维度（布局 / 连线 / 配色 / 边框）是同构的，差异只有三处：归一函数、
 	 * 引擎通道（布局/连线各有专法，配色与边框共用 `applyTheme`）、会话字段名。
@@ -913,7 +899,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
-	 * 切换布局（工具栏调用）：布局不写入正文，存 data.json 按文件路径恢复。
+	 * 切换布局（右键菜单调用）：布局不写入正文，存 data.json 按文件路径恢复。
 	 */
 	applyLayout(value: string): void {
 		this.commitPreference({
@@ -923,14 +909,16 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			normalize: (next) => next,
 			applyToEngine: (next) => {
 				this.engine.setLayout(next);
-				// 连线样式选项面随布局变化（固定直线布局收窄为「直线」单项）
-				syncLineStyleOptions(this, next, this.resolveLineStyle());
+				// 连线开关只有「可点 / 置灰」两态，判定（`supportsLineStyleSwitch`）
+				// 写在竖栏的构建流程里，故换布局后必须重建一次——否则开关态会停在
+				// 上一个布局（2026-10-23 修复）。
+				this.refreshToolbar();
 			},
 		});
 	}
 
 	/**
-	 * 切换连线样式偏好（工具栏调用；两态：折线 / 曲线，不写入正文）。
+	 * 切换连线样式偏好（右栏「连线」开关调用；两态：折线 / 曲线，不写入正文）。
 	 *
 	 * **写入前归一**（不只信调用方）：本方法在 `MindMapViewContext` 上对任意字符串
 	 * 开放；若未来新入口传旧词汇（`auto` / `direct`），把旧值写回 `data.json` 会与
@@ -947,7 +935,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
-	 * 切换配色（顶栏调用）：走 `engine.applyTheme()` 原地换肤（不重建引擎），
+	 * 切换配色（右键菜单调用）：走 `engine.applyTheme()` 原地换肤（不重建引擎），
 	 * 按文件记在 `data.json` 的 `viewState[<路径>].palette`。
 	 */
 	applyPalette(value: string): void {
@@ -959,7 +947,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		});
 	}
 
-	/** 切换节点外观主题（顶栏调用）：与 `applyPalette` 同构，按文件记在 `themeStyle`。 */
+	/** 切换节点外观主题（右栏「边框」开关调用）：与 `applyPalette` 同构，按文件记在 `themeStyle`。 */
 	applyThemeStyle(value: string): void {
 		this.commitPreference({
 			key: 'themeStyle',
@@ -986,7 +974,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 		if (changedKeys.has('defaultTheme')) {
 			// 主题（明暗）变更 → 引擎原地换 themeConfig
-			// （边框与配色不是设置项：按文件记，走顶栏 applyThemeStyle / applyPalette；
+			// （边框与配色不是设置项：按文件记，走右栏开关 / 右键菜单的 applyThemeStyle、applyPalette；
 			//   defaultThemeStyle 只影响新建导图，这里重算也不会改动当前文件）
 			this.applyTheme();
 		}

@@ -114,7 +114,7 @@ const EMBED_FIT_PADDING = 12;
  * 只取四项，且由组合根取值——features 不引 `settings`（组合根禁令）。
  *
  * `themeStyle` 取**全局默认**（设置项 `defaultThemeStyle`，由组合根注入），
- * 与 `layout` / `lineStyle` 同性质：嵌入没有「当前文件」身份、拿不到顶栏那份
+ * 与 `layout` / `lineStyle` 同性质：嵌入没有「当前文件」身份、拿不到右栏/右键那份
  * 按文件记的值，但仍应遵守用户的默认外观（2026-10-21 用户订正）。
  * `palette` **没有全局默认**（只有按文件记），故恒用 `DEFAULT_PALETTE`。
  */
@@ -123,7 +123,7 @@ export interface MindmapEmbedConfig {
 	lineStyle: string;
 	/** 主题（明暗配色） */
 	themePref: string;
-	/** 边框样式：取全局设置 `defaultThemeStyle`（非顶栏按文件值） */
+	/** 边框样式：取全局设置 `defaultThemeStyle`（非右栏/右键按文件值） */
 	themeStyle: string;
 	lang: Language;
 }
@@ -423,7 +423,7 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 					themePref: next.themePref,
 					layout: next.layout,
 					lineStyle: next.lineStyle,
-					// 同 mount：边框跟全局默认、配色恒基准蓝（都不读顶栏按文件值）
+					// 同 mount：边框跟全局默认、配色恒基准蓝（都不读右栏/右键按文件值）
 					themeStyle: next.themeStyle,
 					palette: DEFAULT_PALETTE,
 				});

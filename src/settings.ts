@@ -44,7 +44,7 @@ export interface MindMapStudioSettings {
 	defaultTheme: string;
 	/**
 	 * 默认边框样式（即节点外观 `themeStyle`）：只作用于**新建**导图的初始值，
-	 * 单篇导图由顶栏「边框」下拉按文件覆盖（`viewState[<路径>].themeStyle`）。
+	 * 单篇导图由右栏「边框」开关按文件覆盖（`viewState[<路径>].themeStyle`）。
 	 * 取值范围见 `core/constants.THEME_STYLE_OPTIONS`（id 发布即冻结）。
 	 */
 	defaultThemeStyle: string;
@@ -79,7 +79,7 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	// 新建默认折线；存量的 auto/direct 在读取侧归一为折线（见 constants 归一函数）
 	defaultLineStyle: DEFAULT_LINE_STYLE,
 	defaultTheme: 'default',
-	// 新建导图默认带框（＝存量观感）；单篇由顶栏「边框」覆盖
+	// 新建导图默认带框（＝存量观感）；单篇由右栏「边框」开关覆盖
 	defaultThemeStyle: DEFAULT_THEME_STYLE,
 	// 默认跟随官方「新建笔记的默认位置」（经 getNewFileParent 完整生效）——
 	// 与引入本设置前的行为一致；另三档为用户显式覆盖
@@ -359,6 +359,11 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 	 * 契约（对齐宿主签名），不代表运行期存在旧版本分支。
 	 */
 	override getSettingDefinitions(): SettingDefinitionItem[] {
+		// 给本页容器打标记：官方设置项的描述是单个文本节点 + `white-space: normal`，
+		// 说明里的 `\n` 会被折叠成空格；styles.css 依此类名把描述改成 `pre-line`，
+		// 让「一句话做什么 / 一句话代价」分行显示（作用域只在本插件设置页）。
+		// 每渲染一次都加（有则无操作）：容器可能被宿主重建。
+		this.containerEl.addClass('mindmap-settings-tab');
 		const layoutOptions = this.localizedOptions(LAYOUT_OPTIONS);
 		const lineStyleOptions = this.localizedOptions(LINE_STYLE_OPTIONS);
 		const themeOptions = this.localizedOptions(THEME_OPTIONS);
@@ -374,7 +379,7 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 		return [
 			{
 				type: 'group',
-				heading: t(this.lang, 'settings.title'),
+				heading: t(this.lang, 'settings.groupGeneral'),
 				items: [
 					{
 						name: t(this.lang, 'settings.language'),
@@ -385,6 +390,12 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 							options: languageOptions,
 						},
 					},
+				],
+			},
+			{
+				type: 'group',
+				heading: t(this.lang, 'settings.groupAppearance'),
+				items: [
 					{
 						name: t(this.lang, 'settings.defaultLayout'),
 						desc: t(this.lang, 'settings.defaultLayoutDesc'),
@@ -421,6 +432,12 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 							options: themeOptions,
 						},
 					},
+				],
+			},
+			{
+				type: 'group',
+				heading: t(this.lang, 'settings.groupFile'),
+				items: [
 					{
 						name: t(this.lang, 'settings.saveLocation'),
 						desc: t(this.lang, 'settings.saveLocationDesc'),
@@ -453,6 +470,12 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 						desc: t(this.lang, 'settings.autoSplitMixedLinksDesc'),
 						control: { type: 'toggle', key: 'autoSplitMixedLinks' },
 					},
+				],
+			},
+			{
+				type: 'group',
+				heading: t(this.lang, 'settings.groupExport'),
+				items: [
 					{
 						name: t(this.lang, 'settings.enableDrag'),
 						desc: t(this.lang, 'settings.enableDragDesc'),

@@ -458,10 +458,8 @@ describe('EngineController.initMindMap（初始化入口与零尺寸等待）', 
 		// 尺寸就绪路径完全同步：不产生等待中的观察器
 		expect(observers).toHaveLength(0);
 		expect(h.controller.mindMap).toBe(h.engines[0]);
-		expect(h.deps.onEngineReady).toHaveBeenCalledWith(
-			'logicalStructure',
-			'straight',
-		);
+		// 收尾回调不再携带布局/连线参数：工具栏按 `resolve*` 自己重算（2026-10-23）
+		expect(h.deps.onEngineReady).toHaveBeenCalledWith();
 	});
 
 	it('超链接跳转回调转发给视图（onHyperlinkJump 闭包绑定 deps）', () => {
@@ -715,8 +713,8 @@ describe('EngineController 装配与销毁', () => {
 			themePref: 'dark',
 			enableDrag: true,
 		});
-		// 视图侧收尾按本次布局/连线样式回调（工具栏同步依赖它）
-		expect(h.deps.onEngineReady).toHaveBeenLastCalledWith('mindMap', 'curve');
+		// 视图侧收尾每次 refresh 都会回调（不再带布局/连线参数，工具栏自查 resolve*）
+		expect(h.deps.onEngineReady).toHaveBeenCalledTimes(2);
 	});
 
 	it('createMindMap 抛错：兜底销毁、清空容器、不外抛，视图保持可用', () => {

@@ -37,7 +37,9 @@ src/
     tree.ts         #   walkTree 先序遍历（显式栈防溢出，visit 返回 false 短路）
     md-meta.ts      #   MdNodeMeta：节点 data 上 md* 元数据的类型契约（纯契约，无引擎类型）
     mindmap-property.ts # 「本文件是导图」的 frontmatter 判据唯一实现（读侧 Type/类型 双键
-                    #   都认 + 值归一；写侧按语言选键）。2026-10-12 起取代文件名后缀判据
+                    #   都认 + 值归一；写侧按语言选键）。2026-10-12 起取代文件名后缀判据。
+                    #   另含 isMindMapDeclarationValue：只认插件写过的 Mindmap/Markdown，
+                    #   给「会改写用户文件」的场合做值守卫（语言切换迁移，见 md-open）
   core/             # L1 基座：通用机制与共享词汇
     constants.ts    #   全局常量：扩展名分流清单、布局/连线/主题色/主题/配色选项（后者按文件记）、渲染能力清单
                     #   （.mindmap.md 后缀判定三函数已于 2026-10-12 退役，判据见
@@ -65,7 +67,10 @@ src/
     md-serialize.ts #   导图树 → Markdown（未编辑逐字回写/编辑合成；链接/图片新增检测）
     markdown.ts     #   新建文件默认内容/文件名、uid 修复（ensureUniqueUids）
     md-open.ts      #   声明判据（经 MetadataCache 同步读）、视图切换、切回 Markdown 的
-                    #   属性持久降级（processFrontMatter，三入口同语义）
+                    #   属性持久降级（processFrontMatter，三入口同语义）、语言切换的
+                    #   全库键名迁移（migrateMindMapPropertyKeys：**先判值**——只改值 ∈
+                    #   Mindmap/Markdown 的键，同名属性如 `类型: wiki` 一律放过；目标键被
+                    #   非声明值占用时整文件跳过，2026-10-23）
     md-line-write.ts #  节点行内容**原文写入**（编辑弹窗原文模式的提交）：重解析 → 整体
                     #   重建行内字段（链接/图片/台账）⇒ 未编辑态 ⇒ 保存逐字写回用户输入
     links-split.ts  #   混排双链拆分纯逻辑（方案生成/批量改写/写回字段）；规则与产品决策
@@ -74,6 +79,14 @@ src/
                     #   对未编辑且 mdRaw 仍含旧目标的节点，按解析侧同一扫描器定位旧链接 token
                     #   并以同一改写规则重写，经 buildInlineData 重建 text/mdRaw/mdDerivedText/
                     #   mdSegments——通道字段保留字段层结果（attachmentUrl 资源地址不照搬解析态）
+    md-outline-lines.ts #   逐行分类（围栏状态机 / 自闭合围栏 / setext 与分隔线 / 空列表项）+ leadingSpaces
+                    #   （2026-10-22 自 md-outline 抽出，纯提取；零依赖）
+    md-outline-inline.ts # 行内 token 族（tokenizeInline / tokenDisplay / tokenAnchors / 图片尺寸后缀），
+                    #   由 md-outline **转出**（既有引用方零改 import 路径）
+    md-serialize-anchors.ts # 行内锚点三件套（inLinkSyntax / anchorInsertPoint / insertionForm）：
+                    #   插入位置与写法判定（padLead/padTrail 只有 insertionForm 消费）
+    md-serialize-inline.ts # 图片族（尺寸参数 / 嵌入标签 /「是否已在 mdRaw」特征 / renderImage /
+                    #   imageVaultPath / imageSelfText）；stripAngleBrackets 与链接族共用
   media/            # L1 图片与附件
     images-path.ts  #   图片地址→资源地址（经统一解析入口）、外部地址判断、尺寸校正
     images-save.ts  #   图片入库（走 concurrency 串行队列）、文件名清理
@@ -108,6 +121,11 @@ src/
     mindmap-theme.ts #  主题管线（buildThemeConfig 唯一实现：色板 + 主题覆盖合并；参数化差异：
                     #   亮/暗 + 连线样式 + 主题；resolveLineStyle 两态偏好解析〔折线/曲线，
                     #   固定直线布局恒折线〕，归一在 core/constants.normalizeLineStylePreference）
+    mindmap-icons.ts #   文档页 SVG 图标（WIKI_DOC_ICON_SIZE / buildWikiDocIcon；2026-10-22 自 mindmap.ts 抽出）
+    mindmap-arrange.ts # 自动整理：RESET_LAYOUT → 延时 fit → 根未回填轮询（成功路径唯一实现，
+                    #   三者必须同文件；barrel 转出 arrangeMindMap）
+    mindmap-viewport-canvas.ts # 画布几何（实时 rect / 尺寸 / 原点 / syncCanvasGeometry /
+                    #   flushPendingLayoutRender）：引擎几何与实时容器的唯一同步点
   platform/         # L1 Obsidian 平台集成
     vault-sync.ts   #   库事件同步单一入口（引用更新、索引失效；插件侧补充处理经 hooks 注入）
     mindmap-auto-open.ts # 声明驱动自动打开（active-leaf-change/file-open/metadataCache
@@ -147,6 +165,13 @@ src/
                     #   + mjx-container 高度钉定（pinMathContainerHeightsInExportSvg）。
                     #   **纯 DOM/CSSOM**——不依赖渲染态（缓存/登记面/pending/flush 代际
                     #   全不碰），故可干净抽出；唯一隐式前提是 CHTML 样式表已挂入文档
+    math-jax-export-clip.ts # 导出 SVG 的 mjx-c 字形裁切放宽（2026-10-23 自上一文件拆出）：
+                    #   MathJax 4 的 clip-path 纵向 ±2px 在 fallback 字体下会把公式下半
+                    #   裁掉（PNG/SVG 同因）；relaxMathGlyphClipPaths 纯字符串改写、可直测
+    math-jax-fonts.ts # 导出 SVG 的 MathJax 字体按需内联（2026-10-23，A 方案）：
+                    #   私有触点 app:// 取 woff2 → base64；按克隆里 TEX-* class 裁剪
+                    #   只内联实际用到的族（否则矩阵竖线/根号/分式线/大括号整片消失）；
+                    #   primeExportMathFonts 由导出入口 await（同步钩子读缓存），失败回退
   ui/               # L2 弹窗
    modal-common.ts / modal-image.ts / modal-link.ts / modal-name.ts / modal-text.ts
                     # 链接/图片/命名/节点文本弹窗（官方 AbstractInputSuggest 联想；settle 守卫与
@@ -154,6 +179,10 @@ src/
                     #   自绘（富）节点的**备选**文本编辑入口（2026-09-28 起主入口＝
                     #   node-inline-editor 内联编辑器，见 K92）——引擎编辑框对其静默
                     #   no-op（textEdit.show 的 isUseCustomNodeContent 守卫），故由插件兜底
+    math-jax-char-rules.ts # 逐字符规则索引与判定（缓存键=样式表元素+规则条数；usable 三态；
+                    #   零宽字符豁免判据）：isProductReady 的就绪判据依赖它
+    prism-code-color-probe.ts # token 颜色**真探测**（浅克隆挂进已挂载宿主，连读两次计算色；
+                    #   「父链在且已连接」才可进共享缓存）
   services/         # L2 视图服务
     document-service.ts # md 文档读取解析 + 保存管线（防抖/串行排空/卸载快照兜底，onSaveError 上报；
                         #   写盘前 cachedRead 比对，内容一致跳过 modify）；
@@ -164,6 +193,12 @@ src/
                     #   四项外观偏好共用 getPreference/setPreference，缺省值由 resolveFilePreferences
                     #   统一给；openAs 已于 2026-10-12 退役：打开方式由文件属性声明承载）
     status-bar.ts   #   StatusBarService 契约 + 插件层实现（节点计数展示/清空，DOM 归插件层）
+    engine-controller-deps.ts # 控制器依赖契约（EngineSetupOptions + EngineControllerDeps，**纯类型**）；
+                    #   控制器转出 EngineControllerDeps，既有 import 路径不变
+    engine-controller-viewport.ts # 视口会话状态（restoreTimer / recenterTimer / defaultSignature /
+                    #   recalcBudget / restoredSaved / 节点拖拽时戳）+ reset / beginInitialWindow / canRecalcOnRender
+    engine-controller-options.ts # createMindMap 入参拼装（buildCreateOptions：deps 回调包箭头避免
+                    #   unbound-method；与 createNodeContent / handleExportSvg 的惰性装配同点）
   features/         # L3 UI 特性与视图控制器
     view.ts         # Controller：Obsidian 生命周期编排、service 装配、链接跳转、标题重命名
     view-context.ts # MindMapViewContext：view-* 对视图的访问契约（结构化窄接口）
@@ -173,7 +208,8 @@ src/
                     #   恒 0×0）、由隐藏转可见四路自愈（挂起 holders 重新入批 / 暂存重试补做 /
                     #   字体批次补做 / 塌陷节点症状重测）；自愈拍到期时若又隐藏则保留脏标记
                     #   ⑤ 未定稿修复（弃段症状修复 + 登记面清理，见 platform/math-jax）
-    view-*.ts       # 18 个交互特性各自一文件：工具栏（view-toolbar.ts）/ 拖拽（view-dnd.ts）/
+    view-*.ts       # 18 个交互特性各自一文件：工具栏（view-toolbar.ts：右缘竖栏四组，
+                    #   见 conventions K129）/ 拖拽（view-dnd.ts）/
                     #   右键（view-context-menu.ts）/ 搜索（view-search.ts）/ 导出（view-export.ts）/
                     #   状态栏（view-status.ts）/ 图片灯箱（view-image-fullscreen.ts）/
                     #   图片动作（view-image-actions.ts）/ wikilink 交互（view-wikilink.ts）/
@@ -188,6 +224,10 @@ src/
                     #   混排双链拆分（view-split-links.ts）/ 视口（view-viewport.ts：
                     #   Shift+1/2 的缩放实现 + 抑制中键自动滚动；**滚轮与中键拖由引擎负责**）/
                     #   共用件（view-common.ts：insertChildNodeWithData 等）
+    view-load-session.ts # 加载会话状态（whenReady / 加载去重路径 / 首帧 rAF / 挂起的图片校正）：
+                    #   被 onOpen 与 onLoadFile 两个入口读写，时序契约见其文件头
+    view-node-link-plan.ts # 「把节点变成链接」的**规划**（目标名 → 链接串 → 载荷/提示，纯计算）：
+                    #   与 view-node-actions 的 apply* 族分界；planDocLink / planAttachmentLink 由原文件转出
     node-inline-content.ts # 节点内联内容的**对外 barrel**（2026-10-16 拆分）：契约文档 +
                     #   re-export；实现见下两文件（**方案 B 原型**）。边界见本文件头契约：
                     #   自绘节点无 `_textData`，引擎编辑框有 isUseCustomNodeContent
@@ -315,7 +355,7 @@ tests/
   view-dnd.test.ts     # 拖入分发（图片/笔记/附件/外部导入、两分支与提示）
   view-search.test.ts  # 搜索栏（装配/防抖/回绕/零命中计数/防抖窗口内跳转）
   view-status.test.ts  # 状态栏计数（节流与尾随、销毁/抛错降级、关闭清理）
-  view-toolbar.test.ts # 工具栏装配（分组/图标/命令接线、布局与连线样式选择器（固定布局收窄为单项「直线」）、自动整理分支、重建）
+  view-toolbar.test.ts # 右缘竖栏装配（四组/图标接线、连线与边框开关互切、固定布局下连线开关置灰、自动整理分支、重建）
   view-paste.test.ts   # 粘贴分发（容器监听与窗口兜底两入口、三道豁免（已消费/容器内/输入框）、
                        #   图片识别与接管、命名约定保存（覆盖系统临时名）、无节点提示、
                        #   保存 null 与「保存期间引擎换代」守卫、失败转用户提示）
@@ -361,8 +401,9 @@ docs/
 | `src/engine/mindmap-nodes.ts` | 748 | 节点查询与工具 + 文本编辑防腐面（2026-10-16 自 `mindmap.ts` 拆出）：节点/DOM 反查（`findNodeByDom`/`resolveNodesByDoms`）、节点文本与图片尺寸、自绘内容重建、兄弟上/下移、`renderer.textEdit`/`node_dblclick` 收口 |
 | `src/markdown/md-serialize.ts` | 915 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。（链接「生效显示名」的纯判定已下沉 `domain/wiki-display.ts` 供 `mindmap.ts` 复用——那是**跨模块复用**，不是本文件内聚被拆）。2026-10-12（K119）：无显示名段的**锚点插入点**与替换型 slot 共用同一遍行内拼装（区间占用判定只有一份），拆开会让两种定位各持一套冲突规则 |
 | `src/markdown/md-outline.ts` | 702 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则，拆开会让两侧规则漂移。2026-10-12（K119）：首图与 icon-only URL 也登记台账段并附**上下文锚点**（`tokenAnchors`），与其余 token 段同源 |
-| `src/core/i18n.ts` | 593 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
-| `src/features/view.ts` | 1235 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；**主**业务已外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。**数学校准会话已于 2026-10-11 外置为 `features/content-remeasure.ts`**（原「已知偏离：L264–452 仍留在视图层、尚未排期」就此关闭）——外置同时补上架构文档要求的两件事：`dispose()` 生命周期（取消未决批次）与会话直测（`tests/content-remeasure.test.ts` 9 例）。再拆剩余部分会把「生命周期编排顺序集中可见」这一收口点摊到多文件。**2026-10-15 增至 1122**（此前登记 1086）：`mdBackMode` **跨会话保留**——读取点前移到 `setState` 覆写（官方 `view.getState()` 不保留传入 state，经 `leaf.getViewState()` 读回是**恒失败链路**，模式与布局保存都会丢）、`getState` 覆写回吐 `mdBackMode`；取值白名单收在 `readMdBackMode` 一处。**2026-10-21 增至 1149**：连线样式两态收敛（`resolveLineStyle` 读取侧归一存量 `auto`/`direct`；`applyLineStyle` 写入侧同样归一）。**同日再增至 1249**：边框 / 配色改为按文件记（`resolvePalette` / `resolveThemeStyle` / `applyPalette` / `applyThemeStyle`），四项「按文件偏好」的缺省值收进 `services/view-state.resolveFilePreferences`——此前 `themeStyle` 在 `loadMindMapFromFile` 里回落硬编码 `DEFAULT_THEME_STYLE`，使「默认边框样式」对新建导图无效（由单测锁死） |
+| `src/core/i18n.ts` | 612 | 纯词条表（无逻辑分支），拆分只增加 import 噪音，无内聚收益 |
+| `src/features/view-context-menu.ts` | 380 | 两个右键菜单（节点 / 画布空白）的**唯一实现**：条目按节点形态分流（链接双通道 / 图片 / 文字）与视图级外观级联（布局 / 配色）同处一文件，拆开会让两份菜单的调用面分叉（同 `view-node-actions` 理由）。2026-10-23 增至 380：布局 / 配色改为官方 `Menu.showAtMouseEvent` **级联菜单**（`MenuItem.setSubmenu` 未声明且实测不展开），且节点右键与空白右键共用同一份 `addLayoutPaletteMenus`；键盘触发用被激活项的矩形做锚点 |
+| `src/features/view.ts` | 1216 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。只做「生命周期事件 → 装配 services 与 view-* 交互特性」；**主**业务已外置（DocumentService/EngineController/TitleRenamer/openHyperlink…）。**数学校准会话已于 2026-10-11 外置为 `features/content-remeasure.ts`**（原「已知偏离：L264–452 仍留在视图层、尚未排期」就此关闭）——外置同时补上架构文档要求的两件事：`dispose()` 生命周期（取消未决批次）与会话直测（`tests/content-remeasure.test.ts` 9 例）。再拆剩余部分会把「生命周期编排顺序集中可见」这一收口点摊到多文件。**2026-10-15 增至 1122**（此前登记 1086）：`mdBackMode` **跨会话保留**——读取点前移到 `setState` 覆写（官方 `view.getState()` 不保留传入 state，经 `leaf.getViewState()` 读回是**恒失败链路**，模式与布局保存都会丢）、`getState` 覆写回吐 `mdBackMode`；取值白名单收在 `readMdBackMode` 一处。**2026-10-21 增至 1149**：连线样式两态收敛（读取侧归一存量 `auto`/`direct`；`applyLineStyle` 写入侧同样归一）。**同日再增至 1249**：边框 / 配色改为按文件记（`applyPalette` / `applyThemeStyle`），四项「按文件偏好」的缺省值收进 `services/view-state.resolveFilePreferences`——此前 `themeStyle` 在 `loadMindMapFromFile` 里回落硬编码 `DEFAULT_THEME_STYLE`，使「默认边框样式」对新建导图无效（由单测锁死）。**2026-10-23 复测 1223**：读取侧四个 `resolve*()` 收敛为 `resolvePreference(key)`（与写入侧 `commitPreference` 对称，接口面 −3）；`onEngineReady` 删死参，改由视图自行 `refreshToolbar()` |
 | `src/services/engine-controller.ts` | 631 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。与 `mindmap.ts` **同性质**——拆开即把私有访问面摊开，故同样必须豁免 |
 | `src/media/images-path.ts` | 637 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一），**从 images.ts 拆出**的产物；导出函数共享同一套路径与尺寸不变式，再拆会摊成跨文件的隐式协议 |
 | `src/features/image-resize.ts` | 432 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链（无常驻监听、帧内 DOM 直写、手势独占），拆开会让状态机与 DOM 手柄跨文件失配 |
@@ -370,8 +411,8 @@ docs/
 | `src/features/view-dnd.ts` | 591 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配 |
 | `src/main.ts` | 524 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。业务逻辑已全部外置（见文件头），拆开 onload 会破坏「装配顺序集中可见」的可读性收益；当前超线 52 行 |
 | `src/markdown/links-split.ts` | 487 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。与 `md-outline` / `md-serialize` 同性质 |
-| `src/core/constants.ts` | 699 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题色/主题/配色选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件，互有基表派生；「可链接附件」「系统媒体」两份白名单已于 2026-09-15 删除——附件口径收敛到 `domain/wikilink.wikilinkTargetIsAttachment`）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音。**2026-10-21 增至 678**：① 连线样式两态收敛（`LINE_STYLE_OPTIONS` 砍至折线/曲线、新增 `DEFAULT_LINE_STYLE` 与 `normalizeLineStylePreference`）；② 新增「主题」（节点外观）维度——`THEME_STYLE_OPTIONS`（`as const` 派生 `ThemeStyleId`，id 唯一源）+ `DEFAULT_THEME_STYLE` + `normalizeThemeStyle`，与「主题色」正交，外观数据在 `engine/mindmap-theme-presets.ts`；③ 新增「配色」（色相方案）维度——`PALETTE_OPTIONS`（6 套，`as const` 派生 `PaletteId`）+ `DEFAULT_PALETTE` + `normalizePalette`，与明暗 / 形态**三维正交**；**它与「主题」都不是设置项**：分别按文件记在 `viewState[<路径>].palette` / `.themeStyle`，由顶栏切换 |
-| `src/settings.ts` | 529 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。`sanitizeSettings` 被 data.json 加载与面板写回共用（已在「代码结构」清单登记）。**2026-10-21 收敛至 529**：`themeStyle`（「边框」）与 `palette`（「配色」）两个外观维度先后**移出设置**、改为按文件记（`viewState`，顶栏切换），本文件一度回落到 505；随后补回 `defaultThemeStyle`（「默认边框样式」，只作新建导图的初始值）→ 529。设置面板现有：布局 / 连线 / **默认边框样式** / 主题（明暗）/ 保存位置 / 导入导出 / 其他。「四处同改即闭合」在**移除键**时同样只要同步四处 |
+| `src/core/constants.ts` | 699 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题色/主题/配色选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件，互有基表派生；「可链接附件」「系统媒体」两份白名单已于 2026-09-15 删除——附件口径收敛到 `domain/wikilink.wikilinkTargetIsAttachment`）；K28 要求「扩展名清单集中在 `constants.ts`，勿复制」——拆分即打断该收口，同 `i18n` 性质，只增加 import 噪音。**2026-10-21 增至 678**：① 连线样式两态收敛（`LINE_STYLE_OPTIONS` 砍至折线/曲线、新增 `DEFAULT_LINE_STYLE` 与 `normalizeLineStylePreference`）；② 新增「主题」（节点外观）维度——`THEME_STYLE_OPTIONS`（`as const` 派生 `ThemeStyleId`，id 唯一源）+ `DEFAULT_THEME_STYLE` + `normalizeThemeStyle`，与「主题色」正交，外观数据在 `engine/mindmap-theme-presets.ts`；③ 新增「配色」（色相方案）维度——`PALETTE_OPTIONS`（6 套，`as const` 派生 `PaletteId`）+ `DEFAULT_PALETTE` + `normalizePalette`，与明暗 / 形态**三维正交**；**它与「主题」都不是设置项**：分别按文件记在 `viewState[<路径>].palette` / `.themeStyle`，由右栏「边框」开关切换 |
+| `src/settings.ts` | 529 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。`sanitizeSettings` 被 data.json 加载与面板写回共用（已在「代码结构」清单登记）。**2026-10-21 收敛至 529**：`themeStyle`（「边框」）与 `palette`（「配色」）两个外观维度先后**移出设置**、改为按文件记（`viewState`，右栏开关 / 右键菜单切换），本文件一度回落到 505；随后补回 `defaultThemeStyle`（「默认边框样式」，只作新建导图的初始值）→ 529。设置面板现有：布局 / 连线 / **默认边框样式** / 主题（明暗）/ 保存位置 / 导入导出 / 其他。「四处同改即闭合」在**移除键**时同样只要同步四处 |
 | `src/features/node-inline-tokenize.ts` | 1091 | 段序列切分（**纯逻辑，无 DOM**）：行内 token → 段序列（轻标记 / 围栏代码块 / 缩进代码 / 语言码规范化 / 数学 / 链接 / 表格块）+ 段缓存 + 接管判定 `resolveSelfDrawSource` + 截断 `clampSegments` + 预览 `inlineContentPreview` |
 | `src/features/node-inline-html.ts` | 723 | 段序列 → HTML **装配**：类名/锚点属性契约 + 内联样式常量表（**导出保真契约** K53 ⑤，引擎导出不注入插件 CSS）+ 文本段/锚点/表格/代码块/数学元素。复杂度仍是「取值表 × 契约」，且两条契约在此完整可见 |
 | `src/features/view-wikilink.ts` | 411 | 链接交互**单一关注点**：**点击路径**的锚点识别（`findAnchorInNode` / `resolveAnchorLink`）与**悬停预览**（两级：锚点优先 + 节点级 `nodeLink` 三通道 + `hover-link` 事件）同在一处，还有中键 `auxclick`；把悬停拆出去会让「链接怎么取、锚点取哪个目标」出现第二份实现——正是本文件当初拆出（原在 view.ts）要消除的问题。两条预览路径**都不预检目标是否存在**（交核心判断，见 K21） |
@@ -384,6 +425,7 @@ docs/
 | `src/features/mindmap-codeblock.ts` | 595 | Markdown 代码块只读嵌入的**单一关注点**（K122，2026-10-13 恢复）：块体解析 → 只读引擎装配（`readonly: true` + 不注册任何交互插件）→ **容器高度随内容且随宽度重算**（观察器**先建且常驻**：首帧同步挂载成功也注册，否则高度口径锁死在首帧；重排在**下一帧**落，RO 回调里写布局会记 `ResizeObserver loop…`，见 `renderOrWait` / `deferFit`）→ 滚轮归宿主页面（capture 拦截；引擎 `onMousewheel` 无条件 preventDefault）→ 超限降级只读大纲 → 生命周期收尾（ResizeObserver / EventBinder / ContentRemeasureSession / 引擎 / 卸载即清 DOM〔2026-10-14：切模式保留的另一套视图子树不残留空壳〕）是一条不可分割的链；拆开会让「解析口径、零尺寸等待、尺寸反馈环、销毁顺序」四处漂移。**不写 `data.json`** |
 
 | `src/features/content-remeasure.ts` | 534 | 「自绘内容定稿 → 尺寸同步」会话的**单一关注点**：三条不变式（同帧合批 `setTimeout(0)` / 按 holder 反查真实节点 / 渲染窗口只重试一次）**加第四条可见性不变式**（2026-10-14）——「隐藏态不测量」与「由隐藏转可见的四路自愈」（holders → 产物反查 → 暂存重试）共享同一份回退链，拆开会让 `flush` / `retryDeferred` / 字体批次各自维护一份可见性判定，必然漂移；文件头 ④ 记录实机证据与官方判据（`Element.isShown()`）。2026-10-14 第十/十一/十二批续增（未定稿修复三钩子、`forgetEngine` 按引擎身份清理、`recoverHidden` 可见性守卫）。**2026-10-15 补登记**（此前只在本表之外登记，两表不一致） |
+| `src/markdown/md-open.ts` | 303 | 声明模式文档的**唯一读写面**：触发判据读取 / 以导图打开·以 Markdown 打开的属性写入（`processFrontMatter` + `convergeMindMapPropertyKey`）/ 语言切换的全库键名迁移，三者共享同一份「谁有声明、这个值算不算声明」判据（`domain/mindmap-property.isMindMapDeclarationValue`）；拆开会让「读判据 / 写值 / 集体改名」三处口径漂移。2026-10-23 因迁移补值守卫（只改值 ∈ `Mindmap`/`Markdown` 的键）增至 303 行 |
 | `src/platform/prism-code.ts` | 393 | 代码块语法高亮通道**单一落点**（全插件唯一 `loadPrism` 的 `import`）：产品形态「字面代码 → 异步 `Prism.tokenize` → token 元素（**不经 innerHTML**）→ 定稿（入产物缓存 + 通知重排）」；与数学通道的四点差异（tokenize 是同步纯函数，故**不搬**字体 / flush / 就绪判据 / 挂载补替换队列）必须成对阅读；token 颜色**探测宿主计算色后内联**（导出 SVG 无 app.css，K91/K99）；主题切换走 `refreshPrismTokenColors`（清缓存 + 就地改色，不重建节点）；未登记语言 / `tokenize` 抛错 / 空产物一律保留字面（占位即回退）。**2026-10-15 补登记**（此前只在本表之外登记，两表不一致） |
 
 行数基准为 **2026-09-28 快照**，其后按实测逐批更新（**2026-10-02 全量重测**并补登记 `document-service.ts`；死代码审计、lint 合规化、K92/K93与「函数内纯移动拆分」轮后重测；**2026-10-04 再全量重测**，本轮因批量反查等改动更新了 6 个文件；**2026-10-15 复测**——本表 24 行按 `countSourceLines` **逐行**核对、其中 **14 行**更新〔此前本节写「22 行全部复测、18 行更新」，与表格事实矛盾（`engine/mindmap.ts` 当时登记 2658、实测 2856；`node-inline-content` 1772/1813 等），该失真由 2026-10-15 审查发现并订正〕）。**2026-10-20 全表复测**：27 行按 `countSourceLines` 逐行重测并按实测回填（本表与 `AGENTS.md` 同表同步更新；实测超限文件数仍为 **27**）。**2026-10-21 全表复测（第二批·配色维度）**：28 行再逐行重测，**7 行**回填（`core/constants.ts` 635 → 678、`core/i18n.ts` 576 → 593、`settings.ts` 528 → 554、`engine/mindmap.ts` 746 → 759、`services/engine-controller.ts` 818 → 822、`features/view.ts` 1149 → 1155、`features/mindmap-codeblock.ts` 553 → 558；两表同批更新，复验 0 处差异）。新增文件 `engine/mindmap-theme-presets.ts`（191 行）与 `engine/mindmap-theme.ts`（209 行）均未超 300，不登记。
@@ -392,10 +434,10 @@ docs/
 
 **口径（2026-10-04 统一）**：以 `tests/agents-md-sync.test.ts` 的 `countSourceLines` 为**唯一口径** —— `readFileSync(path,'utf8').split('\n')`，末尾换行不计行。⚠ **不要用 PowerShell `(Get-Content … | Measure-Object -Line).Lines`**：该 cmdlet 统计的是「非空行」以外的另一套计数，与本口径在多数文件上差 1–4%，会让登记值与实测对不上（实测曾因此误判「登记值整体失真」）。重测命令见下。
 
-全部 **28 个超限文件均已登记理由**（2026-10-16 补登记：engine/ 层内拆分新增 `mindmap-viewport.ts` / `mindmap-nodes.ts`，features/ 由 `node-inline-content.ts` 拆出 `node-inline-tokenize.ts` / `node-inline-html.ts`（原文件 1834 → 87，已移出本表）；其中 `math-jax.ts` / `links-tree.ts` / `links-resolve.ts` / `node-inline-editor.ts` / `document-service.ts` / `mindmap-codeblock.ts` 分属各批补登记；`content-remeasure.ts` / `prism-code.ts` 于 **2026-10-15** 补登记——此前本表 22 行、`AGENTS.md` 表 24 行，两表不一致、本行数字也与实测不符，本轮按 `countSourceLines` 实测对账后补齐）。
+全部 **30 个超限文件均已登记理由**（2026-10-23 补两行：`features/view-context-menu.ts` 380 行——布局/配色改为官方级联菜单后超线；`markdown/md-open.ts` 303 行——语言切换迁移补值守卫后越线。此前本节与 `AGENTS.md` 的计数文字停在 28，但两表登记行当时就已是 29 行，属计数文字未随登记更新，非漏登记。2026-10-16 补登记：engine/ 层内拆分新增 `mindmap-viewport.ts` / `mindmap-nodes.ts`，features/ 由 `node-inline-content.ts` 拆出 `node-inline-tokenize.ts` / `node-inline-html.ts`（原文件 1834 → 87，已移出本表）；其中 `math-jax.ts` / `links-tree.ts` / `links-resolve.ts` / `node-inline-editor.ts` / `document-service.ts` / `mindmap-codeblock.ts` 分属各批补登记；`content-remeasure.ts` / `prism-code.ts` 于 **2026-10-15** 补登记——此前本表 22 行、`AGENTS.md` 表 24 行，两表不一致、本行数字也与实测不符，本轮按 `countSourceLines` 实测对账后补齐）。
 
 **判定分两层**（勿再写成「不以数字为准」——那样与下述测试契约自相矛盾）：
 1. **是否已登记理由**（人工/文档层）—— 未登记者一律视为待偿还债务。
 2. **登记值与实测的漂移**（机械层）—— `tests/agents-md-sync.test.ts` 的「豁免表登记行数与实测无超阈值漂移」用例守门，阈值 `±min(+15%, +50 行)`（**双向**：2026-10-16 前只判偏大一侧，导致 `engine/mindmap.ts` 拆分后实测 712 行、登记仍是 2911，门禁却绿灯），超阈即红灯并列出 `文件：登记 N 行，实测 M 行`。**改动任一豁免文件后若该用例转红，必须回来更新本表的行数列**（本轮 `mindmap.ts` 因新增 `resolveNodesByDoms` +69 行触发过一次）。
 
-**函数内拆分口径（2026-09-28「批次 2」逐行评估裁决）**：超长函数（>90 行）能否拆，判据同文件级——「拆会不会把契约摊开」，而非行数。① **不拆**（判定/优先级链形态：分支**顺序即契约**、注释与状态流集中可见；拆分需 `continue`→`return` 转换或引入 ctx/闭包状态，属机械改写而非提取）——`md-outline.buildInlineData`（220 行）/ `md-outline.classifyLines`（174）/ `node-inline-content.splitMarkedText`（111）。② **拆**（纯移动：块间独立、签名统一、零共享可变状态）——2026-09-28 已完成：`view-wikilink.registerWikilinkInteractions`（137 → 编排壳 + 点击/悬停/画布锚点悬停/中键四个注册函数）、`view-toolbar.buildToolbar`（114 → 编排壳 + 左/中/右三组构建）、`commands.registerCommands`（145 → 编排壳 + 创建/视图/导出与文档三组）。**重跑函数级评估前先读本节**，避免重复论证。
+**函数内拆分口径（2026-09-28「批次 2」逐行评估裁决）**：超长函数（>90 行）能否拆，判据同文件级——「拆会不会把契约摊开」，而非行数。① **不拆**（判定/优先级链形态：分支**顺序即契约**、注释与状态流集中可见；拆分需 `continue`→`return` 转换或引入 ctx/闭包状态，属机械改写而非提取）——`md-outline.buildInlineData`（220 行）/ `md-outline.classifyLines`（174）/ `node-inline-content.splitMarkedText`（111）。② **拆**（纯移动：块间独立、签名统一、零共享可变状态）——2026-09-28 已完成：`view-wikilink.registerWikilinkInteractions`（137 → 编排壳 + 点击/悬停/画布锚点悬停/中键四个注册函数）、`view-toolbar.buildToolbar`（114 → 编排壳 + 右缘四组构建；2026-10-22 重排为浮层后仍是编排壳形态）、`commands.registerCommands`（145 → 编排壳 + 创建/视图/导出与文档三组）。**重跑函数级评估前先读本节**，避免重复论证。

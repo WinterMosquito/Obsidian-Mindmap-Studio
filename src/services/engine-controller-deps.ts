@@ -103,8 +103,8 @@ export interface EngineControllerDeps {
 	onNodeAttachmentClick(node: MindMapNode): void;
 	/** 引擎就绪后装配交互特性（拖拽/粘贴/右键/wikilink） */
 	setupFeatures(): void;
-	/** 引擎就绪后视图侧收尾（工具栏布局/连线样式同步、md 模式工具栏重建） */
-	onEngineReady(layout: string, lineStyle: string): void;
+	/** 引擎就绪后视图侧收尾（重建工具栏以同步连线开关可用态、md 模式补返回入口） */
+	onEngineReady(): void;
 	/**
 	 * 引擎实例**即将销毁**（destroyInstance 的唯一通知点）：宿主据此按引擎
 	 * 归属清理插件侧登记（未定稿数学段的登记面，见 platform/math-jax 的

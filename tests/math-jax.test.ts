@@ -35,9 +35,25 @@ const finishRenderMathMock = vi.hoisted(() =>
 	vi.fn(async (): Promise<void> => {}),
 );
 
+/**
+ * 字体预取走官方 `requestUrl`（math-jax → math-jax-export → math-jax-fonts）；
+ * 只有「字体快照」那一例真的发请求，故默认 404、由该例改实现。
+ */
+const requestUrlMock = vi.hoisted(() =>
+	vi.fn(
+		async (
+			_request: { url: string },
+		): Promise<{ status: number; arrayBuffer: ArrayBuffer }> => ({
+			status: 404,
+			arrayBuffer: new ArrayBuffer(0),
+		}),
+	),
+);
+
 vi.mock('obsidian', () => ({
 	loadMathJax: loadMathJaxMock,
 	finishRenderMath: finishRenderMathMock,
+	requestUrl: requestUrlMock,
 }));
 
 /**
@@ -925,6 +941,107 @@ describe('injectMathStylesIntoExportSvg（导出 SVG 后处理 · 方案 B）', 
 		expect(out).not.toContain('app://obsidian.md');
 		expect(out).toContain('mjx-container[jax="CHTML"]');
 		expect(out).toContain('.TEX-I');
+	});
+
+	it('relaxMathGlyphClipPaths：mjx-c 纵向裁切窗放宽到 ±0.6em，横向与其他规则不动', async () => {
+		// 2026-10-23 实机取证：MathJax 4.1.3 给 mjx-c 的纵向余量只有 ±2px；导出
+		// 上下文加载不了 app:// 字体、字形走 fallback（更高且基线更低）⇒ 公式下半
+		// 被这条 clip-path 裁掉（PNG / SVG 同因）。放宽纵向后与"完全移除"同效。
+		const { relaxMathGlyphClipPaths } = await loadModule();
+		const css =
+			'mjx-c, mjx-mi > mjx-c { clip-path: polygon(-1em -2px, calc(100% + 1em) -2px, calc(100% + 1em) calc(100% + 2px), -1em calc(100% + 2px)) padding-box; }\nmjx-container[jax="CHTML"] { white-space: nowrap; }';
+		const out = relaxMathGlyphClipPaths(css);
+		expect(out).toContain(
+			'polygon(-1em -0.6em, calc(100% + 1em) -0.6em, calc(100% + 1em) calc(100% + 0.6em), -1em calc(100% + 0.6em))',
+		);
+		expect(out).not.toContain('-2px');
+		expect(out, '非 mjx-c 规则不得改写').toContain(
+			'mjx-container[jax="CHTML"] { white-space: nowrap; }',
+		);
+	});
+
+	it('relaxMathGlyphClipPaths：形态不符（点数≠4 / 非 padding-box）原样返回', async () => {
+		const { relaxMathGlyphClipPaths } = await loadModule();
+		const tri =
+			'mjx-c { clip-path: polygon(0 0, 100% 0, 100% 100%) padding-box; }';
+		expect(relaxMathGlyphClipPaths(tri)).toBe(tri);
+		const borderBox =
+			'mjx-c { clip-path: polygon(-1em -2px, calc(100% + 1em) -2px, calc(100% + 1em) calc(100% + 2px), -1em calc(100% + 2px)) border-box; }';
+		expect(relaxMathGlyphClipPaths(borderBox)).toBe(borderBox);
+	});
+
+	it('注入链同时放宽字形裁切窗（导出 style 内不再有 ±2px 纵向窗）', async () => {
+		vi.stubGlobal('document', {
+			getElementById: (id: string) =>
+				id === 'MJX-CHTML-styles'
+					? {
+							textContent:
+								'mjx-c { clip-path: polygon(-1em -2px, calc(100% + 1em) -2px, calc(100% + 1em) calc(100% + 2px), -1em calc(100% + 2px)) padding-box; }',
+						}
+					: null,
+		});
+		const appended: Array<{ tagName: string; textContent: string }> = [];
+		const svg = {
+			node: {
+				ownerDocument: {
+					win: {
+						createSvg: (tag: string) => ({ tagName: tag, textContent: '' }),
+					},
+				},
+				appendChild: (el: { tagName: string; textContent: string }) => {
+					appended.push(el);
+				},
+			},
+		};
+		const { injectMathStylesIntoExportSvg } = await loadModule();
+		injectMathStylesIntoExportSvg(svg);
+		expect(appended[0]?.textContent).toContain('calc(100% + 0.6em)');
+		expect(appended[0]?.textContent).not.toContain('-2px');
+	});
+
+	it('字体快照就绪：导出 style 内联 data URI 字体，未用到的族被剥离', async () => {
+		// 2026-10-23 A 方案：stretchy（矩阵竖线 / 根号 / 分式）只能用 MJX 字体，
+		// 导出上下文禁 app:// ⇒ 按需内联 data URI。裁剪依据 = 克隆里的 class token。
+		// 走**真实预取**（requestUrl 返回 3 字节 ⇒ base64 `QUFB`），不靠测试专用注入口。
+		vi.resetModules();
+		const mathJaxCss =
+			'@font-face { font-family: MJX-TEX-N; src: url("/lib/n.woff2"); }\n@font-face { font-family: MJX-TEX-SO; src: url("/lib/so.woff2"); }';
+		vi.stubGlobal('document', {
+			getElementById: (id: string) =>
+				id === 'MJX-CHTML-styles' ? { textContent: mathJaxCss } : null,
+		});
+		requestUrlMock.mockImplementation(async (request) => {
+			const hit = request.url.includes('/lib/n.woff2');
+			return {
+				status: hit ? 200 : 404,
+				// 65,65,65 = 'AAA' ⇒ btoa 得 `QUFB`
+				arrayBuffer: hit
+					? new Uint8Array([65, 65, 65]).buffer
+					: new ArrayBuffer(0),
+			};
+		});
+		const { injectMathStylesIntoExportSvg, primeExportMathFonts } = await import(
+			'../src/platform/math-jax'
+		);
+		expect(await primeExportMathFonts()).toBe(true);
+
+		const appended: Array<{ tagName: string; textContent: string }> = [];
+		const svg = {
+			node: {
+				ownerDocument: {
+					win: {
+						createSvg: (tag: string) => ({ tagName: tag, textContent: '' }),
+					},
+				},
+				appendChild: (el: { tagName: string; textContent: string }) => {
+					appended.push(el);
+				},
+				querySelectorAll: () => [{ getAttribute: () => 'TEX-N' }],
+			},
+		};
+		injectMathStylesIntoExportSvg(svg);
+		expect(appended[0]?.textContent).toContain('data:font/woff2;base64,QUFB');
+		expect(appended[0]?.textContent).not.toContain('/lib/so.woff2');
 	});
 
 	it('样式表存在：把剥离后的 CSS 追加为导出 SVG 的 style（原样返回入参）', async () => {

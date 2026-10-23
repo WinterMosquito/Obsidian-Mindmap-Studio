@@ -19,6 +19,16 @@ export class TFile {}
  * 真实语义（注入 MathJax 到主窗口）属交互行为，由各测试局部 vi.mock 覆写。
  */
 export async function loadMathJax(): Promise<void> {}
+
+/**
+ * 官方 HTTP 原语替身（platform/math-jax-fonts 读字体用）：
+ * 单测只测纯函数，预取路径不在覆盖面，故返回「空数组」即可（调用方会回退）。
+ */
+export async function requestUrl(
+	_request: unknown,
+): Promise<{ status: number; arrayBuffer: ArrayBuffer }> {
+	return { status: 404, arrayBuffer: new ArrayBuffer(0) };
+}
 /**
  * loadPrism 桩：仅保证模块图可链接（platform/prism-code 具名导入）。
  * 真实语义（把 Prism 注入 window）属交互行为，由 prism-code.test.ts 局部

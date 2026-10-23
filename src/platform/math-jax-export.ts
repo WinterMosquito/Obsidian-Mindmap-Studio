@@ -8,6 +8,8 @@
  */
 import { createWarnOnce } from '../core/errors';
 import { appendSvgStyle } from './export-svg-postprocess';
+import { relaxMathGlyphClipPaths } from './math-jax-export-clip';
+import { primeMathJaxFonts, withInlinedMathFonts } from './math-jax-fonts';
 
 /**
  * MathJax 注入的 CHTML 样式表元素 id（字形与 @font-face 的载体）。
@@ -68,6 +70,11 @@ export function stripFontFaceRules(css: string): string {
 	return css.replace(/@font-face[^{]*\{[^}]*\}/g, '');
 }
 
+// 字形裁切放宽已拆至 ./math-jax-export-clip（纯字符串改写、可直测）；
+// 此处导入后原样转发（`export … from` 不引入本地绑定，注入链仍需本地符号）。
+export { relaxMathGlyphClipPaths };
+
+
 /**
  * 导出 SVG 后处理（方案 B，用户确认）：把 MathJax CHTML 样式表
  * 注入克隆 SVG，使导出图中数学**可见**（此前为空白）。
@@ -82,6 +89,13 @@ export function stripFontFaceRules(css: string): string {
  * 本函数）。**不修改**屏上视图与导出源 DOM——只在克隆 SVG 末尾追加一个
  * `<style>`（SVG 允许 style 子元素；与引擎自带 style 并存）。
  *
+ * 注入前两步改写（均为纯字符串、顺序无关）：
+ * 1. 字体：快照就绪（`primeExportMathFonts` 已预取）→ **按需内联 data URI
+ *    @font-face**（`withInlinedMathFonts`，2026-10-23 A 方案）；未就绪 → 退回
+ *    `stripFontFaceRules` 剥离（导出上下文加载不了 `app://`）；
+ * 2. `relaxMathGlyphClipPaths`：放宽 `mjx-c` 纵向裁切窗（无字体时的兜底；
+ *    字体就位时无害）。
+ *
  * @returns 原样返回传入的 svg.js 元素对象（引擎要求）；无样式表或对象形态
  *   不符时**原样返回、不做任何修改**（安全 no-op）。
  */
@@ -94,8 +108,22 @@ export function injectMathStylesIntoExportSvg(svgElement: unknown): unknown {
 	if (!root || typeof root.appendChild !== 'function') {
 		return svgElement;
 	}
-	appendSvgStyle(root, stripFontFaceRules(css));
+	const inlined = withInlinedMathFonts(css, root);
+	appendSvgStyle(
+		root,
+		relaxMathGlyphClipPaths(inlined ?? stripFontFaceRules(css)),
+	);
 	return svgElement;
+}
+
+/**
+ * 导出前预取 MathJax 字体（入口是 async，可等）：导出钩子 `handleBeingExportSvg`
+ * 是**同步**的，字体缓存必须先就绪，否则那一次导出仍走无字体回退。
+ *
+ * 幂等、并发去重、失败不抛（返回 false，导出链自动回退）。
+ */
+export function primeExportMathFonts(): Promise<boolean> {
+	return primeMathJaxFonts(readMathJaxCss());
 }
 
 /** MathJax CHTML 产物根：定位按**标签名**（class 是 `MathJax`，类选择器不可靠） */

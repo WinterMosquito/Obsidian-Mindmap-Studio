@@ -121,6 +121,8 @@ import {
 export {
 	injectMathStylesIntoExportSvg,
 	pinMathContainerHeightsInExportSvg,
+	primeExportMathFonts,
+	relaxMathGlyphClipPaths,
 	stripFontFaceRules,
 } from './math-jax-export';
 

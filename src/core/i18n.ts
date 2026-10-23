@@ -50,24 +50,24 @@ const ZH = {
 	'toolbar.addChild': '添加子节点 (Tab)',
 	'toolbar.addSibling': '添加同级节点 (Enter)',
 	'toolbar.deleteNode': '删除节点 (Delete)',
-	'toolbar.undo': '撤销 (Ctrl+Z / Command+Z)',
-	'toolbar.redo': '重做 (Ctrl+Y / Command+Shift+Z)',
-	'toolbar.backToMarkdown': '切换回 Markdown',
-	'toolbar.undoShort': '撤销',
-	'toolbar.redoShort': '重做',
+	'toolbar.undo': '撤销',
+	'toolbar.redo': '重做',
+	'toolbar.backToMarkdown': '返回',
 	'toolbar.arrange': '自动整理',
 	'toolbar.search': '搜索节点 (Ctrl+F)',
 	'toolbar.searchPlaceholder': '搜索节点…',
 	'toolbar.insertLink': '添加链接',
 	'toolbar.insertImage': '添加图片',
-	'toolbar.layout': '布局：',
-	'toolbar.lineStyle': '连线：',
-	'toolbar.palette': '配色：',
-	'toolbar.themeStyle': '边框：',
+	'toolbar.layout': '布局',
+	'toolbar.lineStyle': '连线',
+	'toolbar.palette': '配色',
+	'toolbar.themeStyle': '边框',
 	'toolbar.zoomIn': '放大',
 	'toolbar.zoomOut': '缩小',
-	'toolbar.resetZoom': '重置缩放（100%）',
-	'toolbar.exportImage': '导出图片',
+	'toolbar.resetZoom': '重置',
+	'toolbar.exportImage': '导出',
+	'toolbar.tipFit': '总览',
+	'toolbar.tipArrange': '整理',
 
 	// ===== 右键菜单 =====
 	'menu.editText': '编辑文本',
@@ -181,45 +181,53 @@ const ZH = {
 	'modal.apply': '应用',
 
 	// ===== 设置 =====
-	'settings.title': '设置',
+	// 分组标题（面板按「基础 / 外观 / 文件与保存 / 导出」四段排布）
+	'settings.groupGeneral': '基础',
+	'settings.groupAppearance': '外观',
+	'settings.groupFile': '文件与保存',
+	'settings.groupExport': '交互与导出',
+	'settings.language': '语言',
+	'settings.languageDesc': '界面语言，切换后立即生效',
 	'settings.defaultLayout': '默认布局',
-	'settings.defaultLayoutDesc': '新建思维导图时使用的默认布局',
+	'settings.defaultLayoutDesc':
+		'新建导图时使用的布局\n单篇导图可在右键菜单的「布局」中随时切换',
 	'settings.defaultLineStyle': '默认连线样式',
-	'settings.defaultLineStyleDesc': '新建思维导图时使用的默认连线样式（折线 / 曲线；仅逻辑结构图/思维导图/组织结构图可切换）',
-	'settings.defaultTheme': '主题',
-	'settings.defaultThemeDesc':
-		'导图的明暗配色：跟随 Obsidian / 强制亮色 / 强制暗色',
+	'settings.defaultLineStyleDesc':
+		'新建导图时使用的连线样式\n仅逻辑结构图 / 思维导图 / 组织结构图可切换折线与曲线',
 	'settings.defaultThemeStyle': '默认边框样式',
 	'settings.defaultThemeStyleDesc':
-		'新建思维导图的边框样式（单篇导图可在顶栏「边框」随时切换）',
+		'新建导图的边框样式（有边框 / 无边框）\n单篇导图可用右侧竖栏的「边框」按钮随时切换',
+	'settings.defaultTheme': '主题',
+	'settings.defaultThemeDesc':
+		'导图的明暗配色\n跟随 Obsidian＝随宿主主题自动切换；强制亮/暗色可固定导图观感',
 	'settings.saveLocation': '新建导图的默认位置',
 	'settings.saveLocationDesc':
-		'新建思维导图时保存到哪个文件夹。「跟随 Obsidian 设置」＝使用官方「文件与链接 → 新建笔记的默认位置」',
+		'新建导图保存到哪个文件夹\n「跟随 Obsidian 设置」＝使用官方「文件与链接 → 新建笔记的默认位置」',
 	'settings.saveLocation.obsidian': '跟随 Obsidian 设置',
 	'settings.saveLocation.root': '仓库的根目录',
 	'settings.saveLocation.current': '当前文件所在的文件夹',
 	'settings.saveLocation.folder': '指定的文件夹',
 	'settings.saveFolder': '目标文件夹',
 	'settings.saveFolderDesc':
-		'「指定的文件夹」模式下新建导图的保存目录；文件夹不存在时保存到仓库的根目录',
+		'「指定的文件夹」模式下使用的目录\n文件夹不存在时保存到仓库根目录',
 	'settings.saveFolderPlaceholder': '文件夹路径',
 	'settings.autoSave': '自动保存',
-	'settings.autoSaveDesc': '编辑思维导图时自动保存到笔记',
-	'settings.enableDrag': '启用节点拖拽',
-	'settings.enableDragDesc': '允许拖拽节点改变层级和顺序',
-	'settings.exportScale': '导出图片倍率',
-	'settings.exportScaleDesc':
-		'导出 PNG 时的分辨率倍率（倍；越高越清晰，文件也越大；SVG 导出为矢量，不受倍率影响）',
-	'settings.exportImageFormat': '导出格式',
-	'settings.exportImageFormatDesc':
-		'导出图片时使用的格式（PNG 位图 / SVG 矢量；倍率设置仅作用于 PNG）',
-	'settings.exportFormat.png': 'PNG（位图）',
-	'settings.exportFormat.svg': 'SVG（矢量）',
+	'settings.autoSaveDesc':
+		'编辑导图时自动保存到当前笔记\n关闭后需手动 Ctrl/Cmd + S',
 	'settings.autoSplitMixedLinks': '自动拆分混排双链',
 	'settings.autoSplitMixedLinksDesc':
-		'默认关闭。开启后，被编辑的节点若含「双链 + 描述文字」，自动把文档/附件双链拆分为子节点（图片与外链不动）——这会改写文件结构；整篇批处理请用命令「拆分文档内全部混排双链」',
-	'settings.language': '语言',
-	'settings.languageDesc': '界面语言',
+		'被编辑的节点含「双链 + 描述文字」时，自动把双链拆为子节点\n只处理文档与附件双链（图片与外链不动）；会改写文件结构，默认关闭\n整篇处理请用命令「拆分文档内全部混排双链」',
+	'settings.enableDrag': '启用节点拖拽',
+	'settings.enableDragDesc':
+		'允许拖拽节点改变层级与顺序\n关闭后节点层级只能通过编辑文本调整',
+	'settings.exportScale': '导出图片倍率',
+	'settings.exportScaleDesc':
+		'导出 PNG 的分辨率倍率，越高越清晰、文件越大\nSVG 为矢量，不受此设置影响',
+	'settings.exportImageFormat': '导出格式',
+	'settings.exportImageFormatDesc':
+		'导出图片时使用的格式（PNG 位图 / SVG 矢量）\n倍率设置仅作用于 PNG',
+	'settings.exportFormat.png': 'PNG（位图）',
+	'settings.exportFormat.svg': 'SVG（矢量）',
 
 	// ===== 布局选项 =====
 	'layout.logical': '逻辑结构图',
@@ -320,24 +328,24 @@ const EN: Record<TranslationKey, string> = {
 	'toolbar.addChild': 'Add child node (Tab)',
 	'toolbar.addSibling': 'Add sibling node (Enter)',
 	'toolbar.deleteNode': 'Delete node (Delete)',
-	'toolbar.undo': 'Undo (Ctrl+Z / Command+Z)',
-	'toolbar.redo': 'Redo (Ctrl+Y / Command+Shift+Z)',
-	'toolbar.backToMarkdown': 'Switch to Markdown',
-	'toolbar.undoShort': 'Undo',
-	'toolbar.redoShort': 'Redo',
+	'toolbar.undo': 'Undo',
+	'toolbar.redo': 'Redo',
+	'toolbar.backToMarkdown': 'Back',
 	'toolbar.arrange': 'Auto arrange',
 	'toolbar.search': 'Search nodes (Ctrl+F)',
 	'toolbar.searchPlaceholder': 'Search nodes…',
 	'toolbar.insertLink': 'Add link',
 	'toolbar.insertImage': 'Add image',
-	'toolbar.layout': 'Layout: ',
-	'toolbar.lineStyle': 'Line style: ',
-	'toolbar.palette': 'Palette: ',
-	'toolbar.themeStyle': 'Border: ',
+	'toolbar.layout': 'Layout',
+	'toolbar.lineStyle': 'Line style',
+	'toolbar.palette': 'Palette',
+	'toolbar.themeStyle': 'Border',
 	'toolbar.zoomIn': 'Zoom in',
 	'toolbar.zoomOut': 'Zoom out',
-	'toolbar.resetZoom': 'Reset zoom (100%)',
-	'toolbar.exportImage': 'Export image',
+	'toolbar.resetZoom': 'Reset',
+	'toolbar.exportImage': 'Export',
+	'toolbar.tipFit': 'Fit',
+	'toolbar.tipArrange': 'Tidy',
 
 	// ===== 右键菜单 =====
 	'menu.editText': 'Edit text',
@@ -451,46 +459,52 @@ const EN: Record<TranslationKey, string> = {
 	'modal.apply': 'Apply',
 
 	// ===== 设置 =====
-	'settings.title': 'Settings',
+	'settings.groupGeneral': 'General',
+	'settings.groupAppearance': 'Appearance',
+	'settings.groupFile': 'Files and saving',
+	'settings.groupExport': 'Interaction and export',
+	'settings.language': 'Language',
+	'settings.languageDesc': 'UI language; applies immediately',
 	'settings.defaultLayout': 'Default layout',
-	'settings.defaultLayoutDesc': 'Default layout when creating a new mind map',
+	'settings.defaultLayoutDesc':
+		'Layout used when creating a mind map\nEach map can be switched from the "Layout" submenu of its right-click menu',
 	'settings.defaultLineStyle': 'Default line style',
-	'settings.defaultLineStyleDesc': 'Default connector style for new mind maps (Elbow / Curve; switchable only for Logical structure / Mind map / Organization chart)',
-	'settings.defaultTheme': 'Theme',
-	'settings.defaultThemeDesc':
-		'Light/dark palette for mind maps: follow Obsidian / force light / force dark',
+	'settings.defaultLineStyleDesc':
+		'Connector style used when creating a mind map\nElbow / Curve can only be switched for Logical structure, Mind map and Organization chart',
 	'settings.defaultThemeStyle': 'Default border style',
 	'settings.defaultThemeStyleDesc':
-		'Border style for new mind maps (each map can switch it anytime from the "Border" dropdown in the toolbar)',
+		'Border style for new mind maps (bordered / borderless)\nEach map can be switched with the "Border" button in its right-hand rail',
+	'settings.defaultTheme': 'Theme',
+	'settings.defaultThemeDesc':
+		'Light/dark palette for mind maps\nFollow Obsidian switches with the app theme; force light/dark keeps the map appearance fixed',
 	'settings.saveLocation': 'Default location for new mind maps',
 	'settings.saveLocationDesc':
-		'Where new mind maps are saved. "Follow Obsidian setting" uses Files and links → Default location for new notes',
+		'Which folder new mind maps are saved to\n"Follow Obsidian setting" uses Files and links → Default location for new notes',
 	'settings.saveLocation.obsidian': 'Follow Obsidian setting',
 	'settings.saveLocation.root': 'Vault root',
 	'settings.saveLocation.current': 'Same folder as current file',
 	'settings.saveLocation.folder': 'In the folder specified below',
 	'settings.saveFolder': 'Target folder',
 	'settings.saveFolderDesc':
-		'Folder for new mind maps in the "In the folder specified below" mode; if the folder does not exist, new mind maps are saved to the vault root',
+		'Folder used in the "In the folder specified below" mode\nIf it does not exist, new mind maps go to the vault root',
 	'settings.saveFolderPlaceholder': 'Folder path',
 	'settings.autoSave': 'Auto-save',
-	'settings.autoSaveDesc': 'Automatically save the mind map to the note while editing',
-	'settings.enableDrag': 'Enable node dragging',
-	'settings.enableDragDesc':
-		'Allow dragging nodes to change hierarchy and order',
-	'settings.exportScale': 'Export image scale',
-	'settings.exportScaleDesc':
-		'Resolution scale for PNG export (higher is sharper and the file is larger; SVG export is vector-based and unaffected)',
-	'settings.exportImageFormat': 'Export format',
-	'settings.exportImageFormatDesc':
-		'Format used when exporting images (PNG raster / SVG vector; the scale setting only affects PNG)',
-	'settings.exportFormat.png': 'PNG (raster)',
-	'settings.exportFormat.svg': 'SVG (vector)',
+	'settings.autoSaveDesc':
+		'Save the map to its note automatically while editing\nWhen off, use Ctrl/Cmd + S to save',
 	'settings.autoSplitMixedLinks': 'Auto-split mixed links',
 	'settings.autoSplitMixedLinksDesc':
-		'Off by default. When enabled, an edited node that mixes links with description text has its document/attachment links split into child nodes (images and external URLs are left untouched) — this rewrites the file structure; for a whole file use the command "Split all mixed links in document"',
-	'settings.language': 'Language',
-	'settings.languageDesc': 'UI language',
+		'When an edited node mixes links with description text, its links are split into child nodes\nOnly document and attachment links are handled (images and external URLs are untouched); this rewrites the file structure and is off by default\nUse the command "Split all mixed links in document" to process the whole file',
+	'settings.enableDrag': 'Enable node dragging',
+	'settings.enableDragDesc':
+		'Allow dragging nodes to change hierarchy and order\nWhen off, hierarchy can only be changed by editing text',
+	'settings.exportScale': 'Export image scale',
+	'settings.exportScaleDesc':
+		'Resolution scale for PNG export; higher is sharper and larger\nSVG is vector-based and unaffected',
+	'settings.exportImageFormat': 'Export format',
+	'settings.exportImageFormatDesc':
+		'Format used when exporting images (PNG raster / SVG vector)\nThe scale setting only affects PNG',
+	'settings.exportFormat.png': 'PNG (raster)',
+	'settings.exportFormat.svg': 'SVG (vector)',
 
 	// ===== 布局选项 =====
 	'layout.logical': 'Logical structure',

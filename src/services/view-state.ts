@@ -9,8 +9,8 @@
  * - layout: 布局类型（logicalStructure/mindMap/...）
  * - lineStyle: 连线样式偏好（auto/curve/direct/straight；auto＝随布局）
  * - palette: 配色（default/mint/amber/wisteria/forest/slate；**按文件记**，
- *   由导图顶栏切换——配色不是全局设置，见 `core/constants.PALETTE_OPTIONS`）
- * - themeStyle: 节点外观主题（default/borderless；**按文件记**，由导图顶栏切换——
+ *   由右键菜单「配色」切换——配色不是全局设置，见 `core/constants.PALETTE_OPTIONS`）
+ * - themeStyle: 节点外观主题（default/borderless；**按文件记**，由右栏「边框」开关切换——
  *   同样不是全局设置，见 `core/constants.THEME_STYLE_OPTIONS`）
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）
  */
@@ -20,8 +20,8 @@ import { VIEW_STATE_PERSIST_MS } from '../core/constants';
 export type PathState = Record<string, unknown>;
 
 /**
- * 按文件记的四项偏好键——既是 `viewState` 条目里的字段名，也是导图顶栏的
- * 四个维度（布局 / 连线 / 配色 / 边框）。命名与字段一一对应，勿再起别名。
+ * 按文件记的四项偏好键——既是 `viewState` 条目里的字段名，也是外观四项
+ * （布局 / 连线 / 配色 / 边框）的键。命名与字段一一对应，勿再起别名。
  */
 export type PreferenceKey = 'layout' | 'lineStyle' | 'palette' | 'themeStyle';
 
@@ -170,7 +170,7 @@ export class ViewStateStore {
 		return typeof value === 'string' ? value : undefined;
 	}
 
-	/** 写入某项「按文件偏好」（顶栏切换后调用；与 `view` 字段共用 `patch` 合并语义） */
+	/** 写入某项「按文件偏好」（外观入口切换后调用；与 `view` 字段共用 `patch` 合并语义） */
 	setPreference(path: string, key: PreferenceKey, value: string): void {
 		this.patch(path, { [key]: value });
 	}
@@ -192,7 +192,7 @@ export class ViewStateStore {
 		this.setPreference(path, 'lineStyle', value);
 	}
 
-	/** 配色（按文件）：顶栏切换后写入，未设置时由视图回落 `DEFAULT_PALETTE` */
+	/** 配色（按文件）：右键菜单切换后写入，未设置时由视图回落 `DEFAULT_PALETTE` */
 	getPalette(path: string): string | undefined {
 		return this.getPreference(path, 'palette');
 	}
@@ -201,7 +201,7 @@ export class ViewStateStore {
 		this.setPreference(path, 'palette', value);
 	}
 
-	/** 节点外观主题（按文件）：顶栏切换后写入，未设置时回落 `DEFAULT_THEME_STYLE` */
+	/** 节点外观主题（按文件）：右栏「边框」开关切换后写入，未设置时回落 `DEFAULT_THEME_STYLE` */
 	getThemeStyle(path: string): string | undefined {
 		return this.getPreference(path, 'themeStyle');
 	}

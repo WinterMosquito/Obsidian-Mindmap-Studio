@@ -1,37 +1,30 @@
 /**
- * view-toolbar 回归测试：工具栏按钮装配、命令接线与布局选择器。
+ * view-toolbar 回归测试：右缘图标栈的装配与接线。
+ *
+ * 2026-10-22 第三版排布（对齐 Obsidian Canvas 右栏）：屏上只剩**纯动作**，四组自上而下
+ * - 组 1 文档：返回 Markdown / 导出图片
+ * - 组 2 外观：边框 / 连线（状态开关）
+ * - 组 3 视图：放大 / 重置缩放 / 总览全局 / 整理 / 缩小
+ * - 组 4 历史：撤销 / 重做
  *
  * 覆盖：
- * - 分组结构与按钮顺序（左：编辑/插入；中：布局；右：画布/导入导出），
- *   右侧顺序为「重置缩放 → 适应画布 → 放大 → 缩小 → 导出图片」；
- * - 每个按钮的 onclick 真的接到了对应动作上（引擎命令常量、节点操作、
- *   搜索栏、导出、缩放收口函数），并用 aria-label 校验无障碍标签；
- * - md 文档模式（.mindmap.md）多出「切换回 Markdown」入口 + 分隔符；
- * - 布局选择器：六项布局、初始值取设置里的 defaultLayout、变更走 applyLayout；
- * - arrangeMindMap 的三种分支（未加载 / 整理成功 / 整理失败）提示文案；
- * - refreshToolbar 清空后重建。
+ * - 四组的 DOM 结构与按钮顺序、图标接线、无障碍标签（官方 setTooltip 写 aria-label）；
+ * - 每个按钮的 onclick 真的接到对应动作（引擎命令、导出、缩放收口函数、fitToScreen）；
+ * - **反向断言**：外观四项（布局/连线/配色/边框）与节点级动作**都不在屏上**
+ *   —— 前者在节点右键的二级菜单、后者一直在右键菜单，防止有人把它们加回屏幕；
+ * - arrangeMindMap 三种分支的提示文案；
+ * - refreshToolbar 清空后重建、语言切换后 tooltip 跟随。
  *
- * 隔离策略：引擎面（../src/engine/mindmap）、同级特性模块（view-search / view-export /
- * view-node-actions）与 obsidian 的 setIcon、Notice 全部用 vi.mock 替换；setTooltip
- * 走全局 mock 的最小实现（写 aria-label）——本测试只验证工具栏自身的装配与接线，
- * 不触碰 vendor bundle（避免加载引擎）。
+ * 隔离策略：引擎面（../src/engine/mindmap）、同级模块（view-search / view-export）与
+ * obsidian 的 setIcon、Notice 全部 vi.mock；本文件不触碰 vendor bundle。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import {
-	DEFAULT_PALETTE,
-	DEFAULT_THEME_STYLE,
-	LAYOUT_OPTIONS,
-	LINE_STYLE_OPTIONS,
-	PALETTE_OPTIONS,
-	THEME_STYLE_OPTIONS,
-} from '../src/core/constants';
 import { t } from '../src/core/i18n';
 import {
 	arrangeMindMap,
 	buildToolbar,
 	refreshToolbar,
-	syncLineStyleOptions,
 } from '../src/features/view-toolbar';
 import type { MindMapViewContext } from '../src/features/view-context';
 
@@ -41,21 +34,16 @@ const engineMocks = vi.hoisted(() => ({
 	resetZoom: vi.fn<(mindMap: unknown) => void>(),
 	zoomInMindMap: vi.fn<(mindMap: unknown) => void>(),
 	zoomOutMindMap: vi.fn<(mindMap: unknown) => void>(),
-	// 按真实语义桩化（真值由 mindmap-theme.test.ts 锁定）：三态布局为真、固定直线布局为假
-	supportsLineStyleSwitch: vi.fn<(layout: string) => boolean>(
-		(layout) =>
-			layout === 'logicalStructure' ||
-			layout === 'mindMap' ||
-			layout === 'organizationStructure',
+	// 与真实语义一致（真值由 mindmap-theme.test.ts 锁定）：三态布局可切连线
+	supportsLineStyleSwitch: vi.fn<(layout: string) => boolean>((layout) =>
+		layout === 'logicalStructure' ||
+		layout === 'mindMap' ||
+		layout === 'organizationStructure',
 	),
 }));
 
 const siblingMocks = vi.hoisted(() => ({
-	openSearchBar: vi.fn<(view: unknown) => void>(),
 	exportImage: vi.fn<(view: unknown) => Promise<void>>(),
-	addLinkToActiveNode: vi.fn<(view: unknown) => Promise<void>>(),
-	addImageToActiveNode: vi.fn<(view: unknown) => Promise<void>>(),
-	deleteActiveNode: vi.fn<(view: unknown) => void>(),
 }));
 
 const setIconMock = vi.hoisted(() =>
@@ -82,13 +70,6 @@ vi.mock('../src/engine/mindmap', () => ({
 	ENGINE_COMMANDS: {
 		BACK: 'BACK',
 		FORWARD: 'FORWARD',
-		INSERT_CHILD_NODE: 'INSERT_CHILD_NODE',
-		INSERT_NODE: 'INSERT_NODE',
-		REMOVE_NODE: 'REMOVE_NODE',
-		RESET_LAYOUT: 'RESET_LAYOUT',
-		SET_NODE_DATA: 'SET_NODE_DATA',
-		SET_NODE_HYPERLINK: 'SET_NODE_HYPERLINK',
-		SET_NODE_IMAGE: 'SET_NODE_IMAGE',
 	},
 	arrangeMindMap: engineMocks.arrangeMindMap,
 	fitMindMap: engineMocks.fitMindMap,
@@ -100,18 +81,8 @@ vi.mock('../src/engine/mindmap', () => ({
 	supportsLineStyleSwitch: engineMocks.supportsLineStyleSwitch,
 }));
 
-vi.mock('../src/features/view-search', () => ({
-	openSearchBar: siblingMocks.openSearchBar,
-}));
-
 vi.mock('../src/features/view-export', () => ({
 	exportImage: siblingMocks.exportImage,
-}));
-
-vi.mock('../src/features/view-node-actions', () => ({
-	addImageToActiveNode: siblingMocks.addImageToActiveNode,
-	addLinkToActiveNode: siblingMocks.addLinkToActiveNode,
-	deleteActiveNode: siblingMocks.deleteActiveNode,
 }));
 
 interface FakeElInit {
@@ -138,7 +109,6 @@ class FakeEl {
 		this.attr = { ...(init.attr ?? {}) };
 	}
 
-	/** 当前文本（末次 setText） */
 	get text(): string {
 		return this.texts[this.texts.length - 1] ?? '';
 	}
@@ -155,7 +125,6 @@ class FakeEl {
 		return child;
 	}
 
-	/** 模块按 Obsidian 真实签名调用 createSpan('mindmap-toolbar-label') */
 	createSpan(cls?: string): FakeEl {
 		const child = new FakeEl('span', cls === undefined ? {} : { cls });
 		this.children.push(child);
@@ -164,6 +133,13 @@ class FakeEl {
 
 	setText(text: string): void {
 		this.texts.push(text);
+	}
+
+	/** 按钮置灰时会加类（官方 Element.addClass） */
+	addClass(cls: string): void {
+		if (!this.classes.includes(cls)) {
+			this.classes.push(cls);
+		}
 	}
 
 	/** 官方 setTooltip 桩（全局 mock）经此写入 aria-label */
@@ -177,7 +153,6 @@ class FakeEl {
 	}
 }
 
-/** 引擎 execCommand 的 spy：显式标注参数类型，避免 mock.calls 退化成 any */
 type ExecCommandMock = ReturnType<
 	typeof vi.fn<(command: string, ...args: unknown[]) => void>
 >;
@@ -187,27 +162,50 @@ interface Harness {
 	readonly toolbarEl: FakeEl;
 	readonly mindMap: MindMap;
 	readonly execCommand: ExecCommandMock;
-	readonly applyLayout: ReturnType<typeof vi.fn>;
-	readonly applyLineStyle: ReturnType<typeof vi.fn>;
 	readonly backToMarkdown: ReturnType<typeof vi.fn>;
+	readonly applyLineStyle: ReturnType<typeof vi.fn>;
+	readonly applyThemeStyle: ReturnType<typeof vi.fn>;
+	/** 改写 `resolvePreference('layout')` 的返回值（模拟「建栏时只有默认布局、之后才拿到文件值」） */
+	readonly setLayout: (layout: string) => void;
 }
 
-/** 构造视图桩（每次新建：工具栏在 toolbarEl 上建 DOM，语言可配） */
-function makeView(options: { withToolbar?: boolean } = {}): Harness {
+/** 构造视图桩（每次新建：工具栏在 toolbarEl 上建 DOM，语言与外观状态可配） */
+function makeView(
+	options: {
+		withToolbar?: boolean;
+		layout?: string;
+		lineStyle?: string;
+		themeStyle?: string;
+	} = {},
+): Harness {
 	const toolbarEl = new FakeEl('div');
 	const execCommand = vi.fn<(command: string, ...args: unknown[]) => void>();
-	const applyLayout = vi.fn();
-	const applyLineStyle = vi.fn();
-	const backToMarkdown = vi.fn();
 	const mindMap = { execCommand } as unknown as MindMap;
+	const backToMarkdown = vi.fn();
+	// 外观状态：apply* 真的改它，resolvePreference 真的读它——这样「点击后图标跟着变」才可断言
+	const appearance = {
+		layout: options.layout ?? 'logicalStructure',
+		lineStyle: options.lineStyle ?? 'straight',
+		themeStyle: options.themeStyle ?? 'default',
+		palette: 'default',
+	};
+	const applyLineStyle = vi.fn((value: string) => {
+		appearance.lineStyle = value;
+	});
+	const applyThemeStyle = vi.fn((value: string) => {
+		appearance.themeStyle = value;
+	});
 	const view = {
 		toolbarEl:
-			options.withToolbar === false ? null : (toolbarEl as unknown as HTMLElement),
+			options.withToolbar === false
+				? null
+				: (toolbarEl as unknown as HTMLElement),
 		lang: 'zh',
 		mindMap,
 		backToMarkdown,
-		applyLayout,
 		applyLineStyle,
+		applyThemeStyle,
+		resolvePreference: (key: keyof typeof appearance): string => appearance[key],
 		plugin: {
 			settings: { defaultLayout: 'mindMap', defaultLineStyle: 'straight' },
 		},
@@ -217,19 +215,31 @@ function makeView(options: { withToolbar?: boolean } = {}): Harness {
 		toolbarEl,
 		mindMap,
 		execCommand,
-		applyLayout,
-		applyLineStyle,
 		backToMarkdown,
+		applyLineStyle,
+		applyThemeStyle,
+		setLayout: (layout: string): void => {
+			appearance.layout = layout;
+		},
 	};
 }
 
-/** 按类名取分组（左 / 中 / 右） */
-function groupOf(toolbarEl: FakeEl, marker: string): FakeEl {
-	const group = toolbarEl.children.find((child) =>
-		child.classes.includes(marker),
+/** 右缘图标栈（.mindmap-hud--rail） */
+function railOf(toolbarEl: FakeEl): FakeEl {
+	const rail = toolbarEl.children.find((child) =>
+		child.classes.includes('mindmap-hud--rail'),
 	);
+	if (!rail) {
+		throw new Error('未找到右缘图标栈 .mindmap-hud--rail');
+	}
+	return rail;
+}
+
+/** 第 n 组（自上而下，从 0 起） */
+function groupOf(rail: FakeEl, index: number): FakeEl {
+	const group = rail.children[index];
 	if (!group) {
-		throw new Error(`未找到工具栏分组 ${marker}`);
+		throw new Error(`未找到第 ${index} 组`);
 	}
 	return group;
 }
@@ -238,7 +248,7 @@ function buttonsOf(group: FakeEl): FakeEl[] {
 	return group.children.filter((child) => child.tag === 'button');
 }
 
-/** 按 tooltip 取按钮（官方 setTooltip 写入 aria-label）；缺失即失败（按钮未装配或文案变了） */
+/** 按 tooltip 取按钮（官方 setTooltip 写入 aria-label） */
 function buttonByTooltip(group: FakeEl, tooltip: string): FakeEl {
 	const button = buttonsOf(group).find(
 		(child) => child.attr['aria-label'] === tooltip,
@@ -261,465 +271,309 @@ function clickButton(button: FakeEl): void {
 beforeEach(() => {
 	vi.resetAllMocks();
 	siblingMocks.exportImage.mockResolvedValue(undefined);
-	siblingMocks.addLinkToActiveNode.mockResolvedValue(undefined);
-	siblingMocks.addImageToActiveNode.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
 	vi.useRealTimers();
 });
 
-describe('buildToolbar（装配与分组结构）', () => {
+describe('buildToolbar（右缘四组结构）', () => {
 	it('toolbarEl 缺失：静默返回（不建 DOM、不设图标）', () => {
 		const h = makeView({ withToolbar: false });
 		expect(() => buildToolbar(h.view)).not.toThrow();
 		expect(setIconMock).not.toHaveBeenCalled();
 	});
 
-	it('左侧按钮序列（含三个分隔符）：返回入口 + 编辑/插入组', () => {
+	it('只有一个根：右缘图标栈；栈内恰好四组', () => {
 		const h = makeView();
 		buildToolbar(h.view);
-		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
 
-		// 结构：返回按钮 → 分隔符 → 按钮×3 → 分隔符 → 按钮×3 → 分隔符 → 按钮×3
-		expect(left.children.map((child) => child.tag)).toEqual([
-			'button',
-			'div',
-			'button',
-			'button',
-			'button',
-			'div',
-			'button',
-			'button',
-			'button',
-			'div',
-			'button',
-			'button',
-			'button',
-		]);
-		expect(
-			buttonsOf(left).map((button) => button.attr['aria-label']),
-		).toEqual([
+		expect(h.toolbarEl.children).toHaveLength(1);
+		const rail = railOf(h.toolbarEl);
+		expect(rail.children).toHaveLength(4);
+		for (const group of rail.children) {
+			expect(group.classes).toContain('mindmap-hud-group');
+		}
+	});
+
+	it('组 1 文档：返回 Markdown → 导出图片', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const group = groupOf(railOf(h.toolbarEl), 0);
+
+		expect(buttonsOf(group).map((b) => b.attr['aria-label'])).toEqual([
 			t('zh', 'toolbar.backToMarkdown'),
-			t('zh', 'toolbar.addChild'),
-			t('zh', 'toolbar.addSibling'),
-			t('zh', 'toolbar.deleteNode'),
-			t('zh', 'toolbar.undo'),
-			t('zh', 'toolbar.redo'),
-			t('zh', 'toolbar.arrange'),
-			t('zh', 'toolbar.search'),
-			t('zh', 'toolbar.insertLink'),
-			t('zh', 'toolbar.insertImage'),
+			t('zh', 'toolbar.exportImage'),
 		]);
-		// 无障碍标签由官方 setTooltip 写入 aria-label；不再手写 `title`
-		// （浏览器原生提示会与官方 tooltip 双显）
-		expect(
-			buttonsOf(left).every(
-				(button) =>
-					(button.attr['aria-label'] ?? '') !== '' &&
-					!('title' in button.attr),
-			),
-		).toBe(true);
-		// 图标按按钮顺序接线（左组先于中/右组构建，故取前 10 次 setIcon 调用）
-		expect(setIconMock.mock.calls.slice(0, 10).map((call) => call[1])).toEqual([
+		expect(setIconMock.mock.calls.slice(0, 2).map((call) => call[1])).toEqual([
 			'file-text',
-			'plus',
-			'circle-plus',
-			'trash-2',
-			'undo',
-			'redo',
-			'sparkles',
-			'search',
-			'link',
 			'image',
 		]);
 	});
 
-	it('「切换回 Markdown」恒在左组首位（任何 md 都可用），点击委托视图', () => {
+	it('组 2 外观：边框 / 连线（只有图标，图标＝当前状态）', () => {
 		const h = makeView();
 		buildToolbar(h.view);
-		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
+		const group = groupOf(railOf(h.toolbarEl), 1);
 
-		const backButton = buttonByTooltip(left, t('zh', 'toolbar.backToMarkdown'));
-		expect(buttonsOf(left)[0]).toBe(backButton);
-		clickButton(backButton);
-		expect(h.backToMarkdown).toHaveBeenCalledTimes(1);
+		expect(buttonsOf(group)).toHaveLength(2);
+		// 屏上不摆文字：按钮内除 svg（setIcon 已 mock，不产生子元素）外无内容
+		expect(buttonsOf(group).every((b) => b.children.length === 0)).toBe(true);
+		// 图标随状态：有边框 square / 折线 route
+		expect(setIconMock.mock.calls.slice(2, 4).map((call) => call[1])).toEqual([
+			'square',
+			'slash',
+		]);
+	});
+
+	it('组 3 视图：放大 → 重置缩放 → 总览全局 → 整理 → 缩小（对齐 Canvas 右栏）', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const group = groupOf(railOf(h.toolbarEl), 2);
+
+		expect(buttonsOf(group).map((b) => b.attr['aria-label'])).toEqual([
+			t('zh', 'toolbar.zoomIn'),
+			t('zh', 'toolbar.resetZoom'),
+			t('zh', 'toolbar.tipFit'),
+			t('zh', 'toolbar.tipArrange'),
+			t('zh', 'toolbar.zoomOut'),
+		]);
+		// 整理夹在「总览」与「缩小」之间（用户 2026-10-23 指定），图标与右键菜单的
+		// 「自动整理」同枚 `sparkles`——同一动作不换图标
+		expect(setIconMock.mock.calls.slice(4, 9).map((call) => call[1])).toEqual([
+			'zoom-in',
+			'rotate-ccw',
+			'maximize',
+			'sparkles',
+			'zoom-out',
+		]);
+	});
+
+	it('组 4 历史：撤销 → 重做', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const group = groupOf(railOf(h.toolbarEl), 3);
+
+		expect(buttonsOf(group).map((b) => b.attr['aria-label'])).toEqual([
+			t('zh', 'toolbar.undo'),
+			t('zh', 'toolbar.redo'),
+		]);
+		expect(setIconMock.mock.calls.slice(9).map((call) => call[1])).toEqual([
+			'undo',
+			'redo',
+		]);
+	});
+
+	it('屏上只有 11 个按钮；外观下拉与节点级动作**都不在屏上**', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const labels = railOf(h.toolbarEl).children.flatMap((group) =>
+			buttonsOf(group).map((button) => button.attr['aria-label']),
+		);
+
+		expect(labels).toHaveLength(11);
+		// 布局 / 配色只在右键菜单（view-context-menu）；连线 / 边框是屏上开关
+		expect(labels).not.toContain(t('zh', 'toolbar.layout'));
+		expect(labels).not.toContain(t('zh', 'toolbar.palette'));
+		expect(labels).toContain(t('zh', 'toolbar.lineStyle'));
+		expect(labels).toContain(t('zh', 'toolbar.themeStyle'));
+		// 节点级动作：一直在右键菜单，屏上不重复
+		expect(labels).not.toContain(t('zh', 'toolbar.addChild'));
+		expect(labels).not.toContain(t('zh', 'toolbar.deleteNode'));
+		expect(labels).not.toContain(t('zh', 'toolbar.insertLink'));
+		expect(labels).not.toContain(t('zh', 'toolbar.insertImage'));
 	});
 });
 
-describe('buildToolbar（左侧按钮的动作接线）', () => {
-	it('节点增删：添加子节点/同级节点走引擎命令，删除委托 view-node-actions', () => {
+describe('buildToolbar（按钮动作接线）', () => {
+	it('文档组：返回委托视图，导出走 exportImage', () => {
 		const h = makeView();
 		buildToolbar(h.view);
-		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
+		const group = groupOf(railOf(h.toolbarEl), 0);
 
-		clickButton(buttonByTooltip(left, t('zh', 'toolbar.addChild')));
-		clickButton(buttonByTooltip(left, t('zh', 'toolbar.addSibling')));
-		clickButton(buttonByTooltip(left, t('zh', 'toolbar.deleteNode')));
-
-		expect(h.execCommand.mock.calls.map((call) => call[0])).toEqual([
-			'INSERT_CHILD_NODE',
-			'INSERT_NODE',
-		]);
-		// 删除走节点操作编排（含中心节点兜底提示），不直接 execCommand
-		expect(siblingMocks.deleteActiveNode).toHaveBeenCalledWith(h.view);
+		clickButton(buttonByTooltip(group, t('zh', 'toolbar.backToMarkdown')));
+		clickButton(buttonByTooltip(group, t('zh', 'toolbar.exportImage')));
+		expect(h.backToMarkdown).toHaveBeenCalledTimes(1);
+		expect(siblingMocks.exportImage).toHaveBeenCalledWith(h.view);
 	});
 
-	it('撤销/重做：接 BACK / FORWARD 命令', () => {
+	it('视图组：放大/重置/总览/整理/缩小 各走自己的收口函数', () => {
 		const h = makeView();
 		buildToolbar(h.view);
-		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
+		const group = groupOf(railOf(h.toolbarEl), 2);
 
-		clickButton(buttonByTooltip(left, t('zh', 'toolbar.undo')));
-		clickButton(buttonByTooltip(left, t('zh', 'toolbar.redo')));
+		clickButton(buttonByTooltip(group, t('zh', 'toolbar.zoomIn')));
+		clickButton(buttonByTooltip(group, t('zh', 'toolbar.resetZoom')));
+		clickButton(buttonByTooltip(group, t('zh', 'toolbar.tipFit')));
+		// 整理复用右键菜单那条 `arrangeMindMap`（同一动作只有一个实现）：受理 ⇒ 提示 done
+		engineMocks.arrangeMindMap.mockReturnValueOnce(true);
+		clickButton(buttonByTooltip(group, t('zh', 'toolbar.tipArrange')));
+		clickButton(buttonByTooltip(group, t('zh', 'toolbar.zoomOut')));
 
+		expect(engineMocks.zoomInMindMap).toHaveBeenCalledWith(h.mindMap);
+		expect(engineMocks.resetZoom).toHaveBeenCalledWith(h.mindMap);
+		expect(engineMocks.fitMindMap).toHaveBeenCalledWith(h.mindMap);
+		expect(engineMocks.arrangeMindMap).toHaveBeenCalledWith(h.mindMap);
+		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.arrangeDone'));
+		expect(engineMocks.zoomOutMindMap).toHaveBeenCalledWith(h.mindMap);
+	});
+
+	it('历史组：撤销/重做接 BACK / FORWARD 命令', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const group = groupOf(railOf(h.toolbarEl), 3);
+
+		clickButton(buttonByTooltip(group, t('zh', 'toolbar.undo')));
+		clickButton(buttonByTooltip(group, t('zh', 'toolbar.redo')));
 		expect(h.execCommand.mock.calls.map((call) => call[0])).toEqual([
 			'BACK',
 			'FORWARD',
 		]);
 	});
-
-	it('搜索 / 链接 / 图片：分别委托 openSearchBar、addLinkToActiveNode、addImageToActiveNode', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
-
-		clickButton(buttonByTooltip(left, t('zh', 'toolbar.search')));
-		expect(siblingMocks.openSearchBar).toHaveBeenCalledWith(h.view);
-
-		clickButton(buttonByTooltip(left, t('zh', 'toolbar.insertLink')));
-		expect(siblingMocks.addLinkToActiveNode).toHaveBeenCalledWith(h.view);
-
-		clickButton(buttonByTooltip(left, t('zh', 'toolbar.insertImage')));
-		expect(siblingMocks.addImageToActiveNode).toHaveBeenCalledWith(h.view);
-	});
-
-	it('自动整理按钮：提示「已整理思维导图」（引擎返回 true）', () => {
-		const h = makeView();
-		engineMocks.arrangeMindMap.mockReturnValue(true);
-		buildToolbar(h.view);
-		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
-
-		clickButton(buttonByTooltip(left, t('zh', 'toolbar.arrange')));
-
-		expect(engineMocks.arrangeMindMap).toHaveBeenCalledWith(h.mindMap);
-		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.arrangeDone'));
-	});
-});
-
-describe('buildToolbar（右侧画布/导出按钮顺序与接线）', () => {
-	it('顺序：重置缩放 → 适应画布 → 放大 → 缩小 → 分隔符 → 导出 PNG', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
-
-		expect(right.children.map((child) => child.tag)).toEqual([
-			'button',
-			'button',
-			'button',
-			'button',
-			'div',
-			'button',
-		]);
-		expect(buttonsOf(right).map((button) => button.attr['aria-label'])).toEqual([
-			t('zh', 'toolbar.resetZoom'),
-			t('zh', 'command.fitCanvas'),
-			t('zh', 'toolbar.zoomIn'),
-			t('zh', 'toolbar.zoomOut'),
-			t('zh', 'toolbar.exportImage'),
-		]);
-		// 右组最后构建：取末尾 5 次 setIcon 调用，验证顺序与按钮一一对应
-		expect(setIconMock.mock.calls.slice(-5).map((call) => call[1])).toEqual([
-			'rotate-ccw',
-			'maximize',
-			'zoom-in',
-			'zoom-out',
-			'image',
-		]);
-	});
-
-	it('重置缩放 → resetZoom(mindMap)（以画布中心为锚点回到 100%）', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
-
-		clickButton(buttonByTooltip(right, t('zh', 'toolbar.resetZoom')));
-
-		expect(engineMocks.resetZoom).toHaveBeenCalledTimes(1);
-		expect(engineMocks.resetZoom).toHaveBeenCalledWith(h.mindMap);
-	});
-
-	it('适应画布 / 放大 / 缩小 → fitMindMap / zoomInMindMap / zoomOutMindMap', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
-
-		clickButton(buttonByTooltip(right, t('zh', 'command.fitCanvas')));
-		clickButton(buttonByTooltip(right, t('zh', 'toolbar.zoomIn')));
-		clickButton(buttonByTooltip(right, t('zh', 'toolbar.zoomOut')));
-
-		expect(engineMocks.fitMindMap).toHaveBeenCalledWith(h.mindMap);
-		expect(engineMocks.zoomInMindMap).toHaveBeenCalledWith(h.mindMap);
-		expect(engineMocks.zoomOutMindMap).toHaveBeenCalledWith(h.mindMap);
-		// 三者互不串线
-		expect(engineMocks.fitMindMap).toHaveBeenCalledTimes(1);
-		expect(engineMocks.resetZoom).not.toHaveBeenCalled();
-	});
-
-	it('导出图片 → exportImage(view)', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
-
-		clickButton(buttonByTooltip(right, t('zh', 'toolbar.exportImage')));
-
-		expect(siblingMocks.exportImage).toHaveBeenCalledWith(h.view);
-	});
-});
-
-describe('buildToolbar（布局选择器）', () => {
-	it('居中分组：标签文案 + select 类名 + 六项布局（值与文案对应 LAYOUT_OPTIONS）', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const center = groupOf(h.toolbarEl, 'mindmap-toolbar-center');
-
-		const label = center.children.find((child) => child.tag === 'span');
-		expect(label?.text).toBe(t('zh', 'toolbar.layout'));
-
-		const select = h.view.layoutSelect;
-		expect(select).not.toBeNull();
-		expect((select as unknown as FakeEl).classes).toEqual([
-			'mindmap-layout-select',
-		]);
-
-		const options = (select as unknown as FakeEl).children.filter(
-			(child) => child.tag === 'option',
-		);
-		expect(options).toHaveLength(LAYOUT_OPTIONS.length);
-		expect(options.map((option) => option.value)).toEqual(
-			LAYOUT_OPTIONS.map((option) => option.value),
-		);
-		expect(options.map((option) => option.text)).toEqual(
-			LAYOUT_OPTIONS.map((option) => t('zh', option.label)),
-		);
-	});
-
-	it('初始值取插件设置 defaultLayout，变更时调 applyLayout(当前值)', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const select = h.view.layoutSelect as unknown as FakeEl;
-
-		expect(select.value).toBe('mindMap'); // plugin.settings.defaultLayout
-		expect(select.onchange).toBeTypeOf('function');
-
-		select.value = 'fishbone';
-		select.onchange?.();
-		expect(h.applyLayout).toHaveBeenCalledWith('fishbone');
-		expect(h.applyLayout).toHaveBeenCalledTimes(1);
-	});
-});
-
-describe('buildToolbar（连线样式选择器）', () => {
-	it('居中分组：布局 / 连线 / 配色 / 主题四个标签 + 三个分隔符 + 各项选项（值对应选项表）', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const center = groupOf(h.toolbarEl, 'mindmap-toolbar-center');
-
-		const labels = center.children.filter((child) => child.tag === 'span');
-		expect(labels.map((label) => label.text)).toEqual([
-			t('zh', 'toolbar.layout'),
-			t('zh', 'toolbar.lineStyle'),
-			t('zh', 'toolbar.palette'),
-			t('zh', 'toolbar.themeStyle'),
-		]);
-		expect(
-			center.children.filter((child) =>
-				child.classes.includes('mindmap-toolbar-separator'),
-			),
-		).toHaveLength(3);
-
-		const select = h.view.lineStyleSelect;
-		expect(select).not.toBeNull();
-		expect((select as unknown as FakeEl).classes).toEqual([
-			'mindmap-line-style-select',
-		]);
-
-		const options = (select as unknown as FakeEl).children.filter(
-			(child) => child.tag === 'option',
-		);
-		expect(options).toHaveLength(LINE_STYLE_OPTIONS.length);
-		expect(options.map((option) => option.value)).toEqual(
-			LINE_STYLE_OPTIONS.map((option) => option.value),
-		);
-		expect(options.map((option) => option.text)).toEqual(
-			LINE_STYLE_OPTIONS.map((option) => t('zh', option.label)),
-		);
-
-		// 配色下拉：六项（首项「默认」）、初始落 DEFAULT_PALETTE、变更走 applyPalette
-		const paletteSelect = h.view.paletteSelect;
-		expect(paletteSelect).not.toBeNull();
-		expect((paletteSelect as unknown as FakeEl).classes).toEqual([
-			'mindmap-palette-select',
-		]);
-		const paletteOptions = (paletteSelect as unknown as FakeEl).children.filter(
-			(child) => child.tag === 'option',
-		);
-		expect(paletteOptions.map((option) => option.value)).toEqual(
-			PALETTE_OPTIONS.map((option) => option.value),
-		);
-		expect(paletteOptions.map((option) => option.text)).toEqual(
-			PALETTE_OPTIONS.map((option) => t('zh', option.label)),
-		);
-		expect((paletteSelect as unknown as FakeEl).value).toBe(DEFAULT_PALETTE);
-
-		// 主题下拉（节点外观）：从全局设置移到顶栏后的落点
-		const themeSelect = h.view.themeSelect;
-		expect(themeSelect).not.toBeNull();
-		expect((themeSelect as unknown as FakeEl).classes).toEqual([
-			'mindmap-theme-select',
-		]);
-		const themeOptions = (themeSelect as unknown as FakeEl).children.filter(
-			(child) => child.tag === 'option',
-		);
-		expect(themeOptions.map((option) => option.value)).toEqual(
-			THEME_STYLE_OPTIONS.map((option) => option.value),
-		);
-		expect((themeSelect as unknown as FakeEl).value).toBe(DEFAULT_THEME_STYLE);
-	});
-
-	it('初始值取插件设置 defaultLineStyle，变更时调 applyLineStyle(当前值)', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const select = h.view.lineStyleSelect as unknown as FakeEl;
-
-		expect(select.value).toBe('straight'); // plugin.settings.defaultLineStyle
-		expect(select.onchange).toBeTypeOf('function');
-
-		select.value = 'curve';
-		select.onchange?.();
-		expect(h.applyLineStyle).toHaveBeenCalledWith('curve');
-		expect(h.applyLineStyle).toHaveBeenCalledTimes(1);
-	});
-
-	it('固定直线布局（时间轴）：选项面收窄为单项「直线」（不是「自动」）', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-
-		syncLineStyleOptions(h.view, 'timeline', 'curve');
-
-		const select = h.view.lineStyleSelect as unknown as FakeEl;
-		const options = select.children.filter((child) => child.tag === 'option');
-		expect(options).toHaveLength(1);
-		expect(options[0]!.value).toBe('straight');
-		expect(options[0]!.text).toBe(t('zh', 'lineStyle.fixedStraight'));
-		expect(select.value).toBe('straight');
-	});
-
-	it('切回支持切换的布局：恢复两项并回填文件偏好（不因固定布局丢失）', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-		const select = h.view.lineStyleSelect as unknown as FakeEl;
-
-		syncLineStyleOptions(h.view, 'timeline', 'curve');
-		syncLineStyleOptions(h.view, 'organizationStructure', 'curve');
-
-		const options = select.children.filter((child) => child.tag === 'option');
-		expect(options.map((option) => option.value)).toEqual(
-			LINE_STYLE_OPTIONS.map((option) => option.value),
-		);
-		expect(select.value).toBe('curve');
-	});
-
-	it('脏偏好（不在选项表内）归一为折线，不产生空白选中态', () => {
-		const h = makeView();
-		buildToolbar(h.view);
-
-		syncLineStyleOptions(h.view, 'mindMap', 'zigzag');
-
-		const select = h.view.lineStyleSelect as unknown as FakeEl;
-		expect(select.value).toBe('straight');
-	});
 });
 
 describe('arrangeMindMap（自动整理分支）', () => {
-	it('引擎未加载：提示「思维导图尚未加载」，不调引擎整理', () => {
+	it('未加载引擎：提示 notLoaded，不调引擎', () => {
 		const h = makeView();
-		const bare = { ...h.view, mindMap: null } as unknown as MindMapViewContext;
-
-		arrangeMindMap(bare);
-
+		arrangeMindMap({ ...h.view, mindMap: null });
 		expect(engineMocks.arrangeMindMap).not.toHaveBeenCalled();
 		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.notLoaded'));
 	});
 
-	it('引擎整理成功：提示「已整理思维导图」', () => {
+	it('引擎返回 true：提示 arrangeDone', () => {
 		const h = makeView();
-		engineMocks.arrangeMindMap.mockReturnValue(true);
-
+		engineMocks.arrangeMindMap.mockReturnValueOnce(true);
 		arrangeMindMap(h.view);
-
-		expect(engineMocks.arrangeMindMap).toHaveBeenCalledWith(h.mindMap);
 		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.arrangeDone'));
 	});
 
-	it('引擎整理失败：提示「无法整理思维导图」', () => {
+	it('引擎返回 false：提示 arrangeFailed', () => {
 		const h = makeView();
-		engineMocks.arrangeMindMap.mockReturnValue(false);
-
+		engineMocks.arrangeMindMap.mockReturnValueOnce(false);
 		arrangeMindMap(h.view);
-
 		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.arrangeFailed'));
 	});
 });
 
+describe('外观开关（边框 / 连线：点一下切到另一个值）', () => {
+	/** 组 2 里的两个开关按钮（组内顺序：边框 → 连线） */
+	function toggles(h: Harness): { theme: FakeEl; line: FakeEl } {
+		const group = groupOf(railOf(h.toolbarEl), 1);
+		const rows = buttonsOf(group);
+		expect(rows).toHaveLength(2);
+		return { theme: rows[0]!, line: rows[1]! };
+	}
+
+	it('边框：有边框 → 点击写入 borderless，图标立刻换成虚线框', () => {
+		const h = makeView({ themeStyle: 'default' });
+		buildToolbar(h.view);
+		const { theme } = toggles(h);
+
+		clickButton(theme);
+		expect(h.applyThemeStyle).toHaveBeenCalledWith('borderless');
+		// 外观变更不重建工具栏 ⇒ 按钮必须自己同步图标（实机踩过：只改数据不改画面）
+		expect(setIconMock.mock.calls.at(-1)?.[1]).toBe('square-dashed');
+		expect(theme.attr['aria-label']).toBe(t('zh', 'toolbar.themeStyle'));
+	});
+
+	it('边框：无边框 → 点击切回 default', () => {
+		const h = makeView({ themeStyle: 'borderless' });
+		buildToolbar(h.view);
+
+		clickButton(toggles(h).theme);
+		expect(h.applyThemeStyle).toHaveBeenCalledWith('default');
+	});
+
+	it('连线：折线 → 点击切到 curve；曲线 → 切回 straight', () => {
+		const zigzag = makeView({ lineStyle: 'straight' });
+		buildToolbar(zigzag.view);
+		clickButton(toggles(zigzag).line);
+		expect(zigzag.applyLineStyle).toHaveBeenCalledWith('curve');
+
+		const curved = makeView({ lineStyle: 'curve' });
+		buildToolbar(curved.view);
+		clickButton(toggles(curved).line);
+		expect(curved.applyLineStyle).toHaveBeenCalledWith('straight');
+	});
+
+	it('固定直线布局：连线开关置灰，点击不触发任何写入', () => {
+		const h = makeView({ layout: 'timeline', lineStyle: 'straight' });
+		buildToolbar(h.view);
+		const { line } = toggles(h);
+
+		expect(line.classes).toContain('is-disabled');
+		expect(line.attr['aria-label']).toBe(t('zh', 'toolbar.lineStyle'));
+		// 没有 onclick ⇒ 点击不会改任何东西（不给假交互）
+		expect(line.onclick).toBeNull();
+		expect(h.applyLineStyle).not.toHaveBeenCalled();
+	});
+
+	it('悬停文案极简：只报名字，状态由图标表达', () => {
+		const h = makeView({ themeStyle: 'borderless', lineStyle: 'curve' });
+		buildToolbar(h.view);
+		const { theme, line } = toggles(h);
+
+		expect(theme.attr['aria-label']).toBe(t('zh', 'toolbar.themeStyle'));
+		expect(line.attr['aria-label']).toBe(t('zh', 'toolbar.lineStyle'));
+	});
+});
+
+describe('连线开关的可用态同步时机（2026-10-23 修复）', () => {
+	/** 组 2 的连线按钮（组内顺序：边框 → 连线） */
+	function lineButton(h: Harness): FakeEl {
+		const button = buttonsOf(groupOf(railOf(h.toolbarEl), 1))[1];
+		if (!button) {
+			throw new Error('组 2 缺少连线按钮');
+		}
+		return button;
+	}
+
+	it('建栏早于文件加载（只有全局默认布局）：重建后置灰态双向跟随新布局', () => {
+		// onOpen 建栏时 resolvePreference('layout') 只能拿到 settings.defaultLayout
+		const h = makeView({ layout: 'timeline', lineStyle: 'straight' });
+		buildToolbar(h.view);
+		expect(lineButton(h).classes).toContain('is-disabled');
+		expect(lineButton(h).onclick).toBeNull();
+
+		// 文件 viewState 到位（逻辑结构图）→ onEngineReady 后重建，开关恢复可点
+		h.setLayout('logicalStructure');
+		refreshToolbar(h.view);
+		expect(lineButton(h).classes).not.toContain('is-disabled');
+		clickButton(lineButton(h));
+		expect(h.applyLineStyle).toHaveBeenCalledWith('curve');
+
+		// 菜单切到固定直线布局 → applyLayout 后重建，必须重新置灰（不给假交互）
+		h.setLayout('timeline');
+		refreshToolbar(h.view);
+		expect(lineButton(h).classes).toContain('is-disabled');
+		expect(lineButton(h).onclick).toBeNull();
+	});
+});
+
 describe('refreshToolbar（设置变更后重建）', () => {
-	it('清空后按新设置重建（子元素数量与首次构建一致）', () => {
+	it('清空后重建：仍是四组、11 个按钮', () => {
 		const h = makeView();
 		buildToolbar(h.view);
-		const builtCount = h.toolbarEl.children.length;
-		expect(builtCount).toBe(3); // 左 / 中 / 右三个分组
-		const firstCallIcons = setIconMock.mock.calls.length;
-
 		refreshToolbar(h.view);
 
 		expect(h.toolbarEl.emptyCount).toBe(1);
-		expect(h.toolbarEl.children).toHaveLength(builtCount);
-		// 重建即重新接线图标（未复用旧按钮）
-		expect(setIconMock.mock.calls.length).toBe(firstCallIcons * 2);
-		// 新按钮仍可用：重置缩放仍接到 resetZoom
-		const right = groupOf(h.toolbarEl, 'mindmap-toolbar-right');
-		clickButton(buttonByTooltip(right, t('zh', 'toolbar.resetZoom')));
-		expect(engineMocks.resetZoom).toHaveBeenCalledWith(h.mindMap);
+		expect(h.toolbarEl.children).toHaveLength(1);
+		const rail = railOf(h.toolbarEl);
+		expect(rail.children).toHaveLength(4);
+		expect(
+			rail.children.flatMap((group) => buttonsOf(group)),
+		).toHaveLength(11);
 	});
 
-	it('toolbarEl 缺失：静默返回（不抛异常）', () => {
-		const h = makeView({ withToolbar: false });
-		expect(() => refreshToolbar(h.view)).not.toThrow();
-		expect(setIconMock).not.toHaveBeenCalled();
-	});
-
-	it('语言变更后重建：按钮 tooltip 用新语言（由构建期 t(lang) 决定）', () => {
+	it('语言变更后重建：按钮 tooltip 用新语言（构建期 t(lang) 决定）', () => {
 		const h = makeView();
 		buildToolbar(h.view);
-		(h.view as unknown as { lang: string }).lang = 'en';
+		refreshToolbar({ ...h.view, lang: 'en' } as unknown as MindMapViewContext);
 
-		refreshToolbar(h.view);
-
-		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
-		expect(
-			buttonsOf(left).map((button) => button.attr['aria-label']),
-		).toEqual([
+		const first = groupOf(railOf(h.toolbarEl), 0);
+		expect(buttonsOf(first)[0]?.attr['aria-label']).toBe(
 			t('en', 'toolbar.backToMarkdown'),
-			t('en', 'toolbar.addChild'),
-			t('en', 'toolbar.addSibling'),
-			t('en', 'toolbar.deleteNode'),
-			t('en', 'toolbar.undo'),
-			t('en', 'toolbar.redo'),
-			t('en', 'toolbar.arrange'),
-			t('en', 'toolbar.search'),
-			t('en', 'toolbar.insertLink'),
-			t('en', 'toolbar.insertImage'),
-		]);
+		);
 	});
 });
 
@@ -727,9 +581,13 @@ describe('工具栏按钮的图标接线', () => {
 	it('每个按钮各自收到自己的图标元素（不共用同一容器）', () => {
 		const h = makeView();
 		buildToolbar(h.view);
-		const left = groupOf(h.toolbarEl, 'mindmap-toolbar-group');
+		const buttons = railOf(h.toolbarEl).children.flatMap((group) =>
+			buttonsOf(group),
+		);
 
-		const leftIcons = setIconMock.mock.calls.slice(0, 10);
-		expect(leftIcons.map((call) => call[0])).toEqual(buttonsOf(left));
+		expect(buttons).toHaveLength(11);
+		expect(setIconMock).toHaveBeenCalledTimes(buttons.length);
+		const parents = new Set(setIconMock.mock.calls.map((call) => call[0]));
+		expect(parents.size).toBe(buttons.length);
 	});
 });

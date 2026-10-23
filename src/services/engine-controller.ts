@@ -268,7 +268,7 @@ export class EngineController {
 			);
 			this.mindMap.render();
 			this.deps.setupFeatures();
-			this.deps.onEngineReady(options.layout, options.lineStyle);
+			this.deps.onEngineReady();
 			// 兜底：布局晚变（工具栏重建、工作区 settle）而不再有布局事件时，
 			// 最后再应用一次（与布局事件里那次幂等：几何未变则平移量为 0）；
 			// 并补一次重算预算，覆盖本次 resize 触发的再布局。

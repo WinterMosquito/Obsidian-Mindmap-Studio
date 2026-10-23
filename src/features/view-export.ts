@@ -6,6 +6,7 @@
 import type { ExportImageFormat } from '../core/constants';
 import { notifyError } from '../core/errors';
 import { exportMindMapImage } from '../engine/mindmap';
+import { primeExportMathFonts } from '../platform/math-jax';
 import type { MindMapViewContext } from './view-context';
 
 const FALLBACK_NAME = 'mindmap';
@@ -25,6 +26,10 @@ export async function exportImageAs(
 	// 用局部引用避免空指针。
 	const mindMap = view.mindMap;
 	try {
+		// 数学字体内联的前提：导出钩子（handleBeingExportSvg）是同步的，
+		// 字体缓存必须先就绪，否则这一次导出仍走「无字体」回退（stretchy 缺失）。
+		// 幂等、并发去重、失败不抛（返回 false → 导出自动回退）。
+		await primeExportMathFonts();
 		const result = await exportMindMapImage(
 			mindMap,
 			format,

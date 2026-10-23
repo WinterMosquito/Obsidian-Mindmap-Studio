@@ -34,7 +34,12 @@ const { exportMock, notifyErrorMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/engine/mindmap', () => ({ exportMindMapImage: exportMock }));
-vi.mock('../src/core/errors', () => ({ notifyError: notifyErrorMock }));
+vi.mock('../src/core/errors', () => ({
+	notifyError: notifyErrorMock,
+	// view-export → platform/math-jax → math-jax-fonts 依赖它做「告警一次」；
+	// 本套件只关心导出分流，不关心告警去重 ⇒ 返回恒空操作。
+	createWarnOnce: () => () => {},
+}));
 
 import { exportImage, exportImageAs } from '../src/features/view-export';
 import { injectObsidianCssVarsIntoExportSvg } from '../src/platform/export-svg-postprocess';

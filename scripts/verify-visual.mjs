@@ -514,6 +514,10 @@ export function finishRenderMath() {
 export function loadPrism() {
 	return Promise.resolve({});
 }
+// math-jax-fonts 的具名导入（导出链不在探针负载内；返回空响应即可，只保链接）
+export function requestUrl() {
+	return Promise.resolve({ status: 404, arrayBuffer: new ArrayBuffer(0) });
+}
 `;
 
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
