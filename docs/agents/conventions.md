@@ -74,7 +74,7 @@
 
 ### 引擎行为、视口与布局
 
-- [K15] 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动），**自动整理后走「适应画布」**（`arrangeMindMap` 的 RESET_LAYOUT 延时回调 → `fitMindMap`：性能模式走**数据层 fit**（布局几何并集算缩放与居中，零 DOM 装配，2026-10-02，见 K110 ⑥）；常规模式沿用引擎 `view.fit()`）。首帧窗口内的三个坑（陈旧容器几何 / 根节点居中中间态 / 图片回灌改动包围盒）见 K64。
+- [K15] 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动）。**自动整理默认不改视口**（2026-10-24 用户裁决：只清 `customLeft/customTop` + 重排；`fitView: true` 仅「切布局」路径用，见 K18）——按下「整理」不该夺走当前视野，想看全图按「总览」。该日期之前的口径是「整理后走适应画布」：`arrangeMindMap` 的 RESET_LAYOUT 延时回调 → `fitMindMap`，性能模式走**数据层 fit**（布局几何并集算缩放与居中，零 DOM 装配，2026-10-02，见 K110 ⑥），常规模式沿用引擎 `view.fit()`。首帧窗口内的三个坑（陈旧容器几何 / 根节点居中中间态 / 图片回灌改动包围盒）见 K64。
 - [K16] **连线样式（两态：折线 / 曲线；2026-10-21 用户裁决收敛）**：可选样式只剩 `straight`
   （折线，正交折线）与 `curve`（曲线）——`auto`（随布局）与 `direct`（直连）下线：默认值固定为
   折线，「跟随布局」不再有信息量，直连与折线的差异不足以再占一个选项。引擎仍实现三态 `renderLine`
@@ -112,7 +112,7 @@
 - [K19] **默认热键归零**：引擎 `KeyboardNavigation` 插件自带 **Ctrl+L = RESET_LAYOUT**（只重排、
   不含「适应画布」），与「自动整理」命令口径冲突，已在 `createMindMap` 末段经
   `keyCommand.removeShortcut` 移除——自动整理统一走 `mindmap-arrange` 命令（用户自行绑热键，
-  绑到 Ctrl+L 时同样以「适应画布」收尾）。回归由 `verify:visual` 的 layout 探针锁定
+  绑到 Ctrl+L 时与菜单 / 命令同一口径：只重排、**保留当前视口**，2026-10-24 起不再 fit——想看全图按「总览」）。回归由 `verify:visual` 的 layout 探针锁定
   （`engineShortcuts` 不得含 `Control+l`，并带"快捷键表非空"前提断言）。
 - [K20] **无差异写盘跳过**：`SavePipeline.save` 在 `vault.modify` 前用 `vault.cachedRead` 比对
   **文件当前内容**，一致则跳过写盘（`vault.modify` 即使内容一字未变也会刷新 mtime、惊动元数据

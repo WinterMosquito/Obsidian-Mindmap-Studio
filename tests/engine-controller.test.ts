@@ -1532,9 +1532,12 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 			themeStyle: 'default',
 			palette: 'default',
 		});
-		// 切换布局后自动整理一次（无引擎的那次早退不算）
+		// 切换布局后自动整理一次（无引擎的那次早退不算）；这里必须 fit
+		// （引擎 setLayout 会把视口变换归零，不 fit 会停在左上角）
 		expect(mocks.arrangeMindMap).toHaveBeenCalledTimes(1);
-		expect(mocks.arrangeMindMap).toHaveBeenCalledWith(h.engines[0]);
+		expect(mocks.arrangeMindMap).toHaveBeenCalledWith(h.engines[0], {
+			fitView: true,
+		});
 	});
 
 	it('setLineStyle 按当前会话布局重算主题配置（偏好即时生效、无引擎时静默）', () => {

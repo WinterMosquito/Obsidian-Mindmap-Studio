@@ -122,7 +122,8 @@ src/
                     #   亮/暗 + 连线样式 + 主题；resolveLineStyle 两态偏好解析〔折线/曲线，
                     #   固定直线布局恒折线〕，归一在 core/constants.normalizeLineStylePreference）
     mindmap-icons.ts #   文档页 SVG 图标（WIKI_DOC_ICON_SIZE / buildWikiDocIcon；2026-10-22 自 mindmap.ts 抽出）
-    mindmap-arrange.ts # 自动整理：RESET_LAYOUT → 延时 fit → 根未回填轮询（成功路径唯一实现，
+    mindmap-arrange.ts # 自动整理：RESET_LAYOUT（默认**保留视口**；`fitView: true` 才延时 fit，
+                    #   目前只有「切布局」路径用它）→ 根未回填轮询（成功路径唯一实现，
                     #   三者必须同文件；barrel 转出 arrangeMindMap）
     mindmap-viewport-canvas.ts # 画布几何（实时 rect / 尺寸 / 原点 / syncCanvasGeometry /
                     #   flushPendingLayoutRender）：引擎几何与实时容器的唯一同步点
@@ -337,7 +338,8 @@ tests/
                        #   见 K113；
                         #   API 面缺失告警一次 / 抛错不上抛 / 未连接入队补替换 / 字体等待与拒绝
                         #   不阻塞；P4 面：塌缩不入缓存、定稿回调恰好一次（见 K86）
-  viewport.test.ts     # 视口几何（resetZoom 画布中心锚点 / 内容包围盒居中 / 自动整理后重置缩放）；
+  viewport.test.ts     # 视口几何（resetZoom 画布中心锚点 / 内容包围盒居中 / 自动整理默认保留视口、
+                       #   `fitView: true` 才延时 fit）；
                        #   自动整理的渲染窗口守卫（root 暂缺延后执行 / 超上限放弃，K67）
   mindmap-auto-open.test.ts # 声明驱动自动打开（多档延时/事件接线/陈旧档位不覆盖新状态/
                         #   全量扫描 50ms 防抖（突发合并，`core/concurrency` 的 `createDebouncer`）

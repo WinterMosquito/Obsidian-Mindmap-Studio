@@ -136,10 +136,9 @@ function buildViewportGroup(view: MindMapViewContext, rail: HTMLElement): void {
 	createToolButton(group, t(view.lang, 'toolbar.tipFit'), 'maximize', () =>
 		fitToScreen(view),
 	);
-	// 整理：与右键菜单的「自动整理」是**同一动作**，故复用同一下游 `arrangeMindMap`
-	// 与同一枚图标 `sparkles`（同一能力在屏上/菜单里换图标会让人当成两个功能）。
-	// 位置夹在「总览」与「缩小」之间：两者都是视口动作，整理会连视口一起 fit，
-	// 放右侧紧邻缩小可避免它被读成「布局选择」（布局在右键级联菜单里）。
+	// 整理：与右键菜单「自动整理」同一动作 —— 同下游 `arrangeMindMap`、同图标 `sparkles`
+	// （换图标会被当成两个功能）。夹在「总览」与「缩小」之间：整理只重排、**保留视口**
+	// （2026-10-24 起不再 fit），紧邻「总览」正好对应「想看全图」的去处。
 	createToolButton(group, t(view.lang, 'toolbar.tipArrange'), 'sparkles', () =>
 		arrangeMindMap(view),
 	);
@@ -234,7 +233,7 @@ function createToolButton(
 	return button;
 }
 
-/** 自动整理（画布右键菜单 / 命令面板入口）：重新按布局算法对齐并适配画布 */
+/** 自动整理（画布右键菜单 / 命令面板入口）：重新按布局算法对齐（保留当前视口） */
 export function arrangeMindMap(view: MindMapViewContext): void {
 	if (!view.mindMap) {
 		new Notice(t(view.lang, 'common.notLoaded'));

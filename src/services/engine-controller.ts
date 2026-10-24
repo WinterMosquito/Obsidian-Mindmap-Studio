@@ -360,9 +360,9 @@ export class EngineController {
 		this.mindMap.setLayout(value);
 		this.writeThemeConfig({ layout: value });
 		// 切换后自动整理一次：清掉自由拖拽留下的自定义坐标（否则旧布局下手动摆过的
-		// 节点会带着坐标留在新布局里），并以「适应画布」收尾（引擎 setLayout 内部
-		// 会把视口变换归零，不 fit 会让画面停在左上角）。
-		arrangeMindMap(this.mindMap);
+		// 节点会带着坐标留在新布局里）。**必须 fit**：引擎 setLayout 会把视口变换归零，
+		// 不 fit 画面会停在左上角（用户手动「整理」走默认值，保留视口）。
+		arrangeMindMap(this.mindMap, { fitView: true });
 	}
 
 	/**

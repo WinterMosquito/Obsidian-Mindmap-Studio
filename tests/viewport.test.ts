@@ -14,7 +14,8 @@
  *   相对画布原点，只 `setScale(1)`（省略锚点）会让内容绕原点跳动（表现为「视图乱飘」）。
  *   故断言 setScale 收到第二/三参，且不做任何节点居中；
  * - `arrangeMindMap`（自动整理）：只走引擎 RESET_LAYOUT（清除自由拖拽位置，不触碰
- *   children 顺序），延时后走 `fitMindMap` 适应画布（fit 全图，整理结果一览无余）。
+ *   children 顺序）；**默认保留视口**（2026-10-24 用户裁决：不 fit、不设比例、不平移），
+ *   只有 `{ fitView: true }`（切布局路径）才在延时后走 `fitMindMap` 适应画布。
  *   K67 起另有渲染窗口守卫：引擎渲染期 `renderer.root` 会被临时置 null（异步布局回填），
  *   此时执行 RESET_LAYOUT 会遍历 null 根并抛 TypeError（用户实测），故 root 缺失时
  *   改为等待回填后执行（超上限放弃）——本文件钉住「延后执行」与「上限放弃」两条。
@@ -405,8 +406,8 @@ describe('isContentVisibleInCanvas（保存视口恢复后的落界校验）', (
 	});
 });
 
-describe('arrangeMindMap（执行 RESET_LAYOUT 后适应画布）', () => {
-	it('走引擎 RESET_LAYOUT 命令，延时后 fit 全图', () => {
+describe('arrangeMindMap（清自定义坐标；默认保留视口）', () => {
+	it('默认只走 RESET_LAYOUT：不 fit、不设比例、不平移', () => {
 		vi.useFakeTimers();
 		const { mindMap, execCommand, setScale, fit, translateXY } = makeMindMap();
 
@@ -414,37 +415,41 @@ describe('arrangeMindMap（执行 RESET_LAYOUT 后适应画布）', () => {
 		// 断言字面量：常量表键名与引擎命令名必须一致（拼错时此处即刻失败）
 		expect(execCommand).toHaveBeenCalledExactlyOnceWith('RESET_LAYOUT');
 
+		// 保留视口：连延时窗口过后也不应有任何 fit / 变换写入
+		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS);
+		expect(fit).not.toHaveBeenCalled();
+		expect(setScale).not.toHaveBeenCalled();
+		expect(translateXY).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('fitView: true（切布局路径）：延时后 fit 全图，边界前不触发', () => {
+		vi.useFakeTimers();
+		const { mindMap, execCommand, setScale, fit, translateXY } =
+			makeMindMap();
+
+		expect(arrangeMindMap(mindMap, { fitView: true })).toBe(true);
+		expect(execCommand).toHaveBeenCalledExactlyOnceWith('RESET_LAYOUT');
+
 		// 延时结束前不调整视口：等引擎完成 reflow，否则按旧布局算缩放
+		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS - 1);
 		expect(fit).not.toHaveBeenCalled();
 
-		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS);
-
+		vi.advanceTimersByTime(1);
 		expect(fit).toHaveBeenCalledTimes(1);
 		// 适应画布即引擎 fit：不单独设比例、不平移
 		expect(setScale).not.toHaveBeenCalled();
 		expect(translateXY).not.toHaveBeenCalled();
 	});
 
-	it('延时边界：不足 RESET_LAYOUT_VIEWPORT_DELAY_MS 时不触发', () => {
-		vi.useFakeTimers();
-		const { mindMap, fit } = makeMindMap();
-
-		arrangeMindMap(mindMap);
-		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS - 1);
-		expect(fit).not.toHaveBeenCalled();
-
-		vi.advanceTimersByTime(1);
-		expect(fit).toHaveBeenCalledTimes(1);
-	});
-
-	it('渲染窗口期（root 暂缺）：延后到回填后再执行 RESET_LAYOUT', () => {
+	it('渲染窗口期（root 暂缺）：延后到回填后再执行（fitView 一路透传）', () => {
 		vi.useFakeTimers();
 		const { mindMap, execCommand, fit } = makeMindMap();
 		const renderer = (mindMap as unknown as { renderer: { root: unknown } })
 			.renderer;
 		renderer.root = null;
 
-		expect(arrangeMindMap(mindMap)).toBe(true);
+		expect(arrangeMindMap(mindMap, { fitView: true })).toBe(true);
 		// 窗口期内立即执行会遍历 null 根并在回调首行抛 TypeError（见 K67）
 		expect(execCommand).not.toHaveBeenCalled();
 
@@ -469,7 +474,7 @@ describe('arrangeMindMap（执行 RESET_LAYOUT 后适应画布）', () => {
 		const { mindMap, execCommand, fit } = makeMindMap();
 		(mindMap as unknown as { renderer: { root: unknown } }).renderer.root = null;
 
-		expect(arrangeMindMap(mindMap)).toBe(true);
+		expect(arrangeMindMap(mindMap, { fitView: true })).toBe(true);
 
 		vi.advanceTimersByTime(
 			RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS + RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,

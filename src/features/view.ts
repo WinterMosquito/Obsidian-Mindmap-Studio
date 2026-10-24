@@ -1043,7 +1043,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	// ==================== 工具栏（委托 view-toolbar.ts） ====================
 
-	/** 自动整理（需求 3）：重新按布局算法对齐摆放各主题并适配画布 */
+	/** 自动整理：按当前布局重新对齐各主题（保留当前视口） */
 	arrangeMindMap(): void {
 		arrangeMindMap(this);
 	}
