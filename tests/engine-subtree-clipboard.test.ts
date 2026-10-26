@@ -7,6 +7,10 @@
  * 剪切口径由引擎 `CUT_NODE` 过滤（`vendor` 的 `cutNode` 过滤 `isRoot`，而
  * `copyNode` 不过滤），只测剪切永远测不出来。
  *
+ * 2026-10-26 优化 A：文本路径**只读、不克隆**——返回值是引擎 `nodeData` 本身
+ * （剪切是引擎 `copyNodeTree` 已产出的副本），uid 不再剥离；下方「同一对象」
+ * 与「不产生副本」断言即该契约的回归。
+ *
  * 桩形态与 `tests/viewport.test.ts` 同源：假 MindMap + **真** `engine/mindmap`。
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -17,6 +21,7 @@ import type {
 } from '../vendor/simple-mind-map.cjs';
 import {
 	collectSelectedSubtrees,
+	collectWholeTreeSubtrees,
 	cutSelectedSubtrees,
 	ENGINE_COMMANDS,
 	insertSubtreesAsChildren,
@@ -46,8 +51,8 @@ interface NodeSpec {
 
 /**
  * 造节点树：**同时**维护两份镜像——运行期 `children`（`rankByDocumentOrder`
- * 走它）与 `nodeData.children`（`cloneSubtreeWithoutUid` 走它）。两者不同源时
- * 引擎自己的复制也会失真，故桩必须与引擎形态一致。
+ * 走它）与 `nodeData.children`（序列化的取值面走它）。两者不同源时引擎自己的
+ * 复制也会失真，故桩必须与引擎形态一致。
  */
 function build(
 	spec: NodeSpec,
@@ -119,7 +124,7 @@ const sample: NodeSpec = {
 };
 
 describe('collectSelectedSubtrees（复制的取值面）', () => {
-	it('只选中根节点 ⇒ 空结果（不写剪贴板；调用方走既有提示）', () => {
+	it('只选中根节点 ⇒ 空结果（调用方按「无选中」回退整图）', () => {
 		const { mindMap } = makeMindMap(sample, ['root']);
 		expect(collectSelectedSubtrees(mindMap)).toEqual([]);
 	});
@@ -139,47 +144,63 @@ describe('collectSelectedSubtrees（复制的取值面）', () => {
 		expect(texts(collectSelectedSubtrees(mindMap))).toEqual(['甲', '乙']);
 	});
 
-	it('uid 逐层剥离（否则粘贴进同一文档会产生重复 uid，删除/查找随即失准）', () => {
-		const { mindMap } = makeMindMap(sample, ['a']);
+	it('返回引擎树上的**同一对象**（不克隆、不剥 uid）', () => {
+		const { mindMap, nodes } = makeMindMap(sample, ['a']);
 		const subtree = collectSelectedSubtrees(mindMap)[0];
 		expect(subtree).toBeDefined();
-		const data = subtree!.data as Record<string, unknown>;
-		expect(data.uid).toBeUndefined();
-		const childData = (subtree!.children[0]?.data ?? {}) as Record<
-			string,
-			unknown
-		>;
-		expect(childData.uid).toBeUndefined();
-		expect(childData.text).toBe('甲一');
+		expect(subtree).toBe(nodes.get('a')!.nodeData);
+		expect((subtree!.data as Record<string, unknown>).uid).toBe('a');
+		expect((subtree!.children[0]?.data ?? {}) as Record<string, unknown>).toMatchObject({
+			text: '甲一',
+			uid: 'a1',
+		});
 	});
 
-	it('深拷贝：改返回值不影响原树（节点数据不被复制动作篡改）', () => {
+	it('不产生副本：children 就是 `nodeData.children`（数据树，不是运行期实例）', () => {
 		const { mindMap, nodes } = makeMindMap(sample, ['a']);
 		const subtree = collectSelectedSubtrees(mindMap)[0]!;
-		(subtree.data as Record<string, unknown>).text = '改过的';
-		(subtree.children[0]!.data as Record<string, unknown>).text = '也改过的';
-		expect(nodes.get('a')?.nodeData.data.text).toBe('甲');
-		expect(nodes.get('a1')?.nodeData.data.text).toBe('甲一');
+		expect(subtree.children).toBe(nodes.get('a')!.nodeData.children);
 	});
 
-	it('顶层字段与 vendor `copyNodeTree` 同口径：非 `_` 前缀字段带出、`_` 前缀丢弃', () => {
+	it('不剥离顶层字段：文本序列化器只读所需字段，过滤是数据粘贴通道的事', () => {
 		const { mindMap, nodes } = makeMindMap(sample, ['a']);
 		const nodeData = nodes.get('a')!.nodeData as unknown as Record<
 			string,
 			unknown
 		>;
 		nodeData.engineFlag = 'kept';
-		nodeData._internal = 'dropped';
 		const [subtree] = collectSelectedSubtrees(mindMap);
-		const clone = subtree as unknown as Record<string, unknown>;
-		expect(clone.engineFlag).toBe('kept');
-		expect(clone._internal).toBeUndefined();
+		expect(subtree).toBe(nodeData);
+		expect((subtree as unknown as Record<string, unknown>).engineFlag).toBe(
+			'kept',
+		);
 	});
 
 	it('无选中 / 引擎缺失 ⇒ 空结果（不抛）', () => {
 		const { mindMap } = makeMindMap(sample, []);
 		expect(collectSelectedSubtrees(mindMap)).toEqual([]);
 		expect(collectSelectedSubtrees(null)).toEqual([]);
+	});
+});
+
+describe('collectWholeTreeSubtrees（无选中 ⇒ 整张图）', () => {
+	it('根节点整棵子树原样带出（含中心主题、同一对象、不剥 uid）', () => {
+		const { mindMap, nodes } = makeMindMap(sample, []);
+		const trees = collectWholeTreeSubtrees(mindMap);
+		expect(trees).toHaveLength(1);
+		expect(trees[0]).toBe(nodes.get('root')!.nodeData);
+		expect((trees[0]!.data as Record<string, unknown>).text).toBe('文档');
+		expect((trees[0]!.data as Record<string, unknown>).uid).toBe('root');
+		expect(texts(trees[0]!.children ?? [])).toEqual(['甲', '乙']);
+		// 深层照常带出（复制是整棵，不是两层）
+		expect(texts(trees[0]!.children[0]!.children ?? [])).toEqual(['甲一']);
+	});
+
+	it('渲染树未就绪（null / 空 renderer）⇒ 空结果，不抛', () => {
+		expect(collectWholeTreeSubtrees(null)).toEqual([]);
+		expect(
+			collectWholeTreeSubtrees({ renderer: {} } as unknown as MindMap),
+		).toEqual([]);
 	});
 });
 
@@ -216,21 +237,24 @@ describe('折叠（收起）状态不影响复制取值面（2026-10-15 用户�
 });
 
 describe('cutSelectedSubtrees（剪切的取值面）', () => {
-	it('引擎回调数据经深拷贝 + 剥 uid 后返回', () => {
+	it('引擎回调数据**原样**返回（已是独立副本，不再二次克隆）', () => {
 		const { mindMap, execCommand } = makeMindMap(sample, ['a']);
+		const payload = [
+			{
+				data: { text: '甲', uid: 'a' },
+				children: [{ data: { text: '甲一', uid: 'a1' }, children: [] }],
+			},
+		];
 		execCommand.mockImplementation((...args: unknown[]) => {
 			const callback = args[1] as (data: unknown) => void;
-			callback([
-				{
-					data: { text: '甲', uid: 'a' },
-					children: [{ data: { text: '甲一', uid: 'a1' }, children: [] }],
-				},
-			]);
+			callback(payload);
 		});
 		const subtrees = cutSelectedSubtrees(mindMap);
 		expect(execCommand.mock.calls[0]?.[0]).toBe(ENGINE_COMMANDS.CUT_NODE);
 		expect(texts(subtrees)).toEqual(['甲']);
-		expect(subtrees[0]!.data.uid).toBeUndefined();
+		// 同一对象：没有第二份拷贝（uid 也保持回调数据原样）
+		expect(subtrees[0]).toBe(payload[0]);
+		expect((subtrees[0]!.data as Record<string, unknown>).uid).toBe('a');
 	});
 
 	it('引擎给非数组（只选中根 ⇒ 引擎过滤后回调空）⇒ 空结果，调用方不动剪贴板', () => {

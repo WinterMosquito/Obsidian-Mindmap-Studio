@@ -1,41 +1,47 @@
 /**
  * 选中子树的复制/剪切/粘贴（2026-10-16 自 `engine/mindmap.ts` 拆出）。
  *
- * 语义与实现约束（顶层去重、文档序、剥 uid、过滤根节点、取值面必须是 `nodeData`）
+ * 语义与实现约束（顶层去重、文档序、过滤根节点、取值面必须是 `nodeData`）
  * 见 `collectSelectedSubtrees`——本模块的唯一取值面收口。
+ *
+ * **只读、不克隆**（2026-10-26 优化 A）：返回的是引擎树上的 `nodeData` 本身，
+ * 仅供 `serializeSubtreesToOutline` **同步**读出 Markdown 文本。复制/剪切写出的
+ * 是字符串，uid 根本不会进文本，深拷贝 + 逐层剥 uid 是纯开销（500 节点实测
+ * 0.3ms + 一份整树内存）。调用方**不得改写**返回值；若日后要恢复「复制为数据、
+ * 粘贴回引擎」的通道，克隆与剥 uid 必须加在那条通道上，不要加回这里。
  */
 import type {
 	MindMap,
 	MindMapNode,
-	MindMapNodeData,
 	MindMapTreeNode,
 } from '../../vendor/simple-mind-map.cjs';
 import { ENGINE_COMMANDS } from './mindmap-commands';
-import { getActiveNodes } from './mindmap-nodes';
+import { getActiveNodes, getRenderRoot } from './mindmap-nodes';
 
 /**
  * 收集当前选中节点的**顶层子树数据**（复制到剪贴板的唯一取值面）。
  *
- * 与引擎自带 `Renderer.copyNode()` 同一套语义（顶层去重、文档序、剥激活态、
- * 剥 uid），但用**已入 d.cts 的节点面**（`parent` / `children` / `nodeData`）
+ * 与引擎自带 `Renderer.copyNode()` 同一套**选面**语义（顶层去重、文档序），
+ * 但用**已入 d.cts 的节点面**（`parent` / `children` / `nodeData`）
  * 重写实现——引擎把 `getTopAncestorsFomNodeList` / `sortNodeList` /
  * `copyNodeTree` 留在内部工具里、未随包导出，直接读 `isAncestor` / `sortIndex`
  * 这类未声明字段属更高风险的私有触点。**唯一有意差异 = 过滤根节点**
  * （2026-10-15：`copyNode` 不过滤而 `cutNode` 过滤，本插件的粘贴落点是子节点，
  * 照搬 copy 口径会让「复制根节点」变成「把整篇文档嵌成自己的子节点」）。
- * 其余语义与 `copyNode` 逐条一致，且判定只在本文件出现。**取值面必须是 `nodeData`**：
- * 实机（2026-10-15）证实节点「收起**并重渲染后**，引擎会摘空其运行期 `children`」
- * （`nodeData.children` 完整保留）——改读运行期实例即「收起一棵子树＝复制/落盘丢整棵子树」。
+ * 其余选面语义与 `copyNode` 逐条一致，且判定只在本文件出现。**取值面必须是
+ * `nodeData`**：实机（2026-10-15）证实节点「收起**并重渲染后**，引擎会摘空其
+ * 运行期 `children`」（`nodeData.children` 完整保留）——改读运行期实例即
+ * 「收起一棵子树＝复制/落盘丢整棵子树」。
  *
  * - **顶层去重**：选中的祖先优先（子树随祖先整棵带走，与引擎一致）；
  * - **文档序**：按渲染树先序遍历排名（非选中顺序，保证粘贴顺序稳定）；
- * - **剥 uid**：引擎 `INSERT_MULTI_CHILD_NODE` 对首次目标**保留**已有 uid
- *   （`createUidForAppointNodes(childList, false)`），同一文档内复制粘贴会
- *   产生重复 uid（按 uid 的删除/查找随即失准）；故深拷贝时逐层删除；
- * - 激活态不在此处剥离：插入时引擎会按 `addDataToAppointNodes` 逐层覆盖
- *   `isActive`（见 vendor/upstream `utils/index.js`）。
+ * - **不克隆、不剥 uid**：返回值是引擎树上的**只读**数据，仅供同步序列化；
+ *   uid 不进 Markdown 文本（2026-10-26 优化 A，见文件头）；
+ * - **不碰激活态**：引擎 `copyNode` 剥的是节点实例上的 `isActive`，`nodeData` 无该字段。
  *
- * @returns 深拷贝的子树（无选中节点时为空数组）
+ * @returns 引擎树上的只读子树（无选中节点、或**只选中了根**时为空数组；
+ *   调用方不得改写。空结果由 `features/view-clipboard.copySelectedNodes` 决定
+ *   下一步——它把空结果当「无选中」回退到整图大纲，不再弹「请先选择节点」）
  */
 export function collectSelectedSubtrees(
 	mindMap: MindMap | null,
@@ -44,7 +50,8 @@ export function collectSelectedSubtrees(
 	// 自身不过滤根（`cutNode` 才过滤，见 vendor `core/render/Render.js` 两方法），
 	// 而本插件的粘贴落点是「选中节点 ?? 渲染根」的子节点——只选中根
 	//（右键根节点「复制节点」/ Ctrl+A）时若把整棵树写进剪贴板，粘贴即把整篇
-	// 文档嵌成自己的子节点，反复操作指数级膨胀。空结果交调用方走既有提示。
+	// 文档嵌成自己的子节点，反复操作指数级膨胀。空结果交调用方决定——现按
+	// 「无选中」回退整图（`copySelectedNodes`），因此只选中根时 Ctrl+C = 复制全图。
 	const selected = getActiveNodes(mindMap).filter((node) => !node.isRoot);
 	if (selected.length === 0) {
 		return [];
@@ -60,9 +67,27 @@ export function collectSelectedSubtrees(
 		}
 		return true;
 	});
-	return rankByDocumentOrder(mindMap, tops).map((node) =>
-		cloneSubtreeWithoutUid(node.nodeData),
-	);
+	return rankByDocumentOrder(mindMap, tops).map((node) => node.nodeData);
+}
+
+/**
+ * 整张图的**大纲源数据**（`Ctrl+C` 无选中时的落点）：根节点整棵子树。
+ *
+ * 与 `collectSelectedSubtrees` 的唯一差别是**不过滤根**：无选中时用户要的就是
+ * 「整张图」，中心主题（即文件标题）必须作首行，否则复制出的文本没有标题。
+ * 代价：把这份大纲粘回同一张图的根下会得到「中心主题的副本」子树——这是用户
+ * 显式复制全图后的粘贴动作，与「选中子树复制」同语义（复制什么就粘什么），
+ * 不再按误操作拦截（2026-10-26 用户裁决）。
+ *
+ * 返回**引擎树上的只读数据**（不克隆，见文件头）；调用方不得改写。
+ *
+ * @returns 只含一个元素的数组；渲染树未就绪（首帧前 / 销毁中）时为空
+ */
+export function collectWholeTreeSubtrees(
+	mindMap: MindMap | null,
+): MindMapTreeNode[] {
+	const root = getRenderRoot(mindMap);
+	return root ? [root.nodeData] : [];
 }
 
 /**
@@ -72,7 +97,15 @@ export function collectSelectedSubtrees(
  * （上游 `Render.js` 的 `cutNode`），照写会把用户的剪贴板清空。调用方据此
  * 保持剪贴板原样（见 `features/view-clipboard`）。
  *
- * @returns 被剪的顶层子树（无选中 / 仅根节点时为空数组）
+ * 回调数据已是引擎 `copyNodeTree` 产出的**独立副本**（`removeId`/`removeActiveState`
+ * 均取默认 true ⇒ 不含 uid / `isActive`，`_` 前缀字段也不带出），且插件只把它
+ * **同步**序列化成文本 ⇒ 这里不再二次克隆（2026-10-26 优化 A）。
+ *
+ * ⚠ 回调是**同步**的（vendor `Render.cutNode` 末尾直接 `callback(copyData)`），
+ * 所以 `captured` 在 `execCommand` 返回时就已填好。若日后引擎改成异步回调，
+ * 本函数必须改成 Promise——否则会静默返回空数组。
+ *
+ * @returns 被剪的顶层子树（无选中 / 仅根节点时为空数组；调用方不得改写）
  */
 export function cutSelectedSubtrees(mindMap: MindMap | null): MindMapTreeNode[] {
 	if (!mindMap) {
@@ -84,7 +117,7 @@ export function cutSelectedSubtrees(mindMap: MindMap | null): MindMapTreeNode[] 
 			? (copyData as MindMapTreeNode[])
 			: [];
 	});
-	return captured.map((subtree) => cloneSubtreeWithoutUid(subtree));
+	return captured;
 }
 
 /**
@@ -118,7 +151,8 @@ function rankByDocumentOrder(
 	nodes: readonly MindMapNode[],
 ): MindMapNode[] {
 	const rank = new Map<MindMapNode, number>();
-	const root = mindMap?.renderer.root;
+	// 走防腐面而不是直读 `mindMap.renderer.root`：两级判空只在 `getRenderRoot` 一处
+	const root = getRenderRoot(mindMap);
 	if (root) {
 		const stack: MindMapNode[] = [root];
 		let index = 0;
@@ -138,65 +172,4 @@ function rankByDocumentOrder(
 	return [...nodes].sort(
 		(a, b) => (rank.get(a) ?? last) - (rank.get(b) ?? last),
 	);
-}
-
-/**
- * 深拷贝子树数据并逐层删除 `uid`（见 collectSelectedSubtrees 的剥 uid 说明）。
- * JSON 往返而非结构化克隆：节点 data 只含可序列化字段（引擎自身也按 JSON
- * 序列化保存），且这是历史剪贴板路径的既有口径。
- */
-function cloneSubtreeWithoutUid(source: MindMapTreeNode): MindMapTreeNode {
-	const cloneData = (
-		data: MindMapNodeData | undefined,
-	): MindMapNodeData => {
-		const cloned = JSON.parse(
-			JSON.stringify(data ?? {}),
-		) as MindMapNodeData;
-		delete cloned.uid;
-		return cloned;
-	};
-	const root: MindMapTreeNode = {
-		data: cloneData(source.data),
-		children: [],
-	};
-	copyExtraNodeDataFields(source, root);
-	const stack: { src: readonly MindMapTreeNode[]; dst: MindMapTreeNode[] }[] =
-		[{ src: source.children ?? [], dst: root.children }];
-	while (stack.length > 0) {
-		const { src, dst } = stack.pop()!;
-		for (const child of src) {
-			const cloned: MindMapTreeNode = {
-				data: cloneData(child.data),
-				children: [],
-			};
-			copyExtraNodeDataFields(child, cloned);
-			dst.push(cloned);
-			stack.push({ src: child.children ?? [], dst: cloned.children });
-		}
-	}
-	return root;
-}
-
-/**
- * 顶层字段拷贝：`data` / `children` 之外的**非 `_` 前缀**键一并带出
- * （2026-10-15 与 vendor 对齐）。
- *
- * 口径来源：`vendor/upstream/src/utils/index.js` 的 `copyNodeTree` 末尾会把
- * `nodeData` 上除 `data` / `children` / `_` 前缀以外的字段**浅拷**进结果。此前
- * 我们只拷 `data` + `children` ⇒ 引擎或插件将来在 `nodeData` 顶层加字段时，
- * 复制 / 粘贴会**静默丢字段**（当前 `d.cts` 只声明这两个字段，故无实害——纯契约
- * 对齐；浅拷同样照 vendor）。
- */
-function copyExtraNodeDataFields(
-	source: MindMapTreeNode,
-	target: MindMapTreeNode,
-): void {
-	const src = source as unknown as Record<string, unknown>;
-	const dst = target as unknown as Record<string, unknown>;
-	for (const key of Object.keys(src)) {
-		if (key === 'data' || key === 'children' || key.startsWith('_')) {
-			continue;
-		}
-		dst[key] = src[key];
-	}
 }

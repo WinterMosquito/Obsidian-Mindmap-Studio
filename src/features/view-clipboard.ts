@@ -1,7 +1,7 @@
 /**
  * 节点剪贴板：复制 / 剪切 / 粘贴的**唯一收口**（系统剪贴板，纯 Markdown 文本）。
  *
- * 三条裁决（2026-10-13，用户）：
+ * 四条裁决（1–3 为 2026-10-13 用户裁决，4 为 2026-10-26 追加）：
  * 1. `Ctrl+C` / `Ctrl+X` / `Ctrl+V` 一律走**系统剪贴板**——引擎自带的 JSON
  *    剪贴板通道由 `beforeShortcutRun` 短路（见 `engine/mindmap` 与
  *    `handleClipboardShortcut`）；
@@ -10,7 +10,10 @@
  *    `md-serialize.serializeSubtreesToOutline`，解析见
  *    `md-outline.parseMdOutlineFragment`——同一份往返实现，硬规则 5）；
  * 3. 插件内**不再有内存剪贴板**（视图级 WeakMap 已整体删除）：读/写失败只提示，
- *    不留副本——两份剪贴板必然行为漂移。
+ *    不留副本——两份剪贴板必然行为漂移；
+ * 4. **无选中时 `Ctrl+C` = 复制整张图的大纲**（2026-10-26 用户裁决）：中心主题
+ *    作首行、与选中子树同一序列化口径（见 `engine/mindmap-clipboard.collectWholeTreeSubtrees`）；
+ *    此前这里只弹「请先选择一个节点」、剪贴板保持原样。
  *
  * 为什么粘贴优先走 `paste` 事件而不是 `clipboard.readText()`：事件自带的
  * `clipboardData` 是**同步、零权限**通道；宿主拒绝 `readText` 时引擎自己的
@@ -20,6 +23,7 @@
 import { Notice } from 'obsidian';
 import {
 	collectSelectedSubtrees,
+	collectWholeTreeSubtrees,
 	cutSelectedSubtrees,
 	getActiveNode,
 	getRenderRoot,
@@ -34,13 +38,25 @@ import { isAnyNodeEditing } from './node-inline-editor';
 import type { MindMapNode } from '../core/engine-types';
 
 /**
- * 复制当前选中节点（及其整棵子树）到系统剪贴板。
- * 未选中节点时提示（与 requireActiveNode 同口径），不做静默 no-op。
+ * 复制到系统剪贴板（Markdown 大纲）。
+ *
+ * - **有选中节点**：复制这些节点及其整棵子树（`collectSelectedSubtrees`，根节点
+ *   被过滤——避免把整篇文档嵌成自己的子节点）；
+ * - **无选中节点**：复制**整张图**（2026-10-26 用户裁决）——中心主题作首行，
+ *   与选中路径同一序列化口径（标题降级为 `-`、层级用缩进），可直接粘回导图。
+ * - **只选中了根**：与「无选中」同路——根被过滤后集合为空，自然落到整图分支
+ *   （「复制根」的语义就是复制整图，不再单独拦截）。
+ *
+ * 两条路径只在「取哪些子树」上不同，写剪贴板与提示完全共用（同一条
+ * `writeOutline`）；**只有渲染树不可得**（首帧前 / 销毁中，两条路径都取不到
+ * 根）才提示 `common.notLoaded`，不做静默 no-op。
  */
 export function copySelectedNodes(view: PasteClipboardHost): void {
-	const subtrees = collectSelectedSubtrees(view.mindMap);
+	const selected = collectSelectedSubtrees(view.mindMap);
+	const subtrees =
+		selected.length > 0 ? selected : collectWholeTreeSubtrees(view.mindMap);
 	if (subtrees.length === 0) {
-		new Notice(t(view.lang, 'common.selectNodeFirst'));
+		new Notice(t(view.lang, 'common.notLoaded'));
 		return;
 	}
 	writeOutline(
@@ -98,10 +114,11 @@ export function pasteClipboardIntoNode(
 /**
  * 键盘/画布粘贴事件入口（`paste` 事件自带 `clipboardData`）。
  *
- * 让位（返回 `false`、不接管）的两种情形——接管会破坏既有语义：
+ * 让位（返回 `false`、不接管）的情形——接管会破坏既有语义：
  * - 事件目标是输入类元素（引擎节点文本编辑框是 contenteditable、内联编辑器、
  *   弹窗输入框）：那里的粘贴必须粘贴文本；
- * - 有节点正处于编辑态（同上，事件目标可能是编辑框内的子元素）。
+ * - 有节点正处于编辑态（同上，事件目标可能是编辑框内的子元素）；
+ * - 剪贴板里没有文本（图片粘贴等）：提前返回，交给图片分支。
  *
  * @returns 是否已接管（true 时调用方不应再处理同一事件）
  */

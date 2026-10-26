@@ -31,6 +31,7 @@ import {
 const {
 	noticeCalls,
 	collectSelectedSubtreesMock,
+	collectWholeTreeSubtreesMock,
 	cutSelectedSubtreesMock,
 	getActiveNodeMock,
 	getRenderRootMock,
@@ -41,6 +42,7 @@ const {
 } = vi.hoisted(() => ({
 	noticeCalls: [] as string[],
 	collectSelectedSubtreesMock: vi.fn<(mindMap: unknown) => unknown>(),
+	collectWholeTreeSubtreesMock: vi.fn<(mindMap: unknown) => unknown>(),
 	cutSelectedSubtreesMock: vi.fn<(mindMap: unknown) => unknown>(),
 	getActiveNodeMock: vi.fn<(mindMap: unknown) => unknown>(),
 	getRenderRootMock: vi.fn<(mindMap: unknown) => unknown>(),
@@ -69,6 +71,7 @@ vi.mock('../src/engine/mindmap', () => ({
 	getActiveNode: getActiveNodeMock,
 	getRenderRoot: getRenderRootMock,
 	collectSelectedSubtrees: collectSelectedSubtreesMock,
+	collectWholeTreeSubtrees: collectWholeTreeSubtreesMock,
 	cutSelectedSubtrees: cutSelectedSubtreesMock,
 	insertSubtreesAsChildren: insertSubtreesAsChildrenMock,
 }));
@@ -126,6 +129,20 @@ function fakePasteEvent(
 	return { event, preventDefault };
 }
 
+/** 整张图的根子树桩（中心主题 + 一个子节点） */
+function wholeTree(): MindMapTreeNode {
+	return {
+		data: {
+			text: '文档',
+			mdRaw: '文档',
+			mdDerivedText: '文档',
+			mdType: 'list',
+			mdMarker: '-',
+		},
+		children: [subtree()],
+	};
+}
+
 /** 取自解析产物的最小子树（mdRaw/mdDerivedText 齐备 ⇒ 逐字回写形态） */
 function subtree(): MindMapTreeNode {
 	return {
@@ -144,6 +161,7 @@ beforeEach(() => {
 	noticeCalls.length = 0;
 	vi.clearAllMocks();
 	collectSelectedSubtreesMock.mockReturnValue([]);
+	collectWholeTreeSubtreesMock.mockReturnValue([]);
 	cutSelectedSubtreesMock.mockReturnValue([]);
 	getActiveNodeMock.mockReturnValue(null);
 	getRenderRootMock.mockReturnValue(null);
@@ -170,12 +188,25 @@ describe('复制（copySelectedNodes）', () => {
 		expect(zh('common.nodeCopied')).toBe('复制');
 	});
 
-	it('未选中节点：提示且不触碰剪贴板', () => {
+	it('未选中节点：复制**整张图**的大纲（中心主题作首行）并提示「复制」', async () => {
+		collectWholeTreeSubtreesMock.mockReturnValue([wholeTree()]);
+		const { host } = makeHost();
+
+		copySelectedNodes(host);
+		await flush();
+
+		expect(collectWholeTreeSubtreesMock).toHaveBeenCalledWith(host.mindMap);
+		expect(writeClipboardTextMock).toHaveBeenCalledWith('- 文档\n  - 甲');
+		expect(noticeCalls).toEqual([zh('common.nodeCopied')]);
+	});
+
+	it('无选中且渲染树未就绪：提示「未能加载」且不触碰剪贴板', () => {
+		collectWholeTreeSubtreesMock.mockReturnValue([]);
 		const { host } = makeHost();
 
 		copySelectedNodes(host);
 
-		expect(noticeCalls).toEqual([zh('common.selectNodeFirst')]);
+		expect(noticeCalls).toEqual([zh('common.notLoaded')]);
 		expect(writeClipboardTextMock).not.toHaveBeenCalled();
 	});
 
