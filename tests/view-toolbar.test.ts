@@ -147,6 +147,11 @@ class FakeEl {
 		this.attr[name] = value;
 	}
 
+	/** 官方 setTooltip 省略落位时会清掉旧值（见 `tests/mocks/obsidian.setTooltip`） */
+	removeAttribute(name: string): void {
+		delete this.attr[name];
+	}
+
 	empty(): void {
 		this.emptyCount += 1;
 		this.children.length = 0;
@@ -382,6 +387,35 @@ describe('buildToolbar（右缘四组结构）', () => {
 		expect(labels).not.toContain(t('zh', 'toolbar.deleteNode'));
 		expect(labels).not.toContain(t('zh', 'toolbar.insertLink'));
 		expect(labels).not.toContain(t('zh', 'toolbar.insertImage'));
+	});
+
+	it('tooltip 统一落在左侧（对齐 Canvas 的 data-tooltip-position="left"）', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const buttons = railOf(h.toolbarEl).children.flatMap((group) =>
+			buttonsOf(group),
+		);
+
+		expect(buttons).toHaveLength(11);
+		expect(
+			buttons.every(
+				(button) => button.attr['data-tooltip-position'] === 'left',
+			),
+		).toBe(true);
+	});
+
+	it('切换状态后 tooltip 仍在左侧（syncState 回写也要带落位）', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const border = buttonByTooltip(
+			groupOf(railOf(h.toolbarEl), 1),
+			t('zh', 'toolbar.themeStyle'),
+		);
+
+		clickButton(border);
+
+		// 桩在「省略落位」时会清掉旧值（模拟官方按本次调用定位）：漏传即 undefined
+		expect(border.attr['data-tooltip-position']).toBe('left');
 	});
 });
 

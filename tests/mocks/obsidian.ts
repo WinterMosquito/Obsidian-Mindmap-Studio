@@ -249,8 +249,20 @@ export function setIcon(_parent: unknown, _iconId: string): void {}
  * 由它驱动）。工具栏按钮与丝带提示的无障碍断言依赖这一步写入；
  * 位置/延迟等展示行为不在 mock 范围。
  */
-export function setTooltip(el: HTMLElement, tooltip: string): void {
+export function setTooltip(
+	el: HTMLElement,
+	tooltip: string,
+	options?: { placement?: 'top' | 'bottom' | 'left' | 'right' },
+): void {
 	el.setAttribute('aria-label', tooltip);
+	// 官方按**本次调用**决定展示位置（省略＝默认下方）：不传就清掉旧值。
+	// 不清的话，「状态回写时漏传 placement」在测试里测不出来——2026-10-26
+	// 工具栏的 `syncState` 正是这么漏的（切换一次后提示从左侧跳到下方）。
+	if (options?.placement) {
+		el.setAttribute('data-tooltip-position', options.placement);
+	} else if (typeof el.removeAttribute === 'function') {
+		el.removeAttribute('data-tooltip-position');
+	}
 }
 
 /**

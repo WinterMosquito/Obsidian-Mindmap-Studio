@@ -198,7 +198,7 @@ function createToggleRow(
 			cls: 'mindmap-tool-btn',
 		});
 		setIcon(disabledButton, initial.icon);
-		setTooltip(disabledButton, initial.tooltip);
+		setTooltip(disabledButton, initial.tooltip, HUD_TOOLTIP);
 		disabledButton.disabled = true;
 		disabledButton.addClass('is-disabled');
 		return disabledButton;
@@ -213,10 +213,24 @@ function createToggleRow(
 	function syncState(): void {
 		const state = spec.describe();
 		setIcon(button, state.icon);
-		setTooltip(button, state.tooltip);
+		// **落位必须一起传**：官方按「本次调用」决定展示位置，省掉就回默认下方，
+		// 切换一次状态的按钮之后提示会从左侧跳到下方（2026-10-26 修）。
+		setTooltip(button, state.tooltip, HUD_TOOLTIP);
 	}
 	return button;
 }
+
+/**
+ * 右缘竖栏的 tooltip 落位：**左侧**。
+ *
+ * 与官方 Canvas `.canvas-control-item` 的 `data-tooltip-position="left"` 同款
+ * （2026-10-26 取证）：竖栏贴右缘，向左弹出不越界、也不压住按钮本身。
+ *
+ * **构建与每次状态回写都要带**（`createToggleRow.syncState` 曾漏传——那会让
+ * 切过一次状态的按钮提示位置回落到默认下方）。测试桩据此在省略落位时清除旧值，
+ * 使「漏传」直接转红。
+ */
+const HUD_TOOLTIP = { placement: 'left' } as const;
 
 /** 创建工具按钮（提示/图标/点击回调） */
 function createToolButton(
@@ -228,7 +242,7 @@ function createToolButton(
 	const button = container.createEl('button', { cls: 'mindmap-tool-btn' });
 	setIcon(button, icon);
 	// 官方 tooltip（原生样式/定位；aria-label 由核心写入，不再手写 title）
-	setTooltip(button, tooltip);
+	setTooltip(button, tooltip, HUD_TOOLTIP);
 	button.onclick = onClick;
 	return button;
 }
