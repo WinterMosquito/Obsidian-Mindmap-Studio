@@ -17,11 +17,13 @@
 | 平台 | Windows win32，PowerShell 7 + Git Bash **5.3.15**（须写全路径 `& 'C:\Program Files\Git\bin\bash.exe' -lc '…'`；裸 `bash` 命中 WindowsApps 的 WSL 别名） | `Get-Command bash -All`；`C:\Program Files\Git\bin\bash.exe -lc 'echo $BASH_VERSION'` |
 | Node | v24.22.0 | `node -v` |
 | Chrome | `C:\Program Files\Google\Chrome\Application\chrome.exe`（无头 `--headless=old`） | `scripts/verify-visual.mjs:281` 的 `findChrome()` |
-| 库（实机） | **`D:\Obsidian\Mindmap测试仓库`**（vault 名 = 目录名；2026-10-20 复测库）；§7 的 2026-10-07 台账仍在旧库 `C:\Users\LEGION\OneDrive\Obsidian\Mindmap` | `obsidian vault="Mindmap测试仓库" eval code="app.vault.getName()"` |
-| 记录日期 | 2026-10-07（首版）；2026-10-08（第一次全表复测）；2026-10-09（全表复测）；**2026-10-20 全表复测**（§1–§6 全部重跑；§3.2 消融与 §7 实机核销未重测，见各自小节）；2026-10-22 **局部复测**（仅 S-09 / G-03 / P-01 / P-02 与 main.js 指纹，重构序列 R0–R34 结项后；其余行仍为 10-20/10-21 读数）；**2026-10-23 局部复测**（S-06 / S-09 / S-10 随 K129+K130 批次复算，其余行仍为上轮读数） | - |
-| 构建指纹（本次复测） | `main.js` sha256 `50573aec…c669dc`（632,940 B）｜ `vendor/simple-mind-map.cjs` sha256 `85905272…f4a89`（414,469 B，**LF 归一后**；raw 414,572 B） | `sha256sum main.js`；vendor 按 LF 归一后计算（`check-env.ps1` 同口径） |
+| 库（实机） | **`D:\Obsidian\Mindmap Studio`**（vault 名 = 目录名；2026-10-20 复测库）；§7 的 2026-10-07 台账仍在旧库 `C:\Users\LEGION\OneDrive\Obsidian\Mindmap` | `obsidian vault="Mindmap Studio" eval code="app.vault.getName()"` |
+| 记录日期 | 2026-10-07（首版）；2026-10-08（第一次全表复测）；2026-10-09（全表复测）；**2026-10-20 全表复测**（§1–§6 全部重跑；§3.2 消融与 §7 实机核销未重测，见各自小节）；2026-10-22 **局部复测**（仅 S-09 / G-03 / P-01 / P-02 与 main.js 指纹，重构序列 R0–R34 结项后；其余行仍为 10-20/10-21 读数）；2026-10-23 **局部复测**（S-06 / S-09 / S-10 随 K129+K130 批次复算）；**2026-10-24 局部复测**（F12-M 小地图三批：G-03 / P-01 / P-02 / S-05 / S-06 / S-09 / S-10 与构建指纹；其余行仍为上轮读数）；**2026-10-25 清理批局部复测**（G-03 / P-01 / P-02 / S-06 / S-09 与构建指纹；同日补跑 G-06 `verify:visual`、`gate.ps1` 全链与 `--bench-open`，读数见 §2）；**2026-10-25 小地图分档批局部复测**（G-03 / P-01 / S-06 / S-09 与构建指纹；同日另有视口框落位批与墨色批，三批合并回填）；**2026-10-25 第三清理批局部复测**（G-03 / P-01 / P-02 / S-06 / S-09 与构建指纹；死代码 / 注释 / 文档对账）；**2026-10-26 审核修复批局部复测**（G-03 / P-01 / P-02 / S-06 / S-09 与构建指纹；小地图唤醒分流 + 卸载前拆卸）；**2026-10-26 批 7 复核**（G-03 / P-01 / P-02 / S-06 / S-09 / S-10 与构建指纹；批 1–6 清理收尾） | - |
+| 构建指纹（本次复测） | `main.js` sha256 `cc7caaf8…675808`（**654,034 B**，gzip 194,132 B）｜ `vendor/simple-mind-map.cjs` sha256 `85905272…f4a89`（414,469 B，**LF 归一后**；raw 414,572 B，本批未重打包） | `sha256sum main.js`；vendor 按 LF 归一后计算（`check-env.ps1` 同口径） |
 
-**读数与指纹的绑定关系（重要）**：上表指纹是本次复测所用构建。**§1–§6 的数字均由各自「复现命令」在该构建上实测**；§5 的实机读数同在**该构建**上重测（三件套已复制到 `D:\Obsidian\Mindmap测试仓库\.obsidian\plugins\mindmap-studio\` 并 `obsidian vault="Mindmap测试仓库" plugin:reload id=mindmap-studio`，`dev:errors` 无报错），**窗口可见**（实测 `document.hidden === false`，无 rAF 垫片）；§3.2 消融、§7 实机核销与 §8.1 行跨度未随本次复测（原因见各自小节）。
+**读数与指纹的绑定关系（重要）**：上表指纹是本次复测所用构建。**§1–§6 的数字均由各自「复现命令」在该构建上实测**；§5 的实机读数同在**该构建**上重测（三件套已复制到 `D:\Obsidian\Mindmap Studio\.obsidian\plugins\mindmap-studio\` 并 `obsidian vault="Mindmap Studio" reload`，`dev:errors` 无报错），**窗口可见**（实测 `document.hidden === false`，无 rAF 垫片）；§3.2 消融、§7 实机核销与 §8.1 行跨度未随本次复测（原因见各自小节）。
+
+> **库路径与读数的归属（2026-10-24 补注）**：§0 的库路径已随实机库改名更新为 `D:\Obsidian\Mindmap Studio`，但 **§1–§6 的历史读数取自 2026-10-07 ~ 10-23 的旧库 `D:\Obsidian\Mindmap测试仓库`**（同一份插件代码、不同 vault）。行内 `（YYYY-MM-DD 复测）` 标注的是**该行读数**的日期；跨日不可直接相减，只比同轮相对值（§2「读数解释」）。另：`plugin:reload` 不重新 `require` `main.js`（D23），实机重载一律用 `obsidian reload`。
 
 注意：**打开基准跑在无头 Chrome 里，与 Obsidian 实机不同源**。`vendor/BUILD.md` 里的 5000 节点读数（1151ms、1091ms 等）是**实机**口径，与本文件 §2 的无头读数**不可直接相减**。
 
@@ -44,10 +46,10 @@
 | --- | --- | --- | --- |
 | G-01 | 类型检查 + 生产构建 | `BUILD_EXIT=0` | `npm run build` |
 | G-02 | Lint（0 warning 门禁） | `LINT_EXIT=0` | `npm run lint` |
-| G-03 | 单测 | **83 文件 / 2236 用例**全通过（2026-10-23 复测；+1 文件 `math-jax-fonts.test.ts`、+14 用例＝字体内联 9 + 注入链 1 + 连接线两批的用例回归，另 +3 用例＝预取与失败缓存、+2 用例＝属性键迁移的值守卫） | `npx vitest run` |
+| G-03 | 单测 | **87 文件 / 2377 用例**全通过（2026-10-26 批 7 复核；较第四清理批 86 / 2365 为 +1 文件 / +12 例＝批 5 的「切换状态后 tooltip 仍在左侧」1 例 + 批 6 的 `tests/check-gates.test.ts` 11 例。以下为第四清理批：+21 例来自同日后半批未登记：视口框实时画布、鱼骨骨干+斜脊、无选中复制全图、HUD 卡片、滚轮平滑各若干。以下为上轮：+2 例＝小地图唤醒分流〔淡出后渲染落地不复活且不取样 / `resize` 算用户手势复活并补一帧〕。以下为前几轮：2026-10-25 分档批复测；同日三批 +6 例＝视口框落位 3 + 墨色 1 + 分档 2〔「>阈值且深 8 ⇒ 7 条」「浅宽/星形等于全画」〕。以下为前几轮：同日清理批 +5 例＝判据/取图/窄画布门禁共用一次画布读数 2 例 + 判据直传画布 1 例 + 画布不可得早退 1 例 + 停用复位悬停态 1 例。以下为前几轮：小地图七轮〔B1/B2 修复〕**当日整体回撤**（源码 / 样式 / 测试 / 验收断言一并退回，D42）；六轮〔连线按布局五态复刻〕**+5 用例**＝`buildMiniMapLinks` 的 busV/railLeft/chainRail 逐坐标 3 例 + 分派表 1 例 + 未知形态退回 1 例；上一轮五轮〔连线按节点数门槛 + 悬停保活 + 滚轮转发〕**+5 用例**；上一轮四轮修 +15 例、**+1 文件**＝`engine-minimap-capture.test.ts` 10 + 标记硬上界 1 + 指纹 1 + 帧指纹 1 + 会话共用测量 1 + 判据可选测量 1；上一批 F12-M 三批为 **+2 文件 / +68 用例**＝`minimap-geometry.test.ts`（几何/绘制/开放高度/三层连线/抽样口径 52 例）+ `view-minimap.test.ts`（会话状态机 12 例，fake DOM + fake window），另 +4 例 `contentExceedsCanvasAtFullScale`；同日清理批 +2 例＝`miniMapScale` 取向与退化各 1） | `npx vitest run` |
 | G-04 | 死代码 | `KNIP_EXIT=0` | `npm run check:dead-code` |
 | G-05 | 文档同步契约 | 4 passed | `npx vitest run tests/agents-md-sync.test.ts` |
-| G-06 | 渲染契约（无头 Chrome） | `✓ 视觉验证通过`（15 场景 / 19 探针；2026-10-23 复测，退出码 0） | `npm run verify:visual -- --require-chrome` |
+| G-06 | 渲染契约（无头 Chrome） | `✓ 视觉验证通过`（15 场景 / 19 探针；2026-10-25 复测，退出码 0） | `npm run verify:visual -- --require-chrome` |
 
 ---
 
@@ -58,11 +60,11 @@
 
 | 节点数 | 打开墙钟 | 相对同轮 500 基准 | 构造期 | 渲染 `.smm-node` | 自绘锚点 | 截断 | 剪枝命中 | 内部节点 | 预测量 built/visited | 正式测量缓存命中 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 500 | **478 ms** | +0 ms | 0 ms | 24 | 2 | 0 | 23 | 371/500 | 475/500 | 475/475（100%） |
-| 5000 | **800 ms** | +323 ms | 0 ms | **15** | 1 | 0 | 117 | 3701/5000 | 4750/5000 | **4750/4750（100%）** |
-| 10000 | **1140 ms** | +663 ms | 0 ms | **15** | 1 | 0 | 217 | 7401/10000 | 9500/10000 | **9500/9500（100%）** |
+| 500 | **455 ms** | +0 ms | 0 ms | 24 | 2 | 0 | 23 | 371/500 | 475/500 | 475/475（100%） |
+| 5000 | **761 ms** | +306 ms | 0 ms | **15** | 1 | 0 | 117 | 3701/5000 | 4750/5000 | **4750/4750（100%）** |
+| 10000 | **1112 ms** | +657 ms | 0 ms | **15** | 1 | 0 | 217 | 7401/10000 | 9500/10000 | **9500/9500（100%）** |
 
-（各规模仍为 2 次取最小。探针在 500 行也会输出「自绘锚点 / 截断」两列，故如实填入。**2026-10-20 读数 478/800/1140 ms** 较 2026-10-09 的 386/687/1039 ms 整体上移 **+24 % / +16 % / +10 %**，但 **DOM 与内部节点计数逐列完全一致**（24/15/15、371/3701/7401、475/4750/9500、缓存命中 100 %）——差异落在机器负载侧，不构成代码回归判定。）
+（各规模为 2 次取最小。探针在 500 行也会输出「自绘锚点 / 截断」两列，故如实填入。**2026-10-25 读数 455/761/1112 ms**（清理批同一 bundle）与 **2026-10-20 的 478/800/1140 ms**、2026-10-09 的 386/687/1039 ms 相比，**DOM 与内部节点计数逐列完全一致**（24/15/15、371/3701/7401、475/4750/9500、缓存命中 100 %）——ms 差异落在机器负载侧，不构成代码回归判定。）
 
 **读数解释（勿误读）**
 
@@ -78,14 +80,14 @@
 
 | 指标ID | 指标 | 值 | 复现命令 |
 | --- | --- | --- | --- |
-| P-01 | 发布产物 | **637,082 B**（2026-10-23 复测；含导出 SVG 的 MathJax 字体内联模块；较上一条读数 +279 B＝属性键迁移的值守卫） | `ls -l main.js` |
-| P-02 | gzip 后 | **188,182 B**（2026-10-23 复测） | `gzip -c main.js \| wc -c` |
+| P-01 | 发布产物 | **654,034 B**（2026-10-26 批 7 复核；较第四清理批 653,987 为 +47 B＝批 1–6 的注释 / 结构收敛（含新增门禁映射直测）；`styles.css` 同步 **23,639 B**〔批 5 删旧顶栏残留 −884 B：`*-select` 死选择器、暗色 `.mindmap-toolbar` 背景与两条重复按钮规则、移动端从未生效的 28px〕。以下为第四清理批：+1,320 B 来自同日后半批的**未登记**改动（滚轮平滑 / 视口框实时投影 / 鱼骨骨干 / 无选中复制 / HUD 卡片），该批自身是注释与死代码（`MiniMapContext.lang`、合并重复步长常量），对压缩产物影响在百字节内。以下为前几轮：相对 649,388 B 发布基线 +13,279 B＝小地图三个新模块 + 浮层样式 + 视口框/墨色/分档三批；再往前 +48 B＝唤醒分流与 `onUnloadFile` 拆卸；2026-10-25 第三清理批 −62 B＝删 `MiniMapMeasure.firstLevel` 及其传播） | `ls -l main.js` |
+| P-02 | gzip 后 | **194,132 B**（2026-10-26 批 7 复核，与 P-01 同一产物；勿跨批次配对比较。第四清理批为 194,071 B） | `gzip -c main.js \| wc -c` |
 | P-03 | vendor 源文件 | **414,469 B**（LF 归一；raw 414,572 B） | `ls -l vendor/simple-mind-map.cjs`；LF 归一后计字节 |
 | P-04 | **gzip 分组占比**（消融实测，见 §3.2） | vendor **117,526 B（66.9%）** / 自有（含 i18n）**58,179 B（33.1%）**（**2026-10-09 消融读数，2026-10-20 未重测**） | 消融构建 + `gzip -c \| wc -c` |
 
 ### 3.1 归因（方案 OPT-01A）
 
-> **2026-10-23 注**：本小节的归因读数取自 2026-10-09 的构建（发布产物 625,647 B），此后发布产物已增至 **637,082 B**（见 P-01）。结论（vendor ≈ 2/3、自有侧最大项是 `core/i18n.ts`）未变；要精确归因请按本节命令重跑——**输出到 `.tmp-analyze`，绝不覆盖发布产物**。
+> **2026-10-24 注**：本小节的归因读数取自 2026-10-09 的构建（发布产物 625,647 B），此后发布产物已增至 **649,388 B**（见 P-01）。结论（vendor ≈ 2/3、自有侧最大项是 `core/i18n.ts`）未变；要精确归因请按本节命令重跑——**输出到 `.tmp-analyze`，绝不覆盖发布产物**。
 
 归因构建（**输出到独立目录，绝不覆盖发布产物**）：
 
@@ -160,12 +162,12 @@ npx esbuild src/main.ts --bundle --format=cjs --target=es2021 --tree-shaking=tru
 | S-02 | `as unknown as` | **34**（`engine/` 层占 23，其中 `mindmap-viewport.ts` 9、`mindmap-nodes.ts` 8） | `grep -rho "as unknown as" src --include=*.ts \| wc -l` |
 | S-03 | 分支密度 Top5 | `mindmap-viewport.ts` 151、`md-serialize.ts` 149、`md-outline.ts` 101、`math-jax.ts` 90、`node-inline-tokenize.ts` 73 | `grep -oE "if\|for\|while\|catch" <file> \| wc -l`（**逐文件**统计、按计数降序取 5；该正则含标识符内出现，如 `verify` 里的 `if`，故只作横向排序口径） |
 | S-04 | features 横向 import | **58**（总 86 边，`view-context` 21 + `view-common` 7 除外），`view-node-actions` 被 6 处依赖 | `grep -rhoP "from './[a-z-]+'" src/features` |
-| S-05 | `view.ts` 规模 | **1223** 行 / 19 自有方法 / **15** 私有字段 / 43 import（2026-10-23 复测；四个 `resolve*()` 合并为 `resolvePreference` 后方法与字段各 −3 / −2） | `awk 'END{print NR}' src/features/view.ts`；`grep -cP "^\t[a-zA-Z]+\(" …`；`grep -cP "^\tprivate [a-zA-Z]+[?!]?\s*[:=]" …`；`grep -c "^import" …` |
-| S-06 | 超过 300 行的文件 | **30**（2026-10-23 实测；本批新增 `features/view-context-menu.ts` 380 行、`markdown/md-open.ts` 303 行；与 AGENTS.md 豁免表、`docs/agents/architecture.md` 同表**逐行一致**。计数须逐文件 `countSourceLines` 复算——`agents-md-sync.test.ts` 只守登记值漂移阈值，不改总数） | 逐文件 `countSourceLines`（`readFileSync(…,'utf8').split('\n')`，末尾换行不计）；或 `npx vitest run tests/agents-md-sync.test.ts`（仅漂移） |
+| S-05 | `view.ts` 规模 | **1254** 行 / 19 自有方法 / **15** 私有字段 / 44 import（2026-10-26 复测；较 10-24 的 1249 行 +5＝`onUnloadFile` 的拆卸与注释，方法/字段/import 未增） | `awk 'END{print NR}' src/features/view.ts`；`grep -cP "^\t[a-zA-Z]+\(" …`；`grep -cP "^\tprivate [a-zA-Z]+[?!]?\s*[:=]" …`；`grep -c "^import" …` |
+| S-06 | 超过 300 行的文件 | **33**（2026-10-26 第四清理批复测；F12-M 新增的两条**已登记**：`core/minimap-geometry.ts` 1351、`features/view-minimap.ts` 771；本批补登记此前漏登的 `features/view-viewport.ts` 409——滚轮接管后越线；与 AGENTS.md 豁免表、`docs/agents/architecture.md` 同表**逐行一致**。计数须逐文件 `countSourceLines` 复算——`agents-md-sync.test.ts` 只守登记值漂移阈值，不改总数） | 逐文件 `countSourceLines`（`readFileSync(…,'utf8').split('\n')`，末尾换行不计）；或 `npx vitest run tests/agents-md-sync.test.ts`（仅漂移） |
 | S-07 | `addEventListener` 出现 | **31** 处 | `grep -rno "addEventListener" src --include=*.ts \| wc -l` |
 | S-08 | `console.` 调用 | **88** 处（2026-10-23 复测；+1＝属性键迁移的目标键占用告警） | `grep -rno "console\." src --include=*.ts \| wc -l` |
-| S-09 | src / tests 规模 | **110 文件 29,909 行 / 85 文件 41,512 行**（2026-10-23 复测；+2 `src/platform/math-jax-{fonts,export-clip}.ts`、+1 `tests/math-jax-fonts.test.ts`。行数按 `countSourceLines`——直接 `wc -l` 会少 1～4 行，来自末尾无换行的文件） | `find src -name "*.ts" \| wc -l`（文件数）；行数用 `countSourceLines` 口径 |
-| S-10 | i18n 键 | ZH **206** / EN **206**（对齐；2026-10-23 复测。+4 个 `settings.group*` 分组标题，−`settings.title` / `toolbar.undoShort` / `toolbar.redoShort`，净 +3） | 统计 `src/core/i18n.ts` 两段字面量键（`^\t'` 行；ZH 段以 `} as const;` 收尾、EN 段以 `};` 收尾，**按段切分**，勿用单一结束标记） |
+| S-09 | src / tests 规模 | **113 文件 32,837 行 / 89 文件 44,588 行**（2026-10-26 批 7 复核；较第四清理批 src +108 / tests +150＝批 1–6 的注释与结构收敛（`minimap-geometry` 抽出 `extentOf` / `pushVerticalRail`、`view-viewport` 合并 `stepOf`、`check-gates` 去第二份清单）+ `tests/check-gates.test.ts` 新文件 127 行。以下为第四清理批：src +302 / tests +515＝同日后半批（视口框实时画布、鱼骨骨架、无选中复制全图、HUD 卡片、滚轮平滑）与本次死代码/注释订正（`view-minimap` −1、`view-viewport` −4、`minimap-geometry` +5、`mindmap-clipboard` 净 −1）。以下为上轮：本批 src +31 行＝`view-minimap` 唤醒分流与注释（+26）+ `onUnloadFile` 拆卸（+5），tests +29 行＝两条回归。以下为 2026-10-25 第三清理批：src +8 行＝删 `firstLevel`（`minimap-geometry` −6）与同文件注释订正（+7）＋ `drag-session` +3 / `viewport` +3 / `constants` +1，tests −5 行＝三处 fixture 去掉 `firstLevel`。以下为前几轮：小地图分档批复测；同日三批累计 src +179 / tests +183＝视口框落位（`projectViewportBox` 改走 `fitSpan`）+ 墨色（`readInk` 回落链、预设只归零宽度）+ 分档（`marksWithinDepth` 取代 `spineMarks`、新增 `MINIMAP_LINK_MAX_DEPTH`）。以下为前几轮：第二清理批〔死代码/注释订正〕src 再 +12＝`minimap-geometry` 删恒真根特判并订正两条注释、`constants` 小地图族级说明改段头注释。小地图七轮〔B1/B2 修复〕**当日整体回撤**（源码 / 样式 / 测试 / 验收断言一并退回，D42），比六轮多出的是同级兄弟横链那几行；上一轮 src +95 行、tests +140 行＝小地图五轮；上一轮 tests +1 文件＝`engine-minimap-capture.test.ts` 271 行；+3 src＝`core/minimap-geometry.ts`、`engine/mindmap-minimap.ts`、`features/view-minimap.ts`，+1 tests＝`view-minimap.test.ts`（`tests/*.ts` 含 `setup.ts`）；清理批 src 净 −35 行（重复的全树遍历与三处比例换算各收一份）、tests +19 行（+2 用例）。行数按 `countSourceLines`——直接 `wc -l` 会少 1～4 行，来自末尾无换行的文件） | `find src -name "*.ts" \| wc -l`（文件数）；行数用 `countSourceLines` 口径 |
+| S-10 | i18n 键 | ZH **206** / EN **206**（对齐；2026-10-26 复核。较 2026-10-24 的 207/207 各 −1＝删去小地图面板的 `aria-label` 文案 `minimap.label`，见 K139） | 统计 `src/core/i18n.ts` 两段字面量键（`^\t'` 行；ZH 段以 `} as const;` 收尾、EN 段以 `};` 收尾，**按段切分**，勿用单一结束标记） |
 | S-11 | 设置 | 接口 **12** 项声明 / `DEFAULT_SETTINGS` **12** 键 / 面板走 `getSettingDefinitions()`（2026-10-21 复测；边框与配色已改为按文件记，`defaultThemeStyle` 只提供新建时的初始值） | 取 `export interface MindMapStudioSettings` 与 `DEFAULT_SETTINGS` 两段内的字段行（文件为 CRLF，行尾 `\r` 需先剥离） |
 | S-12 | **循环依赖**（§4.1） | **编译期与运行时均为 0 个环**；**94** 文件 / **450** 条 src 内部依赖边（其中仅类型边 **93** 条；2026-10-21 复测，口径同 §4.1） | 自建 Tarjan 检测脚本（见 §4.1 口径与盲区） |
 | S-13 | **圈复杂度**（§4.2） | ≥9 共 **81** 个函数；≥15 共 30；≥20 共 15；≥30 共 5（2026-10-20 读数，2026-10-21 未重测） | ESLint Node API 覆盖 `complexity` 规则（CLI `--rule` 在 flat config 下已不可用，见 §4.2） |
@@ -234,7 +236,7 @@ node scripts/gen-perf-fixture.mjs --out "<vault>/fixtures/bench/realistic-5000.m
 
 **夹具治理（2026-10-20 决策）**：库内旧副本（5,004 行 / 239,460 B / sha `03adc54b…`）**未删除，已改名归档**为 `realistic-5000.legacy-2026-10-20.md`；当前 `realistic-5000.md` 已由生成器重建（指纹见上）。规则：**每次测量前先跑生成器并核对 sha**，库内文件只是缓存，指纹不符即重建——不再接受「就地编辑夹具后继续测」（2026-10-09 与 2026-10-20 两次漂移同源）。
 
-**测量环境（必须与读数一起读）**：2026-10-20 复测时 Obsidian **窗口可见**（实测 `document.hidden === false`），**无 rAF 垫片**；容器 `1315 × 1027`。读数经 `obsidian vault="Mindmap测试仓库" eval` 读画布 DOM（`view.containerEl`，注意本版本 `contentEl` 为空）。端点 B 等渐进渲染停增（连续两次读数相同，实测约 2 分钟）。
+**测量环境（必须与读数一起读）**：2026-10-20 复测时 Obsidian **窗口可见**（实测 `document.hidden === false`），**无 rAF 垫片**；容器 `1315 × 1027`。读数经 `obsidian vault="Mindmap Studio" eval` 读画布 DOM（`view.containerEl`，注意本版本 `contentEl` 为空）。端点 B 等渐进渲染停增（连续两次读数相同，实测约 2 分钟）。
 
 **读数由「当前视口」决定（2026-10-08 复测确认的口径）**：性能模式生效时剪枝是「**节点移出画布即摘 DOM**」（引擎 `opt.performanceConfig.removeNodeWhenOutCanvas = true`），而视口变换按文件持久化在 `data.json`，故同一文件在不同会话下 DOM 规模可从「只渲染视口内十几个节点」到「全量 5002 个」——**任何回归比对都必须先说明视口状态**。下表两列即实测的两个端点（本轮两端点均可**按命令复现**）：
 

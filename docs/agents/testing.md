@@ -53,6 +53,20 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 `--dump-dom` 快照经 `if: always()` 步骤归档成 artifact，失败时可直接下载定位。
 浏览器缺失仍然直接失败（`--require-chrome`），不静默跳过。
 
+**已知缺口：小地图没有视觉门禁**（2026-10-24 登记；判定为「不需要常驻补」，理由见下）。
+`features/view-minimap`、`core/minimap-geometry` 与引擎读取面已由
+`tests/view-minimap.test.ts`（**22** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
+`tests/minimap-geometry.test.ts`（**66** 例纯几何）与
+`tests/engine-minimap-capture.test.ts`（**15** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
+**肉眼一眼可见**的风险：CSS 级联（面板定位/层级/pointer-events/过渡）与 `<img>` 对
+data-URL SVG 的解码。往 `verify:visual` 加场景需要把 features 层也 bundle 进页面并补
+Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— 投入产出比不划算。
+
+**触发条件（命中才临时加探针，三条足够）**：改 `styles.css` 的小地图段、或改
+`buildMiniMapSvg` 的输出结构时，在无头页里断言 ① `img.naturalWidth > 0`（解码成功）
+② 面板宽高 = `computeMiniMapSize` 的期望值 ③ 视口框的百分比坐标落在面板内。
+日常靠库内 `10-wiki/实机验收剧本.md` §2.9 的走查兜底。
+
 > **obsidian 替身必须与源码的具名导入同步**：`verify:visual` 把真实 `src/**` 打进浏览器，
 > 任何模块新增 `import { x } from 'obsidian'` 都要在 `scripts/verify-visual.mjs` 的
 > `OBSIDIAN_SHIM_SOURCE` 补同名导出，否则会停在构建阶段 `No matching export … for import "x"`
@@ -137,6 +151,19 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
   `CHROME_PATH` 指定浏览器，路径不存在时自动回落到平台默认安装位置）。
 - vitest 配置 `vitest.config.ts`：`obsidian` → `tests/mocks/obsidian.ts` alias（包仅有类型声明，无运行时 JS）。
   coverage 含 `src/**`（排除 `core/i18n`、`core/constants` 纯文案与常量表），vendor 为预打包产物不纳入。
+- **有 DOM 副作用的模块怎么测（fake DOM 手法，`tests/view-minimap.test.ts` 为范式）**：环境是
+  `node`、**没有 jsdom**（引入即触发依赖审批），故不要为了测一个会话状态机去装 DOM 库。
+  做法是跑**真实模块** + 最小替身：`FakeEl` 只实现模块实际调用的 Obsidian DOM 子集
+  （`createDiv` / `createEl` / `addClass` / `removeClass` / `setAttribute` / `removeAttribute` /
+  `style`（含 `removeProperty`）/ `contains` / `remove` / `src`），`FakeWin` 提供
+  `setTimeout`（走 `window.setTimeout`，受 `vi.useFakeTimers()` 控制）、rAF 队列（测试里
+  手动 `runFrames()` 推进）、事件监听表；`containerEl.win` 指向它。**引擎侧整体
+  `vi.mock('../src/engine/mindmap')`**——断言对象是「何时画 / 何时藏 / 延迟到哪 / 拖了多少 /
+  销毁干不干净」，不是引擎取样。配套约定：`tests/setup.ts` 已把 `window` 指向 `globalThis`；
+  替身里的定时器一律写 `window.setTimeout`（否则 `obsidianmd/prefer-window-timers` 报 warning）；
+  `style` 的写入用属性赋值（`el.style.left = …`），清空用 `removeProperty` / `removeAttribute`
+  （`el.setAttribute('style', …)` 会触发 `no-static-styles-assignment`）。
+  **这类测试替代不了真实浏览器**：CSS 级联与布局仍归 `verify:visual`（小地图那部分见本文件前段「已知缺口」）。
 - `tsconfig.json` 纳入 `src/`、`tests/`、`vendor/**/*.d.cts`，**以及三个发布相关配置
   （`eslint.config.mts` / `stylelint.config.mjs` / `manifest.json`）**；`npm run build` 先
   `tsc -noEmit` 类型检查全部。2026-10-04 为此开了 `checkJs`（否则 `.mjs` 只过语法

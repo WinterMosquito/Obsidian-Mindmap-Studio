@@ -1,6 +1,6 @@
 {
 	"name": "mindmap-studio",
-	"version": "0.2.4",
+	"version": "0.2.5",
 	"description": "Mind map rendering for Markdown in Obsidian: edit .mindmap.md as a mind map with Markdown outline round-trip and Obsidian-native links/images.",
 	"main": "main.js",
 	"type": "module",
@@ -15,6 +15,7 @@
 		"lint:css": "stylelint \"**/*.css\"",
 		"check:dead-code": "knip --include files,exports,types",
 		"check:release": "node scripts/check-release-metadata.mjs",
+		"check:gates": "node scripts/check-gates.mjs",
 		"lint:scanner": "node scripts/scanner-lint.mjs",
 		"verify:visual": "node scripts/verify-visual.mjs",
 		"build:vendor": "node scripts/build-vendor.mjs"
