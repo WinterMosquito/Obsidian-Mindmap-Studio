@@ -4,16 +4,28 @@
  * 覆盖：实时容器几何同步、数据层/DOM 两种内容包围盒测量、适应画布（fit）、
  * 居中与「渲染落地后居中补正」、缩放/平移、以及视口状态读写与签名。
  * 依赖 `mindmap-timers` 的 `scheduleEngineTimer`（补正兜底定时器）。
+ * 另把 `mindmap-viewport-canvas.getCanvasSize` 转出（视图层小地图的唯一画布尺寸
+ * 来源，见下方 export 处的说明）。
  */
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 import { HEAVY_FIT_NODE_THRESHOLD } from '../core/constants';
-import { countMindMapNodes } from './mindmap-nodes';
+import { createWarnOnce } from '../core/errors';
+import {
+	contentExceedsCanvas,
+	measureMiniMapBounds,
+	type MiniMapMeasure,
+	type MiniMapSize,
+} from '../core/minimap-geometry';
+import { countMindMapNodes, getRenderRoot } from './mindmap-nodes';
 import { scheduleEngineTimer } from './mindmap-timers';
 import {
 	getCanvasOrigin,
 	getCanvasSize,
 	syncCanvasGeometry,
 } from './mindmap-viewport-canvas';
+// 画布尺寸的唯一读取面：视图层（小地图）经 barrel 转出取用，不直接依赖
+// `mindmap-viewport-canvas`（后者是 engine 内部形态）
+export { getCanvasSize };
 
 /**
  * 大图 fit 的**最小可读比例**（产品裁决 2026-10-17）。
@@ -26,6 +38,9 @@ import {
  * 阈值以下不受影响（1–2k 的 fit 亚秒级，全览仍有意义）。
  */
 const LARGE_MAP_MIN_FIT_SCALE = 0.1;
+
+/** 小地图启用判据失败只告警一次（判据每秒最多跑一次，普通 warn 会刷屏） */
+const warnCriterionFailed = createWarnOnce();
 
 /**
  * `fitMindMap` 的结果。
@@ -493,22 +508,9 @@ export function measureContentFitToWidth(
 		return null;
 	}
 	syncCanvasGeometry(mindMap);
-	const transform = readDrawTransform(mindMap);
-	// **原尺寸**（布局像素）双路：性能模式用数据层并集（零装配），常规模式用
-	// DOM rbox 除以当前比例还原（rbox 含当前变换，不还原会把旧缩放当内容尺寸）。
-	let natural: { width: number; height: number } | null = null;
-	const dataBox = mindMap.opt?.openPerformance
-		? measureContentBoxFromData(mindMap)
-		: null;
-	if (dataBox) {
-		natural = { width: dataBox.width, height: dataBox.height };
-	} else {
-		const box = measureContentBox(mindMap);
-		const scaleX = transform?.scaleX ?? 1;
-		if (box && scaleX > 0) {
-			natural = { width: box.width / scaleX, height: box.height / scaleX };
-		}
-	}
+	// 原尺寸只问 readContentSizeInLayout（双路口径见该函数：性能模式＝节点盒并集，
+	// 常规模式＝rbox ÷ 当前比例，后者含连线，即「整图要多宽」）
+	const natural = readContentSizeInLayout(mindMap);
 	if (!natural || !(natural.width > 0) || !(natural.height > 0)) {
 		return null;
 	}
@@ -554,15 +556,6 @@ function measureContentBox(
 	};
 }
 
-/** 渲染树节点的数据层几何面（仅取计算所需字段，缺省时调用方回退 DOM 测量） */
-interface DataLayerNode {
-	readonly left?: unknown;
-	readonly top?: unknown;
-	readonly width?: unknown;
-	readonly height?: unknown;
-	readonly children?: readonly DataLayerNode[];
-}
-
 /**
  * 可见性判定用的**画布坐标**内容盒。
  *
@@ -605,54 +598,57 @@ function contentBoxForVisibility(
  * `left/top/width/height`（引擎裁剪判定 `checkIsInClient` 同源字段），
  * 直接求并集即可——零 DOM 装配、O(n) 纯计算。
  *
- * 字段语义（vendor 实读）：`get left() { return this.customLeft || this._left }`
- * ——拖拽调整过位置的节点用 customLeft/customTop，渲染与判定同样读它，故一致。
+ * 实现委托 `core/minimap-geometry.measureMiniMapBounds`：全树节点盒并集只有
+ * 这一份（小地图的启用判据与映射也用它），此处只负责经防腐面取渲染树根——
+ * 此前本文件另写了一份同义遍历，两处口径（零尺寸节点算不算）已开始漂移。
  *
  * @returns 全树几何并集；渲染树不可得或几何全不可用时返回 null（调用方回退）
  */
 function measureContentBoxFromData(
 	mindMap: MindMap,
 ): { x: number; y: number; width: number; height: number } | null {
-	const root = (
-		mindMap as unknown as {
-			renderer?: { root?: DataLayerNode | null };
-		}
-	).renderer?.root;
-	if (!root) {
+	return measureMiniMapBounds(getRenderRoot(mindMap))?.bounds ?? null;
+}
+
+/**
+ * 内容的**布局尺寸**（不含当前视口变换；只给「按宽度适配」关心宽高）。
+ *
+ * 双路口径（与 `measureContentBoxFromData` 同源）：
+ * - 性能模式：数据层几何并集，已是布局坐标、零装配；
+ * - 常规模式：DOM rbox 是**画布坐标**（含当前变换），除以比例还原。
+ *
+ * **只服务「按宽度适配」**（`measureContentFitToWidth`，即 `mindmap` 代码块嵌入）
+ * ——那里的语义是「整张图（含连线）要装进多宽」，rbox 口径正合适。
+ * 小地图不走这里（2026-10-24 二轮修）：它的判据与映射统一用
+ * `core/minimap-geometry.measureMiniMapBounds`（全量节点盒），否则常规模式含连线、
+ * 性能模式只覆盖已装配子集，同一张图会给出两种尺寸。
+ *
+ * 调用方须先 `syncCanvasGeometry`（本函数只读，不触发 resize/渲染）。
+ */
+function readContentSizeInLayout(
+	mindMap: MindMap | null,
+): { width: number; height: number } | null {
+	if (!mindMap) {
 		return null;
 	}
-	let minX = Infinity;
-	let minY = Infinity;
-	let maxX = -Infinity;
-	let maxY = -Infinity;
-	const walk = (node: DataLayerNode): void => {
-		const left = Number(node.left);
-		const top = Number(node.top);
-		const width = Number(node.width);
-		const height = Number(node.height);
-		if (
-			Number.isFinite(left) &&
-			Number.isFinite(top) &&
-			Number.isFinite(width) &&
-			Number.isFinite(height)
-		) {
-			if (left < minX) minX = left;
-			if (top < minY) minY = top;
-			if (left + width > maxX) maxX = left + width;
-			if (top + height > maxY) maxY = top + height;
-		}
-		const children = node.children;
-		if (children) {
-			for (const child of children) {
-				walk(child);
-			}
-		}
+	const dataBox = mindMap.opt?.openPerformance
+		? measureContentBoxFromData(mindMap)
+		: null;
+	if (dataBox) {
+		return { width: dataBox.width, height: dataBox.height };
+	}
+	const transform = readDrawTransform(mindMap);
+	if (!transform || !(transform.scaleX > 0) || !(transform.scaleY > 0)) {
+		return null;
+	}
+	const box = measureContentBox(mindMap);
+	if (!box) {
+		return null;
+	}
+	return {
+		width: box.width / transform.scaleX,
+		height: box.height / transform.scaleY,
 	};
-	walk(root);
-	if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
-		return null;
-	}
-	return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
 /**
@@ -693,6 +689,54 @@ export function isContentVisibleInCanvas(
 		);
 	} catch (error) {
 		console.warn('检测内容可见性失败', error);
+		return null;
+	}
+}
+
+/**
+ * **100% 缩放**下内容是否装不进画布（小地图的自动启用判据）。
+ *
+ * 与当前缩放无关：用户缩到 50% 看全图时小地图不该消失（否则随缩放闪烁）。
+ *
+ * 内容尺寸用 `measureMiniMapBounds`（**全量节点盒**）——与缩略图的映射基准
+ * 同一份口径。2026-10-24 二轮修：此前用 `readContentSizeInLayout`，常规模式含
+ * 连线、性能模式只覆盖已装配子集，与缩略图画的东西不是一回事，临界尺寸下会
+ * 出现「判据说装不下、图里却大片留白」。
+ *
+ * @param measured 已算好的全树几何（`measureMiniMapContent`）：判据与取图共用
+ *   一份时省一遍遍历；不传则自己测。
+ * @param canvasSize 已读到的画布尺寸：判据与「窄画布门禁」「取图」共用同一次
+ *   实时矩形读取（`getBoundingClientRect` 会强制布局）；不传则自己读。
+ * @returns `true` 装不下（显示小地图）；`false` 装得下；`null` 几何不可得
+ *   （引擎未就绪 / 渲染树未回填 / 容器零尺寸）——调用方按「不显示」处理。
+ */
+export function contentExceedsCanvasAtFullScale(
+	mindMap: MindMap | null,
+	measured?: MiniMapMeasure | null,
+	canvasSize?: MiniMapSize | null,
+): boolean | null {
+	if (!mindMap) {
+		return null;
+	}
+	try {
+		// **刻意不调 `syncCanvasGeometry`**：它会 `resize()` 引擎，而 vendor 的
+		// `resize()` 无条件 `emit('resize')` —— 该事件又被小地图的「重判启用条件」
+		// 监听，于是构成 1 次/秒的自激循环（实机实测：静止 20s 内 22 次 resize），
+		// 面板永远等不到「空闲 30s」。本判据不需要同步：画布尺寸取实时矩形、
+		// 内容盒走渲染树几何（两者都不依赖缓存尺寸）。
+		const size = canvasSize === undefined ? getCanvasSize(mindMap) : canvasSize;
+		const stats = measured ?? measureMiniMapBounds(getRenderRoot(mindMap));
+		if (!size || !stats) {
+			return null;
+		}
+		const { bounds } = stats;
+		if (!(bounds.width > 0) || !(bounds.height > 0)) {
+			return null;
+		}
+		return contentExceedsCanvas(bounds, size);
+	} catch (error) {
+		// 判据每秒最多跑一次（节流），持续异常时普通 warn 会刷屏
+		warnCriterionFailed('检测小地图启用条件失败', error);
 		return null;
 	}
 }

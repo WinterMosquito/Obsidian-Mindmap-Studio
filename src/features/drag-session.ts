@@ -6,17 +6,19 @@
  * 「win.addEventListener ×2 → move 里 `if (rafId === null) requestAnimationFrame`
  * → 收尾 `cancelAnimationFrame` + `removeEventListener ×2」，约 40 行。
  * 当时唯一的语义差异是**注册是否带捕获标志**，靠两处代码各自注释说明且已实际
- * 分叉过一次（见下方 `capture` 参数）；现仅剩 `image-resize` 一个调用方。
+ * 分叉过一次（见下方 `capture` 参数）。现存两个调用方分属两种语义：图像调宽传
+ * `capture: true`（手势独占），小地图拖拽不传（观察式）。
  *
  * 归入 features 层而非 core：`core/` 是零依赖纯逻辑层（禁 DOM），而本原语
  * 直接操作 `Window` 事件与 `requestAnimationFrame`。
  *
  * 事件语义（两条**不同**的合约，勿混用）：
  * - `onMove` **逐事件**触发、不合并——调用方需要每个 mousemove 都算状态
- *   （调宽要按 clientX 递推尺寸并记 latest）。
+ *   （调宽按 clientX 递推尺寸；小地图按位移累加平移量）。
  * - `onFrame` 至多每帧一次，由调用方显式 `scheduleFrame()` 排期——判定是全树
- *   O(n) 的活，按帧率而非事件频率计价（大图 + 高回报率鼠标下事件频率可达帧率
- *   数倍）。调用方通常在 `onMove` 里只写「待处理」状态、在 `onFrame` 里消费它。
+ *   O(n) 的活（或每帧只需一次的重投影），按帧率而非事件频率计价（大图 + 高
+ *   回报率鼠标下事件频率可达帧率数倍）。调用方通常在 `onMove` 里只写「待处理」
+ *   状态、在 `onFrame` 里消费它。
  */
 
 /** 窗口级拖拽会话句柄：合帧排期 + 幂等收尾 */
@@ -59,10 +61,11 @@ export interface WindowDragSessionOptions {
 	 * 捕获阶段注册（默认 false）。
 	 *
 	 * - `true`：**手势独占**。注册先于引擎容器级监听执行，配合 `onMove` 内的
-	 *   `stopPropagation()` 让引擎收不到事件（调宽用，避免缩放拖拽被节点拖拽
-	 *   逻辑串扰）。移除时必须带**同款**标志，否则监听摘不掉。
+	 *   `stopPropagation()` 让引擎收不到事件（图像调宽用，避免缩放拖拽被节点
+	 *   拖拽逻辑串扰）。移除时必须带**同款**标志，否则监听摘不掉。
 	 * - `false`：与引擎监听并存（**观察式**会话：不夺事件，引擎照常收到）。
-	 *   现存调用方均传 `true`；该分支保留以表达「观察 vs 独占」两种语义。
+	 *   小地图拖拽走这条——面板是画布的兄弟节点，引擎本就收不到它的事件，
+	 *   平移由 `onMove` 里的程序化 `panMindMap` 完成。
 	 */
 	capture?: boolean;
 }

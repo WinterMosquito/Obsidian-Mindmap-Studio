@@ -31,6 +31,7 @@ import {
 import {
 	arrangeMindMap,
 	centerContentAtFullScale,
+	contentExceedsCanvasAtFullScale,
 	fitMindMap,
 	isContentVisibleInCanvas,
 	resetZoom,
@@ -573,5 +574,130 @@ describe('fitMindMap · 大图比例下限（LARGE_MAP_MIN_FIT_SCALE）', () => 
 
 		expect(setScale).toHaveBeenCalledTimes(1);
 		expect(setScale.mock.calls[0]?.[0]).toBeCloseTo(0.03, 6);
+	});
+});
+
+/**
+ * 小地图启用判据（`contentExceedsCanvasAtFullScale`）：100% 下内容装不装得下。
+ *
+ * 两条契约：
+ * 1. **不调 resize**：本函数在 `node_tree_render_end` 上被调用，而
+ *    `syncCanvasGeometry` 会调引擎 `resize()`，vendor 的 `resize()` 又无条件
+ *    `emit(resize)` —— 实机实测构成 1 次/秒的自激循环（静止 20s 内 22 次），
+ *    小地图永远等不到「空闲 30s」，淡出失效。
+ * 2. **只看全量节点盒**（`measureMiniMapBounds`）：与缩略图映射同源。rbox
+ *    不参与——常规模式它含连线与外扩边距，性能模式只覆盖已装配子集，两种口径
+ *    都会让「判据说装不下、缩略图却大片留白」（2026-10-24 二轮修）。
+ */
+describe('contentExceedsCanvasAtFullScale（小地图自动启用判据）', () => {
+	/** 画布 800×600；内容几何由渲染树给出，rbox 只用于反证「不参与判定」 */
+	function makeStub(options: {
+		openPerformance: boolean;
+		dataWidth: number;
+		rboxWidth?: number;
+	}) {
+		const { openPerformance, dataWidth, rboxWidth = dataWidth } = options;
+		const resize = vi.fn<() => void>();
+		const mindMap = {
+			width: 800,
+			height: 600,
+			resize,
+			opt: { openPerformance },
+			el: {
+				getBoundingClientRect: () => ({
+					left: 0,
+					top: 0,
+					width: 800,
+					height: 600,
+				}),
+			},
+			elRect: { left: 0, top: 0 },
+			draw: {
+				transform: () => ({
+					scaleX: 1,
+					scaleY: 1,
+					translateX: 0,
+					translateY: 0,
+				}),
+				rbox: () => ({ x: 0, y: 0, width: rboxWidth, height: 200 }),
+			},
+			renderer: {
+				root: {
+					isRoot: true,
+					left: 0,
+					top: 0,
+					width: dataWidth,
+					height: 200,
+					children: [],
+				},
+			},
+		} as unknown as MindMap;
+		return { mindMap, resize };
+	}
+
+	it('节点盒超出画布宽 → true，且不触发引擎 resize', () => {
+		const { mindMap, resize } = makeStub({
+			openPerformance: true,
+			dataWidth: 1200,
+		});
+
+		expect(contentExceedsCanvasAtFullScale(mindMap)).toBe(true);
+		expect(resize).not.toHaveBeenCalled();
+	});
+
+	it('节点盒装得下 → false', () => {
+		const { mindMap, resize } = makeStub({
+			openPerformance: true,
+			dataWidth: 600,
+		});
+
+		expect(contentExceedsCanvasAtFullScale(mindMap)).toBe(false);
+		expect(resize).not.toHaveBeenCalled();
+	});
+
+	it('rbox 不参与判定（含连线/外扩的 9000 宽不得把结果翻成 true）', () => {
+		const { mindMap } = makeStub({
+			openPerformance: false,
+			dataWidth: 600,
+			rboxWidth: 9000,
+		});
+
+		expect(contentExceedsCanvasAtFullScale(mindMap)).toBe(false);
+	});
+
+	it('引擎缺失 / 渲染树不可用 → null（调用方按不显示处理）', () => {
+		expect(contentExceedsCanvasAtFullScale(null)).toBeNull();
+		const { mindMap } = makeStub({ openPerformance: false, dataWidth: 0 });
+		(mindMap as unknown as { renderer?: unknown }).renderer = undefined;
+		expect(contentExceedsCanvasAtFullScale(mindMap)).toBeNull();
+	});
+
+	it('传入已测好的全树几何时按它判定（判据与取图共用一份测量）', () => {
+		const { mindMap } = makeStub({ openPerformance: true, dataWidth: 600 });
+
+		expect(
+			contentExceedsCanvasAtFullScale(mindMap, {
+				bounds: { x: 0, y: 0, width: 5000, height: 200 },
+				total: 2,
+			}),
+		).toBe(true);
+		// 显式 null 不等于「已知装得下」：退回自测（节点盒 600 宽 ⇒ false）
+		expect(contentExceedsCanvasAtFullScale(mindMap, null)).toBe(false);
+	});
+
+	it('传入画布尺寸时不再读实时矩形（与窄画布门禁 / 取图共用一次读数）', () => {
+		const { mindMap } = makeStub({ openPerformance: true, dataWidth: 600 });
+		const el = (
+			mindMap as unknown as { el: { getBoundingClientRect: () => unknown } }
+		).el;
+		const rect = vi.spyOn(el, 'getBoundingClientRect');
+
+		expect(
+			contentExceedsCanvasAtFullScale(mindMap, null, {
+				width: 200,
+				height: 200,
+			}),
+		).toBe(true);
+		expect(rect).not.toHaveBeenCalled();
 	});
 });

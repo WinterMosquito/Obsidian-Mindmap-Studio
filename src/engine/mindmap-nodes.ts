@@ -209,9 +209,15 @@ export function getActiveNodes(mindMap: MindMap | null): MindMapNode[] {
 	return mindMap?.renderer ? [...mindMap.renderer.activeNodeList] : [];
 }
 
-/** 当前渲染树的根节点（性能模式/初始化中间态等场景可能为 null） */
+/**
+ * 当前渲染树的根节点（性能模式/初始化中间态等场景可能为 null）。
+ *
+ * `renderer` 本身也可能缺失（引擎销毁途中、测试替身），故两级都要判空：
+ * 只写 `mindMap?.renderer.root` 会在 renderer 缺席时抛 TypeError（2026-10-24 由
+ * 小地图启用判据的失败注入测试暴露）。
+ */
 export function getRenderRoot(mindMap: MindMap | null): MindMapNode | null {
-	return mindMap?.renderer.root ?? null;
+	return mindMap?.renderer?.root ?? null;
 }
 
 /**

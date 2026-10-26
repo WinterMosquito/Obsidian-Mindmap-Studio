@@ -97,6 +97,12 @@ import {
 } from './view-status';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { setupImageResize, teardownImageResize } from './image-resize';
+import {
+	refreshMiniMap,
+	refreshMiniMapAfterRender,
+	setupMiniMap,
+	teardownMiniMap,
+} from './view-minimap';
 import { gateNodeWidthHandles, setupNodeWidthRefresh } from './view-node-width';
 import { EventBinder } from '../core/event-binder';
 import { TitleRenamer } from './view-title-renamer';
@@ -236,8 +242,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	private currentPalette: string | null = null;
 	/**
-	 * 当前节点外观主题（default/borderless）。同样**按文件**记在视图状态存储，
-	 * 由本类经 `applyThemeStyle` / `resolvePreference` 维护。
+	 * 当前边框样式（default＝有边框 / borderless＝无边框）。同样**按文件**记在
+	 * 视图状态存储，由本类经 `applyThemeStyle` / `resolvePreference` 维护。
 	 */
 	private currentThemeStyle: string | null = null;
 	/**
@@ -372,7 +378,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				layout: this.resolvePreference('layout'),
 				lineStyle: this.resolvePreference('lineStyle'),
 				themePref: this.plugin.settings.defaultTheme,
-				// 主题与配色都按文件记（viewState），不是设置项
+				// 边框与配色都按文件记（viewState），不是设置项
 				themeStyle: this.resolvePreference('themeStyle'),
 				palette: this.resolvePreference('palette'),
 				enableDrag: this.plugin.settings.enableDrag,
@@ -458,6 +464,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				setupImageResize(this);
 				// 拖左右边框改宽结束 → 重建自绘内容（节点高度方能跟随新宽度）
 				setupNodeWidthRefresh(this);
+				// 左下角小地图（自动出现/淡出，无手动入口；见 view-minimap 文件头）
+				setupMiniMap(this);
 			},
 			onEngineReady: () => this.onEngineReady(),
 			onReferencesChanged: () => {
@@ -660,6 +668,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.cancelPendingInit();
 		this.savePipeline.cancelTimer();
 		this.titleRenamer.cancel();
+		// 小地图会话持有本引擎引用 + 定时器 + 面板 DOM：与其它会话同期收尾。
+		// **必须在 await 之前**——await 期间新文件可能已接管视图并重建了会话，
+		// 那时再拆会误拆新的；而漏掉这一步时，旧面板会跨到下一个文件
+		// （加载失败的路径更是无人收尾）。
+		teardownMiniMap(this);
 		// 内联编辑会话必须先提交（用户输入落节点数据 + scheduleSave），
 		// 否则随后的写盘拿不到刚输入的内容（引擎随后销毁）
 		closeInlineEditor(this);
@@ -878,23 +891,34 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/** 标题重命名已委托 TitleRenamer（view-title-renamer.ts） */
 
 	/**
-	 * 提交一项外观偏好：归一 → 会话字段 → 应用引擎 → 持久化到当前文件。
+	 * 提交一项外观偏好：归一 → 会话字段 → 应用引擎 → 持久化 → 通知小地图。
 	 *
-	 * 四个维度（布局 / 连线 / 配色 / 边框）是同构的，差异只有三处：归一函数、
-	 * 引擎通道（布局/连线各有专法，配色与边框共用 `applyTheme`）、会话字段名。
-	 * 收在一处后，新增维度不会漏掉「归一」或「持久化」——这两步在复制时最易丢。
+	 * 四个维度（布局 / 连线 / 配色 / 边框）是同构的，差异只有四处：归一函数、
+	 * 引擎通道（布局/连线各有专法，配色与边框共用 `applyTheme`）、会话字段名，
+	 * 以及**小地图何时重画**（`miniMap`）。收在一处后，新增维度不会漏掉这几步。
+	 *
+	 * `miniMap` 由各 `apply*` 自己声明，而不是在这里按 `key` 猜：
+	 * - `'now'`：同步 `setThemeConfig`，几何未动，立即重画；
+	 * - `'after-render'`：布局的引擎重排是**异步分片**（`setLayout` → `RESET_LAYOUT`
+	 *   → 80ms fit），此刻取样只能拿到上一套布局，交渲染落地事件补画。
 	 */
 	private commitPreference(config: {
 		key: PreferenceKey;
 		value: string;
 		normalize: (value: string) => string;
 		applyToEngine: (value: string) => void;
+		miniMap: 'now' | 'after-render';
 	}): void {
 		const next = config.normalize(config.value);
 		this[SESSION_FIELDS[config.key]] = next;
 		config.applyToEngine(next);
 		if (this.file) {
 			this.plugin.viewState.setPreference(this.file.path, config.key, next);
+		}
+		if (config.miniMap === 'after-render') {
+			refreshMiniMapAfterRender(this);
+		} else {
+			refreshMiniMap(this);
 		}
 	}
 
@@ -914,6 +938,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// 上一个布局（2026-10-23 修复）。
 				this.refreshToolbar();
 			},
+			// 重排是异步分片：小地图必须等渲染落地再取样
+			miniMap: 'after-render',
 		});
 	}
 
@@ -931,6 +957,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			value,
 			normalize: normalizeLineStylePreference,
 			applyToEngine: (next) => this.engine.setLineStyle(next),
+			miniMap: 'now',
 		});
 	}
 
@@ -944,16 +971,18 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			value,
 			normalize: normalizePalette,
 			applyToEngine: () => this.engine.applyTheme(),
+			miniMap: 'now',
 		});
 	}
 
-	/** 切换节点外观主题（右栏「边框」开关调用）：与 `applyPalette` 同构，按文件记在 `themeStyle`。 */
+	/** 切换边框样式（右缘竖栏「边框」开关调用）：与 `applyPalette` 同构，按文件记在 `themeStyle`。 */
 	applyThemeStyle(value: string): void {
 		this.commitPreference({
 			key: 'themeStyle',
 			value,
 			normalize: normalizeThemeStyle,
 			applyToEngine: () => this.engine.applyTheme(),
+			miniMap: 'now',
 		});
 	}
 
@@ -1166,6 +1195,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 不经事件绑定器记录，中途关闭视图收不到 mouseup，须显式清理。
 		// 必须在 savePipeline.save() 之前——调宽会话收尾会调度一次保存。
 		teardownImageResize(this);
+		// 小地图：定时器 + 拖拽会话 + 面板 DOM 一并回收（幂等，引擎换代亦走它）
+		teardownMiniMap(this);
 		// 挂起装配信号：关闭后到达的 onLoadFile 等待下一次 onOpen（原轮询语义）
 		this.loadSession.whenReady = new Promise(() => {});
 		// 内联编辑会话提交（同 onUnloadFile：输入必须先落数据再写盘）

@@ -10,12 +10,13 @@
   height: 100%;
   width: 100%;
   overflow: hidden;
-  /* 三块浮层（.mindmap-toolbar 的绝对定位子元素）以本容器为参照系 */
+  /* 浮层（.mindmap-toolbar 的右缘竖栏、.mindmap-minimap 等绝对定位元素）以本容器为参照系 */
   position: relative;
 }
 
-/* 工具栏：三块浮层（顶部居中 / 右缘竖排 / 底栏左下），见 view-toolbar.ts 文件头。
-   本元素只是**穿透层**：不占布局高度、不拦截画布事件；三块子容器各自 pointer-events:auto。 */
+/* 工具栏：只剩右缘竖排一组（2026-10-22 第三版；顶部居中 / 底栏左下两版已移除），
+   见 view-toolbar.ts 文件头。本元素只是**穿透层**：不占布局高度、不拦截画布事件；
+   子容器 `.mindmap-hud` 自己 pointer-events:auto。 */
 .mindmap-toolbar {
   position: absolute;
   inset: 0;
@@ -23,65 +24,76 @@
   pointer-events: none;
 }
 
-/* 右缘图标栈：外层只管定位与「组间 8px」——对齐 Obsidian Canvas 的 .canvas-controls */
+/* 右缘图标栈：对齐官方 `.canvas-controls`——absolute / top 8 / 右 8 / 纵向 flex / 组间 8px */
 .mindmap-hud {
   position: absolute;
   top: 8px;
   inset-inline-end: 8px;
   display: flex;
   flex-direction: column;
-  /* 每组各自贴合内容宽度并整体右对齐：纯图标组 33px，带文字的「外观」组更宽，
-     避免被 flex 拉伸后图标组右侧留一条空白 */
-  align-items: flex-end;
   gap: 8px;
   pointer-events: auto;
 }
 
-/* 栈内每组：一张浮起卡片，组内按钮用 1px 分隔线粘成一体。
-   实测 Canvas：`.canvas-control-group` 是 padding:0 / overflow:hidden，
-   条目 32×32、radius 0，4 项组高 131 = 32×4 + 1×3（分隔线）。 */
+/* 栈内每组：逐条照抄官方 `.canvas-control-group`（Obsidian 1.14.4 实机取证）：
+   padding:0 / overflow:hidden / radius var(--radius-s) / 背景 interactive-normal /
+   阴影 input-shadow；组内**没有 gap**，分隔线是条目自身除末项外的 1px border-bottom
+   （4 项组高 131 = 32×4 + 1×3）。 */
 .mindmap-hud-group {
   display: flex;
   flex-direction: column;
-  /* 分隔线不用 border：让组底色从 1px 缝里透出来，少维护一处状态 */
-  gap: 1px;
+  gap: 0;
   padding: 0;
-  background: var(--background-modifier-border);
+  background: var(--interactive-normal);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  box-shadow: var(--shadow-s);
+  border-radius: var(--radius-s, 4px);
+  box-shadow: var(--input-shadow);
   overflow: hidden;
-  /* 半透明：会盖住画布边缘节点，留一点透光；交互时转实心 */
-  opacity: 0.95;
-  transition: opacity 120ms ease;
 }
 
-.mindmap-hud-group:hover,
-.mindmap-hud-group:focus-within {
+/* 组内按钮：官方的 `.canvas-control-item` 同款盒模型——width 32 / height auto /
+   padding 8（内容区恰为 16px 图标）/ 除末项外 border-bottom 1px。
+   dpr 1.5 下 1px 边框 computed 0.6667（= 1 物理 px）：条目总高 32.67、末项 32；
+   用固定 height 32 + border-box 会把线吃进盒内（组矮 0.67px），故用 auto + padding。 */
+.mindmap-hud-group .mindmap-tool-btn {
+  box-sizing: border-box;
+  width: 32px;
+  height: auto;
+  padding: 8px;
+  border-radius: 0;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  cursor: var(--cursor, default);
+  --icon-size: 16px;
+  /* 官方条目同款：图标描边走 --icon-s-stroke-width（本机 2px） */
+  --icon-stroke: var(--icon-s-stroke-width, 2px);
+}
+
+/* 末项去掉底边：否则会与组容器的下边框叠成 2px 粗线（官方 :last-child 同款） */
+.mindmap-hud-group .mindmap-tool-btn:last-child {
+  border-bottom: none;
+}
+
+/* 悬停：官方 `@media (hover:hover)` 同款取色（底色 interactive-hover、字色 normal，
+   不是 accent） */
+.mindmap-hud-group .mindmap-tool-btn:hover {
+  color: var(--text-normal);
+  background: var(--interactive-hover);
+}
+
+/* 置灰（固定直线布局的「连线」）：官方只淡化**图标**（text-faint），
+   不整块降透明度、外框与分隔线保持原样。
+   `opacity: 1` 必须显式写：宿主对 `button:disabled` 默认 0.7，会整块变淡，
+   与官方 `div.canvas-control-item` 的呈现不同（2026-10-26 实机 0.7 vs 1）。 */
+.mindmap-hud-group .mindmap-tool-btn.is-disabled {
+  cursor: default;
   opacity: 1;
 }
 
-/* 组内按钮：铺满 32×32、直角（圆角交给组容器裁切），主背景底色把 1px 缝读作分隔线 */
-.mindmap-hud-group .mindmap-tool-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 0;
-  background: var(--background-primary);
-}
-
-.mindmap-hud-group .mindmap-tool-btn:hover {
-  background: var(--background-modifier-hover);
-}
-
-/* 固定直线布局下的「连线」：切了也无效，置灰且吞掉 hover */
-.mindmap-hud-group .mindmap-tool-btn.is-disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.mindmap-hud-group .mindmap-tool-btn.is-disabled:hover {
-  background: var(--background-primary);
-  color: var(--text-muted);
+.mindmap-hud-group .mindmap-tool-btn.is-disabled svg {
+  color: var(--text-faint);
 }
 
 /* 工具按钮 */
@@ -134,36 +146,6 @@
   display: block;
 }
 
-/* 布局选择器 / 连线样式选择器 / 配色选择器 */
-.mindmap-layout-select,
-.mindmap-line-style-select,
-.mindmap-palette-select,
-.mindmap-theme-select {
-  padding: 4px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
-  color: var(--text-normal);
-  font-size: 12px;
-  cursor: pointer;
-  outline: none;
-}
-
-.mindmap-layout-select:hover,
-.mindmap-line-style-select:hover,
-.mindmap-palette-select:hover,
-.mindmap-theme-select:hover {
-  border-color: var(--text-accent);
-}
-
-.mindmap-layout-select:focus,
-.mindmap-line-style-select:focus,
-.mindmap-palette-select:focus,
-.mindmap-theme-select:focus {
-  border-color: var(--text-accent);
-  box-shadow: 0 0 0 2px var(--text-accent-hover);
-}
-
 /* 画布容器 */
 .mindmap-canvas-container {
   flex: 1;
@@ -193,21 +175,6 @@
   cursor: pointer;
 }
 
-/* ========== 暗色主题适配 ========== */
-
-.theme-dark .mindmap-toolbar {
-  background: var(--background-secondary);
-}
-
-.theme-dark .mindmap-tool-btn {
-  color: var(--text-muted);
-}
-
-.theme-dark .mindmap-tool-btn:hover {
-  color: var(--text-accent);
-  background: var(--background-modifier-hover);
-}
-
 /* ========== 移动端适配 ========== */
 
 @media (max-width: 600px) {
@@ -215,20 +182,16 @@
     gap: 6px;
   }
 
-  .mindmap-hud-group {
-    padding: 3px;
-  }
-
-  .mindmap-tool-btn {
-    width: 28px;
-    height: 28px;
-  }
+  /* 按钮尺寸**不在这里缩**：组内条目的盒模型由 `.mindmap-hud-group .mindmap-tool-btn`
+     （特异性 0,2,0）决定，此处写 `.mindmap-tool-btn { width/height: 28px }` 从来
+     没生效过（2026-10-26 清理按死规则删除）。真要缩须改上面那条组内规则，并同步
+     `.mindmap-hud-group` 的内边距与图标尺寸——属观感变更，留待实机验证。 */
 }
 
 /* ========== 搜索栏 ========== */
 
 /* 搜索栏：底部居中的临时浮条（2026-10-22 从流内一条改为浮层）。
-   打开时不再挤占画布高度；层级高于三块 HUD，避免被其遮挡。 */
+   打开时不再挤占画布高度；层级高于右缘竖栏（`z-index: 20`），避免被其遮挡。 */
 .mindmap-search-bar {
   position: absolute;
   bottom: 12px;
@@ -296,6 +259,80 @@
 .mindmap-search-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-accent);
+}
+
+/* ========== 小地图（左下角自动浮层，F12-M） ==========
+   口径：宽度随内容比例收在 160–220、高度随内容比例（上限 = 画布高 × 0.6）；
+   **底边钉住**（bottom 固定，高度变化只向上长）。
+   可见性由 JS 切 .is-visible（自动出现 → 动图后 30s 淡出），本文件不设任何常显状态。 */
+.mindmap-minimap {
+  position: absolute;
+  bottom: 16px;
+  inset-inline-start: 16px;
+  z-index: 20;
+  box-sizing: border-box;
+  overflow: hidden;
+  /* 圆角必须与视口框同值（`.mindmap-minimap-view` 的 2px）：面板的
+     `overflow: hidden` 会把**子元素**也裁进圆角，半径大于框的半径时，
+     贴到角的框角就落在弧外的弓形区里被切掉（实机症状：四角各缺 3–4px，
+     总览态「框缺四个角」）。半径 2px 时弓形深度只有 0.59px，小于 2px 边框，
+     视觉上角是闭合的。改大这里 = 重新引入缺角（2026-10-25 取证）。 */
+  border-radius: 2px;
+  background: var(--background-primary);
+  /* 描边走**内阴影**而不是 border：面板的 padding box 必须与几何尺寸严格一致
+     （视口框的 left/top 是相对它的像素坐标，1px 边框会让框整体偏 1px） */
+  box-shadow: inset 0 0 0 1px var(--background-modifier-border), var(--shadow-s);
+  /* 淡出后不可见亦不可点：隐藏期间不抢画布事件 */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  /* 宽高过渡是**刻意保留的动画**（2026-10-24 用户裁决）。面板是视口框的坐标系，
+     框的 left/top/width/height 因此写**百分比**而不是像素（见 view-minimap.updateBox），
+     两者同比例缩放，过渡期间也不会错位。 */
+  transition: opacity 150ms ease, height 150ms ease, width 150ms ease,
+    visibility 0s linear 150ms;
+}
+
+.mindmap-minimap.is-visible {
+  opacity: 0.92;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 150ms ease, height 150ms ease, width 150ms ease;
+}
+
+/* 半透明是常态（会盖住节点边缘），指上去转实心——与 HUD 卡片同款取舍 */
+.mindmap-minimap.is-visible:hover {
+  opacity: 1;
+}
+
+.mindmap-minimap-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* 当前视口方框：位置与尺寸由 JS **每帧**写入（当前变换的本地投影）。
+   ⚠ 这里**不能**给 left/top/width/height 挂 transition——过渡会拦截每一帧写入，
+   实测「写完立即读 rect 仍是旧值」，平移/缩放时框比主图慢约 200ms，与
+   view-minimap 文件头「图可以慢，框不能迟」的口径直接冲突（2026-10-24 实机）。 */
+.mindmap-minimap-view {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--interactive-accent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  cursor: grab;
+}
+
+.mindmap-minimap.is-dragging .mindmap-minimap-view {
+  cursor: grabbing;
+}
+
+/* 几何未就绪 / 面板不可见：框收起（避免停在上一位置误导） */
+.mindmap-minimap-view.is-hidden {
+  display: none;
 }
 
 /* ========== 滚动条样式 ========== */
