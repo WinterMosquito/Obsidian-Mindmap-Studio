@@ -10,8 +10,8 @@
  * - lineStyle: 连线样式偏好（auto/curve/direct/straight；auto＝随布局）
  * - palette: 配色（default/mint/amber/wisteria/forest/slate；**按文件记**，
  *   由右键菜单「配色」切换——配色不是全局设置，见 `core/constants.PALETTE_OPTIONS`）
- * - themeStyle: 节点外观主题（default/borderless；**按文件记**，由右栏「边框」开关切换——
- *   同样不是全局设置，见 `core/constants.THEME_STYLE_OPTIONS`）
+ * - themeStyle: 边框样式（default＝有边框 / borderless＝无边框；**按文件记**，由右缘
+ *   竖栏「边框」开关切换——同样不是全局设置，见 `core/constants.THEME_STYLE_OPTIONS`）
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）
  */
 import { createDebouncer, type Debouncer } from '../core/concurrency';
@@ -201,7 +201,14 @@ export class ViewStateStore {
 		this.setPreference(path, 'palette', value);
 	}
 
-	/** 节点外观主题（按文件）：右栏「边框」开关切换后写入，未设置时回落 `DEFAULT_THEME_STYLE` */
+	/**
+	 * 边框样式（按文件）：右缘竖栏「边框」开关切换后写入。
+	 *
+	 * 未设置时返回 `undefined`（本模块**不做**回退）：缺省值由视图经
+	 * `resolveFilePreferences` 取 `settings.defaultThemeStyle`——**别**在这里写死
+	 * `DEFAULT_THEME_STYLE`：那会让「默认边框样式」设置对新建导图失效
+	 * （2026-10-21 实机缺陷，见 `docs/agents/conventions.md` K127 ⑨）。
+	 */
 	getThemeStyle(path: string): string | undefined {
 		return this.getPreference(path, 'themeStyle');
 	}

@@ -187,8 +187,9 @@ function buildThemeConfig(
  * （2026-09-28 K97：未设置尺寸按图片原始大小展示、长边超 `IMAGE_MAX_SIDE_PX`
  * 等比缩，见 `media/images-path.fitImageWithinMaxSide`）。
  * lineStyle = 偏好解析结果（两态：折线 / 曲线；固定直线布局恒折线，见 resolveLineStyle）。
- * themeStyle = 节点外观主题（`default` / `borderless`）；与 isDark 正交，
- * 脏值经 `normalizeThemeStyle` 回退默认，保证渲染入口不因手改 data.json 失败。
+ * themeStyle = 边框样式（`default`＝有边框 / `borderless`＝无边框；id 是持久化键，
+ * 不随 UI 名变化）；与 isDark 正交，脏值经 `normalizeThemeStyle` 回退出厂默认，
+ * 保证渲染入口不因手改 data.json 失败。
  * palette = 配色（色相方案，`default` / `mint` / …）；与 isDark、themeStyle 三维正交，
  * 只换 5 个填充/线色，脏值经 `normalizePalette` 回退 `default`。
  */

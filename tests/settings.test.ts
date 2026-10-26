@@ -89,7 +89,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		});
 	});
 
-	it('defaultThemeStyle 白名单：合法边框样式保留，未知值与旧数据回退默认', () => {
+	it('defaultThemeStyle 白名单：合法边框样式保留，未知值与旧数据回退出厂默认（无边框）', () => {
 		expect(
 			sanitizeSettings({ defaultThemeStyle: 'borderless' }).defaultThemeStyle,
 		).toBe('borderless');
@@ -100,10 +100,10 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			expect(
 				sanitizeSettings({ defaultThemeStyle: bad }).defaultThemeStyle,
 				String(bad),
-			).toBe('default');
+			).toBe('borderless');
 		}
-		// 缺省（存量 data.json 无此键）同样落到「有边框」
-		expect(sanitizeSettings({}).defaultThemeStyle).toBe('default');
+		// 缺省（data.json 无此键）落到出厂默认「无边框」（2026-10-25 用户裁决）
+		expect(sanitizeSettings({}).defaultThemeStyle).toBe('borderless');
 	});
 
 	it('defaultLineStyle 白名单：两态保留，旧词汇 auto/direct 与坏值回退折线', () => {

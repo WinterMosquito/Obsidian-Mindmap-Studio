@@ -66,6 +66,8 @@ export * from './mindmap-nodes';
 export * from './mindmap-clipboard';
 export * from './mindmap-search';
 export * from './mindmap-export';
+// 小地图缩略图取样（F12-M）：视图层只经本 barrel 取，不碰 renderer 形态
+export * from './mindmap-minimap';
 // 「自动整理」族已拆到独立文件，仍由本 barrel 对外转出（调用方 import 路径不变）
 export { arrangeMindMap } from './mindmap-arrange';
 import { buildWikiDocIcon, WIKI_DOC_ICON_SIZE } from './mindmap-icons';
@@ -77,9 +79,10 @@ export interface CreateMindMapOptions {
 	/** 主题色偏好（default/light/dark —— 只决定明暗色板） */
 	themePref: string;
 	/**
-	 * 节点外观主题（`core/constants.THEME_STYLE_OPTIONS` 的 id）。
-	 * 与 `themePref` **正交**：themePref 管明暗，本项管节点形态（填充/边框）。
-	 * 设为必填而非缺省：新增调用点漏传会静默丢掉用户的主题选择。
+	 * 边框样式（`core/constants.THEME_STYLE_OPTIONS` 的 id：`default`＝有边框 /
+	 * `borderless`＝无边框；id 是持久化键，不随 UI 名变化）。
+	 * 与 `themePref` **正交**：themePref 管明暗，本项管节点形态（填充/描边）。
+	 * 设为必填而非缺省：新增调用点漏传会静默丢掉用户的边框选择。
 	 */
 	themeStyle: string;
 	/**
@@ -337,6 +340,8 @@ export function createMindMap(
 				// `isDisableDrag` 统一切断（见 CreateMindMapOptions.enableViewDrag）。
 				// 插件侧**不得**再注册 wheel / pointer 平移（会双重生效或成死代码，
 				// 见 features/view-viewport.ts 文件头；契约测试 tests/vendor-contract）。
+				// 唯一例外：`Alt + 滚轮` 横轴由插件在**画布祖先的 capture** 阶段接管
+				// （引擎不读 altKey；同元素 capture 会被引擎按注册顺序抢先）。
 				mousewheelAction: 'move',
 				disableMouseWheelZoom: false,
 			},
@@ -510,9 +515,9 @@ export function resizeMindMap(mindMap: MindMap | null): void {
 
 /**
  * 重算主题配置所需的**全部**外观输入（当前亮暗 + 主题色 + 布局 + 连线样式 +
- * 主题）。
+ * 边框 + 配色）。
  *
- * 为什么是对象而不是五个位置参数：四个维度里有四个都是 `string`，
+ * 为什么是对象而不是一串位置参数：除 `isDark` 外全是 `string`，
  * 漏传/错序在编译期无法发现（`themePref` 与 `themeStyle` 尤其容易互换），
  * 而它们各自对应一个用户可见设置。对象形态让「新增外观维度」只需加一个键，
  * 调用点由类型检查兜住。
@@ -525,7 +530,7 @@ export interface ThemeConfigInput {
 	layout: string;
 	/** 连线样式偏好（straight/curve） */
 	lineStyle: string;
-	/** 节点外观主题 id（default/borderless） */
+	/** 边框样式 id（default＝有边框 / borderless＝无边框） */
 	themeStyle: string;
 	/** 配色 id（default/mint/amber/wisteria/forest/slate） */
 	palette: string;

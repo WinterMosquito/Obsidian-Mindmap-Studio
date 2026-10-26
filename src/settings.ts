@@ -44,8 +44,10 @@ export interface MindMapStudioSettings {
 	defaultTheme: string;
 	/**
 	 * 默认边框样式（即节点外观 `themeStyle`）：只作用于**新建**导图的初始值，
-	 * 单篇导图由右栏「边框」开关按文件覆盖（`viewState[<路径>].themeStyle`）。
-	 * 取值范围见 `core/constants.THEME_STYLE_OPTIONS`（id 发布即冻结）。
+	 * 单篇导图由右缘竖栏「边框」开关按文件覆盖（`viewState[<路径>].themeStyle`）；
+	 * 存量文件已有按文件值时不受这里影响。
+	 * 取值范围见 `core/constants.THEME_STYLE_OPTIONS`（id 发布即冻结），
+	 * 出厂默认见 `core/constants.DEFAULT_THEME_STYLE`。
 	 */
 	defaultThemeStyle: string;
 	/**
@@ -79,7 +81,8 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	// 新建默认折线；存量的 auto/direct 在读取侧归一为折线（见 constants 归一函数）
 	defaultLineStyle: DEFAULT_LINE_STYLE,
 	defaultTheme: 'default',
-	// 新建导图默认带框（＝存量观感）；单篇由右栏「边框」开关覆盖
+	// 新建导图默认**无边框**（2026-10-25 用户裁决，改自「有边框＝存量观感」）；
+	// 单篇由右缘竖栏「边框」开关覆盖，存量文件各记各的、不受此默认影响
 	defaultThemeStyle: DEFAULT_THEME_STYLE,
 	// 默认跟随官方「新建笔记的默认位置」（经 getNewFileParent 完整生效）——
 	// 与引入本设置前的行为一致；另三档为用户显式覆盖

@@ -196,7 +196,7 @@ const ZH = {
 		'新建导图时使用的连线样式\n仅逻辑结构图 / 思维导图 / 组织结构图可切换折线与曲线',
 	'settings.defaultThemeStyle': '默认边框样式',
 	'settings.defaultThemeStyleDesc':
-		'新建导图的边框样式（有边框 / 无边框）\n单篇导图可用右侧竖栏的「边框」按钮随时切换',
+		'新建导图的边框样式（有边框 / 无边框）\n单篇导图可用右缘竖栏的「边框」按钮随时切换；存量导图各记各的，不受影响',
 	'settings.defaultTheme': '主题',
 	'settings.defaultThemeDesc':
 		'导图的明暗配色\n跟随 Obsidian＝随宿主主题自动切换；强制亮/暗色可固定导图观感',
@@ -473,7 +473,7 @@ const EN: Record<TranslationKey, string> = {
 		'Connector style used when creating a mind map\nElbow / Curve can only be switched for Logical structure, Mind map and Organization chart',
 	'settings.defaultThemeStyle': 'Default border style',
 	'settings.defaultThemeStyleDesc':
-		'Border style for new mind maps (bordered / borderless)\nEach map can be switched with the "Border" button in its right-hand rail',
+		'Border style for new mind maps (bordered / borderless)\nEach map can be switched with the "Border" button in its right-hand rail; existing maps keep their own value',
 	'settings.defaultTheme': 'Theme',
 	'settings.defaultThemeDesc':
 		'Light/dark palette for mind maps\nFollow Obsidian switches with the app theme; force light/dark keeps the map appearance fixed',

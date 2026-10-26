@@ -1,5 +1,5 @@
 /**
- * mindmap-theme 回归：布局/偏好 → 连线样式解析与主题配置产出。
+ * mindmap-theme 回归：布局 / 偏好 → 连线样式解析与边框配置产出。
  *
  * 事实基线（2026-10-21 连线样式收敛为两态）：
  * - 可选样式只有**折线（straight，正交折线）/ 曲线（curve）**；`auto`（随布局）
@@ -12,11 +12,13 @@
  * 本模块零 vendor 依赖（仅常量与类型），可直接单测。
  */
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_THEME_STYLE } from '../src/core/constants';
 import {
 	getThemeConfig,
 	resolveLineStyle,
 	supportsLineStyleSwitch,
 } from '../src/engine/mindmap-theme';
+import { PALETTES } from '../src/engine/mindmap-theme-presets';
 
 describe('supportsLineStyleSwitch（布局是否支持三态切换）', () => {
 	it('逻辑结构图 / 思维导图 / 组织结构图支持切换', () => {
@@ -110,16 +112,22 @@ describe('getThemeConfig（lineStyle 两态：偏好 / 布局 / 默认）', () =
 	});
 });
 
-describe('getThemeConfig（主题：节点外观，与主题色正交）', () => {
+describe('getThemeConfig（边框：节点外观，与主题色正交）', () => {
 	/** 读取某一层级的节点 token（getThemeConfig 返回 Record<string, unknown>） */
 	const tokenOf = (
 		config: Record<string, unknown>,
 		level: 'root' | 'second' | 'node',
 	): Record<string, unknown> => config[level] as Record<string, unknown>;
 
-	it('默认主题沿用色板：second/node 有填充与 1px 描边（存量观感，升级零变化）', () => {
+	it('有边框（default）沿用色板：second / node 有填充与 1px 描边', () => {
+		// 出厂默认已改为无边框（2026-10-25 用户裁决），故这里**显式**取 default
 		for (const isDark of [false, true]) {
-			const config = getThemeConfig(isDark, 'logicalStructure');
+			const config = getThemeConfig(
+				isDark,
+				'logicalStructure',
+				'straight',
+				'default',
+			);
 			for (const level of ['second', 'node'] as const) {
 				const token = tokenOf(config, level);
 				expect(token.fillColor, `${isDark}/${level}`).not.toBe('transparent');
@@ -128,8 +136,9 @@ describe('getThemeConfig（主题：节点外观，与主题色正交）', () =>
 		}
 	});
 
-	it('无边框主题：second/node 填充与描边一起消失（只去描边会留一层淡灰底）', () => {
+	it('无边框：填充透明 + 描边宽度归零，描边颜色保留（小地图拿它当墨）', () => {
 		for (const isDark of [false, true]) {
+			const variant = isDark ? 'dark' : 'light';
 			const config = getThemeConfig(
 				isDark,
 				'logicalStructure',
@@ -138,14 +147,17 @@ describe('getThemeConfig（主题：节点外观，与主题色正交）', () =>
 			);
 			for (const level of ['second', 'node'] as const) {
 				const token = tokenOf(config, level);
-				expect(token.fillColor, `${isDark}/${level}`).toBe('transparent');
-				expect(token.borderColor, `${isDark}/${level}`).toBe('transparent');
-				expect(token.borderWidth, `${isDark}/${level}`).toBe(0);
+				expect(token.fillColor, `${variant}/${level}`).toBe('transparent');
+				expect(token.borderWidth, `${variant}/${level}`).toBe(0);
+				// 「不描边」由宽度表达；颜色留着，缩略图节点块才不会跟着消失
+				expect(token.borderColor, `${variant}/${level}`).toBe(
+					PALETTES.default[variant].border,
+				);
 			}
 		}
 	});
 
-	it('无边框主题不动根节点（保留主题色填充作视觉锚点）', () => {
+	it('无边框不动根节点（保留主题色填充作视觉锚点）', () => {
 		const root = tokenOf(
 			getThemeConfig(false, 'logicalStructure', 'straight', 'borderless'),
 			'root',
@@ -154,7 +166,7 @@ describe('getThemeConfig（主题：节点外观，与主题色正交）', () =>
 		expect(root.borderWidth).toBe(0);
 	});
 
-	it('主题不得越权改字体度量与连线（各有单一来源）', () => {
+	it('边框不得越权改字体度量与连线（各有单一来源）', () => {
 		const config = getThemeConfig(
 			false,
 			'logicalStructure',
@@ -168,7 +180,7 @@ describe('getThemeConfig（主题：节点外观，与主题色正交）', () =>
 		expect(config.lineWidth).toBe(1.5);
 	});
 
-	it('主题与主题色、连线偏好互不干扰（三维正交）', () => {
+	it('边框与主题色、连线偏好互不干扰（三维正交）', () => {
 		const light = getThemeConfig(false, 'mindMap', 'curve', 'borderless');
 		const dark = getThemeConfig(true, 'mindMap', 'curve', 'borderless');
 		for (const config of [light, dark]) {
@@ -181,7 +193,14 @@ describe('getThemeConfig（主题：节点外观，与主题色正交）', () =>
 		);
 	});
 
-	it('脏值/未知 id 回退默认主题（手改 data.json 不致渲染失败）', () => {
+	it('脏值/未知 id 回退出厂默认（手改 data.json 不致渲染失败）', () => {
+		// 与「出厂默认」逐值比对，不写死边框宽度（默认值会变，脏值回退口径不能变）
+		const fallback = getThemeConfig(
+			false,
+			'logicalStructure',
+			'straight',
+			DEFAULT_THEME_STYLE,
+		);
 		for (const value of ['nope', '', 'BORDERLESS', 'default ']) {
 			const config = getThemeConfig(
 				false,
@@ -189,12 +208,14 @@ describe('getThemeConfig（主题：节点外观，与主题色正交）', () =>
 				'straight',
 				value,
 			);
-			expect(tokenOf(config, 'node').borderWidth, value).toBe(1);
+			expect(tokenOf(config, 'node'), value).toEqual(
+				tokenOf(fallback, 'node'),
+			);
 		}
 	});
 });
 
-describe('getThemeConfig（配色：色相方案，与明暗 / 主题三维正交）', () => {
+describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正交）', () => {
 	const PALETTE_IDS = [
 		'default',
 		'mint',
@@ -217,14 +238,15 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 主题三维正�
 		getThemeConfig(isDark, 'logicalStructure', 'straight', themeStyle, palette);
 
 	it('默认配色为蓝，逐值与改造前一致（升级零变化）', () => {
-		const light = getThemeConfig(false, 'logicalStructure');
+		// 填充色只在「有边框」形态上可见；出厂默认已改无边框，故显式取 default
+		const light = configOf(false, 'default');
 		expect(tokenOf(light, 'root').fillColor).toBe('#4a90d9');
 		expect(tokenOf(light, 'second').fillColor).toBe('#f1f5f9');
 		expect(tokenOf(light, 'node').fillColor).toBe('#f8fafc');
 		expect(tokenOf(light, 'second').borderColor).toBe('#cbd5e1');
 		expect(light.lineColor).toBe('#94a3b8');
 
-		const dark = getThemeConfig(true, 'logicalStructure');
+		const dark = configOf(true, 'default');
 		expect(tokenOf(dark, 'root').fillColor).toBe('#2d2d2d');
 		expect(dark.lineColor).toBe('#4a4a4a');
 	});
@@ -259,7 +281,7 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 主题三维正�
 		expect(darkRootTexts.size).toBe(1);
 	});
 
-	it('配色与无边框主题正交：root 保留配色、second/node 被置透明', () => {
+	it('配色与无边框正交：root 保留配色、second / node 被置透明', () => {
 		const config = configOf(false, 'mint', 'borderless');
 		expect(tokenOf(config, 'root').fillColor).toBe('#2e9e8f');
 		expect(tokenOf(config, 'node').fillColor).toBe('transparent');

@@ -168,20 +168,20 @@ export const THEME_OPTIONS: ThemeOption[] = [
 ];
 
 /**
- * 「主题色」（明暗配色）与「主题」（节点外观风格）是**两个正交维度**：
+ * 「主题色」（明暗配色）与「边框」（节点外观风格）是**两个正交维度**：
  * - 主题色 = `THEME_OPTIONS`（跟随 Obsidian / 强制亮 / 强制暗），只决定色板；
- * - 主题 = `THEME_STYLE_OPTIONS`（本表），只决定节点外观（是否绘制填充/边框）。
+ * - 边框 = `THEME_STYLE_OPTIONS`（本表），只决定节点是否绘制填充与描边。
  *
  * 二者在设置面板紧邻呈现，但持久化字段（`defaultTheme` / `themeStyle`）与
- * 渲染通道各自独立：给主题加选项不动任何色值，改配色也不动节点形态。
+ * 渲染通道各自独立：给主题色加选项不动任何节点形态，改边框也不动色值。
  *
- * **新增主题的规范**（唯一源在本表 + `engine/mindmap-theme-presets.ts` 的
+ * **新增边框样式的规范**（唯一源在本表 + `engine/mindmap-theme-presets.ts` 的
  * `THEME_STYLE_PRESETS`，两者由 `Record<ThemeStyleId, …>` 在编译期强制对齐）：
  * 1. `value` 一旦发布**永不更名**——它会写进 `data.json`，改名即用户设置失效；
  * 2. 显示名只走 `label`（i18n 键，中英必须成对），不在数据里写文案；
- * 3. 主题只能表达**全局**外观：不得引入节点级样式（本插件节点样式无持久化位，
+ * 3. 边框只能表达**全局**外观：不得引入节点级样式（本插件节点样式无持久化位，
  *    Markdown 是唯一真相）；
- * 4. 主题是纯视图态：不碰 Markdown、`mdRaw` 与节点数据。
+ * 4. 边框是纯视图态：不碰 Markdown、`mdRaw` 与节点数据。
  */
 export interface ThemeStyleOption {
 	value: string;
@@ -189,11 +189,15 @@ export interface ThemeStyleOption {
 }
 
 /**
- * 主题选项（设置面板下拉与 sanitizeSettings 白名单共用；顺序＝界面顺序）。
+ * 边框选项（设置面板下拉与 sanitizeSettings 白名单共用；顺序＝界面顺序）。
  *
  * `as const` 让**本表成为 id 的唯一源**：`ThemeStyleId` 由它派生，
- * `THEME_STYLE_PRESETS` 又用 `Record<ThemeStyleId, …>` 反向约束——新增主题只加
+ * `THEME_STYLE_PRESETS` 又用 `Record<ThemeStyleId, …>` 反向约束——新增边框只加
  * 数组一项，漏写外观配置即编译失败，不存在「类型与选项表两处维护」的漂移面。
+ *
+ * ⚠ **id 与 UI 名、默认值三者互不相干**：`default` 的显示名是「有边框」，
+ * 出厂默认另由 `DEFAULT_THEME_STYLE` 决定（当前为 `borderless`）。不要因为
+ * 某个 id 叫 `default` 就把它当默认值——改默认只改 `DEFAULT_THEME_STYLE`。
  */
 export const THEME_STYLE_OPTIONS = [
 	{ value: 'default', label: 'themeStyle.default' },
@@ -203,8 +207,17 @@ export const THEME_STYLE_OPTIONS = [
 /** 主题 id（从选项表派生；勿手写第二份字面量联合） */
 export type ThemeStyleId = (typeof THEME_STYLE_OPTIONS)[number]['value'];
 
-/** 新建导图与脏值归一使用的默认主题（＝存量外观，升级观感零变化） */
-export const DEFAULT_THEME_STYLE: ThemeStyleId = 'default';
+/**
+ * 出厂默认边框样式（`DEFAULT_SETTINGS.defaultThemeStyle` 与脏值归一共同引用）。
+ *
+ * 2026-10-25 用户裁决改为**无边框**（原为「有边框＝存量外观，升级观感零变化」），
+ * **改这一行即改出厂默认**——`THEME_STYLE_OPTIONS` 的顺序、id 里的 `default`
+ * 字样都不参与默认值判定。
+ *
+ * 存量导图不受影响：边框按文件记在 `viewState[<路径>].themeStyle`，只有「该文件
+ * 没记过」才用这里的默认（见 `services/view-state.resolveFilePreferences`）。
+ */
+export const DEFAULT_THEME_STYLE: ThemeStyleId = 'borderless';
 
 /**
  * 从选项表挑出合法值；未知 / 非字符串 / 空串一律回退 `fallback`。
@@ -224,7 +237,7 @@ function pickOption<T extends string>(
 
 /**
  * 脏值归一（渲染侧兜底）：不在白名单内（未知 id / 手改 data.json / 空串 /
- * 非字符串）一律回退默认主题——与 `normalizeLineStylePreference` 同口径。
+ * 非字符串）一律回退出厂默认边框——与 `normalizeLineStylePreference` 同口径。
  * 设置读取侧的诊断（丢弃非法值并留痕）仍走 `settings.sanitizeSettings` 的
  * `pickFrom`，两者目的不同：此处保证渲染入口永不因脏值失败。
  */
@@ -233,9 +246,9 @@ export function normalizeThemeStyle(value: unknown): ThemeStyleId {
 }
 
 /**
- * 配色（色相方案）——与「主题色」（明暗）、「主题」（节点形态）**三维正交**：
+ * 配色（色相方案）——与「主题色」（明暗）、「边框」（节点形态）**三维正交**：
  * - 主题色（`THEME_OPTIONS`）决定亮/暗色板；
- * - 主题（`THEME_STYLE_OPTIONS`）决定节点是否绘制填充/描边；
+ * - 边框（`THEME_STYLE_OPTIONS`）决定节点是否绘制填充与描边；
  * - 配色（本表）决定整套色板的色相。
  *
  * 每套配色必须在 `engine/mindmap-theme-presets.ts` 的 `PALETTES` 里同时给出
@@ -697,3 +710,81 @@ export const CORE_VIEW_TYPE = {
  * 声明数据源），故集中为常量，避免拼写漂移。
  */
 export const HOVER_LINK_EVENT = 'hover-link';
+
+/*
+ * 小地图（F12-M）参数——**唯一来源**，`core/minimap-geometry` 与视图层共用。
+ *
+ * 口径（2026-10-24 三轮裁决，2026-10-25 补三条）：
+ * - 面板按内容**等比装入**宽 220 的框，再压回宽 160–220、高 ≥90；高度上限为
+ *   **画布高 × 0.6**（`MINIMAP_MAX_HEIGHT_RATIO`），底边钉住、只向上长；
+ * - 100% 缩放下内容装不进画布时才出现（无任何手动入口）；
+ * - **首帧立即绘制**（启用瞬间不等节拍）；此后每 30s 最多换一次，且只在有改动时换；
+ * - 动图后 30s 无操作即淡出（**悬停不淡出**），隐藏期间零重绘、零定时器；
+ * - 连线按节点数分档：`MINIMAP_LINK_NODE_LIMIT` 以内画全部父子连线、以外只画前
+ *   `MINIMAP_LINK_MAX_DEPTH` 层（2026-10-25 用户裁决：不配额、不设星形闸）。
+ *
+ * （本段是常量族的**总说明**，不挂在任何一个常量上——各常量的细注见各自 JSDoc。）
+ */
+/** 面板宽度上限（内容够宽时用满）；窄内容按比例收窄，避免左右大片留白 */
+export const MINIMAP_WIDTH_PX = 220;
+/** 面板宽度下限：再窄就放不下「根 + 两级」的横向层级 */
+export const MINIMAP_MIN_WIDTH_PX = 160;
+/** 面板高度下限：极扁宽内容按比例算出的高度会小到读不出层级，故保底此值（多出的部分留白） */
+export const MINIMAP_MIN_HEIGHT_PX = 90;
+/**
+ * 面板高度上限的**默认值**（调用方不传上限时用，即 `computeMiniMapSize` 的默认
+ * 参数）；生产路径恒传 `画布高 × MINIMAP_MAX_HEIGHT_RATIO`——取不到画布尺寸时
+ * `captureMiniMap` 直接返回 null，不会退到这里。
+ */
+export const MINIMAP_MAX_HEIGHT_PX = 280;
+/**
+ * 面板高度上限 = **画布高 × 本比例**。
+ *
+ * 2026-10-24 三轮裁决：「极端比例开放高度更合适」→ 高度跟着画布长；同日再裁决
+ * 「封顶画布高的 60%」——既能让高瘦内容长成可用的比例，又不会把左侧整列占满
+ * （实测不封顶时 500 节点图会长到 914px / 画布 1027px）。
+ */
+export const MINIMAP_MAX_HEIGHT_RATIO = 0.6;
+/**
+ * 缩略图连线**全画**的节点数上限（= 性能模式阈值，唯一来源，不另写数）。
+ *
+ * `≤ 此值` ⇒ 画**全部**父子连线；`>` 此值 ⇒ 只画**前 `MINIMAP_LINK_MAX_DEPTH` 层**
+ * （2026-10-25 用户裁决：按层分档，不配额、不抽样、不设星形闸）。
+ *
+ * 注意与抽样无关：抽样只在 > `MINIMAP_MAX_MARKS` 2000 时发生；且抽样与连线共用
+ * 同一份标记集，所以 2000 以上的图浅层连线会随抽样一起变稀（既有行为）。
+ *
+ * 历史：更早是「只画到第 3 层」→ 改为「> 此值一条不画」→ 再改为「按层分档」。
+ * 前两版在实测里都走了极端：`realistic-500`（502 块 / 深 9）3 层口径只出 3 条、
+ * 一条不画口径出 0 条；按层分档后出 53 条（= 前 7 层）。
+ */
+export const MINIMAP_LINK_NODE_LIMIT = PERFORMANCE_NODE_THRESHOLD;
+/**
+ * 超过 `MINIMAP_LINK_NODE_LIMIT` 后，允许画线的最深**子节点深度**（根 = 0）。
+ *
+ * 判据只看「子节点深度」：深度 1…本值 的父子边画，更深的一条不画。**方块不受
+ * 影响**——节点矩形永远全画，只有连线受这一层约束。
+ *
+ * 为什么是 7（2026-10-25 用户裁决）：深图（深 9 的 `realistic-500`）取 6 只剩
+ * 17 条、取 7 是 53 条、取 8 是 165 条；7 在「能读出主干 + 不至于糊」之间。
+ * 注意浅宽图（深 ≤ 此值）本就不受约束，规则对它们不生效——这是既定取舍。
+ */
+export const MINIMAP_LINK_MAX_DEPTH = 7;
+/** 画布窄于此值不显示（尺寸退化保护，**不是移动端适配**） */
+export const MINIMAP_MIN_CANVAS_WIDTH_PX = 320;
+export const MINIMAP_REFRESH_INTERVAL_MS = 30_000;
+export const MINIMAP_IDLE_FADE_MS = 30_000;
+/**
+ * 「是否需要小地图」的**重判节流**（毫秒）：判据要读实时容器矩形（强制布局）
+ * 并遍历全树几何，而 `node_tree_render_end` 在性能模式下按分片连发——不能
+ * 每次渲染都付。1s 足够「拉宽窗口 / 换布局」即时反应。
+ */
+export const MINIMAP_REFRESH_CHECK_MS = 1000;
+/**
+ * 缩略图标记上限：超过即按步长抽样。
+ *
+ * 按原图输出（每个节点一个方块、每条父子一条连线）在 2000 个标记以内仍只是
+ * 几十 KB 的 SVG；再大就按 DFS 步长抽样——缩略尺度下少画一半肉眼无差，
+ * 但解码成本差一倍。
+ */
+export const MINIMAP_MAX_MARKS = 2000;
