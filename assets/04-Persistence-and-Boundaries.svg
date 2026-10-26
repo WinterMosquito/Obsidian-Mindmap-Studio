@@ -1,0 +1,818 @@
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:svgjs="http://svgjs.dev/svgjs" width="1611.6771240234375" height="1379.375" style="background-color: rgb(255, 255, 255);"><title>04-Persistence-and-Boundaries</title><g class="smm-container" transform="matrix(1,0,0,1,-669.6666717529297,161.42185974121094)"><g class="smm-line-container"><path d="M 956.5521240234375,528.265645980835L 1018.9521240234375,528.265645980835L 1018.9521240234375,-89.23435401916504Q 1018.9521240234375,-94.23435401916504 1023.9521240234375,-94.23435401916504L 1060.5521240234375,-94.23435401916504" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 956.5521240234375,528.265645980835L 1018.9521240234375,528.265645980835L 1018.9521240234375,69.70314598083496Q 1018.9521240234375,64.70314598083496 1023.9521240234375,64.70314598083496L 1060.5521240234375,64.70314598083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 956.5521240234375,528.265645980835L 1018.9521240234375,528.265645980835L 1018.9521240234375,221.64064598083496Q 1018.9521240234375,216.64064598083496 1023.9521240234375,216.64064598083496L 1060.5521240234375,216.64064598083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 956.5521240234375,528.265645980835L 1018.9521240234375,528.265645980835L 1018.9521240234375,358.21877098083496Q 1018.9521240234375,353.21877098083496 1023.9521240234375,353.21877098083496L 1060.5521240234375,353.21877098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 956.5521240234375,528.265645980835L 1018.9521240234375,528.265645980835L 1018.9521240234375,487.00002098083496Q 1018.9521240234375,482.00002098083496 1023.9521240234375,482.00002098083496L 1060.5521240234375,482.00002098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 956.5521240234375,528.265645980835L 1018.9521240234375,528.265645980835L 1018.9521240234375,613.578145980835Q 1018.9521240234375,618.578145980835 1023.9521240234375,618.578145980835L 1060.5521240234375,618.578145980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 956.5521240234375,528.265645980835L 1018.9521240234375,528.265645980835L 1018.9521240234375,780.031270980835Q 1018.9521240234375,785.031270980835 1023.9521240234375,785.031270980835L 1060.5521240234375,785.031270980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 956.5521240234375,528.265645980835L 1018.9521240234375,528.265645980835L 1018.9521240234375,961.843770980835Q 1018.9521240234375,966.843770980835 1023.9521240234375,966.843770980835L 1060.5521240234375,966.843770980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 956.5521240234375,528.265645980835L 1018.9521240234375,528.265645980835L 1018.9521240234375,1137.171895980835Q 1018.9521240234375,1142.171895980835 1023.9521240234375,1142.171895980835L 1060.5521240234375,1142.171895980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1244.1667175292969,-94.23435401916504L 1276.566717529297,-94.23435401916504L 1276.566717529297,-118.82810401916504Q 1276.566717529297,-123.82810401916504 1281.566717529297,-123.82810401916504L 1298.1667175292969,-123.82810401916504" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1244.1667175292969,-94.23435401916504L 1276.566717529297,-94.23435401916504L 1276.566717529297,-69.64060401916504Q 1276.566717529297,-64.64060401916504 1281.566717529297,-64.64060401916504L 1298.1667175292969,-64.64060401916504" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1601.0104675292969,-123.82810401916504L 1633.410467529297,-123.82810401916504L 1633.410467529297,-133.62497901916504Q 1633.410467529297,-138.62497901916504 1638.410467529297,-138.62497901916504L 1655.0104675292969,-138.62497901916504" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1601.0104675292969,-123.82810401916504L 1633.410467529297,-123.82810401916504L 1633.410467529297,-114.03122901916504Q 1633.410467529297,-109.03122901916504 1638.410467529297,-109.03122901916504L 1655.0104675292969,-109.03122901916504" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1711.4792175292969,-64.64060401916504L 1743.879217529297,-64.64060401916504L 1743.879217529297,-74.43747901916504Q 1743.879217529297,-79.43747901916504 1748.879217529297,-79.43747901916504L 1765.4792175292969,-79.43747901916504" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1711.4792175292969,-64.64060401916504L 1743.879217529297,-64.64060401916504L 1743.879217529297,-54.84372901916504Q 1743.879217529297,-49.84372901916504 1748.879217529297,-49.84372901916504L 1765.4792175292969,-49.84372901916504" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1243.2500457763672,64.70314598083496L 1275.6500457763673,64.70314598083496L 1275.6500457763673,25.03127098083496Q 1275.6500457763673,20.03127098083496 1280.6500457763673,20.03127098083496L 1297.2500457763672,20.03127098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1243.2500457763672,64.70314598083496L 1275.6500457763673,64.70314598083496L 1275.6500457763673,54.90627098083496Q 1275.6500457763673,49.90627098083496 1280.6500457763673,49.90627098083496L 1297.2500457763672,49.90627098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1243.2500457763672,64.70314598083496L 1275.6500457763673,64.70314598083496L 1275.6500457763673,74.50002098083496Q 1275.6500457763673,79.50002098083496 1280.6500457763673,79.50002098083496L 1297.2500457763672,79.50002098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1243.2500457763672,64.70314598083496L 1275.6500457763673,64.70314598083496L 1275.6500457763673,104.37502098083496Q 1275.6500457763673,109.37502098083496 1280.6500457763673,109.37502098083496L 1297.2500457763672,109.37502098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1607.6146392822266,20.03127098083496L 1640.0146392822267,20.03127098083496L 1640.0146392822267,20.03127098083496L 1661.6146392822266,20.03127098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1233.1146240234375,216.64064598083496L 1265.5146240234376,216.64064598083496L 1265.5146240234376,184.25002098083496Q 1265.5146240234376,179.25002098083496 1270.5146240234376,179.25002098083496L 1287.1146240234375,179.25002098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1233.1146240234375,216.64064598083496L 1265.5146240234376,216.64064598083496L 1265.5146240234376,216.64064598083496L 1287.1146240234375,216.64064598083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1233.1146240234375,216.64064598083496L 1265.5146240234376,216.64064598083496L 1265.5146240234376,249.03127098083496Q 1265.5146240234376,254.03127098083496 1270.5146240234376,254.03127098083496L 1287.1146240234375,254.03127098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1717.3438110351562,216.64064598083496L 1749.7438110351563,216.64064598083496L 1749.7438110351563,216.64064598083496L 1771.3438110351562,216.64064598083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1211.5417175292969,353.21877098083496L 1243.941717529297,353.21877098083496L 1243.941717529297,328.62502098083496Q 1243.941717529297,323.62502098083496 1248.941717529297,323.62502098083496L 1265.5417175292969,323.62502098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1211.5417175292969,353.21877098083496L 1243.941717529297,353.21877098083496L 1243.941717529297,353.21877098083496L 1265.5417175292969,353.21877098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1211.5417175292969,353.21877098083496L 1243.941717529297,353.21877098083496L 1243.941717529297,377.81252098083496Q 1243.941717529297,382.81252098083496 1248.941717529297,382.81252098083496L 1265.5417175292969,382.81252098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1674.3646545410156,323.62502098083496L 1706.7646545410157,323.62502098083496L 1706.7646545410157,323.62502098083496L 1728.3646545410156,323.62502098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1729.8854675292969,353.21877098083496L 1762.285467529297,353.21877098083496L 1762.285467529297,353.21877098083496L 1783.8854675292969,353.21877098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1167.2187957763672,482.00002098083496L 1199.6187957763673,482.00002098083496L 1199.6187957763673,457.40627098083496Q 1199.6187957763673,452.40627098083496 1204.6187957763673,452.40627098083496L 1221.2187957763672,452.40627098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1167.2187957763672,482.00002098083496L 1199.6187957763673,482.00002098083496L 1199.6187957763673,482.00002098083496L 1221.2187957763672,482.00002098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1167.2187957763672,482.00002098083496L 1199.6187957763673,482.00002098083496L 1199.6187957763673,506.59377098083496Q 1199.6187957763673,511.59377098083496 1204.6187957763673,511.59377098083496L 1221.2187957763672,511.59377098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1657.2812957763672,452.40627098083496L 1689.6812957763673,452.40627098083496L 1689.6812957763673,452.40627098083496L 1711.2812957763672,452.40627098083496" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1134.7917098999023,618.578145980835L 1167.1917098999024,618.578145980835L 1167.1917098999024,586.187520980835Q 1167.1917098999024,581.187520980835 1172.1917098999024,581.187520980835L 1188.7917098999023,581.187520980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1134.7917098999023,618.578145980835L 1167.1917098999024,618.578145980835L 1167.1917098999024,615.781270980835Q 1167.1917098999024,610.781270980835 1172.1917098999024,610.781270980835L 1188.7917098999023,610.781270980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1134.7917098999023,618.578145980835L 1167.1917098999024,618.578145980835L 1167.1917098999024,643.171895980835Q 1167.1917098999024,648.171895980835 1172.1917098999024,648.171895980835L 1188.7917098999023,648.171895980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1521.7604598999023,610.781270980835L 1554.1604598999024,610.781270980835L 1554.1604598999024,610.781270980835L 1575.7604598999023,610.781270980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1320.7292175292969,785.031270980835L 1353.129217529297,785.031270980835L 1353.129217529297,730.843770980835Q 1353.129217529297,725.843770980835 1358.129217529297,725.843770980835L 1374.7292175292969,725.843770980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1320.7292175292969,785.031270980835L 1353.129217529297,785.031270980835L 1353.129217529297,760.718770980835Q 1353.129217529297,755.718770980835 1358.129217529297,755.718770980835L 1374.7292175292969,755.718770980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1320.7292175292969,785.031270980835L 1353.129217529297,785.031270980835L 1353.129217529297,785.312520980835L 1374.7292175292969,785.312520980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1320.7292175292969,785.031270980835L 1353.129217529297,785.031270980835L 1353.129217529297,809.906270980835Q 1353.129217529297,814.906270980835 1358.129217529297,814.906270980835L 1374.7292175292969,814.906270980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1320.7292175292969,785.031270980835L 1353.129217529297,785.031270980835L 1353.129217529297,839.500020980835Q 1353.129217529297,844.500020980835 1358.129217529297,844.500020980835L 1374.7292175292969,844.500020980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1194.0729675292969,966.843770980835L 1226.472967529297,966.843770980835L 1226.472967529297,919.093770980835Q 1226.472967529297,914.093770980835 1231.472967529297,914.093770980835L 1248.0729675292969,914.093770980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1194.0729675292969,966.843770980835L 1226.472967529297,966.843770980835L 1226.472967529297,948.687520980835Q 1226.472967529297,943.687520980835 1231.472967529297,943.687520980835L 1248.0729675292969,943.687520980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1194.0729675292969,966.843770980835L 1226.472967529297,966.843770980835L 1226.472967529297,976.359395980835Q 1226.472967529297,981.359395980835 1231.472967529297,981.359395980835L 1248.0729675292969,981.359395980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1194.0729675292969,966.843770980835L 1226.472967529297,966.843770980835L 1226.472967529297,1014.312520980835Q 1226.472967529297,1019.312520980835 1231.472967529297,1019.312520980835L 1248.0729675292969,1019.312520980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1205.1875457763672,1142.171895980835L 1237.5875457763673,1142.171895980835L 1237.5875457763673,1101.984395980835Q 1237.5875457763673,1096.984395980835 1242.5875457763673,1096.984395980835L 1259.1875457763672,1096.984395980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1205.1875457763672,1142.171895980835L 1237.5875457763673,1142.171895980835L 1237.5875457763673,1142.171895980835L 1259.1875457763672,1142.171895980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path><path d="M 1205.1875457763672,1142.171895980835L 1237.5875457763673,1142.171895980835L 1237.5875457763673,1182.359395980835Q 1237.5875457763673,1187.359395980835 1242.5875457763673,1187.359395980835L 1259.1875457763672,1187.359395980835" stroke-dasharray="none" stroke-width="1.5" stroke="#94a3b8" fill="none"></path></g><g class="smm-node-container"><g class="smm-node" transform="matrix(1,0,0,1,679.6666870117188,513.6666870117188)" style="cursor: default;"><path d="
+      M5,0
+      L271.88543701171875,0
+      C271.88543701171875,0 276.88543701171875,0 276.88543701171875,5
+      L276.88543701171875,24.197917938232422
+      C276.88543701171875,24.197917938232422 276.88543701171875,29.197917938232422 271.88543701171875,29.197917938232422
+      L5,29.197917938232422
+      C5,29.197917938232422 0,29.197917938232422 0,24.197917938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="#4a90d9" stroke-dasharray="none" stroke-width="0" stroke="transparent"></path><foreignObject width="288.88543701171875" height="49.19791793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 16px; color: rgb(255, 255, 255); font-weight: bold;">04-Persistence-and-Boundaries</div></foreignObject><rect width="280.88543701171875" height="33.19791793823242" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1060.5521240234375,-107.63018798828125)" style="cursor: default;"><path d="
+      M5,0
+      L178.61459350585938,0
+      C178.61459350585938,0 183.61459350585938,0 183.61459350585938,5
+      L183.61459350585938,21.791667938232422
+      C183.61459350585938,21.791667938232422 183.61459350585938,26.791667938232422 178.61459350585938,26.791667938232422
+      L5,26.791667938232422
+      C5,26.791667938232422 0,26.791667938232422 0,21.791667938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.791667938232422" x="183.61459350585938" y="0"></rect><foreignObject width="195.61459350585938" height="46.79166793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; color: rgb(30, 41, 59); font-weight: normal;">Exactly two state stores</div></foreignObject><rect width="187.61459350585938" height="30.791667938232422" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1298.1667175292969,-136.62497901916504)" style="cursor: default;"><path d="
+      M5,0
+      L297.84375,0
+      C297.84375,0 302.84375,0 302.84375,5
+      L302.84375,20.59375
+      C302.84375,20.59375 302.84375,25.59375 297.84375,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="25.59375" x="302.84375" y="0"></rect><foreignObject width="314.84375" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">The note itself: Markdown body + frontmatter</div></foreignObject><rect width="306.84375" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1655.0104675292969,-151.42185401916504)" style="cursor: default;"><path d="
+      M5,0
+      L430.35418701171875,0
+      C430.35418701171875,0 435.35418701171875,0 435.35418701171875,5
+      L435.35418701171875,20.59375
+      C435.35418701171875,20.59375 435.35418701171875,25.59375 430.35418701171875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="447.35418701171875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">The only source of content; unedited lines are written back verbatim</div></foreignObject><rect width="439.35418701171875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1655.0104675292969,-121.82810401916504)" style="cursor: default;"><path d="
+      M5,0
+      L423.04168701171875,0
+      C423.04168701171875,0 428.04168701171875,0 428.04168701171875,5
+      L428.04168701171875,20.59375
+      C428.04168701171875,20.59375 428.04168701171875,25.59375 423.04168701171875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="440.04168701171875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">"Is this a map?" is carried by the property declaration, nowhere else</div></foreignObject><rect width="432.04168701171875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1298.1667175292969,-77.71872901916504)" style="cursor: default;"><path d="
+      M5,0
+      L408.3125,0
+      C408.3125,0 413.3125,0 413.3125,5
+      L413.3125,21.15625
+      C413.3125,21.15625 413.3125,26.15625 408.3125,26.15625
+      L5,26.15625
+      C5,26.15625 0,26.15625 0,21.15625
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.15625" x="413.3125" y="0"></rect><foreignObject width="425.3125" height="46.15625"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">The plugin's <code style="font-family: var(--font-monospace, monospace); font-size: 0.95em; padding: 0px 3px; border-radius: 3px; background-color: var(--code-background, rgba(128, 128, 128, 0.12));">data.json</code>: only the map's own look and viewpoint</div></foreignObject><rect width="417.3125" height="30.15625" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1765.4792175292969,-92.23435401916504)" style="cursor: default;"><path d="
+      M5,0
+      L297.84375,0
+      C297.84375,0 302.84375,0 302.84375,5
+      L302.84375,20.59375
+      C302.84375,20.59375 302.84375,25.59375 297.84375,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="314.84375" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Layout / line style / palette / border / viewport</div></foreignObject><rect width="306.84375" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1765.4792175292969,-62.64060401916504)" style="cursor: default;"><path d="
+      M5,0
+      L387.9375,0
+      C387.9375,0 392.9375,0 392.9375,5
+      L392.9375,20.59375
+      C392.9375,20.59375 392.9375,25.59375 387.9375,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="404.9375" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Keyed by file path; a rename migrates it, a delete cleans it up</div></foreignObject><rect width="396.9375" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1060.5521240234375,51.30731201171875)" style="cursor: default;"><path d="
+      M5,0
+      L177.6979217529297,0
+      C177.6979217529297,0 182.6979217529297,0 182.6979217529297,5
+      L182.6979217529297,21.791667938232422
+      C182.6979217529297,21.791667938232422 182.6979217529297,26.791667938232422 177.6979217529297,26.791667938232422
+      L5,26.791667938232422
+      C5,26.791667938232422 0,26.791667938232422 0,21.791667938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.791667938232422" x="182.6979217529297" y="0"></rect><foreignObject width="194.6979217529297" height="46.79166793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; color: rgb(30, 41, 59); font-weight: normal;">What is not in data.json</div></foreignObject><rect width="186.6979217529297" height="30.791667938232422" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1297.2500457763672,6.953145980834961)" style="cursor: default;"><path d="
+      M5,0
+      L305.3645935058594,0
+      C305.3645935058594,0 310.3645935058594,0 310.3645935058594,5
+      L310.3645935058594,21.15625
+      C310.3645935058594,21.15625 310.3645935058594,26.15625 305.3645935058594,26.15625
+      L5,26.15625
+      C5,26.15625 0,26.15625 0,21.15625
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.15625" x="310.3645935058594" y="0"></rect><foreignObject width="322.3645935058594" height="46.15625"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">The open mode: it <em style="font-style: italic;">is</em> the <code style="font-family: var(--font-monospace, monospace); font-size: 0.95em; padding: 0px 3px; border-radius: 3px; background-color: var(--code-background, rgba(128, 128, 128, 0.12));">Type</code> / <code style="font-family: var(--font-monospace, monospace); font-size: 0.95em; padding: 0px 3px; border-radius: 3px; background-color: var(--code-background, rgba(128, 128, 128, 0.12));">类型</code> property</div></foreignObject><rect width="314.3645935058594" height="30.15625" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1661.6146392822266,7.234395980834961)" style="cursor: default;"><path d="
+      M5,0
+      L317.375,0
+      C317.375,0 322.375,0 322.375,5
+      L322.375,20.59375
+      C322.375,20.59375 322.375,25.59375 317.375,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="334.375" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">So there are never two states fighting each other</div></foreignObject><rect width="326.375" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1297.2500457763672,37.10939598083496)" style="cursor: default;"><path d="
+      M5,0
+      L434.7083435058594,0
+      C434.7083435058594,0 439.7083435058594,0 439.7083435058594,5
+      L439.7083435058594,20.59375
+      C439.7083435058594,20.59375 439.7083435058594,25.59375 434.7083435058594,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="451.7083435058594" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Node and image sizes: written into the body as official embed syntax</div></foreignObject><rect width="443.7083435058594" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1297.2500457763672,66.70314598083496)" style="cursor: default;"><path d="
+      M5,0
+      L384.7083435058594,0
+      C384.7083435058594,0 389.7083435058594,0 389.7083435058594,5
+      L389.7083435058594,20.59375
+      C389.7083435058594,20.59375 389.7083435058594,25.59375 384.7083435058594,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="401.7083435058594" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Minimap, search bar, rail state: local view state, not persisted</div></foreignObject><rect width="393.7083435058594" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1297.2500457763672,96.29689598083496)" style="cursor: default;"><path d="
+      M5,0
+      L462.35418701171875,0
+      C462.35418701171875,0 467.35418701171875,0 467.35418701171875,5
+      L467.35418701171875,21.15625
+      C467.35418701171875,21.15625 467.35418701171875,26.15625 462.35418701171875,26.15625
+      L5,26.15625
+      C5,26.15625 0,26.15625 0,21.15625
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="479.35418701171875" height="46.15625"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Embedded blocks (<code style="font-family: var(--font-monospace, monospace); font-size: 0.95em; padding: 0px 3px; border-radius: 3px; background-color: var(--code-background, rgba(128, 128, 128, 0.12));">mindmap</code> fence): write neither the file nor <code style="font-family: var(--font-monospace, monospace); font-size: 0.95em; padding: 0px 3px; border-radius: 3px; background-color: var(--code-background, rgba(128, 128, 128, 0.12));">data.json</code></div></foreignObject><rect width="471.35418701171875" height="30.15625" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1060.5521240234375,203.24481201171875)" style="cursor: default;"><path d="
+      M5,0
+      L167.5625,0
+      C167.5625,0 172.5625,0 172.5625,5
+      L172.5625,21.791667938232422
+      C172.5625,21.791667938232422 172.5625,26.791667938232422 167.5625,26.791667938232422
+      L5,26.791667938232422
+      C5,26.791667938232422 0,26.791667938232422 0,21.791667938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.791667938232422" x="172.5625" y="0"></rect><foreignObject width="184.5625" height="46.79166793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; color: rgb(30, 41, 59); font-weight: normal;">One instance per map</div></foreignObject><rect width="176.5625" height="30.791667938232422" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1287.1146240234375,166.45314598083496)" style="cursor: default;"><path d="
+      M5,0
+      L227.15625,0
+      C227.15625,0 232.15625,0 232.15625,5
+      L232.15625,20.59375
+      C232.15625,20.59375 232.15625,25.59375 227.15625,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="244.15625" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">A map keeps <strong style="font-weight: 600;">one</strong> editing instance</div></foreignObject><rect width="236.15625" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1287.1146240234375,203.84377098083496)" style="cursor: default;"><path d="
+      M5,0
+      L425.22918701171875,0
+      C425.22918701171875,0 430.22918701171875,0 430.22918701171875,5
+      L430.22918701171875,20.59375
+      C430.22918701171875,20.59375 430.22918701171875,25.59375 425.22918701171875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="25.59375" x="430.22918701171875" y="0"></rect><foreignObject width="442.22918701171875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Opening it in a second tab shows a notice and hands the view back</div></foreignObject><rect width="434.22918701171875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1771.3438110351562,196.04689598083496)" style="cursor: default;"><path d="
+      M5,0
+      L495,0
+      C495,0 500,0 500,5
+      L500,36.1875
+      C500,36.1875 500,41.1875 495,41.1875
+      L5,41.1875
+      C5,41.1875 0,41.1875 0,36.1875
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="512" height="61.1875"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Two instances = two engines + two save pipelines, and interleaved writes lose edits</div></foreignObject><rect width="504" height="45.1875" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1287.1146240234375,241.23439598083496)" style="cursor: default;"><path d="
+      M5,0
+      L327.97918701171875,0
+      C327.97918701171875,0 332.97918701171875,0 332.97918701171875,5
+      L332.97918701171875,20.59375
+      C332.97918701171875,20.59375 332.97918701171875,25.59375 327.97918701171875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="344.97918701171875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">The note's reading view can still be open alongside</div></foreignObject><rect width="336.97918701171875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1060.5521240234375,339.82293701171875)" style="cursor: default;"><path d="
+      M5,0
+      L145.98959350585938,0
+      C145.98959350585938,0 150.98959350585938,0 150.98959350585938,5
+      L150.98959350585938,21.791667938232422
+      C150.98959350585938,21.791667938232422 150.98959350585938,26.791667938232422 145.98959350585938,26.791667938232422
+      L5,26.791667938232422
+      C5,26.791667938232422 0,26.791667938232422 0,21.791667938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.791667938232422" x="150.98959350585938" y="0"></rect><foreignObject width="162.98959350585938" height="46.79166793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; color: rgb(30, 41, 59); font-weight: normal;">Conflicts &amp; failures</div></foreignObject><rect width="154.98959350585938" height="30.791667938232422" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1265.5417175292969,310.82814598083496)" style="cursor: default;"><path d="
+      M5,0
+      L403.82293701171875,0
+      C403.82293701171875,0 408.82293701171875,0 408.82293701171875,5
+      L408.82293701171875,20.59375
+      C408.82293701171875,20.59375 408.82293701171875,25.59375 403.82293701171875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="25.59375" x="408.82293701171875" y="0"></rect><foreignObject width="420.82293701171875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">The file changed outside Obsidian (sync drive, another window)</div></foreignObject><rect width="412.82293701171875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1728.3646545410156,310.82814598083496)" style="cursor: default;"><path d="
+      M5,0
+      L332.40625,0
+      C332.40625,0 337.40625,0 337.40625,5
+      L337.40625,20.59375
+      C337.40625,20.59375 337.40625,25.59375 332.40625,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="349.40625" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">That auto-save round is skipped and reported <strong style="font-weight: 600;">once</strong></div></foreignObject><rect width="341.40625" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1265.5417175292969,340.42189598083496)" style="cursor: default;"><path d="
+      M5,0
+      L459.34375,0
+      C459.34375,0 464.34375,0 464.34375,5
+      L464.34375,20.59375
+      C464.34375,20.59375 464.34375,25.59375 459.34375,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="25.59375" x="464.34375" y="0"></rect><foreignObject width="476.34375" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Repeated write failures past a threshold suspend auto-save with a notice</div></foreignObject><rect width="468.34375" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1783.8854675292969,340.42189598083496)" style="cursor: default;"><path d="
+      M5,0
+      L190,0
+      C190,0 195,0 195,5
+      L195,20.59375
+      C195,20.59375 195,25.59375 190,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="207" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Manual save keeps working</div></foreignObject><rect width="199" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1265.5417175292969,370.01564598083496)" style="cursor: default;"><path d="
+      M5,0
+      L474.54168701171875,0
+      C474.54168701171875,0 479.54168701171875,0 479.54168701171875,5
+      L479.54168701171875,20.59375
+      C479.54168701171875,20.59375 479.54168701171875,25.59375 474.54168701171875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="491.54168701171875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">When the writer has already reported a failure, callers do not report it again</div></foreignObject><rect width="483.54168701171875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1060.5521240234375,468.60418701171875)" style="cursor: default;"><path d="
+      M5,0
+      L101.66667175292969,0
+      C101.66667175292969,0 106.66667175292969,0 106.66667175292969,5
+      L106.66667175292969,21.791667938232422
+      C106.66667175292969,21.791667938232422 106.66667175292969,26.791667938232422 101.66667175292969,26.791667938232422
+      L5,26.791667938232422
+      C5,26.791667938232422 0,26.791667938232422 0,21.791667938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.791667938232422" x="106.66667175292969" y="0"></rect><foreignObject width="118.66667175292969" height="46.79166793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; color: rgb(30, 41, 59); font-weight: normal;">Large maps</div></foreignObject><rect width="110.66667175292969" height="30.791667938232422" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1221.2187957763672,439.60939598083496)" style="cursor: default;"><path d="
+      M5,0
+      L431.0625,0
+      C431.0625,0 436.0625,0 436.0625,5
+      L436.0625,20.59375
+      C436.0625,20.59375 436.0625,25.59375 431.0625,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="25.59375" x="436.0625" y="0"></rect><foreignObject width="448.0625" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">500+ nodes → performance mode, only the nodes in view are drawn</div></foreignObject><rect width="440.0625" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1711.2812957763672,439.60939598083496)" style="cursor: default;"><path d="
+      M5,0
+      L244.4479217529297,0
+      C244.4479217529297,0 249.4479217529297,0 249.4479217529297,5
+      L249.4479217529297,20.59375
+      C249.4479217529297,20.59375 249.4479217529297,25.59375 244.4479217529297,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="261.4479217529297" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">No setting for it; always on internally</div></foreignObject><rect width="253.4479217529297" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1221.2187957763672,469.20314598083496)" style="cursor: default;"><path d="
+      M5,0
+      L364.8333435058594,0
+      C364.8333435058594,0 369.8333435058594,0 369.8333435058594,5
+      L369.8333435058594,20.59375
+      C369.8333435058594,20.59375 369.8333435058594,25.59375 364.8333435058594,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="381.8333435058594" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">2000+ nodes → <strong style="font-weight: 600;">fit to canvas</strong> has a readable floor of 10%</div></foreignObject><rect width="373.8333435058594" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1221.2187957763672,498.79689598083496)" style="cursor: default;"><path d="
+      M5,0
+      L292.5208435058594,0
+      C292.5208435058594,0 297.5208435058594,0 297.5208435058594,5
+      L297.5208435058594,20.59375
+      C297.5208435058594,20.59375 297.5208435058594,25.59375 292.5208435058594,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="309.5208435058594" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">The status bar shows the current node count</div></foreignObject><rect width="301.5208435058594" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1060.5521240234375,605.1823120117188)" style="cursor: default;"><path d="
+      M5,0
+      L69.23958587646484,0
+      C69.23958587646484,0 74.23958587646484,0 74.23958587646484,5
+      L74.23958587646484,21.791667938232422
+      C74.23958587646484,21.791667938232422 74.23958587646484,26.791667938232422 69.23958587646484,26.791667938232422
+      L5,26.791667938232422
+      C5,26.791667938232422 0,26.791667938232422 0,21.791667938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.791667938232422" x="74.23958587646484" y="0"></rect><foreignObject width="86.23958587646484" height="46.79166793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; color: rgb(30, 41, 59); font-weight: normal;">Export</div></foreignObject><rect width="78.23958587646484" height="30.791667938232422" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1188.7917098999023,568.390645980835)" style="cursor: default;"><path d="
+      M5,0
+      L295.01043701171875,0
+      C295.01043701171875,0 300.01043701171875,0 300.01043701171875,5
+      L300.01043701171875,20.59375
+      C300.01043701171875,20.59375 300.01043701171875,25.59375 295.01043701171875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="312.01043701171875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">PNG raster (scale 1–4, default 2) / SVG vector</div></foreignObject><rect width="304.01043701171875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1188.7917098999023,597.984395980835)" style="cursor: default;"><path d="
+      M5,0
+      L327.96875,0
+      C327.96875,0 332.96875,0 332.96875,5
+      L332.96875,20.59375
+      C332.96875,20.59375 332.96875,25.59375 327.96875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="25.59375" x="332.96875" y="0"></rect><foreignObject width="344.96875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Maps with maths inline the MathJax faces they use</div></foreignObject><rect width="336.96875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1575.7604598999023,597.984395980835)" style="cursor: default;"><path d="
+      M5,0
+      L394.0833435058594,0
+      C394.0833435058594,0 399.0833435058594,0 399.0833435058594,5
+      L399.0833435058594,20.59375
+      C399.0833435058594,20.59375 399.0833435058594,25.59375 394.0833435058594,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="411.0833435058594" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Larger files, but matrix rules, radicals and fraction bars survive</div></foreignObject><rect width="403.0833435058594" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1188.7917098999023,627.578145980835)" style="cursor: default;"><path d="
+      M5,0
+      L495,0
+      C495,0 500,0 500,5
+      L500,36.1875
+      C500,36.1875 500,41.1875 495,41.1875
+      L5,41.1875
+      C5,41.1875 0,41.1875 0,36.1875
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="512" height="61.1875"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">The export post-process injects Obsidian's CSS variables to fix clipping from font fallback</div></foreignObject><rect width="504" height="45.1875" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1060.5521240234375,771.6354370117188)" style="cursor: default;"><path d="
+      M5,0
+      L255.17709350585938,0
+      C255.17709350585938,0 260.1770935058594,0 260.1770935058594,5
+      L260.1770935058594,21.791667938232422
+      C260.1770935058594,21.791667938232422 260.1770935058594,26.791667938232422 255.17709350585938,26.791667938232422
+      L5,26.791667938232422
+      C5,26.791667938232422 0,26.791667938232422 0,21.791667938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.791667938232422" x="260.1770935058594" y="0"></rect><foreignObject width="272.1770935058594" height="46.79166793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; color: rgb(30, 41, 59); font-weight: normal;">Boundaries of the read-only embed</div></foreignObject><rect width="264.1770935058594" height="30.791667938232422" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1374.7292175292969,712.765645980835)" style="cursor: default;"><path d="
+      M5,0
+      L446.04168701171875,0
+      C446.04168701171875,0 451.04168701171875,0 451.04168701171875,5
+      L451.04168701171875,21.15625
+      C451.04168701171875,21.15625 451.04168701171875,26.15625 446.04168701171875,26.15625
+      L5,26.15625
+      C5,26.15625 0,26.15625 0,21.15625
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="463.04168701171875" height="46.15625"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">A <code style="font-family: var(--font-monospace, monospace); font-size: 0.95em; padding: 0px 3px; border-radius: 3px; background-color: var(--code-background, rgba(128, 128, 128, 0.12));">mindmap</code> fenced block renders in place in reading view / live preview</div></foreignObject><rect width="455.04168701171875" height="30.15625" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1374.7292175292969,742.921895980835)" style="cursor: default;"><path d="
+      M5,0
+      L469.2708435058594,0
+      C469.2708435058594,0 474.2708435058594,0 474.2708435058594,5
+      L474.2708435058594,20.59375
+      C474.2708435058594,20.59375 474.2708435058594,25.59375 469.2708435058594,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="486.2708435058594" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Height follows the content, scaled to the note's width and <strong style="font-weight: 600;">never scaled up</strong></div></foreignObject><rect width="478.2708435058594" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1374.7292175292969,772.515645980835)" style="cursor: default;"><path d="
+      M5,0
+      L465.66668701171875,0
+      C465.66668701171875,0 470.66668701171875,0 470.66668701171875,5
+      L470.66668701171875,20.59375
+      C470.66668701171875,20.59375 470.66668701171875,25.59375 465.66668701171875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="482.66668701171875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Not draggable, zoomable or resizable; the wheel belongs to the host page</div></foreignObject><rect width="474.66668701171875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1374.7292175292969,802.109395980835)" style="cursor: default;"><path d="
+      M5,0
+      L468.875,0
+      C468.875,0 473.875,0 473.875,5
+      L473.875,20.59375
+      C473.875,20.59375 473.875,25.59375 468.875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="485.875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Above 500 nodes it degrades to a read-only indented outline with a notice</div></foreignObject><rect width="477.875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1374.7292175292969,831.703145980835)" style="cursor: default;"><path d="
+      M5,0
+      L492.34375,0
+      C492.34375,0 497.34375,0 497.34375,5
+      L497.34375,20.59375
+      C497.34375,20.59375 497.34375,25.59375 492.34375,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="509.34375" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Appearance follows <strong style="font-weight: 600;">Default border style</strong>; the palette is always the default one</div></foreignObject><rect width="501.34375" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1060.5521240234375,953.4479370117188)" style="cursor: default;"><path d="
+      M5,0
+      L128.52084350585938,0
+      C128.52084350585938,0 133.52084350585938,0 133.52084350585938,5
+      L133.52084350585938,21.791667938232422
+      C133.52084350585938,21.791667938232422 133.52084350585938,26.791667938232422 128.52084350585938,26.791667938232422
+      L5,26.791667938232422
+      C5,26.791667938232422 0,26.791667938232422 0,21.791667938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.791667938232422" x="133.52084350585938" y="0"></rect><foreignObject width="145.52084350585938" height="46.79166793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; color: rgb(30, 41, 59); font-weight: normal;">Limits &amp; privacy</div></foreignObject><rect width="137.52084350585938" height="30.791667938232422" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1248.0729675292969,901.296895980835)" style="cursor: default;"><path d="
+      M5,0
+      L363.57293701171875,0
+      C363.57293701171875,0 368.57293701171875,0 368.57293701171875,5
+      L368.57293701171875,20.59375
+      C368.57293701171875,20.59375 368.57293701171875,25.59375 363.57293701171875,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="380.57293701171875" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Desktop only (Windows / macOS / Linux), Obsidian 1.13+</div></foreignObject><rect width="372.57293701171875" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1248.0729675292969,930.890645980835)" style="cursor: default;"><path d="
+      M5,0
+      L431.2083435058594,0
+      C431.2083435058594,0 436.2083435058594,0 436.2083435058594,5
+      L436.2083435058594,20.59375
+      C436.2083435058594,20.59375 436.2083435058594,25.59375 431.2083435058594,25.59375
+      L5,25.59375
+      C5,25.59375 0,25.59375 0,20.59375
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="448.2083435058594" height="45.59375"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Configuration is local, no telemetry, <strong style="font-weight: 600;">no outbound network requests</strong></div></foreignObject><rect width="440.2083435058594" height="29.59375" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1248.0729675292969,960.484395980835)" style="cursor: default;"><path d="
+      M5,0
+      L495,0
+      C495,0 500,0 500,5
+      L500,36.75
+      C500,36.75 500,41.75 495,41.75
+      L5,41.75
+      C5,41.75 0,41.75 0,36.75
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="512" height="61.75"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">The only read outside the plugin folder is the local MathJax font fetch over <code style="font-family: var(--font-monospace, monospace); font-size: 0.95em; padding: 0px 3px; border-radius: 3px; background-color: var(--code-background, rgba(128, 128, 128, 0.12));">app://obsidian.md</code> during export</div></foreignObject><rect width="504" height="45.75" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1248.0729675292969,1006.234395980835)" style="cursor: default;"><path d="
+      M5,0
+      L441.65625,0
+      C441.65625,0 446.65625,0 446.65625,5
+      L446.65625,21.15625
+      C446.65625,21.15625 446.65625,26.15625 441.65625,26.15625
+      L5,26.15625
+      C5,26.15625 0,26.15625 0,21.15625
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="458.65625" height="46.15625"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Only clicking a <code style="font-family: var(--font-monospace, monospace); font-size: 0.95em; padding: 0px 3px; border-radius: 3px; background-color: var(--code-background, rgba(128, 128, 128, 0.12));">file:///…</code> link yourself reaches files outside the vault</div></foreignObject><rect width="450.65625" height="30.15625" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1060.5521240234375,1128.7760620117188)" style="cursor: default;"><path d="
+      M5,0
+      L139.6354217529297,0
+      C139.6354217529297,0 144.6354217529297,0 144.6354217529297,5
+      L144.6354217529297,21.791667938232422
+      C144.6354217529297,21.791667938232422 144.6354217529297,26.791667938232422 139.6354217529297,26.791667938232422
+      L5,26.791667938232422
+      C5,26.791667938232422 0,26.791667938232422 0,21.791667938232422
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><rect fill="transparent" width="20" height="26.791667938232422" x="144.6354217529297" y="0"></rect><foreignObject width="156.6354217529297" height="46.79166793823242"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; color: rgb(30, 41, 59); font-weight: normal;">Known trade-offs</div></foreignObject><rect width="148.6354217529297" height="30.791667938232422" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1259.1875457763672,1076.390645980835)" style="cursor: default;"><path d="
+      M5,0
+      L495,0
+      C495,0 500,0 500,5
+      L500,36.1875
+      C500,36.1875 500,41.1875 495,41.1875
+      L5,41.1875
+      C5,41.1875 0,41.1875 0,36.1875
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="512" height="61.1875"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">External edits to the <strong style="font-weight: 600;">body</strong> are overwritten by the map (the map owns the body; only frontmatter is disk-first)</div></foreignObject><rect width="504" height="45.1875" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1259.1875457763672,1121.578145980835)" style="cursor: default;"><path d="
+      M5,0
+      L495,0
+      C495,0 500,0 500,5
+      L500,36.1875
+      C500,36.1875 500,41.1875 495,41.1875
+      L5,41.1875
+      C5,41.1875 0,41.1875 0,36.1875
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="512" height="61.1875"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Non-image embeds (a PDF, say) render as a <strong style="font-weight: 600;">clickable file name</strong>, not an embedded media view</div></foreignObject><rect width="504" height="45.1875" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g><g class="smm-node" transform="matrix(1,0,0,1,1259.1875457763672,1166.765645980835)" style="cursor: default;"><path d="
+      M5,0
+      L495,0
+      C495,0 500,0 500,5
+      L500,36.1875
+      C500,36.1875 500,41.1875 495,41.1875
+      L5,41.1875
+      C5,41.1875 0,41.1875 0,36.1875
+      L0,5
+      C0,5 0,0 5,0
+      Z
+    " class="smm-node-shape" transform="matrix(1,0,0,1,0,0)" fill="transparent" stroke-dasharray="none" stroke-width="0" stroke="#cbd5e1"></path><foreignObject width="512" height="61.1875"><div class="mindmap-node-inline-content" data-mmx-f="loaded:2" xmlns="http://www.w3.org/1999/xhtml" style="display: block; box-sizing: border-box; max-width: 500px; padding: 5px 16px; font-family: var(--font-interface, sans-serif); line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 13px; color: rgb(100, 116, 139); font-weight: normal;">Pasting an outline that includes the root back into the same map adds a second central node — that is what "copy the whole map" means</div></foreignObject><rect width="504" height="45.1875" x="-2" y="-2" class="smm-hover-node" rx="5" ry="5" fill="none" stroke="#5ec8f8"></rect></g></g><g class="smm-associative-line-container"></g><g class="smm-other-container"></g></g><style>
+  /* 鼠标hover和激活时渲染的矩形 */
+  .smm-hover-node{
+    display: none;
+    opacity: 0.6;
+    stroke-width: 1;
+  }
+
+  .smm-node:not(.smm-node-dragging):hover .smm-hover-node{
+    display: block;
+  }
+
+  .smm-node.active .smm-hover-node, .smm-node-highlight .smm-hover-node{
+    display: block;
+    opacity: 1;
+    stroke-width: 2;
+  }
+
+  .smm-text-node-wrap, .smm-expand-btn-text {
+    user-select: none;
+  }
+</style><style>svg { --font-interface: "HarmonyOS Sans SC", '??', '??', ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", "Google Sans Flex", Roboto, "Inter Variable", "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif; --font-text: "HarmonyOS Sans SC", '??', ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", "Google Sans Flex", Roboto, "Inter Variable", "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif; --font-text-size: 16px; --font-monospace: '??', '??', ui-monospace, SFMono-Regular, "Cascadia Mono", "Roboto Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Monaco, "Consolas", "Source Code Pro", monospace; --code-background: #fafafa; --code-normal: #222222; --link-color: hsl(210, 100%, 50%); --link-external-color: hsl(210, 100%, 50%); --link-unresolved-color: hsl(210, 100%, 50%); --link-unresolved-opacity: 0.7; --text-accent: hsl(210, 100%, 50%); --text-normal: #222222; --text-muted: #5c5c5c; --icon-color: #5c5c5c; }</style><style>mjx-container[overflow="scroll"][display] { overflow: auto clip; min-width: initial !important; }
+mjx-container[overflow="truncate"][display] { overflow: hidden clip; min-width: initial !important; }
+mjx-container[display] { display: block; text-align: center; justify-content: center; margin: 0.7em 0px; padding: 0.3em 2px; }
+mjx-container[display][width="full"] { display: flex; }
+mjx-container[justify="left"] { text-align: left; justify-content: left; }
+mjx-container[justify="right"] { text-align: right; justify-content: right; }
+mjx-container[jax="CHTML"] { white-space: nowrap; }
+mjx-mo &gt; mjx-c, mjx-mi &gt; mjx-c, mjx-mn &gt; mjx-c, mjx-ms &gt; mjx-c, mjx-mtext &gt; mjx-c { clip-path: polygon(-1em -0.6em, calc(100% + 1em) -0.6em, calc(100% + 1em) calc(100% + 0.6em), -1em calc(100% + 0.6em)) padding-box; }
+mjx-stretchy-h { clip-path: polygon(0px -2px, 100% -2px, 100% calc(100% + 2px), 0px calc(100% + 2px)) padding-box; display: inline-block; }
+mjx-stretchy-v { clip-path: polygon(-2px 0px, calc(100% + 2px) 0px, calc(100% + 2px) 100%, -2px 100%) padding-box; display: inline-block; text-align: center; }
+mjx-container [space="1"] { margin-left: 0.111em; }
+mjx-container [space="2"] { margin-left: 0.167em; }
+mjx-container [space="3"] { margin-left: 0.222em; }
+mjx-container [space="4"] { margin-left: 0.278em; }
+mjx-container [space="5"] { margin-left: 0.333em; }
+mjx-container [rspace="1"] { margin-right: 0.111em; }
+mjx-container [rspace="2"] { margin-right: 0.167em; }
+mjx-container [rspace="3"] { margin-right: 0.222em; }
+mjx-container [rspace="4"] { margin-right: 0.278em; }
+mjx-container [rspace="5"] { margin-right: 0.333em; }
+mjx-container [size="s"] { font-size: 70.7%; }
+mjx-container [size="ss"] { font-size: 50%; }
+mjx-container [size="Tn"] { font-size: 60%; }
+mjx-container [size="sm"] { font-size: 85%; }
+mjx-container [size="lg"] { font-size: 120%; }
+mjx-container [size="Lg"] { font-size: 144%; }
+mjx-container [size="LG"] { font-size: 173%; }
+mjx-container [size="hg"] { font-size: 207%; }
+mjx-container [size="HG"] { font-size: 249%; }
+mjx-container [width="full"] { width: 100%; }
+mjx-box { display: inline-block; }
+mjx-block { display: block; }
+mjx-itable { display: inline-table; }
+mjx-row { display: table-row; }
+mjx-row &gt; mjx-cell, mjx-row &gt; mjx-base, mjx-row &gt; mjx-under, mjx-row &gt; mjx-over, mjx-row &gt; mjx-den { display: table-cell; }
+mjx-container [inline-breaks] { display: inline; }
+mjx-container .mjx-selected { outline: black solid 2px; }
+@media (prefers-color-scheme: dark) {
+  mjx-container .mjx-selected { outline: rgb(200, 200, 200) solid 2px; }
+}
+mjx-mtext { display: inline-block; }
+mjx-mstyle { display: inline-block; }
+mjx-merror { display: inline-block; color: red; background-color: yellow; }
+mjx-mphantom { visibility: hidden; }
+mjx-container[has-speech="true"] { position: relative; cursor: default; }
+mjx-speech { position: absolute; z-index: -1; inset: 0px; }
+mjx-speech:focus { outline: none; }
+mjx-container a[data-mjx-href] { color: linktext; cursor: pointer; }
+mjx-container a[data-mjx-href].mjx-visited { color: visitedtext; }
+mjx-container &gt; mjx-help { display: none; position: absolute; top: -0.3em; right: -0.5em; width: 0.6em; height: 0.6em; cursor: pointer; }
+mjx-container[display="true"] &gt; mjx-help { position: sticky; bottom: 100%; left: 0px; margin: -0.3em -0.5em 0px -0.1em; right: 0px; top: initial; }
+mjx-help &gt; svg { stroke: black; width: 100%; height: 100%; }
+mjx-help &gt; svg &gt; circle { stroke-width: 1.5px; cx: 9px; cy: 9px; r: 9px; fill: white; }
+mjx-help &gt; svg &gt; circle:nth-child(2) { fill: var(--mjx-bg1-color); r: 7px; }
+mjx-help &gt; svg &gt; line { stroke-width: 2.5px; stroke-linecap: round; }
+mjx-help:hover &gt; svg &gt; circle:nth-child(2) { fill: white; }
+mjx-container.mjx-explorer-active &gt; mjx-help { display: inline-flex; align-items: center; }
+@media (prefers-color-scheme: dark) {
+  mjx-help &gt; svg { stroke: rgb(224, 224, 224); }
+  mjx-help &gt; svg &gt; circle { fill: rgb(64, 64, 64); }
+  mjx-help &gt; svg &gt; circle:nth-child(2) { fill: rgba(132, 132, 255, 0.3); }
+  mjx-help:hover &gt; svg &gt; circle:nth-child(2) { stroke: rgb(170, 170, 170); fill: rgb(64, 64, 64); }
+}
+mjx-math { display: inline-block; text-align: left; line-height: 0; text-indent: 0px; font-style: normal; font-weight: normal; font-size: 100%; font-size-adjust: none; letter-spacing: normal; overflow-wrap: normal; word-spacing: normal; direction: ltr; padding: 1px 0px; }
+mjx-container[jax="CHTML"][display="true"] mjx-math { padding: 0px; }
+mjx-math[breakable] { display: inline; }
+mjx-container[jax="CHTML"] mjx-break { white-space: normal; line-height: 0; clip-path: rect(0px 0px 0px 0px); font-family: MJX-BRK !important; }
+mjx-break[size="0"] { letter-spacing: -0.999em; }
+mjx-break[size="1"] { letter-spacing: -0.889em; }
+mjx-break[size="2"] { letter-spacing: -0.833em; }
+mjx-break[size="3"] { letter-spacing: -0.778em; }
+mjx-break[size="4"] { letter-spacing: -0.722em; }
+mjx-break[size="5"] { letter-spacing: -0.667em; }
+mjx-mi { display: inline-block; text-align: left; }
+mjx-c { display: inline-block; width: 0px; text-align: right; }
+mjx-utext { display: inline-block; padding: 0.75em 0px 0.2em; }
+mjx-mo { display: inline-block; text-align: left; }
+mjx-stretchy-h &gt; mjx-beg, mjx-stretchy-h &gt; mjx-ext, mjx-stretchy-h &gt; mjx-end, mjx-stretchy-h &gt; mjx-mid { display: inline-block; width: 0px; text-align: right; }
+mjx-stretchy-h &gt; mjx-ext { clip-path: polygon(0px -1em, 100% -1em, 100% calc(100% + 1em), 0px calc(100% + 1em)) padding-box; width: 100%; border: 0px solid transparent; box-sizing: border-box; text-align: left; }
+mjx-stretchy-v &gt; mjx-beg, mjx-stretchy-v &gt; mjx-ext, mjx-stretchy-v &gt; mjx-end, mjx-stretchy-v &gt; mjx-mid { display: block; height: 0px; margin: 0px auto; }
+mjx-stretchy-v &gt; mjx-ext &gt; mjx-spacer { display: block; }
+mjx-stretchy-v &gt; mjx-ext { clip-path: polygon(-1em 0px, calc(100% + 1em) 0px, calc(100% + 1em) 100%, -1em 100%) padding-box; height: 100%; border: 0.1px solid transparent; box-sizing: border-box; white-space: pre; }
+mjx-mark { display: inline-block; height: 0px; }
+mjx-msup { display: inline-block; text-align: left; }
+mjx-msubsup { display: inline-block; text-align: left; }
+mjx-script { display: inline-block; padding-right: 0.05em; padding-left: 0.033em; }
+mjx-script &gt; mjx-spacer { display: block; }
+mjx-mn { display: inline-block; text-align: left; }
+mjx-container[jax="CHTML"] &gt; mjx-math.TEX-N[breakable] &gt; * { font-family: MJX-TEX-ZERO, MJX-TEX-N; }
+.TEX-N { font-family: MJX-TEX-ZERO, MJX-TEX-N; }
+.TEX-B { font-family: MJX-TEX-ZERO, MJX-TEX-B; }
+.TEX-I { font-family: MJX-TEX-ZERO, MJX-TEX-I; }
+.TEX-BI { font-family: MJX-TEX-ZERO, MJX-TEX-BI; }
+.TEX-F { font-family: MJX-TEX-ZERO, MJX-TEX-F; }
+.TEX-FB { font-family: MJX-TEX-ZERO, MJX-TEX-FB; }
+.TEX-SS { font-family: MJX-TEX-ZERO, MJX-TEX-SS; }
+.TEX-SSB { font-family: MJX-TEX-ZERO, MJX-TEX-SSB; }
+.TEX-SSI { font-family: MJX-TEX-ZERO, MJX-TEX-SSI; }
+.TEX-M { font-family: MJX-TEX-ZERO, MJX-TEX-M; }
+.TEX-SO { font-family: MJX-TEX-ZERO, MJX-TEX-SO; }
+.TEX-LO { font-family: MJX-TEX-ZERO, MJX-TEX-LO; }
+.TEX-C { font-family: MJX-TEX-ZERO, MJX-TEX-C; }
+.TEX-CB { font-family: MJX-TEX-ZERO, MJX-TEX-CB; }
+.TEX-OS { font-family: MJX-TEX-ZERO, MJX-TEX-OS; }
+.TEX-OB { font-family: MJX-TEX-ZERO, MJX-TEX-OB; }
+.TEX-MI { font-family: MJX-TEX-ZERO, MJX-TEX-MI; }
+.TEX-V { font-family: MJX-TEX-ZERO, MJX-TEX-V; }
+.TEX-S3 { font-family: MJX-TEX-ZERO, MJX-TEX-S3; }
+.TEX-S4 { font-family: MJX-TEX-ZERO, MJX-TEX-S4; }
+.MHC-M { font-family: MJX-TEX-ZERO, MJX-MHC-M; }
+.MHC-N { font-family: MJX-TEX-ZERO, MJX-MHC-N; }
+
+
+@font-face { font-family: MJX-TEX-ZERO; src: url("data:font/woff2;base64,d09GMk9UVE8AAAPAAAoAAAAACjgAAAN1AAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAADYESBmAALAE2AiQDCD9sdGFnEgQGBY9LByAbggkRhUSRfZXAzSHMY2W05kTAQBWzuEfy7dkTDuEQW0ZI0snDf/v9b5+Z+029SUhIE5HIfxH1EImdTGOR1DOBZ7Y7AHbvX7ppW5bpR6gE2Sqmay9NH0jRSDUAKvzfqjG1QaEyGU8rVIS5iYqUmb/fEDos2AoNQOPr61Ah2VogX6MBXYWtazEiRuY1W37PTlNIB10cihARbZcvlObM6dKcuebnnlxkDv6NiR89fvSmH335R3/x8OHPG9+flMGtBrjb9BBeNCuLKO8er/oedakrkXew3z451eYTIB5KEbn8Yf2f1Jf9ii/KSA/S8Gi+mnhtKZJBbHDu29O2QYPp3d9mxD85AmIHgwZByAK1CoMoFAKD/yOigJ8KDn3+snG0oa+VOb+FN2mwJF7BL5AlECi+qF9aXI5E4A+u1yidvsIeElbSBRQg2VwjdIKkXiey+RhGYdI4ylS7inKTdqHCS9fGVtIeWwVZLWtkrayT9cVGLfpoOi4As+kuEGpjD5KKOISsIxcotMZJlClLN1CuNXZQYW8alcKWrJLVskbWos73eIh63enc2Ea4mw7NoqjCvjJAJ1EQCkJBKAgFoSAUFoSsktUKQtaiLt7lHtRbLV4pCMWhLrugZA5pcO78BlS+37rwkTB1xUyAGK3a5VF3/P9sE2QaQWGACkwOJkIY5MVHiTAyoJEbkWcQ5Op63a5nRvxtxW6YMhUDM0aJ64OCMzNbnwBHTaEOhh80ihs0LBw0qu3zM6YVbrdmyFQzNPZ9eIybbKG7YjXjShMz1+7snfLobNsVkilMlO6aUm9NW6RXlzjm2Us74yohsaieSfycQiIf0CeGrB1my0dF6IVMJ/LldSWPthKRLFmgZKGr27i3A2bqJLvPLyCta5Ek3PXNeBlfDMXYg3OMEfvlIvqQ8v95zFGT8e/TK7Fv2YNNVlfUFOrgPIO7t8stboPvurXq8vE8twJD1CLM4MAFZhwrMBOzlEa9+Ro+L02Zie7sTXMVtu0KeQkTwR41qifeYOy602vBmTZhRck9z162Xy4ySsgxEposfVg6g+zLXzjRns0nPqCZaaXqj8wH9fNhLz3MlrApMKM6fknsrGTPhEXt0+oeHVNTgyl5ObAnEwm7JkIfC8kyxZq9nX+u14kz3dYUdcfRXInCaKpFYsWb0dmMlw49UsLS/wcA") format("woff2"); }
+@font-face { font-family: MJX-BRK; src: url("data:font/woff2;base64,d09GMk9UVE8AAAPUAAoAAAAACigAAAOHAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAADYEPBmAALAE2AiQDCD9sdGFnEgQGBY8/ByAbcwkRhRSR/SWBU1lZcmBXHUyIdpdiVhOpK92KcbDep+aVyjfeMfyTyWR8Sjx8jqHvJykBuFaVZa8KaCiJHLFi4adm3RSpKaL/3TTauhj1ZWcK5zrWtH2BfiDsjE5174RVB3Wy2/NFYIRaZceufj3QBwDcgPGMX8WHmP/24aWQ7H9/b+rW8Qp4gAJyJxTkd9/ZVm1fukZkW7UINKsgO5+Wg6VhE25NIBhF8EwPeSAvnS6UEBHtV4J3TeO7Zsuw9uAiQ/Q3p36MH9ePgfgxmM+f/58H8Gjg6T54fVREVPaMV0yLmtQUJgyNh6ypLG/BIJ7LR+TK543fbTl/ikx6lmJ4sTxIvGNFMloa/Mfu3NgwbDi+/J/4ohDgFxg2DEIWqFcMoygCw//1FigHXxVceH/5u1n5WiF/YvAhdq2KJZgpSyCQXInaKHEHEg6J4GzN0pnEsE3CQrpoUECytEXoBEmjTmTz0Y9i0jgq1LqOSpO2UOUN38FqoQdrIGtlnayXDbJxoFmJES08BWA+3QVCXWwiqYo9ZJ3pJ4q2OIEKFelGppIofAVVdtJbVAvLgzWQtbJO1qPBd3/RqDedHmyuBlu8sig1OFb+AqETtRJCQSgIBaEgFISCkDWyVtbJejTE5wyNFguzwoKYFQfvmsblb2LL8IjeI2KSenpoLlbbsqg5/X/2ETKFINFFCToF7SOM0uwjuedrUOhonibgppK57rtEN70ku2PMlOyYJtrJ7YcA/sTsvWEHFYUmaLyd39Yu+Gvnvzb8fmnVKV2+kK0lYewb8Bga2Wx2tdgOHU1YXA/YO66x2S1VSTIwmZ9r8rk1NpHZ0PEtc7cLi2tEuKkUyd9RSMb8G8LE+mmxfjiE0mTMkK+rK1t0bHkitxJ8RJIHg+ngAEw3SQKf3zzqFI+iarebriOITrTdvsYwsCnd0MCVf8xjCE1Sv+E2xMbcBhuR7qcoNMFy2tu0+UWnBD+m2aitb84yqzBGxb0ETg7HxMEqLJo5KoRrv8aPS2Om/YC9aSq9bqlKXlz7cESF8ol3mNrrzLbhj1dgI1BwmbvtP50nlJCzzxW3zGntd3MvF+FHS1mI7P5KoqRyj8TtNLqtJ58Wa9hlmAg6vObsr+auHEvKjTmLTqmodlLOB/ZkPGJ21GgwkByTbGVwcMmuSazpojpr1uvKkTzTiioeGfFJrO+ma4vuVWP7hREAAAA=") format("woff2"); }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }
+mjx-c.mjx-c3D { padding: 0.367em 0.778em 0px 0px; }
+mjx-c.mjx-c1D45A { padding: 0.442em 0.878em 0.011em 0px; }
+mjx-c.mjx-c1D450 { padding: 0.442em 0.433em 0.011em 0px; }
+mjx-c.mjx-c32 { padding: 0.666em 0.5em 0px 0px; }
+mjx-c.mjx-c1D44E { padding: 0.441em 0.529em 0.01em 0px; }
+mjx-c.mjx-c2B { padding: 0.583em 0.778em 0.082em 0px; }
+mjx-c.mjx-c1D44F { padding: 0.694em 0.429em 0.011em 0px; }
+mjx-mrow { display: inline-block; text-align: left; }
+mjx-linestack, mjx-mrow[break-top] { display: inline-table; width: 100%; }
+mjx-linestack[break-align="bottom"], mjx-mrow[break-top][break-align="bottom"] { display: inline-block; }
+mjx-linestack[break-align="middle"], mjx-mrow[break-top][break-align="middle"] { vertical-align: middle; }
+mjx-linestack[break-align="center"], mjx-mrow[break-top][break-align="center"] { vertical-align: middle; }
+mjx-linestack[breakable] { display: inline; }
+mjx-linestack[breakable] &gt; mjx-linebox { display: inline; }
+mjx-linestack[breakable] &gt; mjx-linebox::before { white-space: pre; content: "\a "; }
+mjx-linestack[breakable] &gt; mjx-linebox::after { white-space: normal; content: " "; letter-spacing: -0.999em; font-family: MJX-BRK; }
+mjx-linestack[breakable] &gt; mjx-linebox:first-of-type::before { display: none; }
+mjx-linestack[breakable] &gt; mjx-linebox:last-of-type::after { display: none; }
+mjx-linebox { display: block; }
+mjx-linebox[align="left"] { text-align: left; }
+mjx-linebox[align="center"] { text-align: center; }
+mjx-linebox[align="right"] { text-align: right; }
+mjx-linestrut { display: inline-block; height: 1em; vertical-align: -0.25em; }
+mjx-mtable { display: inline-block; text-align: center; vertical-align: 0.25em; position: relative; box-sizing: border-box; border-spacing: 0px; border-collapse: collapse; }
+mjx-mstyle[size="s"] mjx-mtable { vertical-align: 0.354em; }
+mjx-labels { position: absolute; left: 0px; top: 0px; }
+mjx-table { display: inline-block; vertical-align: -0.5ex; box-sizing: border-box; }
+mjx-table &gt; mjx-itable { vertical-align: middle; text-align: left; box-sizing: border-box; }
+mjx-labels &gt; mjx-itable { position: absolute; top: 0px; }
+mjx-mtable[justify="left"] { text-align: left; }
+mjx-mtable[justify="right"] { text-align: right; }
+mjx-mtable[justify="left"][side="left"] { padding-right: 0px !important; }
+mjx-mtable[justify="left"][side="right"] { padding-left: 0px !important; }
+mjx-mtable[justify="right"][side="left"] { padding-right: 0px !important; }
+mjx-mtable[justify="right"][side="right"] { padding-left: 0px !important; }
+mjx-mtable[align] { vertical-align: baseline; }
+mjx-mtable[align="top"] &gt; mjx-table { vertical-align: top; }
+mjx-mtable[align="bottom"] &gt; mjx-table { vertical-align: bottom; }
+mjx-mtable[side="right"] mjx-labels { min-width: 100%; }
+mjx-mtr { display: table-row; text-align: left; }
+mjx-mtr[rowalign="top"] &gt; mjx-mtd { vertical-align: top; }
+mjx-mtr[rowalign="center"] &gt; mjx-mtd { vertical-align: middle; }
+mjx-mtr[rowalign="bottom"] &gt; mjx-mtd { vertical-align: bottom; }
+mjx-mtr[rowalign="baseline"] &gt; mjx-mtd { vertical-align: baseline; }
+mjx-mtr[rowalign="axis"] &gt; mjx-mtd { vertical-align: 0.25em; }
+mjx-mtd { display: table-cell; text-align: center; padding: 0.215em 0.4em; }
+mjx-mtd:first-child { padding-left: 0px; }
+mjx-mtd:last-child { padding-right: 0px; }
+mjx-mtable &gt; * &gt; mjx-itable &gt; :first-child &gt; mjx-mtd { padding-top: 0px; }
+mjx-mtable &gt; * &gt; mjx-itable &gt; :last-child &gt; mjx-mtd { padding-bottom: 0px; }
+mjx-tstrut { display: inline-block; height: 1em; vertical-align: -0.25em; }
+mjx-labels[align="left"] &gt; mjx-mtr &gt; mjx-mtd { text-align: left; }
+mjx-labels[align="right"] &gt; mjx-mtr &gt; mjx-mtd { text-align: right; }
+mjx-mtd[extra] { padding: 0px; }
+mjx-mtd[rowalign="top"] { vertical-align: top; }
+mjx-mtd[rowalign="center"] { vertical-align: middle; }
+mjx-mtd[rowalign="bottom"] { vertical-align: bottom; }
+mjx-mtd[rowalign="baseline"] { vertical-align: baseline; }
+mjx-mtd[rowalign="axis"] { vertical-align: 0.25em; }
+mjx-stretchy-v.mjx-c7C &gt; mjx-ext &gt; mjx-spacer { margin-top: 0.271em; }
+mjx-stretchy-v.mjx-c7C &gt; mjx-ext { width: 0.333em; line-height: 0.572em; }
+mjx-c.mjx-c1D451 { padding: 0.694em 0.523em 0.01em 0px; }
+mjx-c.mjx-c2212 { padding: 0.583em 0.778em 0.082em 0px; }
+mjx-msqrt { display: inline-block; text-align: left; }
+mjx-root { display: inline-block; white-space: nowrap; }
+mjx-surd { display: inline-block; vertical-align: top; }
+mjx-sqrt { display: inline-block; padding-top: 0.075em; }
+mjx-sqrt &gt; mjx-box { border-top: 0.075em solid; padding-left: 0.03em; margin-left: -0.03em; }
+mjx-sqrt.mjx-tall &gt; mjx-box { padding-left: 0.3em; margin-left: -0.3em; }
+mjx-mfrac { display: inline-block; text-align: left; }
+mjx-frac { display: inline-block; vertical-align: 0.17em; padding: 0px 0.22em; }
+mjx-frac[type="d"] { vertical-align: 0.04em; }
+mjx-frac[delims] { padding: 0px 0.1em; }
+mjx-frac[atop] { padding: 0px 0.12em; }
+mjx-frac[atop][delims] { padding: 0px; }
+mjx-dtable { display: inline-table; width: 100%; }
+mjx-dtable &gt; mjx-line, mjx-dtable &gt; mjx-row { font-size: 2000%; }
+mjx-dbox { display: block; font-size: 5%; }
+mjx-num { display: block; text-align: center; }
+mjx-den { display: block; text-align: center; }
+mjx-mfrac[bevelled] &gt; mjx-num { display: inline-block; }
+mjx-mfrac[bevelled] &gt; mjx-den { display: inline-block; }
+mjx-den[align="right"], mjx-num[align="right"] { text-align: right; }
+mjx-den[align="left"], mjx-num[align="left"] { text-align: left; }
+mjx-nstrut { display: inline-block; height: 0.054em; width: 0px; vertical-align: -0.054em; }
+mjx-nstrut[type="d"] { height: 0.217em; vertical-align: -0.217em; }
+mjx-dstrut { display: inline-block; height: 0.505em; width: 0px; }
+mjx-dstrut[type="d"] { height: 0.726em; }
+mjx-line { display: block; box-sizing: border-box; min-height: 1px; height: 0.06em; border-top: 0.075em solid; margin: 0.06em -0.1em; overflow: hidden; }
+mjx-line[type="d"] { margin: 0.18em -0.1em; }
+mjx-texatom { display: inline-block; text-align: left; }
+mjx-munderover { display: inline-block; text-align: left; }
+mjx-munderover:not([limits="false"]) { padding-top: 0.1em; }
+mjx-munderover:not([limits="false"]) &gt; mjx-over, mjx-munderover:not([limits="false"]) &gt; mjx-box { display: block; }
+mjx-mspace { display: inline-block; text-align: left; }
+mjx-c.mjx-c221A.TEX-SO { padding: 0.85em 1.02em 0.35em 0px; }
+mjx-c.mjx-c1D465 { padding: 0.442em 0.572em 0.011em 0px; }
+mjx-c.mjx-c1D466 { padding: 0.442em 0.496em 0.205em 0px; }
+mjx-c.mjx-c28.TEX-SO { padding: 0.85em 0.458em 0.349em 0px; }
+mjx-c.mjx-c31 { padding: 0.666em 0.5em 0px 0px; }
+mjx-c.mjx-c29.TEX-SO { padding: 0.85em 0.458em 0.349em 0px; }
+mjx-c.mjx-c1D45B { padding: 0.442em 0.6em 0.011em 0px; }
+mjx-c.mjx-c2211.TEX-SO { padding: 0.75em 1.056em 0.25em 0px; }
+mjx-c.mjx-c1D456 { padding: 0.661em 0.345em 0.011em 0px; }
+mjx-c.mjx-c222B.TEX-SO { padding: 0.805em 0.61em 0.306em 0px; }
+mjx-c.mjx-c221E { padding: 0.442em 1em 0.011em 0px; }
+mjx-c.mjx-c30 { padding: 0.666em 0.5em 0.022em 0px; }
+mjx-c.mjx-c1D452 { padding: 0.442em 0.466em 0.011em 0px; }
+mjx-c.mjx-c7B.TEX-S3 { padding: 1.45em 0.75em 0.949em 0px; }
+mjx-c.mjx-c3E { padding: 0.54em 0.778em 0.04em 0px; }
+mjx-c.mjx-c2264 { padding: 0.636em 0.778em 0.138em 0px; }</style></svg>

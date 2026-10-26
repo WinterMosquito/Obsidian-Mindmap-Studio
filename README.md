@@ -56,6 +56,47 @@ The plugin is a **rendering layer**, not a file-format converter. A note declare
 - **Status bar node count**: while the mind-map view is active the status bar shows "N nodes" (refreshed as you edit), and clears when you switch away or close the view.
 - **Central node ↔ filename**: editing the central node renames the file (Obsidian updates links/backlinks) — for **declared** mind maps only.
 
+## 🖼️ Feature gallery
+
+**Four showcase maps** — the content itself is the plugin's output: wikilinks, tables, maths, code blocks and images all render inside them. Click any image for the full size (all of them live in [`assets/`](assets/)).
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <a href="assets/01-Overview.svg"><img src="assets/01-Overview.svg" alt="Overview: declared means open, outline to map, edits written back"></a><br>
+      <sub><b>1 · Overview</b> — declared means open · outline to map · edits written back</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <a href="assets/02-Rich-Text-and-Links.svg"><img src="assets/02-Rich-Text-and-Links.svg" alt="Rich text and links: inline markup, maths, tables, wikilinks, images"></a><br>
+      <sub><b>2 · Rich text &amp; links</b> — inline markup · maths · tables · wikilinks · images</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <a href="assets/03-Interaction-and-Appearance.svg"><img src="assets/03-Interaction-and-Appearance.svg" alt="Interaction and appearance: rail, context menu, hotkeys, minimap"></a><br>
+      <sub><b>3 · Interaction &amp; appearance</b> — rail · context menu · hotkeys · minimap</sub>
+    </td>
+    <td align="center" valign="top">
+      <a href="assets/04-Persistence-and-Boundaries.svg"><img src="assets/04-Persistence-and-Boundaries.svg" alt="Persistence and boundaries: two state stores, one instance, large maps and export"></a><br>
+      <sub><b>4 · Persistence &amp; boundaries</b> — two state stores · one instance · large maps · export</sub>
+    </td>
+  </tr>
+</table>
+
+**In the app**
+
+**Minimap** — it fades in when the map does not fit at 100%; the box is the current viewport, so drag it (or the empty area of the panel) to navigate:
+
+<p align="center">
+  <a href="assets/minimap.png"><img src="assets/minimap.png" width="85%" alt="Minimap: thumbnail with the viewport box at the bottom-left, icon rail on the right"></a>
+</p>
+
+**Read-only embed** — a fenced block tagged `mindmap` renders in place in any note; it only scales down, cannot be dragged, and the wheel scrolls the page:
+
+<p align="center">
+  <a href="assets/Embed example.png"><img src="assets/Embed example.png" width="85%" alt="Read-only embed: a mindmap fenced block rendered inside a plain note"></a>
+</p>
+
 ## 📖 Usage
 
 ### 1) Create & open a mind map
@@ -208,7 +249,7 @@ Everything lives in **Settings → MindMap Studio** (stored locally in the plugi
 ## 📦 Install
 
 - **Community plugins**: **Settings → Community plugins** → search *MindMap Studio*.
-- **From GitHub releases (recommended)**: download the latest release assets (`main.js`, `manifest.json`, `styles.css`) from the repo [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) page, copy them into `<vault>/.obsidian/plugins/mindmap-studio/`, reload Obsidian, then enable the plugin in **Settings → Community plugins**. (Each release also attaches `LICENSE` and `THIRD-PARTY-NOTICES.md` for licence compliance — no need to copy those into the plugin folder.)
+- **From GitHub releases**: download the latest release assets (`main.js`, `manifest.json`, `styles.css`) from the repo [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) page, copy them into `<vault>/.obsidian/plugins/mindmap-studio/`, reload Obsidian, then enable the plugin in **Settings → Community plugins**. (Each release also attaches `LICENSE` and `THIRD-PARTY-NOTICES.md` for licence compliance — no need to copy those into the plugin folder.)
 - **Build from source**: `npm install && npm run build` produces `main.js`; copy it together with `manifest.json` and `styles.css` into the plugin folder.
 
 > Release notes for each version live on the repo's [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) page (their text comes from [`docs/release-notes-<version>.md`](docs/)).

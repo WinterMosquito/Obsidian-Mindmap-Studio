@@ -56,6 +56,47 @@
 - **状态栏节点计数**：导图视图激活时状态栏显示「N 个节点」（随编辑节流刷新），切走或关闭视图即清空。
 - **中心节点 ⇄ 文件名**：修改中心节点会自动重命名该文件（Obsidian 原生更新链接/反链）；仅对**声明为导图**的文件生效。
 
+## 🖼️ 功能展示
+
+**四份展示导图** —— 内容本身就是插件的产物：双链、表格、数学、代码块与图片都在图里。点击任一图可看原图（全部在 [`assets/`](assets/)）。
+
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <a href="assets/01-定位与入口.svg"><img src="assets/01-定位与入口.svg" alt="定位与入口：声明即打开、大纲如何变成图、编辑如何回写"></a><br>
+      <sub><b>① 定位与入口</b> —— 声明即打开 · 大纲变图 · 编辑回写</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <a href="assets/02-富文本与链接.svg"><img src="assets/02-富文本与链接.svg" alt="富文本与链接：行内标记、数学、表格、双链、图片"></a><br>
+      <sub><b>② 富文本与链接</b> —— 行内标记 · 数学 · 表格 · 双链 · 图片</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <a href="assets/03-交互与外观.svg"><img src="assets/03-交互与外观.svg" alt="交互与外观：竖栏、右键菜单、快捷键、小地图"></a><br>
+      <sub><b>③ 交互与外观</b> —— 竖栏 · 右键菜单 · 快捷键 · 小地图</sub>
+    </td>
+    <td align="center" valign="top">
+      <a href="assets/04-持久化与边界.svg"><img src="assets/04-持久化与边界.svg" alt="持久化与边界：两处状态、单实例、大图与导出"></a><br>
+      <sub><b>④ 持久化与边界</b> —— 两处状态 · 单实例 · 大图与导出</sub>
+    </td>
+  </tr>
+</table>
+
+**界面实拍**
+
+**小地图** —— 100% 缩放下内容装不进画布时自动浮出；方框即当前视口，拖它（或面板空白处）即可导航：
+
+<p align="center">
+  <a href="assets/小地图.png"><img src="assets/小地图.png" width="85%" alt="小地图：左下角缩略图与视口框，右侧为竖栏图标"></a>
+</p>
+
+**只读嵌入** —— 任意笔记里语言标识为 `mindmap` 的围栏块就地渲染；只缩不放、不可拖动、滚轮归页面：
+
+<p align="center">
+  <a href="assets/嵌入示例.png"><img src="assets/嵌入示例.png" width="85%" alt="只读嵌入：mindmap 围栏块在普通笔记里渲染为导图"></a>
+</p>
+
 ## 📖 使用说明
 
 ### ① 新建 / 打开
@@ -208,7 +249,7 @@
 ## 📦 安装
 
 - **社区插件**：**设置 → 第三方插件** → 搜索 *MindMap Studio*。
-- **从 GitHub Release 安装（推荐）**：从仓库 [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) 页面下载最新版本的附件（`main.js`、`manifest.json`、`styles.css`），复制到 `<仓库>/.obsidian/plugins/mindmap-studio/`，重启 Obsidian 后在 **设置 → 第三方插件** 启用。（每个 Release 同时附带 `LICENSE` 与 `THIRD-PARTY-NOTICES.md` 以履行许可声明——无需复制进插件目录。）
+- **从 GitHub Release 安装**：从仓库 [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) 页面下载最新版本的附件（`main.js`、`manifest.json`、`styles.css`），复制到 `<仓库>/.obsidian/plugins/mindmap-studio/`，重启 Obsidian 后在 **设置 → 第三方插件** 启用。（每个 Release 同时附带 `LICENSE` 与 `THIRD-PARTY-NOTICES.md` 以履行许可声明——无需复制进插件目录。）
 - **从源码构建**：`npm install && npm run build` 生成 `main.js`，与 `manifest.json`、`styles.css` 一起放入插件目录。
 
 > 每个版本的变更说明见仓库 [Releases](https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases) 页面（正文取自 [`docs/release-notes-<版本>.md`](docs/)）。
