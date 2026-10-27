@@ -4,7 +4,11 @@
 
 # 🧠 MindMap Studio
 
-> Mind map rendering for Markdown inside Obsidian. Put `Type: Mindmap` in a note's frontmatter (Chinese vaults write `类型: Mindmap`) and it opens as a mind map; any note can also be previewed via the context menu's **Open as mind map** — it stays a normal Markdown file, and the outline round-trips. Powered by the [simple-mind-map](https://github.com/wanglin2/mind-map) engine, developed by [WinterMosquito](https://github.com/WinterMosquito).
+**Read and edit your notes as mind maps — the notes stay Markdown.**
+
+Add `Type: Mindmap` to a note's frontmatter (Chinese vaults write `类型: Mindmap`) and it opens as a mind map; any note can also be opened as one from its context menu. Nothing is converted and nothing is duplicated: the outline *is* the file, and every edit is written back into it.
+
+Powered by the [simple-mind-map](https://github.com/wanglin2/mind-map) engine · by [WinterMosquito](https://github.com/WinterMosquito)
 
 <p align="center">
   <a href="https://github.com/WinterMosquito/Obsidian-Mindmap-Studio/releases"><img src="https://img.shields.io/github/v/release/WinterMosquito/Obsidian-Mindmap-Studio?label=Release&color=blue" alt="Latest release" /></a>
@@ -15,25 +19,29 @@
 
 </div>
 
-## 🚀 Quick start
-
-1. **Create**: run **Create new mind map** (command palette or ribbon) — name it (default = prefix + date); the `MindMap2026-10-13.md` file (frontmatter `Type: Mindmap`) is created and opens as a mind map. Existing notes work too.
-2. **Edit**: the file is ordinary Markdown, so its outline becomes the map — add/edit/delete nodes, drag to rearrange, attach images or links.
-3. **Back & save**: use **Switch to Markdown** to return anytime; text edits are written back to the note, while layout / line style / colours / border / viewport are remembered per file in the plugin's `data.json`. That button rewrites the property to `Type: Markdown`, so the note **stops opening as a mind map**.
-4. **Embed**: write a fenced code block with the `mindmap` language in **any note** and the reading view / live preview renders it as a **read-only mind map** — shaped like the built-in Mermaid, sized to its content, not draggable, and it never writes the file. The block body is the very same outline syntax as a mind map file.
-
----
-
 ![A note declared as a mind map, shown as a mind map in Obsidian](assets/mindmap.png)
 
-## ✨ Why MindMap Studio
+## ✨ What it is — and what it isn't
 
-The plugin is a **rendering layer**, not a file-format converter. A note declared as a mind map is 100% standard Markdown — your notes, links, backlinks, search and Git all work as usual. A Markdown outline is parsed into a mind map; when you edit the map, the changes are written back as Markdown.
+MindMap Studio is a **rendering layer**, not a file-format converter. It reads a note's Markdown outline, draws it as a mind map, and writes your edits back as Markdown — so the note stays 100% standard Markdown, and links, backlinks, search and Git all work as usual.
+
+| It is | It isn't |
+|---|---|
+| A mind-map **view** for notes you already have | A new note format or a separate app |
+| **Markdown in, Markdown out** — frontmatter, headings and lists are the whole model | A converter that moves your content into `.xmind`-style files |
+| The note as the single source of truth; the map is a way of looking at it | A second database that can drift from the file |
 
 ## 🚀 Features
 
+### The file stays Markdown
+
 - **Markdown-native**: a mind map is ordinary Markdown (a frontmatter declaration + headings + lists). No proprietary format, no special extension.
 - **Round-trip fidelity**: unedited lines are written back verbatim (frontmatter preserved; blank lines between paragraphs and standalone `---` separators are normalised); headings `#`–`######` map to node levels 1–6, nested lists to deeper levels.
+- **Central node ↔ filename**: editing the central node renames the file (Obsidian updates links/backlinks) — for **declared** mind maps only.
+- **Persistence**: layout, line style, palette, border and viewport are kept per file (in plugin data), surviving reopen, rename and view switching. Whether a file *is* a mind map lives in the file's **own frontmatter**, so there is no second source of truth.
+
+### Nodes look like your notes
+
 - **Obsidian-native wikilinks**: `[[note]]` shows as its link text, with hover preview and graded modifier clicks (matching Obsidian).
   - **Modifier clicks**: plain click = current tab, `Ctrl`/`Command`+click = new tab, `+Alt` = new tab group, plus `Shift` = new window
   - **What the add-link dialog searches**: notes and other documents (`.canvas` / `.base`) plus non-image vault files (attachments); images go through **Add image**
@@ -48,41 +56,26 @@ The plugin is a **rendering layer**, not a file-format converter. A note declare
   - **Per-node colours**: right-click a node → **Palette** to recolour that node and **all of its descendants** (fill, border and connectors take the colour, the text colour flips to stay readable, **inline code, tables and links are recoloured to match**, and the **minimap follows**). The colour is written into that line as `%%#89CFF0%%`, **wins over** the file-wide palette, and a child's own directive **overrides** its ancestors'. **Default** returns the node to the **map palette** (even when a parent is coloured): if an ancestor is still coloured it writes `%%none%%` to block the inheritance, otherwise it simply removes the directive — `%%none%%` is the only non-colour value. With a multi-selection only the top-most nodes get a directive. **Custom** accepts a hex colour (`#89CFF0`) or RGB (`137, 207, 240`). The directive itself stays hidden (still a comment) and lives in the file; the same shape inside fenced/inline code or maths is not a directive, and invalid values stay plain comments. Right-clicking **empty canvas** → Palette changes the map-wide scheme instead (stored in `data.json`), and it also offers **Custom**
   - The raw text stays verbatim in the file; **links inside paragraph (multi-line) nodes are clickable too**
   - **Very long nodes** (> 2000 chars) show the beginning plus `…` (with a hover explanation) — the full text stays in the file, which also keeps oversized text from slowing the canvas down. Double-clicking such a node edits **the actual line from the file** (wikilink, URL and inline syntax stay visible and editable)
-- **Embedded read-only mind maps**: a fenced code block with the `mindmap` language renders in place as a read-only map (the block body uses the very same outline syntax as a mind map file). It behaves like Obsidian's built-in Mermaid: the container **fits the content** (scaled down to the note width, **never up**), **not draggable / zoomable / resizable**, and the wheel keeps scrolling the note. The preview writes neither the file nor plugin state; links inside nodes stay clickable and in-node code blocks stay copyable; above 500 nodes it degrades to a **read-only outline** with an in-block notice (see the [embedding section](#embedding-a-read-only-mind-map-in-a-note)).
 - **Images**: vault image suggestions, uniform sizing, `![[path]]` round-trip; drag the corner handle to resize a node image — the size is written back as Obsidian's official embed syntax (`![[img.png|300]]` width-only, `|300x150` explicit, `![alt|300](url)` for external images); clear a node's text and the node becomes image-exclusive — an image-exclusive node has no text, so node search never matches it. Inline images also render in **text/paragraph nodes** (its first line; links inside a paragraph are clickable too, see above). **With nothing selected**, pasting or dropping an image no longer asks you to select a node — each image becomes its own node under the central node.
+
+### Read-only maps inside notes
+
+- **Embedded read-only mind maps**: a fenced code block with the `mindmap` language renders in place as a read-only map (the block body uses the very same outline syntax as a mind map file). It behaves like Obsidian's built-in Mermaid: the container **fits the content** (scaled down to the note width, **never up**), **not draggable / zoomable / resizable**, and the wheel keeps scrolling the note. The preview writes neither the file nor plugin state; links inside nodes stay clickable and in-node code blocks stay copyable; above 500 nodes it degrades to a **read-only outline** with an in-block notice (see the [embedding section](#embedding-a-read-only-mind-map-in-a-note)).
+
+### The canvas works like a canvas
+
 - **Clipboard & node order**: `Ctrl`/`Cmd`+`C` / `X` / `V` copy, cut and paste a subtree as **plain Markdown outline text on the system clipboard** — the outline moves between the map and any editor (indentation encodes levels; headings flatten to `-` items; ordered items keep `1.`). The node context menu also has **Move node up** / **Move node down** — swap with the adjacent sibling, with a notice at the first/last position (one `Ctrl`/`Cmd`+`Z` undoes it). **With nothing selected**, `Ctrl`/`Cmd`+`C` copies the **whole map** (central topic as the first line) instead of asking you to select a node — the clipboard never keeps the previous, stale text.
-- **Opens at 100%** with the whole map centred; **Reset zoom** returns to 100% while keeping the visible content in place (auto-arrange only re-lays out nodes and **keeps the current viewport** — use **fit to canvas** to see everything). **Controls sit on the map itself instead of a bar**: the right edge carries a vertical rail of icon buttons in four groups — back to Markdown / export image, **border** and **line style** (click to toggle; the icon *is* the current state), zoom in / reset zoom / fit to canvas / **auto arrange** / zoom out, undo / redo. Anything that **picks a value** lives in the **context menu**: right-click the canvas or a node → **Layout** / **Palette**, a cascading list with the current choice ticked. **Layout and palette are remembered per file** (six layouts — switching one auto-arranges and fits the map; palette: Default / Mint / Amber / Wisteria / Forest / Slate), and so are **border** (Bordered / Borderless, borderless by default for new maps) and **line style** (Elbow / Curve, Elbow by default; Catalog organization / Timeline / Fishbone draw native straight connectors, so that toggle is disabled there). Node search, auto-arrange, **performance mode kicks in automatically on large maps** (500+ nodes draws only the nodes in view — no setting), **fast text node rendering** (every text node is rendered by the plugin — large maps open several times faster; double-click then opens the inline editor), **image export** (PNG or SVG, per the *Export format* setting; **maths survives export** — the MathJax faces the exported SVG actually uses are inlined on demand, so matrix rules, radicals, fraction lines and `cases` braces are not lost, at the cost of a larger file, and maps without maths are unaffected); **drag reparenting** — drop a node onto another node to nest it as its child, or between two siblings to insert it in between (native engine hit-testing). **On maps with more than 2000 nodes, Fit to canvas has a readable floor**: when the true fit scale would be below 10%, the map is centred at 10% with a notice that not all nodes are shown (a multi-thousand-node fit lands around 0.03 — text under 1px).
+- **Opens at 100%** with the whole map centred; **Reset zoom** returns to 100% while keeping the visible content in place (auto-arrange only re-lays out nodes and **keeps the current viewport** — use **fit to canvas** to see everything).
+- **Controls sit on the map itself instead of a bar**: the right edge carries a vertical rail of icon buttons in four groups — back to Markdown / export image, **border** and **line style** (click to toggle; the icon *is* the current state), zoom in / reset zoom / fit to canvas / **auto arrange** / zoom out, undo / redo. Anything that **picks a value** lives in the **context menu**: right-click the canvas or a node → **Layout** / **Palette**, a cascading list with the current choice ticked. **Layout and palette are remembered per file** (six layouts — switching one auto-arranges and fits the map; palette: Default / Mint / Amber / Wisteria / Forest / Slate), and so are **border** (Bordered / Borderless, borderless by default for new maps) and **line style** (Elbow / Curve, Elbow by default; Catalog organization / Timeline / Fishbone draw native straight connectors, so that toggle is disabled there).
+- **Node search** is built in: `Ctrl`/`Cmd`+`F` opens a floating search bar with a live `current/matches` count (`Enter` next, `Shift+Enter` previous).
+- **Large maps stay fast**: **performance mode** kicks in automatically (500+ nodes draws only the nodes in view — no setting) and **fast text node rendering** renders every text node through the plugin (large maps open several times faster; double-click then opens the inline editor).
+- **Image export**: PNG or SVG, per the *Export format* setting; **maths survives export** — the MathJax faces the exported SVG actually uses are inlined on demand, so matrix rules, radicals, fraction lines and `cases` braces are not lost, at the cost of a larger file, and maps without maths are unaffected.
+- **Drag reparenting**: drop a node onto another node to nest it as its child, or between two siblings to insert it in between (native engine hit-testing).
+- **On maps with more than 2000 nodes, Fit to canvas has a readable floor**: when the true fit scale would be below 10%, the map is centred at 10% with a notice that not all nodes are shown (a multi-thousand-node fit lands around 0.03 — text under 1px).
 - **Minimap**: when the map **does not fit the canvas at 100%**, a thumbnail fades in at the bottom-left (it disappears as soon as the map fits — **no button, command or setting**, and nothing is written to `data.json`): nodes are shaded by depth, connectors **follow the current layout's shape**, and colours follow the map. The box is the current viewport — drag it (or the empty area of the panel) to navigate, and it follows every pan/zoom frame. It fades out after 30 s without activity, stays while the pointer is over it, and wheel events over the minimap are forwarded to the canvas (plain wheel pans, `Ctrl`/`Cmd`+wheel zooms — same as on the map).
-- **Persistence**: layout, line style, palette, border and viewport are kept per file (in plugin data), surviving reopen, rename and view switching. Whether a file *is* a mind map lives in the file's **own frontmatter**, so there is no second source of truth.
 - **Status bar node count**: while the mind-map view is active the status bar shows "N nodes" (refreshed as you edit), and clears when you switch away or close the view.
-- **Central node ↔ filename**: editing the central node renames the file (Obsidian updates links/backlinks) — for **declared** mind maps only.
 
 ## 🖼️ Feature gallery
-
-**Four showcase maps** — the content itself is the plugin's output: wikilinks, tables, maths, code blocks and images all render inside them. Click any image for the full size (all of them live in [`assets/`](assets/)).
-
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <a href="assets/01-Overview.svg"><img src="assets/01-Overview.svg" alt="Overview: declared means open, outline to map, edits written back"></a><br>
-      <sub><b>1 · Overview</b> — declared means open · outline to map · edits written back</sub>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <a href="assets/02-Rich-Text-and-Links.svg"><img src="assets/02-Rich-Text-and-Links.svg" alt="Rich text and links: inline markup, maths, tables, wikilinks, images"></a><br>
-      <sub><b>2 · Rich text &amp; links</b> — inline markup · maths · tables · wikilinks · images</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top">
-      <a href="assets/03-Interaction-and-Appearance.svg"><img src="assets/03-Interaction-and-Appearance.svg" alt="Interaction and appearance: rail, context menu, hotkeys, minimap"></a><br>
-      <sub><b>3 · Interaction &amp; appearance</b> — rail · context menu · hotkeys · minimap</sub>
-    </td>
-    <td align="center" valign="top">
-      <a href="assets/04-Persistence-and-Boundaries.svg"><img src="assets/04-Persistence-and-Boundaries.svg" alt="Persistence and boundaries: two state stores, one instance, large maps and export"></a><br>
-      <sub><b>4 · Persistence &amp; boundaries</b> — two state stores · one instance · large maps · export</sub>
-    </td>
-  </tr>
-</table>
 
 **In the app**
 
