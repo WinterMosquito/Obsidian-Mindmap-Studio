@@ -62,6 +62,7 @@ import { createThrottler } from '../core/concurrency';
 import { EventBinder } from '../core/event-binder';
 import { t, tf, type Language } from '../core/i18n';
 import {
+	applyColorDirectivesToTree,
 	applyThemeConfig,
 	cancelEngineTimers,
 	centerContentAtScale,
@@ -85,6 +86,7 @@ import {
 	buildInlineNodeContent,
 	type InlineContentOptions,
 } from './node-inline-content';
+import { colorDirectiveOf } from './node-inline-tokenize';
 import { isResolvedWikiLinkpath, openHyperlink } from './view-link-navigator';
 import type { MindMapLinkHost } from './view-context';
 import type { MindMap, MindMapTreeNode } from '../core/engine-types';
@@ -356,6 +358,9 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		const config = this.getConfig();
 		let mindMap: MindMap;
 		try {
+			// 节点配色指令（`%%#hex%%`）：在创建**之前**写进 data 树——引擎会克隆
+			// 数据，建好后再改这棵树不再生效（只读嵌入没有编辑入口，无需实时同步）。
+			applyColorDirectivesToTree(tree, colorDirectiveOf);
 			mindMap = createMindMap(el, tree, {
 				layout: config.layout,
 				lineStyle: config.lineStyle,

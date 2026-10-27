@@ -27,6 +27,7 @@ import {
 	segmentCacheStats,
 } from '../src/features/node-inline-content';
 import { CODE_BLOCK_MAX_HEIGHT_PX } from '../src/core/constants';
+import { nodeContentTones } from '../src/domain/color';
 import type { InlineSegment } from '../src/features/node-inline-content';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
 
@@ -1817,5 +1818,116 @@ describe('段序列缓存：LRU 淘汰（渲染热点不被「预览洪水」冲
 		const stats = segmentCacheStats();
 		expect(stats.chars).toBeLessThanOrEqual(maxChars);
 		expect(stats.size).toBeLessThanOrEqual(stats.max);
+	});
+});
+
+/**
+ * 着色节点（`data.fillColor` = `%%#hex%%` 的落点）的轻渲染派生色。
+ *
+ * 背景：轻渲染的默认底色是**主题纸面**（码块 `#fafafa`、表头 `#f6f6f6`、链接蓝、
+ * 40% 透明黄），在彩色节点上会出现白底白字 / 蓝压蓝。着色节点改用从底色派生的
+ * 同色阶、墨色链接 + 下划线、实心黄高亮；**未着色节点必须逐字不变**（回归锁）。
+ */
+describe('着色节点的轻渲染派生色', () => {
+	const doc = () => asDocument(new FakeDocument());
+	const raw =
+		'**粗** `码` ==高亮== ~~删~~ [[笔记A]]\n\n| 表头 | 值 |\n|---|---|\n| 粗 | 码 |\n\n```js\nconst x = 1;\n```';
+	const data = (fillColor?: string): Record<string, unknown> => ({
+		text: '粗 码 高亮 笔记A 表头 值 粗 码',
+		mdRaw: raw,
+		mdDerivedText: '粗 码 高亮 笔记A 表头 值 粗 码',
+		...(fillColor ? { fillColor } : {}),
+	});
+
+	/** 桩树里按 tagName 找第一个元素（深度优先 = 文档顺序） */
+	function findTag(node: unknown, tag: string): FakeElement | null {
+		if (node instanceof FakeElement) {
+			if (node.tagName === tag) {
+				return node;
+			}
+			for (const child of node.children) {
+				const hit = findTag(child, tag);
+				if (hit) {
+					return hit;
+				}
+			}
+		}
+		return null;
+	}
+
+	/** 桩树里按 className 找第一个元素（className 是空格分隔的整串） */
+	function findClass(node: unknown, token: string): FakeElement | null {
+		if (node instanceof FakeElement) {
+			if (node.className.split(/\s+/).includes(token)) {
+				return node;
+			}
+			for (const child of node.children) {
+				const hit = findClass(child, token);
+				if (hit) {
+					return hit;
+				}
+			}
+		}
+		return null;
+	}
+
+	it('深色底：码块/表头用派生色阶、链接墨色下划线、高亮实心黄、网格线派生', () => {
+		const box = buildInlineNodeContent(fakeNode(data('#1e3a8a')), doc())!;
+		const tones = nodeContentTones('#1e3a8a');
+
+		const code = findTag(box, 'code')!;
+		expect(styleOf(code).backgroundColor).toBe(tones.chip);
+		// 文字色**继承**内容根（根上写了派生墨色）——不逐元素重复，导出时同样生效
+		expect(styleOf(box).color).toBe(tones.ink);
+
+		const header = findTag(box, 'th')!;
+		expect(styleOf(header).backgroundColor).toBe(tones.chip);
+		expect(styleOf(header).color).toBe(tones.ink);
+
+		const table = findTag(box, 'table')!;
+		expect(styleOf(table).border).toBe(`1px solid ${tones.border}`);
+
+		const anchor = findTag(box, 'a')!;
+		expect(styleOf(anchor).color).toBe(tones.ink);
+		expect(styleOf(anchor).textDecoration).toBe('underline');
+
+		const mark = findTag(box, 'mark')!;
+		expect(styleOf(mark).backgroundColor).toBe('#ffd000');
+		expect(styleOf(mark).color).toBe('#000000');
+
+		// P2：删除线不再叠 75% 透明度（弱化由横线本身承担）
+		expect(styleOf(findTag(box, 'del')!).opacity).toBeUndefined();
+
+		// P2：围栏代码块保持纸面，只加派生边框
+		const block = findClass(box, 'tmm-codeblock')!;
+		expect(styleOf(block).border).toBe(`1px solid ${tones.border}`);
+		expect(String(styleOf(block).backgroundColor)).toContain(
+			'var(--code-background',
+		);
+	});
+
+	it('未着色节点：保持主题样式（码块 var / 链接蓝 / 无下划线 / 透明黄）', () => {
+		const box = buildInlineNodeContent(fakeNode(data()), doc())!;
+
+		const code = findTag(box, 'code')!;
+		expect(String(styleOf(code).backgroundColor)).toContain('var(--code-background');
+
+		const anchor = findTag(box, 'a')!;
+		expect(String(styleOf(anchor).color)).toContain('var(--link-color');
+		expect(styleOf(anchor).textDecoration).toBe('none');
+
+		const mark = findTag(box, 'mark')!;
+		expect(String(styleOf(mark).backgroundColor)).toContain(
+			'var(--text-highlight-bg',
+		);
+		// 表头仍取主题底色（着色节点才换成同色阶）
+		const header = findTag(box, 'th')!;
+		expect(String(styleOf(header).backgroundColor)).toContain(
+			'var(--background-secondary',
+		);
+
+		// P2 只作用于着色节点：未着色节点仍是「删除线 + 75% 透明」、代码块无边框
+		expect(styleOf(findTag(box, 'del')!).opacity).toBe('0.75');
+		expect(styleOf(findClass(box, 'tmm-codeblock')!).border).toBeUndefined();
 	});
 });

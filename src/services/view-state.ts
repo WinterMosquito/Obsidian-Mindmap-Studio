@@ -8,8 +8,9 @@
  * 状态：
  * - layout: 布局类型（logicalStructure/mindMap/...）
  * - lineStyle: 连线样式偏好（auto/curve/direct/straight；auto＝随布局）
- * - palette: 配色（default/mint/amber/wisteria/forest/slate；**按文件记**，
- *   由右键菜单「配色」切换——配色不是全局设置，见 `core/constants.PALETTE_OPTIONS`）
+ * - palette: 配色（预设 id `default/mint/amber/wisteria/forest/slate`，或「自定义」
+ *   写入的 `#rrggbb`；**按文件记**，由右键菜单「配色」切换——配色不是全局设置，
+ *   见 `core/constants.PALETTE_OPTIONS` / `normalizePalettePreference`）
  * - themeStyle: 边框样式（default＝有边框 / borderless＝无边框；**按文件记**，由右缘
  *   竖栏「边框」开关切换——同样不是全局设置，见 `core/constants.THEME_STYLE_OPTIONS`）
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）

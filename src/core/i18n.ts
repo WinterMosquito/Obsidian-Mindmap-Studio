@@ -90,6 +90,9 @@ const ZH = {
 	'menu.deleteNode': '删除节点',
 	'menu.pasteNode': '粘贴节点',
 	'menu.resetZoom': '重置缩放',
+	// 节点右键「配色」首项：UI 只叫「默认」（＝不写指令、跟随整篇配色；
+	// 与「清除节点颜色」同一个动作，2026-10-27 用户裁决合并并简化文案）
+	'menu.color.follow': '默认',
 
 	// ===== 通用提示/通知 =====
 	'common.mindMap': '思维导图',
@@ -255,6 +258,21 @@ const ZH = {
 	'palette.wisteria': '紫藤',
 	'palette.forest': '森林',
 	'palette.slate': '石板',
+	// 节点级配色（右键「配色」）：只列非默认配色（「默认」项已表达跟随整篇）；
+	// 按色相命名，与整篇方案的选项名对齐
+	'palette.custom': '自定义',
+	'nodeColor.mint': '薄荷',
+	'nodeColor.amber': '琥珀',
+	'nodeColor.wisteria': '紫藤',
+	'nodeColor.forest': '森林',
+	'nodeColor.slate': '石板',
+
+	// ===== 弹窗 - 自定义颜色 =====
+	'modal.color.title': '自定义颜色',
+	'modal.color.hint':
+		'填十六进制（#89CFF0）或 RGB（137, 207, 240）；写入文件时统一为十六进制。',
+	'modal.color.placeholder': '#89CFF0 或 137, 207, 240',
+	'modal.color.invalid': '无法识别：请填 #89CFF0 或 137, 207, 240',
 
 	// ===== 搜索栏按钮提示 =====
 	'search.prev': '上一个 (Shift+Enter)',
@@ -366,6 +384,9 @@ const EN: Record<TranslationKey, string> = {
 	'menu.deleteNode': 'Delete node',
 	'menu.pasteNode': 'Paste node',
 	'menu.resetZoom': 'Reset zoom',
+	// Node "Palette" first item: the UI says just "Default" (= no directive, follow
+	// the map palette; same action as clearing the node colour)
+	'menu.color.follow': 'Default',
 
 	// ===== 通用提示/通知 =====
 	'common.mindMap': 'Mind map',
@@ -514,7 +535,7 @@ const EN: Record<TranslationKey, string> = {
 	'layout.timeline': 'Timeline',
 	'layout.fishbone': 'Fishbone',
 
-	// ===== Line style =====
+	// ===== 连线样式 =====
 	'lineStyle.curve': 'Curve',
 	'lineStyle.straight': 'Elbow',
 	// 固定直线布局（目录组织图/时间轴/鱼骨图）的描述：连线由布局类绘制、不可切换
@@ -532,6 +553,20 @@ const EN: Record<TranslationKey, string> = {
 	'palette.wisteria': 'Wisteria',
 	'palette.forest': 'Forest',
 	'palette.slate': 'Slate',
+	// Node-level colours: non-default schemes only ("Default" already means follow the map)
+	'palette.custom': 'Custom',
+	'nodeColor.mint': 'Mint',
+	'nodeColor.amber': 'Amber',
+	'nodeColor.wisteria': 'Wisteria',
+	'nodeColor.forest': 'Forest',
+	'nodeColor.slate': 'Slate',
+
+	// ===== 弹窗 - 自定义颜色 =====
+	'modal.color.title': 'Custom colour',
+	'modal.color.hint':
+		'Enter a hex colour (#89CFF0) or RGB (137, 207, 240); it is written as hex.',
+	'modal.color.placeholder': '#89CFF0 or 137, 207, 240',
+	'modal.color.invalid': 'Not a colour: use #89CFF0 or 137, 207, 240',
 
 	// ===== 搜索栏按钮提示 =====
 	'search.prev': 'Previous (Shift+Enter)',

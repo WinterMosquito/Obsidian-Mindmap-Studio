@@ -8,13 +8,22 @@
  * 子模块（同 engine/ 层内，vendor 私有形态仍只出现在本层）：
  * - `mindmap-commands`  引擎命令名表 + 快捷键闸门（叶子）
  * - `mindmap-timers`    引擎延时任务登记表（叶子）
+ * - `mindmap-icons`     文档页 SVG 图标（叶子）
  * - `mindmap-history`   命令历史内存预算策略
  * - `mindmap-viewport`  画布几何 / 视口（适配、居中、缩放、平移、视口状态）
+ * - `mindmap-viewport-canvas` 引擎几何与实时容器的唯一同步点
  * - `mindmap-nodes`     节点查询与工具 + 节点文本编辑
  * - `mindmap-clipboard` 选中子树的复制/剪切/粘贴
  * - `mindmap-search`    搜索子系统防腐收口
  * - `mindmap-export`    导出（PNG/SVG）
- * 主题配置见 mindmap-theme.ts（本文件 re-export）。
+ * - `mindmap-arrange`   自动整理（RESET_LAYOUT + 根回填轮询）
+ * - `mindmap-minimap`   缩略图取样的引擎侧读取面
+ * - `mindmap-theme`     主题管线（buildThemeConfig 唯一实现）
+ * - `mindmap-theme-presets` 外观预设数据表（边框 / 五档填充与线色）
+ * - `mindmap-palette`   配色解析与派生（预设 id / 自定义十六进制的唯一分派点）
+ * - `mindmap-colors`    节点级配色指令落地（`%%#hex%%` → 节点 data 四键）
+ *
+ * 新增子模块时**同时更新本清单**（它是层内结构的第一入口，别处只写指针）。
  */
 import {
 	DoExport,
@@ -28,7 +37,8 @@ import {
 	Select,
 	TouchEvent,
 } from '../../vendor/simple-mind-map.cjs';
-import { getThemeConfig, isDarkTheme, getDocIconColor } from './mindmap-theme';
+import { getDocIconColor } from './mindmap-palette';
+import { getThemeConfig, isDarkTheme } from './mindmap-theme';
 import type { Language } from '../core/i18n';
 import { docWikiLinkDisplay, type WikiAliasSource } from '../domain/wiki-display';
 import {
@@ -40,19 +50,25 @@ import {
 	shortcutGateAllows,
 } from './mindmap-commands';
 import { applyHistoryLimitOnCreate } from './mindmap-history';
-import { countTreeNodes } from './mindmap-nodes';
+import { countTreeNodes, getRenderRoot } from './mindmap-nodes';
+import {
+	applyLiveColorDirectives,
+	type ColorDirectiveReader,
+} from './mindmap-colors';
 
 // 对外 API 转发（调用方一律 `import ... from '../engine/mindmap'`）。
 // 两种写法**各有用途，勿统一**：
 // - `export *`：子模块的导出面**恰好等于**公共 API（不含仅供 engine/ 内共享的符号），
-//   用于 viewport / nodes / clipboard / search / export；
+//   用于 viewport / nodes / clipboard / search / export / minimap / colors；
 // - 显式具名：子模块另含**内部共享**符号（`scheduleEngineTimer` /
-//   `removeEngineShortcut` / `HISTORY_DEFAULT_MAX_COUNT` 等），逐名列出以免回吐。
+//   `removeEngineShortcut` / `HISTORY_DEFAULT_MAX_COUNT` / `buildThemeConfig` 等），
+//   逐名列出以免回吐。
 export {
 	getThemeConfig,
 	isDarkTheme,
 	supportsLineStyleSwitch,
 } from './mindmap-theme';
+export { paletteNodeColor } from './mindmap-palette';
 export { ENGINE_COMMANDS, shortcutGateAllows } from './mindmap-commands';
 export { cancelEngineTimers } from './mindmap-timers';
 export {
@@ -68,6 +84,8 @@ export * from './mindmap-search';
 export * from './mindmap-export';
 // 小地图缩略图取样（F12-M）：视图层只经本 barrel 取，不碰 renderer 形态
 export * from './mindmap-minimap';
+// 节点级配色（`%%#hex%%` 指令）：颜色 → 节点样式键的唯一定义
+export * from './mindmap-colors';
 // 「自动整理」族已拆到独立文件，仍由本 barrel 对外转出（调用方 import 路径不变）
 export { arrangeMindMap } from './mindmap-arrange';
 import { buildWikiDocIcon, WIKI_DOC_ICON_SIZE } from './mindmap-icons';
@@ -560,6 +578,36 @@ export function applyThemeConfig(
 			input.palette,
 		),
 	);
+}
+
+/**
+ * 按**实时节点树**重算 `%%#hex%%` 配色指令，并在样式确有变化时重渲染一次。
+ *
+ * 调用时机：视图挂在 `node_tree_render_end`（**不是** `data_change`，理由见
+ * `features/view` 的装配注释：插件内联编辑不发 `data_change`，撤销时它又早于
+ * 新树落地）。此刻根节点已是新树、数据已定稿，全部编辑通道都在这里对齐。
+ *
+ * 四处口径：
+ * - **写节点 data，不走命令**：颜色是 Markdown 的派生显示状态，不该进撤销历史，
+ *   也不该再发 `data_change`（否则同步与保存互相唤醒）；
+ * - **无变化不渲染**：绝大多数渲染（拖拽位置、图片回灌、字体加载）与配色无关，
+ *   5000 节点图不能为每次编辑多付一轮整树渲染；
+ * - **收敛于下一次**：在 `node_tree_render_end` 里再 `render()` 会重新进本回调，
+ *   但 render 不改 data ⇒ 第二次必判无变化，最多多渲染一轮，不会自激；
+ * - **只读嵌入没有编辑入口**，不需要调用本函数（创建前已写好样式）。
+ */
+export function syncNodeColorDirectives(
+	mindMap: MindMap | null,
+	readDirective: ColorDirectiveReader,
+): boolean {
+	if (!mindMap) {
+		return false;
+	}
+	if (!applyLiveColorDirectives(getRenderRoot(mindMap), readDirective)) {
+		return false;
+	}
+	mindMap.render();
+	return true;
 }
 
 /** 安全销毁思维导图实例 */

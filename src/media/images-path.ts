@@ -156,7 +156,22 @@ export function cacheImageFail(url: string): void {
 	}
 }
 
-/** 失败缓存过期清理：移除超过 TTL 的条目（惰性，每次调用顺带清理）。export 为测试白盒钩子 */
+/**
+ * 解除某个 URL 的失败记忆（只清这一条）。
+ *
+ * 语义是「用户重新打开了这幅导图 ⇒ 再给这些图一次机会」：5 min TTL 只该节流
+ * **同一会话内的反复渲染**，不该跨打开周期继续压着瞬态失败（同步刚落地、
+ * 库索引未就绪、资源地址尚未可解析）。调用方在打开路径上按本文件的图逐个调用，
+ * 不做全表清空——别的导图里的坏图没必要跟着重探。
+ */
+export function forgetImageFail(url: string): void {
+	IMAGE_FAIL_CACHE.delete(url);
+}
+
+/**
+ * 该 URL 的失败记录是否仍在 TTL 内。命中即续到 LRU 队尾（热点坏图不被挤出），
+ * 过期则惰性删除并返回 false（允许重新探测）。export 为测试白盒钩子
+ */
 export function isImageFailFresh(url: string): boolean {
 	const failedAt = IMAGE_FAIL_CACHE.get(url);
 	if (failedAt === undefined) return false;

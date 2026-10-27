@@ -46,6 +46,11 @@ const siblingMocks = vi.hoisted(() => ({
 	exportImage: vi.fn<(view: unknown) => Promise<void>>(),
 }));
 
+/** 小地图两个刷新入口只在「自动整理」这条路径被用到（等渲染落地补画） */
+const minimapMocks = vi.hoisted(() => ({
+	refreshMiniMapAfterRender: vi.fn<(view: unknown) => void>(),
+}));
+
 const setIconMock = vi.hoisted(() =>
 	vi.fn<(parent: unknown, iconId: string) => void>(),
 );
@@ -83,6 +88,10 @@ vi.mock('../src/engine/mindmap', () => ({
 
 vi.mock('../src/features/view-export', () => ({
 	exportImage: siblingMocks.exportImage,
+}));
+
+vi.mock('../src/features/view-minimap', () => ({
+	refreshMiniMapAfterRender: minimapMocks.refreshMiniMapAfterRender,
 }));
 
 interface FakeElInit {
@@ -474,18 +483,22 @@ describe('arrangeMindMap（自动整理分支）', () => {
 		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.notLoaded'));
 	});
 
-	it('引擎返回 true：提示 arrangeDone', () => {
+	it('引擎返回 true：提示 arrangeDone，并挂「渲染落地补画」', () => {
 		const h = makeView();
 		engineMocks.arrangeMindMap.mockReturnValueOnce(true);
 		arrangeMindMap(h.view);
 		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.arrangeDone'));
+		// 重排是异步分片的（RESET_LAYOUT → 根回填轮询 → 80ms fit）：当场取样只会拿到
+		// 旧几何，必须等 node_tree_render_end；这条通道同时决定「是否再等 30s 节拍」
+		expect(minimapMocks.refreshMiniMapAfterRender).toHaveBeenCalledWith(h.view);
 	});
 
-	it('引擎返回 false：提示 arrangeFailed', () => {
+	it('引擎返回 false：提示 arrangeFailed，不刷小地图', () => {
 		const h = makeView();
 		engineMocks.arrangeMindMap.mockReturnValueOnce(false);
 		arrangeMindMap(h.view);
 		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.arrangeFailed'));
+		expect(minimapMocks.refreshMiniMapAfterRender).not.toHaveBeenCalled();
 	});
 });
 

@@ -32,6 +32,7 @@ import {
 } from '../engine/mindmap';
 import { fitToScreen } from './view-viewport';
 import { exportImage } from './view-export';
+import { refreshMiniMapAfterRender } from './view-minimap';
 import { t } from '../core/i18n';
 import type { MindMapViewContext } from './view-context';
 
@@ -254,6 +255,10 @@ export function arrangeMindMap(view: MindMapViewContext): void {
 		return;
 	}
 	if (arrangeMindMapEngine(view.mindMap)) {
+		// 重排是异步分片的（`RESET_LAYOUT` → 根未回填轮询 → 80ms 后 fit）：当场取样
+		// 只能拿到旧几何，还会白耗 30s 刷新窗口。挂「渲染落地补画」，与切布局同一条
+		// 通道；不刷则整图轮廓变化要等半分钟才反映到缩略图。
+		refreshMiniMapAfterRender(view);
 		new Notice(t(view.lang, 'common.arrangeDone'));
 	} else {
 		new Notice(t(view.lang, 'common.arrangeFailed'));

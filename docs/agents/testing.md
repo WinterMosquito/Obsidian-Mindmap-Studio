@@ -56,7 +56,7 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 **已知缺口：小地图没有视觉门禁**（2026-10-24 登记；判定为「不需要常驻补」，理由见下）。
 `features/view-minimap`、`core/minimap-geometry` 与引擎读取面已由
 `tests/view-minimap.test.ts`（**22** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
-`tests/minimap-geometry.test.ts`（**66** 例纯几何）与
+`tests/minimap-geometry.test.ts`（**69** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
 `tests/engine-minimap-capture.test.ts`（**15** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
 **肉眼一眼可见**的风险：CSS 级联（面板定位/层级/pointer-events/过渡）与 `<img>` 对
 data-URL SVG 的解码。往 `verify:visual` 加场景需要把 features 层也 bundle 进页面并补

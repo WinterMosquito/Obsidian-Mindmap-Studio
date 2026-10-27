@@ -4,10 +4,18 @@
  * 覆盖：类名与锚点属性契约、内联样式常量表（导出保真契约，K53 ⑤）、
  * 段序列 → HTML（文本段 / 锚点 / 表格 / 代码块 / 数学）与节点内容根
  * （`buildInlineNodeContent`）。段序列与接管判定来自 `node-inline-tokenize`。
+ *
+ * **着色节点**（节点 data 带 `fillColor`，即 `%%#hex%%` 指令的落点）额外有一套
+ * 派生样式：墨色、码块阶、网格线都从底色现算（`domain/color.nodeContentTones`），
+ * 由 `readNodeTones` 读一次、经 `BuildContentParams.tones` 下传。未着色节点一律
+ * 走原常量表，观感与改动前逐字一致。
  */
+import { isSafeAnchorHref } from '../domain/url';
 import {
-	isSafeAnchorHref,
-} from '../domain/url';
+	normalizeHexColor,
+	nodeContentTones,
+	type NodeContentTones,
+} from '../domain/color';
 import { t } from '../core/i18n';
 import type { Language } from '../core/i18n';
 import {
@@ -193,6 +201,118 @@ const TABLE_HEADER_STYLES: Partial<CSSStyleDeclaration> = {
 	fontWeight: '600',
 };
 
+/**
+ * 着色节点上的高亮：**实心黄 + 黑字**（12.8:1）。
+ *
+ * 主题的 40% 透明黄是按白底设计的：在深色节点上叠加后只有 3.3–4.5，且看起来像
+ * 一块脏色。实心黄在任何底色上都是「荧光笔」语义，字色也随之定死为黑。
+ */
+const COLOR_HIGHLIGHT_BG = '#ffd000';
+const COLOR_HIGHLIGHT_INK = '#000000';
+
+/**
+ * 轻标记样式：**无节点色走原常量**（未着色节点的观感与改动前逐字一致）；
+ * 着色节点改三处——行内码换派生色阶（不再取主题近白）、高亮换实心黄、删除线
+ * 去掉 75% 透明度。其余标记（粗/斜/粗斜）只继承墨色，不需要覆盖。
+ */
+function markupStyle(
+	style: InlineTextStyle,
+	tones: NodeContentTones | null,
+): Partial<CSSStyleDeclaration> {
+	if (!tones) {
+		return MARKUP_STYLES[style];
+	}
+	if (style === 'code') {
+		return { ...MARKUP_STYLES.code, backgroundColor: tones.chip };
+	}
+	if (style === 'highlight') {
+		return {
+			backgroundColor: COLOR_HIGHLIGHT_BG,
+			color: COLOR_HIGHLIGHT_INK,
+			borderRadius: '2px',
+		};
+	}
+	if (style === 'strike') {
+		// 删除线在着色节点上**不再叠 75% 透明度**：正文墨色本已贴着可读线
+		// （薄荷 5.41 / 紫藤 4.82），再乘 0.75 会掉到 3.5–4.2，像「快看不见」。
+		// 弱化语义由那条横线本身承担。
+		return { textDecoration: 'line-through' };
+	}
+	return MARKUP_STYLES[style];
+}
+
+/**
+ * 锚点样式：着色节点改用**正文墨色 + 下划线**。
+ *
+ * 为什么不是第五种颜色：实测薄荷/琥珀上没有任何蓝色能到 4.5（最好的深蓝 4.46 /
+ * 4.11），紫藤上蓝字只有 1.27。下划线给的是**形状线索**，不依赖色相；未着色节点
+ * 仍保持 Obsidian 的蓝色链接与无下划线。
+ */
+function anchorStyle(
+	base: Partial<CSSStyleDeclaration>,
+	tones: NodeContentTones | null,
+): Partial<CSSStyleDeclaration> {
+	if (!tones) {
+		return base;
+	}
+	return {
+		...base,
+		color: tones.ink,
+		textDecoration: 'underline',
+		textUnderlineOffset: '2px',
+	};
+}
+
+/**
+ * 「外框类」容器（表格 / 围栏代码块）：着色节点把主题的浅灰外框换成派生色
+ * ——主题 `#e4e4e4` 在彩色底上对比仅 1.2，等于没有框。
+ */
+function withDerivedBorder(
+	base: Partial<CSSStyleDeclaration>,
+	tones: NodeContentTones | null,
+): Partial<CSSStyleDeclaration> {
+	return tones ? { ...base, border: `1px solid ${tones.border}` } : base;
+}
+
+/** 单元格：着色节点用派生网格线（主题 `#e4e4e4` 在彩色底上对比仅 1.2） */
+function cellStyle(
+	tones: NodeContentTones | null,
+): Partial<CSSStyleDeclaration> {
+	return tones
+		? { ...TABLE_CELL_STYLES, borderColor: tones.border }
+		: TABLE_CELL_STYLES;
+}
+
+/**
+ * 表头：着色节点用**码块同一份色阶** + 墨色文字。
+ * 主题表头底色（近白）在深色节点上是「白底白字 1.08」，这条是修复的核心之一。
+ */
+function headerStyle(
+	tones: NodeContentTones | null,
+): Partial<CSSStyleDeclaration> {
+	if (!tones) {
+		return TABLE_HEADER_STYLES;
+	}
+	return {
+		...TABLE_CELL_STYLES,
+		borderColor: tones.border,
+		backgroundColor: tones.chip,
+		color: tones.ink,
+		fontWeight: '600',
+	};
+}
+
+/**
+ * 围栏代码块的外框：**纸面不换**（Prism token 颜色是按纸面探测的，换底会让
+ * 关键字变暗/变亮），只加一条从节点底色派生的边框——深色节点上纸卡不再「浮」，
+ * 浅色节点上也能一眼看出边界。
+ */
+function codeBlockStyle(
+	tones: NodeContentTones | null,
+): Partial<CSSStyleDeclaration> {
+	return withDerivedBorder(CODE_BLOCK_STYLES, tones);
+}
+
 /** 块级代码块容器类名（styles.css 的 hover/按钮规则与 verify:visual 断言共用） */
 export const CODE_BLOCK_CLASS = 'tmm-codeblock';
 /** 代码块复制按钮类名（视图层点击委托的选择器，见 features/node-codeblock.ts） */
@@ -315,6 +435,9 @@ export function buildInlineNodeContent(
 				: null,
 			// 用户拖过左右边框时按引擎写入的宽度渲染（未拖过 → null → 500 折行上限）
 			explicitWidth: customTextWidthOf(node),
+			// 节点级配色（`%%#hex%%`）：着色节点内所有「轻渲染」都从这份派生色取，
+			// 未着色节点为 null（样式与改动前逐字一致）
+			tones: readNodeTones(node),
 			options,
 			lang,
 			owner,
@@ -344,6 +467,13 @@ interface BuildContentParams {
 	 * 内层递归（`buildTextElement` 的 children）同样携带——归属与嵌套深度无关。
 	 */
 	owner: object | null;
+	/**
+	 * 节点级配色派生出的内容色（`null` = 未着色节点，走原主题样式）。
+	 *
+	 * 只由 `data.fillColor` 决定（指令的唯一落点），**不跟随明暗主题**：
+	 * 写进文件的实色不随主题变，内容色也应保持一致。
+	 */
+	tones: NodeContentTones | null;
 }
 
 /**
@@ -373,6 +503,20 @@ function customTextWidthOf(node: MindMapNode): number | null {
 		}
 	}
 	return null;
+}
+
+/**
+ * 节点的派生内容色：**只认 `data.fillColor`**（`engine/mindmap-colors` 写入的
+ * 指令落点）。未着色节点（无 fillColor / 非合法 hex）返回 null ⇒ 沿用原主题样式。
+ *
+ * 注意不读 `data.color`：那是引擎要用的文字色，和这里的墨色同源但用途不同；
+ * 内容层需要的是整套（墨色 + 码块阶 + 网格线）。
+ */
+function readNodeTones(node: MindMapNode): NodeContentTones | null {
+	const data = node.getData?.() as Record<string, unknown> | null | undefined;
+	const fill = typeof data?.['fillColor'] === 'string' ? data['fillColor'] : '';
+	const hex = normalizeHexColor(fill);
+	return hex ? nodeContentTones(hex) : null;
 }
 
 /** 段序列 → HTML 元素（文本节点 + 锚点） */
@@ -413,6 +557,11 @@ function buildContentElement(
 	if (style.fontWeight) {
 		box.style.fontWeight = style.fontWeight;
 	}
+	// 着色节点：墨色以派生值为准（与 data.color 同源，但这里保证内容层拿到的是
+	// 「三候选取大」的结果，避免引擎侧与内容层各持一份文字色）
+	if (params.tones) {
+		box.style.color = params.tones.ink;
+	}
 	for (const segment of segments) {
 		if (segment.kind === 'table') {
 			box.appendChild(buildTableElement(doc, segment, params));
@@ -422,7 +571,7 @@ function buildContentElement(
 			box.appendChild(buildTextElement(doc, segment, params));
 			continue;
 		}
-		box.appendChild(buildAnchor(doc, segment, params.options));
+		box.appendChild(buildAnchor(doc, segment, params));
 	}
 	return box;
 }
@@ -442,13 +591,19 @@ function buildTextElement(
 		return buildMathElement(doc, segment, params.options, params.owner);
 	}
 	if (segment.style === 'code' && segment.block === true) {
-		return buildCodeBlockElement(doc, segment, params.lang, params.options);
+		return buildCodeBlockElement(
+			doc,
+			segment,
+			params.lang,
+			params.options,
+			params.tones,
+		);
 	}
 	if (!segment.style) {
 		return doc.createTextNode(segment.text);
 	}
 	const wrapper = doc.createElement(MARKUP_TAGS[segment.style]);
-	Object.assign(wrapper.style, MARKUP_STYLES[segment.style]);
+	Object.assign(wrapper.style, markupStyle(segment.style, params.tones));
 	if (segment.children && segment.children.length > 0) {
 		for (const child of segment.children) {
 			wrapper.appendChild(buildTextElement(doc, child, params));
@@ -479,7 +634,7 @@ function buildTableElement(
 	params: BuildContentParams,
 ): HTMLElement {
 	const table = doc.createElement('table');
-	Object.assign(table.style, TABLE_STYLES);
+	Object.assign(table.style, withDerivedBorder(TABLE_STYLES, params.tones));
 	const model = segment.table;
 	if (!model) {
 		// 表格段的构造点唯一（必带模型）；真出现空壳时按字面兜底，不渲染空白
@@ -492,7 +647,7 @@ function buildTableElement(
 	table.appendChild(head);
 	model.header.forEach((cell, column) => {
 		const th = doc.createElement('th');
-		Object.assign(th.style, TABLE_HEADER_STYLES);
+		Object.assign(th.style, headerStyle(params.tones));
 		applyCellAlign(th, model.align[column] ?? null);
 		appendCellContent(doc, th, cell, params);
 		headRow.appendChild(th);
@@ -505,7 +660,7 @@ function buildTableElement(
 			body.appendChild(tr);
 			row.forEach((cell, column) => {
 				const td = doc.createElement('td');
-				Object.assign(td.style, TABLE_CELL_STYLES);
+				Object.assign(td.style, cellStyle(params.tones));
 				applyCellAlign(td, model.align[column] ?? null);
 				appendCellContent(doc, td, cell, params);
 				tr.appendChild(td);
@@ -540,7 +695,7 @@ function appendCellContent(
 ): void {
 	for (const segment of buildInlineSegments(text)) {
 		if (segment.kind === 'link') {
-			cell.appendChild(buildAnchor(doc, segment, params.options));
+			cell.appendChild(buildAnchor(doc, segment, params));
 			continue;
 		}
 		if (segment.kind === 'text') {
@@ -578,10 +733,11 @@ function buildCodeBlockElement(
 	segment: InlineSegment,
 	lang: Language,
 	options: InlineContentOptions,
+	tones: NodeContentTones | null,
 ): HTMLElement {
 	const block = doc.createElement('div');
 	block.className = CODE_BLOCK_CLASS;
-	Object.assign(block.style, CODE_BLOCK_STYLES);
+	Object.assign(block.style, codeBlockStyle(tones));
 	const button = doc.createElement('button');
 	button.className = CODE_COPY_CLASS;
 	button.setAttribute('aria-label', t(lang, 'codeBlock.copy'));
@@ -688,18 +844,21 @@ function buildMathElement(
 function buildAnchor(
 	doc: InlineContentDocument,
 	segment: InlineSegment,
-	options: InlineContentOptions,
+	params: BuildContentParams,
 ): HTMLElement {
 	const anchor = doc.createElement('a');
 	anchor.textContent = segment.text;
 	const link = segment.link ?? '';
 	if (segment.internal) {
-		const unresolved = options.isResolvedLink
-			? !options.isResolvedLink(link)
+		const unresolved = params.options.isResolvedLink
+			? !params.options.isResolvedLink(link)
 			: false;
 		Object.assign(
 			anchor.style,
-			unresolved ? UNRESOLVED_LINK_STYLES : INTERNAL_LINK_STYLES,
+			anchorStyle(
+				unresolved ? UNRESOLVED_LINK_STYLES : INTERNAL_LINK_STYLES,
+				params.tones,
+			),
 		);
 		// 类名是锚点识别的契约（findAnchorInNode 用 `a.internal-link` 前缀匹配），
 		// 故未解析形态必须是「internal-link 之上加 is-unresolved」，不能替换为别的名
@@ -708,7 +867,7 @@ function buildAnchor(
 			: 'internal-link';
 		anchor.setAttribute('data-href', link);
 	} else {
-		Object.assign(anchor.style, EXTERNAL_LINK_STYLES);
+		Object.assign(anchor.style, anchorStyle(EXTERNAL_LINK_STYLES, params.tones));
 		anchor.className = 'external-link';
 		// 安全（K101 防御纵深）：链接原文来自 Markdown，可能是
 		// `[点我](javascript:…)` / `data:` 这类危险协议——直接写进 href 后，一旦

@@ -378,6 +378,27 @@
   margin-bottom: 6px;
 }
 
+/* 自定义颜色弹窗：色块预览（仅尺寸与外形；底色是运行时输入值，由脚本写内联样式） */
+.mindmap-color-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mindmap-color-preview-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* 非法输入的说明文案：元素平时 hidden，只在解析失败时显示，故不必再叠状态类 */
+.mindmap-color-invalid {
+  color: var(--text-error);
+}
+
 .mindmap-modal-label {
   font-size: 12px;
   color: var(--text-muted);

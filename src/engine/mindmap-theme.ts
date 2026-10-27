@@ -1,6 +1,10 @@
 /**
- * simple-mind-map 引擎主题配置：亮/暗色配色、视图主题。
- * 从 mindmap.ts 拆出。
+ * simple-mind-map 引擎主题配置：把「主题色 / 布局 / 连线 / 边框 / 配色」装配成
+ * 引擎的 themeConfig。从 mindmap.ts 拆出。
+ *
+ * 本文件只做**装配与字号/间距口径**：色值来自 `mindmap-palette`（配色解析与
+ * 派生，含亮/暗文字色与画布底色）与 `mindmap-theme-presets`（五档填充/线色、
+ * 边框预设）——那两处才是色值字面量的归属，此处不新增 hex。
  */
 import {
 	DEFAULT_LINE_STYLE,
@@ -9,49 +13,22 @@ import {
 	IMAGE_HEIGHT,
 	IMAGE_WIDTH,
 	normalizeLineStylePreference,
-	normalizePalette,
 	normalizeThemeStyle,
 } from '../core/constants';
-import type { PaletteId, ThemeStyleId } from '../core/constants';
-import { PALETTES, THEME_STYLE_PRESETS } from './mindmap-theme-presets';
+import type { ThemeStyleId } from '../core/constants';
+import { resolvePaletteTheme, type ThemeTextColors } from './mindmap-palette';
+import {
+	THEME_STYLE_PRESETS,
+	type PaletteColors,
+} from './mindmap-theme-presets';
 
 const BORDER_RADIUS = 5;
 /** 节点水平内边距：略大于引擎默认值（15），仅作左右留白 */
 const NODE_PADDING_X = 16;
 
-/**
- * 文字色三档——**不随配色变**，只按明暗定。
- *
- * 完整九键色板 = `PALETTES[<配色>][<亮|暗>]` 的 5 个填充/线色 + 本处的 3 个
- * 文字色。这样新增配色只需 5 个 hex，且不会出现「某套配色的浅底配错深字」
- * 这类不可读组合（文字色的对比度只需按明暗校核一次）。
- */
-const TEXT_LIGHT = {
-	rootText: '#ffffff',
-	secondText: '#1e293b',
-	nodeText: '#64748b',
-} as const;
-
-const TEXT_DARK = {
-	rootText: '#e0e0e0',
-	secondText: '#d0d0d0',
-	nodeText: '#a0a0a0',
-} as const;
-
 /** 判断指定主题偏好下是否使用暗色配色 */
 export function isDarkTheme(themePref: string, isDark: boolean): boolean {
 	return themePref === 'dark' || (themePref === 'default' && isDark);
-}
-
-/**
- * 双链文档自绘图标（节点前缀内容）的描边色：与**当前配色**同源，
- * 避免在 mindmap.ts 里手写色值。亮色用该配色的根节点主色，暗色用 nodeText 中性灰
- * （暗色下各配色的 rootFill 都很深，拿它当图标色会看不见）。
- */
-export function getDocIconColor(isDark: boolean, palette: string): string {
-	return isDark
-		? TEXT_DARK.nodeText
-		: PALETTES[normalizePalette(palette)].light.rootFill;
 }
 
 /**
@@ -94,7 +71,8 @@ export function resolveLineStyle(
 /**
  * 主题配置唯一实现：亮/暗配色、字号、布局连线样式与节点外观主题
  * （背景色、三级字号、lineStyle、themeStyle）由 variant 参数统一表达，
- * 视图主题是唯一调用方。
+ * 色值本体（五档填充/线色 + 三档文字色）由调用方从 `mindmap-palette` 取好传入
+ * ——本文件不解析配色。视图主题是唯一调用方。
  *
  * 合并顺序固定为「色板默认 → 主题覆盖」：主题只能在节点填充/描边上做减法，
  * 不能改字体度量与连线——那两项分别由 `variant.fontSizes` / `variant.lineStyle`
@@ -107,13 +85,10 @@ function buildThemeConfig(
 		fontSizes: { root: number; second: number; node: number };
 		lineStyle: 'curve' | 'straight';
 		themeStyle: ThemeStyleId;
-		palette: PaletteId;
 	},
+	colors: PaletteColors,
+	text: ThemeTextColors,
 ): Record<string, unknown> {
-	// 两个 id 均已由 normalize* 归一为合法值；`Record<…, …>` 又保证键完整
-	//（漏写即编译失败）——故此处不需要第二道兜底分支
-	const colors = PALETTES[variant.palette][isDark ? 'dark' : 'light'];
-	const text = isDark ? TEXT_DARK : TEXT_LIGHT;
 	const preset = THEME_STYLE_PRESETS[variant.themeStyle];
 	return {
 		backgroundColor: variant.background,
@@ -190,8 +165,10 @@ function buildThemeConfig(
  * themeStyle = 边框样式（`default`＝有边框 / `borderless`＝无边框；id 是持久化键，
  * 不随 UI 名变化）；与 isDark 正交，脏值经 `normalizeThemeStyle` 回退出厂默认，
  * 保证渲染入口不因手改 data.json 失败。
- * palette = 配色（色相方案，`default` / `mint` / …）；与 isDark、themeStyle 三维正交，
- * 只换 5 个填充/线色，脏值经 `normalizePalette` 回退 `default`。
+ * palette = 配色（预设 id，或「自定义」写入的十六进制）；与 isDark、themeStyle
+ * 三维正交，只换 5 个填充/线色。脏值由 `mindmap-palette.resolvePaletteTheme`
+ * 兜住（十六进制归一，其余回退 `default`），十六进制值当场派生五档
+ * （文字色按亮度现算）——本文件不做第二道判定。
  */
 export function getThemeConfig(
 	isDark: boolean,
@@ -200,11 +177,16 @@ export function getThemeConfig(
 	themeStyle: string = DEFAULT_THEME_STYLE,
 	palette: string = DEFAULT_PALETTE,
 ): Record<string, unknown> {
-	return buildThemeConfig(isDark, {
-		background: isDark ? '#1e1e1e' : '#ffffff',
-		fontSizes: { root: 16, second: 14, node: 13 },
-		lineStyle: resolveLineStyle(lineStylePreference, layout),
-		themeStyle: normalizeThemeStyle(themeStyle),
-		palette: normalizePalette(palette),
-	});
+	const { background, colors, text } = resolvePaletteTheme(palette, isDark);
+	return buildThemeConfig(
+		isDark,
+		{
+			background,
+			fontSizes: { root: 16, second: 14, node: 13 },
+			lineStyle: resolveLineStyle(lineStylePreference, layout),
+			themeStyle: normalizeThemeStyle(themeStyle),
+		},
+		colors,
+		text,
+	);
 }

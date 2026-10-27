@@ -21,9 +21,10 @@ import {
 	SAVE_FAILURE_SUSPEND_THRESHOLD,
 } from '../core/constants';
 import { createDebouncer, createSerialQueue } from '../core/concurrency';
+import { walkTree } from '../domain/tree';
 import { parseMdOutline, splitFrontmatter, UTF8_BOM } from '../markdown/md-outline';
 import { serializeMdBody } from '../markdown/md-serialize';
-import { walkResolveImagePaths } from '../media/images-path';
+import { forgetImageFail, walkResolveImagePaths } from '../media/images-path';
 import type { MindMapTreeNode } from '../core/engine-types';
 
 /** 单次文档加载结果（视图据此前导引擎并更新自身文档状态） */
@@ -55,6 +56,15 @@ export class DocumentService {
 		// 图片尺寸不在此归一：视图加载走 walkImageSizeCorrections（K97：未设置
 		// 尺寸的图一律保持默认大小；带官方参数时按参数，仅宽时探测原始比例补高）。
 		walkResolveImagePaths(tree, this.app);
+		// 重开导图 = 给这些图一次重新探测的机会：失败缓存（5 min）只为同一会话内
+		// 的反复渲染节流，不该跨打开周期压着瞬态失败（同步刚落地的图、
+		// 库索引尚未就绪）。只清本文件用到的地址，不横扫全局缓存。
+		walkTree(tree, (node) => {
+			const image = node.data?.['image'];
+			if (typeof image === 'string' && image) {
+				forgetImageFail(image);
+			}
+		});
 		return {
 			tree,
 			frontmatter: parsed.frontmatter,

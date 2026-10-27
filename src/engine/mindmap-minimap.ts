@@ -23,6 +23,7 @@ import {
 	computeMiniMapSize,
 	connectorModeForLayout,
 	measureMiniMapBounds,
+	pickVisibleColor,
 	MINIMAP_FALLBACK_COLORS,
 	type MiniMapBox,
 	type MiniMapColors,
@@ -230,30 +231,8 @@ function readColor(value: unknown, fallback: string): string {
  * 这一层是防御：主题数据再写出透明色时，缩略图退到填充色 / 连线色而不是变瞎。
  */
 function readInk(...candidates: readonly unknown[]): string {
-	for (const candidate of candidates) {
-		if (typeof candidate !== 'string') {
-			continue;
-		}
-		const value = candidate.trim();
-		if (value.length > 0 && !isTransparentColor(value)) {
-			return value;
-		}
-	}
-	return MINIMAP_FALLBACK_COLORS.nodeBorder;
-}
-
-/** `transparent` 与 alpha 为 0 的 rgb(a) 都等于「不绘制」 */
-function isTransparentColor(value: string): boolean {
-	const lower = value.toLowerCase();
-	if (lower === 'transparent') {
-		return true;
-	}
-	const match = /^rgba?\(([^)]*)\)$/.exec(lower);
-	if (!match) {
-		return false;
-	}
-	const parts = (match[1] ?? '').split(',');
-	return parts.length === 4 && Number(parts[3] ?? '') === 0;
+	// 「什么是画得出来的颜色」由 core 统一判定（节点自定义颜色的逐块上色共用它）
+	return pickVisibleColor(...candidates) ?? MINIMAP_FALLBACK_COLORS.nodeBorder;
 }
 
 /** SVG 字符串 → data URL（`<img>` 解码，不注入 DOM，避免污染 `.smm-*` 选择器） */

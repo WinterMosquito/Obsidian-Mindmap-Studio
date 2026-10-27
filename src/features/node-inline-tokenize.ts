@@ -12,9 +12,11 @@ import {
 	normalizeFenceLanguage,
 } from '../core/constants';
 import { readNodeDataString } from '../core/node-data';
+import { COLOR_DIRECTIVE_NONE, normalizeHexColor } from '../domain/color';
 import { matchPipeTable, type PipeTable } from '../domain/pipe-table';
 import { isSchemeUrl, isUrlLikeText } from '../domain/url';
-import { isNodeTextEdited } from '../domain/md-meta';
+import { nodeInlineSource } from '../domain/md-meta';
+import { fenceMarker } from '../markdown/md-outline-lines';
 import { tokenDisplay, tokenizeInline, type InlineToken } from '../markdown/md-outline';
 import type { MindMapNode } from '../core/engine-types';
 
@@ -203,7 +205,9 @@ const MATH_SOURCE =
 /**
  * 行内语法的统一扫描正则（命名分组；备选顺序即优先级）。
  *
- * 1. `%%…%%` —— 注释（可跨行；未闭合不匹配 → 按字面显示）；
+ * 1. `%%…%%` —— 注释（可跨行；未闭合不匹配 → 按字面显示）。内容恰为三/六位
+ *    十六进制时**同时**是节点配色指令（`colorDirectiveOf`）：显示口径不变
+ *    （一样整段隐藏），颜色由 `engine/mindmap-colors` 消费；
  * 2. 围栏代码块 —— 定界符 **3 个以上**的反引号**或波浪号**、**同字符同长度闭合**
  *    （CommonMark + Obsidian 帮助：两种定界符皆可，4+ 反引号可嵌套代码块）；
  *    排在行内码之前，否则 `` ```js `` 的首行会被行内码分支切碎。
@@ -262,6 +266,208 @@ const MARKUP_RE = new RegExp(
 	].join('|'),
 	'gu',
 );
+
+/**
+ * 配色指令的扫描器：**同源**于 MARKUP_RE（同一份正则源码，保护区语义因此不会
+ * 漂移），但用独立实例——不复用同一个全局正则对象，就不必依赖「调用方只用
+ * `matchAll`（内部会克隆）」这条约定，`lastIndex` 也不会成为跨入口的隐形状态。
+ */
+const COLOR_DIRECTIVE_SCAN_RE = new RegExp(MARKUP_RE.source, 'gu');
+
+/** 原文里的一处合法指令：位置（`[start, end)`）与取值（`#rrggbb` / 哨兵 `none`） */
+interface ColorDirectiveRange {
+	start: number;
+	end: number;
+	color: string;
+}
+
+/**
+ * 注释段内容 → 指令取值：三/六位十六进制，或裸写的 `none` 哨兵；其余 null。
+ *
+ * 哨兵宽容外壳空白与大小写（`%% None %%`）；**`%%#none%%` 不是指令**（值域只收
+ * 十六进制与该裸词），仍按普通注释隐藏。
+ */
+function directiveValueOf(body: string): string | null {
+	const color = normalizeHexColor(body);
+	if (color) {
+		return color;
+	}
+	return body.trim().toLowerCase() === COLOR_DIRECTIVE_NONE
+		? COLOR_DIRECTIVE_NONE
+		: null;
+}
+
+/**
+ * 逐处产出原文里的合法指令——「哪些注释段算指令」的**唯一判定**（读写共用。
+ * 各写一份 `groups.comment` + 值域筛选，保护区或值域的边界迟早只改到一边）。
+ *
+ * - 只认注释段（`MARKUP_RE` 的 `comment` 分支）：围栏代码 / 行内代码 / 数学内的
+ *   同形态由备选顺序整段吃掉，不算指令；写在其它标记内部（`**%%#fff%%**`）同理。
+ * - 值不合法（`%%备注%%` / `%%#12%%` / 4·8 位 alpha / `%%#none%%`）**不算指令**，
+ *   仍按普通注释隐藏（2026-10-27 用户裁决，不做可见报错）。
+ */
+function* colorDirectiveRanges(raw: string): Generator<ColorDirectiveRange> {
+	// 没有注释定界符就必然没有指令：跳过整行扫描（热点路径，每次渲染每节点都跑）
+	if (!raw.includes('%%')) {
+		return;
+	}
+	for (const match of raw.matchAll(COLOR_DIRECTIVE_SCAN_RE)) {
+		const comment = match.groups?.comment;
+		if (!comment) {
+			continue;
+		}
+		// 去掉两侧 `%%` 定界符：`%%#89CFF0%%` → `#89CFF0`
+		const color = directiveValueOf(comment.slice(2, -2));
+		if (!color) {
+			continue;
+		}
+		yield { start: match.index, end: match.index + match[0].length, color };
+	}
+}
+
+/**
+ * 节点配色指令：`%%#89CFF0%%`（六/三位十六进制）或 `%%none%%`（哨兵：自己回落主题
+ * 并阻断祖先色下传）。返回**第一处**合法指令的取值，没有则 null。
+ *
+ * 这里只负责「读出取值」：落到样式在 `engine/mindmap-colors`，继承在
+ * `domain/color.walkColorDirectives`。
+ */
+export function colorDirectiveOf(raw: string): string | null {
+	for (const range of colorDirectiveRanges(raw)) {
+		return range.color;
+	}
+	return null;
+}
+
+/**
+ * 该指令是否**独占一行**：返回删除时该吞掉的区间 `[from, to)`，否则 null。
+ *
+ * 「独占一行」＝ 它前面（到上一个换行为止）与后面（到换行或串尾为止）只剩空白。
+ * 删除时连同**分行的换行**一起吞：非首行吞前一个（保留本行末尾的换行），首行没
+ * 前导换行可吞则改吞本行末尾那个。只按字符吞会留下一个空行（见 `setColorDirective`）。
+ *
+ * `cursor` 是上一处删除已经消费到的位置：多行指令连续清除时前一个可能已吞掉同一个
+ * 换行，区间下界因此要回夹，避免 `slice` 反向。
+ */
+function ownLineSpan(
+	raw: string,
+	range: ColorDirectiveRange,
+	cursor: number,
+): { from: number; to: number } | null {
+	const lineStart = raw.lastIndexOf('\n', range.start - 1) + 1;
+	if (!/^[ \t]*$/.test(raw.slice(lineStart, range.start))) {
+		return null;
+	}
+	const newlineAt = raw.indexOf('\n', range.end);
+	const lineEnd = newlineAt === -1 ? raw.length : newlineAt;
+	if (!/^[ \t]*$/.test(raw.slice(range.end, lineEnd))) {
+		return null;
+	}
+	return lineStart > 0
+		? { from: Math.max(cursor, lineStart - 1), to: lineEnd }
+		: { from: lineStart, to: newlineAt === -1 ? raw.length : lineEnd + 1 };
+}
+
+/**
+ * 写入 / 清除配色指令（节点行原文的**唯一改写入口**，右键「配色」用）。
+ *
+ * - `color` 非空：把**第一处**合法指令替换成新值，多余的一并删掉（`colorDirectiveOf`
+ *   只认第一处，留着只会误导作者）；没有指令时追加到末尾。取值是 `#rrggbb` 或哨兵
+ *   {@link COLOR_DIRECTIVE_NONE}（写成 `%%none%%`）；
+ * - `color === null`：删掉全部指令（每处带走**一个**相邻空白，不留双空格；
+ *   **独占一行**的指令连同那一行一起删，否则清除后原文末尾会多出一个空行，
+ *   保存时文件凭空多一行、紧列表变松散）——即「默认」；
+ * - 保护区与解析一致：围栏代码 / 行内代码 / 数学里的同形态**不动**（那不是指令，
+ *   改它等于改用户的代码）；
+ * - 只改这一行原文；无指令时的落点见 `appendColorDirective`。
+ */
+export function setColorDirective(raw: string, color: string | null): string {
+	const ranges = [...colorDirectiveRanges(raw)];
+	if (ranges.length === 0) {
+		if (!color) {
+			return raw;
+		}
+		return appendColorDirective(raw, color);
+	}
+	const directive = color ? `%%${color}%%` : '';
+	let out = '';
+	let cursor = 0;
+	for (const [index, range] of ranges.entries()) {
+		// 第一处是「替换」：保留原有间隔（`标题 %%#fff%%` → `标题 %%#new%%`）；
+		// 其余各处（以及清除时的第一处）是「删除」：带走**一个**空白——
+		// 优先前一个（`A %%#f00%% B` → `A B`），行首没有前导空白则改带后一个
+		//（`%%#f00%% 标题` → `标题`，否则会留下一个前导空格）
+		const removing = index > 0 || !color;
+		// 独占一行的指令（`appendColorDirective` 遇到围栏 / 表格时的落点）：整行
+		// 连同分行的换行一起删。只吞相邻空白的话，清除后原文末尾会留下一个空行
+		//（`标题\n```\n%%#f00%%` → `标题\n```\n`），保存时文件凭空多一行、
+		// 紧列表变松散列表。
+		const ownLine = removing ? ownLineSpan(raw, range, cursor) : null;
+		if (ownLine) {
+			out += raw.slice(cursor, ownLine.from);
+			cursor = ownLine.to;
+			continue;
+		}
+		const hasLeadSpace =
+			range.start > cursor && /[ \t]/.test(raw[range.start - 1] ?? '');
+		const keepFrom = removing && hasLeadSpace ? range.start - 1 : range.start;
+		out += raw.slice(cursor, keepFrom);
+		if (index === 0) {
+			out += directive;
+		}
+		cursor = range.end;
+		if (removing && !hasLeadSpace && /[ \t]/.test(raw[cursor] ?? '')) {
+			cursor += 1;
+		}
+	}
+	return out + raw.slice(cursor);
+}
+
+/**
+ * 无指令时把指令放到**不破坏块语法**的位置。
+ *
+ * 不能一律尾插（2026-10-27 实机事故）：末行是**闭合围栏**时会写成
+ * ```` ``` %%#2e9e8f%% ````——CommonMark 要求闭合围栏后只有空白（`classifyLines`
+ * 同口径），围栏于是不再闭合，其后的**全部同级节点被吞进这段代码**（重开即见
+ * 两个节点塌成一个，再存盘结构真的变了）；末行是**表格行**时则被 GFM 当成新的
+ * 单元格（多一列）。
+ *
+ * 两种情形改为**另起一行**：注释行不参与块语法，重解析时作为续行并入同一节点
+ * （`applyRawToNode` 支持多行），`colorDirectiveOf` 照常读到它。
+ */
+function appendColorDirective(raw: string, color: string): string {
+	const directive = `%%${color}%%`;
+	if (raw === '') {
+		return directive;
+	}
+	const lastLine = raw.slice(raw.lastIndexOf('\n') + 1);
+	// 收尾块是表格 ⇒ 尾插会被解析成新单元格（表格判定复用既有唯一实现）
+	const blocks = scanTableBlocks(raw);
+	const endsWithTable = blocks[blocks.length - 1]?.table !== undefined;
+	if (isClosingFenceLine(lastLine) || endsWithTable) {
+		return `${raw}\n${directive}`;
+	}
+	const separator = /\s$/.test(raw) ? '' : ' ';
+	return `${raw}${separator}${directive}`;
+}
+
+/**
+ * 这一行是否是**闭合**围栏定界行：分隔符之后只剩空白——与 `classifyLines` 判
+ * 「闭合」的口径逐字相同（定界符本身仍由 `fenceMarker` 认，不另写正则）。
+ *
+ * 只认闭合行：` ``` 后文 ` 这类「定界符后面还有内容」的行在 CommonMark 里根本不是
+ * 闭合围栏（围栏早已闭合在上一条），尾插不破坏任何块语法。未闭合的**开**定界行
+ * 也不在此列：那种 `raw` 只来自本身残缺的文件，尾插落进 info string 不生效，
+ * 但胜过「另起一行」往用户代码里插一条注释。
+ */
+function isClosingFenceLine(line: string): boolean {
+	const marker = fenceMarker(line);
+	if (!marker) {
+		return false;
+	}
+	const indent = line.length - line.trimStart().length;
+	return /^[ \t]*$/.test(line.slice(indent + marker.length));
+}
 
 /**
  * 轻标记的**嵌套深度上限**：深度 0 = 顶层、1 = 标记体内再套一层标记
@@ -960,13 +1166,9 @@ export function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null 
 	if (readNodeDataString(data, 'image')) {
 		return null;
 	}
-	// 渲染源：未编辑 → mdRaw（含链接语法）；**已编辑 → data.text**——mdRaw 是解析期
-	// 快照，用户编辑（引擎编辑框或插件弹窗）后已过期，再按它渲染会显示旧内容
-	//（与回写侧 rawOk 的「未编辑」判据同源：text === mdDerivedText）
-	const text = readNodeDataString(data, 'text');
-	// 「未编辑」判据与回写侧同一实现（domain/md-meta.isNodeTextEdited）
-	const edited = isNodeTextEdited(data.text, data.mdDerivedText);
-	const raw = edited ? text : readNodeDataString(data, 'mdRaw') || text;
+	// 渲染源：未编辑 → mdRaw（含链接语法）；**已编辑 → data.text**——判据收口在
+	// domain/md-meta.nodeInlineSource（与配色指令共用同一份原文）
+	const raw = nodeInlineSource(data);
 	if (!raw) {
 		return null;
 	}

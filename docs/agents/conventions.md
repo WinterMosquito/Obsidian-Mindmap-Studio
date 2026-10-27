@@ -1,4 +1,4 @@
-# 关键约定 K1–K144（详录）
+# 关键约定 K1–K149（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -245,6 +245,44 @@
   ④ 收尾：`mousedown`（开始拖拽）与 `Ctrl|Cmd` 滚轮（缩放）取消未走完的平滑；引擎换代（`setupViewportGestures` 再次调用）取消旧会话；到达画布边界（`limitMindMapInCanvas` 夹住）连续 2 帧走不动即丢弃剩余量。
   ⑤ 已知取舍/待决：τ、阈值 50、Alt 小 delta 也被平滑（约 100ms 级延迟）是产品口径；toolbar fit/center 等**其它视口命令**尚未注册取消（极端时序下会在 fit 后继续走完剩余平滑）；`persistViewport` 不做 flush（动画中关文件可能存到中间位置）。
   ⑥ 回归：`tests/view-viewport.test.ts` 28 例（分帧总量 / 连滚累加 / 两轴 / 让位项 / mousedown 取消）。
+
+- [K145] **注释语法升级为节点级配色指令（`%%#89CFF0%%`，2026-10-27 用户裁决）**：
+  ① 动机：插件此前只能整篇换配色（`viewState[<路径>].palette`），节点级颜色没有持久化位；而 `%%…%%` 在导图上完全不可见（纯隐藏备注）。改为「注释语法 + 十六进制色」既是用户能写进 Markdown 的唯一真相，也保住了「注释不显示」的既有观感。
+  ② 语义：指令写在节点行**顶层**，该节点 + **全部后代**改色；**就近覆盖**（自身指令优先，否则最近祖先）；**优先级 节点 > 文件配色 > 出厂默认**。落地为节点 data 的 `fillColor` / `lineColor` / `borderColor` / `color` 四键（引擎 `Style.merge` 自身样式优先）；连线色取**子节点**的 `lineColor`（`styleLine(line, childNode)`），故后代连线天然跟随。文字色按 `domain/color.nodeInkColor` 取（首选柔和深灰蓝 `#111827` 够 4.5 就用它，否则在纯黑/纯白里取对比度更大者——深底深字不可读）。**`borderColor` 同色、`borderWidth` 不动**：画不画边框仍由边框开关（主题维度）决定，见 K146 ③。
+  ③ 解析：`features/node-inline-tokenize.colorDirectiveOf` 复用 `MARKUP_RE`（与段序列同一份保护区语义）⇒ 围栏代码 / 行内代码 / 数学里的同形态不识别；写在其它标记内部（`**%%#fff%%**`）也不识别。值收 `#rgb` / `#rrggbb`（4/8 位 alpha 拒绝）与哨兵 `none`（K149）；**非法值仍按普通注释隐藏**（不做可见报错），由用户裁决。
+  ④ 应用时机（两处，缺一则漏）：创建引擎**前**把样式写进 data 树（`view.loadMindMapFromFile` 与 `features/mindmap-codeblock.createEmbedEngine`）——引擎 `handleData` 会克隆数据，建好后再改原树无效；创建后只在 **`node_tree_render_end`** 同步（`syncNodeColorDirectives`），**不能挂 `data_change`**：插件内联编辑（`applyRawNodeContent`）直接改 data 后 render、根本不发 `data_change`（K108），而撤销时 `data_change` 在渲染排队之前发出、`renderer.root` 还是旧树。无变化不重渲染（多数 `data_change` 与颜色无关，大图不为此多付一轮整树渲染）。
+  ⑤ 保真：样式键是派生显示数据，**不写回文件**；指令本身留在 `mdRaw`，删除指令即删除四个样式键（填充 / 连线 / 描边 / 文字色）、回落主题。含图节点与「整行只有指令」的节点不自绘 ⇒ 指令按字面显示（与既有注释同口径，已知边界）。小地图**按节点配色逐块上色**（K146 ④；本条早先「缩略图仍是单色墨」的说法已被该批取代）。
+  ⑥ 回归：`tests/color-directive.test.ts`（归一 / 亮度 / 保护区不识别 / 就近覆盖 / 样式键清除 / 有变化才重渲染）。
+
+- [K146] **节点配色的两个入口、边框与缩略图口径（2026-10-27 用户裁决「入口做进右键配色」）**：
+  ① **入口按右键落点分流**（同一个「配色」标题、两套语义）：右键**节点** → 给该节点及子树写正文指令（`features/view-node-color.applyNodeColor`，首项「默认」＝删指令、跟随整篇配色，**不写 data.json**）；右键**空白** → 整篇方案（`applyPalette`，写 `data.json`）。两处都加「自定义」（`ui/modal-color`，收十六进制 / RGB，统一转 `#rrggbb`；`rgba` 与 4/8 位十六进制同口径拒绝）。节点级色值取**非默认**配色的 `PALETTES[id].light.rootFill`（`paletteNodeColor` 唯一来源，新增配色自动进菜单；「默认」项已表达跟随整篇，不再单列那枚蓝，2026-10-27 用户裁决）；菜单文案按**色相**命名（`nodeColor.*`）。**分组也必须一致**：默认 + 五个颜色同组，只在「自定义」前画一条分隔线——节点侧曾多画一条「默认」后的线，同屏对比时子菜单高度与分组肉眼可见不同（2026-10-27 实机指出并修正，`tests/view-context-menu.test.ts` 锁定「标题序列 + 分隔线条数」两处相等；K149 之后节点侧也不再单列「无颜色」，两处重新逐项相同）。
+  ② **多选取「右键按下」时的集合**：引擎的 `contextmenu` 处理器**先折叠多选**（`clearActiveNodeList` + `active()`），`node_contextmenu` 到达时 `activeNodeList` 往往只剩一个。故在 `node_mousedown`（button 2）里留存选中集合，菜单打开即取走（WeakMap per view）；只给**最上层**节点写指令（`engine/mindmap-nodes.topMostNodes`，与剪贴板的选面判定同一份实现）。
+  ③ **节点颜色覆盖边框色**（补充 K145 的「不覆盖」）：写节点 data 的 `borderColor = hex`，`borderWidth` 仍由边框开关决定；**主题预设**仍不得带 `borderColor`（小地图的默认墨色依赖色板真色）。
+  ④ **小地图按节点配色**：`core/minimap-geometry` 的标记新增 `color`，取样时读 `nodeData.data` 的 描边 → 填充（`pickVisibleColor`，与主题墨色同一条可见性判定；`isTransparentColor` 由 engine 迁入 core）；SVG 给该块单独写 `fill`，颜色进帧指纹（只改颜色也要换图）。
+  ⑤ **自定义整篇配色**：`viewState[<路径>].palette` 的值域扩到十六进制（`normalizePalettePreference`；非法值仍回退 `default`）。渲染侧 `engine/mindmap-palette`（2026-10-27 自 `mindmap-theme` 拆出，两形态的唯一分派点在 `resolvePaletteTheme`）从一个主色派生五档（`domain/color.mixHex`：根＝原色、二级 86% / 三级 93% 向背景靠拢、描边 50%、连线 35%），文字色按各档亮度现算（`contrastTextColor`）；预设 id 的色板与文字色不变。
+  ⑥ 回归：`tests/view-context-menu.test.ts`（节点/空白两套配色菜单、写指令/替换/清除/自定义、右键按下的多选集合）、`tests/color-directive.test.ts`（`parseColorInput` / `setColorDirective` / `topMostNodes`）、`tests/minimap-geometry.test.ts`（逐块颜色、颜色进指纹、SVG 单块 fill）、`tests/mindmap-theme.test.ts`（自定义五档与亮度文字色）。
+
+- [K147] **小地图「30s 节拍」只该覆盖后台重渲染，插件内手势各有显式入口（2026-10-27 实机复盘）**：
+  ① 现象：节点右键改色、点「自动整理」之后，缩略图最长 30s 才反映。根因不是节拍本身（它防的是渲染风暴），而是这两个动作走「插件改 data → `render()`」通道：不发 `data_change`，只经 `node_tree_render_end` → `noteChange` 置脏，拿不到 `wake({ forceDraw })`，于是被当成后台重渲染。
+  ② 判据不是「几何变没变」，而是**效果此刻在不在 data 里**：整篇配色 / 连线 / 边框当场写进 themeConfig ⇒ `refreshMiniMap`（now）；要等一次渲染落地才落到 data 的 ⇒ `refreshMiniMapAfterRender`。据此补两处，**都用 after-render**：`features/view-node-color.applyNodeColor`（本函数只改原文，节点 data 的 `fillColor/borderColor` 要等 `node_tree_render_end` 里的 `syncNodeColorDirectives` 才写入）与 `features/view-toolbar.arrangeMindMap`（`RESET_LAYOUT` + 根回填轮询）。**2026-10-27 实机订正**：节点配色最初写成 `refreshMiniMap`（now），点击后 1.4s 缩略图一动不动——当场采样拿的是旧色，画出一张没变化的图并把 30s 窗口白耗掉；改成 after-render 后由 `drawWhenLanded` 在落地时补画（颜色已进指纹 ⇒ `sameMiniMapFrame` 不会误判同帧）。
+  ③ 为什么不统一改 `noteChange`：它的输入是**引擎事件**，同一事件既可能是用户手势（插件内联编辑、节点增删）也可能是后台重渲染（图片回灌、字体加载、内容重测），按事件类型猜必然误判（K137 已在此踩过一次）。手势只能在**动作发起处**判定，`commitPreference` 的 `miniMap` 字段是同一思路的既有先例。
+  ④ 回归：`tests/view-context-menu.test.ts`（改色后调 `refreshMiniMapAfterRender`；原文没变 / 仅根节点不调）、`tests/view-toolbar.test.ts`（受理后调 `refreshMiniMapAfterRender`，未受理不调）。
+  ⑤ **实机读数**（2026-10-27，Obsidian 1.14.4 / 库内 0.2.5 / `示例/测试/小地图-宽树.md`，35 渲染节点、缩略图 SVG 112660 字符）：**改色写 now 通道** → 点击后 1455ms 缩略图 `src` 仍为 112660（`firstDiff: -1`），而文件已写入 `%%#2e9e8f%%`、节点 `path[fill]` 已变 ⇒ 当场采样只能画出旧色（缺陷实锤）；**改 after-render** → 点击后 2252ms（含 2s 采样 sleep）内 `src` 112660 → 112685，且 SVG 内含 `#2e9e8f`（偏移 78168）。**自动整理**：几何未变时 `posChanged=false / srcChanged=false`（正确，无变化不重画）；模拟拖拽把节点从 `805,-101` 移到 `985,-26` 后再整理，`geoChanged=true` 且 `minimapChanged=true`（2252ms 内含 sleep）。对照：拖拽本身走 `data_change`，那次小图也更新了，但那是距上次绘制已 ≥30s 的自然节拍，不是即时通道——勿据此以为"内容类变更也即时"。
+
+- [K148] **图片「探测失败」记忆加打开期失效（2026-10-27）**：
+  ① 问题：`IMAGE_FAIL_CACHE` 的 5 min TTL 只在**模块内**读写，无任何清除入口（`isImageFailFresh` 仅测试直接调）。瞬态失败（同步刚落地、库索引未就绪、资源地址暂不可解析）会被当成坏图，最长 5 分钟不重探，期间图片按默认/回退尺寸显示，且用户没有手势能提前解除。
+  ② 修法：新增 `media/images-path.forgetImageFail(url)`，由 `services/document-service.parse` 在 `walkResolveImagePaths` 之后对本文件的图**逐个**解除。语义是「重新打开这幅导图 = 再给这些图一次机会」。
+  ③ 三条边界：**不缩短 TTL**（真坏图会每次渲染重付 2.5s 超时）；**不做全表清空**（别的导图的坏图不必跟着重探）；**`mindmap` 围栏块不清**（它是每次进视口就重建的 `MarkdownRenderChild`，清了等于反复重探）。
+  ④ 回归：`tests/images-path.test.ts`（只清指定 URL、其余保持；清掉后确实重新走一次探测）。
+  ⑤ **为何只有单测、没做端到端实机**（2026-10-27）：库内图片的资源地址自带 `?文件修改时间` 缓存串（官方 `getResourcePath` 输出），文件出现或改动时**地址本身就会变**，旧的失败记录天然不命中；要复现「同 URL 恢复」得制造同名且 mtime 不变的覆盖写，不是真实场景。本项价值因此集中在**外链**与**地址不变但当时不可读**（解码失败、偶发 IO）两类。
+
+- [K149] **哨兵 `%%none%%`：给继承链一个「显式空层」（2026-10-27 用户裁决「引入不跟随上层」）**：
+  ① 问题：继承只认「有没有指令」（`own ?? inherited`），于是**彩色子树里的单个节点无法脱色**——删掉指令只会继续继承父色，想「变回主题色」只能把主题色写死成一个 hex（且换主题就错）。2026-10-27 实机复核时菜单还把这类节点勾在「默认」上（自身无指令），等于对用户说谎。
+  ② 语法：注释段内容恰为**裸** `none`（正文 `%%none%%`），外壳空白与大小写宽容（`%% None %%`）；`%%#none%%` **不是**指令（值域只收 `#rgb`/`#rrggbb` 与该裸词）。判定与十六进制同处 `features/node-inline-tokenize.colorDirectiveRanges`（读 / 写共用一份），常量 `domain/color.COLOR_DIRECTIVE_NONE`。
+  ③ 语义：在 `walkColorDirectives` 里折成 `null` 并把 `null` 传下去——**自己回落主题 / 整篇配色，且祖先色到此为止**；子树里再写十六进制的节点照常染色（就近覆盖不受影响）。折 null 只做在遍历里，`engine/mindmap-colors` **不再判一次**（那里看到的已经是「颜色或 null」）。
+  ④ 入口：**首项「默认」就是它**（2026-10-27 用户裁决「转接到默认、删去「无颜色」项」）。「默认」＝回到**整篇配色**（不再看祖先的节点色），`applyNodeColor(view, targets, null)` 按节点分别落地：`inheritedColorOf(node)` 非空（上层还在染色）⇒ 写 `%%none%%` 挡住继承；否则 ⇒ 直接删自身指令（不给文件添注释）。**不能一律删指令**——那正是旧语义的坑（删完照旧继承父色）。勾选态：生效色为哨兵或 null 都勾「默认」；自定义弹窗不预填哨兵。菜单条目因此与整篇侧**逐项相同**。
+  ⑤ 保真与边界：哨兵同样只写正文（`mdRaw` 逐字保真）、不写 `data.json`；写入口复用 `setColorDirective` 的替换 / 追加 / 块级语法行另起一行；围栏代码 / 行内代码 / 数学内不识别；含图节点与「整行只有指令」的节点不自绘 ⇒ 字面显示（与既有注释同口径）。
+  ⑥ 回归：`tests/color-directive.test.ts`（解析口径与 `#none` 拒绝 / 阻断继承的遍历 / 写·换·清哨兵 / 渲染期子树不挂色）、`tests/view-context-menu.test.ts`（「默认」在上层染色时写哨兵 / 上层无色时只删指令 / 上层已被哨兵挡住时删自身哨兵 / 哨兵与未写指令同勾「默认」/ 哨兵换色）。
 
 ### 架构边界与单一来源
 
@@ -1670,7 +1708,7 @@
 - [K129] **UI 组装面：右缘竖栏 + 右键级联（2026-10-22~23，多轮用户裁决 + 实机取证）**：导图视图的控件从「一条 40px 顶栏」彻底改为**右缘竖排图标**，并做了两处「入口二选一」的收口——同一能力不在两处重复提供。
   - **① 现状（唯一口径）**：`view-toolbar.buildToolbar` 产出**四组**（DOM 顺序＝Tab 序）—— 文档（返回 / 导出）→ 外观开关（连线 / 边框，**点一下互切**）→ 视图（放大 / 重置 / 总览 / **整理** / 缩小）→ 历史（撤销 / 重做）。**整理**（2026-10-23 新增，位于「总览」与「缩小」之间）与右键菜单的**自动整理**是同一动作：共用 `view-toolbar.arrangeMindMap` 与同一枚 `sparkles` 图标，tooltip 只有两个字「整理」（比菜单标题「自动整理」短，`toolbar.tipArrange` 与 `toolbar.tipFit` 同族）。`.mindmap-toolbar` 只是 `pointer-events:none` 的**穿透层**，每组 `.mindmap-hud-group` 才是 `pointer-events:auto` 的浮起卡片；组内按钮用 `gap:1px` + 组底色透出分隔线（对齐 Canvas `.canvas-control-group`：`padding:0`、条目 32×32、radius 0）。
   - **② 入口二选一**：**连线 / 边框**在竖栏当开关（写 `viewState`），右键菜单里**不再有**这两项；**布局 / 配色**留在右键的级联菜单（`addLayoutPaletteMenus`），**空白右键与节点右键共用同一份实现**。屏上没有任何 `select` —— `ViewDomContext` 的 4 个 `*Select` 字段已删除，改为只读方法现算（菜单勾选态现算，不缓存第二份状态）。**2026-10-23 收敛（R3）**：四个 `resolve*()` 合成一个 `resolvePreference(key: PreferenceKey)`——读取侧与写入侧 `commitPreference({ key, … })` 以同一个键为中心对称，`MindMapViewContext` 接口面 −3；新增一项偏好时两侧各加一行。
-  - **③ 「二级菜单」只能用官方 API 级联**：`MenuItem.setSubmenu` **不在** `obsidian.d.ts` 里。给它挂上后宿主会加 `has-submenu` 类，但**悬停 / 点击都不会展开**（2026-10-23 实机复现）——所以判断"某个 API 是否生效"**不能看它自己加的类名，要验可观察行为**。现在的做法：父项 `onClick((evt) => 子菜单.showAtMouseEvent(evt))`（键盘触发退回 `showAtPosition`），全程只用 d.ts 声明过的 `Menu` / `onClick` / `showAtMouseEvent` / `showAtPosition`。
+  - **③ 「二级菜单」用宿主原生级联（2026-10-27 订正）**：`MenuItem.setSubmenu` **不在** `obsidian.d.ts`，但运行时存在，语义是**无参调用、返回一个新 Menu**（内部给条目加 `has-submenu` 与右向箭头；悬停约 250ms 或点击由宿主展开，位置贴住父项右缘；手机上改为整页切换）。2026-10-23 记的「挂上也不展开」是**用法错误**——当 setter 传了自建菜单，参数被忽略、条目加到了没人引用的那个菜单上。现由 `view-context-menu.createNativeSubmenu` 单点封装（规则 9 私有触点），运行时缺该方法时回退「点击父项 → 光标处弹出独立菜单」（键盘触发用条目矩形当锚点）。判断 API 是否生效仍看**可观察行为**（箭头 + 悬停展开），不看它自己加的类名。
   - **④ `setIcon` 对不存在的图标名静默失败**：换图标时试过 `tilde`（~ 形曲线），Obsidian 内置 Lucide **没有**该图标 → 渲染出**空 `<svg>`**，无报错、无告警（实测 `svg.innerHTML` 长度 0）。**换图标的验收动作**＝实机读 `button.querySelector('svg').innerHTML` 非空；现用 `slash`（一条斜直线）+ `spline`（曲线）表达连线样式。
   - **⑤ 开关类按钮的自我同步**：外观变更**不重建工具栏**，所以开关按钮的图标 / 提示必须在 `toggle()` 之后**自己重算**（`describe()` 现算 + `applyState()`），否则会出现"数据变了、按钮还显示旧值"（2026-10-23 实机踩到）。固定直线布局下连线开关**置灰**（`is-disabled` + `disabled` + 不挂 `onclick`），不给假交互。
   - **⑥ 回归**：`tests/view-toolbar.test.ts`（四组结构 / 图标接线 / 开关互切与图标状态 / 固定布局置灰 / 「外观四项不在屏上」反向断言）、`tests/view-context-menu.test.ts`（空白菜单 9 项、节点菜单 13 项与 `G.tail` 顺序、级联弹出与勾选、**菜单里不得再出现连线/边框**）。

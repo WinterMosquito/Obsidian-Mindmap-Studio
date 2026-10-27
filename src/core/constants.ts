@@ -7,6 +7,7 @@
  * （`canOpenInObsidian` / `isRenderableImageExtension` / `isEmbeddableAttachmentExtension`），
  * 不再维护「可链接附件」白名单（比解析侧窄，会造成「拖入被拒、手写却行」）。
  */
+import { normalizeHexColor } from '../domain/color';
 import type { TranslationKey } from './i18n';
 
 /** 自定义视图类型标识 */
@@ -256,7 +257,8 @@ export function normalizeThemeStyle(value: unknown): ThemeStyleId {
  * **文字色不随配色变**（三档共用、按明暗定），故每套只维护 5 个填充/线色。
  *
  * 规范同主题：id 发布即冻结（写进 `data.json`）；新增配色＝本表加一项 +
- * `PALETTES` 加两档 + i18n 一对，渲染代码零改动。
+ * `PALETTES` 加两档（light / dark）+ i18n **两组**（整篇菜单的 `palette.<id>` 与
+ * 节点菜单的 `nodeColor.<id>`，各 ZH/EN 一条），渲染代码零改动。
  */
 export interface PaletteOption {
 	value: string;
@@ -267,9 +269,10 @@ export interface PaletteOption {
  * 配色选项（顺序＝界面顺序；首项「默认」＝本特性引入前的蓝色基准）。
  *
  * ⚠ 与「主题色」「主题」不同，**配色不是全局设置**：它按文件记在
- * `data.json` 的 `viewState[<路径>].palette`，由右键菜单「配色」级联切换（与布局 /
- * 连线样式同一种「按文件记忆」形态）。故本表只供右键菜单与白名单使用，不进
- * `MindMapStudioSettings`。
+ * `data.json` 的 `viewState[<路径>].palette`，由**空白处右键**的「配色」级联切换
+ *（与布局 / 连线样式同一种「按文件记忆」形态）。节点右键的「配色」是另一层语义
+ *（写正文 `%%#hex%%`，见 `features/view-node-color`），本表只供整篇菜单与白名单
+ * 使用，不进 `MindMapStudioSettings`。
  */
 export const PALETTE_OPTIONS = [
 	{ value: 'default', label: 'palette.default' },
@@ -289,9 +292,31 @@ export const DEFAULT_PALETTE: PaletteId = 'default';
 /**
  * 脏值归一（渲染侧兜底）：未知 id / 手改 data.json / 空串 / 非字符串
  * 一律回退默认配色——与 `normalizeThemeStyle` 同口径。
+ *
+ * ⚠ 只认**预设 id**（`PaletteId`）。用户「自定义」写入的是十六进制值，
+ * 归一走 `normalizePalettePreference`；渲染侧由
+ * `engine/mindmap-palette.resolvePaletteTheme` 分派（该函数自己做十六进制判定，
+ * 不先经本函数，否则自定义值会被压回 `default`）。
  */
 export function normalizePalette(value: unknown): PaletteId {
 	return pickOption(value, PALETTE_OPTIONS, DEFAULT_PALETTE);
+}
+
+/**
+ * 配色偏好值的归一（写入 / 读取共用）：**预设 id 或自定义十六进制**。
+ *
+ * 自定义值归一为小写 `#rrggbb`（手写 `#89CFF0` / `89cff0` 都收成同一个值，
+ * 避免同一颜色在 `data.json` 里存出两种写法）；其余非法值回退
+ * `DEFAULT_PALETTE`——与 `normalizePalette` 的兜底一致。
+ */
+export function normalizePalettePreference(value: unknown): string {
+	const hex = typeof value === 'string' ? normalizeHexColor(value) : null;
+	return hex ?? normalizePalette(value);
+}
+
+/** 该配色值是否是「自定义色」（十六进制），而非预设 id */
+export function isCustomPaletteValue(value: string): boolean {
+	return normalizeHexColor(value) !== null;
 }
 
 /**

@@ -283,6 +283,14 @@ export interface MiniMapGeometryNode {
 	readonly width?: number;
 	readonly height?: number;
 	readonly children?: readonly MiniMapGeometryNode[];
+	/**
+	 * 引擎节点数据（可选，只读 `data.borderColor` / `data.fillColor`）。
+	 *
+	 * 节点级配色指令把颜色写进节点 data（`engine/mindmap-colors`），缩略图据此
+	 * **逐块**上色；没有这两个键的节点照旧用主题墨色（`MiniMapColors.nodeBorder`）。
+	 * 声明成结构类型而不是引入引擎类型：本模块保持零引擎依赖（可直接测）。
+	 */
+	readonly nodeData?: { readonly data?: Record<string, unknown> };
 }
 
 /**
@@ -308,6 +316,13 @@ export interface MiniMapMark extends MiniMapBox {
 	 * 与层级无关。
 	 */
 	depth?: number;
+	/**
+	 * 该节点的自定义颜色（`%%#hex%%` 指令写入 data 的描边/填充色）。
+	 *
+	 * 有值时 SVG 给这一块单独写 `fill`（覆盖所在层级的主题墨色）——「小地图按
+	 * 节点配色」的唯一落点；无值时仍按层级分档的主题墨色画。
+	 */
+	color?: string;
 }
 
 /** 全树几何的一次测量结果（`measureMiniMapBounds` 的产物，可跨调用复用） */
@@ -446,6 +461,10 @@ export function buildMiniMapMarks(
 		seen++;
 		if (box && sampledIn) {
 			const mark: MiniMapMark = { ...box, depth };
+			const color = readNodeColor(node);
+			if (color) {
+				mark.color = color;
+			}
 			if (parentIndex !== undefined) {
 				mark.parent = parentIndex;
 			}
@@ -490,6 +509,12 @@ function marksSignature(marks: readonly MiniMapMark[]): number {
 		mix(Math.round(mark.width));
 		mix(Math.round(mark.height));
 		mix((mark.depth ?? 0) + (mark.root === true ? 0x100 : 0));
+		// 节点自定义颜色也进指纹：只改颜色不改几何时，帧比较不能把它判成「同一帧」
+		if (mark.color) {
+			for (let index = 0; index < mark.color.length; index++) {
+				mix(mark.color.charCodeAt(index));
+			}
+		}
 	}
 	mix(marks.length);
 	return hash >>> 0;
@@ -500,6 +525,56 @@ function readChildren(
 ): readonly MiniMapGeometryNode[] {
 	const children = node.children;
 	return children && children.length > 0 ? children : [];
+}
+
+/**
+ * 节点块的墨色：**描边 → 填充**（与主题墨色同一条回落链，见 `pickVisibleColor`）。
+ * 两者都没有（未上色的节点）返回 null，调用方回落到主题墨色。
+ */
+function readNodeColor(node: MiniMapGeometryNode): string | null {
+	const data = node.nodeData?.data;
+	if (!data) {
+		return null;
+	}
+	return pickVisibleColor(data['borderColor'], data['fillColor']);
+}
+
+/**
+ * 依次取第一个**画得出来**的颜色（`transparent` / alpha 0 视为画不出来）。
+ *
+ * 两份消费：缩略图的主题墨色（`engine/mindmap-minimap.readInk` 的回落链）与
+ * 节点自定义颜色（`readNodeColor`）。放在这里是因为「什么是看得见的颜色」
+ * 只有这一处判定，两边各写一份必然在「无边框主题把描边写成透明」这类边界上漂移。
+ */
+export function pickVisibleColor(...candidates: readonly unknown[]): string | null {
+	for (const candidate of candidates) {
+		if (typeof candidate !== 'string') {
+			continue;
+		}
+		const value = candidate.trim();
+		if (value.length > 0 && !isTransparentColor(value)) {
+			return value;
+		}
+	}
+	return null;
+}
+
+/** `transparent` 与 alpha 为 0 的 rgb(a) 都等于「不绘制」（自 engine/mindmap-minimap 迁入） */
+function isTransparentColor(value: string): boolean {
+	const lower = value.toLowerCase();
+	if (lower === 'transparent') {
+		return true;
+	}
+	const match = /^rgba?\(([^)]+)\)$/.exec(lower);
+	if (!match) {
+		return false;
+	}
+	const parts = (match[1] ?? '').split(',').map((part) => part.trim());
+	if (parts.length < 4) {
+		return false;
+	}
+	const alpha = Number(parts[3]);
+	return Number.isFinite(alpha) && alpha === 0;
 }
 
 function toBox(node: MiniMapGeometryNode | null): MiniMapBox | null {
@@ -1283,12 +1358,14 @@ export function buildMiniMapSvg(
 		const depth = mark.depth ?? UNKNOWN_DEPTH;
 		const width = mark.width * miniScale;
 		const height = mark.height * miniScale;
+		// 节点自定义颜色：单块覆盖所在层级的主题墨色（「小地图按节点配色」）
+		const ownFill = mark.color ? ` fill="${safeColor(mark.color)}"` : '';
 		if (mark.root === true) {
 			// 根给个最小尺寸：小图上它可能只有 1px，认不出来
 			rootRect =
 				`<rect x="${round(mapX(mark.x))}" y="${round(mapY(mark.y))}" ` +
 				`width="${round(Math.max(3, width))}" ` +
-				`height="${round(Math.max(3, height))}" rx="1" />`;
+				`height="${round(Math.max(3, height))}" rx="1"${ownFill} />`;
 			continue;
 		}
 		// 内缩：主题 `marginY = 0` 时相邻节点会贴死成一条带；块很矮时缩得更多
@@ -1297,7 +1374,7 @@ export function buildMiniMapSvg(
 		const rect =
 			`<rect x="${round(mapX(mark.x) + inset)}" y="${round(mapY(mark.y) + inset)}" ` +
 			`width="${round(Math.max(1, width - inset * 2))}" ` +
-			`height="${round(Math.max(1, height - inset * 2))}" rx="0.6" />`;
+			`height="${round(Math.max(1, height - inset * 2))}" rx="0.6"${ownFill} />`;
 		if (depth === 1) {
 			tier1.push(rect);
 		} else if (depth === 2) {

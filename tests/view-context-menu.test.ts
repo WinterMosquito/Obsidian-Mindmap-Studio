@@ -19,8 +19,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { t, type TranslationKey } from '../src/core/i18n';
 import { LAYOUT_OPTIONS, PALETTE_OPTIONS } from '../src/core/constants';
+import type { MindMapNode } from '../src/core/engine-types';
 import type { MindMapViewContext } from '../src/features/view-context';
 import { setupContextMenu } from '../src/features/view-context-menu';
+import { applyNodeColor, nodeColorOptions } from '../src/features/view-node-color';
 
 /** 记录型菜单项桩（仅编译期形状，运行时由 FakeMenu 构造） */
 interface MenuItemStub {
@@ -31,16 +33,21 @@ interface MenuItemStub {
 	/** 勾选态（外观选项用 setChecked 表达「当前生效值」） */
 	checked: boolean | null;
 	isLabel: boolean;
+	/** 原生级联：运行时 `setSubmenu()` 返回的子菜单（未启用该能力时无此方法） */
+	nativeSubmenu?: unknown;
 	setTitle(title: string): MenuItemStub;
 	setIcon(icon: string): MenuItemStub;
 	setChecked(checked: boolean | null): MenuItemStub;
 	setIsLabel(isLabel: boolean): MenuItemStub;
 	onClick(cb: (evt?: MouseEvent) => void): MenuItemStub;
+	setSubmenu?: () => unknown;
 }
 
 const { FakeMenu, ENGINE } = vi.hoisted(() => {
 	class FakeMenuClass {
 		static instances: FakeMenuClass[] = [];
+		/** 是否模拟「宿主运行时提供了 MenuItem.setSubmenu」（默认关闭＝走回退路径） */
+		static supportSubmenu = false;
 		items: MenuItemStub[] = [];
 		separators = 0;
 		shownAt: { x: number; y: number } | null = null;
@@ -83,6 +90,14 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 					this.click = cb2;
 					return this;
 				},
+				// 与宿主同语义：**无参**调用、内部新建菜单并返回（不是 setter）
+				setSubmenu: FakeMenuClass.supportSubmenu
+					? function (this: MenuItemStub) {
+							const created = new FakeMenuClass();
+							this.nativeSubmenu = created;
+							return created;
+						}
+					: undefined,
 			};
 			cb(item);
 			this.items.push(item);
@@ -161,7 +176,15 @@ const {
 	addImageToActiveNodeMock,
 	openNodeImageFullscreenMock,
 	arrangeMindMapMock,
+	applyRawNodeContentMock,
+	openColorInputModalMock,
+	getActiveNodesMock,
 } = vi.hoisted(() => ({
+	applyRawNodeContentMock:
+		vi.fn<(view: unknown, node: unknown, raw: string) => void>(),
+	openColorInputModalMock:
+		vi.fn<(app: unknown, lang: string, current: string | null) => Promise<string | null>>(),
+	getActiveNodesMock: vi.fn<() => unknown[]>(() => []),
 	findNodeByDomMock: vi.fn<(mindMap: unknown, el: unknown) => unknown>(),
 	fitMindMapMock: vi.fn<(mindMap: unknown) => void>(),
 	resetZoomMock: vi.fn<(mindMap: unknown) => void>(),
@@ -202,6 +225,28 @@ vi.mock('../src/engine/mindmap', () => ({
 		layout === 'mindMap' ||
 		layout === 'organizationStructure',
 	startNodeTextEdit: startNodeTextEditMock,
+	// 节点配色：色值来源与选中集合（真实实现见 engine/mindmap-theme 与 -nodes）
+	paletteNodeColor: (palette: string): string =>
+		({
+			default: '#4a90d9',
+			mint: '#2e9e8f',
+			amber: '#c2761a',
+			wisteria: '#7c5cd6',
+			forest: '#2f7d5a',
+			slate: '#475569',
+		})[palette] ?? '#000000',
+	getActiveNodes: getActiveNodesMock,
+	// 最上层判定由 color-directive.test.ts 直测真实实现；这里只需恒等
+	topMostNodes: (nodes: unknown[]): unknown[] => nodes,
+}));
+
+// 节点配色落盘走「原文提交」通道（node-inline-editor）：本文件只验证「写了什么原文」
+vi.mock('../src/features/node-inline-editor', () => ({
+	applyRawNodeContent: applyRawNodeContentMock,
+}));
+
+vi.mock('../src/ui/modal-color', () => ({
+	openColorInputModal: openColorInputModalMock,
 }));
 
 vi.mock('../src/features/view-node-actions', () => ({
@@ -234,6 +279,15 @@ vi.mock('../src/features/view-image-fullscreen', () => ({
 
 vi.mock('../src/features/view-toolbar', () => ({
 	arrangeMindMap: arrangeMindMapMock,
+}));
+
+// 小地图：节点配色改完必须走「立即画」通道（否则缩略图要等 30s 节拍）
+const minimapMocks = vi.hoisted(() => ({
+	refreshMiniMapAfterRender: vi.fn<(view: unknown) => void>(),
+}));
+
+vi.mock('../src/features/view-minimap', () => ({
+	refreshMiniMapAfterRender: minimapMocks.refreshMiniMapAfterRender,
 }));
 
 /** 取真实中文文案（key 拼错即编译失败） */
@@ -361,6 +415,14 @@ function lastMenu(): MenuInstance {
 	return menu;
 }
 
+/** 最近**弹出**的级联子菜单（按弹出序号，不是创建顺序） */
+function lastShownMenu(): MenuInstance | undefined {
+	return [...FakeMenu.instances]
+		.filter((entry) => entry.shownAtMouseEvent !== null)
+		.sort((a, b) => a.shownSeq - b.shownSeq)
+		.at(-1);
+}
+
 /**
  * getNodeDataString 桩复位：与生产实现同语义（读节点 getData 的字段值，
  * 非字符串归一为空串）。若统一 mockReturnValue('')，「清除链接」「移除文本」
@@ -375,10 +437,16 @@ function resetGetNodeDataString(): void {
 
 beforeEach(() => {
 	FakeMenu.instances = [];
+	// 默认模拟「宿主没有 setSubmenu」→ 走回退路径；原生路径的用例自行开启
+	FakeMenu.supportSubmenu = false;
 	vi.clearAllMocks();
 	resetGetNodeDataString();
 	addLinkToActiveNodeMock.mockResolvedValue(undefined);
 	addImageToActiveNodeMock.mockResolvedValue(undefined);
+	// 自定义颜色弹窗：默认「取消」，需要返回值的用例自行 mockResolvedValue
+	openColorInputModalMock.mockReset();
+	openColorInputModalMock.mockResolvedValue(null);
+	getActiveNodesMock.mockReturnValue([]);
 });
 
 // 静态注册表跨用例共享：每个用例后清空，避免「上次用例的菜单」被 lastMenu 取到。
@@ -866,6 +934,287 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 	});
 });
 
+describe('节点右键「配色」：写 Markdown 颜色指令', () => {
+	/** 节点桩 + 行数据（text/mdDerivedText 相等 = 「未编辑」，原文取 mdRaw） */
+	function colorNode(raw: string, text = '项目') {
+		const node = fakeNode({ text, mdDerivedText: text, mdRaw: raw });
+		return { ...node, parent: null, children: [] };
+	}
+
+	/** 打开节点菜单 → 点「配色」父项，返回弹出的子菜单 */
+	function openColorMenu(node: unknown) {
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		harness.binder.fireEngine(
+			'node_contextmenu',
+			fakeContextMenuEvent(null),
+			node,
+		);
+		lastMenu().click(zh('toolbar.palette'), {
+			clientX: 5,
+			clientY: 6,
+		} as MouseEvent);
+		const submenu = lastShownMenu();
+		if (!submenu) {
+			throw new Error('配色子菜单未弹出');
+		}
+		return { ...harness, node, menu: lastMenu(), submenu };
+	}
+
+	it('条目与空白右键的整篇配色一致：默认 + 五种配色 + 自定义（不列「蓝」）', () => {
+		const { submenu } = openColorMenu(colorNode('项目'));
+		const titles = submenu.titles();
+		// 与空白右键同一组标题（首项「默认」语义不同，但样式一致，2026-10-27 裁决）
+		expect(titles).toEqual([
+			zh('menu.color.follow'),
+			...PALETTE_OPTIONS.filter((option) => option.value !== 'default').map(
+				(option) => zh(option.label),
+			),
+			zh('palette.custom'),
+		]);
+		// 「默认」配色那枚蓝不再单列（词条已删，故此处只能按字面断言不存在）
+		expect(titles).not.toContain('蓝');
+		const checked = submenu.items.filter((entry) => entry.checked === true);
+		expect(checked.map((entry) => entry.title)).toEqual([
+			zh('menu.color.follow'),
+		]);
+	});
+
+	/**
+	 * 勾选态取**生效色**（2026-10-27 修正）：颜色沿子树继承，子节点自身没有
+	 * 指令但屏上已经是父色——只读自身会让菜单勾着「默认」，等于对用户说谎。
+	 */
+	it('继承父色的子节点：勾在父色上，不勾「默认」', () => {
+		const amber = nodeColorOptions().find(
+			(option) => option.value === 'amber',
+		);
+		expect(amber).toBeTruthy();
+		const parent = colorNode(`父 %%${amber!.color}%%`, '父');
+		const child = { ...colorNode('子', '子'), parent };
+		const { submenu } = openColorMenu(child);
+		const checked = submenu.items.filter((entry) => entry.checked === true);
+		expect(checked.map((entry) => entry.title)).toEqual([zh(amber!.label)]);
+	});
+
+	/**
+	 * 「默认」= 回到**整篇配色**（2026-10-27 裁决）：上层还在染色时由 `%%none%%`
+	 * 哨兵挡住继承，否则直接删指令。哨兵是该动作的落地形态，不是独立菜单项。
+	 */
+	it('点「默认」且上层还在染色：写 `%%none%%` 挡住继承', () => {
+		const parent = colorNode('父 %%#c2761a%%', '父');
+		const node = { ...colorNode('项目', '项目'), parent };
+		const { submenu, view } = openColorMenu(node);
+		submenu.click(zh('menu.color.follow'));
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+			view,
+			node,
+			'项目 %%none%%',
+		);
+	});
+
+	it('点「默认」且上层本就没色：只删指令，不往文件里塞哨兵', () => {
+		const node = colorNode('项目 %%#ff0000%%');
+		const { submenu, view } = openColorMenu(node);
+		submenu.click(zh('menu.color.follow'));
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(view, node, '项目');
+		// 已无指令可删 ⇒ 不写盘、也不产生一条多余的哨兵
+		applyRawNodeContentMock.mockClear();
+		const again = colorNode('项目');
+		const second = openColorMenu(again);
+		second.submenu.click(zh('menu.color.follow'));
+		expect(applyRawNodeContentMock).not.toHaveBeenCalled();
+	});
+
+	it('点「默认」且上层已被更上面的哨兵挡住：删掉自身哨兵（不留垃圾）', () => {
+		const parent = colorNode('父 %%none%%', '父');
+		const child = { ...colorNode('子 %%none%%', '子'), parent };
+		const { submenu, view } = openColorMenu(child);
+		submenu.click(zh('menu.color.follow'));
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(view, child, '子');
+	});
+
+	it('哨兵节点勾在「默认」上（与没写指令同一个勾）', () => {
+		const parent = colorNode('父 %%#c2761a%%', '父');
+		const child = { ...colorNode('子 %%none%%', '子'), parent };
+		const { submenu } = openColorMenu(child);
+		const checked = submenu.items.filter((entry) => entry.checked === true);
+		expect(checked.map((entry) => entry.title)).toEqual([
+			zh('menu.color.follow'),
+		]);
+	});
+
+	it('哨兵换成颜色：替换原位，不叠加第二条', () => {
+		const node = colorNode('项目 %%none%%');
+		const { submenu } = openColorMenu(node);
+		const mint = nodeColorOptions().find((option) => option.value === 'mint');
+		submenu.click(zh('nodeColor.mint'));
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+			expect.anything(),
+			node,
+			`项目 %%${mint?.color}%%`,
+		);
+	});
+
+	it('宿主提供原生 setSubmenu 时：交给宿主展开，不再绑点击弹出', () => {
+		FakeMenu.supportSubmenu = true;
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		harness.binder.fireEngine(
+			'node_contextmenu',
+			fakeContextMenuEvent(null),
+			fakeNode({ text: '甲' }),
+		);
+		const menu = lastMenu();
+		const parent = menu.item(zh('toolbar.palette'));
+		// 原生路径不设 onClick：点击/悬停由宿主 Menu 处理（并自带箭头）
+		expect(parent.click).toBeNull();
+		const native = parent.nativeSubmenu as MenuInstance;
+		expect(native).toBeTruthy();
+		expect(native.titles()).toEqual([
+			zh('menu.color.follow'),
+			...nodeColorOptions().map((option) => zh(option.label)),
+			zh('palette.custom'),
+		]);
+		// 只在「自定义」前画一条线（与整篇配色同分组；多一条会增高、观感不同）
+		expect(native.separators).toBe(1);
+	});
+
+	it('节点与空白两处子菜单结构一致：标题序列 + 分隔线条数', () => {
+		FakeMenu.supportSubmenu = true;
+		// 空白右键（整篇配色）
+		const blank = makeView();
+		setupContextMenu(blank.view);
+		blank.binder.fireDom('contextmenu', fakeContextMenuEvent(null));
+		const paletteSub = lastMenu().item(zh('toolbar.palette'))
+			.nativeSubmenu as MenuInstance;
+		// 节点右键（节点配色）
+		const node = makeView();
+		setupContextMenu(node.view);
+		node.binder.fireEngine(
+			'node_contextmenu',
+			fakeContextMenuEvent(null),
+			fakeNode({ text: '甲' }),
+		);
+		const colorSub = lastMenu().item(zh('toolbar.palette'))
+			.nativeSubmenu as MenuInstance;
+		expect(colorSub.titles()).toEqual(paletteSub.titles());
+		expect(colorSub.separators).toBe(paletteSub.separators);
+	});
+
+	it('选颜色：指令追加在原文末尾，交给原文提交通道（同一条编辑链）', () => {
+		const node = colorNode('项目');
+		const { submenu, view } = openColorMenu(node);
+		const mint = nodeColorOptions().find((option) => option.value === 'mint');
+		submenu.click(zh('nodeColor.mint'));
+		expect(applyRawNodeContentMock).toHaveBeenCalledTimes(1);
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+			view,
+			node,
+			`项目 ${`%%${mint?.color}%%`}`,
+		);
+	});
+
+	it('已有指令：替换原指令，不在后面再叠一条', () => {
+		const node = colorNode('项目 %%#ff0000%%');
+		const { submenu } = openColorMenu(node);
+		submenu.click(zh('nodeColor.amber'));
+		const amber = nodeColorOptions().find((option) => option.value === 'amber');
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+			expect.anything(),
+			node,
+			`项目 %%${amber?.color}%%`,
+		);
+	});
+
+	it('跟随整篇（= 清除节点颜色）：删掉指令并吞掉多余空格', () => {
+		const node = colorNode('项目 %%#ff0000%% 说明');
+		const { submenu } = openColorMenu(node);
+		submenu.click(zh('menu.color.follow'));
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+			expect.anything(),
+			node,
+			'项目 说明',
+		);
+	});
+
+	it('自定义：弹窗返回值（归一后的十六进制）写进原文', async () => {
+		openColorInputModalMock.mockResolvedValue('#123456');
+		const node = colorNode('项目');
+		const { submenu } = openColorMenu(node);
+		submenu.click(zh('palette.custom'));
+		await vi.waitFor(() => {
+			expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+				expect.anything(),
+				node,
+				'项目 %%#123456%%',
+			);
+		});
+	});
+
+	it('中心主题（虚拟文档根）不写节点指令：配色退回整篇方案', () => {
+		const root = {
+			...fakeNode({ text: '我的导图.md' }),
+			isRoot: true,
+			parent: null,
+			children: [],
+		};
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		harness.binder.fireEngine(
+			'node_contextmenu',
+			fakeContextMenuEvent(null),
+			root,
+		);
+		lastMenu().click(zh('toolbar.palette'), {
+			clientX: 1,
+			clientY: 1,
+		} as MouseEvent);
+		const submenu = lastShownMenu();
+		// 整篇方案：6 个预设 + 自定义；首个不是「跟随整篇配色」
+		expect(submenu?.items.map((entry) => entry.title)).toEqual([
+			...PALETTE_OPTIONS.map((option) => zh(option.label)),
+			zh('palette.custom'),
+		]);
+		// 完整序列已逐项断言（预设名与节点颜色名同文，不能用「包含某个色名」区分，
+		// 也不能用「默认」——两套菜单都有这一项）
+	});
+
+	it('多选：右键按下时的选中集合全部上色（顶层合并由 engine.topMostNodes 判定）', () => {
+		const first = colorNode('甲');
+		const second = colorNode('乙');
+		getActiveNodesMock.mockReturnValue([first, second]);
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		// 引擎先发 node_mousedown（右键），再发 contextmenu；前者留存多选集合
+		harness.binder.fireEngine('node_mousedown', first, {
+			button: 2,
+			which: 3,
+		});
+		harness.binder.fireEngine(
+			'node_contextmenu',
+			fakeContextMenuEvent(null),
+			first,
+		);
+		lastMenu().click(zh('toolbar.palette'), {
+			clientX: 1,
+			clientY: 1,
+		} as MouseEvent);
+		lastShownMenu()?.click(zh('nodeColor.forest'));
+		const forest = nodeColorOptions().find((option) => option.value === 'forest');
+		expect(applyRawNodeContentMock).toHaveBeenCalledTimes(2);
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+			expect.anything(),
+			first,
+			`甲 %%${forest?.color}%%`,
+		);
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+			expect.anything(),
+			second,
+			`乙 %%${forest?.color}%%`,
+		);
+	});
+});
+
 describe('画布空白右键菜单', () => {
 	/** 触发画布 contextmenu（closest 结果决定是否命中节点） */
 	function fireCanvas(closestResult: unknown) {
@@ -926,21 +1275,15 @@ describe('画布空白右键菜单', () => {
 		expect(execCommand).toHaveBeenCalledTimes(2);
 	});
 
-	it('外观四项＝级联菜单：点父项在光标处弹子菜单，选项勾选当前值', () => {
+	it('外观四项＝级联菜单：点父项在光标处弹子菜单，选项勾选当前值', async () => {
 		const { applyLayout, applyPalette } = fireCanvas(null);
 		const menu = lastMenu();
-		/** 最近**弹出**的菜单＝刚才点开的子菜单（按弹出序号，不是创建顺序） */
-		const lastShown = () =>
-			FakeMenu.instances
-				.filter((entry) => entry.shownAtMouseEvent !== null)
-				.sort((a, b) => a.shownSeq - b.shownSeq)
-				.at(-1);
 
 		menu.click(zh('toolbar.layout'), {
 			clientX: 30,
 			clientY: 40,
 		} as MouseEvent);
-		const layoutMenu = lastShown();
+		const layoutMenu = lastShownMenu();
 		expect(layoutMenu?.items).toHaveLength(LAYOUT_OPTIONS.length);
 		// 勾选态只有一处为真（当前布局），且落在对应选项上
 		const checked = layoutMenu?.items.filter((entry) => entry.checked === true);
@@ -958,10 +1301,18 @@ describe('画布空白右键菜单', () => {
 			clientX: 1,
 			clientY: 2,
 		} as MouseEvent);
-		const paletteMenu = lastShown();
-		expect(paletteMenu?.items).toHaveLength(PALETTE_OPTIONS.length);
+		const paletteMenu = lastShownMenu();
+		// 预设 6 项 + 「自定义…」一项（2026-10-27 新增）
+		expect(paletteMenu?.items).toHaveLength(PALETTE_OPTIONS.length + 1);
 		paletteMenu?.click(zh('palette.mint'));
 		expect(applyPalette).toHaveBeenCalledWith('mint');
+
+		// 自定义：弹窗返回归一色值后按文件写入（整篇配色）
+		openColorInputModalMock.mockResolvedValue('#89cff0');
+		paletteMenu?.click(zh('palette.custom'));
+		await vi.waitFor(() => {
+			expect(applyPalette).toHaveBeenCalledWith('#89cff0');
+		});
 
 		// 连线与边框**不在**菜单里：它们已是右缘竖栏的开关按钮（防回潮）
 		expect(menu.titles().some((title) => title.startsWith(zh('toolbar.lineStyle')))).toBe(
@@ -1006,5 +1357,53 @@ describe('画布空白右键菜单', () => {
 		expect(menu.titles()).toContain(zh('menu.pasteNode'));
 		expect(() => menu.click(zh('toolbar.undo'))).not.toThrow();
 		expect(harness.execCommand).not.toHaveBeenCalled();
+	});
+});
+
+describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
+	/** 只补 applyNodeColor 用得到的字段：引擎 + app（原文合成要经 app 判定可回写） */
+	function makeColorView(): MindMapViewContext {
+		const harness = makeView();
+		return { ...harness.view, app: {} } as unknown as MindMapViewContext;
+	}
+
+	/** 节点桩：applyNodeColor 只读 isRoot / getData（最上层判定在 engine 层已 mock） */
+	function colorNode(data: Record<string, unknown>): MindMapNode {
+		return { isRoot: false, getData: () => data } as unknown as MindMapNode;
+	}
+
+	it('写指令后挂「渲染落地补画」（当场采样只有旧色；不刷就得等 30s 节拍）', () => {
+		const view = makeColorView();
+		const node = colorNode({ text: '项目', mdRaw: '项目', mdDerivedText: '项目' });
+		applyNodeColor(view, [node], '#89cff0');
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+			view,
+			node,
+			'项目 %%#89cff0%%',
+		);
+		expect(minimapMocks.refreshMiniMapAfterRender).toHaveBeenCalledWith(view);
+	});
+
+	it('原文没变（重复点同一颜色）：不写盘、也不刷小地图', () => {
+		const view = makeColorView();
+		const node = colorNode({
+			text: '项目',
+			mdRaw: '项目 %%#89cff0%%',
+			mdDerivedText: '项目',
+		});
+		applyNodeColor(view, [node], '#89cff0');
+		expect(applyRawNodeContentMock).not.toHaveBeenCalled();
+		expect(minimapMocks.refreshMiniMapAfterRender).not.toHaveBeenCalled();
+	});
+
+	it('只选中根节点：根没有正文行，不改也不刷', () => {
+		const view = makeColorView();
+		const root = {
+			isRoot: true,
+			getData: () => ({ text: 'root' }),
+		} as unknown as MindMapNode;
+		applyNodeColor(view, [root], '#89cff0');
+		expect(applyRawNodeContentMock).not.toHaveBeenCalled();
+		expect(minimapMocks.refreshMiniMapAfterRender).not.toHaveBeenCalled();
 	});
 });

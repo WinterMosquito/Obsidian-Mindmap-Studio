@@ -20,6 +20,7 @@ import {
 	ensureDefaultImageSizes,
 	createSetNodeImageOptions,
 	fitImageWithinMaxSide,
+	forgetImageFail,
 	IMAGE_FAIL_TTL_MS,
 	type ImageSizeCacheStore,
 	isExternalUrl,
@@ -851,6 +852,23 @@ describe('图片探测失败缓存（白盒，TTL 与容量）', () => {
 		expect(isImageFailFresh(url)).toBe(false);
 		// 再次查询仍为 false（条目已被清理，不会复活）
 		expect(isImageFailFresh(url)).toBe(false);
+	});
+
+	it('forgetImageFail：只清指定 URL，其余失败记录保持（重开导图重新探测）', async () => {
+		const target = probeUrl('forget-target.png');
+		const other = probeUrl('forget-other.png');
+		cacheImageFail(target);
+		cacheImageFail(other);
+
+		forgetImageFail(target);
+		expect(isImageFailFresh(target)).toBe(false);
+		expect(isImageFailFresh(other)).toBe(true);
+
+		// 清掉之后确实会重新走一次探测（不再直接命中失败缓存）
+		const pending = probeImageNaturalSize(target);
+		expect(FakeImage.instances).toHaveLength(1);
+		lastImage().emitLoad(64, 32);
+		await expect(pending).resolves.toEqual({ width: 64, height: 32 });
 	});
 });
 

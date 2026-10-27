@@ -13,6 +13,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_THEME_STYLE } from '../src/core/constants';
+import { paletteNodeColor } from '../src/engine/mindmap-palette';
 import {
 	getThemeConfig,
 	resolveLineStyle,
@@ -301,5 +302,55 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 		for (const bad of ['nope', '', 'DEFAULT', 'mint ']) {
 			expect(tokenOf(configOf(false, bad), 'root').fillColor, bad).toBe(defaultRoot);
 		}
+	});
+});
+
+describe('getThemeConfig（自定义整篇配色：一个十六进制 → 五档色板）', () => {
+	const tokenOf = (
+		config: Record<string, unknown>,
+		level: 'root' | 'second' | 'node',
+	): Record<string, unknown> => config[level] as Record<string, unknown>;
+
+	const configOf = (
+		isDark: boolean,
+		palette: string,
+	): Record<string, unknown> =>
+		getThemeConfig(isDark, 'logicalStructure', 'straight', 'default', palette);
+
+	it('根节点用原色，二/三级向画布底色淡出（不等于原色）', () => {
+		const config = configOf(false, '#89cff0');
+		expect(tokenOf(config, 'root').fillColor).toBe('#89cff0');
+		expect(tokenOf(config, 'second').fillColor).not.toBe('#89cff0');
+		expect(tokenOf(config, 'node').fillColor).not.toBe('#89cff0');
+		// 层级递减：second 比 node 更接近主色（更深）
+		expect(tokenOf(config, 'second').fillColor).not.toBe(
+			tokenOf(config, 'node').fillColor,
+		);
+	});
+
+	it('文字色按底色亮度现算：浅底深字、深底白字', () => {
+		const light = configOf(false, '#89cff0');
+		expect(tokenOf(light, 'second').color).toBe('#1e293b');
+		const dark = configOf(false, '#123456');
+		expect(tokenOf(dark, 'root').color).toBe('#ffffff');
+	});
+
+	it('亮 / 暗两档各自向背景靠拢（同一主色在暗色下派生更深）', () => {
+		const lightSecond = tokenOf(configOf(false, '#89cff0'), 'second')
+			.fillColor as string;
+		const darkSecond = tokenOf(configOf(true, '#89cff0'), 'second')
+			.fillColor as string;
+		expect(lightSecond).not.toBe(darkSecond);
+	});
+
+	it('非法十六进制回退「默认」预设（手改 data.json 不致渲染失败）', () => {
+		const fallback = tokenOf(configOf(false, 'default'), 'root').fillColor;
+		for (const bad of ['#12345', '#gggggg', '#89cff0ff']) {
+			expect(tokenOf(configOf(false, bad), 'root').fillColor, bad).toBe(fallback);
+		}
+	});
+
+	it('节点配色菜单的色值与配色数据同源（paletteNodeColor）', () => {
+		expect(paletteNodeColor('mint')).toBe(PALETTES.mint.light.rootFill);
 	});
 });

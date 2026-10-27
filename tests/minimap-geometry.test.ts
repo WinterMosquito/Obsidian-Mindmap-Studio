@@ -234,6 +234,74 @@ describe('buildMiniMapMarks：DFS 顺序 + 父子下标 + 根标记', () => {
 		expect(solo?.bounds).toEqual({ x: 0, y: 0, width: 10, height: 10 });
 	});
 
+	it('节点自定义颜色：描边优先、填充兜底、透明色跳过，未上色不带 color', () => {
+		const tree: MiniMapGeometryNode = {
+			left: 0,
+			top: 0,
+			width: 100,
+			height: 40,
+			nodeData: { data: { borderColor: '#89cff0', fillColor: '#89cff0' } },
+			children: [
+				{
+					left: 200,
+					top: 0,
+					width: 80,
+					height: 30,
+					nodeData: { data: { fillColor: '#ff0000' } },
+				},
+				{
+					left: 200,
+					top: 50,
+					width: 80,
+					height: 30,
+					// 无边框主题可能把描边写成透明：此时退到填充色（不能画成透明块）
+					nodeData: { data: { borderColor: 'transparent', fillColor: '#00ff00' } },
+				},
+				{ left: 200, top: 100, width: 80, height: 30 },
+			],
+		};
+		const marks = buildMiniMapMarks(tree)?.marks ?? [];
+		expect(marks.map((mark) => mark.color)).toEqual([
+			'#89cff0',
+			'#ff0000',
+			'#00ff00',
+			undefined,
+		]);
+	});
+
+	it('颜色进指纹：几何不变、只改颜色也要判「换图」', () => {
+		const base: MiniMapGeometryNode = {
+			left: 0,
+			top: 0,
+			width: 100,
+			height: 40,
+			children: [
+				{
+					left: 200,
+					top: 0,
+					width: 80,
+					height: 30,
+					nodeData: { data: { borderColor: '#89cff0' } },
+				},
+			],
+		};
+		const recolored: MiniMapGeometryNode = {
+			...base,
+			children: [
+				{
+					left: 200,
+					top: 0,
+					width: 80,
+					height: 30,
+					nodeData: { data: { borderColor: '#ff0000' } },
+				},
+			],
+		};
+		expect(buildMiniMapMarks(base)?.signature).not.toBe(
+			buildMiniMapMarks(recolored)?.signature,
+		);
+	});
+
 	it('超过上限时按步长抽样，且根一定保留', () => {
 		const many: MiniMapGeometryNode = {
 			left: 0,
@@ -461,6 +529,19 @@ describe('buildMiniMapSvg：按原图输出（方块 + 连线）', () => {
 		expect(svg).toContain(`<g fill="${MINIMAP_FALLBACK_COLORS.root}"`);
 		expect(svg).not.toContain('NaN');
 		expect(svg).not.toContain('undefined');
+	});
+
+	it('节点自定义颜色：该块单独写 fill（覆盖所在层级的主题墨色）', () => {
+		const colored: MiniMapMark[] = [
+			{ x: 0, y: 0, width: 100, height: 40, root: true, depth: 0, color: '#4a90d9' },
+			{ x: 200, y: 0, width: 80, height: 40, parent: 0, depth: 1, color: '#89cff0' },
+			{ x: 400, y: 200, width: 60, height: 30, parent: 1, depth: 2 },
+		];
+		const svg = buildMiniMapSvg(content, colored, panel, MINIMAP_FALLBACK_COLORS);
+		// 根块与一级块各自带 fill；未上色的二级块仍用主题墨色（块内没有 fill）
+		expect(svg).toContain('fill="#4a90d9"');
+		expect(svg).toContain('fill="#89cff0"');
+		expect((svg.match(/<rect [^>]*fill="#89cff0"/g) ?? []).length).toBe(1);
 	});
 
 	it('shallow ⇒ 只画前 7 层的边（第 8 层剪掉），方块一个不少', () => {

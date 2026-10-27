@@ -34,6 +34,26 @@ export function isNodeTextEdited(text: unknown, mdDerivedText: unknown): boolean
 	return typeof mdDerivedText === 'string' && text !== mdDerivedText;
 }
 
+/**
+ * 节点的**行内原文来源**：未编辑 → `mdRaw`（逐字原文，含 `%%注释%%` / 链接语法）；
+ * 已编辑 → `data.text`（`mdRaw` 是解析期快照，编辑后过期）。
+ *
+ * 唯一实现（2026-10-27 收口）：自绘接管判定（`node-inline-content.resolveSelfDrawSource`）
+ * 与节点配色指令（`engine/mindmap-colors`）必须读同一份原文，否则「节点显示里有
+ * 注释、配色却按旧行解析」这类漂移无从发现。`mdRaw` 缺失时同样回落 `text`
+ *（新建节点没有原文快照）。
+ */
+export function nodeInlineSource(data: Record<string, unknown>): string {
+	const text = typeof data.text === 'string' ? data.text : '';
+	if (!isNodeTextEdited(data.text, data.mdDerivedText)) {
+		const raw = data.mdRaw;
+		if (typeof raw === 'string' && raw) {
+			return raw;
+		}
+	}
+	return text;
+}
+
 /** 行类型（data.mdType）：md 三种行形态 */
 type MdLineType = 'heading' | 'list' | 'plain';
 

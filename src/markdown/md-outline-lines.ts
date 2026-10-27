@@ -27,6 +27,23 @@ interface ParsedLine {
 	marker?: string;
 }
 
+/**
+ * 围栏分隔行：≤3 空格缩进 + 3+ 个 ` 或 ~（后可接语言信息）；返回分隔符，否则 null。
+ *
+ * 模块级导出（2026-10-27）：写入侧 `setColorDirective` 也要认「哪一行是围栏定界行」
+ * （决定指令能否尾插在同一行）。围栏口径只此一份（硬规则 5），故从 `classifyLines`
+ * 的闭包里提出来。
+ */
+export function fenceMarker(
+	raw: string,
+): { char: string; length: number } | null {
+	const m = raw.match(/^[ \t]{0,3}(`{3,}|~{3,})/);
+	if (!m) {
+		return null;
+	}
+	return { char: m[1]![0]!, length: m[1]!.length };
+}
+
 /** 逐行分类（围栏整体原样保留；围栏外空行与分隔线忽略） */
 export function classifyLines(body: string): ParsedLine[] {
 	const out: ParsedLine[] = [];
@@ -37,18 +54,6 @@ export function classifyLines(body: string): ParsedLine[] {
 	let lastLineIsFence = false;
 	/** 围栏外暂存的连续空行：仅当与围栏相邻时才写入（保证围栏仍可识别） */
 	let pendingBlank = 0;
-
-	/**
-	 * 围栏分隔行：≤3 空格缩进 + 3+ 个 ` 或 ~（后可接语言信息）。
-	 * 返回分隔符；不匹配返回 null。
-	 */
-	const fenceMarker = (raw: string): { char: string; length: number } | null => {
-		const m = raw.match(/^[ \t]{0,3}(`{3,}|~{3,})/);
-		if (!m) {
-			return null;
-		}
-		return { char: m[1]![0]!, length: m[1]!.length };
-	};
 
 	/**
 	 * 开围栏行是否在**同一行内自闭合**（```` ```code``` ````）：

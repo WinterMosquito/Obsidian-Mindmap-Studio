@@ -32,15 +32,17 @@ import {
 	AUTO_SPLIT_CHECK_DELAY_MS,
 	DEFAULT_PALETTE,
 	normalizeLineStylePreference,
-	normalizePalette,
+	normalizePalettePreference,
 	normalizeThemeStyle,
 	VIEW_TYPE,
 } from '../core/constants';
 import type { MindMap, MindMapNode } from '../core/engine-types';
 import { createWarnOnce, notifyError } from '../core/errors';
 import {
+	applyColorDirectivesToTree,
 	applyImageSizeCorrectionsToEngine,
 	getRenderRoot,
+	syncNodeColorDirectives,
 } from '../engine/mindmap';
 import {
 	resolveFilePreferences,
@@ -66,6 +68,7 @@ import {
 	buildInlineNodeContent,
 	type InlineContentOptions,
 } from './node-inline-content';
+import { colorDirectiveOf } from './node-inline-tokenize';
 import { createInlineContentOptions } from './node-content-factory';
 import {
 	setupCanvasQuickCreate,
@@ -725,7 +728,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.currentLayout = prefs.layout;
 		this.currentLineStyle = normalizeLineStylePreference(prefs.lineStyle);
 		this.currentThemeStyle = normalizeThemeStyle(prefs.themeStyle);
-		this.currentPalette = normalizePalette(prefs.palette);
+		this.currentPalette = normalizePalettePreference(prefs.palette);
 		try {
 			const doc = await this.documents.load(file);
 			// 加载期间文件已切换：丢弃过期结果
@@ -752,6 +755,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			// 直接解构抛错、整图渲染中断——旧流程靠「探测先于引擎」隐式兜底，
 			// 见 ensureDefaultImageSizes 注释）：O(n) 指针遍历，不探测不等加载。
 			ensureDefaultImageSizes(tree);
+			// 节点配色指令（`%%#hex%%`）：必须在 `initMindMap` **之前**写进 data 树
+			// （引擎 `MindMapNode.handleData` 会克隆数据，建好后再改这棵树不再生效）。
+			// 创建后编辑/撤销引起的变化走 `node_tree_render_end` 的实时同步。
+			applyColorDirectivesToTree(tree, colorDirectiveOf);
 			void collectImageSizeCorrections(tree)
 				.then((corrections) => {
 					// 加载期间文件已切换：丢弃过期结果
@@ -870,6 +877,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		const mindMap = this.mindMap;
 		if (mindMap) {
 			this.engineEvents.onEngine(mindMap, 'node_tree_render_end', () => {
+				// 节点配色指令（`%%#hex%%`）：编辑 / 插入 / 撤销后重算，有变化再渲染一次。
+				// **必须挂渲染落地**（不是 `data_change`）：插件内联编辑走
+				// `applyRawNodeContent` 直接改 data 后 render，根本不发 `data_change`
+				// （K108）；撤销时 `data_change` 又在渲染排队前发出，那时 renderer.root
+				// 还是旧树。此刻根节点已是新树、数据已定稿，同步一次即覆盖全部通道。
+				syncNodeColorDirectives(mindMap, colorDirectiveOf);
 				if (this.applyPendingImageCorrections()) {
 					this.engine.scheduleViewportRecenter();
 				}
@@ -969,7 +982,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.commitPreference({
 			key: 'palette',
 			value,
-			normalize: normalizePalette,
+			normalize: normalizePalettePreference,
 			applyToEngine: () => this.engine.applyTheme(),
 			miniMap: 'now',
 		});

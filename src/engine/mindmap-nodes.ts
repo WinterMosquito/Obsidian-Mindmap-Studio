@@ -210,6 +210,33 @@ export function getActiveNodes(mindMap: MindMap | null): MindMapNode[] {
 }
 
 /**
+ * 选中集合里的**最上层子集**：任一祖先同时被选中的节点被剔除
+ * （子树随祖先整棵生效，不必逐节点处理）。
+ *
+ * 两个消费方共用一份判定：
+ * - 复制/剪切（`mindmap-clipboard`）——与引擎 `copyNode` 的选面语义一致；
+ * - 节点配色（`features/view-node-color`）——颜色沿子树继承，只给顶层节点写
+ *   指令即可，多写只会让文件里堆一串重复注释。
+ *
+ * 保持输入顺序（调用方需要文档序时自行排序）。
+ */
+export function topMostNodes(
+	nodes: readonly MindMapNode[],
+): MindMapNode[] {
+	const selected = new Set(nodes);
+	return nodes.filter((node) => {
+		let cursor = node.parent;
+		while (cursor) {
+			if (selected.has(cursor)) {
+				return false;
+			}
+			cursor = cursor.parent;
+		}
+		return true;
+	});
+}
+
+/**
  * 当前渲染树的根节点（性能模式/初始化中间态等场景可能为 null）。
  *
  * `renderer` 本身也可能缺失（引擎销毁途中、测试替身），故两级都要判空：

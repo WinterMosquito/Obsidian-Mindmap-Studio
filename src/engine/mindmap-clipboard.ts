@@ -16,7 +16,7 @@ import type {
 	MindMapTreeNode,
 } from '../../vendor/simple-mind-map.cjs';
 import { ENGINE_COMMANDS } from './mindmap-commands';
-import { getActiveNodes, getRenderRoot } from './mindmap-nodes';
+import { getActiveNodes, getRenderRoot, topMostNodes } from './mindmap-nodes';
 
 /**
  * 收集当前选中节点的**顶层子树数据**（复制到剪贴板的唯一取值面）。
@@ -56,18 +56,10 @@ export function collectSelectedSubtrees(
 	if (selected.length === 0) {
 		return [];
 	}
-	const selectedSet = new Set(selected);
-	const tops = selected.filter((node) => {
-		let cursor = node.parent;
-		while (cursor) {
-			if (selectedSet.has(cursor)) {
-				return false;
-			}
-			cursor = cursor.parent;
-		}
-		return true;
-	});
-	return rankByDocumentOrder(mindMap, tops).map((node) => node.nodeData);
+	// 「最上层」判定收口在 mindmap-nodes.topMostNodes（节点配色共用同一份）
+	return rankByDocumentOrder(mindMap, topMostNodes(selected)).map(
+		(node) => node.nodeData,
+	);
 }
 
 /**

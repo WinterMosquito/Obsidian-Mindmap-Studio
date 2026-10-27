@@ -86,7 +86,7 @@ export const THEME_STYLE_PRESETS: Record<ThemeStyleId, ThemeStylePreset> = {
  * 3. `border` 比 `secondFill` 深一档、`line` 比 `border` 浅一档——层级递减；
  * 4. 亮 / 暗两档必须成对：暗色 `rootFill` 不能用亮色值（会刺眼）。
  */
-interface PaletteColors {
+export interface PaletteColors {
 	rootFill: string;
 	secondFill: string;
 	nodeFill: string;
