@@ -238,6 +238,8 @@ vi.mock('../src/engine/mindmap', () => ({
 	getActiveNodes: getActiveNodesMock,
 	// 最上层判定由 color-directive.test.ts 直测真实实现；这里只需恒等
 	topMostNodes: (nodes: unknown[]): unknown[] => nodes,
+	// 多选改色的收尾历史（批量写回后记一条快照，见 engine/mindmap-history）
+	recordHistory: vi.fn(),
 }));
 
 // 节点配色落盘走「原文提交」通道（node-inline-editor）：本文件只验证「写了什么原文」

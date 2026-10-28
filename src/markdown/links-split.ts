@@ -41,6 +41,7 @@ import {
 	type InlineToken,
 } from './md-outline';
 import { composeNodeFirstLine } from './md-serialize';
+import { parseTaskPrefix, stripTaskPrefix } from '../domain/md-task';
 import { walkTree } from '../domain/tree';
 import { isAppResourceUrl } from '../domain/url';
 import {
@@ -176,9 +177,21 @@ export function writeSplitPlanToData(
 		}
 		Object.assign(data, plan.parentLinkFields);
 	}
-	data.text = plan.parentText;
 	data.mdRaw = plan.parentRaw;
-	data.mdDerivedText = plan.parentText;
+	// 父行若带任务前缀：合成行（composeNodeFirstLine）已把 token 拼回 parentRaw，
+	// 这里按解析侧同口径重新剥离，否则显示文本会多出一个 `[ ]`（且与派生文本
+	// 一致才不会被判成「已编辑」，见 domain/md-task）
+	const task = data.mdType === 'list' ? parseTaskPrefix(plan.parentRaw) : null;
+	if (task) {
+		data.mdTask = task.state;
+		data.mdTaskToken = task.token;
+	} else {
+		delete data.mdTask;
+		delete data.mdTaskToken;
+	}
+	const parentText = task ? stripTaskPrefix(plan.parentText) : plan.parentText;
+	data.text = parentText;
+	data.mdDerivedText = parentText;
 	// 行内 token 台账以**新行解析结果**为准整体重建：被抽走/消失的 token 不残留
 	//（否则下次合成会把它们写回原位或重复追加），未抽出的多枚 token 不丢失
 	if (plan.parentSegments && plan.parentSegments.length > 0) {

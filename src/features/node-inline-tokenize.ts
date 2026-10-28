@@ -1,8 +1,9 @@
 /**
  * 节点内联内容的**段序列切分**（纯逻辑，2026-10-16 自 `node-inline-content.ts` 拆出）。
  *
- * 覆盖：行内 token → 段序列（轻标记 / 代码块 / 数学 / 链接 / **表格块**）、
- * 段缓存（`segmentEntryOf` / `segmentCacheStats`）、接管判定（`resolveSelfDrawSource`）、
+ * 覆盖：行内 token → 段序列（轻标记 / 代码块 / 数学 / 链接 / **表格块** / **标签**）、
+ * 段缓存（`segmentEntryOf` / `segmentCacheStats`）、接管判定（`resolveSelfDrawSource`，
+ * 任务节点剥掉 `[ ]` 前缀后仍接管）、任务状态读取（`taskStateOf`，渲染与交互共用）、
  * 展示截断（`clampSegments`）与显示文本预览（`inlineContentPreview`）。
  * **不触碰 DOM**——DOM 装配见 `node-inline-html`（本模块是它的依赖，反向不成立）。
  */
@@ -16,6 +17,7 @@ import { COLOR_DIRECTIVE_NONE, normalizeHexColor } from '../domain/color';
 import { matchPipeTable, type PipeTable } from '../domain/pipe-table';
 import { isSchemeUrl, isUrlLikeText } from '../domain/url';
 import { nodeInlineSource } from '../domain/md-meta';
+import { stripTaskPrefix } from '../domain/md-task';
 import { fenceMarker } from '../markdown/md-outline-lines';
 import { tokenDisplay, tokenizeInline, type InlineToken } from '../markdown/md-outline';
 import type { MindMapNode } from '../core/engine-types';
@@ -112,7 +114,7 @@ export interface InlineContentOptions {
 
 /** 行内段：渲染节点内联内容的最小单元（纯数据，可单测） */
 export interface InlineSegment {
-	kind: 'text' | 'link' | 'table';
+	kind: 'text' | 'link' | 'table' | 'tag';
 	/**
 	 * 纯文本原样 / 链接段的**剥壳显示名**（`tokenDisplay` 口径，与节点文本一致）
 	 * / 表格段的**原文块文本**（逐字：含外框管道、`\|` 转义与边界换行）。截断上限
@@ -126,6 +128,23 @@ export interface InlineSegment {
 	text: string;
 	/** 链接段跳转目标：wiki = 原始 linkpath；md 链接 / URL = 地址原文 */
 	link?: string;
+	/**
+	 * 标签段的名称（**不含** `#`，`kind === 'tag'` 专用）。
+	 *
+	 * `text` 是带 `#` 的显示形态（`#项目/子项目`），本字段供点击时拼搜索查询
+	 * （`tag:#名称`）。标签的识别只在**顶层 prose**（见 pushTagSegments）：
+	 * 轻标记内部、代码 / 数学 / 注释 / 链接内一律不算。
+	 */
+	tag?: string;
+	/**
+	 * 该文本段是**转义产物**（`\#` → `#`），**只活在切段过程中**。
+	 *
+	 * 用途：标签判定必须跳过它——`\#标题` 在 Obsidian 里不是标签，而显示文本
+	 * 已经丢掉了反斜杠，只能靠这个标记区分（见 pushPlain 的「转义不合并」）。
+	 * 段序列装配完就逐段清掉（`pushInlineText` 重建段对象时不带本字段），
+	 * 故 `buildInlineSegments` 的产物里读不到它，渲染层也不消费。
+	 */
+	escaped?: true;
 	/** true = 库内目标（`a.internal-link[data-href]`）；false = 外部地址（`a.external-link[href]`） */
 	internal?: boolean;
 	/** 文本段的轻标记（仅 kind = 'text'；无标记的纯文本省略） */
@@ -497,15 +516,17 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 	 * 无样式片段入队（**与上一段合并**）：「转义 / 隐藏注释」会在同一段文本里
 	 * 反复切断扫描（`\*a\*` → `*`、`a`、`*`），逐片入队会产出多个相邻文本节点。
 	 */
-	const pushPlain = (value: string): void => {
+	const pushPlain = (value: string, escaped = false): void => {
 		// prose 连续空格归一在此落地（代码/数学段不走本函数，见各分支）
 		const text = normalizeSpaces(value);
 		const last = out[out.length - 1];
-		if (last && last.style === undefined) {
+		// 转义产物**不参与合并**：`\#` 的显示字符是 `#`，若与后续文字并成一段
+		// （`#` + `标题` → `#标题`），标签判定就分不清它是不是转义来的
+		if (!escaped && last && last.style === undefined && !last.escaped) {
 			out[out.length - 1] = { kind: 'text', text: last.text + text };
 			return;
 		}
-		out.push({ kind: 'text', text });
+		out.push({ kind: 'text', text, ...(escaped ? { escaped: true } : {}) });
 	};
 	let cursor = 0;
 	// **按位置驱动**（每轮把 lastIndex 显式设为 cursor）：MARKUP_RE 是模块级共享
@@ -551,8 +572,8 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 			// 行内码：逐字保留（连续空格是内容；阅读视图同为字面）
 			out.push({ kind: 'text', text: groups.code, style: 'code' });
 		} else if (groups.escaped !== undefined) {
-			// 转义：消费反斜杠，按字面显示该字符（无样式）
-			pushPlain(groups.escaped);
+			// 转义：消费反斜杠，按字面显示该字符（无样式；标记原因见 pushPlain）
+			pushPlain(groups.escaped, true);
 		} else if (groups.mathBlock !== undefined) {
 			// 单行 `$$…$$`（display / 块级）：定界符不进显示文本；display 标记
 			// 决定占位形态（`$$…$$`）与渲染通道（tex2chtml 的 display 选项）
@@ -865,8 +886,17 @@ function pushInlineText(raw: string, segments: InlineSegment[]): void {
 		// 轻标记在文本段内部切分（标记符不进显示文本，原文由 mdRaw 保真）。
 		// ⚠ 这里**不做**连续空格归一：归一化已下沉到 splitMarkedText 的 prose
 		// 分支——预归一化会波及其中的代码块/数学段（缩进被压扁，已修）
+		const local: InlineSegment[] = [];
 		for (const piece of splitMarkedText(text)) {
-			segments.push({
+			// 顶层 prose 才切标签：轻标记内部（`**#tag**`）、代码 / 数学 / 注释 /
+			// 链接内都不算——那些已由 tokenizer 的保护区整段吃掉，或在
+			// piece.style 上（标签不做递归，见 pushTagSegments 的说明）。
+			// **转义产物**（`\#` → `#`）同样跳过：它的 `#` 是字面字符、不是标签。
+			if (!piece.style && !piece.escaped) {
+				pushTagSegments(piece.text, local);
+				continue;
+			}
+			local.push({
 				kind: 'text',
 				text: piece.text,
 				...(piece.style ? { style: piece.style } : {}),
@@ -878,6 +908,31 @@ function pushInlineText(raw: string, segments: InlineSegment[]): void {
 				...(piece.children ? { children: piece.children } : {}),
 			});
 		}
+		// 标签切分完再把**本段内**相邻纯文本并回去：段形态与引入标签前逐字一致
+		// （`\#标题` 仍是单个文本段，而不是 `#` + `标题` 两段——转义标记在这里已经
+		// 摘掉，所以不会被这张网拦下）。只在本次 pushText 内合并——跨 token
+		// （如 `文字 ` + 图片显示名 `图.png`）保持原分段口径。
+		const merged: InlineSegment[] = [];
+		for (const segment of local) {
+			const last = merged[merged.length - 1];
+			if (
+				segment.kind === 'text' &&
+				!segment.style &&
+				!segment.children &&
+				last &&
+				last.kind === 'text' &&
+				!last.style &&
+				!last.children
+			) {
+				merged[merged.length - 1] = {
+					kind: 'text',
+					text: last.text + segment.text,
+				};
+				continue;
+			}
+			merged.push(segment);
+		}
+		segments.push(...merged);
 	};
 	for (const tok of tokenizeInline(raw)) {
 		pushText(raw.slice(cursor, tok.start));
@@ -891,6 +946,58 @@ function pushInlineText(raw: string, segments: InlineSegment[]): void {
 		}
 	}
 	pushText(raw.slice(cursor));
+}
+
+/**
+ * Obsidian 标签的字符形态：`#` + 至少一个「字母 / 数字 / `_` / `-`」，
+ * 允许 `/` 分层（`#项目/子项目`），但**不以 `/` 结尾**（避免把 `#a/` 的斜杠
+ * 吞进标签）。数字、CJK、连字符都按 `\p{L}` / `\p{N}` 走。
+ */
+const TAG_RUN_RE = /#[\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*/gu;
+
+/**
+ * 标签的**前置边界**：紧邻 `#` 的字符不能是词字符 / `/` / `#` / `&` / `-`。
+ *
+ * 依据：`foo#bar` 不是标签（Obsidian 实测口径）；`##bar` 的 `#` 属于标题语法；
+ * `&#foo` 是实体形态；`a/#tag` 是 URL 片段。`(#tag)`、`，#tag`、行首 `#tag`
+ * 都应识别，故边界取「非词字符」而不是「必须是空白」。
+ */
+function isTagBoundary(char: string): boolean {
+	return !/[\p{L}\p{N}_/&#-]/u.test(char);
+}
+
+/**
+ * 顶层 prose → 文本段与标签段的交错序列（**唯一**的标签判定）。
+ *
+ * 为什么是「后处理 prose」而不是加进 `MARKUP_RE`：标签只存在于普通文字里，
+ * 而 `MARKUP_RE` 的保护区（注释 / 围栏 / 行内码 / 数学 / 链接）已经先切走，
+ * 剩余片段的边界判定只需看**前一个字符**——放进主正则反而要处理「边界字符
+ * 属于哪一段」的回吐问题。
+ *
+ * 已知边界（有意）：轻标记内部（`**#tag**`）不识别标签——与节点配色指令
+ * 「其它标记内部不识别」同口径；`#123`（全数字）不是标签（Obsidian 口径）。
+ */
+function pushTagSegments(text: string, out: InlineSegment[]): void {
+	let cursor = 0;
+	for (const match of text.matchAll(TAG_RUN_RE)) {
+		const start = match.index;
+		if (start > 0 && !isTagBoundary(text[start - 1]!)) {
+			continue;
+		}
+		const name = match[0].slice(1);
+		// 全数字不是标签（`#2024` 是年份，不是标签）
+		if (!/\D/.test(name)) {
+			continue;
+		}
+		if (start > cursor) {
+			out.push({ kind: 'text', text: text.slice(cursor, start) });
+		}
+		out.push({ kind: 'tag', text: `#${name}`, tag: name });
+		cursor = start + match[0].length;
+	}
+	if (cursor < text.length) {
+		out.push({ kind: 'text', text: text.slice(cursor) });
+	}
 }
 
 /** 原文的**行切片**（字符区间）：start 含、end 不含（不含行尾 `\n`） */
@@ -1141,6 +1248,23 @@ function trimEdges(segments: InlineSegment[]): InlineSegment[] {
 	return segments;
 }
 
+/**
+ * 任务状态（渲染与交互共用的唯一读取口）。
+ *
+ * 只认**列表项**：`mdType === 'list'` 且 `mdTask` 是合法状态。图片节点由
+ * `resolveSelfDrawSource` 的「含图不接管」挡在前面，故裁决 4（图片节点不做）
+ * 不需要在这里再判一次（多一处判定就多一处漂移）。
+ */
+export function taskStateOf(
+	data: Record<string, unknown> | null | undefined,
+): 'todo' | 'done' | null {
+	if (!data || data['mdType'] !== 'list') {
+		return null;
+	}
+	const state = data['mdTask'];
+	return state === 'todo' || state === 'done' ? state : null;
+}
+
 /** 自绘接管的判定输入（`resolveSelfDrawSource` 的内部形态，判定与渲染源同源） */
 interface SelfDrawSource {
 	segments: readonly InlineSegment[];
@@ -1172,10 +1296,14 @@ export function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null 
 	if (!raw) {
 		return null;
 	}
+	// 任务前缀由复选框承担显示，token 不能再作为文字渲染（未编辑时渲染源是
+	// mdRaw，里面仍有 `[ ]`）。只剥首行：续行原样。
+	const task = taskStateOf(data);
+	const renderRaw = task ? stripTaskPrefix(raw) : raw;
 	// 注意：**没有**「超长就不接管」这条——超长必须接管（见 MAX_INLINE_CONTENT_CHARS：
 	// 引擎逐字符换行是二次复杂度，长行交给它正是白屏/卡死的成因）
-	const segments = segmentEntryOf(raw);
-	const overlong = raw.length > MAX_INLINE_CONTENT_CHARS;
+	const segments = segmentEntryOf(renderRaw);
+	const overlong = renderRaw.length > MAX_INLINE_CONTENT_CHARS;
 	// 接管判据（满足其一）：
 	// ① **段序列非空**——链接 / 轻标记 / 代码块 / 数学 / **纯文本**全部接管。
 	//    为什么纯文本也接管（2026-10-09 起常开；原设置 `selfDrawPlainNodes` 已移除）：
@@ -1189,8 +1317,8 @@ export function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null 
 	//    MAX_INLINE_CONTENT_CHARS 的实测。
 	// 两者都不满足 = **渲染后没有任何可见内容**（空文本 / 纯空白 / 整行只有
 	// `%%注释%%`——注释段被整段吞掉、段序列为空）⇒ 交给引擎按字面显示，
-	// 避免渲染出一个空节点。
-	const takeOver = overlong || segments.length > 0;
+	// 避免渲染出一个空节点。任务节点例外：复选框本身就是可见内容。
+	const takeOver = overlong || segments.length > 0 || task !== null;
 	if (!takeOver) {
 		return null;
 	}

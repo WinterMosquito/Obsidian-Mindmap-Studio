@@ -1,4 +1,26 @@
 /**
+ * 事件目标 → 元素，**跨 realm 安全**（不写 `instanceof Element`）。
+ *
+ * popout（「在新窗口打开」）里的元素来自另一个 realm：对主窗口构造器的
+ * `instanceof Element` 恒为 false，照抄会让独立窗口里的点击静默失效
+ * （与 `engine/mindmap-nodes.isNodeImageElement` 同族的坑）。这里按能力判定：
+ * 有 `closest` 就当元素用；非元素（`window` / `null`）返回 null。
+ *
+ * 放 core 的理由：任务复选框（`features/view-node-task`）与标签 pill
+ * （`features/view-tag`，含只读嵌入宿主）共用同一份判定，而它**不能**寄在
+ * 依赖引擎的模块里——嵌入路径的模块图不该为八行能力判定拖进 vendor。
+ */
+export function elementFromTarget(
+	target: EventTarget | null | undefined,
+): Element | null {
+	if (!target || typeof target !== 'object') {
+		return null;
+	}
+	const element = target as Element;
+	return typeof element.closest === 'function' ? element : null;
+}
+
+/**
  * 事件绑定器：统一管理 DOM 事件与引擎事件的注册与清理。
  *
  * 背景：原先 MindMapView 上散落着 10+ 个 boundHandle* 字段，每个监听器

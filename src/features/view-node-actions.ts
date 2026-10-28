@@ -69,13 +69,13 @@ function clearDocWikiLink(node: MindMapNode): void {
 
 /**
  * 节点是否已有任何内容（决策 R4 修订的分流依据，2026-09-13）：
- * 文字 / 链接三通道（文档双链、附件、超链接）/ 图片 / 行内额外 token
- * （`mdSegments` 里 `first: false` 的项，见 K52）任一存在即为真。
+ * 文字 / 链接三通道（文档双链、附件、超链接）/ 图片 / 任务状态 / 行内额外
+ * token（`mdSegments` 里 `first: false` 的项，见 K52）任一存在即为真。
  *
  * **完全空白**（全无）→ 覆盖（纯双链化）——"拖入即变链接节点"的便捷路径；
  * **其余任何情况** → 链接建为子节点——行内多 token 已保真（见
  * md-meta.MdTokenSegment），拖入/添加链接只是「再挂一个链接」，不得覆盖
- * 节点已有内容（文字 / 原链接 / 行内其它 token / 图片）。
+ * 节点已有内容（文字 / 原链接 / 行内其它 token / 图片 / 任务状态）。
  */
 function hasAnyContent(data: MdNodeData): boolean {
 	const text = readNodeDataString(data, 'text').trim();
@@ -83,6 +83,10 @@ function hasAnyContent(data: MdNodeData): boolean {
 		return true;
 	}
 	if (data.image) {
+		return true;
+	}
+	// 任务状态也是内容：`- [ ]`（无正文）不该被「加链接」覆盖成纯双链节点
+	if (data.mdTask) {
 		return true;
 	}
 	for (const key of ['mdWikiLinkpath', 'attachmentUrl', 'hyperlink'] as const) {
@@ -102,7 +106,7 @@ function hasAnyContent(data: MdNodeData): boolean {
 /**
  * 覆盖分支的公共清理：链接类字段一律清空。
  *
- * `hasAnyContent` 只认「文字 / 图片 / 三通道有效值 / 额外 token」——「移除引用」
+ * `hasAnyContent` 只认「文字 / 图片 / 任务状态 / 三通道有效值 / 额外 token」——「移除引用」
  * 后残留的 `mdAttachmentLinkpath` / `mdEmbed` / `mdLinkText` 等不算内容，节点仍
  * 走**覆盖**路径；不清会让回写凭空多出旧引用。此前五处覆盖分支各持一份清理
  * 清单、逐步漂移（2026-10-02 收敛为并集：applyAttachmentLink 漏步、applyMdLink

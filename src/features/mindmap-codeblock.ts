@@ -91,6 +91,7 @@ import {
 } from './node-inline-content';
 import { colorDirectiveOf } from './node-inline-tokenize';
 import { isResolvedWikiLinkpath, openHyperlink } from './view-link-navigator';
+import { registerTagClicks } from './view-tag';
 import type { MindMapLinkHost } from './view-context';
 import type { MindMap, MindMapTreeNode } from '../core/engine-types';
 
@@ -493,6 +494,8 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 			mindMap,
 			engineEvents: this.events,
 		});
+		// 标签 pill 与链接同权：只读嵌入里也可点（同一份交互实现）
+		registerTagClicks(this.events, el, this.app, this.getConfig().lang);
 		this.events.onEngine(mindMap, 'node_tree_render_end', () => {
 			this.remeasure.retryDeferred();
 			this.applyEmbedFit();

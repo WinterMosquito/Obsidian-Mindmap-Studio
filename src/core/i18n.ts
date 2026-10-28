@@ -42,6 +42,11 @@ const ZH = {
 	'nodeTextTruncated':
 		'节点文本过长，此处仅显示开头部分；完整内容仍保存在文件中，双击节点可查看或编辑',
 	'codeBlock.copy': '复制代码',
+	// 任务复选框的无障碍标签（点击切换，无右键入口）
+	'node.task.markDone': '标记为完成',
+	'node.task.markUndone': '标记为未完成',
+	// 标签点击 → 官方搜索插件（私有触点缺失时的可见回退）
+	'tag.searchUnavailable': '无法打开标签搜索（未找到搜索插件）',
 	'rename.titleConflict': '已存在同名文件，无法按中心节点重命名',
 	// 供 notifyError 拼接根因：与 save.failed 同口径，中文用全角冒号结尾
 	'rename.titleFailed': '按中心节点重命名文件失败：',
@@ -344,6 +349,9 @@ const EN: Record<TranslationKey, string> = {
 	'nodeTextTruncated':
 		'Node text is too long, so only the beginning is shown here; the full text is kept in the file (double-click the node to view or edit it).',
 	'codeBlock.copy': 'Copy code',
+	'node.task.markDone': 'Mark as done',
+	'node.task.markUndone': 'Mark as not done',
+	'tag.searchUnavailable': 'Could not open tag search (search plugin not found)',
 	'rename.titleConflict': 'A file with that name already exists; cannot rename by central node',
 	'rename.titleFailed': 'Failed to rename the file by its central node: ',
 

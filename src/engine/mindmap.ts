@@ -74,6 +74,7 @@ export { cancelEngineTimers } from './mindmap-timers';
 export {
 	HISTORY_BUDGET_BYTES,
 	HISTORY_SNAPSHOT_BYTES_PER_NODE,
+	recordHistory,
 	resolveHistoryLimit,
 	syncHistoryLimit,
 } from './mindmap-history';

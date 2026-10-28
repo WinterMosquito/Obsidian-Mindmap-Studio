@@ -47,6 +47,8 @@ vi.mock('../src/engine/mindmap', () => ({
 	getNodeGroupEl: getNodeGroupElMock,
 	isEditingText: isEditingTextMock,
 	markNodeNeedLayout: markNodeNeedLayoutMock,
+	// 原文写回收尾会记一条撤销快照（见 engine/mindmap-history.recordHistory）
+	recordHistory: vi.fn(),
 }));
 
 vi.mock('../src/markdown/md-serialize', () => ({

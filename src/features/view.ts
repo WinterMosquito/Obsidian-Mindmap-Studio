@@ -61,6 +61,8 @@ import {
 	setMindMapProperty,
 } from '../domain/mindmap-property';
 import { registerWikilinkInteractions } from './view-wikilink';
+import { setupNodeTaskInteraction } from './view-node-task';
+import { registerTagClicks } from './view-tag';
 import {
 	closeInlineEditor,
 	isAnyNodeEditing,
@@ -482,6 +484,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				setupPasteHandler(this);
 				setupContextMenu(this);
 				registerWikilinkInteractions(this);
+				// 任务复选框：画布 capture 接管点击（点一下即切换，见 view-node-task）
+				setupNodeTaskInteraction(this);
+				// 标签 pill：画布 capture 接管点击 → 官方标签搜索（私有触点）
+				registerTagClicks(this.engineEvents, this.canvasEl, this.app, this.lang);
 				// 节点内代码块的复制按钮（悬停显形 → 点击复制 → ✓ 反馈）
 				registerCodeBlockInteractions(this);
 				// 画布视口手势（Ctrl+滚轮缩放 / 滚轮平移 / 中键拖）：对齐官方 Canvas

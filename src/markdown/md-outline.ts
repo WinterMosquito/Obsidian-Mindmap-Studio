@@ -29,6 +29,7 @@ import {
 	wikilinkTargetIsAttachment,
 } from '../domain/wikilink';
 import { isUrlLikeText } from '../domain/url';
+import { parseTaskPrefix, stripTaskPrefix } from '../domain/md-task';
 import { isIndentedCodeLine } from '../core/constants';
 import type { MdTokenSegment } from '../domain/md-meta';
 import type { MdNodeData } from '../core/node-data';
@@ -587,9 +588,19 @@ export function parseMdOutline(
 			listStack.length > 0
 				? listStack[listStack.length - 1]!.node
 				: contentParent;
+		// 任务列表项（GFM task）：token 留在 mdRaw（逐字回写依据），显示文本
+		// 与派生文本一起剥——只剥一个会让 rawOk 恒假、整篇任务节点被合成回写
+		const inline = buildLineInlineData(rawText);
+		const task = parseTaskPrefix(rawText);
+		if (task) {
+			inline.text = stripTaskPrefix(inline.text);
+			inline.mdDerivedText = inline.text;
+			inline.mdTask = task.state;
+			inline.mdTaskToken = task.token;
+		}
 		const node: MindMapTreeNode = {
 			data: {
-				...buildLineInlineData(rawText),
+				...inline,
 				mdType: 'list',
 				mdMarker: marker,
 			},

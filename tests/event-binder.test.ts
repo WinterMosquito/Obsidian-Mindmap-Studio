@@ -15,7 +15,7 @@
  * target/emitter 都是结构化类型，故用普通对象桩即可，无需 DOM 环境。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EventBinder } from '../src/core/event-binder';
+import { EventBinder, elementFromTarget } from '../src/core/event-binder';
 import type { EventTargetLike } from '../src/core/event-binder';
 
 interface DomCall {
@@ -262,5 +262,19 @@ describe('EventBinder.destroy（两类事件一次性收口）', () => {
 	it('未注册任何事件时 destroy 无副作用', () => {
 		const binder = new EventBinder();
 		expect(() => binder.destroy()).not.toThrow();
+	});
+});
+
+describe('elementFromTarget（跨 realm 的事件目标判定）', () => {
+	it('有 closest 的对象即当元素用（popout 里 instanceof 恒 false 的替代判据）', () => {
+		const fake = { closest: () => null };
+		expect(elementFromTarget(fake as unknown as EventTarget)).toBe(fake);
+	});
+
+	it('null / undefined / 非对象 / 无 closest 一律返回 null', () => {
+		expect(elementFromTarget(null)).toBeNull();
+		expect(elementFromTarget(undefined)).toBeNull();
+		expect(elementFromTarget('text' as unknown as EventTarget)).toBeNull();
+		expect(elementFromTarget({} as EventTarget)).toBeNull();
 	});
 });

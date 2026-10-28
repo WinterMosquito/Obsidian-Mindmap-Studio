@@ -11,6 +11,8 @@
  * 不写入 .mindmap.md 文件正文。
  */
 
+import type { TaskState } from './md-task';
+
 /**
  * 「节点文本自解析后是否被编辑过」——回写侧与渲染侧的**唯一判据**。
  *
@@ -224,4 +226,20 @@ export interface MdNodeMeta {
 	 * ——那两种是用户意图，尺寸应照旧回写。
 	 */
 	mdImageAutoSize?: boolean;
+	/**
+	 * 任务列表状态（GFM task list item）。
+	 *
+	 * 只在 `mdType === 'list'` 且**首行**以 `[ ]` / `[x]` / `[X]` 开头时存在；
+	 * 判定与合成收口在 `domain/md-task`。`mdRaw` 保留 token（逐字回写），
+	 * `text` / `mdDerivedText` 剥掉 token（显示文本）——两者必须**一起**剥，
+	 * 否则 `md-serialize.rawOk` 会把每个任务节点判成「已编辑」。
+	 */
+	mdTask?: TaskState;
+	/**
+	 * 任务 token 的**原样**写法（`[ ]` / `[x]` / `[X]`）。
+	 *
+	 * 合成回写时逐字还原（不把用户写的 `[X]` 规范化成 `[x]`）；仅在 `mdTask`
+	 * 存在时有意义。切换状态时由 `domain/md-task.toggleTaskToken` 生成新值。
+	 */
+	mdTaskToken?: string;
 }

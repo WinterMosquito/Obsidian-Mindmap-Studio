@@ -27,6 +27,7 @@ import {
 } from '../core/constants';
 import { readNodeDataString } from '../core/node-data';
 import { isNodeTextEdited } from '../domain/md-meta';
+import { withTaskPrefix } from '../domain/md-task';
 import { tokenizeInline } from './md-outline';
 import {
 	anchorInsertPoint,
@@ -661,15 +662,20 @@ export function composeNodeFirstLine(
 	if (rawOk(data, app)) {
 		return data.mdRaw.split('\n')[0]!;
 	}
+	let body: string;
 	// 纯 token 节点（文本恰为链接/图片自身显示名）→ 只输出 token（避免旧名冗余）
 	if (isPureLinkNode(data)) {
 		// 两枚 token 都要写出（图文/图+链接节点此前只写一枚 → 图片丢失）
 		const tokens = inlineTokens(data, app);
-		if (tokens.length > 0) {
-			return tokens.join(' ');
-		}
+		body = tokens.length > 0 ? tokens.join(' ') : composeFirstLine(data, app);
+	} else {
+		body = composeFirstLine(data, app);
 	}
-	return composeFirstLine(data, app);
+	// 任务前缀只出现在合成路径（rawOk 分支返回的 mdRaw 已自带 token）。
+	// 三条合成分支（纯 token / 分段 / 尾插）都要拼回，否则「改一次文本」或
+	// 「拆分一次链接」就会把任务变成普通条目。
+	const token = data.mdTaskToken;
+	return typeof token === 'string' && token ? withTaskPrefix(token, body) : body;
 }
 
 /**

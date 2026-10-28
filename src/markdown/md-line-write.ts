@@ -21,6 +21,7 @@ import {
 	INLINE_LINK_FIELDS,
 	PLAIN_IMAGE_FIELDS,
 } from './md-outline';
+import { parseTaskPrefix, stripTaskPrefix } from '../domain/md-task';
 import type { MdNodeData } from '../core/node-data';
 
 /**
@@ -35,6 +36,9 @@ const REBUILT_FIELDS = [
 	...PLAIN_IMAGE_FIELDS,
 	'mdImageAutoSize',
 	'mdSegments',
+	// 任务前缀由新原文重新判定：行里删掉 `[ ]` 后不能残留旧状态
+	'mdTask',
+	'mdTaskToken',
 ] as const;
 
 /**
@@ -49,14 +53,22 @@ const REBUILT_FIELDS = [
  */
 export function applyRawToNode(data: MdNodeData, raw: string): void {
 	const lines = raw.split('\n');
-	const parsed = buildInlineData(lines[0] ?? '');
+	const firstLine = lines[0] ?? '';
+	const parsed = buildInlineData(firstLine);
+	const task = data.mdType === 'list' ? parseTaskPrefix(firstLine) : null;
 	for (const key of REBUILT_FIELDS) {
 		delete data[key];
 	}
 	Object.assign(data, parsed);
+	if (task) {
+		data.mdTask = task.state;
+		data.mdTaskToken = task.token;
+	}
 	const rest = lines.slice(1).map((line) => line.trimStart());
-	const text = rest.length > 0 ? [parsed.text, ...rest].join('\n') : parsed.text;
+	// 任务 token 只在 mdRaw（逐字回写依据）里保留；显示文本与派生文本一起剥
+	const firstText = task ? stripTaskPrefix(parsed.text) : parsed.text;
+	const text = rest.length > 0 ? [firstText, ...rest].join('\n') : firstText;
 	data.text = text;
 	data.mdDerivedText = text;
-	data.mdRaw = [lines[0] ?? '', ...rest].join('\n');
+	data.mdRaw = [firstLine, ...rest].join('\n');
 }

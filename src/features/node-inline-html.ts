@@ -2,8 +2,13 @@
  * 节点内联内容的 **DOM 装配**（2026-10-16 自 `node-inline-content.ts` 拆出）。
  *
  * 覆盖：类名与锚点属性契约、内联样式常量表（导出保真契约，K53 ⑤）、
- * 段序列 → HTML（文本段 / 锚点 / 表格 / 代码块 / 数学）与节点内容根
- * （`buildInlineNodeContent`）。段序列与接管判定来自 `node-inline-tokenize`。
+ * 段序列 → HTML（文本段 / 锚点 / 表格 / 代码块 / 数学 / **标签 pill**）+
+ * **任务复选框**与节点内容根（`buildInlineNodeContent`）。段序列与接管判定来自
+ * `node-inline-tokenize`。
+ *
+ * 两条类名是**跨模块契约**：`span.mindmap-node-task` 供 `view-node-task` 在画布
+ * capture 阶段命中，`a.tag[data-tag]` 供 `view-tag`（**刻意不写 `href`** ⇒ 不入
+ * `ANCHOR_SELECTOR`，链接三通道零改动）。改任一处都要同步改消费方。
  *
  * **着色节点**（节点 data 带 `fillColor`，即 `%%#hex%%` 指令的落点）额外有一套
  * 派生样式：墨色、码块阶、网格线都从底色现算（`domain/color.nodeContentTones`），
@@ -33,6 +38,7 @@ import {
 	buildInlineSegments,
 	clampSegments,
 	resolveSelfDrawSource,
+	taskStateOf,
 	type InlineContentDocument,
 	type InlineContentOptions,
 	type InlineSegment,
@@ -59,6 +65,12 @@ const MARKUP_TAGS: Record<InlineTextStyle, string> = {
 
 /** 自绘节点内容的根类名（样式见 styles.css，测宽/断言按它定位） */
 export const NODE_INLINE_CONTENT_CLASS = 'mindmap-node-inline-content';
+
+/**
+ * 任务复选框的类名（**交互契约**：`features/view-node-task` 用它在画布 capture
+ * 阶段命中点击目标；改这里必须同步改那边，两处都不许写字面量）。
+ */
+export const NODE_TASK_CLASS = 'mindmap-node-task';
 
 /**
  * 自绘内容根元素上的「字体代际」标记属性名（K114）。
@@ -438,6 +450,8 @@ export function buildInlineNodeContent(
 			// 节点级配色（`%%#hex%%`）：着色节点内所有「轻渲染」都从这份派生色取，
 			// 未着色节点为 null（样式与改动前逐字一致）
 			tones: readNodeTones(node),
+			// 任务状态：图片节点在 resolveSelfDrawSource 已被挡掉（裁决 4）
+			task: taskStateOf(node.getData?.() as Record<string, unknown> | null),
 			options,
 			lang,
 			owner,
@@ -445,7 +459,7 @@ export function buildInlineNodeContent(
 	);
 }
 
-/** 段序列 → HTML 元素（文本节点 + 锚点）的构建参数 */
+/** `buildContentElement` 的构建参数（一次装配读一次的取值，随段递归下传） */
 interface BuildContentParams {
 	/**
 	 * 非空表示「只显示了开头」（超长截断，见 MAX_INLINE_CONTENT_CHARS）：除尾部 `…`
@@ -474,6 +488,11 @@ interface BuildContentParams {
 	 * 写进文件的实色不随主题变，内容色也应保持一致。
 	 */
 	tones: NodeContentTones | null;
+	/**
+	 * 任务状态（`null` = 非任务）：复选框是自绘内容的**第一个子元素**，与文本
+	 * 同处一个 `foreignObject`，导出 SVG 时随内容一起序列化。
+	 */
+	task: 'todo' | 'done' | null;
 }
 
 /**
@@ -519,7 +538,149 @@ function readNodeTones(node: MindMapNode): NodeContentTones | null {
 	return hex ? nodeContentTones(hex) : null;
 }
 
-/** 段序列 → HTML 元素（文本节点 + 锚点） */
+/**
+ * 缺省强调色（`#7f6df2`＝Obsidian 默认 `--text-accent`）。
+ *
+ * 标签 pill 与任务复选框共用：两者的内联样式要进导出 SVG（**不注入 styles.css**，
+ * 见文件头的导出保真契约），故不能只写 `var(--text-accent)` 一条。
+ */
+const NODE_ACCENT_FALLBACK = '#7f6df2';
+
+/**
+ * 标签 pill 的内联样式（**导出保真**：导出图不含 styles.css）。
+ *
+ * 用 `<a>` 但**不写 href**：既有 `ANCHOR_SELECTOR`
+ * （`a.internal-link, a.external-link, a[href]`）因此不会命中它，链接的三条
+ * 通道（点击 / 悬停预览 / 中键）零改动；标签点击由 `features/view-tag` 的
+ * `a.tag[data-tag]` 分支单独接管（唯一入口，文件视图与只读嵌入共用）。
+ */
+const TAG_STYLES: Partial<CSSStyleDeclaration> = {
+	display: 'inline',
+	padding: '0 4px',
+	borderRadius: '4px',
+	textDecoration: 'none',
+	cursor: 'pointer',
+	color: NODE_ACCENT_FALLBACK,
+	backgroundColor: 'rgba(127, 109, 242, 0.14)',
+};
+
+/** 标签段 → pill 元素（`text` 带 `#`，`data-tag` 是不带 `#` 的名称） */
+function buildTagElement(
+	doc: InlineContentDocument,
+	segment: InlineSegment,
+	params: BuildContentParams,
+): HTMLElement {
+	const el = doc.createElement('a');
+	el.className = 'tag';
+	el.setAttribute('data-tag', segment.tag ?? '');
+	el.textContent = segment.text;
+	Object.assign(el.style, TAG_STYLES);
+	if (params.tones) {
+		// 着色节点：pill 与行内码同族（墨色文字 + 从底色派生的 chip）
+		el.style.color = params.tones.ink;
+		el.style.backgroundColor = params.tones.chip;
+	}
+	return el;
+}
+
+/**
+ * 复选框盒模型（**内联**：导出 SVG 不含 styles.css，见文件头的导出保真契约）。
+ *
+ * 尺寸取 13px：与 14/15px 正文的首行基线对齐后不顶高节点；对勾用普通文本
+ * （`✓`）而非表单控件——`<input type=checkbox>` 在 foreignObject 的序列化 /
+ * 光栅化路径上表现不一致，且无法内联主题色。
+ *
+ * **盒子本体不能有直接文本子节点**（`position: relative` 只服务于对勾层）：
+ * 空 inline-block 的基线取底边 margin edge，一旦盒内出现 `✓`，基线改为字形
+ * 基线 ⇒ 所在行盒被撑高 2px ⇒ 引擎重测出「勾选后节点高 26→28」，画布上节点
+ * 上下各长 1px、**下方兄弟节点整列下移**、复选框相对文字下沉（2026-10-28 实机：
+ * 未勾选 26 / 已勾选 28；内容盒高度对照 空=26、放 `✓`=28、清空=26、
+ * `✓` 放绝对定位子元素=26）。故对勾一律走 `TASK_GLYPH_STYLES` 的绝对定位层，
+ * 两层都渲染（未勾选层留空）以保证两态结构一致。
+ */
+const TASK_BOX_STYLES: Partial<CSSStyleDeclaration> = {
+	position: 'relative',
+	display: 'inline-block',
+	boxSizing: 'border-box',
+	width: '13px',
+	height: '13px',
+	lineHeight: '10px',
+	textAlign: 'center',
+	borderStyle: 'solid',
+	borderWidth: '1.5px',
+	borderRadius: '3px',
+	marginRight: '6px',
+	verticalAlign: '-2px',
+	fontSize: '10px',
+	fontWeight: '700',
+	cursor: 'pointer',
+	userSelect: 'none',
+};
+
+/**
+ * 对勾层：**绝对定位**（不参与行盒 ⇒ 有没有 `✓` 都不改变盒子基线，见
+ * `TASK_BOX_STYLES`）。`inset: 0` 铺满边框内的内容区，flex 居中抵消
+ * `line-height`/字体度量差异；`pointerEvents: none` 让命中判定统一落在复选框
+ * 本体上（`view-node-task` 的 `closest('.mindmap-node-task')` 之外不该有目标）。
+ */
+const TASK_GLYPH_STYLES: Partial<CSSStyleDeclaration> = {
+	position: 'absolute',
+	top: '0',
+	left: '0',
+	right: '0',
+	bottom: '0',
+	display: 'flex',
+	alignItems: 'center',
+	justifyContent: 'center',
+	lineHeight: '1',
+	fontSize: '10px',
+	fontWeight: '700',
+	pointerEvents: 'none',
+};
+
+/**
+ * 任务复选框：状态由 `data.mdTask` 决定，点击切换由 `features/view-node-task`
+ * 在画布 capture 阶段接管（本函数只负责画，不绑事件——节点会随渲染重建，
+ * 逐元素绑监听必然泄漏）。
+ */
+function buildTaskCheckbox(
+	doc: InlineContentDocument,
+	state: 'todo' | 'done',
+	params: BuildContentParams,
+): HTMLElement {
+	const box = doc.createElement('span');
+	box.className = NODE_TASK_CLASS;
+	box.setAttribute('data-task', state);
+	box.setAttribute('role', 'checkbox');
+	box.setAttribute('aria-checked', state === 'done' ? 'true' : 'false');
+	box.setAttribute(
+		'aria-label',
+		t(
+			params.lang,
+			state === 'done' ? 'node.task.markUndone' : 'node.task.markDone',
+		),
+	);
+	Object.assign(box.style, TASK_BOX_STYLES);
+	// 着色节点：描边/填充取派生墨色（与行内码、表格线同源），未着色走缺省强调色
+	const ink = params.tones?.ink;
+	const accent = ink ?? NODE_ACCENT_FALLBACK;
+	box.style.borderColor = accent;
+	// 对勾层两态都建（未勾选留空）：结构恒定，避免「有没有子节点」再引出
+	// 任何尺寸差异（基线/层叠上下文以外的第二份变量）
+	const mark = doc.createElement('span');
+	Object.assign(mark.style, TASK_GLYPH_STYLES);
+	mark.textContent = state === 'done' ? '✓' : '';
+	if (state === 'done') {
+		box.style.backgroundColor = accent;
+		// 对勾与底色必须对比：墨色是白（底色偏深）⇒ 深色勾，其余（墨色深）⇒ 白勾。
+		// 对勾层继承盒色，故只在这里定一次。
+		box.style.color = ink === '#ffffff' ? '#1f2937' : '#ffffff';
+	}
+	box.appendChild(mark);
+	return box;
+}
+
+/** 段序列 → HTML 元素（复选框 + 文本 / 锚点 / 标签 / 表格） */
 function buildContentElement(
 	doc: InlineContentDocument,
 	segments: readonly InlineSegment[],
@@ -562,6 +723,10 @@ function buildContentElement(
 	if (params.tones) {
 		box.style.color = params.tones.ink;
 	}
+	// 复选框在所有段之前（与 GFM 列表项 `- [ ] 文本` 的阅读顺序一致）
+	if (params.task) {
+		box.appendChild(buildTaskCheckbox(doc, params.task, params));
+	}
 	for (const segment of segments) {
 		if (segment.kind === 'table') {
 			box.appendChild(buildTableElement(doc, segment, params));
@@ -569,6 +734,10 @@ function buildContentElement(
 		}
 		if (segment.kind === 'text') {
 			box.appendChild(buildTextElement(doc, segment, params));
+			continue;
+		}
+		if (segment.kind === 'tag') {
+			box.appendChild(buildTagElement(doc, segment, params));
 			continue;
 		}
 		box.appendChild(buildAnchor(doc, segment, params));

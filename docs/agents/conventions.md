@@ -1,4 +1,4 @@
-# 关键约定 K1–K149（详录）
+# 关键约定 K1–K150（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -329,6 +329,16 @@
   ② 根因（`obsidian.asar` 1.13.x 反查 + 实机 DOM）：核心在 `body` 上委托 `pointerover`/`pointerout`、选择器就是 `"[aria-label]"`，命中后直接读该属性作提示文本 `createDiv({cls:"tooltip", text})`（`data-tooltip-delay` 缺省 1000ms、`data-tooltip-position` 缺省 bottom）。故 **不是** `setTooltip` 专属——手写 `setAttribute('aria-label', …)` 一样会弹；也与 `title` / CSS 伪元素无关（实测 `getComputedStyle(panel,'::after').content === 'none'`，全量样式表无 `[aria-label]` + `::after` 规则）。唯一抑制口是元素计算样式 `--no-tooltip: true`（核心内部约定）。
   ③ 处置：面板**只留 `role="group"`、不加可访问名**，`minimap.label` 双语词条一并删除（面板是纯视觉浮层，不需要可访问名）。日后要恢复可访问名**不要**回填 `aria-label`——改 `aria-labelledby` 指向视觉隐藏文本（标准 ARIA，不进 `[aria-label]` 选择器）。
   ④ 验收：实机悬停面板后 `document.querySelector('.tooltip')` 不再出现该文本（单元测试覆盖不到核心的委托监听）。
+
+- [K150] **任务复选框与标签只能走「插件自绘 + 正文派生」，不能写引擎 `tag` / `note` / `icon` 字段（2026-10-28 用户裁决；实机 + vendor 取证）**：
+  ① 引擎事实（vendor 0.14.0-fix.3 的 `createNodeData`）：`this._customNodeContent` 存在时 `mt(...)` 后**直接 return**，其后的 `createImgNode` / `createIconNode` / `createTagNode` / `createNoteNode` / `createAttachmentNode` 全不执行 ⇒ 自绘节点上 `data.tag` / `data.note` 不会渲染、也不会进引擎搜索（引擎 search 只匹配文本）。本插件「快速文本节点渲染」恒开 ⇒ 文本节点全是自绘 ⇒ 写这些字段等于写一个永不显示的第二份数据。故：任务 = `data.mdTask` + 自绘 `span.mindmap-node-task`；标签 = 段序列 `kind:'tag'` + 自绘 `a.tag[data-tag]`；**备注（`note`）与附件映射明确不采用**（标准 Markdown 无对等物，`%%note:` 属私有语法，脚注定义行会破逐字保真）。
+  ② **任务 token 是「正文前缀」而非列表标记**（`- [ ] 文本` 的 `- ` 是标记，`[ ]` 属于正文）：`mdRaw` 必须保留 token（未编辑逐字回写），`text` 与 `mdDerivedText` 必须**一起**剥（`md-serialize.rawOk` 的唯一判据是两者相等；只剥其一会让整篇任务节点恒被判「已编辑」）。合成侧三条路径（纯 token / 分段 / 尾插）统一在 `composeNodeFirstLine` 末尾拼回 `mdTaskToken`（`[X]` 原样保留）；`links-split.writeSplitPlanToData` 重建父行后同样要重剥离，否则拆分一次链接父节点就多出一个 `[ ]`。
+  ③ **标签留在 `text` 里**（与 wikilink 剥壳相反）：Obsidian 阅读视图里 `#tag` 本就是可见文本，故只加段样式、零写回——`rawOk` 恒成立，风险面为零。判定顺序：`MARKUP_RE` 的保护区（注释 / 围栏 / 行内码 / 数学 / 转义）先切走，剩余 prose 再按「前一个字符非词字符」判标签；**转义产物**（`\#` → `#`）单独成段并带 `escaped` 标记，否则 `\#标题` 会被当成标签（回归：`tests/node-inline-content.test.ts` 的转义字符集用例）。
+  ④ **私有触点**（规则 9）：官方没有标签搜索 API，走 `app.internalPlugins.getPluginById('global-search').instance.openGlobalSearch('tag:#名')`；`internalPlugins` 与该方法都不在 `obsidian.d.ts`，故收口在 `platform/tag-search.ts`、任何一层缺失/抛错都降级为**一次**可见 `Notice`（`tag.searchUnavailable`）+ 一条 `console.warn`，不许每次点击重复弹、也不许静默空转（回归：`tests/tag-search.test.ts`）。
+  ⑤ **撤销**：插件侧「原文写回」通道（内联编辑 / 节点配色 / 任务勾选）直接改 data 后 `render()`，**不产生历史**（引擎只在 `Command.exec` 收尾 `addHistory()`，K26b）；这样的快照序列与数据脱节 ⇒ 一次 `Ctrl+Z` 会连带回退更早的未记录编辑（数据损失，不是「少个功能」）。故 `applyRawNodeContent` 收尾统一调 `engine/mindmap-history.recordHistory`（引擎 `command.addHistory()`，d.cts 未声明，防御式读取）。**不要**在批量循环里逐条跳过再补一条：`addHistory` 自带 100ms 防抖，连续写入天然合并为一条快照。
+  ⑥ **已知边界**（有意，勿当缺陷）：含图节点不接管自绘 ⇒ 任务复选框与标签 pill 都不画，也不提供右键入口（裁决 4）；轻标记内部不识别标签；`#123` 全数字不是标签；仅列表项首行识别任务；无右键菜单 / 键盘入口 / 多选批量（裁决 6）。
+  ⑦ **对勾不能进复选框盒的文本节点（2026-10-28 实机：勾选后节点「下沉」）**：空 inline-block 的基线取底边 margin edge，盒内一旦出现 `✓` 基线改为字形基线 ⇒ 所在行盒被撑高 2px ⇒ 引擎重测出节点高 26→28：勾选瞬间节点上下各长 1px（gY 151→150）、**下方兄弟节点整列下移 1px**（181→182 / 212→213）、复选框相对文字下沉（y 158→160，文本 155→154）。同文件静止态即可看到差异：未勾选节点 26、已勾选 28。故对勾一律渲染在**绝对定位层**（`TASK_GLYPH_STYLES`：`position:absolute` + 四边 0 + flex 居中 + `pointerEvents:none`），盒本体 `position:relative` 且两态都只有一个「空 / `✓`」子节点；修复后实机勾选前后高度、位置全部不变（gH 恒 26、兄弟不动）。两条看似对症但**无效**的补丁备查：`overflow:hidden`（DOM 内容盒回到 26，但引擎测得的节点高仍 28 ⇒ 内容与盒不一致，更偏）、`vertical-align:middle`（仍 28）。结构前提由 `tests/view-node-task.test.ts` 锁住（盒本体无裸文本 + 对勾层 `position:absolute`），像素级回归只能靠实机（Node 桩无布局）。**实机复验（2026-10-28 清理批）**：13px 盒在勾选前后 `foreignObject` 高度恒 25.59px（本轮实机读数），与相邻普通列表项一致；`execCommand('BACK')` 回退后 DOM 的 `data-task` 与磁盘 token **同时**回到 `[ ]`（`command.back()` 只移动索引、不落数据——撤销请走 `execCommand('BACK')`，别拿 `command.back()` 当判据）。
+  ⑧ **跨 realm 的事件目标判定只此一份**（2026-10-28）：复选框与标签 pill 都要「`Event.target` → 元素」，早期两个模块各写一份 `typeof closest === 'function'` 的能力判定。现已收口到 `core/event-binder.elementFromTarget`——放 core 而非 `features/view-common`：`view-tag` 是只读嵌入路径上的模块，`view-common` 会顺带把 `engine/mindmap` → vendor 拖进模块图（`tests/view-tag.test.ts` 实测 `document is not defined`）。回归：`tests/event-binder.test.ts`。
 
 ### Obsidian API 合规与工具链
 

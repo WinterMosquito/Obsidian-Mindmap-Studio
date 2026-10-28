@@ -7,6 +7,37 @@ import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 import { countTreeNodes, getRenderRoot } from './mindmap-nodes';
 
 /**
+ * 把**当前整树**记为一条撤销快照。
+ *
+ * ## 为什么需要它
+ * 引擎只在命令收尾自动 `addHistory()`（`Command.exec` 对非白名单命令，见 K26b）；
+ * 插件侧的「原文写回」通道（`features/node-inline-editor.applyRawNodeContent`：
+ * 内联编辑 / 节点配色 / 任务勾选）直接改 data 后 `render()`，**不产生历史**——
+ * 撤销会跳过这些改动、直接回到更早的快照（用户感知为「一次撤销丢一堆编辑」）。
+ * 故该通道收尾必须显式记一条。
+ *
+ * ## 口径
+ * - **先改数据、后记历史**：`addHistory` 推的是「此刻」快照，前一条仍在序列里；
+ * - 引擎内部自带 100ms 防抖（K26e）：同一批连续写入合并成一条，正是批量配色
+ *   与连续勾选需要的行为；
+ * - 引擎面未在 d.cts 声明（`mindMap.command`），故按防御式读取——缺失只留痕，
+ *   不让一次编辑失败。
+ */
+export function recordHistory(mindMap: MindMap | null | undefined): void {
+	const command = (
+		mindMap as unknown as { command?: { addHistory?: () => void } } | null | undefined
+	)?.command;
+	if (typeof command?.addHistory !== 'function') {
+		return;
+	}
+	try {
+		command.addHistory();
+	} catch (error) {
+		console.warn('记录撤销历史失败', error);
+	}
+}
+
+/**
  * 命令历史的**单视图堆内存预算**：引擎逐条保存「整树 JSON 快照」，每条堆占用
  * ≈ 节点数 × `HISTORY_SNAPSHOT_BYTES_PER_NODE`（K65 实测），固定条数上限会让
  * 单视图历史随图规模失控（旧策略：<2000 节点 500 条 ⇒ 500 节点图 ≈ 91MB/视图）。

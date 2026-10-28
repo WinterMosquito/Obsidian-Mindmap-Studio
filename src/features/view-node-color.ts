@@ -122,6 +122,8 @@ export function applyNodeColor(
 		if (next === raw) {
 			continue;
 		}
+		// 历史由 applyRawNodeContent 统一记（引擎 addHistory 自带 100ms 防抖：
+		// 同一批多选改色在窗口内合并成**一条**快照，不会按节点数堆历史）
 		applyRawNodeContent(view, node, next);
 		colored = true;
 	}
