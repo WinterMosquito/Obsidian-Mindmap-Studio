@@ -193,7 +193,7 @@ const ZH = {
 	'settings.languageDesc': '界面语言，切换后立即生效',
 	'settings.defaultLayout': '默认布局',
 	'settings.defaultLayoutDesc':
-		'新建导图时使用的布局\n单篇导图可在右键菜单的「布局」中随时切换',
+		'新建导图时使用的布局；已存在的导图各自记录在文件属性里，可在右键菜单的「布局」中随时切换（写入文件属性）',
 	'settings.defaultLineStyle': '默认连线样式',
 	'settings.defaultLineStyleDesc':
 		'新建导图时使用的连线样式\n仅逻辑结构图 / 思维导图 / 组织结构图可切换折线与曲线',
@@ -291,6 +291,9 @@ const ZH = {
 		'连续自动保存失败，已暂停自动保存；编辑内容仍在内存中，修复问题后请手动保存',
 	'save.pluginDataFailed': '写入插件配置失败：',
 
+	// ===== 视图（运行期动作失败） =====
+	'view.layoutWriteFailed': '切换布局失败（文件属性未写入）：',
+
 	// ===== 图片保存 =====
 	'attachment.tooLarge': '图片过大（{size} MB），最大支持 {max} MB',
 	'attachment.saveFailed': '保存图片失败：',
@@ -306,6 +309,8 @@ const ZH = {
 	'mindmapEmbed.tooMany':
 		'导图节点数 {count} 超过嵌入上限 {max}，此处仅显示大纲',
 	'mindmapEmbed.renderFailed': '代码块导图渲染失败（详见控制台）',
+	'mindmapEmbed.unknownLayout':
+		'此处忽略布局指令「{value}」（不是六种布局之一），已改用默认布局',
 
 	// ===== 默认内容（新建思维导图） =====
 	'default.shortcutHint': '示例：把想法拆成子节点',
@@ -488,7 +493,7 @@ const EN: Record<TranslationKey, string> = {
 	'settings.languageDesc': 'UI language; applies immediately',
 	'settings.defaultLayout': 'Default layout',
 	'settings.defaultLayoutDesc':
-		'Layout used when creating a mind map\nEach map can be switched from the "Layout" submenu of its right-click menu',
+		'Layout used when creating a mind map; each existing map stores its own layout in the file properties and can be switched at any time from the "Layout" submenu of its right-click menu (written to the file property)',
 	'settings.defaultLineStyle': 'Default line style',
 	'settings.defaultLineStyleDesc':
 		'Connector style used when creating a mind map\nElbow / Curve can only be switched for Logical structure, Mind map and Organization chart',
@@ -585,6 +590,10 @@ const EN: Record<TranslationKey, string> = {
 		'Auto-save suspended after repeated failures; your edits are still in memory — save manually once the problem is fixed',
 	'save.pluginDataFailed': 'Failed to write plugin config: ',
 
+	// ===== 视图（运行期动作失败） =====
+	'view.layoutWriteFailed':
+		'Could not switch layout (the file property was not written): ',
+
 	// ===== 图片保存 =====
 	'attachment.tooLarge':
 		'Image is too large ({size} MB); the maximum is {max} MB',
@@ -600,6 +609,8 @@ const EN: Record<TranslationKey, string> = {
 	'mindmapEmbed.tooMany':
 		'The map has {count} nodes, above the embed limit of {max}; showing an outline instead',
 	'mindmapEmbed.renderFailed': 'Failed to render the mind map in this code block (see console)',
+	'mindmapEmbed.unknownLayout':
+		'Layout directive "{value}" is ignored here (not one of the six layouts); the default layout is used instead',
 
 	// ===== 默认内容（新建思维导图） =====
 	'default.shortcutHint': 'Example: break an idea into child nodes',

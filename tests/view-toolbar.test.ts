@@ -220,6 +220,7 @@ function makeView(
 		applyLineStyle,
 		applyThemeStyle,
 		resolvePreference: (key: keyof typeof appearance): string => appearance[key],
+		resolveLayout: (): string => appearance.layout,
 		plugin: {
 			settings: { defaultLayout: 'mindMap', defaultLineStyle: 'straight' },
 		},
@@ -576,7 +577,7 @@ describe('连线开关的可用态同步时机（2026-10-23 修复）', () => {
 	}
 
 	it('建栏早于文件加载（只有全局默认布局）：重建后置灰态双向跟随新布局', () => {
-		// onOpen 建栏时 resolvePreference('layout') 只能拿到 settings.defaultLayout
+		// onOpen 建栏时 resolveLayout() 只能拿到 settings.defaultLayout
 		const h = makeView({ layout: 'timeline', lineStyle: 'straight' });
 		buildToolbar(h.view);
 		expect(lineButton(h).classes).toContain('is-disabled');

@@ -349,7 +349,10 @@ function makeView(options: { canvasEl?: unknown; mindMap?: unknown } = {}) {
 		options.mindMap === undefined ? { execCommand, render } : options.mindMap;
 	const canvasEl = options.canvasEl === undefined ? { tag: 'canvas' } : options.canvasEl;
 	// 外观四项：屏上已无下拉，菜单勾选态由 resolvePreference 现算、变更走 apply*
-	const applyLayout = vi.fn<(value: string) => void>();
+	// 布局是异步的（写文件属性）且**必须返回 Promise**——菜单侧对它挂 `.catch` 兜拒绝
+	const applyLayout = vi
+		.fn<(value: string) => Promise<void>>()
+		.mockImplementation(() => Promise.resolve());
 	const applyLineStyle = vi.fn<(value: string) => void>();
 	const applyPalette = vi.fn<(value: string) => void>();
 	const applyThemeStyle = vi.fn<(value: string) => void>();
@@ -371,6 +374,8 @@ function makeView(options: { canvasEl?: unknown; mindMap?: unknown } = {}) {
 		applyThemeStyle,
 		resolvePreference: (key: keyof typeof preferences): string =>
 			preferences[key],
+		// 布局不在 PreferenceKey 里（它存文件属性），勾选态单独走 resolveLayout
+		resolveLayout: (): string => preferences.layout,
 	};
 	return {
 		view: raw as unknown as MindMapViewContext,

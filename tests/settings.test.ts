@@ -342,7 +342,6 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 	 * 增删即时刷新键必须同步改这份清单，避免差集悄悄漏键（视图侧就不再收到刷新）。
 	 */
 	const LIVE_REFRESH_KEYS = [
-		'defaultLayout',
 		'defaultLineStyle',
 		'defaultTheme',
 		'defaultThemeStyle',
@@ -353,6 +352,16 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 	it('首次应用（无快照）返回全部即时刷新键：视图走最完整路径', () => {
 		const changed = diffLiveRefreshKeys(null, DEFAULT_SETTINGS);
 		expect([...changed].sort()).toEqual([...LIVE_REFRESH_KEYS].sort());
+	});
+
+	it('defaultLayout 不在即时刷新键内（新建文件的种子值，对已打开视图无影响）', () => {
+		expect(diffLiveRefreshKeys(
+			{ ...DEFAULT_SETTINGS },
+			{ ...DEFAULT_SETTINGS, defaultLayout: 'fishbone' },
+		).size).toBe(0);
+		// 但设置项本身仍在、仍被白名单校验（见上方「布局白名单」用例）
+		expect('defaultLayout' in DEFAULT_SETTINGS).toBe(true);
+		expect(LIVE_REFRESH_KEYS).not.toContain('defaultLayout');
 	});
 
 	it('无变化返回空集：视图不做任何刷新（不重建引擎）', () => {

@@ -30,13 +30,25 @@
 
 ## 1. 定位与触发
 
-> 规则：只有 frontmatter 的属性声明（`类型` / `Type` = `Mindmap`）决定「这是导图」，文件名与后缀不参与；切换打开方式 = 改写该属性。
+> 规则：只有 frontmatter 的属性声明（键 `Mindmap`，值为**布局枚举**之一）决定「这是导图、用哪种布局」，文件名与后缀不参与；切换布局 = 改写该属性，切换打开方式 = 把值改成 `Markdown`。
 
 - 插件是 Markdown 的**渲染层**：导图文件是 100% 标准 Markdown（frontmatter + 标题 + 列表），无任何专有格式/标记。
-- **触发**：frontmatter 的 `类型` / `Type` 值为 `mindmap`（大小写不敏感；两个键**都认**）→ 文件以 markdown 视图出现时自动切到导图视图（双击/链接/重启恢复均生效）；「切换回 Markdown」随时返回，并恢复进入前的编辑/阅读模式（模式随视图状态**跨会话保留**）。判据的唯一实现在 `src/domain/mindmap-property.ts`（**读侧双键、写侧按语言选键**：zh 写 `类型`、en 写 `Type`，值 `Mindmap`）。文件**名**不参与判定——`.mindmap.md` 后缀已于 2026-10-12 退役（存量文件由迁移工具改为 `命名.md` + 属性声明）。
-- **降级（原「打开方式记忆」）**：没有第二份「打开方式」状态（不存 `data.json`）。**「以 Markdown 打开」= 持久降级**——把文件里命中的那个属性键改写为 `Markdown`（`FileManager.processFrontMatter`，无命中键则按语言补写），此后不再自动进导图视图；三个入口同语义（文件右键「以 Markdown 打开」、工具栏「切换回 Markdown」、命令「切换回 Markdown」）。**升级**（手动「以思维导图打开」任意笔记）反之：无声明时按语言补写 `类型`/`Type` = `Mindmap`，已声明则不动 YAML。**代价**：不存在「临时看一眼源码再切回」的轻量入口。
-- **键名随语言收敛**（2026-10-12）：升级 / 降级 / **语言切换**都经 `domain/mindmap-property.convergeMindMapPropertyKey` 把 `类型`/`Type` 收敛为**当前语言的唯一键**（zh `类型`、en `Type`），值随打开方式取 `Mindmap`/`Markdown`。此前「改语言只加新键」会让 `Type` 与 `类型` 并存（属性面板里两把键同现）；语言切换时由 `markdown/md-open.migrateMindMapPropertyKeys` 全库把已有声明的键**重命名为对方**（只改键名、值不动；已是目标键的文件免写）。**迁移先判值**：只有值确实是插件写的声明值（`Mindmap` / `Markdown`，判定在 `domain/mindmap-property.isMindMapDeclarationValue`）才动；`类型: wiki` 这类同名属性属于用户数据，一律不改（2026-10-23 修正——按**键名**全库改名曾把非导图笔记一并改掉）；目标键被非声明值占用时整个文件跳过。
-- **任意笔记入口**：文件右键「以思维导图打开」与同名命令对**任意 `.md`** 可用（右键项按声明互斥显示），因此「先改名/新建才能用」不再是前置条件；手动打开会**先把声明写入 frontmatter**（无声明→按语言补 `类型`/`Type` = `Mindmap`），即打开一次即正式成为导图、下次自动打开；此后**可编辑并回写**，且声明已写入，故编辑中心主题同样会重命名文件（守卫只看属性声明 `isMindMapFile`，见 `src/features/view-title-renamer.ts`）。
+- **触发**：frontmatter 含键 `Mindmap`（键名大小写不敏感）且值为七个标准值之一（2026-10-29 起值即布局）：
+
+  | 属性值（写入形态） | 布局 |
+  |---|---|
+  | `LogicalStructure` | 逻辑结构图 |
+  | `Mindmap` | 思维导图 |
+  | `OrganizationStructure` | 组织结构图 |
+  | `CatalogOrganization` | 目录组织图 |
+  | `Timeline` | 时间轴 |
+  | `Fishbone` | 鱼骨图 |
+  | `Markdown` | **终止**：不渲染为导图（按普通 Markdown 打开） |
+
+  读侧宽容：`trim` → 小写 → 去掉 `-` / `_` 与所有空白后查表，故 `Mindmap` / `mindMap` / `mind map` / `MIND-MAP` 都是思维导图，`logical-structure` 是逻辑结构图；官方属性面板的数组形态**取第一项**（空数组＝无值）。**未知值 = 不是导图**（fail-closed、静默）。命中后文件以 markdown 视图出现时自动切到导图视图（双击/链接/重启恢复均生效）；「切换回 Markdown」随时返回，并恢复进入前的编辑/阅读模式（模式随视图状态**跨会话保留**）。判据的唯一实现在 `src/domain/mindmap-property.ts`（**单键**：写侧恒写 `Mindmap` + PascalCase 标准值，与界面语言无关）。文件**名**不参与判定——`.mindmap.md` 后缀已于 2026-10-12 退役。**断代（2026-10-28）**：旧键 `Type` / `类型` **完全不认**——不读、不写、不删、不迁移、不提示；旧文件把属性键名改成 `Mindmap`（或直接右键「以思维导图打开」，插件会补写标准键、旧键原样留着）即可重新成为导图；切语言不触碰任何文件。
+- **布局只存在于文件属性**：切换布局（右键「布局」）会改写该属性，**不写 `data.json`**；属性被外部改写（属性面板 / 其它窗格 / 同步）时，已打开的导图跟随重排但**不回写**文件。设置项「默认布局」只是**新建/升级时的种子值**，不参与任何已存在文件的解读。
+- **降级（原「打开方式记忆」）**：没有第二份「打开方式」状态（不存 `data.json`）。**「以 Markdown 打开」= 持久降级**——把声明键改写为 `Mindmap: Markdown`（`FileManager.processFrontMatter`，无声明值则补写），此后不再自动进导图视图；三个入口同语义（文件右键「以 Markdown 打开」、工具栏「切换回 Markdown」、命令「切换回 Markdown」）。短路条件只有「值已经是 `Markdown`」——布局值与未知值都会被改写。**升级**（手动「以思维导图打开」任意笔记）反之：无声明时补写**种子布局**的标准值（设置「默认布局」对应的属性值），已声明则不动 YAML。**代价**：不存在「临时看一眼源码再切回」的轻量入口。
+- **任意笔记入口**：文件右键「以思维导图打开」与同名命令对**任意 `.md`** 可用（右键项按声明互斥显示），因此「先改名/新建才能用」不再是前置条件；手动打开会**先把声明写入 frontmatter**（无声明→写种子布局的标准值），即打开一次即正式成为导图、下次自动打开；此后**可编辑并回写**，且声明已写入，故编辑中心主题同样会重命名文件（守卫只看属性声明 `isMindMapFile`，见 `src/features/view-title-renamer.ts`）。
 - **自动打开的时机**：判据经官方 `MetadataCache.getFileCache` 同步读取；已打开的文件被**就地**加上属性时，由 `metadataCache.on('changed')` 补判。时机编排在 `src/platform/mindmap-auto-open.ts`（active-leaf-change / file-open / 启动多档延时；定时器经 `host: Component` 注册随组件注销清理）。
 
 ---
@@ -47,7 +59,7 @@
 
 **中心节点 = 虚拟文档根**（第 0 层，文本 = 文件名（不含扩展名）；**恒为树根**——「仅当文件无任何标题时才作为内容树根」是 `mindmap` 代码块嵌入的**显示折叠**规则（`src/features/mindmap-codeblock.ts`），不适用于导图文件本身。2026-10-15 复核订正）。虚拟根不产生 md 行（`src/markdown/md-outline.ts parseMdOutline` 构造 `{ data: { text: rootName } }`，回写时不输出）。
 
-> **布局与视口持久化**：正文保持纯 Markdown，布局（`layout`）与视口（缩放/平移）不写入文件；插件将其存于 `data.json`（`viewState`，按文件路径 key，实现 `src/services/view-state.ts` 的 `ViewStateStore`），随文件改名/删除迁移或清理。
+> **布局与视口持久化**：正文保持纯 Markdown。**布局写在文件属性里**（frontmatter 的 `Mindmap` 值 = 布局枚举，见 §1）——视图加载时经 `markdown/md-open.readDeclaredLayout` 读声明、切换时经 `features/view.applyLayout` 写属性，`data.json` 不再保存逐文件布局（旧数据里的 `viewState[*].layout` 在启动时被剔除）。**视口**（缩放/平移）仍存于 `data.json`（`viewState`，按文件路径 key，实现 `src/services/view-state.ts` 的 `ViewStateStore`），随文件改名/删除迁移或清理。
 >
 > **打开时的默认视口 = 100% 缩放 + 整体内容居中**（不是 fit 全图）：`src/engine/mindmap.ts createMindMap` 显式传 `fit: false`；引擎布局默认 `initRootNodePosition=[center,center]`（首次布局把**根节点**摆在画布中心），故 `src/services/engine-controller.ts` 在**首次布局落地事件**（`node_tree_render_end`：在引擎布局任务内发出、与布局同帧提交，中间态不会被绘制）里就调用 `restoreOrFitViewport()`，再由 `VIEWPORT_RESTORE_DELAY_MS` 延时回调兜底一次（布局晚变而不再有布局事件时）——**有保存视口时** `mindMap.view.setTransformData(savedView)` 恢复；**无保存视口时**调 `centerContentAtFullScale(mindMap)`（`setScale(1, 画布中心)` → `measureContentBox()` 取渲染内容包围盒 → `translateXY` 把包围盒中心对齐画布中心）；只有该调用**抛异常**时才在 catch 中回退 `fitMindMap()`。首帧窗口内每次布局落地都重算（`initialViewportRecalcBudget` 限定次数：`resize` 会按新画布尺寸重摆根节点、图片尺寸回灌会改节点尺寸），几何换算一律取**实时容器**（`engine/mindmap-viewport.ts` 的 `getLiveCanvasRect`）——引擎缓存的 `elRect`/`width`/`height` 只在其创建与 `resize()` 时更新，首帧后布局 settle / 工具栏重建即失真，这正是「打开即偏移、点适应画布才回正」的根源；图片回灌改动包围盒后由 `scheduleViewportRecenter`（仅在仍是自动视口且用户未平移/缩放时）补一次居中；**恢复保存视口后停用全部自动化干预**。README/AGENTS.md 所述语义与此一致，「适应画布」是工具栏/命令的手动动作（`src/commands.ts`、`src/features/view-toolbar.ts`、`src/features/view-context-menu.ts` 三处入口）。回归由 `npm run verify:visual` 的 viewport 探针覆盖（20 层深链大图必须 100% 缩放、整体内容居中，且重置缩放漂移 ≤1px）。
 >
@@ -148,11 +160,12 @@
 | 项 | 标准 |
 |---|---|
 | **块体语法** | 与导图文件正文**同一份大纲语法**（标题 + 列表），解析走同一个 `parseMdOutline`——**不存在第二套格式**，也不新增设置项 |
+| **按块布局（首行指令）** | 块体**第一行**可写 `%%layout: <值>%%`（允许其前有空行；键名大小写不敏感，值走与 §1 相同的解析）：命中六种布局 → 该块按此布局渲染并**剥离该行**；值为 `Markdown` 或未知 → 同样剥离，布局回退默认并在块内给一行提示（可见降级）。**外壳不匹配**（如 `%%备注%%`）原样返回、不剥离；**只识别首行**（其后的同形文本是正文）；**值不可为空**（`%%layout: %%` 虽命中外壳——`(.+?)` 会吃掉分隔空白——但取到空值即判「不是指令」，整行按正文留在块内、不剥行也不弹提示）。无指令时布局取设置「默认布局」。解析为纯函数 `features/mindmap-codeblock.parseEmbedLayoutDirective`，指令行在 `parseMdOutline` **之前**剥离——绝不进入大纲变成节点 |
 | **中心主题** | 块体只有一个顶层块（一个 `# 标题` 或一条列表）→ 以该块为中心主题（虚拟文档根折叠）；多个顶层块 → 保留虚拟根，根名取插件文案（`mindmapEmbed.root`）。**刻意不另写「首个一级标题」判定**（标题语法只允许存在一份） |
 | **形态（尺寸）** | **完整显示 + 容器随内容**（对齐 Obsidian 里 Mermaid 的缺省口径：SVG `width:100%` + `max-width: 原宽`）：按容器宽度等比缩放（`scale = min(1, 可用宽 / 内容宽)`，**只缩不放**）后，容器高度 = 内容高 × scale + 留白 ⇒ 内容完整可见、小图不留大片空白框。⚠ 高度是**输出**（由比例反算），故不能用「适应画布」的双轴适配 |
 | **交互** | **只读 + 不可拖动 + 不可调节**：引擎原生 `readonly`（命令与编辑全禁）+ `enableViewDrag: false`（左键/中键拖动画布关闭）+ **不注册任何交互插件**（`Search`/`KeyboardNavigation` 会抢宿主笔记的 `Ctrl+F` 与方向键）+ 不提供 resize 手柄。节点内链接仍可点——**由 Obsidian 自身的链接委托处理**（锚点是官方形态 `a.internal-link[data-href]`，实机实测同标签打开；插件侧**不再**另接跳转，否则会双开）；块内代码块的复制按钮可用（与视图同一份实现）；悬停预览暂不提供 |
 | **滚轮** | **一律归宿主页面**：引擎对 wheel 无条件 `preventDefault`，嵌入在容器外层 capture 阶段 `stopPropagation` 拦下 ⇒ 指针悬在图上时笔记照常滚动 |
-| **持久化** | **不写 `data.json`**：嵌入的布局/视口不持久化，每次渲染按当前设置重算；也**不回写文件**（块体是用户手写的正文） |
+| **持久化** | **不写 `data.json`**：嵌入的布局/视口不持久化（布局的唯一来源是块体首行指令或当前设置），每次渲染重算；也**不回写文件**（块体是用户手写的正文）。换肤（`css-change`）复用**挂载时**解析出的布局，不重读设置 |
 | **规模上限** | 节点数 > `CODE_BLOCK_MAX_NODES`（500）→ 降级为**只读缩进大纲 + 可见提示行**（一篇笔记可有多个块，不为此付出多份引擎成本） |
 | **降级与错误** | 空块体 → 提示行；解析/引擎异常 → 清半初始化实例 + 块内提示行（控制台留痕）。**降级一律可见**，不静默 |
 | **风险（登记）** | 语言键 `mindmap` 沿用 0.0.1（存量笔记的接口），与第三方插件抢注同键的行为官方未文档化 |
@@ -199,13 +212,14 @@
 | **图片 token** | 仓库路径 → `![[path]]`；外部 http/data/blob/**file** → `![alt](url)`（**合成路径同样如此**：外链判定先于「`image === mdImageTarget`」，地址取当前 `image`——`mdImageTarget` 只是解析期快照，换图后会过期）；尺寸按 `目标\|宽度` 特征匹配判断是否需回写（终界 `]`/`x` 防前缀误匹配），未编辑则原文保真 |
 | **行内 token 的位置**（编辑/调宽后走合成时） | **原位优先，尾插兜底**（2026-10-12 K119 修复）：<br>① **有显示名**的 token（双链 / md 链接 / 文档与附件嵌入 / 非首图）→ 按显示名在显示文本里定位并替换（`mdSegments` 对齐表，§5 第 2 项）；<br>② **无显示名**的 token（**首图**、**icon-only URL**）→ 显示文本里没有它的痕迹，改按解析期记下的**上下文锚点**反查插入点（左邻 `before` / 右邻 `after` + `sepBefore`/`sepAfter` 分隔空白），插入时不改动文本；<br>③ 锚点反查须通过**邻接一致性**（原文该侧有空白 ⇒ 新文本同侧仍是空白/行尾），否则回落尾插——`对比 https://a.com` 被改成 `对比结果` 时短锚点 `对比` 仍会命中，不校验就会把 token 塞进「对比\|结果」中间；<br>④ 一枚都没能原位定位时整体回落尾插，token 顺序取自 `inlineTokens`（按原文出现位置）。<br>**为什么重要**：此前 ② 一律尾插，导致 `前 ![[图\|200]] 后` 一旦编辑/调宽就变成 `前 后 ![[图\|260]]`——**行内顺序被改写**（一行两图时首图被摘出原位），且尾插还会多出一个空格。 |
 | **frontmatter** | 正文重写前回贴**磁盘当前**的文件头（加载快照仅在读取失败时兜底），保证外部改动的属性不被覆盖；仅正文（body）被重写 |
-| **布局 / 视口 / 打开方式** | **不写入文件**：存 `data.json`（`viewState`，按文件路径 key） |
+| **布局** | **写入文件属性**（唯一写进文件的视图状态）：改 frontmatter 的 `Mindmap` 值（`FileManager.processFrontMatter`，正文与其它属性原样保留）。切换顺序是契约：先排空正文 → 写属性 → **成功之后**才重排画面；失败只提示（`view.layoutWriteFailed`）且文件与画面都保持原值 |
+| **视口 / 打开方式** | **不写入正文**：视口存 `data.json`（`viewState`，按文件路径 key）；打开方式由属性声明本身承载（`Markdown` = 终止） |
 
 ### 3.3 持久化边界
 
-> 规则：正文归导图、文件头归磁盘；布局 / 视口 / 打开方式一律存 `data.json`。
+> 规则：正文归导图、文件头归磁盘；布局写文件属性（`Mindmap`），视口存 `data.json`。
 
-- 正文保持纯 Markdown；布局、视口、打开偏好一律不进正文（`src/services/view-state.ts` + `src/core/persistence.ts` 的 `PluginDataWriter`：串行队列 + 写前重读合并）。
+- 正文保持纯 Markdown，且**没有任何视图状态写进正文**。布局是唯一写进**文件头**的视图状态（`Mindmap` 的值，见 §1）；视口与三项外观偏好存 `data.json`（`src/services/view-state.ts` + `src/core/persistence.ts` 的 `PluginDataWriter`：串行队列 + 写前重读合并）。升级到 2026-10-29 语义**不改写任何文件**：`Mindmap: Mindmap` 直接按「思维导图布局」解读；`data.json` 里残留的 `viewState[*].layout` 由启动清理剔除。
 - 中心节点 ⇄ 文件名：编辑中心节点文本会重命名文件——**必须走 `FileManager.renameFile`**（`src/features/view-title-renamer.ts`；`Vault.rename` 只改文件系统、不更新库内反链），Obsidian 原生更新链接/反链；外部改名后视图重载中心随新名。
 - 保存管线在 `src/services/document-service.ts`（防抖 / 串行排空 / 卸载快照兜底 / `onSaveError` 上报）。**文件头新鲜度**：写盘前先读目标文件当前内容，frontmatter 取**磁盘现值**（读失败才用按文件存的加载快照）——插件不持有也不回写"自己记得的文件头"，外部（属性面板/其它窗格/同步）改动的属性因此不会被覆盖；**写盘归属不变式**：一次写盘的目标文件与其内容必须同源——排空期间换文件（core **不 await** `onUnloadFile`）时，树快照与 frontmatter 一律按**该次写盘的那个文件**取（`getSnapshotFor(file)` / `getFrontmatterFor(file)`），不同文件不并入同一批次，避免「新文件的正文写进旧文件」或丢 frontmatter。
 - 文件重命名/**移动**后的引用改写（`src/links/links-tree.ts`）：`[[链接]]` 的**形态跟用户走**（原链接带路径前缀 → 继续写路径），但路径取**新位置**——跨文件夹移动只换 basename 会留下 `[[folder/新名]]` 悬空链接；裸名链接保持裸名；`.md` 可省略扩展名，canvas/base 必须带。
@@ -283,12 +297,12 @@
 
 > 规则：示例必须能直接跑通往返：未编辑保存只允许出现白名单内的空行归一。
 
-输入 `项目计划.md`（frontmatter 声明 `类型: Mindmap`）：
+输入 `项目计划.md`（frontmatter 声明 `Mindmap: Mindmap`）：
 
 ```markdown
 ---
 tags: [规划]
-类型: Mindmap
+Mindmap: Mindmap
 ---
 # 项目计划
 ## 目标
@@ -358,7 +372,7 @@ WeakMap 剪贴板已整体删除）。
    - 回归：`tests/node-inline-content.test.ts`（段序列 / 接管判定 / 锚点属性契约 / 轻标记 / 嵌入分流 / 渲染源切换）、`tests/view-hotkeys.test.ts`（富节点走插件编辑入口、输入框内让位、无激活节点时让位）、`tests/node-inline-editor.test.ts`（内联编辑器的提交语义与生命周期）、`tests/md-roundtrip.test.ts`（多 token 原位 8 例）+ `npm run verify:visual` 的 inline 场景与探针（自绘内容入 foreignObject、离屏测宽与渲染同源、`<strong>` 渲染、合成点击的 `node_click.target` 即锚点本体；负向自检：关掉 `isUseCustomNodeContent` 时报 7 项失败）。
 2. **回写增强（分轮）**：已实现「链接目标转义/归一（含空格/括号目标用 `<...>` 包裹）」「URL 显示名同步（仅图标，清空残留 URL 文本）」「**链接引用定义行保真**（参考式 `[ref]: dest` / 脚注 `[^id]:` 整行按纯文本处理、URL 不被摘为 icon-only——2026-09-13 实施）」与「**多 token 编辑后保真**（多链接 / 多 URL / 多图的非首个 token 原文按序尾插——内容与语法不丢；2026-09-13 实施，原文切片记入 `mdSegments` 台账的 `first: false` 项）」。**台账归并**：此前额外 token 单存 `mdExtraTokens`、与对齐表两表并存需人工同步，2026-09-14 合并为**单一台账** `mdSegments`（`first` 区分首 token / 额外 token），解析、拆分重建、清除链接各只有一处实现。**剩余**：无——多 token **原位保真**已于 2026-09-14 实施（`mdSegments` 对齐表：显示名 ↔ 原文，编辑后按显示名在新文本里定位并写回**原位**；对不上 / **锚点反查失败**才回落尾插——**无显示名 token 自 2026-10-12（K119）起按上下文锚点原位写回**（见 §3.2；旧括注「无显示名才回落尾插」与本页第 1 项 ③ 自相矛盾，2026-10-15 复核订正），见 K52），「同一节点内多链接内联可点」随方案 B 落地（第 1 / 7 项）。
 3. **结构化映射扩展**：表格 → 子节点表；任务 `- [ ]` / 标签 / 备注 → 节点属性；引擎 tag / note / attachment 与 md 的双向映射。（**表格的显示层已于 2026-10-14 落地**——plain 节点内渲染为真表格，见 §3.5；此项登记的是**结构**映射〔表格行列 → 子节点树〕，仍未实施。）
-4. **触发项**：~~`type: mindmap` frontmatter~~ **已实施（2026-10-12，属性声明判据）**——读侧 `domain/mindmap-property.ts` 的 `READ_KEYS = ['type', '类型']`（**键名大小写不敏感**、值大小写不敏感），判据唯一实现在该文件；回归 `tests/md-frontmatter-trigger.test.ts` / `tests/md-open-trigger.test.ts`。**剩余**：带 `mindmap` 语言标记的代码块的独立布局/主题设置（现随插件设置，见 `features/mindmap-codeblock.ts`）。（2026-10-15 复核订正：本项在属性触发落地后未同步状态）
+4. **触发项**：~~`type: mindmap` frontmatter~~ **已实施（2026-10-12，属性声明判据；2026-10-28 单键化；2026-10-29 值改为布局枚举）**——读侧 `domain/mindmap-property.ts` 只认**单键 `Mindmap`**（**键名大小写不敏感**，值为七值之一、读侧宽容归一、数组取首项、未知值不是导图；旧键 `Type` / `类型` 断代不认），判据唯一实现在该文件；值同时决定布局，`data.json` 不再保存逐文件布局；回归 `tests/md-frontmatter-trigger.test.ts` / `tests/md-open-trigger.test.ts` / `tests/view-state.test.ts`。**剩余**：带 `mindmap` 语言标记的代码块的**主题**设置仍随插件设置（布局已有块体首行 `%%layout: …%%` 指令，见 §2.4）。（2026-10-15 复核订正：本项在属性触发落地后未同步状态）
 5. **可持续性**：本项三条**均已以其它方案落地**（2026-10-15 复核订正状态）：① 图片尺寸缓存 → 官方 `App.loadLocalStorage`（**按 vault 隔离**：`src/media/images-path.ts` 的 `cacheImageSize` / `hydrateSizeCache` / `persistSizeCache`，经 `setImageSizeCacheStore` 注入官方 `App#loadLocalStorage` / `saveLocalStorage`；接线在 `src/main.ts`）；② 文件索引 → **库事件增量维护**（`src/links/file-lookup.ts`：file-create/rename/delete 增量更新 + 数量校验自愈），非「按 vault 代际失效」；③ 搜索 → 输入防抖 + 跳转前落地未决搜索（`src/features/view-search.ts`）。**加载侧防抖已于 2026-10-15 实施**：`src/platform/mindmap-auto-open.ts` 新增 `scheduleDeclaredLeavesScan()`——调度交给仓库既有原语 **`core/concurrency.createDebouncer`（50ms）**（**防抖**：窗口内每次触发重置计时，突发结束后落地一次；长突发只扫一遍，而「首次即计时」的节流会按窗口数各扫一遍——每次全量扫描 = 全部 markdown 叶子 × frontmatter 判据读取），卸载清理走同一个防抖器的 `cancel()`（幂等，只登记**一个**清理回调）；`file-open` 与组合根 `main.ts` 的 `metadataCache.changed` 两处触发改走它，启动档位（400/1500/3500ms）保持直调以维持「早/中/晚各一次」的固定节奏。其余「取消 / 代际」语义原已具备：同文件加载互斥（`loadingFilePath`）、`documents.load` 与图片尺寸校正两处「加载期间文件已切换 → 丢弃」、rAF 初始化可取消（`cancelPendingInit`）。回归：`tests/mindmap-auto-open.test.ts`（新增「连发只落地一次」「突发跨越窗口仍只落地一次——区分防抖与节流」「卸载后未决扫描不再触发」三例；3 条既有用例改按防抖语义断言）。
 6. **折叠展开状态持久化**（2026-10-13 剩余项）：「复制 / 剪切 / 粘贴为嵌套 Markdown」已随剪贴板改建实施（§4.1，多选随引擎 `activeNodeList` 天然支持）；折叠展开状态仍不持久化。
 7. **多链接节点可点化**：官方阅读视图里一行内每枚 `[[…]]` 都可点，本插件受引擎「单链接槽位」限制只渲染首个（见 §2.2 / §3.4）。**已实施**的是**结构化解法**——把混排链接拆分为子节点（每条链接一个节点，各自获得图标/悬停/点击，见 §2.2 的「混排双链拆分」）；**同一节点内的内联可点**已由方案 B 的 Phase 1 原型覆盖（一行多枚 `[[…]]` 各自渲染为可点锚点，见第 1 项）；与之配套的**多链接回写规则**（编辑后按段**原位**保真）已于 2026-09-14 实施（`mdSegments`，见第 2 项）。
@@ -371,7 +385,7 @@ WeakMap 剪贴板已整体删除）。
 
 | 项 | 状态 |
 |---|---|
-| 核对依据 | **文件指针 / 行数：2026-10-21 复核；版本：2026-10-27 复核**；**行为结论沿用 2026-10-15 复核**（行数口径 = `tests/agents-md-sync.test.ts` 的 `countSourceLines`：按 `\n` 切分、末尾换行不计行。**不要**用 `Measure-Object -Line`，口径不同会对不上）：`src/markdown/md-outline.ts` 1159 行、`src/markdown/md-serialize.ts` 1248 行、`src/markdown/md-line-write.ts` 62 行、`src/markdown/links-split.ts` 487 行、`src/links/links-tree.ts` 454 行、`src/links/links-resolve.ts` 353 行、`src/domain/md-meta.ts` 207 行、`src/domain/url.ts` 237 行、`src/domain/pipe-table.ts` 190 行、`src/features/view-wikilink.ts` 411 行、`src/features/node-inline-content.ts` 87 行（barrel）、`src/features/node-inline-tokenize.ts` 1081 行、`src/features/node-inline-html.ts` 723 行、`src/features/node-content-factory.ts` 60 行、`src/features/view-node-actions.ts` 862 行、`src/features/view-dnd.ts` 553 行、`src/features/view-link-navigator.ts` 126 行、`src/features/view.ts` 1131 行、`src/features/view-clipboard.ts` 200 行、`src/features/mindmap-codeblock.ts` 549 行、`src/features/content-remeasure.ts` 502 行、`src/media/images-save.ts` 240 行、`src/ui/modal-text.ts` 101 行、`src/platform/clipboard.ts` 55 行、`src/platform/math-jax.ts` 1090 行、`src/platform/mindmap-auto-open.ts` 146 行、`src/services/document-service.ts` 367 行、`src/services/engine-controller.ts` 806 行、`src/engine/mindmap.ts` 714 行、`src/core/i18n.ts` 565 行、`src/core/constants.ts` 568 行、`src/main.ts` 523 行 + `manifest.json` 版本 **0.2.6**（`minAppVersion` 1.13.0）。**行数只是快照**（读取日 2026-10-21）：逻辑定位一律用 `path#符号`，勿引行号；`src/engine/` 现为 10 个文件（`mindmap.ts` + `mindmap-viewport.ts` 等，见 `AGENTS.md` 代码结构索引）。**当日实机核对（当时版本 0.2.1）**（部署该构建到库 `.obsidian/plugins/mindmap-studio/` → 重载）：`dev:errors` 无条目；URL 单独成节点在实机**显示为可点地址文本**（自绘锚点 1 枚、锚点文本即 URL 本体、引擎链接图标 **0** 枚）；popout 悬停预览通过（见「未复核项」行）。**次要观察（未归因）**：删除库内文件（其中一张正开在导图视图）并关弹窗窗口时，`dev:errors` 出现一批（50 条）`ResizeObserver loop completed with undelivered notifications`；对照实验（重建文件 + 开弹窗导图）**不产生新增**，且 `vendor/simple-mind-map.cjs` **零** `ResizeObserver`、插件两处 RO（`engine-controller` 零尺寸等待 / `mindmap-codeblock` 嵌入容器）在该场景均不活跃或已断开 ⇒ 现有证据指向核心/工作区自身，**未归因**（登记待观察） |
+| 核对依据 | **文件指针 / 行数：2026-10-21 复核；版本：2026-10-27 复核**；**行为结论沿用 2026-10-15 复核**（行数口径 = `tests/agents-md-sync.test.ts` 的 `countSourceLines`：按 `\n` 切分、末尾换行不计行。**不要**用 `Measure-Object -Line`，口径不同会对不上）：`src/markdown/md-outline.ts` 1159 行、`src/markdown/md-serialize.ts` 1248 行、`src/markdown/md-line-write.ts` 62 行、`src/markdown/links-split.ts` 487 行、`src/links/links-tree.ts` 454 行、`src/links/links-resolve.ts` 353 行、`src/domain/md-meta.ts` 207 行、`src/domain/url.ts` 237 行、`src/domain/pipe-table.ts` 190 行、`src/features/view-wikilink.ts` 411 行、`src/features/node-inline-content.ts` 87 行（barrel）、`src/features/node-inline-tokenize.ts` 1081 行、`src/features/node-inline-html.ts` 723 行、`src/features/node-content-factory.ts` 60 行、`src/features/view-node-actions.ts` 862 行、`src/features/view-dnd.ts` 553 行、`src/features/view-link-navigator.ts` 126 行、`src/features/view.ts` 1131 行、`src/features/view-clipboard.ts` 200 行、`src/features/mindmap-codeblock.ts` 549 行、`src/features/content-remeasure.ts` 502 行、`src/media/images-save.ts` 240 行、`src/ui/modal-text.ts` 101 行、`src/platform/clipboard.ts` 55 行、`src/platform/math-jax.ts` 1090 行、`src/platform/mindmap-auto-open.ts` 146 行、`src/services/document-service.ts` 367 行、`src/services/engine-controller.ts` 806 行、`src/engine/mindmap.ts` 714 行、`src/core/i18n.ts` 565 行、`src/core/constants.ts` 568 行、`src/main.ts` 523 行 + `manifest.json` 版本 **0.2.7**（`minAppVersion` 1.13.0）。**行数只是快照**（读取日 2026-10-21）：逻辑定位一律用 `path#符号`，勿引行号；`src/engine/` 现为 10 个文件（`mindmap.ts` + `mindmap-viewport.ts` 等，见 `AGENTS.md` 代码结构索引）。**当日实机核对（当时版本 0.2.1）**（部署该构建到库 `.obsidian/plugins/mindmap-studio/` → 重载）：`dev:errors` 无条目；URL 单独成节点在实机**显示为可点地址文本**（自绘锚点 1 枚、锚点文本即 URL 本体、引擎链接图标 **0** 枚）；popout 悬停预览通过（见「未复核项」行）。**次要观察（未归因）**：删除库内文件（其中一张正开在导图视图）并关弹窗窗口时，`dev:errors` 出现一批（50 条）`ResizeObserver loop completed with undelivered notifications`；对照实验（重建文件 + 开弹窗导图）**不产生新增**，且 `vendor/simple-mind-map.cjs` **零** `ResizeObserver`、插件两处 RO（`engine-controller` 零尺寸等待 / `mindmap-codeblock` 嵌入容器）在该场景均不活跃或已断开 ⇒ 现有证据指向核心/工作区自身，**未归因**（登记待观察） |
 | 相对上一版本文档的**事实修正** | 历次修正清单（①–⑰，含当时缺陷与依据）已外迁存档：[`markdown-mindmap-history.md`](markdown-mindmap-history.md)。标准文档只保留现况规则与判据。 |
 | 函数名核对 | 逻辑指针一律 `path#符号`，符号是否真实存在由 `tests/docs-standard.test.ts` 机械校验（含「目标文件内出现该符号」）；逐批核对清单（2026-09 起，含已删符号与旧归属）见 [`markdown-mindmap-history.md`](markdown-mindmap-history.md)。 |
 | 未复核项 | **无**。① 原「hover 预览在 popout 窗口下的实测」已于 **2026-10-15 实机实测通过**：在独立窗口（`app.workspace.getLeaf("window")` + `setViewState`，注意**必须另开一张导图**——同文件会命中「单实例让位」）打开探针导图，在**该窗口的 document** 里合成 `mouseenter`/`mouseover`/`mousemove` → 官方预览弹窗出现、内容正确（探针目标笔记正文），且**定位在锚点下方**（锚点 [739,433] / 弹窗 [563,465,451,135]：水平居中于锚点、垂直位于其下）——即 popout 下 `ensureOffsetSize` 补几何与「下方优先」定位均生效，无 `NaN` 塌陷。② 原「参考式链接往返」2026-09-13 已实施并登记（§3.5 / §5 第 2 项）。历史注记：本项原以为要依赖 `AGENTS.md` 的 `Node.instanceOf` 登记，该登记已不存在（现唯一 `instanceOf` 记录讲 `view-common.isTextEntryTarget`）。 |

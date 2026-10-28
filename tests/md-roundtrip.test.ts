@@ -2195,7 +2195,7 @@ describe('uid 修复（ensureUniqueUids）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 十一、视图状态（ViewStateStore：布局/视口存 data.json，不写入 md 正文）
+// 十一、视图状态（ViewStateStore：外观/视口存 data.json，布局存文件属性）
 // ---------------------------------------------------------------------------
 describe('视图状态（ViewStateStore）', () => {
 	const path = 'a/b.mindmap.md';
@@ -2204,11 +2204,11 @@ describe('视图状态（ViewStateStore）', () => {
 		const store = new ViewStateStore(() => {}, 999999);
 		store.hydrate({
 			viewState: {
-				[path]: { lineStyle: 'curve', layout: 'catalogOrganization' },
+				[path]: { lineStyle: 'curve', palette: 'mint' },
 			},
 		});
 		expect(store.getLineStyle(path)).toBe('curve');
-		expect(store.getLayout(path)).toBe('catalogOrganization');
+		expect(store.getPalette(path)).toBe('mint');
 		expect(store.getView(path), '未存的字段为 undefined').toBeUndefined();
 	});
 
@@ -2216,12 +2216,12 @@ describe('视图状态（ViewStateStore）', () => {
 		const store = new ViewStateStore(() => {}, 999999);
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		// 误用形态 1：path → state 的映射（loadSettings 曾误传）→ 静默不加载
-		store.hydrate({ [path]: { layout: 'mindmap' } });
-		expect(store.getLayout(path), '不生效').toBeUndefined();
-		// 误用形态 2：单个 PathState（顶层含 layout）→ 额外给防御告警
+		store.hydrate({ [path]: { lineStyle: 'curve' } });
+		expect(store.getLineStyle(path), '不生效').toBeUndefined();
+		// 误用形态 2：单个 PathState（顶层含偏好键）→ 额外给防御告警
 		const other = new ViewStateStore(() => {}, 999999);
-		other.hydrate({ layout: 'mindmap' });
-		expect(other.getLayout(path)).toBeUndefined();
+		other.hydrate({ palette: 'mint' });
+		expect(other.getPalette(path)).toBeUndefined();
 		expect(warn).toHaveBeenCalledWith(
 			expect.stringContaining('疑似收到 viewState 子对象'),
 		);
@@ -2235,7 +2235,7 @@ describe('视图状态（ViewStateStore）', () => {
 				'dropped-string.mindmap.md': 'not-an-object',
 				'dropped-null.mindmap.md': null,
 				'dropped-unknown.mindmap.md': { foo: 1 },
-				'kept-layout.mindmap.md': { layout: 'mindmap' },
+				'kept-palette.mindmap.md': { palette: 'mint' },
 				'kept-linestyle.mindmap.md': { lineStyle: 'curve' },
 				// 视口形状取引擎 `getTransformData()` 的真实形态（{transform, state}
 				// 且 state 含有限 scale/x/y）——2026-10-15 起 hydrate 对 `view` 增设
@@ -2250,34 +2250,34 @@ describe('视图状态（ViewStateStore）', () => {
 			},
 		});
 		expect(Object.keys(store.serialize()).sort()).toEqual([
-			'kept-layout.mindmap.md',
 			'kept-linestyle.mindmap.md',
+			'kept-palette.mindmap.md',
 			'kept-view.mindmap.md',
 		]);
 		expect(
-			store.getLineStyle('kept-layout.mindmap.md'),
+			store.getLineStyle('kept-palette.mindmap.md'),
 			'缺 lineStyle → undefined',
 		).toBeUndefined();
-		// 形状合法但取值非法：getLayout 的 typeof 收窄兜底
-		store.hydrate({ viewState: { 'bad-value.mindmap.md': { layout: 42 } } });
-		expect(store.getLayout('bad-value.mindmap.md')).toBeUndefined();
+		// 形状合法但取值非法：getPalette 的 typeof 收窄兜底
+		store.hydrate({ viewState: { 'bad-value.mindmap.md': { palette: 42 } } });
+		expect(store.getPalette('bad-value.mindmap.md')).toBeUndefined();
 		expect(
 			store.getLineStyle('kept-linestyle.mindmap.md'),
 			'重新 hydrate 会清空旧状态',
 		).toBeUndefined();
 		expect(store.serialize()['bad-value.mindmap.md'], '条目本身仍保留（形状合法）').toEqual({
-			layout: 42,
+			palette: 42,
 		});
 	});
 
-	it('setLayout/setLineStyle/setView 是补丁式合并，serialize 输出完整映射', () => {
+	it('setPalette/setLineStyle/setView 是补丁式合并，serialize 输出完整映射', () => {
 		const store = new ViewStateStore(() => {}, 999999);
-		store.setLayout(path, 'fishbone');
+		store.setPalette(path, 'forest');
 		store.setLineStyle(path, 'curve');
 		store.setView(path, { transform: { scale: 2 } });
 		expect(store.serialize()).toEqual({
 			[path]: {
-				layout: 'fishbone',
+				palette: 'forest',
 				lineStyle: 'curve',
 				view: { transform: { scale: 2 } },
 			},
@@ -2287,15 +2287,15 @@ describe('视图状态（ViewStateStore）', () => {
 
 	it('renameKey 迁移状态键；removeKey 清理状态键', () => {
 		const store = new ViewStateStore(() => {}, 999999);
-		store.setLayout('old.mindmap.md', 'mindmap');
+		store.setPalette('old.mindmap.md', 'mint');
 		store.renameKey('old.mindmap.md', 'new.mindmap.md');
-		expect(store.getLayout('old.mindmap.md')).toBeUndefined();
-		expect(store.getLayout('new.mindmap.md')).toBe('mindmap');
+		expect(store.getPalette('old.mindmap.md')).toBeUndefined();
+		expect(store.getPalette('new.mindmap.md')).toBe('mint');
 		// 不存在的键：renameKey/removeKey 都是 no-op
 		store.renameKey('missing.mindmap.md', 'other.mindmap.md');
 		expect(store.serialize()['other.mindmap.md']).toBeUndefined();
 		store.removeKey('new.mindmap.md');
-		expect(store.getLayout('new.mindmap.md')).toBeUndefined();
+		expect(store.getPalette('new.mindmap.md')).toBeUndefined();
 		expect(store.serialize()).toEqual({});
 	});
 
@@ -2305,16 +2305,25 @@ describe('视图状态（ViewStateStore）', () => {
 			writes.push(state);
 			return Promise.resolve();
 		}, 999999);
-		store.setLayout(path, 'timeline');
+		store.setPalette(path, 'slate');
 		const pending = store.flushNow();
 		expect(pending, '有未决变更 → 返回 Promise（卸载路径可持有在途写盘）').toBeInstanceOf(
 			Promise,
 		);
 		await pending;
 		expect(writes, 'persist 收到完整序列化状态').toEqual([
-			{ [path]: { layout: 'timeline' } },
+			{ [path]: { palette: 'slate' } },
 		]);
 		expect(store.flushNow(), '无未决变更 → undefined').toBeUndefined();
+	});
+
+	it('旧版的 viewState[*].layout 在 hydrate 时被剔除（布局已改存文件属性）', () => {
+		const store = new ViewStateStore(() => {}, 999999);
+		const cleaned = store.hydrate({
+			viewState: { [path]: { layout: 'fishbone', lineStyle: 'curve' } },
+		});
+		expect(cleaned, '有残留 → 调用方补一次写盘').toBe(true);
+		expect(store.serialize()).toEqual({ [path]: { lineStyle: 'curve' } });
 	});
 });
 
@@ -2322,13 +2331,13 @@ describe('视图状态（ViewStateStore）', () => {
 // 十二、新建正文（属性声明块 + 标准 Markdown 大纲；声明判据见 mindmap-property）
 // ---------------------------------------------------------------------------
 describe('新建导图正文', () => {
-	it('属性声明块按语言选键（zh「类型」/ en「Type」），块后空行分隔正文', () => {
-		expect(createDefaultMarkdownContent('zh').startsWith('---\n类型: Mindmap\n---\n\n')).toBe(
-			true,
-		);
-		expect(createDefaultMarkdownContent('en').startsWith('---\nType: Mindmap\n---\n\n')).toBe(
-			true,
-		);
+	it('属性声明块恒为 `Mindmap: Mindmap`（与语言无关），块后空行分隔正文', () => {
+		expect(
+			createDefaultMarkdownContent('zh').startsWith('---\nMindmap: Mindmap\n---\n\n'),
+		).toBe(true);
+		expect(
+			createDefaultMarkdownContent('en').startsWith('---\nMindmap: Mindmap\n---\n\n'),
+		).toBe(true);
 	});
 
 	it('新建默认正文是标准 Markdown：文件头被识别、解析为 3 个列表子主题且往返稳定', () => {
@@ -2339,9 +2348,9 @@ describe('新建导图正文', () => {
 			'- Enter：添加同级节点',
 			'',
 		].join('\n');
-		expect(content).toBe(`---\n类型: Mindmap\n---\n\n${body}`);
+		expect(content).toBe(`---\nMindmap: Mindmap\n---\n\n${body}`);
 		const r = parseMdOutline(content, '根');
-		expect(r.frontmatter, '属性块逐字保留为文件头').toBe('---\n类型: Mindmap\n---\n');
+		expect(r.frontmatter, '属性块逐字保留为文件头').toBe('---\nMindmap: Mindmap\n---\n');
 		expect(r.tree.children).toHaveLength(3);
 		expect(r.tree.children.map((c) => (c.data as MdData).mdMarker)).toEqual([
 			'-',

@@ -25,7 +25,7 @@ import type { PreferenceKey, ViewStateStore } from '../services/view-state';
 export interface ViewPluginContext {
 	/** 插件设置（活引用，完整设置面） */
 	readonly settings: MindMapStudioSettings;
-	/** 视图状态存储（布局/视口/打开偏好，按文件路径） */
+	/** 视图状态存储（连线样式 / 配色 / 边框 / 视口，按文件路径；布局只存文件属性） */
 	readonly viewState: ViewStateStore;
 	/** 状态栏服务（节点计数展示/清空；DOM 由插件层持有） */
 	readonly statusBar: StatusBarService;
@@ -155,8 +155,13 @@ export interface MindMapViewContext
 	openHyperlink(link: string, mode?: HyperlinkOpenMode): void;
 	/** 切回 Markdown 编辑（工具栏/命令入口；并把导图声明持久降级为 Markdown） */
 	backToMarkdown(): void;
-	/** 应用指定布局（右键菜单「布局」级联菜单变更时） */
-	applyLayout(layout: string): void;
+	/**
+	 * 应用指定布局（右键菜单「布局」级联菜单变更时）。
+	 *
+	 * **写文件属性**：异步、可能失败（失败时画面不动并已提示），故返回 Promise
+	 * ——调用方不必等，但不能假设「调用后画面就变了」。
+	 */
+	applyLayout(layout: string): Promise<void>;
 	/** 应用指定连线样式偏好（右栏「连线」开关变更时；两态：折线 / 曲线） */
 	applyLineStyle(lineStyle: string): void;
 	/** 应用指定配色（右键菜单「配色」级联菜单变更时；按文件写入 `data.json` 的 `viewState`） */
@@ -164,12 +169,19 @@ export interface MindMapViewContext
 	/** 应用指定边框样式（右栏「边框」开关变更时；按文件写入 `data.json` 的 `viewState`） */
 	applyThemeStyle(themeStyle: string): void;
 	/**
-	 * 当前生效的某项按文件偏好（归一后）。
+	 * 当前生效的某项按文件偏好（归一后；连线 / 配色 / 边框三项）。
 	 *
 	 * 与写入侧 `apply*` 共用 `PreferenceKey`：右键菜单勾选态与竖栏开关都从这一处读，
-	 * 不再为四个维度各开一个方法（接口面 −3）。
+	 * 不再为各维度各开一个方法。
 	 */
 	resolvePreference(key: PreferenceKey): string;
+	/**
+	 * 当前生效的布局（引擎 layout id）。
+	 *
+	 * 单独一项：布局的持久化位是**文件属性**（不是 `data.json`），故不进
+	 * `PreferenceKey`；竖栏「连线」开关的可用性与右键「布局」的勾选态都读这里。
+	 */
+	resolveLayout(): string;
 
 	// ---- 插件能力（窄化）----
 	readonly plugin: ViewPluginContext;

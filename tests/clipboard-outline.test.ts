@@ -107,7 +107,7 @@ describe('parseMdOutlineFragment（粘贴进导图的解析）', () => {
 	});
 
 	it('frontmatter 被剥掉（从笔记整篇复制时只取大纲）', () => {
-		const nodes = parseMdOutlineFragment('---\n类型: Mindmap\n---\n- 甲');
+		const nodes = parseMdOutlineFragment('---\nMindmap: Mindmap\n---\n- 甲');
 		expect(nodes).toHaveLength(1);
 		expect(nodes[0]!.data.text).toBe('甲');
 	});

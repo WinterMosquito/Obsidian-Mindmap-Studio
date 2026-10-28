@@ -1,10 +1,15 @@
 /**
- * 声明模式文档：触发判定与视图切换。
+ * 声明模式文档：触发判定、声明读写与视图切换。
  *
- * 触发判据 = frontmatter 的 `Type` / `类型` 值为 `mindmap`（唯一收口在
- * domain/mindmap-property）。文件**名**不再参与判定——`.mindmap.md` 后缀连同
+ * 触发判据 = frontmatter 的 `Mindmap` 键值为**布局枚举**之一（唯一收口在
+ * domain/mindmap-property；旧键 `Type` / `类型` 自 2026-10-28 起完全不认）。
+ * 文件**名**不再参与判定——`.mindmap.md` 后缀连同
  * 其判定/剥离/拼接三函数已于 2026-10-12 退役（存量文件由迁移命令改为
  * `命名.md` + 属性声明）。
+ *
+ * 布局只存在于文件属性（2026-10-29）：`readDeclaredLayout` 是视图侧取布局的
+ * **唯一入口**，`applyLayout`（view.ts）写属性也是唯一写入口。`data.json` 里
+ * 不再有逐文件布局。
  *
  * 渲染承载（B3 显式切换）：命中的文件仍是普通 Markdown（默认用 Obsidian
  * markdown 视图打开）；插件在它出现于 markdown 视图时自动切到本插件的导图视图
@@ -18,13 +23,11 @@ import { CORE_VIEW_TYPE, VIEW_TYPE } from '../core/constants';
 import { notifyError } from '../core/errors';
 import { type Language } from '../core/i18n';
 import {
-	convergeMindMapPropertyKey,
-	isMindMapDeclarationValue,
-	isMindMapProperty,
 	isMindMapPropertyKey,
-	mindMapPropertyKey,
+	layoutPropertyValue,
 	MINDMAP_MARKDOWN_VALUE,
-	MINDMAP_TYPE_VALUE,
+	readMindMapDeclaration,
+	setMindMapProperty,
 } from '../domain/mindmap-property';
 
 /**
@@ -80,7 +83,30 @@ export function isMindMapFile(
 	if (!file || file.extension !== 'md') {
 		return false;
 	}
-	return isMindMapProperty(app.metadataCache.getFileCache(file)?.frontmatter);
+	return readMindMapDeclaration(app.metadataCache.getFileCache(file)?.frontmatter)
+		?.kind === 'layout';
+}
+
+/**
+ * 读本文件声明的布局（引擎 layout id）；未声明 / 终止值 `Markdown` / 未知值
+ * 一律 `null`。
+ *
+ * 同步读 MetadataCache——视图加载需要在**同步路径**上知道布局（手动升级不读它：
+ * 那是「无声明」的入口，写的是种子值）。
+ * 缓存滞后（刚写完属性）时返回 `null`，由调用方按种子值兜底；随后的
+ * `metadataCache.changed` 会把已打开的视图纠正过来（`view.syncDeclaredLayout`）。
+ */
+export function readDeclaredLayout(
+	app: App,
+	file: TFile | null | undefined,
+): string | null {
+	if (!file || file.extension !== 'md') {
+		return null;
+	}
+	const declaration = readMindMapDeclaration(
+		app.metadataCache.getFileCache(file)?.frontmatter,
+	);
+	return declaration?.kind === 'layout' ? declaration.layoutId : null;
 }
 
 /**
@@ -90,32 +116,35 @@ export function isMindMapFile(
  * 命令 `mindmap-back-to-markdown`——同名动作不允许两种行为。
  *
  * 走官方 `FileManager.processFrontMatter`（YAML 解析/序列化归官方）；只改
- * **命中的那个键**（保留用户原本写的是 `Type` 还是 `类型`），其它属性与正文
- * 一律不动——正文由其后的保存管线按 K45 取**磁盘现值**回贴，故两者先后顺序
- * 无需额外协调。无命中键（本就不是声明文件）时不写入。
+ * 声明键 `Mindmap`，其它属性与正文一律不动——正文由其后的保存管线按 K45 取
+ * **磁盘现值**回贴，故两者先后顺序无需额外协调。
  *
- * 键名随语言收敛（`convergeMindMapPropertyKey`）：命中键改写为 `Markdown` 的同时
- * 把 `Type`/`类型` 收敛为当前语言的唯一键，避免降级后两把键并存。
+ * 短路条件只有「值**已经就是** `Markdown`」：其余（含旧语义下的 `Mindmap`、
+ * 用户手写的未知值）一律改写——`Mindmap: Mindmap` 现在是「思维导图布局」，
+ * 不认识它的旧版本会把它当导图打开，只有 `Markdown` 才是明确的终止值。
+ *
+ * 键名恒为标准键 `Mindmap`（`setMindMapProperty` 顺带收敛同名大小写变体），
+ * 与界面语言无关。
  */
 async function downgradeMindMapProperty(
 	app: App,
 	file: TFile,
 	lang: Language,
 ): Promise<void> {
-	const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
-	// 已有 `类型`/`Type` 但值非导图（如已是 `Markdown`）→ 不动 YAML（目的已达）
-	if (frontmatter && hasAnyMindMapKey(frontmatter) && !isMindMapProperty(frontmatter)) {
+	const isTerminated = (frontmatter: unknown): boolean =>
+		readMindMapDeclaration(frontmatter)?.kind === 'markdown';
+	if (isTerminated(app.metadataCache.getFileCache(file)?.frontmatter)) {
 		return;
 	}
 	try {
 		await app.fileManager.processFrontMatter(
 			file,
 			(fm: Record<string, unknown>) => {
-				// 权威判据（缓存可能滞后）：已有非导图属性时不覆盖值
-				if (hasAnyMindMapKey(fm) && !isMindMapProperty(fm)) {
+				// 权威判据（缓存可能滞后）：已经是终止值时不覆盖
+				if (isTerminated(fm)) {
 					return;
 				}
-				convergeMindMapPropertyKey(fm, lang, MINDMAP_MARKDOWN_VALUE);
+				setMindMapProperty(fm, MINDMAP_MARKDOWN_VALUE);
 			},
 		);
 	} catch (error) {
@@ -130,35 +159,48 @@ async function downgradeMindMapProperty(
  * 把文件提升为「声明为思维导图」（**持久升级**）：手动把任一篇普通笔记开为
  * 导图后的副作用——让它在 frontmatter 里正式成为导图，下次自动打开。
  *
- * 走官方 `processFrontMatter`，经 `convergeMindMapPropertyKey` 把声明收敛为
- * 当前语言的唯一键（zh `类型` / en `Type`）、值 `Mindmap`。**已声明为导图且
- * 键唯一时不改写**（免每次打开重序列化 YAML）；外层 `isMindMapFile` 用
- * MetadataCache 做「免写」优化，回调内再做一次权威判据兜住缓存滞后——即便优化
- * 失效也绝不新增第二把键（这正是「改语言后 `Type`/`类型` 并存」的根因）。
+ * 写入的是**种子值**：设置「默认布局」对应的属性标准值（不是恒写 `Mindmap`）
+ * ——升级出来的文件与「新建导图」得到同一个初始布局。`md-open` 不引 settings
+ * （组合根禁令），故种子由调用方以引擎 id 传入。
+ *
+ * 走官方 `processFrontMatter`，经 `setMindMapProperty` 把声明写到标准键
+ * `Mindmap`（键名与语言无关）。**已声明为导图时不改写**（免每次打开重序列化
+ * YAML）；外层 `isMindMapFile` 用 MetadataCache 做「免写」优化，回调内再做一次
+ * 权威判据兜住缓存滞后——即便优化失效也绝不新增第二把键，且收敛同名变体时
+ * **保留文件已声明的布局**（种子值只用于「本来就不是导图」的文件）。
  */
 async function upgradeMindMapProperty(
 	app: App,
 	file: TFile,
 	lang: Language,
+	seedLayout: string,
 ): Promise<void> {
 	if (isMindMapFile(app, file)) {
-		// 已是 Mindmap 声明：免磁盘写入（值已正确，不必动 YAML）
+		// 已是导图声明：免磁盘写入（布局已正确，不必动 YAML）
 		return;
 	}
+	const seedValue = layoutPropertyValue(seedLayout);
 	try {
 		await app.fileManager.processFrontMatter(
 			file,
 			(frontmatter: Record<string, unknown>) => {
 				const keys = Object.keys(frontmatter).filter(isMindMapPropertyKey);
-				if (isMindMapProperty(frontmatter)) {
-					// 缓存误判「未声明」：文件其实已声明——仅在存在重复键时收敛，
-					// 否则原样保留（不因打开而重命名键，键名收敛交给语言切换迁移）
+				const declared = readMindMapDeclaration(frontmatter);
+				if (declared?.kind === 'layout') {
+					// 缓存误判「未声明」：文件其实已声明——仅在存在同名变体时收敛，
+					// 否则原样保留（不因打开而重写键）。收敛写的是**声明值**：
+					// ① 不能写种子值——那是「新建/升级时的初始布局」，用它收敛等于
+					//    把用户已选的布局静默重置（`Mindmap: Timeline` + `mindmap: …`
+					//    这种同名变体并存即可踩到）；
+					// ② 写的是**标准值**（`declared.value` 已归一为 PascalCase）——
+					//    不带值的 `setMindMapProperty(frontmatter)` 会原样留下用户拼写
+					//    （`mind map` / `mindmap`），收敛就白做了。
 					if (keys.length > 1) {
-						convergeMindMapPropertyKey(frontmatter, lang);
+						setMindMapProperty(frontmatter, declared.value);
 					}
 					return;
 				}
-				convergeMindMapPropertyKey(frontmatter, lang, MINDMAP_TYPE_VALUE);
+				setMindMapProperty(frontmatter, seedValue);
 			},
 		);
 	} catch (error) {
@@ -166,11 +208,6 @@ async function upgradeMindMapProperty(
 		console.error('写入思维导图属性失败，导图声明不会持久:', file.path, error);
 		notifyError(lang, 'command.upgradeFailed', error);
 	}
-}
-
-/** frontmatter 是否含 `类型`/`Type` 键（不看值；键名大小写不敏感） */
-function hasAnyMindMapKey(frontmatter: Record<string, unknown>): boolean {
-	return Object.keys(frontmatter).some(isMindMapPropertyKey);
 }
 
 /**
@@ -201,17 +238,22 @@ export async function openAsMindMap(
 }
 
 /**
- * 手动「以思维导图打开」：先把声明写入 frontmatter（按语言选 `类型`/`Type`、
- * 值 `Mindmap`），再切到导图视图。使任一篇笔记经本入口打开后即成为正式导图，
- * 下次自动打开。已是声明的文件不重复写（见 `upgradeMindMapProperty`）。
+ * 手动「以思维导图打开」：先把声明写入 frontmatter（标准键 `Mindmap`、值为
+ * `seedLayout` 对应的属性标准值），再切到导图视图。使任一篇笔记经本入口打开
+ * 后即成为正式导图，下次自动打开。已是声明的文件不重复写（见
+ * `upgradeMindMapProperty`）。
+ *
+ * @param seedLayout 引擎 layout id（组合根传 `settings.defaultLayout`）——
+ *   这里刻意不给默认值：第二个「默认布局」来源会与设置项各说各话。
  */
 export async function declareAndOpenAsMindMap(
 	app: App,
 	leaf: WorkspaceLeaf,
 	file: TFile,
-	lang: Language = 'zh',
+	lang: Language,
+	seedLayout: string,
 ): Promise<void> {
-	await upgradeMindMapProperty(app, file, lang);
+	await upgradeMindMapProperty(app, file, lang, seedLayout);
 	await openAsMindMap(leaf, file);
 }
 
@@ -240,64 +282,4 @@ export async function openAsMarkdown(
 	}
 	// 同 openAsMindMap：切回同样是视图切换，不构成导航点（K111）
 	notifyViewSwitchDone(leaf, file.path, CORE_VIEW_TYPE.MARKDOWN);
-}
-
-/**
- * 语言切换后的属性键迁移：把库内每个含 `类型`/`Type` 键的 md 文件的声明键
- * **重命名为当前语言的键**（zh `类型` ⇄ en `Type`），并收敛历史遗留的重复键。
- *
- * 这是「改语言时键名随语言走」的唯一入口。要点：
- * - 只改**键名**（值 `Mindmap`/`Markdown` 原样保留）；
- * - **只认本插件写的值**（`isMindMapDeclarationValue`）：`类型: wiki` 这类同名但
- *   语义无关的属性属于用户数据，按键名全库改名会把它变成 `Type: wiki`
- *   （2026-10-23 实测踩到，本库 10 页笔记被改）；
- * - 目标键已被**非声明值**占用时整文件跳过（`converge` 会把值迁到目标键上、
- *   直接覆盖那条无关属性）；
- * - 已是唯一目标键 → 免写（避免每次切语言全库重写）；
- * - 只触碰含声明的文件，逐个 `processFrontMatter`（YAML 由官方序列化）；
- *   单文件失败只留痕（`console.error`）并继续——一次迁移不因个别文件半途而废。
- *
- * 键名收敛的原子实现见 `domain/mindmap-property.convergeMindMapPropertyKey`。
- */
-export async function migrateMindMapPropertyKeys(
-	app: App,
-	lang: Language,
-): Promise<void> {
-	const target = mindMapPropertyKey(lang);
-	for (const file of app.vault.getMarkdownFiles()) {
-		const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
-		if (!frontmatter) {
-			continue;
-		}
-		const keys = Object.keys(frontmatter).filter(
-			(key) =>
-				isMindMapPropertyKey(key) && isMindMapDeclarationValue(frontmatter[key]),
-		);
-		if (keys.length === 0) {
-			continue;
-		}
-		// 已是唯一目标键 → 无需改写（迁移的常见路径，必须免写）
-		if (keys.length === 1 && keys[0] === target) {
-			continue;
-		}
-		// 目标键被非声明值占着（`类型: wiki` + `Type: Mindmap` 这类混用库）⇒ 跳过：
-		// converge 会把声明值迁到目标键上并覆盖那条无关属性。
-		if (
-			frontmatter[target] !== undefined &&
-			!isMindMapDeclarationValue(frontmatter[target])
-		) {
-			console.warn('属性键迁移跳过（目标键已被非导图属性占用）:', file.path);
-			continue;
-		}
-		try {
-			await app.fileManager.processFrontMatter(
-				file,
-				(fm: Record<string, unknown>) => {
-					convergeMindMapPropertyKey(fm, lang);
-				},
-			);
-		} catch (error) {
-			console.error('迁移思维导图属性键失败:', file.path, error);
-		}
-	}
 }

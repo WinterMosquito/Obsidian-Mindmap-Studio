@@ -8,6 +8,7 @@
  * 不再维护「可链接附件」白名单（比解析侧窄，会造成「拖入被拒、手写却行」）。
  */
 import { normalizeHexColor } from '../domain/color';
+import type { MindMapLayoutId } from '../domain/mindmap-property';
 import type { TranslationKey } from './i18n';
 
 /** 自定义视图类型标识 */
@@ -104,19 +105,27 @@ export const SAVE_LOCATION_OPTIONS: SaveLocationOption[] = [
 ];
 
 export interface LayoutOption {
-	value: string;
+	value: MindMapLayoutId;
 	label: TranslationKey;
 }
 
-/** 工具栏布局选择器中提供的六种布局 */
-export const LAYOUT_OPTIONS: LayoutOption[] = [
+/**
+ * 布局选项（右键「布局」级联菜单与设置面板下拉共用）。
+ *
+ * `value` 是**引擎 layout id**；它与「属性标准值」的双向表在
+ * `domain/mindmap-property.MINDMAP_LAYOUT_VALUES`——这里用 domain 导出的 id 联合
+ * 做 `satisfies` 对齐，**不另建一份「值 → 布局」映射**（硬规则 5；方向只能是
+ * core → domain）。表里写错 / 多出一个 id 在此编译失败；漏写一个 id 由
+ * `tests/md-frontmatter-trigger.test.ts` 对 `MINDMAP_LAYOUT_IDS` 断言。
+ */
+export const LAYOUT_OPTIONS = [
 	{ value: 'logicalStructure', label: 'layout.logical' },
 	{ value: 'mindMap', label: 'layout.mindMap' },
 	{ value: 'organizationStructure', label: 'layout.organization' },
 	{ value: 'catalogOrganization', label: 'layout.catalog' },
 	{ value: 'timeline', label: 'layout.timeline' },
 	{ value: 'fishbone', label: 'layout.fishbone' },
-];
+] as const satisfies readonly LayoutOption[];
 
 /**
  * 连线样式偏好：折线（straight，正交折线）/ 曲线（curve）。
@@ -270,7 +279,8 @@ export interface PaletteOption {
  *
  * ⚠ 与「主题色」「主题」不同，**配色不是全局设置**：它按文件记在
  * `data.json` 的 `viewState[<路径>].palette`，由**空白处右键**的「配色」级联切换
- *（与布局 / 连线样式同一种「按文件记忆」形态）。节点右键的「配色」是另一层语义
+ *（与连线样式同一种「按文件记忆」形态；**布局不在这套里**——它写在文件属性）。
+ * 节点右键的「配色」是另一层语义
  *（写正文 `%%#hex%%`，见 `features/view-node-color`），本表只供整篇菜单与白名单
  * 使用，不进 `MindMapStudioSettings`。
  */

@@ -169,6 +169,24 @@ export class SavePipeline {
 	}
 
 	/**
+	 * 作废某文件的写盘基线（**经外部通道写过该文件之后**必须调用）。
+	 *
+	 * 基线只描述「本管线上次写出的内容」；用 `processFrontMatter` 之类绕过管线的
+	 * 写入之后它必然过期。不作者废时，下一次自动保存会把这次写入误判成「他处
+	 * 修改」而整轮跳过——冲突提示只报一次，此后每次编辑都静默不落盘，直到一次
+	 * 显式保存（命令 / 卸载）成功才恢复。删掉基线即回到「首次保存」语义：
+	 * 不检测、直接写，写完重新建立基线。
+	 */
+	forgetBaseline(file: TFile): void {
+		// 同一文件正在排空：本轮结束会写入新基线，中途删等于白丢一次检测
+		if (this.drainFile?.path === file.path) {
+			return;
+		}
+		this.lastWritten.delete(file.path);
+		this.externalConflictNotified.delete(file.path);
+	}
+
+	/**
 	 * 写盘。
 	 *
 	 * @param file    目标文件；缺省取视图当前文件。**卸载/关闭路径必须显式传入

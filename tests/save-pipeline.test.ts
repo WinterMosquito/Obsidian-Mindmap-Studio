@@ -778,6 +778,34 @@ describe('P1a/P1b：外部改动检测与连续失败降级', () => {
 		expect(h.writes.length).toBe(writesAfterExplicit);
 	});
 
+	it('外部通道写过文件后作废基线：下一次自动保存不再误判为他处修改', async () => {
+		let disk = '- Root\n- A\n';
+		const cachedRead = vi.fn(async () => disk);
+		const h = makeHarness({}, { cachedRead });
+		h.modify.mockImplementation(async (_target: TFile, content: string) => {
+			disk = content;
+		});
+		// 建立基线（首次自动保存无基线 → 照常写盘）
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		const writesAfterBaseline = h.modify.mock.calls.length;
+
+		// 模拟 `processFrontMatter` 改属性：绕过管线，基线随之过期
+		disk = '---\nMindmap: Timeline\n---\n- Root\n- A\n';
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.onExternalChange).toHaveBeenCalledTimes(1);
+		expect(h.modify.mock.calls.length).toBe(writesAfterBaseline);
+
+		// 用户继续编辑（树变了）：不作废基线时这一轮仍会被扣住
+		h.setTree(node('Root', [node('A'), node('B')]));
+		// 作废基线（切布局的成功路径会立刻调它）→ 照常写盘
+		h.pipeline.forgetBaseline(h.file);
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.onExternalChange).toHaveBeenCalledTimes(1);
+		expect(h.modify.mock.calls.length).toBe(writesAfterBaseline + 1);
+		// 文件头按磁盘现值取：这次布局写入没有被回贴覆盖
+		expect(h.modify.mock.calls.at(-1)?.[1]).toContain('Mindmap: Timeline');
+	});
+
 	it('排空另一文件期间的自动保存：重入仍透传 checkExternal（不覆盖他人改动）', async () => {
 		const otherPath = 'notes/b.mindmap.md';
 		let disk = '- Root\n- B\n';

@@ -13,19 +13,24 @@ import type { MindMapTreeNode } from '../core/engine-types';
 /**
  * 新建思维导图的默认正文：**属性声明块 + 标准 Markdown 大纲**。
  *
- * 属性块（`类型: Mindmap` / en `Type: Mindmap`）是文件「是导图」的唯一凭据——
- * 触发判定不认文件名（见 domain/mindmap-property）；块后空行分隔正文，
- * 与 md-outline.splitFrontmatter 的边界口径一致（K46）。
+ * 属性块（标准键 `Mindmap` + 布局标准值，与界面语言无关）是文件「是导图、用哪种
+ * 布局」的唯一凭据——触发判定不认文件名（见 domain/mindmap-property）；块后空行
+ * 分隔正文，与 md-outline.splitFrontmatter 的边界口径一致（K46）。
  * 无标题时中心主题 = 文件名，列表项即第 1 级子主题。
+ *
+ * @param layoutValue 属性标准值（种子布局，PascalCase）。缺省 = 思维导图布局。
  */
-export function createDefaultMarkdownContent(lang: Language = 'zh'): string {
+export function createDefaultMarkdownContent(
+	lang: Language = 'zh',
+	layoutValue?: string,
+): string {
 	const body = [
 		`- ${t(lang, 'default.shortcutHint')}`,
 		`- ${t(lang, 'default.tabHint')}`,
 		`- ${t(lang, 'default.enterHint')}`,
 		'',
 	].join('\n');
-	return `${buildMindMapFrontmatter(lang)}\n${body}`;
+	return `${buildMindMapFrontmatter(layoutValue)}\n${body}`;
 }
 
 /**

@@ -17,7 +17,7 @@
  *   node scripts/gen-perf-fixture.mjs --out <path.md> [--nodes 5000] [--seed 20261005]
  *   node scripts/gen-perf-fixture.mjs --out <path.md> --shape degenerate   # 复现旧形态
  *
- * 输出格式：**frontmatter 声明（`类型: Mindmap`）+ 纯列表**、根节点后跟一个空行、
+ * 输出格式：**frontmatter 声明（`Mindmap: Mindmap`）+ 纯列表**、根节点后跟一个空行、
  * 每层缩进 2 空格（插件按文件名派生根标题）。声明块是 2026-10-12 起的判据——
  * 缺它文件不会被识别为导图（文件名后缀 `.mindmap.md` 已退役）。
  */
@@ -149,7 +149,7 @@ function serialize(root) {
 	lines.push(`- ${root.text}`, '')
 	emit(root.children, 1)
 	// 导图声明块：判据是 frontmatter（见文件头），缺它则文件只是普通 md
-	return `---\n类型: Mindmap\n---\n\n${lines.join('\n')}\n`
+	return `---\nMindmap: Mindmap\n---\n\n${lines.join('\n')}\n`
 }
 
 const args = parseArgs(process.argv)

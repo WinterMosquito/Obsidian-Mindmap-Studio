@@ -161,6 +161,8 @@ function settingsStub(
 		language: 'zh',
 		saveLocation: 'obsidian',
 		saveFolder: '',
+		// 与 DEFAULT_SETTINGS.defaultLayout 同口径：它是新建文件的**种子**布局
+		defaultLayout: 'logicalStructure',
 		...overrides,
 	};
 }
@@ -179,10 +181,23 @@ describe('新建思维导图的落点判定', () => {
 			expect(stub.created).toHaveLength(1);
 			expect(stub.created[0]?.path).toBe(expectedFileName());
 			expect(stub.created[0]?.path.startsWith('/')).toBe(false);
-			// 导图身份来自正文的属性声明（zh 用「类型」键）
-			expect(stub.created[0]?.content.startsWith('---\n类型: Mindmap\n---\n')).toBe(
-				true,
+			// 导图身份来自正文的属性声明（标准键 `Mindmap`，与语言无关）；
+			// 值是**种子布局**的标准值（默认逻辑结构图 → LogicalStructure）
+			expect(
+				stub.created[0]?.content.startsWith('---\nMindmap: LogicalStructure\n---\n'),
+			).toBe(true);
+		});
+
+		it('种子布局取设置 defaultLayout：思维导图 → `Mindmap: Mindmap`', async () => {
+			const stub = createStubApp();
+			await createNewMindMap(
+				stub.app,
+				settingsStub({ defaultLayout: 'mindMap' }),
+				'',
 			);
+			expect(
+				stub.created[0]?.content.startsWith('---\nMindmap: Mindmap\n---\n'),
+			).toBe(true);
 		});
 
 		it('指定目录：拼接为「目录/名称」，存在性检查用同一路径口径', async () => {

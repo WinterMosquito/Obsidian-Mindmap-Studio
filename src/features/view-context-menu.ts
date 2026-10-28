@@ -161,14 +161,25 @@ function addChoiceMenu(
 	});
 }
 
-/** 布局（空白右键与节点右键共用） */
+/**
+ * 布局（空白右键与节点右键共用）。
+ *
+ * 切换会**写文件属性**（异步且可能失败）：写盘失败由 `applyLayout` 自己提示，
+ * 这里只需不等待——菜单收起后画面会随写盘结果更新。**但要兜住拒绝**：应用引擎
+ * 那一步（`setLayout` / 竖栏重建）不归它的 try 管，且此刻 leaf 可能已被关闭，
+ * `void` 掉的 Promise 会变成未处理拒绝。
+ */
 function addLayoutMenu(menu: Menu, view: MindMapViewContext): void {
 	addChoiceMenu(menu, view, {
 		title: 'toolbar.layout',
 		icon: 'layout-dashboard',
-		current: view.resolvePreference('layout'),
+		current: view.resolveLayout(),
 		options: LAYOUT_OPTIONS,
-		onPick: (value) => view.applyLayout(value),
+		onPick: (value) => {
+			void view.applyLayout(value).catch((error: unknown) => {
+				console.error('切换布局失败:', error);
+			});
+		},
 	});
 }
 

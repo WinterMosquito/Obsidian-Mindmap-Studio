@@ -39,7 +39,9 @@
  *    拦截见 ①；CSS 不提供 resize 手柄。嵌入形态**没有**平移/缩放语义，
  *    内容已完整显示，任何可移动性都只会把内容推出视野。
  * ④ **不写任何状态到 `data.json`**：布局 / 视口 / 打开偏好都不持久化（本文件
- *    完全不触碰 `ViewStateStore`），每次渲染按当前设置重算。
+ *    完全不触碰 `ViewStateStore`），每次渲染按当前设置重算。布局的唯一「按块」
+ *    入口是块体首行的 `%%layout: <值>%%` 指令（`parseEmbedLayoutDirective`），
+ *    它只影响这一次渲染，不回写任何地方。
  * ⑤ **超限不建引擎**：节点数 > `CODE_BLOCK_MAX_NODES` 时降级为只读缩进大纲
  *    （一篇笔记可有多个块，每块一个引擎会让打开成本随块数线性叠加）；
  *    降级**可见**（提示行），不静默退化。
@@ -72,6 +74,7 @@ import {
 	measureContentFitToWidth,
 	resizeMindMap,
 } from '../engine/mindmap';
+import { layoutIdOfPropertyValue } from '../domain/mindmap-property';
 import { parseMdOutline } from '../markdown/md-outline';
 import { ensureUniqueUids } from '../markdown/markdown';
 import {
@@ -115,12 +118,15 @@ const EMBED_FIT_PADDING = 12;
  * 嵌入渲染所需的**最窄设置面**（窄化契约，同 `CommandsHost` 手法）：
  * 只取四项，且由组合根取值——features 不引 `settings`（组合根禁令）。
  *
- * `themeStyle` 取**全局默认**（设置项 `defaultThemeStyle`，由组合根注入），
- * 与 `layout` / `lineStyle` 同性质：嵌入没有「当前文件」身份、拿不到右栏/右键那份
- * 按文件记的值，但仍应遵守用户的默认外观（2026-10-21 用户订正）。
+ * `layout` / `lineStyle` / `themeStyle` 都取**全局默认**（设置项 `defaultLayout` /
+ * `defaultLineStyle` / `defaultThemeStyle`，由组合根注入）：嵌入没有「当前文件」
+ * 身份、拿不到右栏/右键那份按文件记的值，但仍应遵守用户的默认外观（2026-10-21
+ * 用户订正）。**布局另有块体首行的 `%%layout: …%%` 指令可覆盖**，此时这里的值是
+ * 回退值（见 `parseEmbedLayoutDirective`）。
  * `palette` **没有全局默认**（只有按文件记），故恒用 `DEFAULT_PALETTE`。
  */
 export interface MindmapEmbedConfig {
+	/** 引擎 layout id：**块体首行没有 `%%layout: …%%` 指令时的回退值** */
 	layout: string;
 	lineStyle: string;
 	/** 主题（明暗配色） */
@@ -156,6 +162,56 @@ export function shouldRenderOutline(nodeCount: number): boolean {
 }
 
 /**
+ * 块体首行布局指令的外壳：`%%layout: <值>%%`（键名大小写不敏感）。
+ * **只认外壳**——值的语义交给 `domain/mindmap-property` 解析（唯一实现）。
+ */
+const EMBED_LAYOUT_DIRECTIVE_RE = /^\s*%%\s*layout\s*:\s*(.+?)\s*%%\s*$/i;
+
+/**
+ * 解析块体**首行**的布局指令（`%%layout: Timeline%%`，允许其前有空行）。
+ *
+ * 为什么只认首行：指令是「这一块的渲染参数」，写在正文里会与用户的大纲内容
+ * 混淆；同形文本出现在后面时就只是内容（可能人家正在讲这条语法）。
+ *
+ * 返回值：
+ * - `source`：剥掉指令行后的块体。**外壳不匹配时原样返回**——`%%备注%%` 之类
+ *   是用户注释（行内规则里注释也隐藏），不能因为长得像就被吃掉；
+ * - `layoutId`：值命中六种布局之一时的引擎 id，否则 `null`；
+ * - `invalidValue`：值解析不出布局（`Markdown` 或未知）时才回填，供块内提示
+ *   说明「写了但没用上」——这是可见降级，不静默。
+ *
+ * **值不可为空**：`%%layout: %%` 会命中外壳（`(.+?)` 吃掉分隔空白那个空格），
+ * 故取到值后先判空——空值等同「不是指令」，整行按正文留在块内（既不剥行，
+ * 也不弹一条值为空的「忽略指令」提示）。
+ */
+export function parseEmbedLayoutDirective(source: string): {
+	source: string;
+	layoutId: string | null;
+	invalidValue?: string;
+} {
+	const lines = source.split('\n');
+	let index = 0;
+	while (index < lines.length && (lines[index] ?? '').trim() === '') {
+		index++;
+	}
+	const match = EMBED_LAYOUT_DIRECTIVE_RE.exec(lines[index] ?? '');
+	if (!match) {
+		return { source, layoutId: null };
+	}
+	const raw = (match[1] ?? '').trim();
+	if (raw === '') {
+		return { source, layoutId: null };
+	}
+	const layoutId = layoutIdOfPropertyValue(raw);
+	// 只删指令行本身：其前的空行是用户排版，保留
+	const rest = [...lines.slice(0, index), ...lines.slice(index + 1)];
+	const stripped = rest.join('\n');
+	return layoutId === null
+		? { source: stripped, layoutId: null, invalidValue: raw }
+		: { source: stripped, layoutId };
+}
+
+/**
  * Markdown 代码块渲染子（`ctx.addChild` 托管）：
  * 解析块体 → 建只读引擎 → 随宿主生命周期销毁。
  */
@@ -177,6 +233,14 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 	private observedWidth: number | null = null;
 	/** 待挂载的展示树（尺寸等待期间复用同一份，避免重复解析） */
 	private pendingTree: MindMapTreeNode | null = null;
+	/**
+	 * 挂载时解析出的**实际布局**（首行指令 ?? 配置回退值）。
+	 *
+	 * 之后所有用到布局的地方（延迟挂载、`css-change` 换肤）都读这个字段：
+	 * 重新问配置会让「指令指定的布局」在换主题时悄悄漂回默认（设置变更本就不
+	 * 该改写已渲染块的布局）。
+	 */
+	private embedLayout: string | null = null;
 	/** 待执行的「重建布局 + 重算高度」帧（见 `deferFit`；至多一个在途） */
 	private fitFrame: number | null = null;
 
@@ -218,10 +282,23 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		});
 		this.register(() => this.events.destroy());
 
-		const { lang } = this.getConfig();
+		const config = this.getConfig();
+		const lang = config.lang;
+		// 布局指令必须在解析**之前**剥离：指令行绝不能变成节点（否则用户会看到
+		// 一个叫「%%layout: Timeline%%」的主题）。
+		const directive = parseEmbedLayoutDirective(this.source);
+		this.embedLayout = directive.layoutId ?? config.layout;
+		if (directive.invalidValue !== undefined) {
+			container.createDiv({
+				cls: EMBED_NOTICE_CLASS,
+				text: tf(lang, 'mindmapEmbed.unknownLayout', {
+					value: directive.invalidValue,
+				}),
+			});
+		}
 		let tree: MindMapTreeNode;
 		try {
-			tree = parseMdOutline(this.source, t(lang, 'mindmapEmbed.root')).tree;
+			tree = parseMdOutline(directive.source, t(lang, 'mindmapEmbed.root')).tree;
 		} catch (error) {
 			this.renderFailure(lang, error);
 			return;
@@ -356,13 +433,15 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		tree: MindMapTreeNode,
 	): MindMap | null {
 		const config = this.getConfig();
+		// 布局取挂载时解析出的值（指令 ?? 回退值）：延迟挂载同样是这一块的渲染
+		const layout = this.embedLayout ?? config.layout;
 		let mindMap: MindMap;
 		try {
 			// 节点配色指令（`%%#hex%%`）：在创建**之前**写进 data 树——引擎会克隆
 			// 数据，建好后再改这棵树不再生效（只读嵌入没有编辑入口，无需实时同步）。
 			applyColorDirectivesToTree(tree, colorDirectiveOf);
 			mindMap = createMindMap(el, tree, {
-				layout: config.layout,
+				layout,
 				lineStyle: config.lineStyle,
 				themePref: config.themePref,
 				// 边框跟随**全局默认**（与 layout / lineStyle 同性质）；配色只有
@@ -426,7 +505,8 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 				applyThemeConfig(this.mindMap, {
 					isDark: this.app.isDarkMode(),
 					themePref: next.themePref,
-					layout: next.layout,
+					// 布局用**挂载时**解析出的值：这里重读配置会让指令布局漂回默认
+					layout: this.embedLayout ?? next.layout,
 					lineStyle: next.lineStyle,
 					// 同 mount：边框跟全局默认、配色恒基准蓝（都不读右栏/右键按文件值）
 					themeStyle: next.themeStyle,

@@ -37,6 +37,14 @@ interface SettingsHost {
 
 /** 插件设置 */
 export interface MindMapStudioSettings {
+	/**
+	 * 新建导图的初始布局（**种子值**，引擎 layout id）。
+	 *
+	 * 语义自 2026-10-29 收窄：逐文件布局只存在于文件属性（frontmatter 的
+	 * `Mindmap` 值），这里既不参与任何已存在文件的解读，也不是任何读取路径的
+	 * fallback——它只在「新建/升级文件」时写进属性。改动它对已打开的图无效
+	 * （故不在 `LIVE_REFRESH_SETTING_KEYS` 里）。
+	 */
 	defaultLayout: string;
 	/** 默认连线样式（auto/curve/direct/straight；auto＝随布局） */
 	defaultLineStyle: string;
@@ -281,7 +289,6 @@ export function sanitizeSettings(
  * `key as keyof MindMapStudioSettings` 强转。
  */
 const LIVE_REFRESH_SETTING_KEYS = [
-	'defaultLayout',
 	'defaultLineStyle',
 	'defaultTheme',
 	'defaultThemeStyle',
@@ -305,10 +312,13 @@ function isLiveRefreshKey(key: string): key is LiveRefreshSettingKey {
  * 相对「上次已应用」的设置快照，算出本次真正变化的 LIVE_REFRESH 键（首次应用 = 全部）。
  *
  * 为什么要算差集（2026-09-17 性能轮，见 AGENTS.md K59）：应用动作此前一律让每个视图
- * **重建引擎 + 全量重渲染**，而其中多数键**根本不影响已打开的图**——默认布局 / 默认
- * 连线样式在文件加载时已定为「文件显式选择 ?? 默认值」，之后再改默认值不会改变已打开
- * 的图；主题则有引擎的原地通道（`setThemeConfig`）。算出差集后，视图只做真会改变
- * 渲染的事（`features/view.applySettingsChange`）。
+ * **重建引擎 + 全量重渲染**，而其中多数键**根本不影响已打开的图**——默认连线样式在文件
+ * 加载时已定为「文件显式选择 ?? 默认值」，之后再改默认值不会改变已打开的图；主题则有
+ * 引擎的原地通道（`setThemeConfig`）。算出差集后，视图只做真会改变渲染的事
+ * （`features/view.applySettingsChange`）。
+ *
+ * `defaultLayout` **不在本表**（2026-10-29）：它是新建文件的种子值，逐文件布局只存在
+ * 于文件属性，改了它对任何已打开/已存在文件都无影响。
  *
  * 保守口径：`previous === null`（首次应用）返回**全部键**，让视图走最完整的路径，
  * 不依赖「调用方一定先记过快照」这一隐式前提。

@@ -1,19 +1,23 @@
 /**
- * 视图状态存储：按文件路径保存布局与视口（缩放/平移）。
+ * 视图状态存储：按文件路径保存外观偏好与视口（缩放/平移）。
  *
- * 导图文件正文必须保持纯 Markdown，布局/视口不写入文件；
+ * 导图文件正文必须保持纯 Markdown，外观与视口不写入文件；
  * 状态存插件 data.json（顶层 `viewState` 键，path → 状态），
  * 与 settings 合并写入（保持历史顶层设置格式兼容）。
  *
  * 状态：
- * - layout: 布局类型（logicalStructure/mindMap/...）
- * - lineStyle: 连线样式偏好（auto/curve/direct/straight；auto＝随布局）
+ * - lineStyle: 连线样式偏好（straight/curve）
  * - palette: 配色（预设 id `default/mint/amber/wisteria/forest/slate`，或「自定义」
  *   写入的 `#rrggbb`；**按文件记**，由右键菜单「配色」切换——配色不是全局设置，
  *   见 `core/constants.PALETTE_OPTIONS` / `normalizePalettePreference`）
  * - themeStyle: 边框样式（default＝有边框 / borderless＝无边框；**按文件记**，由右缘
  *   竖栏「边框」开关切换——同样不是全局设置，见 `core/constants.THEME_STYLE_OPTIONS`）
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）
+ *
+ * **布局不在这里（2026-10-29 重构）**：逐文件布局只存在于文件属性
+ * （frontmatter 的 `Mindmap` 值，见 `domain/mindmap-property`）。旧版的
+ * `viewState[*].layout` 在 hydrate 时被剔除（返回 `true` 让调用方补一次写盘），
+ * 此后不再读、也不再写这个键。
  */
 import { createDebouncer, type Debouncer } from '../core/concurrency';
 import { VIEW_STATE_PERSIST_MS } from '../core/constants';
@@ -21,28 +25,30 @@ import { VIEW_STATE_PERSIST_MS } from '../core/constants';
 export type PathState = Record<string, unknown>;
 
 /**
- * 按文件记的四项偏好键——既是 `viewState` 条目里的字段名，也是外观四项
- * （布局 / 连线 / 配色 / 边框）的键。命名与字段一一对应，勿再起别名。
+ * 按文件记的三项偏好键——既是 `viewState` 条目里的字段名，也是外观三项
+ * （连线 / 配色 / 边框）的键。命名与字段一一对应，勿再起别名。
  */
-export type PreferenceKey = 'layout' | 'lineStyle' | 'palette' | 'themeStyle';
+export type PreferenceKey = 'lineStyle' | 'palette' | 'themeStyle';
 
-/** 视图按文件记忆的四项偏好（全部有全局默认值或内置默认值） */
+/** 视图按文件记忆的三项偏好（全部有全局默认值或内置默认值） */
 export interface FilePreferences {
-	layout: string;
 	lineStyle: string;
 	themeStyle: string;
 	palette: string;
 }
 
 /**
- * 「按文件偏好 + 全局默认」的合成——**四个维度必须同时给默认值**（类型强制），
+ * 「按文件偏好 + 全局默认」的合成——**三个维度必须同时给默认值**（类型强制），
  * 视图与新建流程共用这一处。
  *
- * 为什么收成一个函数：四个维度各自在视图里写一遍 `getX(path) ?? 默认`，
- * 极易在某一维写成「硬编码默认」而不是「settings 默认」——2026-10-21 的
+ * 为什么收成一个函数：各维度若在视图里各写一遍 `getX(path) ?? 默认`，
+ * 极易把某一维写成「硬编码默认」而不是「settings 默认」——2026-10-21 的
  * `themeStyle` 就犯过这个错（回落 `DEFAULT_THEME_STYLE` 而非
  * `settings.defaultThemeStyle`，导致「默认边框样式」对新建导图无效）。
  * 并排写在一处后，缺省值写错一眼可见，且由单测锁死。
+ *
+ * 布局**不在其中**：它的缺省来自文件声明（`readDeclaredLayout`），
+ * 不是「按文件记忆的偏好」。
  *
  * 纯函数、零依赖：`saved` 只收「该文件是否记过」，未记过（undefined）即用默认。
  */
@@ -51,7 +57,6 @@ export function resolveFilePreferences(input: {
 	defaults: FilePreferences;
 }): FilePreferences {
 	return {
-		layout: input.saved.layout ?? input.defaults.layout,
 		lineStyle: input.saved.lineStyle ?? input.defaults.lineStyle,
 		themeStyle: input.saved.themeStyle ?? input.defaults.themeStyle,
 		palette: input.saved.palette ?? input.defaults.palette,
@@ -70,8 +75,8 @@ const VIEW_STATE_KEY = 'viewState';
  * - `state` 是对象但缺 scale/x/y ⇒ 不抛，引擎把任意字段写进视图、视口纹丝不动，
  *   之后「内容可见性」判定基于**当前默认视口**给结论（可能误判为「已在目标
  *   视口」而跳过居中）。
- * 两种形态都恢复不出视口 ⇒ 在 hydrate 处丢弃（**只丢该字段**：同一段条目的
- * layout / lineStyle 与视口无关，保留）。`transform` 缺失是安全的
+ * 两种形态都恢复不出视口 ⇒ 在 hydrate 处丢弃（**只丢该字段**：同一条目的
+ * lineStyle / palette / themeStyle 与视口无关，保留）。`transform` 缺失是安全的
  * （`{...undefined}` = `{}`），不参与判定。
  *
  * 比 `engine/mindmap.viewStateSignature` 更严：那个用 `Number()` 兼容手改的
@@ -114,45 +119,51 @@ export class ViewStateStore {
 	 * @param data 必须是**完整的 data.json 顶层对象**（{viewState, ...settings}），
 	 *   不是 viewState 子对象——hydrate 内部从 data[VIEW_STATE_KEY] 提取视图状态。
 	 *   误传子对象时函数静默不加载任何状态，这里加了类型提示和 console.warn 提醒。
+	 * @returns 是否**剔除了残留字段**（旧版逐文件布局 `layout`）。调用方据此决定
+	 *   是否补一次写盘：值为 `false` 时 data.json 已是新形态，不必每次启动都写。
 	 */
-	hydrate(data: unknown): void {
+	hydrate(data: unknown): boolean {
 		this.map.clear();
 		if (!data || typeof data !== 'object') {
-			return;
+			return false;
 		}
 		const raw = (data as Record<string, unknown>)[VIEW_STATE_KEY];
 		if (!raw || typeof raw !== 'object') {
 			// 误传 viewState 子对象而非 data.json 顶层的防御提示
-			if ('layout' in (data as Record<string, unknown>)) {
+			const top = data as Record<string, unknown>;
+			if (['lineStyle', 'palette', 'themeStyle', 'view'].some((key) => key in top)) {
 				console.warn(
 					'ViewStateStore.hydrate 期望完整 data.json 对象，疑似收到 viewState 子对象',
 				);
 			}
-			return;
+			return false;
 		}
+		let cleaned = false;
 		for (const [path, state] of Object.entries(
 			raw as Record<string, unknown>,
 		)) {
 			if (state && typeof state === 'object') {
 				const s = state as Record<string, unknown>;
+				// 旧版把逐文件布局记在这里；布局现在只存在于文件属性 ⇒ 残留一律剔除
+				//（条目里的 view / 连线 / 配色 / 边框不受影响）。
+				if ('layout' in s) {
+					delete s.layout;
+					cleaned = true;
+				}
 				// 形状校验：只接受含已知字段的视图状态，丢弃畸形/异常条目
 				// （防手改 data.json、引擎升级后 view 结构变化等导致的坏数据渗入）。
 				// `view` 另做**可用性**校验（见 isUsableSavedView）：不可恢复的形态
-				// 只丢该字段，同条目的 layout / lineStyle 照样生效。
+				// 只丢该字段，同条目的 lineStyle 照样生效。
 				if ('view' in s && !isUsableSavedView(s.view)) {
 					delete s.view;
 				}
-				if (
-					'layout' in s ||
-					'lineStyle' in s ||
-					'palette' in s ||
-					'themeStyle' in s ||
-					'view' in s
-				) {
+				// 只剩空洞（例如原本只有 layout）⇒ 整条丢弃，不留空壳键
+				if ('lineStyle' in s || 'palette' in s || 'themeStyle' in s || 'view' in s) {
 					this.map.set(path, s);
 				}
 			}
 		}
+		return cleaned;
 	}
 
 	/** 序列化视图状态（供写盘；也会随 settings 全量保存时一并带上） */
@@ -163,7 +174,7 @@ export class ViewStateStore {
 	/**
 	 * 读取某项「按文件偏好」；未记过 / 非字符串一律 `undefined`（由视图回落默认）。
 	 *
-	 * 四项取值同构，故只留这一个实现；下面的具名 getter 只提供语义与注释，
+	 * 三项取值同构，故只留这一个实现；下面的具名 getter 只提供语义与注释，
 	 * 不再各写一遍 `typeof === 'string'`（那是典型的「第四处忘了改」位置）。
 	 */
 	getPreference(path: string, key: PreferenceKey): string | undefined {
@@ -176,15 +187,7 @@ export class ViewStateStore {
 		this.patch(path, { [key]: value });
 	}
 
-	getLayout(path: string): string | undefined {
-		return this.getPreference(path, 'layout');
-	}
-
-	setLayout(path: string, value: string): void {
-		this.setPreference(path, 'layout', value);
-	}
-
-	/** 连线样式偏好（auto/curve/direct/straight；非法值由解析层回落布局默认） */
+	/** 连线样式偏好（straight/curve；非法值由解析层回落布局默认） */
 	getLineStyle(path: string): string | undefined {
 		return this.getPreference(path, 'lineStyle');
 	}

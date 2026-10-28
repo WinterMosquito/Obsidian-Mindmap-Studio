@@ -1,5 +1,5 @@
 /**
- * 声明驱动自动打开：frontmatter 声明为导图（`类型`/`Type` = `Mindmap`）的文件，
+ * 声明驱动自动打开：frontmatter 声明为导图（`Mindmap: Mindmap`）的文件，
  * 每当它以 markdown 视图出现，就自动切到本插件的导图视图。
  *
  * 本模块只管**时机**，判据由组合根注入（`isDeclaredMindMapFile`，唯一实现在
@@ -7,7 +7,7 @@
  * 1. 运行期：双击/链接打开按 Obsidian 默认先落在 markdown 视图，需再切一次。
  *    用 active-leaf-change（携带已激活 leaf）判定而非 file-open（后者时序上活动
  *    视图可能尚未切换为 markdown，会漏判）；file-open 保留为互补兜底。
- *    属性**就地改动**（用户在属性面板加上 `类型: Mindmap`）由组合根监听
+ *    属性**就地改动**（用户在属性面板加上 `Mindmap: Mindmap`）由组合根监听
  *    `metadataCache.on('changed')` 后调 activateDeclaredLeaves() 补判。
  * 2. 启动期：工作区恢复（重启）时 active-leaf-change 对初始叶子可能不触发、或
  *    触发瞬间 file 尚未就位——scheduleStartupRestore 以多档延时扫描恢复。

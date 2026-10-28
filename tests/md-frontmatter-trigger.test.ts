@@ -1,14 +1,14 @@
 /**
  * 导图声明判据回归（domain/mindmap-property.ts）。
  *
- * 判据是「文件是不是导图」的**唯一**凭据（2026-10-12 起取代文件名后缀），
- * 因此这里锁的是它的全部边界：
- * - 读侧**不看语言**：`Type` 与 `类型` 两个键都认；键名大小写不敏感；
- * - 值归一：trim + 大小写不敏感；兼容官方属性面板产出的单元素数组；
- * - `Markdown`（或任何其它值）不是触发值，也**不是否决票**——它只意味着
- *   「没有键等于 mindmap」，故双键并存时任一命中即为导图；
- * - 写侧才看语言：zh → `类型`，en → `Type`，值恒为 `Mindmap`；且 `convergeMindMapPropertyKey`
- *   把两键收敛为**唯一的语言键**（防 `Type`/`类型` 并存——改语言后「只加新键」的根因）。
+ * 判据是「文件是不是导图、用哪种布局」的**唯一**凭据，自 2026-10-29 起为
+ * **布局枚举**：
+ * - 只认键 `Mindmap`（键名大小写不敏感），值经 trim → 小写 → 去 `-` / `_` /
+ *   空白后查反向表；`Mindmap` / `mindMap` / `mind map` / `MIND-MAP` 是同一件事；
+ * - `Markdown` 是**终止值**（不是导图），未知值 fail-closed（静默，不是导图）；
+ * - 旧键 `Type` / `类型` **完全不认**（断代）——负向断言在此锁死，防误加回兼容；
+ * - 写侧恒写标准键 `Mindmap` + PascalCase 标准值，与界面语言无关；
+ *   `setMindMapProperty` 顺带收敛同名大小写变体，但**不碰**旧键。
  *
  * 判据读官方 metadataCache 的 frontmatter 对象，故这里直接用普通对象当输入；
  * `position` 之类官方注入键不应干扰判定。
@@ -16,158 +16,269 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildMindMapFrontmatter,
-	convergeMindMapPropertyKey,
-	findMindMapPropertyKeys,
 	isMindMapProperty,
 	isMindMapPropertyKey,
-	mindMapPropertyKey,
+	layoutIdOfPropertyValue,
+	layoutPropertyValue,
+	MINDMAP_DEFAULT_VALUE,
+	MINDMAP_LAYOUT_IDS,
+	MINDMAP_LAYOUT_VALUES,
 	MINDMAP_MARKDOWN_VALUE,
-	MINDMAP_TYPE_VALUE,
-	normalizePropertyValues,
+	MINDMAP_PROPERTY_KEY,
+	readMindMapDeclaration,
+	setMindMapProperty,
 } from '../src/domain/mindmap-property';
+import { LAYOUT_OPTIONS } from '../src/core/constants';
 
-describe('isMindMapProperty（读侧判据）', () => {
+describe('readMindMapDeclaration（读侧判据：值 = 布局枚举）', () => {
 	it.each([
-		{ name: 'zh 键 类型: Mindmap', fm: { 类型: 'Mindmap' }, expected: true },
-		{ name: 'en 键 Type: Mindmap', fm: { Type: 'Mindmap' }, expected: true },
-		{ name: '小写键 type: mindmap', fm: { type: 'mindmap' }, expected: true },
-		{ name: '大写值 Type: MINDMAP', fm: { Type: 'MINDMAP' }, expected: true },
-		{ name: '带空白 Type: " Mindmap "', fm: { Type: '  Mindmap  ' }, expected: true },
-		{ name: '单元素数组 Type: [Mindmap]', fm: { Type: ['Mindmap'] }, expected: true },
-		{ name: '多值含 mindmap Type: [a, mindmap]', fm: { Type: ['a', 'mindmap'] }, expected: true },
-		{ name: 'Markdown 值不触发', fm: { 类型: 'Markdown' }, expected: false },
-		{ name: '其它值不触发', fm: { type: 'book' }, expected: false },
-		{ name: '值为空数组', fm: { type: [] }, expected: false },
-		{ name: '值为 null', fm: { type: null }, expected: false },
-		{ name: '值近似但不是（mindmap-studio）', fm: { type: 'mindmap-studio' }, expected: false },
-		{ name: '无关键', fm: { title: 'Mindmap' }, expected: false },
-		{ name: '空 frontmatter', fm: {}, expected: false },
-		{ name: 'null frontmatter', fm: null, expected: false },
-		{ name: 'undefined frontmatter', fm: undefined, expected: false },
-		{ name: '非对象 frontmatter', fm: '类型: Mindmap', expected: false },
-	])('$name → $expected', ({ fm, expected }) => {
-		expect(isMindMapProperty(fm)).toBe(expected);
+		{ value: 'LogicalStructure', layoutId: 'logicalStructure' },
+		{ value: 'Mindmap', layoutId: 'mindMap' },
+		{ value: 'OrganizationStructure', layoutId: 'organizationStructure' },
+		{ value: 'CatalogOrganization', layoutId: 'catalogOrganization' },
+		{ value: 'Timeline', layoutId: 'timeline' },
+		{ value: 'Fishbone', layoutId: 'fishbone' },
+	])('$value → $layoutId', ({ value, layoutId }) => {
+		expect(readMindMapDeclaration({ Mindmap: value })).toEqual({
+			kind: 'layout',
+			layoutId,
+			value,
+		});
 	});
 
-	it('两个键并存时：任一命中即导图（Markdown 不是否决票）', () => {
-		expect(isMindMapProperty({ 类型: 'Mindmap', Type: 'Markdown' })).toBe(true);
-		expect(isMindMapProperty({ 类型: 'Markdown', Type: 'mindmap' })).toBe(true);
-		expect(isMindMapProperty({ 类型: 'Markdown', Type: 'markdown' })).toBe(false);
+	it('`Markdown` 是终止值：kind 为 markdown（不是 layout）', () => {
+		expect(readMindMapDeclaration({ Mindmap: 'Markdown' })).toEqual({
+			kind: 'markdown',
+		});
+		expect(isMindMapProperty({ Mindmap: 'Markdown' })).toBe(false);
+	});
+
+	it.each([
+		{ name: '全小写', value: 'mindmap', layoutId: 'mindMap' },
+		{ name: '驼峰（引擎 id）', value: 'mindMap', layoutId: 'mindMap' },
+		{ name: '带空格', value: 'mind map', layoutId: 'mindMap' },
+		{ name: '连字符 + 大写', value: 'MIND-MAP', layoutId: 'mindMap' },
+		{ name: '下划线 + 空格', value: 'Logical Structure', layoutId: 'logicalStructure' },
+		{ name: '连字符', value: 'logical-structure', layoutId: 'logicalStructure' },
+		{ name: '下划线', value: 'catalog_organization', layoutId: 'catalogOrganization' },
+		{ name: '前后空白', value: '  Timeline  ', layoutId: 'timeline' },
+		{ name: '终止值宽容', value: 'mark down', layoutId: null },
+	])('$name（$value）→ $layoutId', ({ value, layoutId }) => {
+		const declaration = readMindMapDeclaration({ Mindmap: value });
+		if (layoutId === null) {
+			expect(declaration).toEqual({ kind: 'markdown' });
+			return;
+		}
+		expect(declaration).toMatchObject({ kind: 'layout', layoutId });
+	});
+
+	it('数组取第一项（官方属性面板的多值形态）', () => {
+		expect(
+			readMindMapDeclaration({ Mindmap: ['Timeline', 'Fishbone'] }),
+		).toMatchObject({ kind: 'layout', layoutId: 'timeline' });
+		// 首项不是布局 ⇒ 不是导图（**不再**「任一命中即命中」）
+		expect(readMindMapDeclaration({ Mindmap: ['笔记', 'Timeline'] })).toBeNull();
+		expect(readMindMapDeclaration({ Mindmap: ['Markdown', 'Timeline'] })).toEqual({
+			kind: 'markdown',
+		});
+	});
+
+	it.each([
+		{ name: '空数组', fm: { Mindmap: [] } },
+		{ name: '空串', fm: { Mindmap: '' } },
+		{ name: '纯空白', fm: { Mindmap: '   ' } },
+		{ name: 'null', fm: { Mindmap: null } },
+		{ name: '无键', fm: { title: 'Mindmap' } },
+		{ name: '空对象', fm: {} },
+		{ name: 'null frontmatter', fm: null },
+		{ name: 'undefined frontmatter', fm: undefined },
+		{ name: '非对象 frontmatter', fm: 'Mindmap: Mindmap' },
+	])('$name → null', ({ fm }) => {
+		expect(readMindMapDeclaration(fm)).toBeNull();
+		expect(isMindMapProperty(fm)).toBe(false);
+	});
+
+	it.each(['书本', 'book', 'mindmap-studio', 'logicalstructure2', '12'])(
+		'未知值 %j fail-closed（不是导图）',
+		(value) => {
+			expect(readMindMapDeclaration({ Mindmap: value })).toBeNull();
+			expect(isMindMapProperty({ Mindmap: value })).toBe(false);
+		},
+	);
+
+	it('断代：旧键 `类型` / `Type` 即便值为布局也**不触发**', () => {
+		expect(readMindMapDeclaration({ 类型: 'Mindmap' })).toBeNull();
+		expect(readMindMapDeclaration({ Type: 'Timeline' })).toBeNull();
+		expect(isMindMapProperty({ type: 'mindmap' })).toBe(false);
+	});
+
+	it('同名变体并存：按对象键顺序取**第一个命中的键**', () => {
+		expect(
+			readMindMapDeclaration({ Mindmap: 'Timeline', mindmap: 'Fishbone' }),
+		).toMatchObject({ layoutId: 'timeline' });
+		expect(
+			readMindMapDeclaration({ mindmap: 'Fishbone', Mindmap: 'Timeline' }),
+		).toMatchObject({ layoutId: 'fishbone' });
+		// 首个命中的键是终止值 ⇒ 终止（后面的同名变体不翻盘）
+		expect(
+			readMindMapDeclaration({ mindmap: 'Markdown', Mindmap: 'Timeline' }),
+		).toEqual({ kind: 'markdown' });
 	});
 
 	it('官方注入的 position / frontmatterPosition 不干扰判定', () => {
 		expect(
-			isMindMapProperty({
-				type: 'mindmap',
+			readMindMapDeclaration({
+				Mindmap: 'Mindmap',
 				position: { start: { line: 0, col: 0, offset: 0 } },
 				frontmatterPosition: { start: { line: 0 }, end: { line: 2 } },
 			}),
-		).toBe(true);
-		expect(isMindMapProperty({ position: { start: { line: 0 } } })).toBe(false);
-	});
-
-	it('findMindMapPropertyKeys 返回**原文键名**（改写据此保留用户写法）', () => {
-		expect(findMindMapPropertyKeys({ 类型: 'Mindmap' })).toEqual(['类型']);
-		expect(findMindMapPropertyKeys({ TyPe: 'mindmap' })).toEqual(['TyPe']);
-		expect(findMindMapPropertyKeys({ 类型: 'Mindmap', Type: 'Mindmap' })).toEqual([
-			'类型',
-			'Type',
-		]);
-		// 非命中的键不返回（Markdown 值 / 无关键）
-		expect(findMindMapPropertyKeys({ 类型: 'Markdown', title: 'x' })).toEqual([]);
-	});
-
-	it('normalizePropertyValues：数组/单值/空值归一为可比字符串', () => {
-		expect(normalizePropertyValues('  MindMap ')).toEqual(['mindmap']);
-		expect(normalizePropertyValues(['A', ' B '])).toEqual(['a', 'b']);
-		expect(normalizePropertyValues(42)).toEqual(['42']);
-		expect(normalizePropertyValues(null)).toEqual([]);
-		expect(normalizePropertyValues(undefined)).toEqual([]);
+		).toMatchObject({ layoutId: 'mindMap' });
+		expect(readMindMapDeclaration({ position: { start: { line: 0 } } })).toBeNull();
 	});
 });
 
-describe('写入侧（键名按语言选，值恒为 Mindmap）', () => {
-	it('键名：zh → 类型，其余 → Type', () => {
-		expect(mindMapPropertyKey('zh')).toBe('类型');
-		expect(mindMapPropertyKey('en')).toBe('Type');
-	});
-
-	it('属性块含末尾换行，且能被 isMindMapProperty 反解（写读自洽）', () => {
-		for (const lang of ['zh', 'en'] as const) {
-			const block = buildMindMapFrontmatter(lang);
-			expect(block.endsWith('\n')).toBe(true);
-			const lines = block.trimEnd().split('\n');
-			expect(lines[0]).toBe('---');
-			expect(lines[2]).toBe('---');
-			const key = lines[1]?.split(':')[0];
-			expect(key).toBe(mindMapPropertyKey(lang));
-			expect(block).toContain(`${MINDMAP_TYPE_VALUE}`);
+describe('layoutIdOfPropertyValue / layoutPropertyValue（双向表）', () => {
+	it('布局 id 与标准值互为逆映射（六对全覆盖）', () => {
+		for (const layoutId of MINDMAP_LAYOUT_IDS) {
+			const value = MINDMAP_LAYOUT_VALUES[layoutId];
+			expect(layoutIdOfPropertyValue(value)).toBe(layoutId);
+			expect(layoutPropertyValue(layoutId)).toBe(value);
 		}
 	});
 
-	it('常量口径：触发值 Mindmap，降级值 Markdown（判定恰相反）', () => {
-		expect(MINDMAP_TYPE_VALUE).toBe('Mindmap');
-		expect(MINDMAP_MARKDOWN_VALUE).toBe('Markdown');
-		expect(isMindMapProperty({ 类型: MINDMAP_TYPE_VALUE })).toBe(true);
-		expect(isMindMapProperty({ 类型: MINDMAP_MARKDOWN_VALUE })).toBe(false);
+	it('`Markdown` / 未知值 / 无值 → null（嵌入指令与视图共用这一份判定）', () => {
+		expect(layoutIdOfPropertyValue('Markdown')).toBeNull();
+		expect(layoutIdOfPropertyValue('%%备注%%')).toBeNull();
+		expect(layoutIdOfPropertyValue(null)).toBeNull();
+		expect(layoutIdOfPropertyValue([])).toBeNull();
+	});
+
+	it('layoutPropertyValue 对未知 id 回退出厂默认值，绝不写脏值', () => {
+		expect(layoutPropertyValue('bogus')).toBe(MINDMAP_DEFAULT_VALUE);
+		// 确定性：两次调用同一个未知 id 得到同一个值
+		expect(layoutPropertyValue('')).toBe(MINDMAP_DEFAULT_VALUE);
+	});
+
+	it('LAYOUT_OPTIONS 与 domain 的布局 id 集合一致（漏登记/多登记都报红）', () => {
+		expect(LAYOUT_OPTIONS.map((option) => option.value).sort()).toEqual(
+			[...MINDMAP_LAYOUT_IDS].sort(),
+		);
 	});
 });
 
 describe('isMindMapPropertyKey（键名谓词，不看值）', () => {
 	it.each([
-		['类型', true],
-		['Type', true],
-		['type', true],
-		['tYpE', true],
-		[' 类型 ', true],
+		['Mindmap', true],
+		['mindmap', true],
+		['MINDMAP', true],
+		[' MiNdMaP ', true],
+		['类型', false],
+		['Type', false],
 		['标题', false],
 		['', false],
-		['typed', false],
+		['mindmaps', false],
 	])('%j → %s', (key, expected) => {
 		expect(isMindMapPropertyKey(key)).toBe(expected);
 	});
 });
 
-describe('convergeMindMapPropertyKey（键名收敛为语言唯一键）', () => {
-	it('zh 目标键：en 键被重命名为 类型，值原样保留', () => {
-		const fm: Record<string, unknown> = { Type: 'Mindmap', title: 'x' };
-		expect(convergeMindMapPropertyKey(fm, 'zh')).toBe(true);
-		expect(fm).toEqual({ 类型: 'Mindmap', title: 'x' });
+describe('setMindMapProperty（写入侧：恒写标准键 + PascalCase 标准值）', () => {
+	it('新建：无同类键 → 写入标准值，其它属性不动', () => {
+		const fm: Record<string, unknown> = { title: 'x' };
+		expect(setMindMapProperty(fm, 'LogicalStructure')).toBe(true);
+		expect(fm).toEqual({ title: 'x', Mindmap: 'LogicalStructure' });
 	});
 
-	it('en 目标键：类型 键被重命名为 Type，值原样保留（含 Markdown 值）', () => {
-		const fm: Record<string, unknown> = { 类型: 'Markdown' };
-		expect(convergeMindMapPropertyKey(fm, 'en')).toBe(true);
-		expect(fm).toEqual({ Type: 'Markdown' });
-	});
-
-	it('显式 value：写入目标键并删除其它同类键（升级/降级用）', () => {
-		const fm: Record<string, unknown> = { 类型: 'Markdown', other: 1 };
-		expect(convergeMindMapPropertyKey(fm, 'en', 'Mindmap')).toBe(true);
-		expect(fm).toEqual({ Type: 'Mindmap', other: 1 });
-	});
-
-	it('两键并存 → 收敛为唯一目标键（取第一个键的值）', () => {
-		const fm: Record<string, unknown> = { 类型: 'Mindmap', Type: 'Markdown' };
-		expect(convergeMindMapPropertyKey(fm, 'en')).toBe(true);
-		expect(fm).toEqual({ Type: 'Mindmap' });
-	});
-
-	it('已是唯一目标键且值正确 → 无改动（幂等，免写盘）', () => {
-		const fm: Record<string, unknown> = { 类型: 'Mindmap' };
-		expect(convergeMindMapPropertyKey(fm, 'zh')).toBe(false);
-		expect(fm).toEqual({ 类型: 'Mindmap' });
+	it('幂等：已是标准键且值相同 → 无改动（免写盘）', () => {
+		const fm: Record<string, unknown> = { Mindmap: 'Timeline' };
+		expect(setMindMapProperty(fm, 'Timeline')).toBe(false);
+		expect(fm).toEqual({ Mindmap: 'Timeline' });
 	});
 
 	it('无同类键且未给 value → 无改动（不凭空造键）', () => {
 		const fm: Record<string, unknown> = { title: 'x' };
-		expect(convergeMindMapPropertyKey(fm, 'zh')).toBe(false);
+		expect(setMindMapProperty(fm)).toBe(false);
 		expect(fm).toEqual({ title: 'x' });
 	});
 
-	it('无同类键但给了 value → 新建目标键', () => {
-		const fm: Record<string, unknown> = { title: 'x' };
-		expect(convergeMindMapPropertyKey(fm, 'en', 'Mindmap')).toBe(true);
-		expect(fm).toEqual({ title: 'x', Type: 'Mindmap' });
+	it('变体收敛：小写变体被改名，值原样保留（未给 value）', () => {
+		const fm: Record<string, unknown> = { mindmap: 'Markdown', title: 'x' };
+		expect(setMindMapProperty(fm)).toBe(true);
+		expect(fm).toEqual({ Mindmap: 'Markdown', title: 'x' });
+	});
+
+	it('变体与标准键并存 → 只留标准键（显式 value 覆盖）', () => {
+		const fm: Record<string, unknown> = { Mindmap: 'Markdown', mindmap: 'Timeline' };
+		expect(setMindMapProperty(fm, 'Fishbone')).toBe(true);
+		expect(fm).toEqual({ Mindmap: 'Fishbone' });
+	});
+
+	it('多个变体并存且未给 value → 收敛为唯一标准键（取首个键的值）', () => {
+		const fm: Record<string, unknown> = { mindmap: 'Timeline', MINDMAP: 'Fishbone' };
+		expect(setMindMapProperty(fm)).toBe(true);
+		expect(fm).toEqual({ Mindmap: 'Timeline' });
+	});
+
+	it('显式覆盖：换布局（Mindmap → Timeline）', () => {
+		const fm: Record<string, unknown> = { Mindmap: 'Mindmap', other: 1 };
+		expect(setMindMapProperty(fm, 'Timeline')).toBe(true);
+		expect(fm).toEqual({ Mindmap: 'Timeline', other: 1 });
+	});
+
+	it('降级：写终止值 Markdown', () => {
+		const fm: Record<string, unknown> = { Mindmap: 'Timeline' };
+		expect(setMindMapProperty(fm, MINDMAP_MARKDOWN_VALUE)).toBe(true);
+		expect(fm).toEqual({ Mindmap: 'Markdown' });
+	});
+
+	it('断代：旧键 `类型` / `Type` 原样放过（不写、不改、不删）', () => {
+		const fm: Record<string, unknown> = { 类型: 'Mindmap', Type: 'Markdown' };
+		expect(setMindMapProperty(fm, 'Timeline')).toBe(true);
+		expect(fm).toEqual({
+			类型: 'Mindmap',
+			Type: 'Markdown',
+			Mindmap: 'Timeline',
+		});
+	});
+
+	it('只有旧键且未给 value → 完全不动（旧键不参与收敛）', () => {
+		const fm: Record<string, unknown> = { 类型: 'Mindmap' };
+		expect(setMindMapProperty(fm)).toBe(false);
+		expect(fm).toEqual({ 类型: 'Mindmap' });
+	});
+});
+
+describe('buildMindMapFrontmatter（参数化）', () => {
+	it('缺省：属性块逐字为 `---\\nMindmap: Mindmap\\n---\\n`', () => {
+		expect(buildMindMapFrontmatter()).toBe('---\nMindmap: Mindmap\n---\n');
+	});
+
+	it('给种子值：逐字写入该标准值（含末尾换行，与语言无关）', () => {
+		expect(buildMindMapFrontmatter('LogicalStructure')).toBe(
+			'---\nMindmap: LogicalStructure\n---\n',
+		);
+		expect(buildMindMapFrontmatter('Fishbone')).toBe(
+			'---\nMindmap: Fishbone\n---\n',
+		);
+	});
+
+	it('属性块能被 readMindMapDeclaration 反解（写读自洽）', () => {
+		for (const layoutId of MINDMAP_LAYOUT_IDS) {
+			const block = buildMindMapFrontmatter(layoutPropertyValue(layoutId));
+			const valueLine = block.split('\n')[1] ?? '';
+			expect(valueLine.startsWith(`${MINDMAP_PROPERTY_KEY}: `)).toBe(true);
+			const value = valueLine.slice(MINDMAP_PROPERTY_KEY.length + 2);
+			expect(readMindMapDeclaration({ Mindmap: value })).toMatchObject({
+				kind: 'layout',
+				layoutId,
+			});
+		}
+	});
+
+	it('常量口径：标准键 Mindmap，默认值 = 思维导图标准值，终止值 Markdown', () => {
+		expect(MINDMAP_PROPERTY_KEY).toBe('Mindmap');
+		expect(MINDMAP_DEFAULT_VALUE).toBe('Mindmap');
+		expect(MINDMAP_LAYOUT_VALUES.mindMap).toBe('Mindmap');
+		expect(MINDMAP_MARKDOWN_VALUE).toBe('Markdown');
 	});
 });

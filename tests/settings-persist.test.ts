@@ -188,12 +188,12 @@ describe('scheduleSettingsPersist（滑块突发合并）', () => {
 
 	it('磁盘既有 viewState 经写前重读合并原样保留，不被设置写盘抹掉', async () => {
 		const h = makeHarness({
-			viewState: { [PATH_A]: { layout: 'mindMap' } },
+			viewState: { [PATH_A]: { palette: 'mint' } },
 			language: 'zh',
 		});
 		await h.plugin.loadSettings();
 		// 加载路径也把视图状态装进了内存映射
-		expect(h.plugin.viewState.getLayout(PATH_A)).toBe('mindMap');
+		expect(h.plugin.viewState.getPalette(PATH_A)).toBe('mint');
 
 		h.plugin.settings.language = 'en';
 		h.plugin.scheduleSettingsPersist();
@@ -202,35 +202,57 @@ describe('scheduleSettingsPersist（滑块突发合并）', () => {
 		expect(h.saved[0]?.['language']).toBe('en');
 		// 设置写盘只带设置键，磁盘上的 viewState 靠重读合并保留
 		expect(h.saved[0]?.['viewState']).toEqual({
-			[PATH_A]: { layout: 'mindMap' },
+			[PATH_A]: { palette: 'mint' },
 		});
 		expect(h.disk['viewState']).toEqual({
-			[PATH_A]: { layout: 'mindMap' },
+			[PATH_A]: { palette: 'mint' },
 		});
+	});
+
+	it('启动时清理残留的 viewState[*].layout：只写一次盘，无残留则完全不写', async () => {
+		const h = makeHarness({
+			viewState: {
+				[PATH_A]: { layout: 'mindMap', palette: 'mint' },
+				'only-layout.md': { layout: 'fishbone' },
+			},
+		});
+		await h.plugin.loadSettings();
+		await flushMicrotasks();
+
+		expect(h.saved, '有残留 → 补一次写盘').toHaveLength(1);
+		expect(h.saved[0]?.['viewState']).toEqual({
+			[PATH_A]: { palette: 'mint' },
+		});
+
+		// 幂等：磁盘已是新形态，再启动一次不再写盘
+		const again = makeHarness(h.disk);
+		await again.plugin.loadSettings();
+		await flushMicrotasks();
+		expect(again.saved).toHaveLength(0);
 	});
 
 	it('设置写盘不携带内存 viewState 快照：视图状态由自身防抖随后合并落盘', async () => {
 		const h = makeHarness({
-			viewState: { [PATH_A]: { layout: 'mindMap' } },
+			viewState: { [PATH_A]: { palette: 'mint' } },
 		});
 		await h.plugin.loadSettings();
 
-		// 内存即时生效的新布局（尚未到 VIEW_STATE_PERSIST_MS 窗口）
-		h.plugin.viewState.setLayout(PATH_A, 'fishbone');
+		// 内存即时生效的新配色（尚未到 VIEW_STATE_PERSIST_MS 窗口）
+		h.plugin.viewState.setPalette(PATH_A, 'amber');
 		h.plugin.settings.language = 'en';
 		h.plugin.scheduleSettingsPersist();
 
 		await vi.advanceTimersByTimeAsync(SETTINGS_PERSIST_DEBOUNCE_MS);
-		// 设置先落盘：此刻磁盘上的仍是被保留的旧布局（本轮只写设置键）
+		// 设置先落盘：此刻磁盘上的仍是旧配色（本轮只写设置键）
 		expect(h.disk['language']).toBe('en');
 		expect(h.disk['viewState']).toEqual({
-			[PATH_A]: { layout: 'mindMap' },
+			[PATH_A]: { palette: 'mint' },
 		});
 
 		await vi.advanceTimersByTimeAsync(VIEW_STATE_PERSIST_MS);
-		// 视图状态窗口到点后自身落盘：新布局写入，且设置键不被抹掉（重读合并）
+		// 视图状态窗口到点后自身落盘：新配色写入，且设置键不被抹掉（重读合并）
 		expect(h.disk['viewState']).toEqual({
-			[PATH_A]: { layout: 'fishbone' },
+			[PATH_A]: { palette: 'amber' },
 		});
 		expect(h.disk['language']).toBe('en');
 	});
@@ -352,14 +374,14 @@ describe('onunload 冲刷', () => {
 
 	it('同时冲刷设置与未落盘视图状态：两次串行写盘，磁盘两类数据都保住', async () => {
 		const h = makeHarness({
-			viewState: { [PATH_A]: { layout: 'mindMap' } },
+			viewState: { [PATH_A]: { palette: 'mint' } },
 			language: 'zh',
 		});
 		await h.plugin.loadSettings();
 
 		h.plugin.settings.language = 'en';
 		h.plugin.scheduleSettingsPersist();
-		h.plugin.viewState.setLayout(PATH_B, 'fishbone'); // 视图状态同样挂起
+		h.plugin.viewState.setPalette(PATH_B, 'slate'); // 视图状态同样挂起
 
 		h.plugin.onunload();
 		await flushMicrotasks();
@@ -368,8 +390,8 @@ describe('onunload 冲刷', () => {
 		expect(h.saved).toHaveLength(2);
 		expect(h.disk['language']).toBe('en');
 		expect(h.disk['viewState']).toEqual({
-			[PATH_A]: { layout: 'mindMap' },
-			[PATH_B]: { layout: 'fishbone' },
+			[PATH_A]: { palette: 'mint' },
+			[PATH_B]: { palette: 'slate' },
 		});
 	});
 

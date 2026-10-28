@@ -107,7 +107,10 @@ function buildHarness(leaves: readonly unknown[]): Harness {
 	) as MindMapStudioPlugin;
 	Object.assign(plugin, {
 		app,
-		settings: { language: 'zh' } as unknown as MindMapStudioSettings,
+		settings: {
+			language: 'zh',
+			defaultLayout: 'logicalStructure',
+		} as unknown as MindMapStudioSettings,
 	});
 	return {
 		app,
@@ -194,11 +197,13 @@ describe('文件右键「以 Markdown 打开」的分支选择（main.ts）', ()
 		expect(item.click).toBeTypeOf('function');
 		expect(mdOpen.openAsMarkdown).not.toHaveBeenCalled();
 		expect(mdOpen.declareAndOpenAsMindMap).toHaveBeenCalledTimes(1);
+		// 第 5 参是**种子布局**（设置 defaultLayout）：升级写的是它的标准属性值
 		expect(mdOpen.declareAndOpenAsMindMap).toHaveBeenCalledWith(
 			h.app,
 			h.getLeaf.mock.results[0]?.value,
 			file,
 			'zh',
+			'logicalStructure',
 		);
 	});
 });

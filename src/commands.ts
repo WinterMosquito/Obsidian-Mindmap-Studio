@@ -210,6 +210,7 @@ function registerDocumentCommands(plugin: CommandsHost): void {
 				view.leaf,
 				file,
 				plugin.settings.language,
+				plugin.settings.defaultLayout,
 			);
 			return true;
 		},

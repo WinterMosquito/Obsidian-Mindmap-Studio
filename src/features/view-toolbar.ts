@@ -87,7 +87,7 @@ function buildAppearanceGroup(
 
 	// 固定直线布局（目录组织图 / 时间轴 / 鱼骨图）的连线由布局固有绘制，
 	// 切了也没用——按钮置灰，不给假的可切换态。
-	if (!supportsLineStyleSwitch(view.resolvePreference('layout'))) {
+	if (!supportsLineStyleSwitch(view.resolveLayout())) {
 		createToggleRow(group, {
 			describe: () => ({
 				icon: 'slash',

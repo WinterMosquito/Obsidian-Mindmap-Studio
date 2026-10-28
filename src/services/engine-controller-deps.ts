@@ -43,7 +43,7 @@ export interface EngineControllerDeps {
 	isDark(): boolean;
 	/** 引擎创建选项（含本次布局，视图负责 fallback 与会话回写） */
 	getSetupOptions(): EngineSetupOptions;
-	/** 布局/视口持久化存储（按文件路径，存插件 data.json） */
+	/** 视图状态存储（按文件路径：连线样式 / 配色 / 边框 / 视口，存插件 data.json） */
 	viewState: ViewStateStore;
 	/** 引擎超链接点击跳转（onHyperlinkJump 回调） */
 	openHyperlink(link: string): void;

@@ -34,7 +34,7 @@
   生成写法不一致（裸名引用被扩写）；md 形态（`![alt](路径)`）仍写完整库内路径。历史依据：审计文档
   `docs/external-audit-2026-09-08.md` §5.2/§7.4（该文档已从工作树移除，需要时用
   `git log --diff-filter=D -- docs/external-audit-2026-09-08.md` 从历史取回）。
-- [K2] 渲染层定位：正文保持纯 Markdown；布局/视口/打开偏好存 `data.json`（`viewState`，按文件路径），不写入文件。
+- [K2] 渲染层定位：正文保持纯 Markdown；布局/视口/打开偏好存 `data.json`（`viewState`，按文件路径），不写入文件。**2026-10-29 修订**：**布局移出 `data.json`**——逐文件布局只存在于文件属性（frontmatter 的 `Mindmap` 值，切换布局即改写该属性）；`viewState` 只剩连线样式 / 配色 / 边框 / 视口，旧数据里的 `viewState[*].layout` 在启动时剔除。「打开偏好」仍由属性声明本身承载（`Markdown` = 终止）。
 - [K3] **行级保真与 `---` 的两种身份**：plain 行的 `mdRaw` 存**未 trim 原文**（`text` 才是 trim 后的显示文本）——缩进代码块（4 空格起）与「行尾两空格 = 硬换行」都是 Markdown 语义，trim 掉即等于改动文件；**列表续行**只保留行尾原文，行首缩进由序列化器按树深度补 `restIndent`（避免双份）。`---`/`-----` 纯短横线行**必须分两种身份**（`md-outline.ts` 的 `isDashLine` 判定）：**空行之后** = 结构分隔线 → 按既定行为整行丢弃；**紧跟非空行之后** = CommonMark 的 **setext H2 下划线 → 保留**（`标题\n---` 是二级标题，丢弃会把标题静默降级为段落）；列表/标题之后的短横线行同样保留为独立分隔线（由序列化器的块分隔补空行）。`=====`（setext H1）一直保留，两条 setext 形态已对齐。
 - [K4] 文档嵌入 `![[笔记]]` / `![[笔记.md]]`（目标末段为文档类扩展名 `.md` / `.canvas` / `.base`，或无扩展名）与文档双链**同通道**（`mdWikiLinkpath` + `mdLinkStyle: 'wiki'` + `mdEmbed: true`）：显示同一枚自绘文档页图标，节点文本 = 别名‖去 `.md` 的目标名，悬停/点图标行为与文档双链一致。**管道位是别名**（`![[笔记|300]]` 的 `300` 是别名，**不是**宽 300）——故解析侧**不得**沿用 `tokenizeInline` 已按图片尺寸剥过的 `tok.label`，必须从原始切片 `parseWikilink` 重解（见 `md-outline.ts` 非图片嵌入分支）。非文档类嵌入（`![[报告.pdf]]` / `![[录音.mp3]]`）才走附件通道（回形针）；其管道位官方**无明文**（PDF 用 `#height=` / `#page=`、音频无尺寸语法），故不解释、原文存 `mdEmbedPipe`，编辑节点后原样回写（不再丢参数）。两类都记 `mdEmbed`，`md-serialize.renderHyperlink` 据此补回 `!`（文档通道即 `effectiveDocWikiLink` 结果前加 `!`）。「是否文档」统一走 `domain/wikilink.isDocumentExtension`（md / canvas / base），「是否附件」统一走 `domain/wikilink.wikilinkTargetIsAttachment`——**勿**再手写 `extension === 'md'`（拖入、链接弹窗、插入链接三处曾各写一份，Canvas/Bases 被判成附件）；点击可打开性走 `constants.canOpenInObsidian`，其清单必须含 `base`（漏登记会把指向 base 的链接误判「无法预览」，回归 `tests/constants.test.ts`）。悬停预览与 `Ctrl/Cmd+点击`走**同一分流**（`view-wikilink.nodeLink`），故附件节点与文档节点等价可预览/可打开（此前只读 `mdWikiLinkpath`/`hyperlink`，附件节点两处都是静默无响应）。回归见 `tests/md-roundtrip.test.ts` 的「文档嵌入」6 例（已验证负向对照：把分流改回「非图片＝附件」即 6 例全红）。
 - [K5] **`[[]]` / `![[]]` 支持度审计结论（对照官方帮助 + `obsidian.d.ts`，四项决策均为「保持现状」）**：① 笔记嵌入的管道位按**别名**处理（`![[笔记|300]]` 的 `300` 是别名，节点文本即显示 `300`）——官方**无明文**，依据 API `Reference.displayText`（`[[page|display name]] → display name`）口径推断，属**有意取舍**；若官方日后改为尺寸/忽略，整改方向是「管道位原文保留」（同 `mdEmbedPipe`），届时再动。② 空 `[[]]` 保持字面文本（Obsidian 亦不视为链接，官方未记载）。③ 一行多链接只有首个可点/可悬停（引擎单链接槽位；官方阅读视图每枚均可点）——未编辑逐字保真、编辑后降级为单链接，已登记。④ **不采用**官方 `parseLinktext` / `getLinkpath` 替换自研 `parseWikilink`：官方那两个函数只给 `path` / `subpath`、**不给别名**，换过去不减代码且会破 domain 零依赖边界；导航已用官方 `getFirstLinkpathDest` + `openLinkText(inner)`，标题/块子路径交核心处理。
@@ -46,7 +46,7 @@
 - [K11] 中心主题 ⇄ 文件名：编辑根节点文本会重命名文件（`命名.md`；**仅对声明为导图的文件生效**——普通笔记被手动开为导图时不静默改名）；外部改名后视图重载中心随新名。**重命名必须走 `FileManager.renameFile`**（`view-title-renamer.ts`），`Vault.rename` 只改文件系统、不更新库内其他笔记中指向本文件的链接/反链（官方 d.ts 明确要求用前者，核心文件浏览器/内联标题/CLI 均走前者）。
 - [K12] **渲染层不修解析层遗留**（渲染/解析解耦）：显示名一律取解析层产物（`domain/wikilink.linkDisplayText` 一族），渲染层**只读不改**。典型遗留：`[[folder/笔记.md#标题]]` 这类带子路径的双链，显示名保留 `.md`（`笔记.md#标题`）——文档双链与文档嵌入**口径一致**，属解析期历史包袱；**勿**在 `mindmap.ts` / `view-*` / 悬停预览里补「剥 `.md`」的 render-time 修正分支（会牵动 rawOk 逐字回写与「纯 token 节点」判定，牵一发动全身）。
 - [K13] **节点状态与附件元数据隔离**（新的静态渲染只走视图层）：悬停预览 / 图标 / tooltip 等新的静态渲染手段一律在**视图层**拦截处理（`features/view-wikilink.ts` + `main.ts` 的 `registerHoverLinkSource`、`mindmap.ts` 的前缀渲染钩子），渲染层只**读**解析结果、不回写节点 state；**勿**为此新增或改写 `mdEmbed`——它是「原文带 `!`」的**语法事实位**，读取面仅 `md-serialize`（补 `!` 两处 + 非图片附件的管道位原文一处 `mdEmbedPipe`）与 `wiki-display` 一处排除附件别名，且各自先被 `attachmentUrl` / `mdWikiLinkpath` 闸住；要动这条通道字段（更名 / 拆位）须先评估附件通道副作用，不擅自改。
-- [K14] **导图判据唯一实现**：`domain/mindmap-property.ts`——读侧 `Type` / `类型` 两键**都查**（键名大小写不敏感），值 trim 后大小写不敏感比对 `mindmap`（兼容官方属性面板产出的单元素数组）；写侧才看语言（zh `类型` / en `Type`，值 `Mindmap`）。值 `Markdown` **不是否决票**：它只是「没有键等于 mindmap」的一种取值，故双键并存时任一命中即为导图。**勿**另写第二份判据（文件名后缀判据 `hasMindMapMarker` 等三函数已于 2026-10-12 退役，见 K121）。
+- [K14] **导图判据唯一实现**：`domain/mindmap-property.ts`——**单键 `Mindmap`**（键名大小写不敏感），值即**布局**（七值枚举，2026-10-29：`LogicalStructure` / `Mindmap` / `OrganizationStructure` / `CatalogOrganization` / `Timeline` / `Fishbone` + 终止值 `Markdown`）；读侧归一只此一处（`normalizePropertyToken`：trim → 小写 → 去 `-` / `_` / 空白，故 `mindMap` / `mind map` / `MIND-MAP` 同义），官方属性面板的数组形态**取第一项**（空数组＝无值），**未知值 = 不是导图**（fail-closed、静默）。判定入口 = `readMindMapDeclaration`（`isMindMapProperty` 只是它的布尔包装），值 → 引擎 layout id 的唯一实现 = `layoutIdOfPropertyValue`（嵌入的 `%%layout: …%%` 也走它）。写侧恒写标准键 `Mindmap` + **PascalCase 标准值**（`MINDMAP_LAYOUT_VALUES`），**与界面语言无关**；降级写 `Markdown`——它是**显式终止值**（不是「否决票」：同名大小写变体并存时按对象键顺序取第一个命中的键，不按值做优先级）。**旧键 `Type` / `类型` 自 2026-10-28 完全不认**（断代：不读、不写、不删、不迁移、不提示，回归见 `tests/md-frontmatter-trigger.test.ts` 的负向断言）。**勿**另写第二份判据（文件名后缀判据 `hasMindMapMarker` 等三函数已于 2026-10-12 退役，见 K121）。
 - [K45] **frontmatter 写盘取磁盘现值**（防「偶有笔记属性丢失」）：`SavePipeline.save` 在序列化前重读目标文件当前内容，文件头取 `splitFrontmatter(磁盘内容).frontmatter`；只有读不到磁盘内容（读取失败或 `cachedRead` 缺失）才回落到按文件存的加载快照（fail-open，不因读失败丢文件头）。视图打开期间用户在属性面板 / 其它窗格 / 其它设备（同步）改的属性不会被加载时的旧快照覆盖；回写只重写正文，文件头原样回贴。
 - [K46] **frontmatter 解析边界（向 Obsidian 属性解析对齐）**：`md-outline.splitFrontmatter` 三条口径——① 空属性块 `---\n---` 也是合法 frontmatter（不得并进正文，否则保存后整块消失）；② 结束围栏取第一个 `---` 行但**跳过 YAML 块标量（`|` / `>`）内部的 `---`**（硬切会截断属性、残余落进正文）；③ 开头 BOM 计入文件头并在序列化时原样带回（不处理会让首个标题降级为段落、首个列表项多出假缩进）。frontmatter 逐字保留换行形态（CRLF 不归一）。回归见 `tests/md-roundtrip.test.ts`（含 CRLF / 空块 / 块标量 / BOM 用例）。
 - [K47] **「添加链接」写入语义（决策 R4 修订，2026-09-13）**：**仅「完全空白」节点**（无文字、无任何链接通道、无图片、无行内额外 token〔K49〕——含「移除首图后 extra 孤存」形态，判定见 `hasAnyContent`）→ 覆盖（纯双链化：节点文字覆盖为链接显示名 / 附件名，别名优先）；**其余任何情况 → 链接一律建为子节点**，节点原文字、原链接、行内其它 token（K49）、图片全部不动——行内多 token 尾插保真后，拖入 / 添加链接只是「再挂一个链接」，不得覆盖节点已有内容。弹窗（`performAddLink`）与拖拽（`applyDocWikiLink` / `applyNodeAttachment` / `applyAttachmentLink`）同口径；URL / 协议链接同样建子节点（子节点文本为空、保持「仅图标」，`<url>` 由 hyperlink 通道回写）。**副作用**：一键改链入口取消（改链 = 先「清除链接」再添加，或直接编辑节点文本）。回归见 `tests/view-node-actions.test.ts`。
@@ -1521,7 +1521,7 @@
   就会长出一条用户可见的行为分叉，且分叉会被「反正 `_` 版能用」的注释掩盖过去。
 
 - [K121] **触发判据从文件名后缀改为 frontmatter 声明：`.mindmap.md` 退役**（2026-10-12 用户裁决）：
-  ① **判据**：`类型` / `Type` 值为 `mindmap`（读写分离口径见 K14）。判据经官方
+  ① **判据**：frontmatter 键 `Mindmap` 值为 `mindmap`（单键口径见 K14）。判据经官方
   `MetadataCache.getFileCache(file)?.frontmatter` **同步**读取——文件菜单回调、命令
   `checkCallback`、vault 事件这些只能同步返回的调用点因此**无须异步化**；缓存未就绪（刚创建 /
   刚改名）或读取失败时返回 false，由组合根监听 `metadataCache.on('changed')` 调
@@ -1534,31 +1534,32 @@
   加载后重建工具栏的分支随之删除。虚拟根名直接取 `file.basename`。
   ③ **打开方式不再存 data.json**（`ViewStateStore.getOpenAs/setOpenAs`、`setOpenAsPreferenceHook`
   退役）：**「以 Markdown 打开」= 持久降级**——走官方 `FileManager.processFrontMatter` 把声明
-  **收敛为当前语言的唯一键、值改为 `Markdown`**（`domain/mindmap-property.convergeMindMapPropertyKey`：
-  删除 `Type`/`类型` 的重复键，只留 `mindMapPropertyKey(lang)`），此后不再自动进导图
+  **改写为 `Mindmap: Markdown`**（`domain/mindmap-property.setMindMapProperty`：顺带收敛同名
+  大小写变体，不碰旧键），此后不再自动进导图
   视图。三个入口同语义（文件右键 / 工具栏 / 命令 `mindmap-back-to-markdown`）；代价是
   **没有「临时看一眼源码」的轻量入口**（声明式模型的自觉取舍）。降级必须**先写属性再切视图**：
   卸载时的保存按 K45 取**磁盘现值**回贴文件头，顺序颠倒会把 `Markdown` 覆盖回 `Mindmap`。
   ④ **任意笔记入口**：「以思维导图打开」命令与文件右键对**任意 `.md`** 开放（消除「必须先改名 /
   新建」这一最大采纳摩擦）；右键项按声明**互斥**显示（声明为导图 → 「以 Markdown 打开」；
   其余 → 「以思维导图打开」）。手动开为导图的普通笔记会**先经 `declareAndOpenAsMindMap`
-  把声明写入 frontmatter**（无声明→按语言补 `类型`/`Type`=`Mindmap`；已声明→不重序列化），
+  把声明写入 frontmatter**（无声明→补**种子布局**的标准值，即设置「默认布局」对应的属性值，出厂即 `Mindmap: Mindmap`；已声明→不重序列化），
   即打开一次即正式成为导图、下次自动打开；此后**可编辑并回写**，但**不参与中心主题 ⇄ 文件名
   同步**（见 K11）。降级/升级走官方 `processFrontMatter`，值随打开方式取 `Markdown`/`Mindmap`；
   升级对已声明文件与降级对「已是 Markdown」文件均免写，避免每次打开都重序列化 YAML。
-  **键名随语言收敛**：改语言（设置面板 `language`）经 `refreshLanguageUi` →
-  `md-open.migrateMindMapPropertyKeys` **全库**把已有声明的键**重命名为当前语言的键**
-  （`类型` ⇄ `Type`，只改键名、值不动、已是目标键免写）；否则「只加新键」会让 `Type` 与
-  `类型` 并存（属性面板两把键同现）。升级/降级回调内再做一次权威判据（防 MetadataCache 滞后
-  导致的误判新增第二把键）。**2026-10-23 补：迁移必须先判值**——`isMindMapDeclarationValue`
-  只认插件写过的值（`Mindmap` / `Markdown`），同名属性（`类型: wiki` / `类型: 笔记`）属于用户
-  数据，按键名全库改名会把值一起改掉（实测把测试库 10 页 `类型: wiki` 写成 `Type: wiki`）；
-  目标键已被非声明值占用时整文件跳过并 `console.warn`（`converge` 会覆盖那条无关属性）。
+  升级/降级回调内再做一次权威判据（防 MetadataCache 滞后导致的误判新增第二把键）。
+  **2026-10-28 单键化（破坏性断代，本节口径的唯一现行版本）**：声明键收敛为**单键**
+  `Mindmap`（键名大小写不敏感，值 `Mindmap` / 降级 `Markdown`），**与界面语言完全无关**；
+  旧键 `Type` / `类型` **完全不认**——不读、不写、不删、不迁移、不提示。原「改语言全库收敛
+  键名」的迁移（连同其值守卫与「按语言选键」函数）已**整体删除**：设置面板切语言
+  **不再触碰任何文件**（`refreshLanguageUi` 只刷文案）。存量旧键文件表现为「普通笔记」：
+  文件右键显示「以思维导图打开」，点一次即补写标准键、值取**种子布局**（出厂 `Mindmap:
+  Mindmap`；旧键原样留在文件里，插件不再管它）。收敛同名变体时写的是**文件已声明的布局**，
+  不是种子值，否则「缓存滞后 + 同名变体并存」会把用户已选的布局静默重置。
   ⑤ **零兼容**：存量 `.mindmap.md` 不再被识别为导图——作为普通 md 打开、**内容零改动**，不会
   损坏。改名 + 补属性的一次性迁移工具属本条的**第二阶段（P2）**，尚未落地。
   ⑥ **教训**：判据从「文件名」（同步、无 IO）换成「内容声明」时，官方 MetadataCache 是唯一
-  同时满足「官方 API 优先」与「不把 7 个调用点异步化」的落点；而**属性的写入侧**必须与读侧
-  分开设计（读双键、写单键），否则中英混用库会出现「看不见的导图」。
+  同时满足「官方 API 优先」与「不把 7 个调用点异步化」的落点；**键名越多、读侧分支越多**，
+  跨语言与跨设备的「看不见的导图」面就越大——最终裁决是键名单一化（2026-10-28）。
 
 - [K122] **`mindmap` 代码块只读嵌入恢复（0.0.3 移除的能力回归，2026-10-13 用户裁决）**：
   ① **定位与形态**：普通笔记里写**语言标识为 `mindmap` 的围栏块** = **只读导图预览**——不回写文件、

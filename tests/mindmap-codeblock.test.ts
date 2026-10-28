@@ -37,6 +37,7 @@ import {
 	EMBED_NOTICE_CLASS,
 	EMBED_OUTLINE_CLASS,
 	embedDisplayTree,
+	parseEmbedLayoutDirective,
 	shouldRenderOutline,
 } from '../src/features/mindmap-codeblock';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
@@ -117,6 +118,102 @@ describe('shouldRenderOutline（超限降级判据）', () => {
 		expect(shouldRenderOutline(0)).toBe(false);
 		expect(shouldRenderOutline(CODE_BLOCK_MAX_NODES)).toBe(false);
 		expect(shouldRenderOutline(CODE_BLOCK_MAX_NODES + 1)).toBe(true);
+	});
+});
+
+describe('parseEmbedLayoutDirective（块体首行布局指令）', () => {
+	it('合法值：剥离指令行，返回引擎 layout id', () => {
+		expect(
+			parseEmbedLayoutDirective('%%layout: Timeline%%\n# 主题\n- 叶子'),
+		).toEqual({ source: '# 主题\n- 叶子', layoutId: 'timeline' });
+	});
+
+	it('宽容写法：键名大小写不敏感，值走同一套归一（连字符 / 空格 / 大小写）', () => {
+		expect(
+			parseEmbedLayoutDirective('%%LAYOUT: logical-structure%%\n# A').layoutId,
+		).toBe('logicalStructure');
+		expect(
+			parseEmbedLayoutDirective('%% Layout : Fish Bone %%\n# A').layoutId,
+		).toBe('fishbone');
+	});
+
+	it('允许指令前有空行，且空行原样保留（只删指令行本身）', () => {
+		expect(
+			parseEmbedLayoutDirective('\n\n%%layout: mindMap%%\n# A'),
+		).toEqual({ source: '\n\n# A', layoutId: 'mindMap' });
+	});
+
+	it('非法值：同样剥离指令行，layoutId 为 null 并回填 invalidValue（布局回落默认）', () => {
+		expect(parseEmbedLayoutDirective('%%layout: 笔记%%\n# A')).toEqual({
+			source: '# A',
+			layoutId: null,
+			invalidValue: '笔记',
+		});
+	});
+
+	it('`Markdown` 在嵌入里也是非法值（嵌入没有「终止渲染」语义）', () => {
+		expect(parseEmbedLayoutDirective('%%layout: Markdown%%\n# A')).toEqual({
+			source: '# A',
+			layoutId: null,
+			invalidValue: 'Markdown',
+		});
+	});
+
+	it('外壳不匹配的普通注释原样返回（不能误吃用户注释）', () => {
+		const source = '%%备注%%\n# A';
+		expect(parseEmbedLayoutDirective(source)).toEqual({
+			source,
+			layoutId: null,
+		});
+	});
+
+	it('值不可为空：`%%layout: %%` 等同普通注释（不剥行、不弹提示）', () => {
+		// `(.+?)` 会吃掉分隔空白那个空格 ⇒ 外壳其实命中，故取到值后必须先判空。
+		for (const source of [
+			'%%layout: %%\n# A',
+			'%%layout:   %%\n# A',
+			'%%layout:%%\n# A',
+		]) {
+			expect(parseEmbedLayoutDirective(source)).toEqual({
+				source,
+				layoutId: null,
+			});
+		}
+	});
+
+	it('无指令：原样返回（含首行不是指令、整段没有指令）', () => {
+		const plain = '# A\n- b';
+		expect(parseEmbedLayoutDirective(plain)).toEqual({
+			source: plain,
+			layoutId: null,
+		});
+		expect(parseEmbedLayoutDirective('')).toEqual({ source: '', layoutId: null });
+	});
+
+	it('只识别首行：其后出现的同形文本是正文', () => {
+		const source = '# A\n%%layout: Timeline%%';
+		expect(parseEmbedLayoutDirective(source)).toEqual({
+			source,
+			layoutId: null,
+		});
+	});
+
+	it('指令行不进入大纲（先剥离再 parseMdOutline）', () => {
+		const parsed = parseEmbedLayoutDirective(
+			'%%layout: Fishbone%%\n# 主题\n- 叶子',
+		);
+		const tree = embedDisplayTree(
+			parseMdOutline(parsed.source, '思维导图').tree,
+		);
+		expect(tree.data.text).toBe('主题');
+		expect(JSON.stringify(tree)).not.toContain('layout');
+		expect(JSON.stringify(tree)).not.toContain('%%');
+	});
+
+	it('只有指令行、没有正文 → 剥离后为空（走现有「空块」提示）', () => {
+		const parsed = parseEmbedLayoutDirective('%%layout: Timeline%%');
+		expect(parsed.source.trim()).toBe('');
+		expect(parseMdOutline(parsed.source, '思维导图').tree.children).toEqual([]);
 	});
 });
 
@@ -230,6 +327,29 @@ describe('跨文件契约', () => {
 		const text = tf('zh', 'mindmapEmbed.tooMany', { count: 602, max: 500 });
 		expect(text).toContain('602');
 		expect(text).toContain('500');
+	});
+
+	it('非法布局指令有块内提示（i18n 双语，值落在文案里）', () => {
+		expect(t('zh', 'mindmapEmbed.unknownLayout')).not.toBe('');
+		expect(t('en', 'mindmapEmbed.unknownLayout')).not.toBe('');
+		expect(
+			tf('zh', 'mindmapEmbed.unknownLayout', { value: '笔记' }),
+		).toContain('笔记');
+	});
+
+	it('布局回退：无指令时用 config.layout，css-change 复用挂载时的解析结果', () => {
+		const source = readFileSync(
+			new URL('../src/features/mindmap-codeblock.ts', import.meta.url),
+			'utf8',
+		);
+		// 挂载期：指令 ?? 回退值，存入实例字段
+		expect(source).toContain(
+			'this.embedLayout = directive.layoutId ?? config.layout;',
+		);
+		// 引擎创建（可能晚于挂载）读字段，不再重读配置
+		expect(source).toContain('const layout = this.embedLayout ?? config.layout;');
+		// 换肤同理：重读配置会让指令布局漂回默认
+		expect(source).toContain('layout: this.embedLayout ?? next.layout,');
 	});
 
 	it('代码块语言键保持 mindmap（存量笔记的接口，改动即静默失效）', () => {

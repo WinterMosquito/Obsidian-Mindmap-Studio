@@ -10,7 +10,7 @@
  */
 import { Menu, Plugin, TFile, TFolder } from 'obsidian';
 import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, SETTINGS_APPLY_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS, CODE_BLOCK_LANGUAGE } from './core/constants';
-import { createDebouncer, createSerialQueue } from './core/concurrency';
+import { createDebouncer } from './core/concurrency';
 import {
 	MindMapStudioSettings,
 	MindMapStudioSettingTab,
@@ -25,7 +25,6 @@ import { createNewMindMap } from './creation';
 import {
 	isMindMapFile,
 	declareAndOpenAsMindMap,
-	migrateMindMapPropertyKeys,
 	openAsMarkdown,
 	setViewSwitchDoneHook,
 } from './markdown/md-open';
@@ -95,18 +94,14 @@ export default class MindMapStudioPlugin extends Plugin {
 	 */
 	private appliedSettingsSnapshot: MindMapStudioSettings | null = null;
 	/**
-	 * 视图状态（布局/视口，按文件路径）——与设置合并写 data.json。
+	 * 视图状态（连线样式 / 配色 / 边框 / 视口，按文件路径）——与设置合并写
+	 * data.json（布局不在此列：它只存文件属性）。
 	 * persist 回调返回写盘 Promise（write 内部吞错不会拒绝），
 	 * 供 ViewStateStore.flushNow 透传给卸载路径跟踪。
 	 */
 	viewState = new ViewStateStore((state) => {
 		return this.dataWriter.write({ viewState: state });
 	}, VIEW_STATE_PERSIST_MS);
-	/**
-	 * 属性键全库迁移的串行队列：语言连续切换会并发启动两次迁移，
-	 * 交错改写会让部分文件停在旧语言的键上（见 `refreshLanguageUi`）。
-	 */
-	private readonly propertyKeyMigration = createSerialQueue();
 	/** Vault 文件事件同步服务（rename/delete/create） */
 	private vaultSync!: VaultSyncService;
 
@@ -248,16 +243,28 @@ export default class MindMapStudioPlugin extends Plugin {
 		);
 		opener.register(this);
 
-		// 属性被**就地**加上时补判（属性面板 / 其它设备同步写回）：metadataCache
+		// 属性被**就地**改写时补判（属性面板 / 其它设备同步写回）：metadataCache
 		// 变化即声明变化。反向（删掉声明）不主动把正在编辑的导图视图抽走——声明
 		// 只决定「打开/新声明时怎么进」，运行中不打断用户。
 		// 走**合并窗口**入口：同步回写 / 批量落盘会连发 changed，每次全量扫描都要
 		// 遍历全部 markdown 叶子（见 MindMapAutoOpener.scheduleDeclaredLeavesScan）。
+		//
+		// 同一次 changed 还要让**已打开**的该文件视图跟随布局（值被改成别的布局时
+		// 只重排画面、不回写文件）。两件事互补：上面管「该不该进导图视图」，这里管
+		// 「已经在了的那张图用哪种布局」。
 		this.registerEvent(
 			this.app.metadataCache.on('changed', (file) => {
-				if (file.extension === 'md' && isMindMapFile(this.app, file)) {
+				if (file.extension !== 'md') {
+					return;
+				}
+				if (isMindMapFile(this.app, file)) {
 					opener.scheduleDeclaredLeavesScan();
 				}
+				this.forEachMindMapView((view) => {
+					if (view.file?.path === file.path) {
+						view.syncDeclaredLayout();
+					}
+				});
 			}),
 		);
 
@@ -358,10 +365,10 @@ export default class MindMapStudioPlugin extends Plugin {
 
 	/**
 	 * md 文件的右键项（**互斥**一项，避免同名动作两种行为）：
-	 * - 声明为导图（frontmatter `类型`/`Type` = `Mindmap`）→「以 Markdown 打开」，
+	 * - 声明为导图（frontmatter `Mindmap` 的值为布局枚举）→「以 Markdown 打开」，
 	 *   点击**持久降级**（属性改写为 `Markdown`），此后不再自动进导图视图；
 	 * - 其他 md →「以思维导图打开」，把当前标签切到导图视图
-	 *   （「任意笔记可预览为导图」的入口）。
+	 *   （「任意笔记可预览为导图」的入口），并按设置的种子布局写声明。
 	 */
 	private addMarkdownFileMenuItems(menu: Menu, file: TFile): void {
 		const lang = this.settings.language;
@@ -396,6 +403,7 @@ export default class MindMapStudioPlugin extends Plugin {
 						this.app.workspace.getLeaf(false),
 						file,
 						lang,
+						this.settings.defaultLayout,
 					);
 				}),
 		);
@@ -416,10 +424,16 @@ export default class MindMapStudioPlugin extends Plugin {
 		}
 		const raw = data as Record<string, unknown>;
 		// hydrate 期望收到「整个 data.json 对象」（内部读取 data['viewState']），
-		// 而非视图状态对象本身；传错会导致 viewState 映射从未载入，
-		// 使 getLayout 恒为 undefined —— 重启后布局/视口丢失。
-		this.viewState.hydrate(raw);
+		// 而非视图状态对象本身；传错会导致 viewState 映射从未载入，重启后视口丢失。
+		const cleanedViewState = this.viewState.hydrate(raw);
 		delete raw.viewState;
+		// 旧版把逐文件布局记在 `viewState[*].layout`；布局现在只存在于文件属性，
+		// 残留键已在 hydrate 里剔除。**只在确实有残留时**补一次写盘：写盘是整棵
+		// viewState 替换（合并写按顶层键覆盖），无残留时写会把启动变成一次多余的
+		// 磁盘 IO。幂等：清理后第二次启动 `cleanedViewState` 为 false。
+		if (cleanedViewState) {
+			void this.dataWriter.write({ viewState: this.viewState.serialize() });
+		}
 		// 坏值静默回退会让用户看到「设置没生效」——汇总留痕一次（进程内）
 		const report: SettingsSanitizeReport = { dropped: [] };
 		this.settings = sanitizeSettings(raw, report);
@@ -480,21 +494,14 @@ export default class MindMapStudioPlugin extends Plugin {
 	 * 重注册/更新，状态栏与已打开视图的搜索栏就地刷新。
 	 * 视图工具栏已由 applySettingsToViews（language 属 LIVE_REFRESH 键）重建。
 	 *
-	 * 同时触发**属性键迁移**：把库内已有导图的声明键重命名为当前语言的键
-	 * （zh `类型` ⇄ en `Type`），避免「只加新键」导致两把键并存。
+	 * **不触碰任何文件**：导图声明键恒为标准键 `Mindmap`，与界面语言无关
+	 * （2026-10-28 单键化，全库键名迁移已删除）。
 	 */
 	refreshLanguageUi(): void {
 		refreshCommandLabels(this, this.ribbonEl);
 		this.refreshStatusBarLabel();
 		this.forEachMindMapView((view) => {
 			view.refreshSearchBarLabels();
-		});
-		// 全库迁移：键名随语言收敛（异步、逐个文件；单文件失败只留痕）。
-		// 经串行队列：连续切换语言会并发启动两次迁移，交错改写会让部分文件停在旧键上。
-		void this.propertyKeyMigration(() =>
-			migrateMindMapPropertyKeys(this.app, this.settings.language),
-		).catch((error) => {
-			console.error('迁移思维导图属性键失败:', error);
 		});
 	}
 

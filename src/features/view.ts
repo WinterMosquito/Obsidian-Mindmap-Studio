@@ -54,7 +54,12 @@ import {
 	collectImageSizeCorrections,
 	ensureDefaultImageSizes,
 } from '../media/images-path';
-import { openAsMarkdown } from '../markdown/md-open';
+import { openAsMarkdown, readDeclaredLayout } from '../markdown/md-open';
+import {
+	layoutIdOfPropertyValue,
+	layoutPropertyValue,
+	setMindMapProperty,
+} from '../domain/mindmap-property';
 import { registerWikilinkInteractions } from './view-wikilink';
 import {
 	closeInlineEditor,
@@ -134,10 +139,13 @@ const RESIZE_THROTTLE_MS = 100;
  * 的 `diffLiveRefreshKeys` 产出；这里只决定「收到这个键时做什么」）。
  *
  * - `defaultTheme`：引擎 `setThemeConfig` 通道原地生效（与 css-change 同款）；
- * - `defaultLayout` / `defaultLineStyle`：**故意留空**——会话字段在
- *   `loadMindMapFromFile` 里已按「文件显式选择 ?? 默认值」定值，此后默认值变更对
- *   已打开的图**本就不生效**（重建一轮也不会有任何可见变化）⇒ 跳过即行为等价
- *   的优化（省掉整树 `structuredClone` + 全量重渲染，实测口径见 K58）。
+ * - `defaultLineStyle`：**故意留空**——会话字段在 `loadMindMapFromFile` 里已按
+ *   「文件显式选择 ?? 默认值」定值，此后默认值变更对已打开的图**本就不生效**
+ *   （重建一轮也不会有任何可见变化）⇒ 跳过即行为等价的优化（省掉整树
+ *   `structuredClone` + 全量重渲染，实测口径见 K58）。
+ *
+ * `defaultLayout` 已不在 LIVE_REFRESH 键内（2026-10-29）：逐文件布局只存在于
+ * 文件属性，它是新建文件的种子值——改它对任何已打开/已存在文件都无影响。
  *
  * 2026-10-09 减法：原 `performanceMode` / `performanceThreshold` 两条在此做
  * 引擎运行时切换（`engine/mindmap.applyPerformanceMode`）——性能模式改为**常开 +
@@ -153,13 +161,15 @@ const RESIZE_THROTTLE_MS = 100;
  *   自绘钩子的 `lang` 实参），重建才能让两者一致（UI 侧另有 `refreshLanguageUi`）。
  */
 /**
- * 外观维度 → 会话字段名（`MindMapView` 上的私有字段）。
+ * 按文件偏好 → 会话字段名（`MindMapView` 上的私有字段）。
  *
  * 与 `PreferenceKey` 用 `satisfies` 绑死：新增一个按文件记的维度时，漏写这里
  * 或写错字段名都会编译失败（`commitPreference` 靠它定位写入目标）。
+ *
+ * **布局不在其中**：它不从 `data.json` 读、也不写 `data.json`，走
+ * `applyLayout` 的独立实现（写文件属性）。
  */
 const SESSION_FIELDS = {
-	layout: 'currentLayout',
 	lineStyle: 'currentLineStyle',
 	palette: 'currentPalette',
 	themeStyle: 'currentThemeStyle',
@@ -168,7 +178,6 @@ const SESSION_FIELDS = {
 const IN_PLACE_REFRESH_KEYS = new Set([
 	'defaultTheme',
 	'defaultThemeStyle',
-	'defaultLayout',
 	'defaultLineStyle',
 ]);
 
@@ -192,8 +201,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	searchBarEl: HTMLElement | null = null;
 	searchInput: HTMLInputElement | null = null;
 	searchCountEl: HTMLElement | null = null;
-	// 外观四项（布局/连线/配色/边框）不再有屏上下拉，故无 select 字段——
-	// 当前值经 `resolvePreference(key)` 现算给右键勾选态与竖栏开关。
+	// 外观项（布局/连线/配色/边框）都没有屏上下拉，故无 select 字段——
+	// 当前值经 `resolveLayout()` / `resolvePreference(key)` 现算给右键勾选态与竖栏开关。
 	/** 当前深色主题（css-change 时重算；仅本类与引擎控制器装配面使用） */
 	private isDark = false;
 
@@ -203,6 +212,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	private savePipeline: SavePipeline;
 	/** 引擎实例生命周期（防腐收口，引擎内部访问不再出现在本类） */
 	private engine: EngineController;
+	/**
+	 * 布局写入在途的目标值（引擎 layout id）：`applyLayout` 写属性期间置位、收尾清空。
+	 *
+	 * 用途只有一个——让跟随侧（`syncDeclaredLayout`）让位。写属性必然触发
+	 * `metadataCache.changed`，而「事件先到还是 `await` 先恢复」由宿主实现决定；
+	 * 不挡就是同一布局被应用两次（双重重排 + 右缘竖栏连建两次）。
+	 */
+	private pendingLayoutWrite: string | null = null;
 	/** 中心主题 ⇄ 文件名重命名（从 view.ts 拆出，见 view-title-renamer.ts） */
 	private readonly titleRenamer: TitleRenamer;
 
@@ -229,19 +246,26 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	readonly loadSession = new LoadSession();
 	/**
-	 * 当前布局（持久化到文件的唯一来源；不依赖 getData() 返回活引用还是深拷贝）。
-	 * 由本类经 applyLayout / resolvePreference 维护。
+	 * 当前布局（引擎 layout id）。
+	 *
+	 * **唯一持久化位是文件属性**（frontmatter 的 `Mindmap` 值）：加载时读声明
+	 * （`readDeclaredLayout`），切换时写属性（`applyLayout`）。
+	 *
+	 * 字段初值给 `null` 只为满足构造顺序，构造函数随即赋 `settings.defaultLayout`
+	 * （见构造函数注释）——`onOpen` 建工具栏早于文件加载，引擎那时尚未创建，而竖栏
+	 * 「连线」开关的可用性要按一个布局先定下来；换文件时由 `loadMindMapFromFile`
+	 * 按新文件的声明覆盖。
 	 */
 	private currentLayout: string | null = null;
 	/**
 	 * 当前连线样式偏好（straight 折线 / curve 曲线；2026-10-21 收敛为两态）。
-	 * 与布局同口径：按文件路径持久化到视图状态存储，由本类经
-	 * applyLineStyle / resolvePreference 维护。
+	 * **按文件**持久化到视图状态存储，由本类经 `applyLineStyle` /
+	 * `resolvePreference` 维护（布局不在此列——它只存文件属性，见 `currentLayout`）。
 	 */
 	private currentLineStyle: string | null = null;
 	/**
-	 * 当前配色（色相方案）。与布局/连线样式同口径：**按文件**持久化到视图状态
-	 * 存储（不是全局设置），由本类经 `applyPalette` / `resolvePreference` 维护。
+	 * 当前配色（色相方案）。**按文件**持久化到视图状态存储（不是全局设置），
+	 * 由本类经 `applyPalette` / `resolvePreference` 维护。
 	 */
 	private currentPalette: string | null = null;
 	/**
@@ -336,6 +360,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	constructor(leaf: WorkspaceLeaf, plugin: ViewPluginContext) {
 		super(leaf);
 		this.plugin = plugin;
+		// 建栏早于文件加载：先按种子布局显示工具栏（文件加载后由声明覆盖）
+		this.currentLayout = plugin.settings.defaultLayout;
 		// 官方 API：App.isDarkMode()（@since 1.10.0）；勿用未文档化的
 		// body.hasClass('theme-dark')（核心 CSS 类，官方 d.ts 中不存在）
 		this.isDark = this.app.isDarkMode();
@@ -378,7 +404,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			getLang: () => this.lang,
 			isDark: () => this.isDark,
 			getSetupOptions: () => ({
-				layout: this.resolvePreference('layout'),
+				layout: this.resolveLayout(),
 				lineStyle: this.resolvePreference('lineStyle'),
 				themePref: this.plugin.settings.defaultTheme,
 				// 边框与配色都按文件记（viewState），不是设置项
@@ -707,25 +733,33 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	private async loadMindMapFromFile(file: TFile): Promise<void> {
 		this.loadSession.loadingFilePath = file.path;
-		// 四项「按文件偏好」一次合成：缺省值统一在 resolveFilePreferences 里给，
-		// 避免某一维回落到硬编码默认而漏掉设置项（2026-10-21 themeStyle 踩过此坑）
+		// 三项「按文件偏好」一次合成：缺省值统一在 resolveFilePreferences 里给，
+		// 避免某一维回落到硬编码默认而漏掉设置项（2026-10-21 themeStyle 踩过此坑）。
+		// 布局不在其中——它只认文件属性（`data.json` 不再保存逐文件布局）。
 		const prefs = resolveFilePreferences({
 			saved: {
-				layout: this.plugin.viewState.getPreference(file.path, 'layout'),
 				lineStyle: this.plugin.viewState.getPreference(file.path, 'lineStyle'),
 				themeStyle: this.plugin.viewState.getPreference(file.path, 'themeStyle'),
 				palette: this.plugin.viewState.getPreference(file.path, 'palette'),
 			},
 			defaults: {
-				layout: this.plugin.settings.defaultLayout,
 				lineStyle: this.plugin.settings.defaultLineStyle,
 				themeStyle: this.plugin.settings.defaultThemeStyle,
 				palette: DEFAULT_PALETTE,
 			},
 		});
 		// 归一放在**入口**：脏值止步于此，后续 `resolve*` 只负责兜底，
-		// 不再各写一次 normalize（那是「新增维度时漏一处」的高发位置）
-		this.currentLayout = prefs.layout;
+		// 不再各写一次 normalize（那是「新增维度时漏一处」的高发位置）。
+		//
+		// 布局 = 文件声明 ?? 种子值。后者**只兜 MetadataCache 滞后**（刚创建文件、
+		// 刚写完属性），不是「按文件记忆」的回落：已存在文件的布局永远来自属性。
+		//
+		// 请求时刻先读一次（`documents.load` 抛错时也保底）；**读完文档还会复问一次**
+		// （见下面的 `declaredNow`）：`vault.read` 给了 MetadataCache 追赶的时间，
+		// 「打开时缓存尚未就绪」的窗口因此从整段 load 缩到一次 read——否则勾选态与
+		// 画面会先停在种子值上，等 `metadataCache.changed` 才跳到真布局。
+		this.currentLayout =
+			readDeclaredLayout(this.app, file) ?? this.plugin.settings.defaultLayout;
 		this.currentLineStyle = normalizeLineStylePreference(prefs.lineStyle);
 		this.currentThemeStyle = normalizeThemeStyle(prefs.themeStyle);
 		this.currentPalette = normalizePalettePreference(prefs.palette);
@@ -736,6 +770,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				return;
 			}
 			this.frontmatterByPath.set(file.path, doc.frontmatter);
+			// 复问声明：此刻引擎尚未创建（initMindMap 在下一帧的 rAF 里），
+			// 更新会话值即可让「竖栏 / 右键勾选态」与「引擎创建用的布局」同时对齐
+			// 磁盘真值，不必等一次 `metadataCache.changed` 再重排。
+			const declaredNow = readDeclaredLayout(this.app, file);
+			if (declaredNow !== null) {
+				this.currentLayout = declaredNow;
+			}
 			// mdBackMode 的读入已前移到 setState 覆写：官方 view.getState() 不保留
 			// 传入 state，从此处经 leaf.getViewState() 读回是恒失败链路（2026-10-15）。
 			const tree = doc.tree;
@@ -809,13 +850,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	// load 之前就被创建」的极端时序（返回默认值，不回写会话字段——回写会让
 	// 「尚未读到文件」与「文件就是这么设的」两种状态混为一谈）。
 	//
-	// 四项同构（会话字段 ?? 默认值），与写入侧 `commitPreference` 以
+	// 三项同构（会话字段 ?? 默认值），与写入侧 `commitPreference` 以
 	// `PreferenceKey` 为中心对称：新增一项偏好时两处各加一行即可。
 
 	resolvePreference(key: PreferenceKey): string {
 		switch (key) {
-			case 'layout':
-				return this.currentLayout ?? this.plugin.settings.defaultLayout;
 			case 'lineStyle':
 				return this.currentLineStyle ?? this.plugin.settings.defaultLineStyle;
 			case 'palette':
@@ -823,6 +862,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			case 'themeStyle':
 				return this.currentThemeStyle ?? this.plugin.settings.defaultThemeStyle;
 		}
+	}
+
+	/**
+	 * 当前生效的布局（引擎 layout id）。
+	 *
+	 * 不并入 `resolvePreference`：布局已不是「按文件偏好」——它只存在于文件属性，
+	 * 既不由 `commitPreference` 提交，也不落 `data.json`。独立方法让「读声明后的
+	 * 会话值」这条唯一来源在接口上可见（引擎创建选项仍要 `layout: string`）。
+	 */
+	resolveLayout(): string {
+		return this.currentLayout ?? this.plugin.settings.defaultLayout;
 	}
 
 	/**
@@ -891,36 +941,35 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				this.contentRemeasure.retryDeferred();
 			});
 		}
-		// 外观四项（布局 / 连线 / 配色 / 边框）已移入右键菜单的二级菜单：
+		// 外观项（布局 / 连线 / 配色 / 边框）的选择入口在右键菜单的二级菜单：
 		// 勾选态在读菜单时按 `resolve*` 现算，引擎就绪时不再需要回填控件。
 		// 但**可用性**不能读时现算：右缘竖栏的连线开关是否置灰由布局决定，它写在
-		// 竖栏的构建流程里，而 `onOpen` 建栏早于文件加载（那时 `resolvePreference()`
-		// 读到的还是全局默认布局）。此刻文件偏好已合成（`currentLayout` 取自
-		// `viewState`），重建一次让开关态跟上——否则默认布局为固定直线布局时
-		// 打开任何导图都会永久置灰（2026-10-23 修复）。
+		// 竖栏的构建流程里，而 `onOpen` 建栏早于文件加载（那时 `resolveLayout()`
+		// 读到的还是种子布局）。此刻 `currentLayout` 已按文件声明定值，重建一次
+		// 让开关态跟上——否则种子值为固定直线布局时，打开任何导图都会永久置灰
+		//（2026-10-23 修复）。
 		this.refreshToolbar();
 	}
 
 	/** 标题重命名已委托 TitleRenamer（view-title-renamer.ts） */
 
 	/**
-	 * 提交一项外观偏好：归一 → 会话字段 → 应用引擎 → 持久化 → 通知小地图。
+	 * 提交一项「按文件偏好」：归一 → 会话字段 → 应用引擎 → 持久化 → 通知小地图。
 	 *
-	 * 四个维度（布局 / 连线 / 配色 / 边框）是同构的，差异只有四处：归一函数、
-	 * 引擎通道（布局/连线各有专法，配色与边框共用 `applyTheme`）、会话字段名，
-	 * 以及**小地图何时重画**（`miniMap`）。收在一处后，新增维度不会漏掉这几步。
+	 * 三个维度（连线 / 配色 / 边框）是同构的，差异只有三处：归一函数、
+	 * 引擎通道（连线有专法，配色与边框共用 `applyTheme`）、会话字段名。
+	 * 收在一处后，新增维度不会漏掉这几步。
 	 *
-	 * `miniMap` 由各 `apply*` 自己声明，而不是在这里按 `key` 猜：
-	 * - `'now'`：同步 `setThemeConfig`，几何未动，立即重画；
-	 * - `'after-render'`：布局的引擎重排是**异步分片**（`setLayout` → `RESET_LAYOUT`
-	 *   → 80ms fit），此刻取样只能拿到上一套布局，交渲染落地事件补画。
+	 * **布局不在这里**：它的持久化位是文件属性而不是 `data.json`，写盘还会失败，
+	 * 故走 `applyLayout` 的独立实现（顺序与失败语义都不同）；引擎重排落地后
+	 * 才补小地图这件事也归那里（`refreshMiniMapAfterRender`），本漏斗的
+	 * 三项都是同步换肤、几何不动，立即重画即可。
 	 */
 	private commitPreference(config: {
 		key: PreferenceKey;
 		value: string;
 		normalize: (value: string) => string;
 		applyToEngine: (value: string) => void;
-		miniMap: 'now' | 'after-render';
 	}): void {
 		const next = config.normalize(config.value);
 		this[SESSION_FIELDS[config.key]] = next;
@@ -928,32 +977,118 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		if (this.file) {
 			this.plugin.viewState.setPreference(this.file.path, config.key, next);
 		}
-		if (config.miniMap === 'after-render') {
-			refreshMiniMapAfterRender(this);
-		} else {
-			refreshMiniMap(this);
-		}
+		refreshMiniMap(this);
 	}
 
 	/**
-	 * 切换布局（右键菜单调用）：布局不写入正文，存 data.json 按文件路径恢复。
+	 * 切换布局（右键菜单调用）：**写文件属性**，成功之后才动画面。
+	 *
+	 * 顺序是必需的（不是风格）：
+	 * ① 先排空正文——`processFrontMatter` 会重写整个文件，而保存管线可能还压着
+	 *    未落盘的节点编辑，不排空就会把旧正文写回去（分屏 Markdown 视图下最明显）；
+	 * ② 写属性只改 `Mindmap` 键，正文与其它属性原样保留（官方 `processFrontMatter`）；
+	 * ③ 只有写成功才落地画面——失败时文件仍是旧布局，乐观应用会让「看的」与
+	 *    「存的」不一致，重开即弹回。
+	 * ④ 写属性期间置 `pendingLayoutWrite`，让 `syncDeclaredLayout` 让位：写盘触发的
+	 *    `changed` 若先于本方法的 `await` 恢复到达，跟随侧会以**旧** `currentLayout`
+	 *    比对而先应用一次，收尾再应用一次（双重重排）。置标记后无论谁先到都只应用一次。
+	 *
+	 * **已知边界**：属性经 `processFrontMatter` 写，`frontmatterByPath`（保存管线
+	 * 「读不到磁盘」时才用的兜底文件头）仍是切换前的快照。刻意不在这里刷新——拼 YAML
+	 * 不归本层，而正常写盘一律以磁盘现值为准。
+	 *
+	 * @param engineLayoutId 引擎 layout id（`LAYOUT_OPTIONS` 的 value）
 	 */
-	applyLayout(value: string): void {
-		this.commitPreference({
-			key: 'layout',
-			value,
-			// 布局选项表是白名单，但工具栏只会给出表内值——此处不做归一
-			normalize: (next) => next,
-			applyToEngine: (next) => {
-				this.engine.setLayout(next);
-				// 连线开关只有「可点 / 置灰」两态，判定（`supportsLineStyleSwitch`）
-				// 写在竖栏的构建流程里，故换布局后必须重建一次——否则开关态会停在
-				// 上一个布局（2026-10-23 修复）。
-				this.refreshToolbar();
-			},
-			// 重排是异步分片：小地图必须等渲染落地再取样
-			miniMap: 'after-render',
-		});
+	async applyLayout(engineLayoutId: string): Promise<void> {
+		// 入口归一（与 `applyLineStyle` 同精神）：值域唯一源是 `LAYOUT_OPTIONS`，而本
+		// 方法对接口上任意字符串开放。非法值既不能写进文件（会落成默认值、冒充一次
+		// 用户选择），也不能交给引擎（未知布局）——直接忽略并留痕。
+		const layoutId = layoutIdOfPropertyValue(engineLayoutId);
+		if (layoutId === null) {
+			console.warn('未知的布局 id，已忽略:', engineLayoutId);
+			return;
+		}
+		// 防重复写盘：勾选态点当前值不该产生一次 YAML 重序列化
+		if (layoutId === this.currentLayout) {
+			return;
+		}
+		const file = this.file;
+		if (file) {
+			// 在途标记（见字段注释）：写属性触发的 `changed` 据此让位给本方法
+			this.pendingLayoutWrite = layoutId;
+			try {
+				// 先落正文：属性写入会重写整个文件，未排空的编辑会被旧正文覆盖
+				await this.savePipeline.save();
+				await this.app.fileManager.processFrontMatter(
+					file,
+					(frontmatter: Record<string, unknown>) => {
+						setMindMapProperty(frontmatter, layoutPropertyValue(layoutId));
+					},
+				);
+				// 这次写入绕过了保存管线：基线必须作废，否则下一次自动保存会把
+				// 它误判成「他处修改」而整轮跳过（此后每次编辑都静默不落盘）。
+				// 失败路径不当作废——文件没被改，基线仍然有效。
+				this.savePipeline.forgetBaseline(file);
+			} catch (error) {
+				// 用户可感：画面不动、文件不改，重开仍是旧布局——必须提示
+				notifyError(this.lang, 'view.layoutWriteFailed', error);
+				return;
+			} finally {
+				// 成功路径到下方应用之间没有 await，不存在新的窗口；失败路径文件未改、
+				// `currentLayout` 未动，清掉标记即可让后续 `changed` 走正常早退。
+				// **只清自己那一项**：两次切换交叠时（连点两个布局）前者收尾若无条件
+				// 清空，后者仍在写盘，期间的 `changed` 会插进来先应用一次、后者再应用
+				// 一次（又一次双重重排）。
+				if (this.pendingLayoutWrite === layoutId) {
+					this.pendingLayoutWrite = null;
+				}
+			}
+		}
+		this.applyLayoutToEngine(layoutId);
+	}
+
+	/**
+	 * 把布局应用到引擎侧并与会话值同步（**顺序即契约**）：
+	 * 会话字段 → 引擎重排 → 竖栏重建（连线开关的可用性按布局定）→ 小地图等渲染落地。
+	 *
+	 * 两个入口共用：`applyLayout`（写属性成功后）与 `syncDeclaredLayout`（跟随外部
+	 * 变更）。各写一份时，将来新增第四步就只能改一处、漏一处。
+	 */
+	private applyLayoutToEngine(layoutId: string): void {
+		this.currentLayout = layoutId;
+		this.engine.setLayout(layoutId);
+		// 连线开关只有「可点 / 置灰」两态，判定（`supportsLineStyleSwitch`）写在
+		// 竖栏的构建流程里，故换布局后必须重建一次——否则开关态会停在上一个布局
+		//（2026-10-23 修复）。
+		this.refreshToolbar();
+		// 引擎重排是异步分片：小地图必须等渲染落地再取样
+		refreshMiniMapAfterRender(this);
+	}
+
+	/**
+	 * 跟随文件属性的**外部**变更：重读本文件声明，值变了就只应用引擎侧，**不回写
+	 * 文件**（属性是用户/其它窗格/同步写的，我们只是跟随）。
+	 *
+	 * 由组合根在 `metadataCache.changed` 时调用（见 main.ts）。四条早退：
+	 * - 无文件 / 声明不是布局（`Markdown`、未知值、无键）⇒ 什么都不做。**刻意不
+	 *   抽走已打开的视图**：运行中把正在编辑的图踢回 Markdown 会丢上下文；「是不是
+	 *   导图」只决定打开时怎么进。
+	 * - 本视图正在写这一项的布局（`pendingLayoutWrite`）⇒ 让位，由 `applyLayout`
+	 *   收尾统一应用。它的 `await` 与 `changed` 谁先到由宿主实现决定，不挡就会对
+	 *   同一布局应用两次（双重重排 + 竖栏连建两次）。
+	 * - 声明值 == 会话值 ⇒ 直接返回。**必须幂等**：我们自己的 `applyLayout` 写属性
+	 *   同样会触发 `changed`，不早退就是二次重排（小地图也连画两轮）。
+	 */
+	syncDeclaredLayout(): void {
+		const file = this.file;
+		const declared = readDeclaredLayout(this.app, file);
+		if (declared === null || declared === this.pendingLayoutWrite) {
+			return;
+		}
+		if (declared === this.currentLayout) {
+			return;
+		}
+		this.applyLayoutToEngine(declared);
 	}
 
 	/**
@@ -970,7 +1105,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			value,
 			normalize: normalizeLineStylePreference,
 			applyToEngine: (next) => this.engine.setLineStyle(next),
-			miniMap: 'now',
 		});
 	}
 
@@ -984,7 +1118,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			value,
 			normalize: normalizePalettePreference,
 			applyToEngine: () => this.engine.applyTheme(),
-			miniMap: 'now',
 		});
 	}
 
@@ -995,7 +1128,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			value,
 			normalize: normalizeThemeStyle,
 			applyToEngine: () => this.engine.applyTheme(),
-			miniMap: 'now',
 		});
 	}
 

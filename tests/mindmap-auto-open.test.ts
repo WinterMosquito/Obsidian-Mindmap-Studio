@@ -10,7 +10,7 @@
  *   `activateDeclaredLeaves` 也是组合根 `metadataCache.on('changed')` 的入口
  *   （属性被就地加上时补判），故该方法是公开的。
  *
- * 判据本身（frontmatter 的 `Type`/`类型`）由组合根注入，本套件用「声明集合」桩
+ * 判据本身（frontmatter 的 `Mindmap`）由组合根注入，本套件用「声明集合」桩
  * 代替——那样判据回归在 tests/md-frontmatter-trigger.test.ts 单独锁定，两边互不
  * 耦合。
  *

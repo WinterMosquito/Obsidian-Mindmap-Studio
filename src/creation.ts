@@ -1,13 +1,17 @@
 /**
- * 新建思维导图：创建普通 `命名.md` 文件，正文带 `类型: Mindmap` 属性声明。
+ * 新建思维导图：创建普通 `命名.md` 文件，正文带布局声明（`Mindmap: <布局>`）。
  *
  * 渲染层定位：新文件是标准 Markdown（属性块 + 提示列表），双击/链接打开落在
  * Obsidian markdown 视图；本模块负责流程（命名、落盘、打开），并在创建后自动
  * 把当前标签切换到导图视图（openAsMindMap）。
+ *
+ * 布局取设置 `defaultLayout`（**种子值**：写进新文件的属性后，该文件此后只认
+ * 自己的属性，改设置不会影响它）。
  */
 import { App, Notice, normalizePath, type TFile, type TFolder } from 'obsidian';
 import { notifyError } from './core/errors';
 import { t } from './core/i18n';
+import { layoutPropertyValue } from './domain/mindmap-property';
 import {
 	buildDefaultMindMapName,
 	createDefaultMarkdownContent,
@@ -19,7 +23,7 @@ import { openNameInputModal } from './ui/modal-name';
 /** `createNewMindMap` 消费的设置子集（窄化契约：命令宿主只需提供这几项） */
 export type NewMindMapSettings = Pick<
 	MindMapStudioSettings,
-	'language' | 'saveLocation' | 'saveFolder'
+	'language' | 'saveLocation' | 'saveFolder' | 'defaultLayout'
 >;
 
 /**
@@ -58,8 +62,13 @@ export async function createNewMindMap(
 	const baseName = (name || defaultName).replace(/\.md$/i, '');
 	const fileName = ensureUniqueFileName(app, folder, `${baseName}.md`);
 	const path = toVaultPath(folder, fileName);
-	// 新建内容为标准 Markdown 大纲；中心主题 = 文件名（虚拟文档根）
-	const content = createDefaultMarkdownContent(language);
+	// 新建内容为标准 Markdown 大纲；中心主题 = 文件名（虚拟文档根）。
+	// 布局写的是**种子值**（设置 defaultLayout 的标准属性值）：之后该文件只认
+	// 自己的属性，改设置不会回头影响它。
+	const content = createDefaultMarkdownContent(
+		language,
+		layoutPropertyValue(settings.defaultLayout),
+	);
 
 	let file: TFile;
 	try {
