@@ -7,8 +7,9 @@
  *    仍按普通注释（渲染期隐藏，2026-10-27 用户裁决）；
  * 2. **继承**（`domain/color.walkColorDirectives`）：就近覆盖——自身指令优先，
  *    否则取最近祖先，清空指令即回落主题；
- * 3. **落地**（`engine/mindmap-colors`）：填充 / 描边 / 连线同色、文字色按填充
- *    亮度二选一、清空时删除样式键（否则残留覆盖会一直压着主题配色）。
+ * 3. **落地**（`engine/mindmap-colors`）：指令色是**主色**——填充取派生浅档、
+ *    连线/描边保留主色、文字色按填充算（`domain/color.nodeColorScale`）；
+ *    清空时删除样式键（否则残留覆盖会一直压着主题配色）。
  *
  * 引擎侧只测纯函数与数据写入，不构造真实 `MindMap`（`syncNodeColorDirectives`
  * 用一个最小替身验证「有变化才重渲染」）。
@@ -20,6 +21,7 @@ import {
 	contrastTextColor,
 	inheritedColorOf,
 	mixHex,
+	nodeColorScale,
 	nodeContentTones,
 	nodeInkColor,
 	normalizeHexColor,
@@ -146,30 +148,66 @@ describe('自定义颜色输入（十六进制 / RGB）', () => {
 	});
 });
 
+describe('节点色阶（主色 → 填充 / 线条 / 文字）', () => {
+	it('填充是主色向画布白混 84%（L* ≈ 92、深字可读），线条保留归一的原色', () => {
+		expect(nodeColorScale('#89CFF0')).toEqual({
+			fill: '#ecf7fd',
+			line: '#89cff0',
+			ink: '#111827',
+		});
+		// 中深色与浅色一样落浅底：不再出现「整支一片中深色」
+		expect(nodeColorScale('#123456')).toEqual({
+			fill: '#d9dfe4',
+			line: '#123456',
+			ink: '#111827',
+		});
+	});
+
+	it('任意主色：填充上的柔和墨色都 ≥ 4.5（不再退纯白/纯黑）', () => {
+		for (const base of ['#7c5cd6', '#2e9e8f', '#2f7d5a', '#c2761a', '#475569', '#000000']) {
+			const { fill, ink } = nodeColorScale(base);
+			expect(ink, `${base} 的墨色`).toBe('#111827');
+			expect(contrastRatio(ink, fill), `${base} 的对比`).toBeGreaterThanOrEqual(4.5);
+		}
+	});
+
+	it('非法主色兜底（不返回空值），三位缩写先归一', () => {
+		const fallback = nodeColorScale('not-a-colour');
+		expect(fallback.line).toBe('#111827');
+		expect(normalizeHexColor(fallback.fill)).toBe(fallback.fill);
+		expect(nodeColorScale('#0aF').line).toBe('#00aaff');
+	});
+});
+
 describe('节点墨色与派生内容色', () => {
-	/** 五套配色的节点色（`paletteNodeColor` = 各配色 light.rootFill） */
+	/** 各套配色的**主色**（`paletteNodeColor` = 各配色 light.rootFill） */
 	const PALETTE_NODE_COLORS = [
 		'#2e9e8f',
 		'#c2761a',
+		'#b8455f',
 		'#7c5cd6',
-		'#2f7d5a',
+		'#3f7c2f',
 		'#475569',
 	] as const;
+	/** 菜单点下去后画布上真正的填充（派生浅档，2026-10-29） */
+	const PALETTE_FILLS = PALETTE_NODE_COLORS.map(
+		(base) => nodeColorScale(base).fill,
+	);
 
 	it('首选柔和墨色够 4.5 就不换纯黑（浅底不刺眼）', () => {
 		expect(nodeInkColor('#89cff0')).toBe('#111827');
 		expect(nodeInkColor('#ffffff')).toBe('#111827');
 	});
 
-	it('深底与中间调：深底白字、中间调退纯黑（方案 A：不改底色）', () => {
+	it('深底与中间调：深底白字、中间调退纯黑（兜底链，任意底色都有答案）', () => {
 		expect(nodeInkColor('#1e3a8a')).toBe('#ffffff');
 		expect(nodeInkColor('#111111')).toBe('#ffffff');
 		expect(nodeInkColor('#777777')).toBe('#000000');
 		expect(nodeInkColor('#808080')).toBe('#000000');
 	});
 
-	it('五套配色：正文与码块均 ≥ 4.5，网格线 ≥ 2', () => {
-		for (const fill of PALETTE_NODE_COLORS) {
+	it('五套配色派生出的填充：正文与码块均 ≥ 4.5，网格线 ≥ 2', () => {
+		for (const fill of PALETTE_FILLS) {
 			const tones = nodeContentTones(fill);
 			expect(
 				contrastRatio(tones.ink, fill),
@@ -458,7 +496,7 @@ function fakeTree(data: FakeData, children: MindMapTreeNode[] = []): MindMapTree
 }
 
 describe('data 树落地（引擎创建前）', () => {
-	it('填充与连线同色；浅底配深字、深底配白字', () => {
+	it('填充取派生浅档，连线与描边保留主色，文字色恒为柔和深灰蓝', () => {
 		const light = fakeTree({ text: '浅', mdRaw: '浅 %%#89CFF0%%' });
 		const dark = fakeTree({ text: '深', mdRaw: '深 %%#123456%%' });
 		const root = fakeTree({ text: 'root', mdRaw: 'root' }, [light, dark]);
@@ -466,16 +504,17 @@ describe('data 树落地（引擎创建前）', () => {
 		applyColorDirectivesToTree(root, colorDirectiveOf);
 
 		expect(light.data).toMatchObject({
-			fillColor: '#89cff0',
+			fillColor: '#ecf7fd',
 			borderColor: '#89cff0',
 			lineColor: '#89cff0',
 			color: '#111827',
 		});
+		// 中深主色同样落浅底：不再出现「深底白字」的大面积实色
 		expect(dark.data).toMatchObject({
-			fillColor: '#123456',
+			fillColor: '#d9dfe4',
 			borderColor: '#123456',
 			lineColor: '#123456',
-			color: '#ffffff',
+			color: '#111827',
 		});
 		// 未写指令的根节点不产生任何样式键（走整篇配色）
 		expect(root.data.fillColor).toBeUndefined();
@@ -486,7 +525,7 @@ describe('data 树落地（引擎创建前）', () => {
 		const root = fakeTree({ text: 'root', mdRaw: 'root %%#ff0000%%' }, [child]);
 
 		applyColorDirectivesToTree(root, colorDirectiveOf);
-		expect(child.data.fillColor).toBe('#ff0000');
+		expect(child.data.fillColor).toBe('#ffd6d6');
 
 		// 模拟用户把指令删掉后重新解析
 		root.data.mdRaw = 'root';
@@ -522,7 +561,10 @@ describe('实时节点树同步（引擎创建后）', () => {
 		const root = fakeNode({ text: 'root', mdRaw: 'root' }, [child]);
 
 		expect(applyLiveColorDirectives(root, colorDirectiveOf)).toBe(true);
-		expect(child.getData()).toMatchObject({ fillColor: '#00ff00' });
+		expect(child.getData()).toMatchObject({
+			fillColor: '#d6ffd6',
+			lineColor: '#00ff00',
+		});
 		expect(applyLiveColorDirectives(root, colorDirectiveOf)).toBe(false);
 	});
 
@@ -544,8 +586,8 @@ describe('实时节点树同步（引擎创建后）', () => {
 		]);
 
 		expect(applyLiveColorDirectives(root, colorDirectiveOf)).toBe(true);
-		expect(root.getData()).toMatchObject({ fillColor: '#ff0000' });
-		expect(colored.getData()).toMatchObject({ fillColor: '#ff0000' });
+		expect(root.getData()).toMatchObject({ fillColor: '#ffd6d6' });
+		expect(colored.getData()).toMatchObject({ fillColor: '#ffd6d6' });
 		expect(blocked.getData()).not.toHaveProperty('fillColor');
 		expect(grand.getData()).not.toHaveProperty('fillColor');
 	});

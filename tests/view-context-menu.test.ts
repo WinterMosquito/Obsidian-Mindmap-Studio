@@ -231,8 +231,9 @@ vi.mock('../src/engine/mindmap', () => ({
 			default: '#4a90d9',
 			mint: '#2e9e8f',
 			amber: '#c2761a',
+			rose: '#b8455f',
 			wisteria: '#7c5cd6',
-			forest: '#2f7d5a',
+			forest: '#3f7c2f',
 			slate: '#475569',
 		})[palette] ?? '#000000',
 	getActiveNodes: getActiveNodesMock,
@@ -968,7 +969,7 @@ describe('节点右键「配色」：写 Markdown 颜色指令', () => {
 		return { ...harness, node, menu: lastMenu(), submenu };
 	}
 
-	it('条目与空白右键的整篇配色一致：默认 + 五种配色 + 自定义（不列「蓝」）', () => {
+	it('条目与空白右键的整篇配色一致：默认 + 六种配色 + 自定义（不列「蓝」）', () => {
 		const { submenu } = openColorMenu(colorNode('项目'));
 		const titles = submenu.titles();
 		// 与空白右键同一组标题（首项「默认」语义不同，但样式一致，2026-10-27 裁决）

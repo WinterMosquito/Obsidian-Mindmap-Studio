@@ -4,7 +4,8 @@
  * 服务对象：节点配色指令 `%%#89CFF0%%`（`features/node-inline-tokenize` 解析、
  * `engine/mindmap-colors` 落地）、「自定义」入口的人类输入（`parseColorInput`）、
  * 自定义整篇配色（`engine/mindmap-palette.deriveCustomPalette` 用 `mixHex` 派生
- * 五档）。都是可直测的纯计算，故放 domain。
+ * 五档）、**节点色阶**（`nodeColorScale`：指令主色 → 填充 / 线条 / 文字）与着色
+ * 节点的内容色阶（`nodeContentTones`）。都是可直测的纯计算，故放 domain。
  */
 
 /** 合法的十六进制颜色（三/六位，必须带 `#`）→ 归一 `#rrggbb`（小写） */
@@ -182,6 +183,58 @@ export function contrastRatio(a: string, b: string): number {
  */
 const NODE_INK_PREFERRED = '#111827';
 
+/**
+ * 节点色阶：`%%#hex%%` 的**主色** → 填充 / 线条 / 文字三档（2026-10-29 用户裁决）。
+ *
+ * ## 为什么指令色不再是「填充色」
+ * 菜单给出的取值来自整篇配色的 `rootFill`（`mindmap-palette.paletteNodeColor`），
+ * 那是**一个节点**的中深色（设计约束见 `mindmap-theme-presets.PALETTES`：承载
+ * 反白字）。节点色沿子树下传，一支动辄几十个节点 —— 直接把中深色铺满整支，
+ * 就是大面积高饱和实色：白字/黑字都被迫贴着 4.5 的底线（实测 4.82–5.41），
+ * 同时丢掉「深字浅底」的阅读优势（Buchner & Baumgartner 2007：正极性校对成绩
+ * 稳定更好，与照度、对比度无关）。
+ *
+ * ## 三档按面积分配（Itten 的面积-明度反比）
+ * - `fill`：大面积填充 = 主色向画布白混 84%（L* ≈ 91–93、C* 6–10，深字对比 ≥ 13；
+ *   石板那支 C* ≈ 2 是刻意的降噪档）；比「只差 2–5%」的整篇二级填充深一档，
+ *   才在整图缩放下看得出色族；
+ * - `line`：连线 / 描边 = **保留主色**。1.5px 细线面积小、视觉权重在「长度」上，
+ *   由它承担「这是哪一支」的辨识度；也是小地图墨色的来源；
+ * - `ink`：`nodeInkColor(fill)` —— 浅底上恒为柔和深灰蓝，不再出现白字/黑字跳变。
+ *
+ * **不读主题**：写进文件的实色不随明暗变（既有口径），混色基准因此是恒定的
+ * 画布白 `#ffffff`，深色主题下同一份文件仍得到同一组颜色。
+ */
+export interface NodeColorScale {
+	fill: string;
+	line: string;
+	ink: string;
+}
+
+/**
+ * 主色 → 填充的混色比例（0.84 = 只留 16% 主色）。
+ *
+ * 取值理由：整篇配色的 `secondFill` 是 0.86（与画布只差 2–5%），在整图缩放下
+ * 几乎无色；再浅一档（0.88）连「哪一支是什么颜色」都要靠并排看。0.84 落在
+ * L* ≈ 91–93、C* 6–10（同上，石板除外）：既在大色块下不压屏（深字对比仍有
+ * ≥ 13:1），又能让色族在 fit 缩放下可辨。
+ */
+const NODE_FILL_MIX = 0.84;
+/** 混色基准（画布白；不随明暗切换，见上面「不读主题」） */
+const NODE_FILL_BASE = '#ffffff';
+
+/**
+ * 主色 → 三档色阶（节点级配色的**唯一**派生点）。
+ *
+ * 入参是归一后的 `#rrggbb`（脏值兜底为柔和墨色，保证永不返回非法值）；
+ * `line` 同时服务 `lineColor` 与 `borderColor` —— 二者语义都是「结构线」。
+ */
+export function nodeColorScale(base: string): NodeColorScale {
+	const color = normalizeHexColor(base) ?? NODE_INK_PREFERRED;
+	const fill = mixHex(color, NODE_FILL_BASE, NODE_FILL_MIX);
+	return { fill, line: color, ink: nodeInkColor(fill) };
+}
+
 /** 节点正文墨色（节点级配色专用）：首选柔和色，不达标才退纯黑/纯白 */
 export function nodeInkColor(fill: string): string {
 	const background = normalizeHexColor(fill);
@@ -201,8 +254,9 @@ export function nodeInkColor(fill: string): string {
  *
  * - `ink`：正文墨色（`nodeInkColor`）；
  * - `chip`：码块与表头底色——从节点底色**朝远离墨色的方向**偏 12%：
- *   深底变暗、浅底变亮，文字与底色因此始终拉开；近白/近黑节点退化为向墨色偏 6%
- *   （否则阶差为 0，码块会彻底消失）；
+ *   深底变暗、浅底变亮，文字与底色因此始终拉开；偏完仍不到 `CHIP_MIN_CONTRAST`
+ *   （1.12）时改朝墨色偏 10% 兜底——判据是**实际达成的阶差**，不是亮度阈值：
+ *   色阶落地后填充恒在 L*≈92，朝白偏 12% 只有 1.01–1.05，等于没偏；
  * - `border`：表格线（45% 墨色混入底色），在任意底色上都能看出网格。
  *
  * 三者都只依赖节点底色与墨色，不读主题变量——导出 SVG 与屏幕因此同一份字面量。
@@ -213,21 +267,28 @@ export interface NodeContentTones {
 	border: string;
 }
 
+/** 码块与底色的最小可见阶差（WCAG 比值；1.12 ≈ 一眼能看出「这里有一块」） */
+const CHIP_MIN_CONTRAST = 1.12;
+/** 朝「背离墨色」方向偏的比例（深底提亮 / 浅底压暗） */
+const CHIP_SHIFT = 0.12;
+/** 已贴边时的反向兜底：朝墨色偏，保证码块仍有一块可辨的底 */
+const CHIP_SHIFT_TOWARD_INK = 0.1;
+/** 表格线与表格外框的墨色比例（45% 在任意底色上都看得出网格） */
+const BORDER_INK_MIX = 0.45;
+
 export function nodeContentTones(fill: string): NodeContentTones {
 	const background = normalizeHexColor(fill) ?? '#ffffff';
 	const ink = nodeInkColor(background);
 	// 码块要与底色拉开，方向必须**背离墨色**（白墨→压暗、黑墨→提亮）
 	const awayFromInk = ink === '#ffffff' ? '#000000' : '#ffffff';
-	// 近白 / 近黑节点已贴到那一端：继续朝同方向偏等于没偏（阶差 0 ⇒ 码块消失），
-	// 退化为朝墨色偏 6%。阈值 0.04 约为「人眼刚好可辨」的明度差。
-	const noRoomToShift =
-		Math.abs(relativeLuminance(background) - relativeLuminance(awayFromInk)) < 0.04;
+	const lifted = mixHex(background, awayFromInk, CHIP_SHIFT);
 	return {
 		ink,
-		chip: noRoomToShift
-			? mixHex(background, ink, 0.06)
-			: mixHex(background, awayFromInk, 0.12),
-		border: mixHex(background, ink, 0.45),
+		chip:
+			contrastRatio(lifted, background) >= CHIP_MIN_CONTRAST
+				? lifted
+				: mixHex(background, ink, CHIP_SHIFT_TOWARD_INK),
+		border: mixHex(background, ink, BORDER_INK_MIX),
 	};
 }
 

@@ -288,6 +288,7 @@ export const PALETTE_OPTIONS = [
 	{ value: 'default', label: 'palette.default' },
 	{ value: 'mint', label: 'palette.mint' },
 	{ value: 'amber', label: 'palette.amber' },
+	{ value: 'rose', label: 'palette.rose' },
 	{ value: 'wisteria', label: 'palette.wisteria' },
 	{ value: 'forest', label: 'palette.forest' },
 	{ value: 'slate', label: 'palette.slate' },

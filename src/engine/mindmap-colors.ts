@@ -4,25 +4,27 @@
  * ## 数据落点（为什么写节点 data 而不是改主题）
  * 引擎 `Style.merge` 的优先级是「**节点自身 data 的样式键** → 层级主题 → 顶层主题」
  *（vendor `core/render/node/Style.js:96-106`），故把 `fillColor` / `lineColor` /
- * `color` 写进节点 data 即可让**该节点**覆盖 `data.json` 里的整篇配色，且这些键
- * 随节点数据参与布局、导出与小地图取样，不另开渲染通道。
+ * `borderColor` / `color` 写进节点 data 即可让**该节点**覆盖 `data.json` 里的整篇
+ * 配色，且这些键随节点数据参与布局、导出与小地图取样，不另开渲染通道。
  *
- * ## 四个键的语义
- * - `fillColor`：节点填充 = 指令颜色；
+ * ## 指令色是「主色」，不是填充色（2026-10-29 用户裁决，B 方案）
+ * 三档由 `domain/color.nodeColorScale` 唯一派生（大面积留浅、饱和留给细线），
+ * 四个键的语义：
+ * - `fillColor`：节点填充 = 主色向画布白混 84%（L* ≈ 92、深字对比 ≥ 13）——
+ *   **不再**把中深色铺满整支子树（那样白字/黑字都被迫贴着 4.5 的底线）；
  * - `lineColor`：**该节点到父节点**的连线色（引擎 `styleLine(line, childNode)` 读的
- *   是子节点的 `lineColor`）——因此「连线跟着变」对所有后代天然成立；
- * - `borderColor`：描边色同色（用户裁决 2026-10-27「节点颜色覆盖边框色」）。
+ *   是子节点的 `lineColor`）——**保留主色**：细线面积小、贯穿全图，由它承担
+ *   「这是哪一支」的辨识度；
+ * - `borderColor`：描边同色（用户裁决 2026-10-27「节点颜色覆盖边框色」）。
  *   **`borderWidth` 不动**：是否画边框仍由右缘竖栏的「边框」开关（主题）决定，
  *   描边宽度归零时这个颜色只服务小地图墨色；
- * - `color`：文字色。自定义填充可能比主题色板深或浅，沿用主题文字色会出现
- *   「深底深字」；判据是**首选柔和深灰蓝 `#111827` 够不够 4.5**——够就用它，
- *   否则在纯黑/纯白里取对比度更大的那个（唯一判定在
- *   `domain/color.nodeInkColor`）。不是「三候选取最大」：那样所有浅色节点都会
- *   写成刺眼的纯黑。纯黑/纯白的最大对比度恒 ≥ 4.58，故任意自定义色都有答案。
+ * - `color`：文字色 = `nodeInkColor(fill)`。填充恒为浅底 ⇒ 落在柔和深灰蓝
+ *   `#111827`（不再出现同一屏里白字/黑字混用）。判据与兜底链见
+ *   `domain/color.nodeInkColor`：首选够 4.5 就用它，否则纯黑/纯白取对比大的。
  *   **只作用于被指令染色的节点**，不改变「文字色只按明暗定」的整篇口径。
  *
  * 小地图的节点块读的就是这里的 `borderColor`（`core/minimap-geometry` 的标记
- * `color`），因此「缩略图按节点配色」不再需要第二套颜色来源。
+ * `color`）——主色比浅填充深得多，缩略图因此比「整支一个中深色」时更清楚。
  *
  * ## 优先级
  * 节点指令 > 最近祖先指令 > 文件配色（`viewState[<路径>].palette`）> 出厂默认。
@@ -35,7 +37,7 @@
  *（见 `domain/md-meta.nodeInlineSource`）。指令本身留在正文里，是唯一真相。
  */
 import type { MindMapNode, MindMapTreeNode } from '../core/engine-types';
-import { nodeInkColor, walkColorDirectives } from '../domain/color';
+import { nodeColorScale, walkColorDirectives } from '../domain/color';
 import { nodeInlineSource } from '../domain/md-meta';
 
 /** 读一行原文里的配色指令（`#rrggbb` / 哨兵 `none` / 未写则 null）；生产实现 = `colorDirectiveOf` */
@@ -55,13 +57,19 @@ const NODE_COLOR_KEYS = [
  */
 type NodeColorStyle = Record<(typeof NODE_COLOR_KEYS)[number], string>;
 
-/** 颜色 → 四个样式键（填充、连线、描边、对比文字色） */
+/**
+ * 主色 → 四个样式键（填充 / 连线 / 描边 / 文字）。
+ *
+ * 派生在 `domain/color.nodeColorScale`（唯一实现）：填充取浅档、连线与描边取
+ * 主色本身、文字色按填充算。这里只做「键名映射」，不再自行混色或判墨色。
+ */
 function nodeColorStyle(color: string): NodeColorStyle {
+	const { fill, line, ink } = nodeColorScale(color);
 	return {
-		fillColor: color,
-		lineColor: color,
-		borderColor: color,
-		color: nodeInkColor(color),
+		fillColor: fill,
+		lineColor: line,
+		borderColor: line,
+		color: ink,
 	};
 }
 

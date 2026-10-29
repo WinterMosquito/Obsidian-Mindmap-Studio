@@ -152,6 +152,28 @@ export const PALETTES: Record<PaletteId, PalettePair> = {
 			line: '#5e4c36',
 		},
 	},
+	/**
+	 * 玫瑰：暖红，补上「琥珀 → 紫藤」之间 120° 的色相空档（2026-10-29 新增）。
+	 *
+	 * 节点级配色下五支（薄荷/琥珀/玫瑰/紫藤/森林）的主色两两 ΔE 均 ≥ 25，
+	 * 连线才分得清；石板保持中性降噪档，不参与彩度比较。
+	 */
+	rose: {
+		light: {
+			rootFill: '#b8455f',
+			secondFill: '#f8ecef',
+			nodeFill: '#fcf7f8',
+			border: '#eac7cf',
+			line: '#d899a7',
+		},
+		dark: {
+			rootFill: '#7d2f41',
+			secondFill: '#302326',
+			nodeFill: '#272022',
+			border: '#492930',
+			line: '#5f2e39',
+		},
+	},
 	/** 紫藤：偏亮的蓝紫 */
 	wisteria: {
 		light: {
@@ -169,21 +191,28 @@ export const PALETTES: Record<PaletteId, PalettePair> = {
 			line: '#4f4470',
 		},
 	},
-	/** 森林：深绿稳重 */
+	/**
+	 * 森林：草绿（2026-10-29 调整色相）。
+	 *
+	 * 原值 `#2f7d5a`（LCh h 160，L 47）与薄荷 `#2e9e8f`（h 182，L 59）只差 18°，
+	 * 节点级配色下两者主色 ΔE 仅 **18**、派生填充 ΔE **2.7**——同一张图上「薄荷」
+	 * 与「森林」两支几乎分不开（实测导出图）。改到 h 135 的草绿后与之拉开 47°：
+	 * 主色 ΔE **38.5**、填充 ΔE **5.8**，且白字对比从 5.00 升到 5.08（仍过 3:1）。
+	 */
 	forest: {
 		light: {
-			rootFill: '#2f7d5a',
-			secondFill: '#e9f5ef',
-			nodeFill: '#f5faf7',
-			border: '#c2e0d0',
-			line: '#94c2ac',
+			rootFill: '#3f7c2f',
+			secondFill: '#ecf2ea',
+			nodeFill: '#f6f9f6',
+			border: '#c5d8c1',
+			line: '#95b78d',
 		},
 		dark: {
-			rootFill: '#20563d',
-			secondFill: '#1b2620',
-			nodeFill: '#151d18',
-			border: '#2c4237',
-			line: '#3b5647',
+			rootFill: '#2b5420',
+			secondFill: '#222920',
+			nodeFill: '#20241f',
+			border: '#273823',
+			line: '#2c4525',
 		},
 	},
 	/** 石板：降噪灰蓝（second / node 与蓝相同，只换 root 与线） */

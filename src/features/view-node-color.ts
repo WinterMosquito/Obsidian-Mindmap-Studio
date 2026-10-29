@@ -30,19 +30,24 @@ import { colorDirectiveOf, setColorDirective } from './node-inline-tokenize';
 import { refreshMiniMapAfterRender } from './view-minimap';
 import type { MindMapViewContext } from './view-context';
 
-/** 菜单里的一个「颜色」选项：调色板的 id + 它对应的单色 + 文案键 */
+/** 菜单里的一个「颜色」选项：调色板的 id + 它对应的主色 + 文案键 */
 export interface NodeColorOption {
 	value: PaletteId;
 	label: TranslationKey;
-	/** 写进 Markdown 的十六进制（各套配色的根节点主色，亮色档） */
+	/**
+	 * 写进 Markdown 的十六进制 = 该套配色的**主色**（`light.rootFill`，不随明暗变）。
+	 * 画布上的观感是它派生出的「浅填充 + 主色连线」，见 `domain/color.nodeColorScale`；
+	 * 勾选态与正文指令做等值比较，所以这里必须是**写进文件的那一个值**。
+	 */
 	color: string;
 }
 
 /**
  * 节点配色菜单的选项表（顺序＝菜单顺序）。
  *
- * 颜色值取 `paletteNodeColor`（`PALETTES[id].light.rootFill`）——**单色**，
- * 因为节点只能记一个 hex；节点颜色不随明暗切换（写进文件的就是用户选的色相）。
+ * 颜色值取 `paletteNodeColor`（`PALETTES[id].light.rootFill`）——**主色**：
+ * 节点只能记一个 hex，深浅由 `nodeColorScale` 在渲染期派生（2026-10-29 用户裁决，
+ * B 方案）。节点颜色不随明暗切换（写进文件的就是用户选的色相）。
  *
  * **不含「默认」配色**（即那枚蓝）：首项「默认」已经表达「跟随整篇」，
  * 再列一枚蓝色会让节点菜单比空白右键的整篇菜单多一项（2026-10-27 用户裁决
@@ -89,7 +94,8 @@ export function effectiveNodeColorOf(node: MindMapNode): string | null {
 /**
  * 给这些节点（及各自子树）上色。
  *
- * `color`：`#rrggbb` 染成该色；`null` ＝「默认」，即回到**整篇配色**。
+ * `color`：`#rrggbb` 的**主色**（深浅由 `nodeColorScale` 派生）；`null` ＝「默认」，
+ * 即回到**整篇配色**。
  * 「默认」按节点分别落地（用户无感，结果等价）：上层还在染色就写哨兵
  * `%%none%%` 挡住继承，否则直接删自身指令（不给文件添注释）。
  *

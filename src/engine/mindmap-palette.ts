@@ -77,10 +77,15 @@ export function getDocIconColor(isDark: boolean, palette: string): string {
 }
 
 /**
- * 节点级配色菜单里「某一套配色」对应的颜色：取该配色的**根节点主色**
- * （亮色档——节点颜色写进 Markdown 后不随明暗变，见 `domain/color` 的口径）。
+ * 节点级配色菜单里「某一套配色」对应的**主色**：取该配色的 `rootFill`（亮色档
+ * ——节点颜色写进 Markdown 后不随明暗变，见 `domain/color` 的口径）。
  *
- * 这是「配色 → 单色」的唯一定义：新增配色时菜单自动多一项，勿在菜单层
+ * 注意它是**主色/色相锚**，不是画布上的填充色：落地由
+ * `domain/color.nodeColorScale` 派生「浅填充 + 主色线 + 深字」（2026-10-29）。
+ * 菜单仍用这个 hex 与正文里的指令做等值比较（勾选态），所以必须是**写进文件的
+ * 那一个值**，不能换成派生后的 fill。
+ *
+ * 这是「配色 → 主色」的唯一定义：新增配色时菜单自动多一项，勿在菜单层
  * 手抄色值。
  */
 export function paletteNodeColor(palette: PaletteId): string {

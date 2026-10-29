@@ -12,7 +12,8 @@
  * 本模块零 vendor 依赖（仅常量与类型），可直接单测。
  */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_THEME_STYLE } from '../src/core/constants';
+import { DEFAULT_THEME_STYLE, PALETTE_OPTIONS } from '../src/core/constants';
+import { contrastRatio, nodeColorScale } from '../src/domain/color';
 import { paletteNodeColor } from '../src/engine/mindmap-palette';
 import {
 	getThemeConfig,
@@ -217,14 +218,8 @@ describe('getThemeConfig（边框：节点外观，与主题色正交）', () =>
 });
 
 describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正交）', () => {
-	const PALETTE_IDS = [
-		'default',
-		'mint',
-		'amber',
-		'wisteria',
-		'forest',
-		'slate',
-	] as const;
+	/** 从选项表派生（新增配色时这里不再需要手改，防漏测） */
+	const PALETTE_IDS = PALETTE_OPTIONS.map((option) => option.value);
 
 	const tokenOf = (
 		config: Record<string, unknown>,
@@ -287,6 +282,64 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 		expect(tokenOf(config, 'root').fillColor).toBe('#2e9e8f');
 		expect(tokenOf(config, 'node').fillColor).toBe('transparent');
 		expect(tokenOf(config, 'second').borderWidth).toBe(0);
+	});
+
+	/**
+	 * 预设可辨性回归（2026-10-29）：节点级配色把主色当「色相锚」，一支一整片。
+	 * 曾经的 `forest #2f7d5a` 与 `mint #2e9e8f` 只差 18°（ΔE76 18.0、派生填充 2.7），
+	 * 实机上两支几乎同色——本用例把「主色 ΔE ≥ 25 / 派生填充 ΔE ≥ 5」写成契约。
+	 *
+	 * 参与比较的档位**从选项表派生**（新增配色自动纳入，不会因为漏改一张手写表而
+	 * 静默漏测），只排除两档：`default`（整篇基准蓝，不是节点菜单项）与 `slate`
+	 * （刻意的中性降噪档，C* ≈ 13，不参与彩色两两比较）。
+	 */
+	const COLORFUL_PALETTES = PALETTE_IDS.filter(
+		(palette) => palette !== 'default' && palette !== 'slate',
+	);
+
+	it('彩色预设两两可辨：主色 ΔE76 ≥ 25、派生填充 ≥ 5，且主色都承载得住反白字', () => {
+		const colorful = COLORFUL_PALETTES;
+		const lab = (hex: string): [number, number, number] => {
+			const channel = (index: number): number => {
+				const value =
+					Number.parseInt(hex.slice(1 + index * 2, 3 + index * 2), 16) / 255;
+				return value <= 0.04045
+					? value / 12.92
+					: ((value + 0.055) / 1.055) ** 2.4;
+			};
+			const [r, g, b] = [channel(0), channel(1), channel(2)];
+			const x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047;
+			const y = 0.2126729 * r + 0.7151522 * g + 0.072175 * b;
+			const z = (0.0193339 * r + 0.119192 * g + 0.9503041 * b) / 1.08883;
+			const f = (t: number): number =>
+				t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+			return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
+		};
+		const deltaE = (a: string, b: string): number => {
+			const [l1, a1, b1] = lab(a);
+			const [l2, a2, b2] = lab(b);
+			return Math.hypot(l1 - l2, a1 - a2, b1 - b2);
+		};
+
+		for (let i = 0; i < colorful.length; i++) {
+			const left = PALETTES[colorful[i]!].light.rootFill;
+			for (let j = i + 1; j < colorful.length; j++) {
+				const right = PALETTES[colorful[j]!].light.rootFill;
+				expect(
+					deltaE(left, right),
+					`${colorful[i]} vs ${colorful[j]} 主色`,
+				).toBeGreaterThanOrEqual(25);
+				expect(
+					deltaE(nodeColorScale(left).fill, nodeColorScale(right).fill),
+					`${colorful[i]} vs ${colorful[j]} 派生填充`,
+				).toBeGreaterThanOrEqual(5);
+			}
+		}
+		for (const palette of colorful) {
+			const root = PALETTES[palette].light.rootFill;
+			// root 承载反白字：设计约束是 ≥3:1（加粗大字可读）
+			expect(contrastRatio(root, '#ffffff'), palette).toBeGreaterThanOrEqual(3);
+		}
 	});
 
 	it('配色与明暗正交：每套配色在亮/暗下都生效且互不相同', () => {

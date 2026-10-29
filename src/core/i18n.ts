@@ -260,6 +260,7 @@ const ZH = {
 	'palette.default': '默认',
 	'palette.mint': '薄荷',
 	'palette.amber': '琥珀',
+	'palette.rose': '玫瑰',
 	'palette.wisteria': '紫藤',
 	'palette.forest': '森林',
 	'palette.slate': '石板',
@@ -268,6 +269,7 @@ const ZH = {
 	'palette.custom': '自定义',
 	'nodeColor.mint': '薄荷',
 	'nodeColor.amber': '琥珀',
+	'nodeColor.rose': '玫瑰',
 	'nodeColor.wisteria': '紫藤',
 	'nodeColor.forest': '森林',
 	'nodeColor.slate': '石板',
@@ -275,7 +277,7 @@ const ZH = {
 	// ===== 弹窗 - 自定义颜色 =====
 	'modal.color.title': '自定义颜色',
 	'modal.color.hint':
-		'填十六进制（#89CFF0）或 RGB（137, 207, 240）；写入文件时统一为十六进制。',
+		'填十六进制（#89CFF0）或 RGB（137, 207, 240）；写入文件时统一为十六进制。这是「主色」：插件据此配出浅底色与同色连线。',
 	'modal.color.placeholder': '#89CFF0 或 137, 207, 240',
 	'modal.color.invalid': '无法识别：请填 #89CFF0 或 137, 207, 240',
 
@@ -563,6 +565,7 @@ const EN: Record<TranslationKey, string> = {
 	'palette.default': 'Default',
 	'palette.mint': 'Mint',
 	'palette.amber': 'Amber',
+	'palette.rose': 'Rose',
 	'palette.wisteria': 'Wisteria',
 	'palette.forest': 'Forest',
 	'palette.slate': 'Slate',
@@ -570,6 +573,7 @@ const EN: Record<TranslationKey, string> = {
 	'palette.custom': 'Custom',
 	'nodeColor.mint': 'Mint',
 	'nodeColor.amber': 'Amber',
+	'nodeColor.rose': 'Rose',
 	'nodeColor.wisteria': 'Wisteria',
 	'nodeColor.forest': 'Forest',
 	'nodeColor.slate': 'Slate',
@@ -577,7 +581,7 @@ const EN: Record<TranslationKey, string> = {
 	// ===== 弹窗 - 自定义颜色 =====
 	'modal.color.title': 'Custom colour',
 	'modal.color.hint':
-		'Enter a hex colour (#89CFF0) or RGB (137, 207, 240); it is written as hex.',
+		'Enter a hex colour (#89CFF0) or RGB (137, 207, 240); it is written as hex. This is the base colour: the light fill and matching connector are derived from it.',
 	'modal.color.placeholder': '#89CFF0 or 137, 207, 240',
 	'modal.color.invalid': 'Not a colour: use #89CFF0 or 137, 207, 240',
 
