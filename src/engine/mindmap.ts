@@ -518,7 +518,67 @@ export function createMindMap(
 			),
 		);
 	}
+	// 测量残渣清理（症状与依据见 clearMeasureResidue）。时机只能是渲染结束：
+	// 容器可能早在创建期就被首帧前的批量预测量建好，但**渲染过程中引擎会持续
+	// 往它填副本**（每个自绘节点一次），只有本事件才是「本轮测量都已完成」的
+	// 稳定点；而测量是同步「建 → append → 取 rect」，清空不会打断后续读取。
+	// 注册在本函数内 ⇒ 视图与只读嵌入两个创建点一并覆盖。
+	mindMap.on('node_tree_render_end', () => clearMeasureResidue(mindMap));
 	return mindMap;
+}
+
+/**
+ * 引擎 `commonCaches` 的私有面（只取测量容器这一处；vendor 形态只允许出现在
+ * `engine/` 层内）。两层字段都可选：未测量过 / 单测桩 / 已销毁都落到 `undefined`。
+ */
+interface EngineMeasureCache {
+	commonCaches?: { measureCustomNodeContentSizeEl?: Element | null };
+}
+
+/**
+ * 引擎**离屏测量容器**的残渣清理（2026-10-29 实机定位并修复）。
+ *
+ * 引擎测自绘内容尺寸时（vendor `Node.measureCustomNodeContentSize`）把内容
+ * **克隆**进 `commonCaches.measureCustomNodeContentSizeEl`——一个挂在画布容器下、
+ * 定位在 `-99999px` 的常驻 DIV，测一次 `getBoundingClientRect` 就返回。它每次
+ * 测量**开头**自己 `innerHTML=''`，但**测完不清** ⇒ 每张图总在文档里留一份
+ * 「最后一次测量」的节点内容副本。两个可观测后果：
+ * - **无障碍 / 焦点**：副本里的 `span[role="checkbox"]`+`aria-label`、`a.tag`、
+ *   `a[href]`（外链）、`button`（代码块复制按钮）仍活着——`-99999px` 既不把它
+ *   移出无障碍树（只有 `display:none` / `aria-hidden` 会），也不移出**焦点顺序**
+ *   （Tab 会聚焦到屏幕外，焦点像丢了）。读屏用户则多遇到一个孤立复选框；
+ * - **查询**：全局 `querySelectorAll('.mindmap-node-task')` 会多算一个（2026-10-29
+ *   实机：任务 4 个、DOM 里 5 个）。插件内的事件委托都走 `closest`（只看事件
+ *   目标向上），不受影响；但「批量查询 + 绑定」的新代码会命中幽灵。
+ *
+ * 处理：清空内容 + 给容器戴 `aria-hidden` 与 `inert`。
+ * **这两个属性不是给「已清空的内容」用的**——它们作用于**下一次测量填进去的
+ * 副本**：清空只消灭「此刻」的残渣，而残渣在单节点重渲染（`reRender(['custom'])`
+ * 之类，不发 `node_tree_render_end`）后会长回来，最长活到下一次整树渲染结束；
+ * 属性则一旦设上就一直在，把那段窗口里的副本一并隔离。
+ *
+ * **清空安全**：引擎下一次测量本来就先自己清空再填；首帧前的批量预测量
+ * （`preMeasureCustomContents`）用的复用池是 `__preMeasuredContentMap`（元素本体
+ * 不挂载，进容器的只是 `cloneNode`），也不依赖这里的残留。测量缓存是内容寻址的
+ * （键 = `addXmlns` 后的 `outerHTML`），同样不在这个元素里 ⇒ 清空不影响命中率。
+ * `inert` 只作用于交互与无障碍，不改布局，`getBoundingClientRect` 照常。
+ */
+export function clearMeasureResidue(mindMap: MindMap | null): void {
+	const host = (mindMap as unknown as EngineMeasureCache | null)?.commonCaches
+		?.measureCustomNodeContentSizeEl;
+	if (!host) {
+		return; // 尚未测量过 / 单测桩 / 已销毁：安全 no-op
+	}
+	// 幂等：渲染结束是高频点，已是目标状态就不再写（避免无变化的变异通知）
+	if (host.getAttribute('aria-hidden') !== 'true') {
+		host.setAttribute('aria-hidden', 'true');
+	}
+	if (!host.hasAttribute('inert')) {
+		host.setAttribute('inert', '');
+	}
+	if (host.childNodes.length > 0) {
+		host.textContent = '';
+	}
 }
 
 /**

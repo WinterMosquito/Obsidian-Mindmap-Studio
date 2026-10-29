@@ -44,6 +44,8 @@ vi.mock('../vendor/simple-mind-map.cjs', () => ({
 		}
 		addPlugin(): void {}
 		updateConfig(): void {}
+		// `createMindMap` 末尾挂测量残渣清理（`node_tree_render_end`），桩补事件面
+		on(): void {}
 	},
 	MindMapNode: class {},
 	DoExport: class {},

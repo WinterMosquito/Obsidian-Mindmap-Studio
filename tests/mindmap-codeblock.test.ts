@@ -61,6 +61,10 @@ vi.mock('../vendor/simple-mind-map.cjs', () => {
 			this.added.push(plugin.name);
 		}
 
+		// `createMindMap` 末尾会挂「测量残渣清理」（`node_tree_render_end` →
+		// `clearMeasureResidue`），桩需提供事件注册面（真实引擎 d.cts 有 `on`）
+		on(): void {}
+
 		resize(): void {}
 
 		updateConfig(): void {}
