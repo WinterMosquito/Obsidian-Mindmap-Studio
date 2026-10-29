@@ -71,8 +71,8 @@ function svgRootOf(svgElement: unknown): Element | null {
  *
  * 背景：自绘节点内容大量使用文档级 CSS 变量——正文/代码字体
  * `var(--font-interface, sans-serif)` / `var(--font-monospace, monospace)`、
- * 代码背景 `var(--code-background, …)`、链接三态色 `var(--link-color, …)` 等
- * （唯一来源 `features/node-inline-content.ts` 的 CONTENT_STYLES 与 token 样式）。
+ * 代码背景 `var(--code-background, …)`、链接三态色 `var(--link-color, …)`、
+ * 勾色 `var(--text-on-accent, …)` 等（来源 `features/node-inline-html` 的样式表）。
  *
  * **屏幕上**这些变量由 Obsidian 在宿主元素上定义，渲染正确；**导出时**引擎克隆
  * SVG 后处于独立渲染环境（序列化 → data URL → `<img>` 解码），文档级样式表不在
@@ -81,9 +81,8 @@ function svgRootOf(svgElement: unknown): Element | null {
  * **被裁切**（用户实测：多行文字节点第二行被切半、LaTeX 节点文字不全）。
  *
  * 修复：导出时把**宿主上实际生效的变量值**取出来，以 `<style>` 注入克隆 SVG 根
- * （CSS 自定义属性沿后代继承，foreignObject 内的 HTML 同样生效），使导出环境的
- * 字体度量与屏上一致（WYSIWYG）。与 `injectMathStylesIntoExportSvg` 同一模式
- * （只改克隆 SVG，不触碰屏上视图与导出源 DOM）。
+ * （自定义属性沿后代继承，foreignObject 内的 HTML 同样生效）⇒ 导出环境的字体度量
+ * 与屏上一致（WYSIWYG）。与 `injectMathStylesIntoExportSvg` 同模式：只改克隆。
  *
  * 接线：由 `postProcessExportSvg` 在几何余量之后调用（组合根
  * `exportSvgTransforms` 链首）。
@@ -102,6 +101,7 @@ const CSS_VARS_TO_EXPORT: readonly string[] = [
 	'--link-unresolved-color',
 	'--link-unresolved-opacity',
 	'--text-accent',
+	'--text-on-accent',
 	'--text-normal',
 	'--text-muted',
 	'--text-highlight-bg',

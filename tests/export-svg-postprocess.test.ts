@@ -108,6 +108,29 @@ describe('postProcessExportSvg（platform 单入口：几何 → 变量）', () 
 		expect(styleEl.textContent).toBe('svg { --font-interface: Inter; }');
 	});
 
+	/**
+	 * 白名单是「保守」的：自绘内容新引用的变量必须登记，否则导出图拿不到
+	 * 宿主主题值、只能退回内联兜底。任务复选框完成态的勾色（`--text-on-accent`）
+	 * 是 2026-10-28 新增的一项——底色改成主题链接色后构建期测不到亮度。
+	 */
+	it('勾色变量（--text-on-accent）在注入白名单内', () => {
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				name === '--text-on-accent' ? '#ffffff' : '',
+		}));
+		const styleEl = { textContent: '' };
+		const root = {
+			querySelectorAll: vi.fn(() => []),
+			appendChild: vi.fn(),
+			ownerDocument: { win: { createSvg: () => styleEl } },
+		};
+
+		postProcessExportSvg({ node: root });
+
+		expect(styleEl.textContent).toBe('svg { --text-on-accent: #ffffff; }');
+	});
+
 	it('两步各自 no-op（形态不符 / 宿主不可用）时仍原样返回、不抛错', () => {
 		const malformedA = null;
 		const malformedB = { node: {} };

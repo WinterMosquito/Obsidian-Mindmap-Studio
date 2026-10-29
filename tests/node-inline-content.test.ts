@@ -1462,6 +1462,40 @@ describe('内联样式契约（导出 PNG 保真）', () => {
 		expect(internal.style.cursor).toBe('pointer');
 		expect(internal.style.color).toContain('var(--link-color');
 		expect(external.style.color).toContain('var(--link-external-color');
+		// 链尾复用内链的整条链（→ --link-color → --text-accent → #7f6df2），
+		// 不是手抄一份少一级的 `var(--link-external-color, var(--link-color, …))`：
+		// 后者不含 `--text-accent`，这行即红（硬规则 5，与 UNRESOLVED_LINK_STYLES 同构）。
+		expect(external.style.color).toContain('var(--text-accent');
+	});
+
+	/**
+	 * 「任务与标签同 Wiki 链接配色」（2026-10-28 用户裁决）的机器可验证形态：
+	 * 三者的基色必须是**同一条 var 链**，而不是三份观感相近的字面量。
+	 */
+	it('标签 pill / 任务复选框的基色与内链同源（同一条主题链接色链）', () => {
+		const node = fakeNode({
+			mdType: 'list',
+			mdMarker: '-',
+			mdTask: 'todo',
+			mdTaskToken: '[ ]',
+			mdRaw: '[ ] 见 #项目 与 [[笔记A]]',
+			text: '见 #项目 与 笔记A',
+			mdDerivedText: '见 #项目 与 笔记A',
+		});
+		const el = buildInlineNodeContent(node, asDocument(new FakeDocument()))!;
+		const children = childrenOf(el);
+		const box = children[0] as FakeElement;
+		const anchors = children.filter(
+			(child) => (child as FakeElement).tagName === 'a',
+		) as FakeElement[];
+		// 段序即文档序：`#项目` 在 `[[笔记A]]` 之前（长度断言让解构失败时报出原因，
+		// 而不是让下面两条 `?.` 静默变成 undefined === undefined）
+		expect(anchors).toHaveLength(2);
+		const [tag, link] = anchors;
+		expect(tag?.style.color).toContain('var(--link-color');
+		expect(tag?.style.color).toBe(link?.style.color);
+		// 复选框的描边与链接文字同一基色
+		expect(box.style.borderColor).toBe(link?.style.color);
 	});
 
 	it('轻标记元素内联样式（strong / code）', () => {

@@ -12,8 +12,13 @@
  *
  * **着色节点**（节点 data 带 `fillColor`，即 `%%#hex%%` 指令的落点）额外有一套
  * 派生样式：墨色、码块阶、网格线都从底色现算（`domain/color.nodeContentTones`），
- * 由 `readNodeTones` 读一次、经 `BuildContentParams.tones` 下传。未着色节点一律
- * 走原常量表，观感与改动前逐字一致。
+ * 由 `readNodeTones` 读一次、经 `BuildContentParams.tones` 下传。
+ *
+ * **未着色节点**的链接色只有一个来源：`THEME_LINK_COLOR`——内链 / 标签 pill /
+ * 任务复选框共用（2026-10-28 用户裁决「任务与标签同 Wiki 链接配色」）。三者
+ * 都随主题变量即时变色，不需要重建节点：`var()` 由浏览器解析，且颜色不影响
+ * 引擎的离屏测宽缓存（K114）。着色节点仍走 `tones`——与链接的 `anchorStyle`
+ * 同一套规则（可读性优先，不跟主题）。
  */
 import { isSafeAnchorHref } from '../domain/url';
 import {
@@ -119,19 +124,49 @@ const CONTENT_STYLES: Partial<CSSStyleDeclaration> = {
 };
 
 /**
+ * **主题链接色链**：内链 / 标签 pill / 任务复选框的**唯一基色来源**。
+ *
+ * 为什么是一条共享常量：三者的可见口径都是「跟主题的链接色」，一旦各写一份
+ * `var(--link-color, …)` 字符串，任何一处调整兜底链都会与另两处失配
+ * （硬规则 5「不造第二份判定」）。链上还有两个**下级**消费者，同样复用本常量
+ * 而不是手抄：`EXTERNAL_LINK_STYLES`（外链优先）与 `UNRESOLVED_LINK_STYLES`
+ * （未解析色优先）。**着色节点不适用**——那里改走 `params.tones.ink`（派生
+ * 墨色），与 `anchorStyle` 同一套规则。
+ *
+ * 后两级兜底服务导出图（导出 SVG 内没有主题变量上下文）：`--link-color`
+ * 缺失退 `--text-accent`，再退 Obsidian 默认强调色 `#7f6df2`。导出侧另有
+ * `platform/export-svg-postprocess` 注入宿主实际值，两者互为兜底。
+ *
+ * **导出注入取的是 computed value，链路两端对称**：`getComputedStyle` 对自定义
+ * 属性已完成 `var()` 替换——默认主题 `--link-color: var(--text-accent)` 实测取到
+ * `hsl(210, 100%, 50%)`，注入进导出 SVG 的也是这个字面量，故**不需要**把被引用
+ * 的下级变量逐个收进 `CSS_VARS_TO_EXPORT`。唯一边界同样对称：引用目标未定义 ⇒
+ * 该变量 computed 值为**空串**（guaranteed-invalid）⇒ 导出侧 `!value` 跳过注入、
+ * `var(--link-color, …)` 落备用值，屏上同一时刻也退到 `--text-accent`（实测
+ * `--link-color: var(--nope)` → computed `''`、标签色 `rgb(0, 128, 255)`）。
+ */
+const THEME_LINK_COLOR = 'var(--link-color, var(--text-accent, #7f6df2))';
+
+/**
  * 库内锚点样式（主题变量 + 字面量兜底：导出图内没有主题变量上下文）。
  * 这就是**导图内链接的可见形态**：主题链接色的超链接字体（默认蓝色系）、
  * 无图标、无下划线（2026-09-28 用户实测口径）。
  */
 const INTERNAL_LINK_STYLES: Partial<CSSStyleDeclaration> = {
-	color: 'var(--link-color, var(--text-accent, #7f6df2))',
+	color: THEME_LINK_COLOR,
 	textDecoration: 'none',
 	cursor: 'pointer',
 };
 
-/** 外部锚点样式（同上；外链配色优先于内链） */
+/**
+ * 外部锚点样式（同上；外链配色优先于内链）。
+ *
+ * 兜底链同样复用 `THEME_LINK_COLOR`，而不是手抄一份 `var(--link-color, #7f6df2)`
+ * ——后者少一级 `--text-accent`，且一旦主题链接色的兜底链调整就会与内链分叉
+ * （硬规则 5）。`UNRESOLVED_LINK_STYLES` 是同一写法。
+ */
 const EXTERNAL_LINK_STYLES: Partial<CSSStyleDeclaration> = {
-	color: 'var(--link-external-color, var(--link-color, #7f6df2))',
+	color: `var(--link-external-color, ${THEME_LINK_COLOR})`,
 	textDecoration: 'none',
 	cursor: 'pointer',
 };
@@ -144,7 +179,7 @@ const EXTERNAL_LINK_STYLES: Partial<CSSStyleDeclaration> = {
  * 导出图（导出 SVG 内没有主题变量上下文，理由同 CONTENT_STYLES）。
  */
 const UNRESOLVED_LINK_STYLES: Partial<CSSStyleDeclaration> = {
-	color: 'var(--link-unresolved-color, var(--link-color, var(--text-accent, #7f6df2)))',
+	color: `var(--link-unresolved-color, ${THEME_LINK_COLOR})`,
 	opacity: 'var(--link-unresolved-opacity, 0.7)',
 	textDecoration: 'none',
 	cursor: 'pointer',
@@ -526,7 +561,10 @@ function customTextWidthOf(node: MindMapNode): number | null {
 
 /**
  * 节点的派生内容色：**只认 `data.fillColor`**（`engine/mindmap-colors` 写入的
- * 指令落点）。未着色节点（无 fillColor / 非合法 hex）返回 null ⇒ 沿用原主题样式。
+ * 派生填充）。未着色节点（无 fillColor / 非合法 hex）返回 null ⇒ 沿用原主题样式。
+ *
+ * B 方案（2026-10-29）下 `fillColor` 已是**主色混白的浅档**，不是指令里那个 hex
+ * ——因此这里派生出的墨色 / chip / 网格线都按「浅底」算，与节点实际的显示底色一致。
  *
  * 注意不读 `data.color`：那是引擎要用的文字色，和这里的墨色同源但用途不同；
  * 内容层需要的是整套（墨色 + 码块阶 + 网格线）。
@@ -539,15 +577,17 @@ function readNodeTones(node: MindMapNode): NodeContentTones | null {
 }
 
 /**
- * 缺省强调色（`#7f6df2`＝Obsidian 默认 `--text-accent`）。
- *
- * 标签 pill 与任务复选框共用：两者的内联样式要进导出 SVG（**不注入 styles.css**，
- * 见文件头的导出保真契约），故不能只写 `var(--text-accent)` 一条。
- */
-const NODE_ACCENT_FALLBACK = '#7f6df2';
-
-/**
  * 标签 pill 的内联样式（**导出保真**：导出图不含 styles.css）。
+ *
+ * 配色与内链**同源**（`THEME_LINK_COLOR`）：文字直接取链接色，底色取同色
+ * 14% 混合——14% 落在 `#7f6df2` 兜底上时与改造前的 `rgba(127, 109, 242, 0.14)`
+ * 等价，无主题变量的环境观感不变。底色走 `color-mix` 而不是写死的 rgba：
+ * 它必须跟着主题链接色走（2026-10-28 用户裁决「标签/任务同 Wiki 链接配色」）。
+ * `color-mix` 按 **premultiplied** 插值，`transparent` 只贡献 alpha ⇒ 结果恰为
+ * `rgba(<链接色>, 0.14)`，不是「往黑色里混」。`color-mix` 需 Chromium 111+
+ * （Obsidian 1.13 的 Electron 远高于此），导出 `<img>` 解码由同一渲染引擎完成，
+ * 故屏上与导出是同一份值；**第三方 SVG 编辑器**（不支持该函数）会把底色退成
+ * transparent——已知且可接受的降级，别当缺陷去补第二份 rgba。
  *
  * 用 `<a>` 但**不写 href**：既有 `ANCHOR_SELECTOR`
  * （`a.internal-link, a.external-link, a[href]`）因此不会命中它，链接的三条
@@ -560,8 +600,8 @@ const TAG_STYLES: Partial<CSSStyleDeclaration> = {
 	borderRadius: '4px',
 	textDecoration: 'none',
 	cursor: 'pointer',
-	color: NODE_ACCENT_FALLBACK,
-	backgroundColor: 'rgba(127, 109, 242, 0.14)',
+	color: THEME_LINK_COLOR,
+	backgroundColor: `color-mix(in srgb, ${THEME_LINK_COLOR} 14%, transparent)`,
 };
 
 /** 标签段 → pill 元素（`text` 带 `#`，`data-tag` 是不带 `#` 的名称） */
@@ -639,6 +679,36 @@ const TASK_GLYPH_STYLES: Partial<CSSStyleDeclaration> = {
 };
 
 /**
+ * 深勾色：完成态盒底为纯白（`ink === '#ffffff'`，即底色过深的着色节点）时用。
+ * 取柔和深灰蓝而非纯黑，与节点墨色（`#111827`）同族。
+ */
+const TASK_MARK_DARK = '#1f2937';
+
+/**
+ * 完成态的勾色：两条分支的判据**不同源**，故不能合并成一个三元。
+ *
+ * - **着色节点**：完成态盒底 = `ink`（构建期已知的十六进制）⇒ 勾色按盒底反推：
+ *   深墨配白勾，纯白盒底配 `TASK_MARK_DARK`。纯白必为小写：`ink` 出自
+ *   `domain/color.nodeInkColor`，它只在底色过深时返回字面量 `'#ffffff'`，
+ *   其余情况一律返回深色。B 方案下填充恒为浅档 ⇒ 实际总走白勾，深勾分支留给
+ *   **data 里出现深 fillColor**（旧数据 / 外部写入）的场合，是防御而非死代码。
+ * - **主题节点**：底色是 CSS 变量，构建期拿不到亮度 ⇒ 交主题的语义色
+ *   `--text-on-accent`（强调底色上的文字色），变量缺失时回退白勾（与原生
+ *   `input[type=checkbox]` 同观感）。代价是浅色链接色配白勾对比不足——接受，
+ *   「与主题自洽」优先（K151 ③）。
+ *
+ * 单独成函数而非内联三元：`obsidianmd/no-static-styles-assignment` 按 AST 拦
+ * 「赋值右侧直接是字面量」，把 `var(--…)` 藏在 `return` 里即可合规——与
+ * `Object.assign(el.style, 表)` 是同一类绕行手法（K91 ⑩），别改成直赋字面量。
+ */
+function taskMarkColor(ink: string | undefined): string {
+	if (ink === undefined) {
+		return 'var(--text-on-accent, #ffffff)';
+	}
+	return ink === '#ffffff' ? TASK_MARK_DARK : '#ffffff';
+}
+
+/**
  * 任务复选框：状态由 `data.mdTask` 决定，点击切换由 `features/view-node-task`
  * 在画布 capture 阶段接管（本函数只负责画，不绑事件——节点会随渲染重建，
  * 逐元素绑监听必然泄漏）。
@@ -661,9 +731,10 @@ function buildTaskCheckbox(
 		),
 	);
 	Object.assign(box.style, TASK_BOX_STYLES);
-	// 着色节点：描边/填充取派生墨色（与行内码、表格线同源），未着色走缺省强调色
+	// 着色节点：描边/填充取派生墨色（与行内码、表格线同源）；未着色走主题
+	// 链接色——与内链、标签 pill 共用同一个基色常量（2026-10-28 用户裁决）
 	const ink = params.tones?.ink;
-	const accent = ink ?? NODE_ACCENT_FALLBACK;
+	const accent = ink ?? THEME_LINK_COLOR;
 	box.style.borderColor = accent;
 	// 对勾层两态都建（未勾选留空）：结构恒定，避免「有没有子节点」再引出
 	// 任何尺寸差异（基线/层叠上下文以外的第二份变量）
@@ -672,9 +743,8 @@ function buildTaskCheckbox(
 	mark.textContent = state === 'done' ? '✓' : '';
 	if (state === 'done') {
 		box.style.backgroundColor = accent;
-		// 对勾与底色必须对比：墨色是白（底色偏深）⇒ 深色勾，其余（墨色深）⇒ 白勾。
-		// 对勾层继承盒色，故只在这里定一次。
-		box.style.color = ink === '#ffffff' ? '#1f2937' : '#ffffff';
+		// 对勾层继承盒色，故只在这里定一次（判据见 taskMarkColor）
+		box.style.color = taskMarkColor(ink);
 	}
 	box.appendChild(mark);
 	return box;

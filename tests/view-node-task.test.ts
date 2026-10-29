@@ -36,6 +36,7 @@ import {
 } from '../src/features/node-inline-html';
 import { setupNodeTaskInteraction } from '../src/features/view-node-task';
 import { toggleTaskToken } from '../src/domain/md-task';
+import { nodeContentTones } from '../src/domain/color';
 
 const { findNodeByDom, recordHistory } = engineMocks;
 
@@ -134,10 +135,71 @@ describe('任务复选框：渲染', () => {
 		)!;
 		const box = (el as unknown as FakeElement).children[0] as FakeElement;
 		expect(box.getAttribute('aria-checked')).toBe('true');
-		expect(box.style.borderColor).toBeTruthy();
-		expect(box.style.backgroundColor).toBeTruthy();
+		// 描边/填充 = 主题链接色（与内链同源，2026-10-28 裁决）
+		expect(box.style.borderColor).toContain('var(--link-color');
+		expect(box.style.backgroundColor).toContain('var(--link-color');
+		// 底色是 CSS 变量 ⇒ 构建期测不到亮度，勾色交主题语义色
+		expect(box.style.color).toContain('var(--text-on-accent');
 		// 对勾是子元素（不是表单控件）
 		expect((box.children[0] as FakeElement).textContent).toBe('✓');
+	});
+
+	it('未勾选：描边取主题链接色，无底色/勾色', () => {
+		const el = buildInlineNodeContent(
+			fakeNode(taskData()),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+		)!;
+		const box = (el as unknown as FakeElement).children[0] as FakeElement;
+		expect(box.style.borderColor).toContain('var(--link-color');
+		expect(box.style.backgroundColor).toBeUndefined();
+		expect(box.style.color).toBeUndefined();
+	});
+
+	/** 着色节点的复选框盒（`fillColor` = 节点 data 的填充，`tones` 由它派生） */
+	const coloredBox = (
+		state: 'todo' | 'done',
+		fillColor: string,
+	): FakeElement => {
+		const el = buildInlineNodeContent(
+			fakeNode(
+				taskData({
+					mdTask: state,
+					mdTaskToken: state === 'done' ? '[x]' : '[ ]',
+					mdRaw: `${state === 'done' ? '[x]' : '[ ]'} 写周报`,
+					fillColor,
+				}),
+			),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+		)!;
+		return (el as unknown as FakeElement).children[0] as FakeElement;
+	};
+
+	it('着色节点：描边/底色/勾色仍走派生墨色（不跟主题链接色）', () => {
+		const todo = coloredBox('todo', '#89CFF0');
+		const ink = nodeContentTones('#89CFF0').ink;
+		// 色阶落地后的填充是浅档 ⇒ 墨色恒为柔和深灰蓝
+		expect(ink).toBe('#111827');
+		expect(todo.style.borderColor).toBe(ink);
+		const done = coloredBox('done', '#89CFF0');
+		expect(done.style.backgroundColor).toBe(ink);
+		// 盒底 = 深墨 ⇒ 白勾
+		expect(done.style.color).toBe('#ffffff');
+	});
+
+	/**
+	 * 深 fillColor 是**防御路径**：B 方案下 `engine/mindmap-colors` 只写派生浅档，
+	 * 但节点 data 里仍可能有深色（旧版本写入 / 外部代码直接赋值）。此时墨色为白
+	 * ⇒ 盒底白 ⇒ 必须换深勾，否则白底白勾等于没有对勾。
+	 */
+	it('着色节点（深 fillColor）：盒底为白墨 ⇒ 换成深勾', () => {
+		const done = coloredBox('done', '#1e3a8a');
+		expect(nodeContentTones('#1e3a8a').ink).toBe('#ffffff');
+		expect(done.style.backgroundColor).toBe('#ffffff');
+		expect(done.style.color).toBe('#1f2937');
 	});
 
 	/**

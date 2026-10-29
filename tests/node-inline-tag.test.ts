@@ -13,6 +13,7 @@ import {
 	buildInlineNodeContent,
 	buildInlineSegments,
 } from '../src/features/node-inline-content';
+import { nodeContentTones } from '../src/domain/color';
 import type { MindMapNode } from '../src/core/engine-types';
 
 // ---------------------------------------------------------------------------
@@ -141,12 +142,13 @@ describe('标签段：pill 渲染契约', () => {
 		expect(tag.textContent).toBe('#项目');
 		// 无 href：既有 ANCHOR_SELECTOR（含 a[href]）不会命中它
 		expect(tag.getAttribute('href')).toBeNull();
-		// 内联样式（导出图不含 styles.css）
-		expect(tag.style.color).toBeTruthy();
-		expect(tag.style.backgroundColor).toBeTruthy();
+		// 内联样式（导出图不含 styles.css）；配色与内链同源（2026-10-28 裁决）
+		expect(tag.style.color).toContain('var(--link-color');
+		expect(tag.style.backgroundColor).toContain('color-mix');
+		expect(tag.style.backgroundColor).toContain('var(--link-color');
 	});
 
-	it('着色节点：pill 用派生墨色 / chip', () => {
+	it('着色节点：pill 用派生墨色 / chip（不跟主题链接色）', () => {
 		const node = {
 			getData: () => ({
 				text: '#项目',
@@ -164,7 +166,8 @@ describe('标签段：pill 渲染契约', () => {
 		const tag = el.children.find(
 			(child) => (child as FakeElement).tagName === 'a',
 		) as FakeElement;
-		expect(tag.style.color).toBeTruthy();
-		expect(tag.style.backgroundColor).toBeTruthy();
+		const tones = nodeContentTones('#89CFF0');
+		expect(tag.style.color).toBe(tones.ink);
+		expect(tag.style.backgroundColor).toBe(tones.chip);
 	});
 });
