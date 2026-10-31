@@ -31,6 +31,7 @@ import {
 import { isUrlLikeText } from '../domain/url';
 import { parseTaskPrefix, stripTaskPrefix } from '../domain/md-task';
 import { isIndentedCodeLine } from '../core/constants';
+import { isDirectiveLine, stripTrailingSegments } from '../domain/relation';
 import type { MdTokenSegment } from '../domain/md-meta';
 import type { MdNodeData } from '../core/node-data';
 import { classifyLines, leadingSpaces } from './md-outline-lines';
@@ -103,6 +104,24 @@ export const PLAIN_IMAGE_FIELDS = [
 	'mdImageStyle',
 ] as const;
 
+/**
+ * 剥离**行内兼容形态**的联系指令（`标题 %%rel:xxxxxx%%`）：显示文本去掉该段，
+ * 原文进 `mdDirectiveTail`，回写时归一为独立指令行。
+ *
+ * **整行就是指令行**时按字面文本处理（`parseMdOutline` 只把「上一节点存在」的
+ * 指令行归属于上一节点；文件首部的孤立指令行仍是一个显示 `%%id:…%%` 的段落，
+ * 这里剥掉会把它变成"空节点 + 一条关系"，与归属规则自相矛盾）。
+ */
+function splitInlineDirectiveTail(
+	raw: string,
+	text: string,
+): { text: string; segments: string[] } {
+	if (!raw.includes('%%') || isDirectiveLine(raw)) {
+		return { text, segments: [] };
+	}
+	return stripTrailingSegments(text);
+}
+
 /** 从行内解析结果里挑出图片字段（无图片时返回空对象） */
 function pickImageMeta(inline: MdNodeData): MdNodeData {
 	const out: Record<string, unknown> = {};
@@ -137,8 +156,16 @@ export function buildInlineData(raw: string): InlineData {
 	// join 的分配；归一化（连续空格折叠 + trim）与下方通用路径同口径。
 	// 「链接引用定义行」的守卫在 buildLineInlineData 层，不经过本条分支。
 	if (toks.length === 0) {
-		const text = raw.replace(/[ \t]{2,}/g, ' ').trim();
-		return { text, mdRaw: raw, mdDerivedText: text };
+		const joined = raw.replace(/[ \t]{2,}/g, ' ').trim();
+		const tailSplit = splitInlineDirectiveTail(raw, joined);
+		const display = tailSplit.text.trimEnd();
+		const data: InlineData = { text: display, mdRaw: raw, mdDerivedText: display };
+		// 行内兼容形态的**指令段**（`标题 %%rel:x%%`）：剥进 mdDirectiveTail，
+		// 显示 / 搜索 / 引擎编辑框都不该看到它们（标准形态是独立指令行）
+		if (tailSplit.segments.length > 0) {
+			data.mdDirectiveTail = tailSplit.segments.join(' ');
+		}
+		return data;
 	}
 	const data: InlineData = {
 		text: '',
@@ -359,12 +386,18 @@ export function buildInlineData(raw: string): InlineData {
 	// 代价：纯图节点不参与文本搜索（图片文件名仍可经引擎 hover 查看）。
 	// URL token（icon-only）剥离后相邻文本可能留下连续空格，折叠为单空格
 	//（HTML 渲染语义本就折叠空白；原文由 mdRaw 保真，不受影响）。
-	const text = pieces
+	const joined = pieces
 		.join('')
 		.replace(/[ \t]{2,}/g, ' ')
 		.trim();
-	data.text = text;
-	data.mdDerivedText = text;
+	// 行内兼容形态的指令段同样剥进 mdDirectiveTail（见上方快路径的同款处理）
+	const tailSplit = splitInlineDirectiveTail(raw, joined);
+	const display = tailSplit.text.trimEnd();
+	if (tailSplit.segments.length > 0) {
+		data.mdDirectiveTail = tailSplit.segments.join(' ');
+	}
+	data.text = display;
+	data.mdDerivedText = display;
 	return data;
 }
 
@@ -528,8 +561,34 @@ export function parseMdOutline(
 	/**
 	 * 等待合并的相邻 plain 文本行：`raw` 是未 trim 的原文（写进 mdRaw，保逐字回写），
 	 * `text` 是 trim 后的显示文本（进节点文本、参与行内 token 解析）。
+	 * `directive` = 该行是**指令行**（整行只有联系指令）：只进 mdRaw，不进 text。
 	 */
-	let plainBuffer: { raw: string; text: string }[] = [];
+	let plainBuffer: { raw: string; text: string; directive?: boolean }[] = [];
+	/**
+	 * 文档序上最近产出的节点（heading / list / plain）。
+	 *
+	 * 唯一的消费方是**指令行归属**（2026-10-30）：`%%id:xxxxxx%%` 这类整行只有指令的
+	 * 行不产出节点，而是挂到上一个节点的 mdRaw 末行。标题节点尤其需要——行内尾插会
+	 * 让 Obsidian 的 heading 文本变成 `支付 %%id:…%%`，`[[#标题]]` 与 `^block-id` 全废。
+	 */
+	let lastNode: MindMapTreeNode | null = null;
+
+	/** 把一行指令挂到上一个节点（只动 mdRaw / mdDirectiveTail，不产出节点） */
+	const attachDirectiveLine = (rawLine: string): boolean => {
+		if (!lastNode) {
+			return false;
+		}
+		const line = rawLine.trim();
+		const data = lastNode.data as MdNodeData;
+		const prevRaw = typeof data.mdRaw === 'string' ? data.mdRaw : '';
+		// 内容为空（空标题 / 空列表项）时**保留一个空内容行**：指令占的是下一行，
+		// 写成 `%%id%%` 单行会让序列化把它当成内容贴到标记后面（`- %%id:…%%`）
+		data.mdRaw = prevRaw === '' ? `\n${line}` : `${prevRaw}\n${line}`;
+		const prevTail =
+			typeof data.mdDirectiveTail === 'string' ? data.mdDirectiveTail.trim() : '';
+		data.mdDirectiveTail = prevTail ? `${prevTail}\n${line}` : line;
+		return true;
+	};
 
 	const flushPlain = (): void => {
 		if (plainBuffer.length === 0) {
@@ -541,14 +600,24 @@ export function parseMdOutline(
 		// 段落按行 token 化（保留行独立性）：**每行只解析一次**，首行的完整结果
 		// 复用给下面的图片字段提取（此前首行会再解析一遍）
 		const derived: string[] = [];
+		/** 本段的联系指令（指令行 + 行内兼容形态），按出现顺序 */
+		const tails: string[] = [];
 		let firstLineData: ReturnType<typeof buildLineInlineData> | null = null;
 		for (const line of plainBuffer) {
+			if (line.directive) {
+				tails.push(line.raw.trim());
+				continue;
+			}
 			const d = buildLineInlineData(line.text);
 			firstLineData ??= d;
 			derived.push(d.text);
+			if (d.mdDirectiveTail) {
+				tails.push(d.mdDirectiveTail);
+			}
 		}
 		// 首行图片进节点字段（缩进代码块的首行属代码内容，不采纳）；
-		// 其余行与链接语法仍靠 mdRaw 逐字保真
+		// 其余行与链接语法仍靠 mdRaw 逐字保真。
+		// 指令行只会在缓冲**已有内容**时入列（见调用点），故首行恒是内容行。
 		const first = plainBuffer[0]!;
 		const imageMeta =
 			isIndentedCodeLine(first.raw) || !firstLineData
@@ -561,17 +630,19 @@ export function parseMdOutline(
 		// 避免同一份内容拼两遍（大文档的段落节点是逐个 flushPlain，此处省的是
 		// 每段的第二次 O(n) 拼接）。
 		const derivedText = derived.join('\n');
-		const node: MindMapTreeNode = {
-			data: {
-				text: derivedText,
-				mdRaw: raw,
-				mdDerivedText: derivedText,
-				mdType: 'plain',
-				...imageMeta,
-			},
-			children: [],
+		const data: MdNodeData = {
+			text: derivedText,
+			mdRaw: raw,
+			mdDerivedText: derivedText,
+			mdType: 'plain',
+			...imageMeta,
 		};
+		if (tails.length > 0) {
+			data.mdDirectiveTail = tails.join('\n');
+		}
+		const node: MindMapTreeNode = { data, children: [] };
 		contentParent.children.push(node);
+		lastNode = node;
 		plainBuffer = [];
 	};
 
@@ -608,6 +679,7 @@ export function parseMdOutline(
 		};
 		parent.children.push(node);
 		listStack.push({ node, indent });
+		lastNode = node;
 	};
 
 	for (const line of lines) {
@@ -633,9 +705,28 @@ export function parseMdOutline(
 			parent.children.push(node);
 			headingStack.push({ node, level });
 			contentParent = node;
+			lastNode = node;
 			continue;
 		}
 		if (line.kind === 'plain') {
+			// **指令行**（整行只有联系指令，`domain/relation.isDirectiveLine`）不产出
+			// 节点，归属上一个节点（2026-10-30）。必须在「列表续行合并」之前拦截：
+			// 列表项的指令行按 restIndent 缩进，否则会被当成续行并进 text。
+			// 段落缓冲非空时交给 flushPlain（指令行在段落内部不算节点内容）。
+			if (isDirectiveLine(line.text)) {
+				if (plainBuffer.length > 0) {
+					plainBuffer.push({
+						raw: line.raw ?? line.text,
+						text: line.text,
+						directive: true,
+					});
+					continue;
+				}
+				if (attachDirectiveLine(line.raw ?? line.text)) {
+					continue;
+				}
+				// 文件首部的孤立指令行：没有上一个节点，按普通段落处理（fail-closed）
+			}
 			// list 项的续行（缩进大于栈顶 list 且当前处于 list 区）→ 并入文本。
 			// **空白续行**（围栏闭合后的分隔空行，classifyLines 仅在围栏相邻时保留）
 			// 同样并入前项 mdRaw——否则会产出一个空文本节点（2026-09-28 修）；
@@ -656,6 +747,16 @@ export function parseMdOutline(
 				const prevRaw = topData.mdRaw ?? '';
 				topData.text = `${prevText}\n${inline.text}`;
 				topData.mdDerivedText = `${prevDerived}\n${inline.text}`;
+				// 续行里的行内兼容指令（`续行 %%rel:x%%` 极罕见但可能）随主行一起归并
+				if (inline.mdDirectiveTail) {
+					const prevTail =
+						typeof topData.mdDirectiveTail === 'string'
+							? topData.mdDirectiveTail
+							: '';
+					topData.mdDirectiveTail = prevTail
+						? `${prevTail}\n${inline.mdDirectiveTail}`
+						: inline.mdDirectiveTail;
+				}
 				// 续行只保留**行尾**原文（行首缩进由序列化器按树深度补 restIndent，
 				// 两者都留会写出双份缩进）；text 仍用 trim 后的显示文本
 				topData.mdRaw = `${prevRaw}\n${(line.raw ?? line.text).trimStart()}`;

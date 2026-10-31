@@ -39,6 +39,10 @@ import {
 } from '../src/engine/mindmap';
 import { openNodeTextModal } from '../src/ui/modal-text';
 import {
+	cancelRelationPicking,
+	removeActiveRelationLine,
+} from '../src/features/view-node-relation';
+import {
 	isAnyNodeEditing,
 	openNodeInlineEditor,
 } from '../src/features/node-inline-editor';
@@ -79,6 +83,13 @@ vi.mock('../src/features/node-inline-editor', () => ({
 
 // 插件文本弹窗（**备选入口**：右键「在弹窗中编辑」）在 Node 环境无法开窗，替换为 spy
 vi.mock('../src/ui/modal-text', () => ({ openNodeTextModal: vi.fn() }));
+
+// 联系线的删除 / 点选取消入口（Delete、Backspace、Escape 的落点）：本文件只验证
+// 「何时调用」，写正文与状态清理的落地由 tests/view-node-relation.test.ts 直测
+vi.mock('../src/features/view-node-relation', () => ({
+	cancelRelationPicking: vi.fn(() => false),
+	removeActiveRelationLine: vi.fn(() => false),
+}));
 
 /**
  * 最小键盘事件桩：只实现处理器实际访问的面。
@@ -413,9 +424,13 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 		vi.mocked(openNodeTextModal).mockReset();
 		vi.mocked(isAnyNodeEditing).mockReset().mockReturnValue(false);
 		vi.mocked(openNodeInlineEditor).mockReset();
+		// 联系线：默认「没有激活的线」——删除键照旧走节点通道
+		vi.mocked(removeActiveRelationLine).mockReset().mockReturnValue(false);
+		// 联系点选模式：默认「不在选点」——Esc 交回核心
+		vi.mocked(cancelRelationPicking).mockReset().mockReturnValue(false);
 	});
 
-	it('视图无作用域时自行创建（否则 scope?.register 静默失效）并注册 9 个快捷键', () => {
+	it('视图无作用域时自行创建（否则 scope?.register 静默失效）并注册 10 个快捷键', () => {
 		const { view, host, parentScope } = makeHost();
 		expect(view.scope, '前置：Obsidian 里 View.scope 默认为 null').toBeNull();
 
@@ -436,9 +451,11 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 		// 删除节点（官方 Canvas：Backspace/Delete）与画布缩放（Shift+1/Shift+2）
 		expect(find(scope, 'Delete', []), 'Delete 删除节点').toBeDefined();
 		expect(find(scope, 'Backspace', []), 'Backspace 删除节点').toBeDefined();
+		// 联系点选模式的退出口（Notice 文案承诺过 Esc 取消）
+		expect(find(scope, 'Escape', []), 'Escape 取消选点').toBeDefined();
 		expect(find(scope, '1', ['Shift']), 'Shift+1 缩放到全览').toBeDefined();
 		expect(find(scope, '2', ['Shift']), 'Shift+2 缩放到选区').toBeDefined();
-		expect(scope.registered).toHaveLength(9);
+		expect(scope.registered).toHaveLength(10);
 	});
 
 	it('已有作用域时复用（幂等：不重建、不丢已注册项）', () => {
@@ -448,7 +465,7 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 		registerViewHotkeys(host);
 		// 两次注册都落到同一实例上（视图 onOpen 重复调用不会各建一份 scope）
 		expect(view.scope).toBe(first);
-		expect(asScopeStub(first).registered).toHaveLength(18);
+		expect(asScopeStub(first).registered).toHaveLength(20);
 	});
 
 	it('F2 只注册一条（去重：不得同时存在空修饰键与 Mod 变体）', () => {
@@ -565,11 +582,92 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 		expect(startNodeTextEdit).toHaveBeenCalledTimes(1);
 	});
 
+	it('Delete / Backspace：选中联系线时删线（吞键、不动节点）', () => {
+		const { host, view } = makeHost();
+		registerViewHotkeys(host);
+		const scope = asScopeStub(view.scope);
+		vi.mocked(removeActiveRelationLine).mockReturnValue(true);
+		// 即使引擎仍报着激活节点，也以「屏上选中了线」为准（两者本应互斥）
+		vi.mocked(getActiveNode).mockReturnValue(node);
+
+		for (const key of ['Delete', 'Backspace']) {
+			const { evt, preventDefault, stopPropagation } = fakeKeyEvent({
+				tagName: 'svg',
+			});
+			const handler = find(scope, key, [])?.handler as (
+				e: KeyboardEvent,
+			) => unknown;
+			expect(handler(evt), `${key} 命中联系线后自吞`).toBe(false);
+			expect(preventDefault).toHaveBeenCalledTimes(1);
+			expect(stopPropagation).toHaveBeenCalledTimes(1);
+		}
+		expect(removeActiveRelationLine).toHaveBeenCalledTimes(2);
+		expect(removeActiveRelationLine).toHaveBeenCalledWith(view);
+		// 线优先于节点：命中线就不再查激活节点（否则会连着删节点）
+		expect(getActiveNode).not.toHaveBeenCalled();
+	});
+
+	it('Delete：没有选中联系线时不吞键，照旧交给节点删除通道', () => {
+		const { host, view } = makeHost();
+		registerViewHotkeys(host);
+		const handler = find(asScopeStub(view.scope), 'Delete', [])?.handler as (
+			e: KeyboardEvent,
+		) => unknown;
+		const { evt } = fakeKeyEvent({ tagName: 'svg' });
+
+		// getActiveNode 默认 null ⇒ 无人可删 ⇒ 返回 true 让位（不触碰节点删除）
+		expect(handler(evt)).toBe(true);
+		expect(removeActiveRelationLine).toHaveBeenCalledTimes(1);
+		expect(getActiveNode).toHaveBeenCalledTimes(1);
+	});
+
+	it('Escape：正在「联系」选点时取消并吞键', () => {
+		const { host, view } = makeHost();
+		registerViewHotkeys(host);
+		const handler = find(asScopeStub(view.scope), 'Escape', [])?.handler as (
+			e: KeyboardEvent,
+		) => unknown;
+		vi.mocked(cancelRelationPicking).mockReturnValue(true);
+
+		const { evt, preventDefault } = fakeKeyEvent({ tagName: 'svg' });
+		// 返回 false = 已消费：否则核心会把视图/标签页一起带走
+		expect(handler(evt)).toBe(false);
+		expect(cancelRelationPicking).toHaveBeenCalledWith(view);
+		expect(preventDefault).toHaveBeenCalledTimes(1);
+	});
+
+	it('Escape：不在选点模式时让位给核心（不吞任何 Esc）', () => {
+		const { host, view } = makeHost();
+		registerViewHotkeys(host);
+		const handler = find(asScopeStub(view.scope), 'Escape', [])?.handler as (
+			e: KeyboardEvent,
+		) => unknown;
+
+		const { evt, preventDefault, stopPropagation } = fakeKeyEvent({
+			tagName: 'svg',
+		});
+		expect(handler(evt)).toBe(true);
+		expect(cancelRelationPicking).toHaveBeenCalledTimes(1);
+		expect(preventDefault).not.toHaveBeenCalled();
+		expect(stopPropagation).not.toHaveBeenCalled();
+	});
+
+	it('Escape：输入框内直接让位（连「是否在选点」都不查）', () => {
+		const { host, view } = makeHost();
+		registerViewHotkeys(host);
+		const handler = find(asScopeStub(view.scope), 'Escape', [])?.handler as (
+			e: KeyboardEvent,
+		) => unknown;
+
+		expect(handler(fakeKeyEvent({ tagName: 'INPUT' }).evt)).toBe(true);
+		expect(cancelRelationPicking).not.toHaveBeenCalled();
+	});
+
 	it('引擎缺失（mindMap 为 null）：注册照常完成，不抛异常', () => {
 		const { host, view } = makeHost({ mindMap: null });
 		expect(() => registerViewHotkeys(host)).not.toThrow();
 		const scope = asScopeStub(view.scope);
-		expect(scope.registered).toHaveLength(9);
+		expect(scope.registered).toHaveLength(10);
 		// 撤销/重做处理器用可选链兜底：引擎为空时静默（不抛错）
 		const handler = find(scope, 'z', ['Mod'])?.handler as (
 			e: KeyboardEvent,
@@ -596,7 +694,7 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 			// macOS 官方仅 Mod+Shift+Z 一种重做
 			expect(find(scope, 'z', ['Mod', 'Shift'])).toBeDefined();
 			expect(find(scope, 'F2', [])).toBeDefined();
-			expect(scope.registered).toHaveLength(8);
+			expect(scope.registered).toHaveLength(9);
 		});
 
 		it('非 macOS：注册 Mod+Y（Windows/Linux 重做）', () => {

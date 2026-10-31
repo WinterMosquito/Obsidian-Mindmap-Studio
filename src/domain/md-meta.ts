@@ -38,12 +38,15 @@ export function isNodeTextEdited(text: unknown, mdDerivedText: unknown): boolean
 
 /**
  * 节点的**行内原文来源**：未编辑 → `mdRaw`（逐字原文，含 `%%注释%%` / 链接语法）；
- * 已编辑 → `data.text`（`mdRaw` 是解析期快照，编辑后过期）。
+ * 已编辑 → `data.text` + 关系指令行（`mdRaw` 是解析期快照，编辑后过期）。
  *
- * 唯一实现（2026-10-27 收口）：自绘接管判定（`node-inline-content.resolveSelfDrawSource`）
- * 与节点配色指令（`engine/mindmap-colors`）必须读同一份原文，否则「节点显示里有
- * 注释、配色却按旧行解析」这类漂移无从发现。`mdRaw` 缺失时同样回落 `text`
- *（新建节点没有原文快照）。
+ * 唯一实现（2026-10-27 收口）：自绘接管判定（`node-inline-content.resolveSelfDrawSource`）、
+ * 节点配色指令（`engine/mindmap-colors`）与关系指令（`domain/relation`）必须读同一份
+ * 原文，否则「节点显示里有注释、样式/关系却按旧行解析」这类漂移无从发现。`mdRaw`
+ * 缺失时同样回落 `text`（新建节点没有原文快照）。
+ *
+ * **已编辑时补回 `mdDirectiveTail`**（2026-10-30）：关系指令被剥出 `text` 存在该字段
+ * 里，不补回来的话「引擎内联编辑一次文本 → 关系全部消失」。
  */
 export function nodeInlineSource(data: Record<string, unknown>): string {
 	const text = typeof data.text === 'string' ? data.text : '';
@@ -53,7 +56,9 @@ export function nodeInlineSource(data: Record<string, unknown>): string {
 			return raw;
 		}
 	}
-	return text;
+	const tail =
+		typeof data.mdDirectiveTail === 'string' ? data.mdDirectiveTail.trim() : '';
+	return tail ? `${text}\n${tail}` : text;
 }
 
 /** 行类型（data.mdType）：md 三种行形态 */
@@ -242,4 +247,18 @@ export interface MdNodeMeta {
 	 * 存在时有意义。切换状态时由 `domain/md-task.toggleTaskToken` 生成新值。
 	 */
 	mdTaskToken?: string;
+	/**
+	 * **联系指令行**的逐字原文（多个指令行以 `\n` 连接），已从 `text` 剥出。
+	 *
+	 * 形态见 `domain/relation`：`%%id:xxxxxx%% %%rel:xxxxxx | 标签%%`，位置是
+	 * 节点最后一个物理行的**下一行**（独立一行、整行只有指令段）。选择独立行而
+	 * 不是行内尾插是实机结论：行尾指令会让 Obsidian 的 heading 文本变成
+	 * `支付 %%id:9c2e%%`，`[[#支付]]` 与行尾 `^block-id` 一起失效。
+	 *
+	 * 与 `mdTaskToken` 同构：`mdRaw` 逐字保留、`text` / `mdDerivedText` 一起剥、
+	 * 合成回写时贴回节点末行（缩进由序列化器按节点类型补）。派生状态（id / 出边）
+	 * **不落字段**，由 `domain/relation.relationStateOf` 读时算出——引擎内联编辑
+	 * 会直接改写 `data.text`，缓存字段必然过期。
+	 */
+	mdDirectiveTail?: string;
 }

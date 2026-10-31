@@ -23,6 +23,7 @@ import type { TranslationKey } from '../core/i18n';
 import type { MindMapNode } from '../core/engine-types';
 import type { MdNodeData } from '../core/node-data';
 import { COLOR_DIRECTIVE_NONE, inheritedColorOf } from '../domain/color';
+import { splitDirectiveTail } from '../domain/relation';
 import { nodeInlineSource } from '../domain/md-meta';
 import { composeNodeContent } from '../markdown/md-serialize';
 import { applyRawNodeContent } from './node-inline-editor';
@@ -120,17 +121,22 @@ export function applyNodeColor(
 	for (const node of topMostNodes(candidate)) {
 		const data = node.getData() as MdNodeData;
 		// 原文 = 「下次写盘会写出的内容」的唯一来源（未编辑 = mdRaw，已编辑 = 合成）
-		const raw = composeNodeContent(data, view.app);
+		const full = composeNodeContent(data, view.app);
+		// **颜色指令只能落在内容行**：联系指令是节点末行的独立一行，整行只由
+		// `%%id%%` / `%%rel%%` 段组成；把 `%%#hex%%` 接到它后面会让整行不再是指令行
+		// （`isDirectiveLine` fail-closed）→ 该节点的关系全部消失。故先剥出尾部，
+		// 改完内容再原样贴回。
+		const { content, tail } = splitDirectiveTail(full);
 		const target =
 			color ??
 			(inheritedColorOf(node, nodeColorOf) ? COLOR_DIRECTIVE_NONE : null);
-		const next = setColorDirective(raw, target);
-		if (next === raw) {
+		const next = setColorDirective(content, target);
+		if (next === content) {
 			continue;
 		}
 		// 历史由 applyRawNodeContent 统一记（引擎 addHistory 自带 100ms 防抖：
 		// 同一批多选改色在窗口内合并成**一条**快照，不会按节点数堆历史）
-		applyRawNodeContent(view, node, next);
+		applyRawNodeContent(view, node, tail ? `${next}\n${tail}` : next);
 		colored = true;
 	}
 	if (colored) {

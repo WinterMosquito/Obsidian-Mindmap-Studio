@@ -5,7 +5,25 @@ root = true
 charset = utf-8
 end_of_line = lf
 insert_final_newline = true
+trim_trailing_whitespace = true
 indent_style = tab
-indent_size = 4
-quote_type = single
+# `tab` = 用 tab_width 作为缩进宽度（写成具体数字会与 tab_width 重复，两处容易改歪）
+indent_size = tab
 tab_width = 4
+quote_type = single
+
+# YAML：缩进即语法，必须是空格（本仓库 workflow 用 4 格）；制表符会让文件直接失效
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 4
+
+# 样式表：仓库现存 2 格空格（制表符会把整篇改写）
+[*.{css,scss}]
+indent_style = space
+indent_size = 2
+
+# 文档：列表嵌套 2 格空格；行尾两个空格在 Markdown 里是硬换行，不能让编辑器顺手清掉
+[*.{md,markdown}]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false

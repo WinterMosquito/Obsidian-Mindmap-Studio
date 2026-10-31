@@ -80,7 +80,7 @@ const mindMapPrototype = (vendor.MindMap as { prototype: Record<string, unknown>
  * 产物而不是内容改动，两者在上游行为上等价，故不作为漂移处理。
  */
 const EXPECTED_BUNDLE_SHA256 =
-	'859052727f7197f05669eef7091247705c072c3c00675b6c2f50a660939f4a89';
+	'4cf277bbf32d72a9bda38257864acea13d64a7d53ef2310d6303fec48e156ca5';
 const bundleSha256 = createHash('sha256')
 	.update(readFileSync(BUNDLE_PATH, 'utf8').replace(/\r\n/g, '\n'), 'utf8')
 	.digest('hex');
@@ -287,6 +287,13 @@ describe('vendor 契约：防腐层触碰的引擎内部字段', () => {
 		'instanceName="search"',
 		'instanceName="doExport"',
 		'instanceName="drag"',
+		// 联系（关系连线）：instanceName + 两个数据键（engine/mindmap-relations 的
+		// 唯一写入面）+ 图层开关（createMindMap 的 opt）+ 补丁 14 的标签位置字段
+		'instanceName="associativeLine"',
+		'associativeLineTargets',
+		'associativeLineText',
+		'associativeLineIsAlwaysAboveNode',
+		'__assocTextT',
 		// opt 配置项（runWithExportScale / 历史上限 / 性能模式 / 拖拽与超链定制）
 		'minExportImgCanvasScale',
 		'maxHistoryCount',

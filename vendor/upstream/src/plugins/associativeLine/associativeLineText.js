@@ -4,12 +4,23 @@ import {
   focusInput,
   selectAllInput
 } from '../../utils/index'
+import { getAssociativeLineTargetIndex } from './associativeLineUtils'
 
 const ASSOCIATIVE_LINE_TEXT_EDIT_WRAP = 'associative-line-text-edit-warp'
 
 // 创建文字节点
 function createText(data) {
-  let g = this.associativeLineDraw.group()
+  // 【自有补丁 14】标签独立顶层图层：线沉到节点下方
+  // （opt.associativeLineIsAlwaysAboveNode === false）时，文字仍须压在节点之上，
+  // 否则标签被节点框遮住就等于「整条消失」。挂在 nodeDraw 之后 ⇒ 天然位于节点
+  // 之上；removeAllLines 仍逐条 remove 文本组，故无需另加清理。
+  // 缓存引用可能已随 `reRender()`（切布局/主题）的 `clearDraw()` 失联：
+  // 只在"仍挂在文档里"时复用，否则重建（否则标签会画进一个游离的 group）。
+  let layer = this.mindMap.__assocTextLayer
+  if (!layer || !layer.node || !layer.node.parentNode) {
+    layer = this.mindMap.__assocTextLayer = this.mindMap.nodeDraw.group()
+  }
+  let g = layer.group()
   const setActive = () => {
     if (
       !this.activeLine ||
@@ -169,6 +180,11 @@ function renderText(str, path, text, node, toNode) {
     this.styleText(textNode, node, toNode)
     text.add(textNode)
   })
+  // 【自有补丁 14】标签位置：默认取路径 50% 处，常正好压在中间列的节点上。
+  // 改为 35% 起、按「同一源节点的第几条边」错开 12%，把多条边（依赖 / 阻塞）
+  // 的标签拉开；比例写回文本组，缩放与拖控制点时由 updateTextPos 复用。
+  const index = getAssociativeLineTargetIndex(node, toNode)
+  text.__assocTextT = Math.min(0.75, 0.35 + 0.12 * Math.max(0, index))
   updateTextPos(path, text)
 }
 
@@ -179,9 +195,21 @@ function styleText(textNode, node, toNode) {
     associativeLineTextFontSize,
     associativeLineTextFontFamily
   } = this.getStyleConfig(node, toNode)
+  // 【自有补丁 14】文字描边光晕（XMind 同款做法）：标签压在任何节点 / 连线
+  // 上都可读——否则一旦重叠就是一片糊字。描边色取画布底色，视觉上等价于
+  // 「文字带背景」，且不需要测量文本宽度去画背景矩形。
+  const backgroundColor =
+    (this.mindMap.themeConfig && this.mindMap.themeConfig.backgroundColor) ||
+    'transparent'
   textNode
     .fill({
       color: associativeLineTextColor
+    })
+    .attr({
+      'paint-order': 'stroke',
+      stroke: backgroundColor,
+      'stroke-width': 3,
+      'stroke-linejoin': 'round'
     })
     .css({
       'font-family': associativeLineTextFontFamily,
@@ -192,7 +220,10 @@ function styleText(textNode, node, toNode) {
 // 更新关联线文字位置
 function updateTextPos(path, text) {
   let pathLength = path.length()
-  let centerPoint = path.pointAt(pathLength / 2)
+  // 【自有补丁 14】位置比例由 renderText 写入（默认 0.5 = 原行为），缩放、
+  // 拖控制点后的重定位沿用同一比例，不会跳回中点。
+  const t = typeof text.__assocTextT === 'number' ? text.__assocTextT : 0.5
+  let centerPoint = path.pointAt(pathLength * t)
   let { width: textWidth, height: textHeight } = text.bbox()
   text.x(centerPoint.x - textWidth / 2)
   text.y(centerPoint.y - textHeight / 2)

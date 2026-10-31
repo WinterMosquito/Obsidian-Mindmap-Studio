@@ -10,7 +10,7 @@
  * （`data.json`），中心主题按空白处理（它没有正文行）。
  * 边框 / 连线不在这里（它们在右缘竖栏的开关按钮上）。
  */
-import { Menu, Notice, type MenuItem } from 'obsidian';
+import { Menu, Notice } from 'obsidian';
 import {
 	ENGINE_COMMANDS,
 	findNodeByDom,
@@ -25,7 +25,12 @@ import {
 	PALETTE_OPTIONS,
 } from '../core/constants';
 import { COLOR_DIRECTIVE_NONE } from '../domain/color';
-import { openColorInputModal } from '../ui/modal-color';
+import {
+	addCascadingMenu,
+	addCustomColorItem,
+	closeOpenMenu,
+	showExclusiveMenu,
+} from '../ui/menu-submenu';
 import {
 	applyNodeColor,
 	effectiveNodeColorOf,
@@ -50,6 +55,7 @@ import {
 	pasteClipboardIntoNode,
 } from './view-clipboard';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
+import { startRelationPicking } from './view-node-relation';
 import { nodeLink } from './view-wikilink';
 import { arrangeMindMap } from './view-toolbar';
 import { t, type TranslationKey } from '../core/i18n';
@@ -58,80 +64,6 @@ import { renderHyperlink } from '../markdown/md-serialize';
 import type { MdNodeData } from '../core/node-data';
 import type { MindMapNode } from '../core/engine-types';
 import type { MindMapViewContext } from './view-context';
-
-/**
- * 追加一个**二级菜单**（「布局」「配色」）。
- *
- * 优先用宿主原生级联：条目右侧出现箭头，悬停/点击由宿主展开并贴住父项——与
- * Obsidian 自带菜单（如「切换编辑器」）同一套观感；运行时缺该方法时**回退**为
- * 「点击父项 → 在光标处弹出独立菜单」（键盘触发用条目矩形当锚点）。
- *
- * 勾选态一律**现算**（`spec.current` 由调用方从 `resolve*` 取），不缓存第二份
- * 状态——外观只存 `data.json` 的 `viewState[路径]` 一处；父项标题只给名字，
- * 当前值靠子项勾选态表达。
- */
-function addCascadingMenu(
-	menu: Menu,
-	view: MindMapViewContext,
-	spec: {
-		title: TranslationKey;
-		icon: string;
-		build: (submenu: Menu) => void;
-	},
-): void {
-	menu.addItem((item) => {
-		item.setTitle(t(view.lang, spec.title)).setIcon(spec.icon);
-		const nativeSubmenu = createNativeSubmenu(item);
-		if (nativeSubmenu) {
-			spec.build(nativeSubmenu);
-			return item;
-		}
-		// 回退：宿主没有原生级联时，点击后在光标处弹出（只用 d.ts 声明的 API）
-		const submenu = new Menu();
-		spec.build(submenu);
-		item.onClick((evt) => {
-			if ('clientX' in evt) {
-				submenu.showAtMouseEvent(evt);
-				return;
-			}
-			// 键盘触发没有鼠标坐标：用**被激活的菜单项**矩形当锚点
-			//（弹到 0,0 会跑到屏幕左上角，与操作位置脱节）
-			const target = evt.target;
-			const rect =
-				target instanceof HTMLElement ? target.getBoundingClientRect() : null;
-			submenu.showAtPosition(
-				rect ? { x: rect.left, y: rect.bottom } : { x: 0, y: 0 },
-			);
-		});
-		return item;
-	});
-}
-
-/**
- * 原生级联子菜单的**私有触点**（规则 9 登记；唯一出处）。
- *
- * `MenuItem.setSubmenu` **不在** `obsidian.d.ts`，但 Obsidian 1.14.4 运行时确实
- * 有（主程序源码 `setSubmenu` + 实机核对）。真实语义：
- * - **无参调用**：内部 `new Menu()`、给条目加 `has-submenu` 与右向箭头，
- *   返回那个菜单——要往里 `addItem` 的是**返回值**；
- * - 展开与定位由宿主 `Menu` 负责：悬停约 250ms（或点击）展开，位置贴住父项右缘；
- * - 手机上改为整页切换（`isPhone` 分支），同样不需要我们干预。
- *
- * ⚠ 2026-10-23 曾记「挂上 setSubmenu 也不展开」——那是**用法错误**：把它当 setter
- * 传了自建 Menu（参数被忽略），条目加到了没人引用的那个菜单上。2026-10-27 订正。
- */
-function createNativeSubmenu(item: MenuItem): Menu | null {
-	const factory = (item as unknown as { setSubmenu?: () => Menu }).setSubmenu;
-	if (typeof factory !== 'function') {
-		return null;
-	}
-	try {
-		return factory.call(item);
-	} catch (error) {
-		console.warn('创建原生子菜单失败，回退为点击弹出', error);
-		return null;
-	}
-}
 
 /** 「勾选当前值」的单值级联菜单（布局用；配色两态见下方两个专用构建） */
 function addChoiceMenu(
@@ -145,7 +77,7 @@ function addChoiceMenu(
 		onPick: (value: string) => void;
 	},
 ): void {
-	addCascadingMenu(menu, view, {
+	addCascadingMenu(menu, view.lang, {
 		title: spec.title,
 		icon: spec.icon,
 		build: (submenu) => {
@@ -184,41 +116,6 @@ function addLayoutMenu(menu: Menu, view: MindMapViewContext): void {
 }
 
 /**
- * 「自定义…」项（整篇配色 / 节点配色共用）：分隔线 + 颜色弹窗 + 写回。
- *
- * 两处唯一的差别是「写到哪里」（`onPick`），输入与校验完全一致，勿各写一份。
- * `onPick` 只在用户提交了**合法颜色**时被调用：取消 / 关闭不回调，调用方不必判空。
- *
- * @param checked 当前值是否已是自定义色（勾选态的现算结果）
- * @param initial 弹窗预填值（null = 空输入框）
- */
-function addCustomColorItem(
-	submenu: Menu,
-	view: MindMapViewContext,
-	options: {
-		checked: boolean;
-		initial: string | null;
-		onPick: (color: string) => void;
-	},
-): void {
-	submenu.addSeparator();
-	submenu.addItem((item) =>
-		item
-			.setTitle(t(view.lang, 'palette.custom'))
-			.setChecked(options.checked)
-			.onClick(() => {
-				void openColorInputModal(view.app, view.lang, options.initial).then(
-					(color) => {
-						if (color) {
-							options.onPick(color);
-						}
-					},
-				);
-			}),
-	);
-}
-
-/**
  * 空白画布的「配色」：改**整篇**方案（写 `data.json` 的 `viewState[路径].palette`）。
  *
  * 预设 6 项之后多一项「自定义」：值是一个十六进制，同样按文件记；读取侧
@@ -227,7 +124,7 @@ function addCustomColorItem(
 function addPaletteMenu(menu: Menu, view: MindMapViewContext): void {
 	const current = view.resolvePreference('palette');
 	const custom = isCustomPaletteValue(current);
-	addCascadingMenu(menu, view, {
+	addCascadingMenu(menu, view.lang, {
 		title: 'toolbar.palette',
 		icon: 'palette',
 		build: (submenu) => {
@@ -239,7 +136,7 @@ function addPaletteMenu(menu: Menu, view: MindMapViewContext): void {
 						.onClick(() => view.applyPalette(option.value)),
 				);
 			}
-			addCustomColorItem(submenu, view, {
+			addCustomColorItem(submenu, view.app, view.lang, {
 				checked: custom,
 				// 预设 id 不是颜色值：带着它预填只会让输入框一打开就报非法
 				initial: custom ? current : null,
@@ -276,7 +173,7 @@ function addNodeColorMenu(
 	const isDefault = current === null || current === COLOR_DIRECTIVE_NONE;
 	const isCustom =
 		!isDefault && !options.some((option) => option.color === current);
-	addCascadingMenu(menu, view, {
+	addCascadingMenu(menu, view.lang, {
 		title: 'toolbar.palette',
 		icon: 'palette',
 		build: (submenu) => {
@@ -294,7 +191,7 @@ function addNodeColorMenu(
 						.onClick(() => applyNodeColor(view, targets, option.color)),
 				);
 			}
-			addCustomColorItem(submenu, view, {
+			addCustomColorItem(submenu, view.app, view.lang, {
 				checked: isCustom,
 				// 当前色直接预填：自定义色可微调，预设色也能「从它起手」；
 				// 哨兵不是颜色，不预填（输入框留空，等用户给一个 hex / RGB）
@@ -302,6 +199,32 @@ function addNodeColorMenu(
 				onPick: (color) => applyNodeColor(view, targets, color),
 			});
 		},
+	});
+}
+
+/**
+ * 节点「联系」（关系连线）：**单击即进入点选模式**，不套二级菜单。
+ *
+ * 为什么不再用二级菜单（2026-10-30 用户裁决）：它唯一的额外内容是「出边列表」，
+ * 而删边/改标签已经有更好的入口——**从线出发**（点线后 `Delete`、右键线「删除
+ * 联系」/「编辑联系标签」，见 view-node-relation）。从节点猜「哪条边对应哪个目标」
+ * 既要读 id 又要分辨同名，反而绕。同一裁决要求它**不与布局 / 配色同组**：那两项是
+ * 视图级外观，联系是结构编辑，观感上不该混在一起。
+ *
+ * 中心主题（虚拟文档根）没有正文行，指令无处落笔 ⇒ 置灰（与配色同一裁决）。
+ */
+function addRelationItem(
+	menu: Menu,
+	view: MindMapViewContext,
+	node: MindMapNode,
+): void {
+	menu.addItem((item) => {
+		const entry = item
+			.setTitle(t(view.lang, 'nodeRelation.add'))
+			.setIcon('git-branch');
+		return node.isRoot
+			? entry.setDisabled(true)
+			: entry.onClick(() => startRelationPicking(view, node));
 	});
 }
 
@@ -343,6 +266,15 @@ export function setupContextMenu(view: MindMapViewContext): void {
 				nodes: active.includes(node) ? active : [node],
 			});
 		},
+	);
+	// 画布上任意按下（含左键选中 / 拖节点）都收起我们弹出的菜单：引擎在节点上把
+	// `mousedown` 吞了，宿主那套「点别处即关闭」收不到事件 ⇒ 不主动关就会一直挂在
+	// 屏幕上（K155）。capture 保证在引擎处理之前执行；菜单自身在 body 上，不受影响。
+	view.engineEvents.onDom(
+		view.canvasEl,
+		'pointerdown',
+		() => closeOpenMenu(view),
+		true,
 	);
 	// 节点右键：引擎对节点 contextmenu 做了 stopPropagation，
 	// 事件不会冒泡到画布，必须改用引擎的 node_contextmenu 事件。
@@ -424,7 +356,7 @@ export function setupContextMenu(view: MindMapViewContext): void {
 				.setIcon('redo')
 				.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD)),
 		);
-		menu.showAtPosition({ x: event.clientX, y: event.clientY });
+		showExclusiveMenu(view, menu, { x: event.clientX, y: event.clientY });
 	});
 }
 
@@ -589,6 +521,9 @@ function showNodeContextMenu(
 	rightClickSelection.delete(view);
 	const targets =
 		snapshot && snapshot.node === node ? snapshot.nodes : [node];
+	// 「联系」独立成组（不与布局 / 配色同组）：它是**结构编辑**，那两项是外观。
+	menu.addSeparator();
+	addRelationItem(menu, view, node);
 	menu.addSeparator();
 	addLayoutMenu(menu, view);
 	// 中心主题是**虚拟文档根**（文件名，没有正文行）：节点颜色无处持久化，
@@ -605,5 +540,5 @@ function showNodeContextMenu(
 			.setIcon('trash-2')
 			.onClick(() => deleteActiveNode(view)),
 	);
-	menu.showAtPosition({ x: event.clientX, y: event.clientY });
+	showExclusiveMenu(view, menu, { x: event.clientX, y: event.clientY });
 }

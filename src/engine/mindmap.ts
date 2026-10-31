@@ -26,6 +26,7 @@
  * 新增子模块时**同时更新本清单**（它是层内结构的第一入口，别处只写指针）。
  */
 import {
+	AssociativeLine,
 	DoExport,
 	Drag,
 	KeyboardNavigation,
@@ -69,6 +70,27 @@ export {
 	supportsLineStyleSwitch,
 } from './mindmap-theme';
 export { paletteNodeColor } from './mindmap-palette';
+// 联系（关系连线）：引擎侧唯一收口面（写 data / 命中判定 / 手绘锚定的画布几何）
+// 只列外部真的会用的符号：`redrawRelationLines` / `relationGeometryAt` 是
+// `mindmap-relations` 的内部步骤（补画、data → `geo` 的读取），没有跨层消费者，
+// 故不出口——出口面越小，防腐层的可替换范围越大。
+export {
+	activeRelationLine,
+	applyRelationsToTree,
+	clearActiveRelationLine,
+	collectRelationIds,
+	collectRelationTargets,
+	engineRelationsOf,
+	relationCanvasLayer,
+	relationClientToContent,
+	relationLineAt,
+	relationNodeBox,
+	syncLiveRelations,
+} from './mindmap-relations';
+export type {
+	EngineRelationEdge,
+	RelationLineHit,
+} from './mindmap-relations';
 export { ENGINE_COMMANDS, shortcutGateAllows } from './mindmap-commands';
 export { cancelEngineTimers } from './mindmap-timers';
 export {
@@ -363,6 +385,11 @@ export function createMindMap(
 				// （引擎不读 altKey；同元素 capture 会被引擎按注册顺序抢先）。
 				mousewheelAction: 'move',
 				disableMouseWheelZoom: false,
+				// 关联线（联系）的**默认文字**清空：引擎缺省值是「关联」，任何没写
+				// 标签的线都会顶着这两个字（`AssociativeLine.createText` 的兜底）。
+				// 本插件的语义是「标签可空」，故必须置空串。字段未入 d.cts，
+				// 与其他未声明键同口径经 Object.assign 注入。
+				defaultAssociativeLineText: '',
 			},
 			{
 				// 双链文档图标（契约与防腐说明见上方常量区注释）；
@@ -436,6 +463,12 @@ export function createMindMap(
 				// ⚠ 新增注入键请**并入现有段**：Object.assign 的类型重载只覆盖到
 				// 3 个 source，第 4 段起返回 `any` → 触发 no-unsafe-argument。
 				handleBeingExportSvg: options.handleExportSvg ?? null,
+				// 联系（关系连线）画在**节点之下**：关联线是两点贝塞尔、无避让，
+				// 画在节点之上会横穿文字（2026-10-30 实机截图）。该开关只在
+				// `initContainer` 决定图层插入点（engine/../index.js），属构造期选项，
+				// 运行时改无效；激活线仍会被 `front()` 提到最上层。标签有独立顶层
+				// 图层（vendor 补丁 14），沉底后不会跟着消失。
+				associativeLineIsAlwaysAboveNode: false,
 			},
 		),
 	);
@@ -460,11 +493,6 @@ export function createMindMap(
 	if (!isReadonly) {
 		mindMap.addPlugin(Select);
 		mindMap.addPlugin(TouchEvent);
-		// 不注册 AssociativeLine（关联线，2026-10-09 减法）：引擎侧唯一的创建入口是
-		// 引擎自带右键菜单，而本项目从不配置 `opt.contextmenu`——节点右键走
-		// features/view-context-menu 的 Obsidian Menu，故注册了也**没有任何入口能创建**
-		// 关联线，属纯空转。若将来要开放该能力，须同时给出显式入口（工具栏/菜单 + i18n），
-		// 并注意关联线**不进 Markdown**（渲染层状态，不落文件）。
 		mindMap.addPlugin(KeyboardNavigation);
 		mindMap.addPlugin(DoExport);
 		mindMap.addPlugin(Search);
@@ -472,6 +500,14 @@ export function createMindMap(
 			mindMap.addPlugin(Drag);
 		}
 	}
+	// 联系（关系连线）的渲染插件：**两种模式都要注册**（只读嵌入同样要看见线）。
+	// 它的交互副作用由 vendor 补丁 13 在只读态整段跳过（不绑 Del / contextmenu /
+	// mousemove / node_click），视图态的创建入口由插件自己的右键菜单提供
+	// （features/view-node-relation，不配置 `opt.contextmenu`，引擎自带入口不可达）。
+	// ⚠ 注册位置必须在下方 `removeEngineShortcut('Del|Backspace')` **之前**：
+	// `KeyCommand.shortcutMap[key]` 是数组，插件会往里 push 一个「删除选中线」的
+	// handler，不摘掉就会出现「一次 Delete 同时删节点与线」。
+	mindMap.addPlugin(AssociativeLine);
 	// 命令历史内存控制：每步一条「整树 JSON 快照」，固定条数上限会让单视图历史
 	// 内存随图规模失控（旧策略 500 条 × 500 节点 ≈ 91MB，见 K65/K66）。
 	// 预算怎么算、何时下调收口在 `mindmap-history`（此处只给节点数，不复述策略）。

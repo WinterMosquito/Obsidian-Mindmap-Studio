@@ -89,6 +89,12 @@ class AssociativeLine {
     this.mindMap.on('node_tree_render_end', this.renderAllLines)
     // 状态改变后重新渲染连接线
     this.mindMap.on('data_change', this.renderAllLines)
+    // 【自有补丁 13】只读嵌入（```mindmap 代码块）只绑渲染事件，交互一律不绑。
+    // 该插件会把 Del|Backspace 挂进 keyCommand（window 级）、并在 contextmenu /
+    // mousemove / node_click 上注册处理器——只读嵌入注册它就会抢宿主笔记的按键与
+    // 手势（与本仓库「只读嵌入不注册交互插件」的裁决冲突）。只读态没有编辑入口，
+    // 连线只用于"看见结构"，故此处早退是安全的；解绑侧 off 未绑处理器无害。
+    if (this.mindMap.opt.readonly) return
     // 监听画布和节点点击事件，用于清除当前激活的连接线
     this.mindMap.on('draw_click', this.onDrawClick)
     this.mindMap.on('node_click', this.onNodeClick)

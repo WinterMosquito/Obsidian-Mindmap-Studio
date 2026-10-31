@@ -1,6 +1,6 @@
 {
 	"name": "mindmap-studio",
-	"version": "0.2.9",
+	"version": "0.3.0",
 	"description": "Render notes as mind maps while keeping them Markdown. Declare a note with the Mindmap property and one of six layouts, then edit it as a map with lossless round-trip, wikilinks, images, search, auto-arrange and PNG and SVG export.",
 	"main": "main.js",
 	"type": "module",

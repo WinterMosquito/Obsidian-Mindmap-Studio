@@ -273,6 +273,18 @@ const ZH = {
 	'nodeColor.wisteria': '紫藤',
 	'nodeColor.forest': '森林',
 	'nodeColor.slate': '石板',
+	// 联系（关系连线）：节点右键「联系」直落选点；线右键「编辑标签 / 删除」
+	'nodeRelation.add': '联系',
+	'nodeRelation.addHint': '点击目标节点完成，Esc 取消',
+	'nodeRelation.anchorStart': '移动鼠标，点击落定起点（Esc 取消）',
+	'nodeRelation.anchorEnd': '点击落定终点（Esc 取消）',
+	'nodeRelation.exists': '已存在指向该节点的联系',
+	'nodeRelation.color': '联系配色',
+	'nodeRelation.editLabel': '编辑联系标签',
+	'nodeRelation.delete': '删除联系',
+	'nodeRelation.labelPlaceholder': '可选说明',
+	'nodeRelation.labelInvalid': '标签不能包含 %% 或 [[ ]]',
+	'nodeRelation.rootUnsupported': '中心主题不能作为联系端点',
 
 	// ===== 弹窗 - 自定义颜色 =====
 	'modal.color.title': '自定义颜色',
@@ -577,6 +589,18 @@ const EN: Record<TranslationKey, string> = {
 	'nodeColor.wisteria': 'Wisteria',
 	'nodeColor.forest': 'Forest',
 	'nodeColor.slate': 'Slate',
+	// Relationships (node context menu entry + line context menu + label modal)
+	'nodeRelation.add': 'Relationship',
+	'nodeRelation.addHint': 'Click the target node, Esc to cancel',
+	'nodeRelation.anchorStart': 'Move the pointer, click to place the start',
+	'nodeRelation.anchorEnd': 'Click to place the end',
+	'nodeRelation.exists': 'A relationship to this node already exists',
+	'nodeRelation.color': 'Relationship color',
+	'nodeRelation.editLabel': 'Edit relationship label',
+	'nodeRelation.delete': 'Delete relationship',
+	'nodeRelation.labelPlaceholder': 'Optional label',
+	'nodeRelation.labelInvalid': 'Label cannot contain %% or [[ ]]',
+	'nodeRelation.rootUnsupported': 'The central topic cannot be linked',
 
 	// ===== 弹窗 - 自定义颜色 =====
 	'modal.color.title': 'Custom colour',

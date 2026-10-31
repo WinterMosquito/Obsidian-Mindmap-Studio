@@ -127,6 +127,14 @@ function buildThemeConfig(
 		},
 		lineColor: colors.line,
 		lineWidth: 1.5,
+		// 联系（关系连线）：比父子线更轻的辅助线——细、浅、虚线更密，且**不画在
+		// 节点之上**（该开关是 opt 不是 theme，见 engine/mindmap.createMindMap）。
+		// 标签自带描边光晕（vendor 补丁 14），压在任何元素上都可读。
+		associativeLineColor: colors.line,
+		associativeLineWidth: 1.5,
+		associativeLineDasharray: '4,4',
+		associativeLineTextColor: text.nodeText,
+		associativeLineTextFontSize: 12,
 		// 连线样式由偏好解析而来（resolveLineStyle：两态折线/曲线；目录组织图/
 		// 时间轴/鱼骨图由布局类自行绘制直线、不受本值影响）+ 收紧间距：视觉重量随
 		// 层级递减、提升一屏信息量。引擎运行时支持（vendor bundle 已验证

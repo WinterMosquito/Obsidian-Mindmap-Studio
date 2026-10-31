@@ -65,6 +65,7 @@ import { EventBinder } from '../core/event-binder';
 import { t, tf, type Language } from '../core/i18n';
 import {
 	applyColorDirectivesToTree,
+	applyRelationsToTree,
 	applyThemeConfig,
 	cancelEngineTimers,
 	centerContentAtScale,
@@ -441,6 +442,9 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 			// 节点配色指令（`%%#hex%%`）：在创建**之前**写进 data 树——引擎会克隆
 			// 数据，建好后再改这棵树不再生效（只读嵌入没有编辑入口，无需实时同步）。
 			applyColorDirectivesToTree(tree, colorDirectiveOf);
+			// 联系（关系连线）：同一时机写进 data 树（只读嵌入没有编辑入口，
+			// 创建后不需要实时同步；交互副作用由 vendor 补丁 13 整段跳过）
+			applyRelationsToTree(tree);
 			mindMap = createMindMap(el, tree, {
 				layout,
 				lineStyle: config.lineStyle,

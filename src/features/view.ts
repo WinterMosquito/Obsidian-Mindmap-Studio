@@ -41,7 +41,9 @@ import { createWarnOnce, notifyError } from '../core/errors';
 import {
 	applyColorDirectivesToTree,
 	applyImageSizeCorrectionsToEngine,
+	applyRelationsToTree,
 	getRenderRoot,
+	syncLiveRelations,
 	syncNodeColorDirectives,
 } from '../engine/mindmap';
 import {
@@ -62,6 +64,11 @@ import {
 } from '../domain/mindmap-property';
 import { registerWikilinkInteractions } from './view-wikilink';
 import { setupNodeTaskInteraction } from './view-node-task';
+import {
+	schedulePersistRelationGeometry,
+	setupRelationInteractions,
+	teardownRelationInteraction,
+} from './view-node-relation';
 import { registerTagClicks } from './view-tag';
 import {
 	closeInlineEditor,
@@ -467,7 +474,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				updateStatusBar(this);
 				this.titleRenamer.schedule();
 			},
-			onDataChanged: () => this.scheduleAutoSplitCheck(),
+			onDataChanged: () => {
+				this.scheduleAutoSplitCheck();
+				// 拖动联系线端点/控制点只改 data（引擎命令），这里把它写回正文——
+				// 不写的话重开文件几何就回到自动计算（用户观感「改了不保存」）。
+				schedulePersistRelationGeometry(this);
+			},
 			onNodeTextEdited: (node) => captureAutoSplitCandidate(this, node),
 			onNodeImageClick: (node) => openNodeImageFullscreen(this, node),
 			onNodeAttachmentClick: (node) => {
@@ -486,6 +498,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				registerWikilinkInteractions(this);
 				// 任务复选框：画布 capture 接管点击（点一下即切换，见 view-node-task）
 				setupNodeTaskInteraction(this);
+				// 联系（关系连线）：点选落点 + 双击线改标签（capture 拦引擎内联框）
+				setupRelationInteractions(this);
 				// 标签 pill：画布 capture 接管点击 → 官方标签搜索（私有触点）
 				registerTagClicks(this.engineEvents, this.canvasEl, this.app, this.lang);
 				// 节点内代码块的复制按钮（悬停显形 → 点击复制 → ✓ 反馈）
@@ -806,6 +820,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			// （引擎 `MindMapNode.handleData` 会克隆数据，建好后再改这棵树不再生效）。
 			// 创建后编辑/撤销引起的变化走 `node_tree_render_end` 的实时同步。
 			applyColorDirectivesToTree(tree, colorDirectiveOf);
+			// 联系（关系连线）：同样必须在创建引擎**之前**写进 data 树——引擎会克隆
+			// 数据，建好后再改这棵树不再生效（首帧即带线，不额外渲染一次）。
+			applyRelationsToTree(tree);
 			void collectImageSizeCorrections(tree)
 				.then((corrections) => {
 					// 加载期间文件已切换：丢弃过期结果
@@ -939,6 +956,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// （K108）；撤销时 `data_change` 又在渲染排队前发出，那时 renderer.root
 				// 还是旧树。此刻根节点已是新树、数据已定稿，同步一次即覆盖全部通道。
 				syncNodeColorDirectives(mindMap, colorDirectiveOf);
+				// 联系（关系连线）：同一时机重算——编辑 / 插入 / 撤销都会改变指令。
+				// 有变化时它会自行补画一次线（插件的 renderAllLines 绑在本事件上但
+				// 早于我们执行，不补画就要等下一轮渲染）。几何只认文件里的 `geo=`，
+				// 文件没写时保留 data 现有几何（用户刚拖完的那一轮）。
+				syncLiveRelations(mindMap);
 				if (this.applyPendingImageCorrections()) {
 					this.engine.scheduleViewportRecenter();
 				}
@@ -1346,6 +1368,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 不经事件绑定器记录，中途关闭视图收不到 mouseup，须显式清理。
 		// 必须在 savePipeline.save() 之前——调宽会话收尾会调度一次保存。
 		teardownImageResize(this);
+		// 联系的点选 / 手绘锚定同样是临时 window 监听（同款理由）；顺带丢弃
+		// 未落地的几何回写计时器，避免关闭后仍去读写已销毁的引擎。
+		teardownRelationInteraction(this);
 		// 小地图：定时器 + 拖拽会话 + 面板 DOM 一并回收（幂等，引擎换代亦走它）
 		teardownMiniMap(this);
 		// 挂起装配信号：关闭后到达的 onLoadFile 等待下一次 onOpen（原轮询语义）

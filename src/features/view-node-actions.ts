@@ -38,7 +38,9 @@ export { planAttachmentLink, planDocLink } from './view-node-link-plan';
 import { resolvePathToFile } from '../links/links-resolve';
 import { t, type TranslationKey } from '../core/i18n';
 import { isHyperlinkProtocolUrl } from '../domain/url';
+import { relationStateOf } from '../domain/relation';
 import { composeNodeContent, isPureLinkNode } from '../markdown/md-serialize';
+import { stripInboundRelations } from './view-node-relation';
 
 import {
 	isDocumentExtension,
@@ -714,10 +716,21 @@ export function deleteActiveNode(view: ViewNodeEditContext): void {
 	}
 	const parent = node.parent;
 	const nodeData = node.nodeData;
+	// 被删节点的完整联系状态：`id` 用来清指向它的入边，`refs` 用来回收它曾指向的
+	// 目标上是否还留得住 `%%id%%`。必须在删除**之前**读（之后这个节点已不在树上）。
+	// 读的是 `node.getData()`（= `nodeData.data`）——`nodeData` 是 `{ data, children }`
+	// 包装层，直接读它拿到的是空对象，id 恒为 null（实机踩过）。
+	const deletedRelation = relationStateOf(
+		node.getData() as Record<string, unknown>,
+	);
 	mindMap.execCommand(ENGINE_COMMANDS.REMOVE_NODE);
 	// 兜底：uid 重复/缺失时引擎按 uid 的删除可能失败，按对象身份强制清除
 	if (parent) {
 		forceRemoveNodeData(mindMap, parent, nodeData);
 	}
+	// 入边 / 孤儿 id 清除只改 data（渲染与「删除前」快照都已由上面的命令完成，
+	// 并进同一步撤销，见 stripInboundRelations 注释）。节点实例一并传入：它此刻
+	// 还在实例树上（`REMOVE_NODE` 只摘数据树），判定时要按身份排除
+	stripInboundRelations(view, { node, state: deletedRelation });
 	view.scheduleSave();
 }

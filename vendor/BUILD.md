@@ -45,8 +45,8 @@
   （svg.js 横幅，`main.js` 同步保留）——逐库声明义务由 `vendor/THIRD-PARTY-NOTICES.md`
   承担（主载体），内联注释仅为补充佐证；其 §3 已按实测口径更新。
 
-**产物字节级身份**（2026-10-17 补丁 12 异步分片批量消费后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
-`859052727f7197f05669eef7091247705c072c3c00675b6c2f50a660939f4a89`（414,469 B），
+**产物字节级身份**（2026-10-30 删除自动选路、回退补丁 15 的「绕行折点」分支后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
+`4cf277bbf32d72a9bda38257864acea13d64a7d53ef2310d6303fec48e156ca5`（415,183 B），
 由 `tests/vendor-contract.test.ts` 断言。**重新打包后必须同步更新此处与该测试里的常量**——
 它是最外层护栏：其余契约断言（导出类 / 原型方法 / 命令名 / 事件名令牌）都只钉在
 **API 面**上，对字节改动无感。（缺口来源：本文件第 22 行要求「不可手工编辑」，
@@ -313,6 +313,58 @@ drain 内继续入队是常态，若按「队列空否」重新派发，每层�
 | `适应画布`（5000，含下节的 0.1 比例下限） | 27.5s，DOM 5000 | **52ms**，DOM 393 |
 | `node_tree_render_end` 次数 | — | 1（契约不变） |
 **边界**：批内任务仍同步串行——单批 8ms 内的阻塞属「工作量」而非「排队」，不在本补丁范围。
+
+**补丁 13｜`upstream/src/plugins/AssociativeLine.js` · 只读嵌入只绑渲染事件**
+**立项依据**：插件「联系（关系连线）」需要引擎的 `AssociativeLine` 画线，而只读嵌入
+（```mindmap 代码块）的既有裁决是**不注册任何交互插件**。该插件在 `bindEvent()` 里
+会 `keyCommand.addShortcut('Del|Backspace', …)`（**window 级**，与宿主笔记抢删除键）
+并在 `contextmenu` / `mousemove` / `node_click` 上注册处理器——只读嵌入注册它即违约。
+**做法**：`bindEvent()` 在绑完两条渲染事件（`node_tree_render_end` / `data_change`）
+后插入 `if (this.mindMap.opt.readonly) return`，其余交互一律不绑。`unBindEvent` 无需
+改（`off` 未绑处理器无害）。只读态没有编辑入口，连线只用于"看见结构"。
+**影响面**：仅 `opt.readonly === true` 的实例（即 ```mindmap 嵌入）；视图实例行为不变。
+**回归**：`tests/vendor-contract.test.ts` 的字节护栏与导出面断言；插件侧
+`tests/relation-directive.test.ts` / `verify:visual` 的关联线探针。
+
+**补丁 14｜`upstream/src/plugins/associativeLine/associativeLineText.js` · 标签光晕 / 位置错开 / 独立顶层**
+**立项依据**（2026-10-30 实机截图）：关联线是两点贝塞尔、**无任何避让**，画在节点之上
+必然横穿中间列的节点文字；标签是裸 `<text>`（无底色）且固定取路径 **50%** 处——多条边
+汇入同一节点时（`依赖` / `阻塞`）两个标签直接叠在同一个节点上，整片糊掉。
+**做法**三处：
+① `styleText` 给文字加 `paint-order: stroke` + `stroke: 画布底色` + `stroke-width: 3`
+（XMind 同款光晕，不测量文本宽度即可获得"背景板"效果）；
+② `renderText` 把标签位置从 50% 改为 `min(0.75, 0.35 + 0.12 × 同源边序号)`，比例写回
+文本组的 `__assocTextT`；`updateTextPos` 读它（缺省 0.5 = 原行为），故缩放、拖控制点后
+的重定位不会跳回中点；
+③ `createText` 把标签挂到**独立顶层图层**（`mindMap.__assocTextLayer`，首次使用时挂在
+`nodeDraw` 之后 ⇒ 位于节点之上）：配合插件侧 `opt.associativeLineIsAlwaysAboveNode = false`
+（线沉到节点下方，穿节点处被遮挡），标签仍恒定可见。`removeAllLines` 逐条 `remove` 文本组，
+无需另加清理。**图层引用要做失联检测**：`reRender()`（切布局 / 换主题）会 `clearDraw()`
+清空 `nodeDraw`，缓存引用随之游离——只在 `layer.node.parentNode` 仍存在时复用，否则重建。
+**影响面**：所有注册了 `AssociativeLine` 的实例（视图 + 只读嵌入）；不改变数据模型与命中逻辑。
+**回归**：`tests/vendor-contract.test.ts` 字节护栏 + `__assocTextT` 令牌断言；插件侧
+`tests/mindmap-theme.test.ts`（新增关联线主题键）与 `verify:visual` 关联线探针。
+
+**补丁 15｜`upstream/src/plugins/associativeLine/associativeLineUtils.js` · 控制点沿锚点外法线伸出**
+**立项依据**（2026-10-30 实机采样）：`getNodeLinePath` 在没有保存控制点时用
+`computeCubicBezierPathPoints`（控制点 = 两端点连线的**中点**方向）。当目标位于源节点
+侧后方时（节点上下相邻、横向只差几像素），控制点会落进**源节点框内**——曲线先从节点
+内部绕出去再接目标。实测：`压测报告 → 6/10 代码冻结` 这条边的 21 个采样点有 **11 个**
+落在源节点矩形内，用户观感即「线怎么从节点里出发」。
+**做法**：默认控制点改为各自沿所在**边的外法线**伸出 `reach = clamp(距离/4, 20, 40)` 像素
+（`left/right/top/bottom → (±1,0)/(0,∓1)`）——曲线恒先离开节点、再弯向目标，与引擎选的
+是哪一对边无关。用户拖过的边有 `associativeLineTargetControlOffsets`，走原分支不受影响。
+**参数由来（补丁 15－b）**：`reach` 公式由 `clamp(距离/3, 24, 80)` 收窄为
+`clamp(距离/4, 20, 40)`——鼓包随跨度线性放大时，同一张图里会同时出现"贴边的小半圆"
+（44px 跨距 → 24）与"甩到天边的弹簧"（170px → 57、>240px → 80）。收窄后全程 20–40。
+**2026-10-30 二次修订（删除「绕行折点」）**：曾读 `associativeLinePoint[targetIndex].waypoint`
+输出两段贝塞尔，折点由插件侧 `domain/relation-route` 的自动选路给出。该方案已整体删除
+（用户裁决：只要手绘几何）⇒ `waypoint` 分支、`unit()` 辅助函数一并回退，本补丁只剩
+「无保存控制点时的外法线兜底」这一件事。
+**影响面**：所有**未写 `geo=`** 的联系线（视图 + 只读嵌入）——手绘过的边走
+`associativeLineTargetControlOffsets` 分支。
+**回归**：`tests/vendor-contract.test.ts` 字节护栏；实机采样脚本（沿 path 取点判定是否
+落在任一节点框内）改写后 4 条边均无自穿透。
 
 **已否决的假设（2026-10-05 实测证伪，勿重做）｜`transform()` 读取器 memo 化（补丁 11 的前一版）**
 假设：「视口剔除判据 `checkIsInClient` 每节点每次渲染都调 `mindMap.draw.transform()`，

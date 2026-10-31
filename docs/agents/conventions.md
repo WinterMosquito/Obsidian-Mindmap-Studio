@@ -1,4 +1,4 @@
-# 关键约定 K1–K152（详录）
+# 关键约定 K1–K155（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -356,6 +356,33 @@
   ⑤ **清空为何安全**（三条独立理由，别只凭其中一条）：ⓐ 下一次测量本来就先自清再填，外部清空等价于提前清；ⓑ 首帧前的批量预测量（`preMeasureCustomContents`，补丁 5）用 `__preMeasuredContentMap` 按 uid 持有**元素本体**，进容器的只是 `cloneNode`，且它自己在末尾就 `holder.innerHTML=''`；ⓒ 测量缓存是内容寻址的（键 = `addXmlns` 后的 `outerHTML`），不在这个元素里 ⇒ 清空不影响命中率。
   ⑥ **实机**（Obsidian 1.14.4）：修复前 `boxes=4→5`（任务数 4）；修复后 `boxes=2`（样例 2 个任务）、`hostKids=0`、`hostAria=true`、`inert=true`，**切换一次任务触发重渲染后仍为 2 / 0 / true / true**，可见 `foreignObject` 高度 29 / 27 / 26 / 26 / 26 与既有口径一致（清空与 `inert` 均未影响测量）。`dev:errors` 干净。
   ⑦ **回归**：`tests/engine-measure-residue.test.ts`（直测：清空 + `aria-hidden` + `inert` + 幂等〔第二次调用**零写操作**〕+ 四种 no-op；源码契约：`createMindMap` 内的注册点仍在）。**勿**改成「只在销毁时清」（噪音在整场会话里都在）、也**勿**试图「给测量副本加标记」——显示与测量是同一构建回调产出的两份 DOM，创建期无法区分。
+
+- [K153] **联系：孤儿 `%%id%%` 的回收（2026-10-30 实机定位并修复）**：
+  ① **症状**：A 的 `%%rel:aaaa01 | 依赖%%` 指向 B 的 `%%id:aaaa01%%`。删掉这条联系线，再删掉 A（或先删 A 让那条边随节点消失），B 的正文里仍留着一整行 `%%id:aaaa01%%`。画布上看不见（注释语法隐藏），但它出现在该节点的**原文编辑框预填**里（`composeNodeContent` 的 rawOk 分支返回 `mdRaw`，含指令行）——用户接着输入就把它变成节点正文（`%%id:aaaa01%%补充` 不再是合法指令行，`mdDirectiveTail` 变 null）。实机读数：删线后 `data.mdRaw = '目标节点乙\n%%id:aaaa01%%'`、F2 编辑框预填同样是这两行。
+  ② **成因**：`%%id%%` 只在建边时**懒加**（`createRelation`：目标没有 id 才补），**从不回收**。两条删除路径都只处理「边」不处理「身份」：`removeRelation` 只摘源节点的 ref（注释写着「目标节点的 `%%id%%` 保留，可能还有入边」，但没有「已无其它入边」的分支）；`stripInboundRelations` 只清**指向被删节点**的入边，不管被删节点**曾指向**的目标。
+  ③ **修法（判定面唯一）**：`engine/mindmap-relations.collectRelationTargets(mindMap, except?)`——`collectRelationIds` 的对偶（一个收身份、一个收引用）。两个删除入口共用它，且**只在全树再无 ref 指向该 id 时**才摘：
+      · `removeRelation(view, from, to)`：把目标那一行（`id: null`）与源节点那一行**合并成一次** `applyRawNodeContents`（一次渲染 / 一次保存 / 一条撤销）；
+      · `stripInboundRelations(view, { node, state })`：入参从 `deletedId` 扩成「被删节点的实例 + 删除前的关系状态」，它自己那条出边随节点消失，目标若因此再无入边就摘掉其 id；两件事都走 `applyRawToNode`（只改 data，并进 `REMOVE_NODE` 那一条历史）。
+      · **多入边节点不误删**：id 仍被任何 ref 指向时必须原样保留（示例文件里「6/20 全量上线」有两条入边）；实机验证删掉其中一条后 `%%id:bbbb01%%` 仍在。
+  ④ **⚠ 实例树滞后一拍（第一版修复的坑）**：`REMOVE_NODE` 只把节点从 `parent.nodeData.children` 摘掉（vendor `removeFromParentNodeData`），**实例树要等 `render()` 才更新**——`stripInboundRelations` 正运行在「数据已删、实例还在」那一拍里，被删节点自己的 `%%rel%%` 仍会被 `collectRelationTargets` 算作「还有人指向」⇒ 删线回收生效、删节点回收**完全不生效**（实机：删掉最后一条入边的持有者后 `%%id:bbbb01%%` 仍在）。故必须按**对象身份**把被删实例排除（`collectRelationTargets(mindMap, deletedNode)`），遍历时也跳过它（别往游离 data 上写）。
+  ⑤ **边界（有意，勿当缺陷）**：文件里**手工**写下的悬空 ref / 手写 id 不清理（那行没被编辑，静默改动破坏逐字保真，规则 4）；本修复只回收「本次删除直接造成」的残渣。撤销照旧一次到位：删线（两行改写）与删节点（含 id 回收）各一次 `Ctrl+Z` 完整还原（实机：文件逐字回到删除前）。
+  ⑥ **回归**：`tests/view-node-relation.test.ts`（删线回收 / 多入边保留 / 删节点回收 / 实例树滞后按身份排除 / 同一节点 ref+id 合并一次改写）、`tests/engine-relations.test.ts`（`collectRelationTargets` 收集全树、`except` 排除、空引擎返空集）。
+
+- [K154] **联系线配色（2026-10-31）**：
+  ① **语法**：`%%rel:id | 标签 | geo=… | color=#rrggbb%%`——颜色是 `%%rel%%` 的**属性段**，不是独立指令：注释不能嵌套，且指令行整行有形状约束（`isDirectiveLine`）。解析从**尾部**逐段消费 `geo=` / `color=`（各至多一段、**顺序无关**、可全省略）；重复出现或形状不符（`foo=…`）即停、该段仍属标签——**绝不吞用户文字**（`%%rel:id | 公式 a=b%%` 的标签完整保留）。值非法（`red` / `#12345` / 带 alpha）**丢弃该段、保留边**（与 `geo=` 同一取舍：辅助数据坏了不该让整条边退化成普通注释）。写侧固定 `geo` → `color`，保证幂等（同内容重放不产生文件 diff）。归一复用 `domain/color.normalizeHexColor`（读侧收三位缩写，写侧恒 `#rrggbb`）。
+  ② **入口只有一个：右键线**（与删线 / 改标签同形，2026-10-30「一切从线出发」裁决的延续）：默认 + **与节点配色同一套色族** + 自定义…。色族表复用 `view-node-color.nodeColorOptions`（同一个「薄荷」在节点上与在连线上是同一个 hex，一支子树和它的出边才像同一族）；「自定义…」复用 `ui/menu-submenu.addCustomColorItem`。带 `paletteNodeColor` 之外的实色（手写 hex）时勾在「自定义」上。
+  ③ **落地**：`associativeLineStyle[目标 uid].associativeLineColor`（源节点 data）——引擎 `AssociativeLine.getStyleConfig(node, toNode)` 先读这份**按目标 uid** 的覆盖、缺键才回落到节点样式（＝主题）。**只写颜色**：宽度 / 虚线 / 标签字号仍由主题单一表达（越权写入会让「连线偏好」失效）；**激活色不覆盖**——点线时的高亮是「选中」这条独立语义（引擎默认 `rgba(2,167,240,1)`），跟着线色变反而看不出选中。整张映射**整体重建**（Markdown 是唯一真相），没着色的边**不占键** ⇒ 删掉 `color=` 段下一轮就回落主题；变化判据只比 `associativeLineColor`（data 可手改，别的键不该触发重画）。
+  ④ **写回与既有编辑的交叉**：改色走 `rawWithState` + `applyRawNodeContents`（一次提交 / 一条撤销，与删线、改标签同通道）。两条**必须带走颜色**的路径：`updateRelationLabel`（已用 `...ref` 展开）、`persistRelationGeometry`（拖端点后重建 refs——颜色只存在于正文、引擎侧没有可回读的产物，必须从当前 ref 原样搬过去，否则**拖一次线就把颜色抹掉**）。
+  ⑤ **不在本特性内**（有意）：不做按节点子树自动推导线色（线的颜色只表达这一条边）、不做渐变色/透明度（`%%#hex%%` 同口径只收实色）、只读嵌入照常显示颜色（同一份 `applyRelationsToTree`），但**不可改**。
+  ⑥ **回归**：`tests/relation-directive.test.ts`（解析 / 归一 / 顺序无关 / 非法丢弃 / 重复段归标签 / 指令行判定）、`tests/engine-relations.test.ts`（写映射 / 无颜色删键 / 同色不重写 / 多目标只写着色项）、`tests/view-node-relation.test.ts`（子菜单结构、勾选态、写回原文、保留 `geo`、默认删段、同色不写盘）。
+
+- [K155] **右键菜单必须独占（2026-10-31 实机定位并修复）**：
+  ① **症状**：在节点上连续右键（换一个节点、或把节点拖到别处再右键），屏幕上叠出**多个一模一样**的菜单，位置几乎重合；打开过「配色」子菜单后更明显（父菜单 + 子菜单一起留着）。
+  ② **成因**：Obsidian 关闭已弹菜单靠的是**收到 `mousedown`**（宿主在 document 上收口），而引擎在节点上把 `mousedown`（拖拽起手）与 `contextmenu` 都 `stopPropagation` 了 ⇒ 只要指针落在节点上，宿主永远收不到那次按下，**旧菜单永不关闭**，新菜单直接叠上去。实机读数：两次右键 = 2 个 `.menu` 同时 `display:flex` 且 rect 相差 3px；而在 body 上 mousedown 后两者都会消失（证明关闭机制本身是好的，只是被 stopPropagation 挡住）。
+  ③ **修法**：`ui/menu-submenu.showExclusiveMenu(host, menu, pos)` 成为**唯一**弹出入口（节点菜单 / 画布空白菜单 / 联系线菜单三处）。它做三件事：关掉该宿主上一个菜单树 → 记账（`WeakMap<host, Menu>`）→ `menu.onHide` 时把记账清掉（用户点条目、宿主自己关，都不会留下陈旧引用）。级联子菜单在 `addCascadingMenu` 里登记（`WeakMap<Menu, Menu[]>`）：子菜单是**独立**的 `.menu`，父菜单 `hide()` 未必带上它，所以关的时候要整棵树关。另外画布 `pointerdown`（capture）调 `closeOpenMenu(view)`——左键选中 / 拖节点同样该收起菜单（那一下 mousedown 也被引擎吞了）。
+  ④ **为什么不用 `document.querySelectorAll('.menu')` 一把删**：那会绕过 `Menu` 的 Component 生命周期（`onHide` 回调、事件解绑、历史栈），留下悬空引用；我们只关**自己创建**的实例。
+  ⑤ **实机**（Obsidian 1.14.4）：修复前连续右键两节点 `visibleCount=2`；修复后 `1`。右键线 → 打开「联系配色」子菜单（2 个 `.menu`，父 + 子）→ 再右键节点：`1`（父子一起收）。画布 `pointerdown` 后菜单立即为 0。`dev:errors` 干净。
+  ⑥ **回归**：`tests/view-context-menu.test.ts`（连续右键两节点只留一个、`pointerdown` 收起）、`tests/view-node-relation.test.ts`（连续右键两条线只留一个）。
 
 ### Obsidian API 合规与工具链
 

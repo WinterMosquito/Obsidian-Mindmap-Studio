@@ -620,6 +620,40 @@ export function generateUid(): string {
 }
 
 /**
+ * 联系（关系连线）关系线的**可绘制上限**（2026-10-30 用户裁决 = 500）。
+ *
+ * 引擎的 `AssociativeLine.renderAllLines` 每次 `data_change` / 渲染落地都会**全量
+ * 重画**所有线，边数直接乘进每帧成本；500 条是「普通导图够用、大图不至于卡」的分界。
+ * 超出的边**不画、不改文件、也不阻止写入**（拒绝写入比不画线更让人意外）——
+ * 截断只发生在 `resolveRelationGraph` 的可绘制边集合上；`ids` 索引（悬空 / 重复
+ * id 的判据）不受影响，否则「目标是否存在」会随上限漂移。
+ */
+export const RELATION_MAX_RENDER_EDGES = 500;
+
+/** 联系 id 的长度（6 位小写十六进制；与配色 hex 同字符集，靠 `id:` 前缀分流） */
+const RELATION_ID_LENGTH = 6;
+
+/**
+ * 生成文件内的联系 id（6 位小写十六进制）。
+ *
+ * 只要求**单文件内唯一**：跨文件关系不是本功能的目标（那用双链/Canvas 表达）。
+ * 冲突由调用方传入 `taken` 兜底——随机空间 16.7M，64 次仍冲突只可能是随机源异常。
+ */
+export function generateRelationId(taken: ReadonlySet<string> = new Set()): string {
+	for (let attempt = 0; attempt < 64; attempt++) {
+		const id = Math.floor(Math.random() * 0x1000000)
+			.toString(16)
+			.padStart(RELATION_ID_LENGTH, '0');
+		if (!taken.has(id)) {
+			return id;
+		}
+	}
+	return (Date.now() % 0x1000000)
+		.toString(16)
+		.padStart(RELATION_ID_LENGTH, '0');
+}
+
+/**
  * 防抖/节流时间常量集中管理——所有模块必须引用此处而非手写数字。
  * 此前设置持久化 400ms（main.ts）、自动保存 600ms（view.ts）散落两处，
  * 维护者难以发现"为什么不一样、哪个改了不该改"。集中后：
@@ -662,6 +696,14 @@ export const SAVE_FAILURE_SUSPEND_THRESHOLD = 3;
  * 中间态（isEditingText 仍为真）；延后很短一瞬让引擎先完成收尾。
  */
 export const AUTO_SPLIT_CHECK_DELAY_MS = 120;
+/**
+ * 联系（关系连线）几何回写的防抖窗口（毫秒）。
+ *
+ * 拖动端点 / 控制点时插件用 `SET_NODE_DATA` 一次性写进 data（拖完才写一次），
+ * 但可能连发（连续拖几条）且紧接着 `node_tree_render_end` 会做 md→data 的
+ * 反向同步——延后一拍让引擎先落地，再把最终几何写回 Markdown。
+ */
+export const RELATION_GEOMETRY_PERSIST_DELAY_MS = 200;
 export const VIEW_STATE_PERSIST_MS = 600;
 /**
  * 「声明为导图的文件自动切到导图视图」的**全量扫描防抖窗口**（毫秒）。

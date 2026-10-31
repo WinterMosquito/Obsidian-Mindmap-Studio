@@ -1,5 +1,4 @@
 import esbuild from 'esbuild';
-import process from 'process';
 import { builtinModules } from 'node:module';
 
 const banner = `/*
@@ -10,12 +9,24 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === 'production';
 
-const context = await esbuild.context({
+/**
+ * prod / dev 共用同一份配置（只差 sourcemap 与 minify），避免两条管线各改一半而漂移。
+ *
+ * `charset: 'utf8'`：esbuild 默认 `ascii`，会把 i18n 里的中文全部转成 `\uXXXX`
+ * ——转义后每个汉字占 6 字节，产物反而更大（约 +10 KB），dev 产物还会失去可读性
+ * （堆栈与断点里看到的不是源码而是转义）。Obsidian 以 UTF-8 读取 `main.js`，无需转义。
+ *
+ * `platform: 'browser'` 显式写出来（与默认值相同）：本插件跑在 Obsidian 的渲染进程，
+ * 这是「不要往 Node 侧解析」的声明；`external` 里的 `obsidian` / `electron` 与
+ * 内建模块由宿主提供，不打进包。
+ */
+const options = {
 	banner: {
 		js: banner,
 	},
 	entryPoints: ['src/main.ts'],
 	bundle: true,
+	platform: 'browser',
 	external: [
 		'obsidian',
 		'electron',
@@ -39,11 +50,14 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: 'main.js',
 	minify: prod,
-});
+	charset: 'utf8',
+};
 
 if (prod) {
-	await context.rebuild();
-	process.exit(0);
+	// 一次性构建：用 build() 而不是 context().rebuild() + process.exit(0)
+	// ——后者靠强制退出收尾（Windows 上偶发截断日志），也跳过了 dispose
+	await esbuild.build(options);
 } else {
+	const context = await esbuild.context(options);
 	await context.watch();
 }

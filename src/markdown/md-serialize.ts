@@ -641,7 +641,17 @@ export function composeNodeContent(data: MdNodeData, app: App | null): string {
 	const rest = readNodeDataString(data, 'text')
 		.split('\n')
 		.slice(1);
-	return [composeNodeFirstLine(data, app), ...rest].join('\n');
+	const body = [composeNodeFirstLine(data, app), ...rest].join('\n');
+	// 联系指令行（`domain/relation`）永远贴在节点末行：未编辑时已包含在 mdRaw 里，
+	// 编辑后由这里补回 —— 指令不进 text（否则显示、搜索、引擎编辑框都会被污染，
+	// 且只剥一半会让 rawOk 恒假，与任务 token 同一教训）。
+	const tail =
+		typeof data.mdDirectiveTail === 'string' ? data.mdDirectiveTail.trim() : '';
+	if (!tail) {
+		return body;
+	}
+	// 内容为空（空标题 / 空列表项）时留一个空内容行，指令因此落在独立的下一行
+	return body === '' ? `\n${tail}` : `${body}\n${tail}`;
 }
 
 /**

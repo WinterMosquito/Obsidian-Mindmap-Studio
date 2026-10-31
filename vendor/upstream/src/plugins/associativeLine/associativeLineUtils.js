@@ -295,13 +295,52 @@ export const getNodeLinePath = (startPoint, endPoint, node, toNode) => {
       }
     ]
   } else {
-    // 没有保存控制点则生成默认的
-    controlPoints = computeCubicBezierPathPoints(
-      startPoint.x,
-      startPoint.y,
-      endPoint.x,
-      endPoint.y
+    // 【自有补丁 15】控制点沿**锚点外法线**伸出。
+    //
+    // 原实现取"中心连线中点"作控制点：目标在侧后方时（如上下相邻、横向略有错位），
+    // 控制点会落进**源节点内部**，曲线于是从节点里绕出来（2026-10-30 实机采样：
+    // 一条边 21 个采样点有 11 个落在源节点框内，用户观感「线怎么从节点里出发」）。
+    // 改为各自沿所在边向外伸 k 像素——曲线恒先离开节点、再弯向目标，任何方向都成立。
+    //
+    // 本插件**不做自动选路**（2026-10-30 用户裁决）：线怎么走由用户在画布上依次点放
+    // 两个手柄决定，那些边存了 `associativeLineTargetControlOffsets`，走上面的分支。
+    // 这里只兜底「文件里没写 `geo=`」的边（例如用户手写的 `%%rel%%`）。
+    // 「绕行折点」(`associativeLinePoint[i].waypoint`) 随自动选路一并删除。
+    const dirVector = dir => {
+      switch (dir) {
+        case 'left':
+          return { x: -1, y: 0 }
+        case 'right':
+          return { x: 1, y: 0 }
+        case 'top':
+          return { x: 0, y: -1 }
+        case 'bottom':
+          return { x: 0, y: 1 }
+        default:
+          return { x: 1, y: 0 }
+      }
+    }
+    // 【自有补丁 15－b】控制点伸展取 clamp(d/4, 20, 40)（原 clamp(d/3, 24, 80)）：
+    // 跨度越大鼓包越大，同一张图里会同时出现"贴边小半圆"与"甩到天边的弹簧"
+    // （170px 跨距甩 57px、>240px 顶到 80px）。收窄后全程 20–40，短边也先探出节点。
+    const reachOf = distance => Math.min(40, Math.max(20, distance / 4))
+    const startVector = dirVector(startPoint.dir)
+    const endVector = dirVector(endPoint.dir)
+    const distance = Math.hypot(
+      endPoint.x - startPoint.x,
+      endPoint.y - startPoint.y
     )
+    const reach = reachOf(distance)
+    controlPoints = [
+      {
+        x: startPoint.x + startVector.x * reach,
+        y: startPoint.y + startVector.y * reach
+      },
+      {
+        x: endPoint.x + endVector.x * reach,
+        y: endPoint.y + endVector.y * reach
+      }
+    ]
   }
   // 根据控制点拼接贝塞尔曲线路径
   return {

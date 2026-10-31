@@ -247,6 +247,20 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 		expect(dark.lineColor).toBe('#4a4a4a');
 	});
 
+	it('联系（关系连线）取更轻的辅助线：同连线色、1.5px、4,4 虚线、12px 标签', () => {
+		// 关联线无避让（两点贝塞尔），故靠"更细 + 更密虚线 + 小字号"降低穿节点的视觉重量；
+		// 线是否画在节点之下由 opt（engine/mindmap.createMindMap）决定，不在主题里。
+		const light = configOf(false, 'default');
+		expect(light.associativeLineColor).toBe(light.lineColor);
+		expect(light.associativeLineWidth).toBe(1.5);
+		expect(light.associativeLineDasharray).toBe('4,4');
+		expect(light.associativeLineTextFontSize).toBe(12);
+		// 标签色跟随节点文字色（不用纯黑），亮暗各自成立
+		expect(light.associativeLineTextColor).toBe(tokenOf(light, 'node').color);
+		const dark = configOf(true, 'default');
+		expect(dark.associativeLineTextColor).toBe(tokenOf(dark, 'node').color);
+	});
+
 	it('六套配色都产出完整九键色板，且亮暗两档成对（root / line 不同）', () => {
 		for (const palette of PALETTE_IDS) {
 			const light = configOf(false, palette);

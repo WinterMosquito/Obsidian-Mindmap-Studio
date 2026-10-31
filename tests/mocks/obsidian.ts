@@ -195,6 +195,10 @@ export class FileView {
 }
 
 export class Menu {
+	/** 是否已被关闭（`ui/menu-submenu.showExclusiveMenu` 会关掉同宿主上一个菜单） */
+	hidden = false;
+	hideCallbacks: (() => unknown)[] = [];
+
 	addItem(_cb: unknown): Menu {
 		return this;
 	}
@@ -203,7 +207,19 @@ export class Menu {
 		return this;
 	}
 
-	showAtPosition(_pos: unknown): void {}
+	showAtPosition(_pos: unknown): Menu {
+		return this;
+	}
+
+	hide(): Menu {
+		this.hidden = true;
+		this.hideCallbacks.forEach((cb) => cb());
+		return this;
+	}
+
+	onHide(cb: () => unknown): void {
+		this.hideCallbacks.push(cb);
+	}
 }
 
 export class ButtonComponent {

@@ -402,6 +402,51 @@ export function applyRawNodeContent(
 	raw: string,
 	options: RawWriteOptions = {},
 ): void {
+	applyRawNodeContents(view, [{ node, raw }], options);
+}
+
+/**
+ * **批量**原文提交（多条一次性落地）。
+ *
+ * 为什么需要它：建立一条联系要改**两行**（源节点的 `%%rel%%` + 目标节点的
+ * `%%id%%`），逐条调用会让 5000 节点的图**渲染两遍**、存两遍、记两条历史。
+ * 本函数把「渲染 / 保存 / 历史」各收敛为一次；`afterCommit` 的语义与单项版一致。
+ *
+ * @param entries 要写入的节点与它的**新原文**（顺序即渲染前的应用顺序）
+ */
+export function applyRawNodeContents(
+	view: ViewNodeEditContext,
+	entries: readonly { node: MindMapNode; raw: string }[],
+	options: RawWriteOptions = {},
+): void {
+	if (entries.length === 0) {
+		return;
+	}
+	for (const { node, raw } of entries) {
+		applyEntry(view, node, raw);
+	}
+	view.mindMap?.render();
+	view.scheduleSave();
+	// 历史：本通道不走引擎命令，不显式记一条的话撤销会跳过这次编辑
+	//（快照序列里没有它，Ctrl+Z 直接回到更早的状态）
+	recordHistory(view.mindMap);
+	// K108：补齐引擎命令通道才会派发的后续编排（中心主题改名文件 /
+	// 编辑后自动拆分混排双链 / 节点计数）——必须在渲染与保存之后，
+	// 与引擎编辑框提交同序。任务勾选、联系建边等结构无关写入可关掉
+	//（见 RawWriteOptions）。
+	if (options.afterCommit !== false) {
+		for (const { node } of entries) {
+			view.notifyNodeContentCommitted(node);
+		}
+	}
+}
+
+/** 单项落地：解析写入 + 图片地址/尺寸校正 + 标记需要重排 */
+function applyEntry(
+	view: ViewNodeEditContext,
+	node: MindMapNode,
+	raw: string,
+): void {
 	const data = node.getData() as MdNodeData;
 	applyRawToNode(data, raw);
 	if (typeof data.image === 'string' && data.image) {
@@ -425,15 +470,4 @@ export function applyRawNodeContent(
 			});
 	}
 	markNodeNeedLayout(node);
-	view.mindMap?.render();
-	view.scheduleSave();
-	// 历史：本通道不走引擎命令，不显式记一条的话撤销会跳过这次编辑
-	//（快照序列里没有它，Ctrl+Z 直接回到更早的状态）
-	recordHistory(view.mindMap);
-	// K108：补齐引擎命令通道才会派发的后续编排（中心主题改名文件 /
-	// 编辑后自动拆分混排双链 / 节点计数）——必须在渲染与保存之后，
-	// 与引擎编辑框提交同序。任务勾选等结构无关写入可关掉（见 RawWriteOptions）
-	if (options.afterCommit !== false) {
-		view.notifyNodeContentCommitted(node);
-	}
 }

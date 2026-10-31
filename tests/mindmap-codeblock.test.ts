@@ -79,6 +79,8 @@ vi.mock('../vendor/simple-mind-map.cjs', () => {
 		KeyboardNavigation: class KeyboardNavigation {},
 		Search: class Search {},
 		Drag: class Drag {},
+		// 联系（关系连线）的渲染插件：两种模式都注册（只读态只绑渲染事件）
+		AssociativeLine: class AssociativeLine {},
 	};
 });
 
@@ -360,7 +362,7 @@ describe('跨文件契约', () => {
 		expect(CODE_BLOCK_LANGUAGE).toBe('mindmap');
 	});
 
-	it('只读嵌入：opt.readonly 为真且不注册任何交互插件', () => {
+	it('只读嵌入：opt.readonly 为真且只注册「只画线」的关联线插件', () => {
 		vendor.instances.length = 0;
 
 		createMindMap({} as HTMLElement, { data: { text: '根' }, children: [] }, {
@@ -377,8 +379,9 @@ describe('跨文件契约', () => {
 
 		const [instance] = vendor.instances;
 		expect(instance?.options.readonly).toBe(true);
-		// 空数组 = 连 Drag 都没注册（readonly 下 enableDrag 也不该生效）
-		expect(instance?.added).toEqual([]);
+		// 只注册 AssociativeLine（联系/关系连线要能看见）；它的交互副作用由
+		// vendor 补丁 13 在只读态整段跳过 ⇒ 不会抢宿主按键。Drag 仍然不注册。
+		expect(instance?.added).toEqual(['AssociativeLine']);
 	});
 
 	it('可编辑视图（缺省）：交互插件照旧注册（回归护栏）', () => {
@@ -404,6 +407,8 @@ describe('跨文件契约', () => {
 			'DoExport',
 			'Search',
 			'Drag',
+			// 联系（关系连线）的渲染插件：两种模式都注册，位置在交互插件之后
+			'AssociativeLine',
 		]);
 	});
 

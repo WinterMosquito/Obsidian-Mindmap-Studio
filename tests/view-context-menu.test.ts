@@ -33,12 +33,15 @@ interface MenuItemStub {
 	/** 勾选态（外观选项用 setChecked 表达「当前生效值」） */
 	checked: boolean | null;
 	isLabel: boolean;
+	/** 置灰态（悬空联系 / 中心主题的「联系」入口用 setDisabled） */
+	disabled: boolean;
 	/** 原生级联：运行时 `setSubmenu()` 返回的子菜单（未启用该能力时无此方法） */
 	nativeSubmenu?: unknown;
 	setTitle(title: string): MenuItemStub;
 	setIcon(icon: string): MenuItemStub;
 	setChecked(checked: boolean | null): MenuItemStub;
 	setIsLabel(isLabel: boolean): MenuItemStub;
+	setDisabled(disabled: boolean): MenuItemStub;
 	onClick(cb: (evt?: MouseEvent) => void): MenuItemStub;
 	setSubmenu?: () => unknown;
 }
@@ -70,6 +73,7 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 				click: null,
 				checked: null,
 				isLabel: false,
+				disabled: false,
 				setTitle(title) {
 					this.title = title;
 					return this;
@@ -84,6 +88,10 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 				},
 				setIsLabel(isLabel) {
 					this.isLabel = isLabel;
+					return this;
+				},
+				setDisabled(disabled) {
+					this.disabled = disabled;
 					return this;
 				},
 				onClick(cb2) {
@@ -109,8 +117,24 @@ const { FakeMenu, ENGINE } = vi.hoisted(() => {
 			return this;
 		}
 
-		showAtPosition(pos: { x: number; y: number }): void {
+		/** 是否已被宿主关闭（`showExclusiveMenu` 会关掉同宿主上一个菜单，K155） */
+		hidden = false;
+		hideCallbacks: (() => unknown)[] = [];
+
+		showAtPosition(pos: { x: number; y: number }): this {
 			this.shownAt = pos;
+			this.shownSeq = ++FakeMenuClass.seq;
+			return this;
+		}
+
+		hide(): this {
+			this.hidden = true;
+			this.hideCallbacks.forEach((cb) => cb());
+			return this;
+		}
+
+		onHide(cb: () => unknown): void {
+			this.hideCallbacks.push(cb);
 		}
 
 		/** 级联菜单的官方入口：把子菜单弹在触发事件的光标处 */
@@ -284,6 +308,16 @@ vi.mock('../src/features/view-toolbar', () => ({
 	arrangeMindMap: arrangeMindMapMock,
 }));
 
+// 联系（关系连线）：节点菜单只剩一个「联系」直落条目。点选模式本体（pending /
+// Esc / 点目标建边）由 tests/view-node-relation.test.ts 覆盖，本文件只验证「点了谁」。
+const startRelationPickingMock = vi.hoisted(() =>
+	vi.fn<(view: unknown, node: unknown) => void>(),
+);
+
+vi.mock('../src/features/view-node-relation', () => ({
+	startRelationPicking: startRelationPickingMock,
+}));
+
 // 小地图：节点配色改完必须走「立即画」通道（否则缩略图要等 30s 节拍）
 const minimapMocks = vi.hoisted(() => ({
 	refreshMiniMapAfterRender: vi.fn<(view: unknown) => void>(),
@@ -313,7 +347,10 @@ function makeEngineBinder() {
 		},
 		onDom(target: unknown, event: string, listener: (event: unknown) => void): void {
 			domListeners.set(event, listener);
-			domTargets.push(target);
+			// 同一元素上绑多个事件时只记一次（断言的是「挂在哪个元素上」）
+			if (!domTargets.includes(target)) {
+				domTargets.push(target);
+			}
 		},
 		fireEngine(event: string, ...args: unknown[]): void {
 			engineListeners.get(event)?.(...args);
@@ -485,6 +522,45 @@ describe('setupContextMenu（注册）', () => {
 	});
 });
 
+/**
+ * 独占菜单（K155）：引擎在节点上 `stopPropagation` 了 `mousedown` / `contextmenu`，
+ * 宿主那套「点别处即关闭」收不到事件 ⇒ 旧菜单会一直挂在屏幕上与新菜单重叠
+ * （2026-10-31 实机：两次右键 = 两个一模一样的菜单）。收场由插件负责。
+ */
+describe('独占菜单：同一时刻只有一个', () => {
+	/** 右键事件桩（菜单只看坐标与 button） */
+	function clickEvent() {
+		return { clientX: 12, clientY: 34, button: 2 };
+	}
+
+	it('连续右键两个节点：前一个菜单被关闭，不会叠在屏上', () => {
+		const { view, binder } = makeView();
+		setupContextMenu(view);
+		const a = fakeNode({ text: 'A' });
+		const b = fakeNode({ text: 'B' });
+
+		binder.fireEngine('node_contextmenu', clickEvent(), a);
+		const first = lastMenu();
+		binder.fireEngine('node_contextmenu', clickEvent(), b);
+		const second = lastMenu();
+
+		expect(second).not.toBe(first);
+		expect(first.hidden).toBe(true);
+		expect(second.hidden).toBe(false);
+	});
+
+	it('画布上按下（左键选中 / 拖节点）收起已弹出的菜单', () => {
+		const { view, binder } = makeView();
+		setupContextMenu(view);
+		binder.fireEngine('node_contextmenu', clickEvent(), fakeNode({ text: 'A' }));
+		const menu = lastMenu();
+
+		binder.fireDom('pointerdown', {});
+
+		expect(menu.hidden).toBe(true);
+	});
+});
+
 describe('链接类动作（对齐 Obsidian 阅读视图的链接右键）', () => {
 	const writeText = vi.fn<(text: string) => Promise<void>>(() =>
 		Promise.resolve(),
@@ -597,10 +673,15 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		imageBlock: [zh('menu.viewImageFullscreen'), zh('menu.removeImage')],
 		removeText: [zh('menu.removeText')],
 		/**
-		 * 节点菜单末尾一段：视图级外观（布局 / 配色，与空白右键同一份）→ 删除节点。
-		 * 顺序敏感：外观在删除**之前**，删除恒为最后一项。
+		 * 节点菜单末尾一段：联系（关系连线，**直落条目 / 独立一组**）→ 视图级外观
+		 * （布局 / 配色，与空白右键同一份）→ 删除节点。顺序敏感：外观在删除**之前**，
+		 * 删除恒为最后一项；「联系」在根节点也出现（置灰），故各形态的序列都含它。
+		 *
+		 * 2026-10-30 用户裁决：「联系」不再套二级菜单、也不与布局 / 配色同组——
+		 * 它是结构编辑，那两项是视图级外观。
 		 */
 		tail: [
+			zh('nodeRelation.add'),
 			zh('toolbar.layout'),
 			zh('toolbar.palette'),
 			zh('menu.deleteNode'),
@@ -803,11 +884,11 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		},
 	);
 
-	it('双通道节点：分离器恒为 5 条（链接/图片块只增条目、不改分组；外观与删除各占一段）', () => {
+	it('双通道节点：分离器恒为 6 条（条目增减不改分组；联系 / 外观 / 删除各占一段）', () => {
 		const { menu } = openNodeMenu(
 			fakeNode({ mdWikiLinkpath: '[[笔记]]', image: 'app://x.png', text: '图' }),
 		);
-		expect(menu.separators).toBe(5);
+		expect(menu.separators).toBe(6);
 	});
 
 	it('右键先激活节点（引擎无 ACTIVE_NODE 命令），并按指针坐标定位菜单', () => {
@@ -879,6 +960,30 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		expect(pasteClipboardIntoNodeMock).toHaveBeenCalledWith(view, node);
 		menu.click(zh('menu.deleteNode'));
 		expect(deleteActiveNodeMock).toHaveBeenCalledWith(view);
+	});
+
+	it('「联系」直落：点击即进入点选（不是二级菜单父项）', () => {
+		// 开启「宿主支持原生级联」：级联父项在该模式下**没有 onClick**，
+		// 而直落条目必须有——这正是「不需要二级菜单」的可测判据
+		FakeMenu.supportSubmenu = true;
+		const node = fakeNode({ text: '甲' });
+		const { menu, view } = openNodeMenu(node);
+		const item = menu.item(zh('nodeRelation.add'));
+
+		expect(item.click, '直落条目自带点击').not.toBeNull();
+		expect(item.nativeSubmenu, '不挂子菜单').toBeUndefined();
+		expect(item.icon).toBe('git-branch');
+		menu.click(zh('nodeRelation.add'));
+		expect(startRelationPickingMock).toHaveBeenCalledWith(view, node);
+	});
+
+	it('中心主题：「联系」置灰且无点击（虚拟根没有正文行）', () => {
+		const root = { ...fakeNode({ text: '我的导图.md' }), isRoot: true };
+		const { menu } = openNodeMenu(root);
+		const item = menu.item(zh('nodeRelation.add'));
+
+		expect(item.disabled).toBe(true);
+		expect(item.click).toBeNull();
 	});
 
 	it('上移/下移：委托 view-node-actions 并显式携带该节点（根/首尾拒绝在动作内）', () => {
@@ -1402,6 +1507,27 @@ describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
 		applyNodeColor(view, [node], '#89cff0');
 		expect(applyRawNodeContentMock).not.toHaveBeenCalled();
 		expect(minimapMocks.refreshMiniMapAfterRender).not.toHaveBeenCalled();
+	});
+
+	it('节点带联系指令行：颜色只落内容行，指令行原样贴回', () => {
+		// 指令行整行只由 `%%rel%%` 组成（fail-closed）：把 `%%#hex%%` 接到它后面
+		// 会让整行不再是指令行 ⇒ 该节点的关系全部消失。
+		const view = makeColorView();
+		const tail = '%%rel:7f3a11 | 依赖%%';
+		const node = colorNode({
+			text: '支付',
+			mdRaw: `支付\n${tail}`,
+			mdDerivedText: '支付',
+			mdDirectiveTail: tail,
+		});
+
+		applyNodeColor(view, [node], '#89cff0');
+
+		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+			view,
+			node,
+			`支付 %%#89cff0%%\n${tail}`,
+		);
 	});
 
 	it('只选中根节点：根没有正文行，不改也不刷', () => {

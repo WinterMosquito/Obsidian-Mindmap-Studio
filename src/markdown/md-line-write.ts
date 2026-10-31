@@ -22,6 +22,7 @@ import {
 	PLAIN_IMAGE_FIELDS,
 } from './md-outline';
 import { parseTaskPrefix, stripTaskPrefix } from '../domain/md-task';
+import { isDirectiveLine } from '../domain/relation';
 import type { MdNodeData } from '../core/node-data';
 
 /**
@@ -39,6 +40,8 @@ const REBUILT_FIELDS = [
 	// 任务前缀由新原文重新判定：行里删掉 `[ ]` 后不能残留旧状态
 	'mdTask',
 	'mdTaskToken',
+	// 联系指令行同样由新原文重新判定（用户可能删掉/改写它）
+	'mdDirectiveTail',
 ] as const;
 
 /**
@@ -49,10 +52,19 @@ const REBUILT_FIELDS = [
  * （含续行），序列化时按树深度补续行缩进。续行行首空白按解析侧口径 `trimStart`
  * ——缩进由序列化器补，留两份会写出双缩进。
  *
+ * 末尾的**联系指令行**（`domain/relation.isDirectiveLine`）不进 `text`：它们只落
+ * `mdDirectiveTail`，与 `mdRaw` 一起构成「逐字回写 + 指令可改」的两份数据。剥不干净
+ * 会让 `text` 与 `mdDerivedText` 口径不一致（`rawOk` 恒假 ⇒ 整篇节点被合成回写）。
+ *
  * 结构字段（`mdType` / `mdLevel`）不动：行类型与层级由树决定，不因改文本而变化。
  */
 export function applyRawToNode(data: MdNodeData, raw: string): void {
 	const lines = raw.split('\n');
+	// 尾部指令行的起点（切在解析首行之前：`tailStart` 之后就是 tail 原文）
+	let tailStart = lines.length;
+	while (tailStart > 1 && isDirectiveLine(lines[tailStart - 1]!)) {
+		tailStart -= 1;
+	}
 	const firstLine = lines[0] ?? '';
 	const parsed = buildInlineData(firstLine);
 	const task = data.mdType === 'list' ? parseTaskPrefix(firstLine) : null;
@@ -64,11 +76,22 @@ export function applyRawToNode(data: MdNodeData, raw: string): void {
 		data.mdTask = task.state;
 		data.mdTaskToken = task.token;
 	}
-	const rest = lines.slice(1).map((line) => line.trimStart());
+	// 续行按 trimStart 归一（行首缩进由序列化器按树深度补）；含指令行——
+	// mdRaw 要留**全部**行，text 只吃内容行
+	const restLines = lines.slice(1).map((line) => line.trimStart());
+	const contentLines = restLines.slice(0, tailStart - 1);
 	// 任务 token 只在 mdRaw（逐字回写依据）里保留；显示文本与派生文本一起剥
 	const firstText = task ? stripTaskPrefix(parsed.text) : parsed.text;
-	const text = rest.length > 0 ? [firstText, ...rest].join('\n') : firstText;
+	const text =
+		contentLines.length > 0 ? [firstText, ...contentLines].join('\n') : firstText;
 	data.text = text;
 	data.mdDerivedText = text;
-	data.mdRaw = [firstLine, ...rest].join('\n');
+	data.mdRaw = [firstLine, ...restLines].join('\n');
+	const tails = [
+		parsed.mdDirectiveTail ?? '',
+		...lines.slice(tailStart).map((line) => line.trim()),
+	].filter(Boolean);
+	if (tails.length > 0) {
+		data.mdDirectiveTail = tails.join('\n');
+	}
 }
