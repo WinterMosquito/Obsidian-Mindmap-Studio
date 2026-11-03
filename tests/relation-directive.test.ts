@@ -14,16 +14,20 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-	applyDirectiveLine,
+	applyDirectiveBlock,
 	isDirectiveLine,
-	normalizeRelationId,
-	relationStateOf,
-	relationStateOfSource,
-	renderDirectiveLine,
-	resolveRelationGraph,
+	renderDirectiveBlock,
 	splitDirectiveTail,
 	stripDirectiveTail,
 	stripTrailingSegments,
+} from '../src/domain/directive';
+import {
+	normalizeRelationId,
+	relationSegmentsOf,
+	relationStateOf,
+	relationStateOfSource,
+	resolveRelationGraph,
+	type RelationState,
 } from '../src/domain/relation';
 import { parseMdOutline } from '../src/markdown/md-outline';
 import { serializeMdBody } from '../src/markdown/md-serialize';
@@ -35,6 +39,16 @@ function rawData(text: string, mdRaw = text): MdNodeData {
 	return { text, mdDerivedText: text, mdRaw };
 }
 
+/**
+ * 写侧口径：状态 → 关系侧的段 → 块。
+ *
+ * 与生产代码 `view-node-relation.rawWithState` **同一组合**——不再单独提供
+ * 「关系块渲染器」（那会是第二份写侧入口：它不认识同节点上的 `sum` 段，
+ * 一经调用就把概要抹掉）。块内顺序与拼接由 `domain/directive` 统一。
+ */
+const relationBlock = (state: RelationState): string =>
+	renderDirectiveBlock(relationSegmentsOf(state));
+
 describe('指令语法', () => {
 	it('id 归一：trim + 小写，长度/字符集不符即非法', () => {
 		expect(normalizeRelationId(' 7F3A11 ')).toBe('7f3a11');
@@ -45,21 +59,27 @@ describe('指令语法', () => {
 		expect(normalizeRelationId('')).toBeNull();
 	});
 
-	it('isDirectiveLine：整行只由合法指令段组成才算', () => {
+	it('isDirectiveLine：整行只由**已登记 key** 的指令段组成才算', () => {
 		expect(isDirectiveLine('%%id:7f3a11%%')).toBe(true);
 		expect(isDirectiveLine('  %%id:7f3a11%%  %%rel:9c2e22 | 依赖%%  ')).toBe(true);
 		expect(isDirectiveLine('%%rel:9c2e22%%')).toBe(true);
-		// 混入非指令文本 / 非法段 → 整行不算（fail-closed）
+		// 混入非指令文本 / 未登记 key / 非法段形状 → 整行不算（fail-closed）
 		expect(isDirectiveLine('标题 %%id:7f3a11%%')).toBe(false);
 		expect(isDirectiveLine('%%备注%%')).toBe(false);
-		expect(isDirectiveLine('%%id:7f3%%')).toBe(false);
 		expect(isDirectiveLine('%%id:7f3a11%% 后文')).toBe(false);
 		expect(isDirectiveLine('')).toBe(false);
 		expect(isDirectiveLine('%%id:7f3a11%% %%bad%%')).toBe(false);
+		// **值**的合法性不参与行判定（2026-11-02，语法收进 domain/directive）：
+		// 写错的 value 只是「这一段的语义没人认领」，整行仍是指令行——否则用户
+		// 的笔误会在画布上冒出一个空节点；普通注释（未登记 key）仍按注释处理
+		expect(isDirectiveLine('%%id:7f3%%')).toBe(true);
+		expect(isDirectiveLine('%%rel:7f3a11 | [[笔记]]%%')).toBe(true);
+		expect(relationStateOfSource('子\n%%id:7f3%%').id).toBeNull();
 	});
 
 	it('标签不允许 `[[` / `]]` / `%%`（注释体不是行内 token 保护区）', () => {
-		expect(isDirectiveLine('%%rel:7f3a11 | [[笔记]]%%')).toBe(false);
+		// 行仍是指令行（见上一条），但**这条边被丢弃**：坏标签不能让整行退化成正文
+		expect(relationStateOfSource('子\n%%rel:7f3a11 | [[笔记]]%%').refs).toEqual([]);
 		expect(isDirectiveLine('%%rel:7f3a11 | a%%b%%')).toBe(false);
 		// 首个 `|` 之后整段都是标签，`|` 本身允许
 		expect(relationStateOfSource('子\n%%rel:7f3a11 | a|b%%').refs[0]).toEqual({
@@ -101,7 +121,7 @@ describe('几何（拖动端点 / 控制点后的持久化）', () => {
 		expect(state.refs[0]?.label).toBe('依赖');
 		expect(state.refs[0]?.geo).toEqual(geo);
 		// 写回去必须逐字相同（幂等，避免每次保存都改文件）
-		expect(renderDirectiveLine(state)).toBe(tail);
+		expect(relationBlock(state)).toBe(tail);
 	});
 
 	it('没有 geo 段时不产生几何（走引擎自动计算）', () => {
@@ -140,7 +160,7 @@ describe('几何（拖动端点 / 控制点后的持久化）', () => {
 		const state = relationStateOfSource(
 			'源\n%%rel:7f3a11 | 依赖 | geo=right,1.4,left,-2.6,0,0,0,0%%',
 		);
-		expect(renderDirectiveLine(state)).toBe(
+		expect(relationBlock(state)).toBe(
 			'%%rel:7f3a11 | 依赖 | geo=right,1,left,-3,0,0,0,0%%',
 		);
 	});
@@ -153,9 +173,9 @@ describe('几何（拖动端点 / 控制点后的持久化）', () => {
 
 	it('改写后几何保留（改标签不影响几何）', () => {
 		const raw = '源\n%%rel:7f3a11 | 依赖 | geo=right,0,left,8,12,0,-30,-12%%';
-		const next = applyDirectiveLine(
+		const next = applyDirectiveBlock(
 			raw,
-			renderDirectiveLine({
+			relationSegmentsOf({
 				id: null,
 				refs: [{ target: '7f3a11', label: '强依赖', geo }],
 			}),
@@ -172,7 +192,7 @@ describe('线色（`color=` 段）', () => {
 		const state = relationStateOfSource(`源\n${tail}`);
 		expect(state.refs[0]?.label).toBe('依赖');
 		expect(state.refs[0]?.color).toBe('#4a90d9');
-		expect(renderDirectiveLine(state)).toBe(
+		expect(relationBlock(state)).toBe(
 			'%%rel:7f3a11 | 依赖 | color=#4a90d9%%',
 		);
 	});
@@ -188,7 +208,7 @@ describe('线色（`color=` 段）', () => {
 		const b = relationStateOfSource(`源\n%%rel:7f3a11 | 依赖 | color=#ff0000 | ${geo}%%`);
 		expect(a.refs[0]?.geo).toEqual(b.refs[0]?.geo);
 		expect(a.refs[0]?.color).toBe('#ff0000');
-		expect(renderDirectiveLine(a)).toBe(
+		expect(relationBlock(a)).toBe(
 			`%%rel:7f3a11 | 依赖 | ${geo} | color=#ff0000%%`,
 		);
 	});
@@ -259,18 +279,50 @@ describe('状态读取', () => {
 		});
 	});
 
-	it('renderDirectiveLine：顺序固定 id → rel，空状态为空串', () => {
-		expect(renderDirectiveLine({ id: '7f3a11', refs: [] })).toBe('%%id:7f3a11%%');
+	it('写侧：顺序固定 id → rel，且**一段一行**', () => {
+		expect(relationBlock({ id: '7f3a11', refs: [] })).toBe('%%id:7f3a11%%');
 		expect(
-			renderDirectiveLine({
+			relationBlock({
 				id: '7f3a11',
 				refs: [
 					{ target: '9c2e22', label: '依赖' },
 					{ target: 'bbbbbb', label: '' },
 				],
 			}),
-		).toBe('%%id:7f3a11%% %%rel:9c2e22 | 依赖%% %%rel:bbbbbb%%');
-		expect(renderDirectiveLine({ id: null, refs: [] })).toBe('');
+		).toBe('%%id:7f3a11%%\n%%rel:9c2e22 | 依赖%%\n%%rel:bbbbbb%%');
+		expect(relationBlock({ id: null, refs: [] })).toBe('');
+	});
+
+	it('一段一行：多条出边各自成行，读回等价且与旧的一行多段形态互认', () => {
+		const state = {
+			id: '7f3a11',
+			refs: [
+				{ target: '9c2e22', label: '依赖' },
+				{ target: 'bbbbbb', label: '' },
+			],
+		};
+		const block = relationBlock(state);
+		// 写出的块自己能读回（幂等）
+		expect(relationStateOfSource(`子\n${block}`)).toEqual(state);
+		// 旧形态（同段用空格分隔）仍照读：存量文件、手写、粘贴片段
+		expect(
+			relationStateOfSource(
+				'子\n%%id:7f3a11%% %%rel:9c2e22 | 依赖%% %%rel:bbbbbb%%',
+			),
+		).toEqual(state);
+	});
+
+	it('一段一行：列表项的每条指令各自按续行缩进（序列化不留裸行）', () => {
+		// 用户手写 / 旧写法：指令行不带缩进，写回时由序列化器按列表续行缩进补齐
+		const md = '- 甲\n%%rel:aaaa11%%\n%%rel:bbbb22 | 依赖%%';
+		const { tree } = parseMdOutline(md, 'root');
+		expect(tree.children).toHaveLength(1);
+		expect(tree.children[0]!.data?.mdDirectiveTail).toBe(
+			'%%rel:aaaa11%%\n%%rel:bbbb22 | 依赖%%',
+		);
+		expect(serializeMdBody(tree, null)).toBe(
+			'- 甲\n  %%rel:aaaa11%%\n  %%rel:bbbb22 | 依赖%%',
+		);
 	});
 });
 
@@ -300,17 +352,22 @@ describe('指令改写', () => {
 		});
 	});
 
-	it('applyDirectiveLine：替换尾段；空指令等于清除', () => {
-		expect(applyDirectiveLine('子', '%%id:7f3a11%%')).toBe('子\n%%id:7f3a11%%');
-		expect(applyDirectiveLine('子\n%%id:7f3a11%%', '%%id:9c2e22%%')).toBe(
+	it('applyDirectiveBlock：替换尾段；空段集合等于清除', () => {
+		const id = (value: string) => [
+			{ key: 'id' as const, value, raw: `%%id:${value}%%` },
+		];
+		expect(applyDirectiveBlock('子', id('7f3a11'))).toBe('子\n%%id:7f3a11%%');
+		expect(applyDirectiveBlock('子\n%%id:7f3a11%%', id('9c2e22'))).toBe(
 			'子\n%%id:9c2e22%%',
 		);
-		expect(applyDirectiveLine('子\n%%id:7f3a11%%', '')).toBe('子');
+		expect(applyDirectiveBlock('子\n%%id:7f3a11%%', [])).toBe('子');
 	});
 
-	it('applyDirectiveLine：内容为空时保留空内容行（指令不得变成节点正文）', () => {
+	it('applyDirectiveBlock：内容为空时保留空内容行（指令不得变成节点正文）', () => {
 		// 空标题 / 空列表项：写成单行会让 `%%id:…%%` 直接显示在节点上
-		const raw = applyDirectiveLine('', '%%id:7f3a11%%');
+		const raw = applyDirectiveBlock('', [
+			{ key: 'id', value: '7f3a11', raw: '%%id:7f3a11%%' },
+		]);
 		expect(raw).toBe('\n%%id:7f3a11%%');
 		expect(relationStateOfSource(raw)).toEqual({ id: '7f3a11', refs: [] });
 		expect(stripDirectiveTail(raw)).toBe('');

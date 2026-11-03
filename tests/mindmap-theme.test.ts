@@ -421,3 +421,29 @@ describe('getThemeConfig（自定义整篇配色：一个十六进制 → 五档
 		expect(paletteNodeColor('mint')).toBe(PALETTES.mint.light.rootFill);
 	});
 });
+
+/**
+ * 概要括号的起笔留白（`generalizationLineMargin`）。
+ *
+ * 为什么锁死：引擎默认 0 —— 括号线紧贴被覆盖节点的右缘，而「＋」展开按钮也挂在
+ * 那里、垂直居中，线的凸起方向正好穿过按钮（2026-11-03 实机：想展开子节点时
+ * 点到线）。这不是可调偏好，而是「线必须从按钮外侧起笔」的硬要求，故按数值下限
+ * 断言，改小了会直接红灯。
+ */
+describe('generalizationLineMargin（概要括号不与「＋」按钮抢位）', () => {
+	it('各配色 / 明暗下都留出正留白，且不小于展开按钮的半径量级', () => {
+		for (const isDark of [false, true]) {
+			for (const palette of ['default', 'mint', '#89cff0']) {
+				const margin = getThemeConfig(
+					isDark,
+					'logicalStructure',
+					'curve',
+					'default',
+					palette,
+				).generalizationLineMargin;
+				expect(typeof margin, `${isDark}/${palette}`).toBe('number');
+				expect(margin as number, `${isDark}/${palette}`).toBeGreaterThanOrEqual(8);
+			}
+		}
+	});
+});

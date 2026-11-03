@@ -12,7 +12,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TFile } from 'obsidian';
 import type { App } from 'obsidian';
-import { declareAndOpenAsMindMap, openAsMarkdown } from '../src/markdown/md-open';
+import { CORE_VIEW_TYPE, VIEW_TYPE } from '../src/core/constants';
+import {
+	declareAndOpenAsMindMap,
+	openAsMarkdown,
+	openAsMindMap,
+} from '../src/markdown/md-open';
 
 /**
  * 轻量 app 桩：processFrontMatter 调回调并落盘。
@@ -191,5 +196,122 @@ describe('「以 Markdown 打开」→ 降级声明（键名与语言无关）',
 		const { app, writes } = makeApp({ Type: 'Mindmap' });
 		await openAsMarkdown(app, leafStub().leaf as never, file, 'source', 'zh');
 		expect(writes[0]).toEqual({ Type: 'Mindmap', Mindmap: 'Markdown' });
+	});
+});
+
+/**
+ * 切换期间的源视图遮罩（`openAsMindMap`）。
+ *
+ * 为什么需要：Obsidian 打开文件**先**建 markdown 视图并渲染，之后才走到
+ * `setViewState`；启动恢复时叶子逐批恢复，中间能隔数百毫秒 ⇒ 用户看到
+ * 「先闪一屏 Markdown 原文，再变成导图」（2026-11-03 实机反馈）。
+ * 遮罩必须**成败都摘**：失败时留着 = 该 leaf 永久空白。
+ */
+describe('openAsMindMap：切换期间的遮罩与并发去重', () => {
+	interface HostStub {
+		classes: Set<string>;
+		addClass: (cls: string) => void;
+		removeClass: (cls: string) => void;
+	}
+
+	function hostStub(): HostStub {
+		const classes = new Set<string>();
+		return {
+			classes,
+			addClass: (cls: string) => void classes.add(cls),
+			removeClass: (cls: string) => void classes.delete(cls),
+		};
+	}
+
+	function leafWithHost(
+		host: HostStub,
+		impl: () => Promise<void> = async () => undefined,
+	) {
+		const setViewState = vi.fn(impl);
+		const leaf = {
+			view: {
+				getViewType: () => CORE_VIEW_TYPE.MARKDOWN,
+				// 非 MarkdownView 实例 ⇒ 记录的返回模式回落 source，不影响本套用例
+				containerEl: { parentElement: host },
+			},
+			setViewState,
+		};
+		return { leaf, setViewState };
+	}
+
+	it('切换成功：切换期间带遮罩类，落定后摘掉', async () => {
+		const host = hostStub();
+		const seen: boolean[] = [];
+		const { leaf } = leafWithHost(host, async () => {
+			seen.push(host.classes.has('mindmap-view-switching'));
+		});
+
+		await openAsMindMap(leaf as never, file);
+
+		expect(seen, 'setViewState 执行时必须在遮罩里').toEqual([true]);
+		expect(host.classes.has('mindmap-view-switching'), '结束后必须摘').toBe(
+			false,
+		);
+	});
+
+	it('切换失败（叶子已被替换）：同样摘掉遮罩，不把 leaf 留成空白', async () => {
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const host = hostStub();
+		const { leaf } = leafWithHost(host, async () => {
+			throw new Error('leaf detached');
+		});
+
+		await expect(openAsMindMap(leaf as never, file)).resolves.toBeUndefined();
+		expect(host.classes.has('mindmap-view-switching')).toBe(false);
+		errorSpy.mockRestore();
+	});
+
+	it('并发触发（active-leaf-change 与 file-open 同时命中）：只真正切一次', async () => {
+		const host = hostStub();
+		const { leaf, setViewState } = leafWithHost(host);
+
+		await Promise.all([
+			openAsMindMap(leaf as never, file),
+			openAsMindMap(leaf as never, file),
+		]);
+
+		expect(setViewState, '重复切换会让画面再闪一次').toHaveBeenCalledTimes(1);
+	});
+
+	it('切换挂起（setViewState 永不 settle）：超时后允许重试，不让 leaf 永久卡死', async () => {
+		vi.useFakeTimers();
+		const host = hostStub();
+		let calls = 0;
+		const { leaf, setViewState } = leafWithHost(host, () => {
+			calls += 1;
+			// 第一次永不完成（模拟视图系统中间态），第二次正常
+			return calls === 1 ? new Promise<void>(() => undefined) : Promise.resolve();
+		});
+
+		void openAsMindMap(leaf as never, file);
+		expect(setViewState).toHaveBeenCalledTimes(1);
+
+		// 超时窗口内：仍复用在途切换，不重复发 setViewState
+		void openAsMindMap(leaf as never, file);
+		expect(setViewState).toHaveBeenCalledTimes(1);
+
+		vi.advanceTimersByTime(3000);
+		await openAsMindMap(leaf as never, file);
+		expect(setViewState, '超时后必须能重试').toHaveBeenCalledTimes(2);
+		vi.useRealTimers();
+	});
+
+	it('已经在导图视图：直接返回，不重复切换', async () => {
+		const host = hostStub();
+		const setViewState = vi.fn(async () => undefined);
+		const leaf = {
+			view: { getViewType: () => VIEW_TYPE, containerEl: { parentElement: host } },
+			setViewState,
+		};
+
+		await openAsMindMap(leaf as never, file);
+
+		expect(setViewState).not.toHaveBeenCalled();
+		expect(host.classes.has('mindmap-view-switching')).toBe(false);
 	});
 });

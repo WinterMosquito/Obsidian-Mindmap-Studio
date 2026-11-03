@@ -38,6 +38,101 @@ export function recordHistory(mindMap: MindMap | null | undefined): void {
 }
 
 /**
+ * 播种**初始快照**：让撤销链的第 0 步是「打开这一刻的样子」。
+ *
+ * ## 为什么必须有
+ * 引擎的历史在创建后是**空的**，`addHistory` 只在命令收尾被调用（见
+ * `recordHistory` 的说明）⇒ 第一条快照永远是**第一次改动之后**的状态。
+ * 于是：
+ * - `Ctrl+Z` 要求 `activeHistoryIndex - 1 >= 0`，index 停在 0 ⇒ **本次会话的
+ *   第一次编辑完全撤不掉**（2026-11-02 实机：勾选复选框、内联改字均无反应）；
+ * - 即便后续有快照，也永远**回不到打开时的原样**（只能退到「第一次被记录的
+ *   那个状态」）。
+ *
+ * ## 为什么用 `originAddHistory`
+ * 引擎把 `addHistory` 用 `addHistoryTime`（100ms）**防抖包装**过（`recordHistory`
+ * 正是靠这层合并连续勾选）；播种必须**立刻**生效——否则用户在 100ms 内编辑，
+ * 这次 addHistory 会与编辑那次合并成一条，第 0 步又变成「编辑后」。
+ * `originAddHistory` 是包装前绑定的原函数（vendor `Command.recovery` 同源）。
+ *
+ * ## 时机与副作用
+ * 由 `createMindMap` 挂在**一次性**的 `node_tree_render_end` 上（渲染结束即摘，
+ * 见该处调用点）：创建瞬间的树还没被引擎规范化（`expand` 等字段渲染期才补），
+ * 此刻播种会与渲染后那条快照内容不同 ⇒ 多出一条「按 Ctrl+Z 毫无反应」的历史
+ * （2026-11-02 实测：打开后 `2 条 / idx 1`，第一次撤销只翻了个看不见的字段）。
+ *
+ * 播种时**插件的监听已经绑好**（`engine-controller.renderMindMap` 在
+ * `createMindMap` 返回后同步绑 `data_change`，而首帧渲染排在 `setTimeout(0)`
+ * ⇒ 播种必在其后），故 `addHistory` 发出的 `data_change` 会正常走一遍视图编排：
+ * `onRootDataChanged`（排一次自动保存 + 标题改名调度）与 `onDataChanged`
+ * （自动拆链检查 + 联系线几何写回）。三者实测都无事发生——保存被「纯浏览守卫」
+ * 跳过（正文与加载基线逐字相同，2026-11-02 实机：打开 4 s 后 mtime 未变）、
+ * 根节点文本本就等于文件名、拆链候选集为空——但**别据此以为播种是静默的**：
+ * 它是这条链路上唯一一次「只读打开却派发 data_change」的事件。
+ *
+ * 只读嵌入不播种（引擎对 readonly 本就早退，且它没有撤销入口）。
+ */
+export function seedInitialHistory(mindMap: MindMap | null | undefined): void {
+	const command = (
+		mindMap as unknown as
+			| { command?: { originAddHistory?: () => void; addHistory?: () => void } }
+			| null
+			| undefined
+	)?.command;
+	// 优先非防抖原函数；旧版/裁剪构建缺失时退回普通入口（仍是「编辑前」的
+	// 快照，只是可能被随后的编辑合并掉）
+	const seed = command?.originAddHistory ?? command?.addHistory;
+	if (typeof seed !== 'function') {
+		return;
+	}
+	try {
+		seed.call(command);
+	} catch (error) {
+		console.warn('播种撤销历史失败', error);
+	}
+}
+
+/** 撤销 / 重做此刻是否可用（竖栏按钮的置灰依据） */
+export interface HistoryAvailability {
+	canUndo: boolean;
+	canRedo: boolean;
+}
+
+/**
+ * 读取命令历史的可用性（只读，不改任何状态）。
+ *
+ * 为什么需要：竖栏的撤销/重做按钮此前恒为可点态，`activeHistoryIndex` 停在 0
+ * 时点击毫无反应，用户会以为「撤销坏了」（2026-11-03 实机）。
+ *
+ * 判据与引擎 `UNDO`/`REDO` 自身的早退条件一致（vendor：`index - 1 >= 0` /
+ * `index + 1 < history.length`）——在这里另写一套「能不能撤」会与引擎漂移，
+ * 故直接读同一组字段。引擎面未在 d.cts 声明，按防御式读取：缺失时回
+ * `false/false`（按钮置灰，键盘快捷键仍是用户的后备通道）。
+ */
+export function readHistoryAvailability(
+	mindMap: MindMap | null | undefined,
+): HistoryAvailability {
+	const command = (
+		mindMap as unknown as
+			| { command?: { history?: unknown[]; activeHistoryIndex?: number } }
+			| null
+			| undefined
+	)?.command;
+	const history = command?.history;
+	if (!Array.isArray(history)) {
+		return { canUndo: false, canRedo: false };
+	}
+	const index =
+		typeof command?.activeHistoryIndex === 'number'
+			? command.activeHistoryIndex
+			: 0;
+	return {
+		canUndo: index > 0,
+		canRedo: index + 1 < history.length,
+	};
+}
+
+/**
  * 命令历史的**单视图堆内存预算**：引擎逐条保存「整树 JSON 快照」，每条堆占用
  * ≈ 节点数 × `HISTORY_SNAPSHOT_BYTES_PER_NODE`（K65 实测），固定条数上限会让
  * 单视图历史随图规模失控（旧策略：<2000 节点 500 条 ⇒ 500 节点图 ≈ 91MB/视图）。

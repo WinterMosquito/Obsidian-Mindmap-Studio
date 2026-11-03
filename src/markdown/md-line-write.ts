@@ -22,7 +22,7 @@ import {
 	PLAIN_IMAGE_FIELDS,
 } from './md-outline';
 import { parseTaskPrefix, stripTaskPrefix } from '../domain/md-task';
-import { isDirectiveLine } from '../domain/relation';
+import { isDirectiveLine } from '../domain/directive';
 import type { MdNodeData } from '../core/node-data';
 
 /**

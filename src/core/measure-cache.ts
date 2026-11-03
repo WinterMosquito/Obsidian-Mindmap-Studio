@@ -137,13 +137,13 @@ function installFontHook(): void {
 		/* 监听面不可用：epoch 不再随批次递增 */
 	}
 	try {
-		void fonts.ready
-			?.then(() => {
-				bump();
-			})
-			?.catch?.(() => {
+		const ready = fonts.ready;
+		if (ready) {
+			// `then` 必返回 Promise，`catch` 恒存在（原先的 `?.catch?.` 是冗余）
+			void ready.then(bump).catch(() => {
 				/* ready 拒绝：忽略（字体面不可用已由 readFontsStatus 兜底） */
 			});
+		}
 	} catch {
 		/* ready 面不可用 */
 	}

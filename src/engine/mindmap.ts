@@ -50,7 +50,7 @@ import {
 	removeEngineShortcut,
 	shortcutGateAllows,
 } from './mindmap-commands';
-import { applyHistoryLimitOnCreate } from './mindmap-history';
+import { applyHistoryLimitOnCreate, seedInitialHistory } from './mindmap-history';
 import { countTreeNodes, getRenderRoot } from './mindmap-nodes';
 import {
 	applyLiveColorDirectives,
@@ -91,15 +91,28 @@ export type {
 	EngineRelationEdge,
 	RelationLineHit,
 } from './mindmap-relations';
+// 概要（Summary）：引擎侧唯一收口面（父节点 generalization 数组的两个时机 +
+// 「这个节点是不是概要节点」的判定 + 概要节点 → 正文节点的反查）。
+// `applySummaryPlan` / `generalizationsOf` / `planTree` 是内部步骤（写 data、
+// 规划翻译），没有跨层消费者，不对外导出。
+export {
+	applySummariesToTree,
+	isSummaryNode,
+	summaryAnchorOf,
+	syncLiveSummaries,
+} from './mindmap-summaries';
 export { ENGINE_COMMANDS, shortcutGateAllows } from './mindmap-commands';
 export { cancelEngineTimers } from './mindmap-timers';
 export {
 	HISTORY_BUDGET_BYTES,
 	HISTORY_SNAPSHOT_BYTES_PER_NODE,
+	readHistoryAvailability,
 	recordHistory,
 	resolveHistoryLimit,
+	seedInitialHistory,
 	syncHistoryLimit,
 } from './mindmap-history';
+export type { HistoryAvailability } from './mindmap-history';
 export * from './mindmap-viewport';
 export * from './mindmap-nodes';
 export * from './mindmap-clipboard';
@@ -512,6 +525,26 @@ export function createMindMap(
 	// 内存随图规模失控（旧策略 500 条 × 500 节点 ≈ 91MB，见 K65/K66）。
 	// 预算怎么算、何时下调收口在 `mindmap-history`（此处只给节点数，不复述策略）。
 	applyHistoryLimitOnCreate(mindMap, nodeCount);
+	// 撤销链的第 0 步 = 打开这一刻：引擎创建后历史是空的，`addHistory` 只在命令
+	// 收尾调用 ⇒ 不播种的话第一次编辑完全撤不掉、也永远回不到打开时的原样
+	// （2026-11-02 实机：勾复选框 / 内联改字后按 Ctrl+Z 无反应）。
+	//
+	// 时机是**首帧渲染落地**而不是创建瞬间：创建时的树还没被引擎规范化（`expand`
+	// 等字段在渲染期才补），此刻播种会与渲染后那条快照内容不同 ⇒ 多出一条「按
+	// Ctrl+Z 毫无反应」的历史（实测：打开后 `2 条 / idx 1`，第一次撤销只翻了个
+	// 看不见的字段）。挪到渲染落地，播种的正是用户看到的那一帧。
+	// 一次性：`expanded` 标志而非解绑（每个引擎只播一次，重复绑定无副作用）。
+	// 只读嵌入没有撤销入口，不播种。
+	if (!isReadonly) {
+		let seeded = false;
+		mindMap.on('node_tree_render_end', () => {
+			if (seeded) {
+				return;
+			}
+			seeded = true;
+			seedInitialHistory(mindMap);
+		});
+	}
 	// 引擎 KeyboardNavigation 插件自带 Ctrl+L = RESET_LAYOUT（只重排、不含
 	// 「适应画布」、也无提示），与插件「自动整理」命令口径不一；而本插件不定义
 	// 默认热键（命令一律由用户在 Hotkeys 中自行分配）。故移除它——自动整理统一

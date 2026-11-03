@@ -138,7 +138,7 @@ export const LAYOUT_OPTIONS = [
  * 在**读取侧**归一为折线（不批量改写用户数据，下一次切换样式时自然落盘）。
  *
  * 固定直线布局（目录组织图 / 时间轴 / 鱼骨图）由布局类自行绘制直线、`lineStyle`
- * 对其无效；工具栏对这三者只显示「直线」描述（`lineStyle.fixedStraight`），
+ * 对其无效；工具栏对这三者的连线开关**置灰**（图标恒为直线、`disabled` 表达不可用），
  * 不作为可选项。
  */
 type LineStylePreference = 'straight' | 'curve';
@@ -502,6 +502,20 @@ export const EXPORT_SCALE_MAX = 4;
  * 渲染树结构仍完整」）。
  */
 const PERFORMANCE_NODE_THRESHOLD = 500;
+
+/**
+ * 首帧渲染提示的节点数阈值（`features/view` 的大图骨架）。
+ *
+ * 实测（2026-11-02，Obsidian 1.14.4 / 本机）：502 节点首帧 ≈ 50–100 ms（无感），
+ * 5000 节点**单次同步任务 2.0–2.4 s**（`_render` 内部布局 + 节点渲染，插件自身
+ * 的 `node_tree_render_end` 处理链只占 5 ms）。低于 1000 节点时这段等待在
+ * 「打开一个标签」的容差内，提示反而是一次闪现；超过则必须让用户看到
+ * 「正在渲染」，否则就是空白画布 + 界面僵住。
+ *
+ * 与 `PERFORMANCE_NODE_THRESHOLD` 无关：那个决定引擎是否虚拟渲染（500 起），
+ * 本值只决定要不要显示提示。
+ */
+export const LARGE_MAP_RENDER_HINT_NODES = 1000;
 
 /**
  * 是否启用性能模式（虚拟渲染）：**唯一判据**（创建期与运行期共用）。

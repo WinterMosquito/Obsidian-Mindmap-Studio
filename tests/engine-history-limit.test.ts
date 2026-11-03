@@ -15,7 +15,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	HISTORY_BUDGET_BYTES,
 	HISTORY_SNAPSHOT_BYTES_PER_NODE,
+	readHistoryAvailability,
 	resolveHistoryLimit,
+	seedInitialHistory,
 	syncHistoryLimit,
 } from '../src/engine/mindmap';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
@@ -143,5 +145,110 @@ describe('syncHistoryLimit：会话内按当前节点数同步上限（图长大
 		expect(() => syncHistoryLimit(engine)).not.toThrow();
 		expect(errorSpy).toHaveBeenCalled();
 		errorSpy.mockRestore();
+	});
+});
+
+/**
+ * 初始快照播种（`seedInitialHistory`）。
+ *
+ * 为什么需要：引擎创建后历史为空，`addHistory` 只在命令收尾被调用 ⇒ 第一条
+ * 快照永远是「第一次改动之后」的状态，`Ctrl+Z` 因 `activeHistoryIndex - 1 < 0`
+ * 直接空转（2026-11-02 实机：勾复选框 / 内联改字后撤销无反应，且永远回不到
+ * 打开时的原样）。播种必须走**非防抖**的 `originAddHistory`：`addHistory` 被
+ * `addHistoryTime`（100ms）包装过，播种若被防抖，会与紧随其后的编辑合并成一条，
+ * 第 0 步又变成「编辑后」。
+ */
+describe('seedInitialHistory（播种初始撤销快照）', () => {
+	function engineWith(command: unknown): MindMap {
+		return { command } as unknown as MindMap;
+	}
+
+	it('优先调用非防抖 originAddHistory，且只调用一次', () => {
+		const originAddHistory = vi.fn();
+		const addHistory = vi.fn();
+		seedInitialHistory(engineWith({ originAddHistory, addHistory }));
+		expect(originAddHistory).toHaveBeenCalledTimes(1);
+		expect(addHistory).not.toHaveBeenCalled();
+	});
+
+	it('缺失 originAddHistory（裁剪构建）：回落到 addHistory', () => {
+		const addHistory = vi.fn();
+		seedInitialHistory(engineWith({ addHistory }));
+		expect(addHistory).toHaveBeenCalledTimes(1);
+	});
+
+	it('引擎面缺失（null / 无 command / 无任何历史入口）：安全 no-op', () => {
+		expect(() => seedInitialHistory(null)).not.toThrow();
+		expect(() => seedInitialHistory(undefined)).not.toThrow();
+		expect(() => seedInitialHistory(engineWith(undefined))).not.toThrow();
+		expect(() => seedInitialHistory(engineWith({}))).not.toThrow();
+	});
+
+	it('播种抛错（引擎中间态）：只留痕，不向上抛', () => {
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const engine = engineWith({
+			originAddHistory: () => {
+				throw new Error('未就绪');
+			},
+		});
+		expect(() => seedInitialHistory(engine)).not.toThrow();
+		expect(warnSpy).toHaveBeenCalled();
+		warnSpy.mockRestore();
+	});
+});
+
+/**
+ * 撤销/重做可用性（`readHistoryAvailability`）。
+ *
+ * 为什么需要：竖栏的撤销/重做按钮此前恒为可点态，`activeHistoryIndex` 停在 0
+ * 时点击毫无反应（2026-11-03 实机：用户以为「撤销坏了」）。判据必须与引擎
+ * `UNDO`/`REDO` 自身的早退条件一致（`index - 1 >= 0` / `index + 1 < length`），
+ * 否则按钮亮着却什么都不做。
+ */
+describe('readHistoryAvailability（撤销/重做按钮的置灰依据）', () => {
+	function engineWith(command: unknown): MindMap {
+		return { command } as unknown as MindMap;
+	}
+
+	it('刚打开（只有种子快照 / idx 0）：可重做不可撤销', () => {
+		expect(
+			readHistoryAvailability(engineWith({ history: [{}], activeHistoryIndex: 0 })),
+		).toEqual({ canUndo: false, canRedo: false });
+	});
+
+	it('编辑一步后：可撤销不可重做', () => {
+		expect(
+			readHistoryAvailability(
+				engineWith({ history: [{}, {}], activeHistoryIndex: 1 }),
+			),
+		).toEqual({ canUndo: true, canRedo: false });
+	});
+
+	it('撤销回中间态：两侧都可用', () => {
+		expect(
+			readHistoryAvailability(
+				engineWith({ history: [{}, {}, {}], activeHistoryIndex: 1 }),
+			),
+		).toEqual({ canUndo: true, canRedo: true });
+	});
+
+	it('引擎面缺失（裁剪构建 / 未就绪 / 无 command）：两侧都不可用', () => {
+		expect(readHistoryAvailability(null)).toEqual({
+			canUndo: false,
+			canRedo: false,
+		});
+		expect(readHistoryAvailability(undefined)).toEqual({
+			canUndo: false,
+			canRedo: false,
+		});
+		expect(readHistoryAvailability(engineWith({}))).toEqual({
+			canUndo: false,
+			canRedo: false,
+		});
+		// history 不是数组（引擎中间态）同样按不可用处理，不能抛
+		expect(readHistoryAvailability(engineWith({ history: null }))).toEqual({
+			canUndo: false,
+			canRedo: false,
+		});
 	});
 });

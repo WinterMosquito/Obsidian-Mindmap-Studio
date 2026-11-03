@@ -99,7 +99,7 @@ async function copyText(button: HTMLElement, text: string): Promise<boolean> {
  * 还原**（回到构建期内联态）；引擎中途重建节点则 WeakMap 到点空转，无泄漏。
  */
 function showCopiedFeedback(button: HTMLElement): void {
-	const win = button.ownerDocument?.defaultView;
+	const win = button.ownerDocument.defaultView;
 	if (!win) {
 		return;
 	}
@@ -151,10 +151,7 @@ export function hideCopyButtonsInExportSvg(svgElement: unknown): unknown {
 		return svgElement;
 	}
 	for (const button of buttons) {
-		const style = (button as HTMLElement).style;
-		if (style) {
-			Object.assign(style, HIDDEN_BUTTON_STYLE);
-		}
+		Object.assign((button as HTMLElement).style, HIDDEN_BUTTON_STYLE);
 	}
 	return svgElement;
 }

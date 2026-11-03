@@ -881,3 +881,313 @@ describe('P1a/P1b：外部改动检测与连续失败降级', () => {
 		expect(h.onAutoSaveSuspended).not.toHaveBeenCalled();
 	});
 });
+
+describe('SavePipeline（纯浏览不写盘：加载基线 markLoaded）', () => {
+	// 磁盘原文带多余空行（序列化会归一），故「无差异跳过」拦不住——
+	// 只有加载基线能区分「用户没编辑」与「序列化规范化了」。
+	const RAW_WITH_BLANK = '# A\n\n\n';
+
+	it('加载后未编辑：即使磁盘原文与规范化结果不同也不写盘', async () => {
+		const cachedRead = vi.fn(async () => RAW_WITH_BLANK);
+		const h = makeHarness({}, { cachedRead });
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]));
+
+		await h.pipeline.save();
+
+		expect(h.modify).not.toHaveBeenCalled();
+		expect(h.onSaveError).not.toHaveBeenCalled();
+	});
+
+	it('加载后编辑（树内容变了）：照常写盘', async () => {
+		const cachedRead = vi.fn(async () => RAW_WITH_BLANK);
+		const h = makeHarness({}, { cachedRead });
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]));
+		h.setTree(node('Root', [node('B')]));
+
+		await h.pipeline.save();
+
+		expect(h.written).toEqual(['# B\n']);
+	});
+
+	it('跳过写盘同样建立外部改动基线：此后他处修改触发 P1a 跳过而非覆盖', async () => {
+		let disk = RAW_WITH_BLANK;
+		const cachedRead = vi.fn(async () => disk);
+		const h = makeHarness({}, { cachedRead });
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]));
+
+		// 纯浏览：不写盘，但基线按磁盘原文建立
+		await h.pipeline.save();
+		expect(h.modify).not.toHaveBeenCalled();
+
+		// 他处（同步盘 / 其它编辑器）改了文件，随后用户在导图里编辑
+		disk = '# A\n外部手改\n';
+		h.setTree(node('Root', [node('B')]));
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+
+		expect(h.modify).not.toHaveBeenCalled();
+		expect(h.onExternalChange).toHaveBeenCalledTimes(1);
+	});
+
+	it('加载基线只认当次加载：重新 markLoaded 后按新基线判定', async () => {
+		const cachedRead = vi.fn(async () => '# B\n');
+		const h = makeHarness({}, { cachedRead });
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]));
+		// 第二次加载（同一路径重新打开）后树已是 B：与磁盘一致 → 不写盘
+		h.setTree(node('Root', [node('B')]));
+		h.pipeline.markLoaded(h.file, node('Root', [node('B')]));
+
+		await h.pipeline.save();
+
+		expect(h.modify).not.toHaveBeenCalled();
+	});
+
+	it('只在属性面板改了 frontmatter（正文一字未动）：不写盘', async () => {
+		// 判据只看正文：文件头恒取磁盘当前值、管线从不改它 ⇒ 换布局不该
+		// 连带把正文规范化一遍（空行被吞）
+		let disk = '---\nMindmap: Mindmap\n---\n\n# A\n\n\n';
+		const cachedRead = vi.fn(async () => disk);
+		const h = makeHarness({}, { cachedRead });
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]));
+
+		disk = '---\nMindmap: LogicalStructure\n---\n\n# A\n\n\n';
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+
+		expect(h.modify).not.toHaveBeenCalled();
+	});
+
+	it('纯浏览跳过之后不做收尾自检补排（推进定时器仍零写盘）', async () => {
+		vi.useFakeTimers();
+		const cachedRead = vi.fn(async () => '# A\n\n\n');
+		const h = makeHarness({}, { cachedRead });
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]));
+
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.modify).not.toHaveBeenCalled();
+
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 3);
+		expect(h.modify, '跳过写盘不是差异，不该触发补排').not.toHaveBeenCalled();
+	});
+
+	it('未记录基线（旧路径 / 读失败）：行为不变，照常写盘', async () => {
+		const cachedRead = vi.fn(async () => RAW_WITH_BLANK);
+		const h = makeHarness({}, { cachedRead });
+
+		await h.pipeline.save();
+
+		expect(h.written).toEqual(['# A\n']);
+	});
+});
+
+/**
+ * 「写过盘之后回到加载态」是**真实改动**，不是纯浏览。
+ *
+ * 实机症状（2026-11-02，Obsidian 1.14.4）：改一个节点 → `Ctrl+Z` 屏上回到原样、
+ * 文件里仍是改后内容 → 关闭标签再重开又跳回改后（撤销等于没发生，且关闭路径
+ * 的显式保存同样被守卫吞掉）。根因是守卫只看「本轮序列化 == 加载时序列化」，
+ * 没看**磁盘上现在是什么**。
+ */
+describe('SavePipeline（回到加载态：写过盘之后必须落盘）', () => {
+	const RAW = '# A\n\n\n';
+
+	/** 让写盘同时更新虚拟磁盘；**保留** harness 自带的调用记录（勿整体替换实现） */
+	function withDisk(h: Harness, sink: { disk: string }): void {
+		const original = h.modify.getMockImplementation() as
+			| ((target: TFile, content: string) => Promise<void>)
+			| undefined;
+		h.modify.mockImplementation(async (target: TFile, content: string) => {
+			sink.disk = content;
+			await original?.(target, content);
+		});
+	}
+
+	it('编辑 → 撤销回加载态：写回**加载时的原样正文**（不是规范化结果）', async () => {
+		const sink = { disk: RAW };
+		const cachedRead = vi.fn(async () => sink.disk);
+		const h = makeHarness({}, { cachedRead });
+		withDisk(h, sink);
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]), RAW);
+
+		// 编辑：树变了 → 规范化结果落盘（空行被归一）
+		h.setTree(node('Root', [node('B')]));
+		await h.pipeline.save();
+		expect(h.written).toEqual(['# B\n']);
+
+		// 撤销：树回到加载时的样子
+		h.setTree(node('Root', [node('A')]));
+		await h.pipeline.save();
+
+		expect(h.written, '屏上回原样，文件也必须回原样').toEqual(['# B\n', RAW]);
+		expect(sink.disk).toBe(RAW);
+	});
+
+	it('撤销回加载态后关闭（显式保存）：同样落盘，不留分叉', async () => {
+		const sink = { disk: RAW };
+		const cachedRead = vi.fn(async () => sink.disk);
+		const h = makeHarness({}, { cachedRead });
+		withDisk(h, sink);
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]), RAW);
+
+		h.setTree(node('Root', [node('B')]));
+		await h.pipeline.save();
+		h.setTree(node('Root', [node('A')]));
+
+		// 卸载路径：显式 save（不带 checkExternal）
+		await h.pipeline.save();
+		expect(sink.disk).toBe(RAW);
+	});
+
+	it('写出的内容被外部改写后撤销回加载态：显式保存照常把原样写回（P1a 只拦自动保存）', async () => {
+		const sink = { disk: RAW };
+		const cachedRead = vi.fn(async () => sink.disk);
+		const h = makeHarness({}, { cachedRead });
+		withDisk(h, sink);
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]), RAW);
+
+		h.setTree(node('Root', [node('B')]));
+		await h.pipeline.save();
+		sink.disk = '# B\n外部手改\n';
+		h.setTree(node('Root', [node('A')]));
+
+		await h.pipeline.save();
+		expect(sink.disk).toBe(RAW);
+	});
+
+	it('重新 markLoaded 复位「写过」标记：新基线下的纯浏览仍零写盘', async () => {
+		const sink = { disk: RAW };
+		const cachedRead = vi.fn(async () => sink.disk);
+		const h = makeHarness({}, { cachedRead });
+		withDisk(h, sink);
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]), RAW);
+		h.setTree(node('Root', [node('B')]));
+		await h.pipeline.save();
+		expect(h.written).toEqual(['# B\n']);
+
+		// 重新打开（同路径重新加载）：磁盘此刻是 '# B\n'
+		h.pipeline.markLoaded(h.file, node('Root', [node('B')]), '# B\n');
+		await h.pipeline.save();
+
+		expect(h.written, '重新加载后的纯浏览不该再写一次').toEqual(['# B\n']);
+	});
+
+	it('未传 rawBody（旧调用形态）：回落为序列化结果，仍能修正屏上/盘上分叉', async () => {
+		const sink = { disk: RAW };
+		const cachedRead = vi.fn(async () => sink.disk);
+		const h = makeHarness({}, { cachedRead });
+		withDisk(h, sink);
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]));
+
+		h.setTree(node('Root', [node('B')]));
+		await h.pipeline.save();
+		h.setTree(node('Root', [node('A')]));
+		await h.pipeline.save();
+
+		expect(h.written).toEqual(['# B\n', '# A\n']);
+		expect(sink.disk).toBe('# A\n');
+	});
+});
+
+describe('SavePipeline（收尾一致性自检：写出的内容必须与活快照一致）', () => {
+	it('写出的内容落后于活快照（陈旧快照）：补排一次，最终落盘最新内容', async () => {
+		vi.useFakeTimers();
+		const h = makeHarness();
+		// 写盘挂起：期间活快照换了内容（模拟「快照取早了」）
+		h.gate(1);
+		const saving = h.pipeline.save(undefined, undefined, { checkExternal: true });
+		await flushMicrotasks();
+		h.setTree(node('Root', [node('B')]));
+		h.release(0);
+		await saving;
+
+		// 第一轮写的是请求时刻的旧树
+		expect(h.written).toEqual(['# A\n']);
+
+		// 自检发现差异 → 补排的保存把最新内容追平
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS + 50);
+		expect(h.written).toEqual(['# A\n', '# B\n']);
+	});
+
+	it('写出的内容与活快照一致：不补排（零额外写盘）', async () => {
+		vi.useFakeTimers();
+		const h = makeHarness();
+
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.written).toEqual(['# A\n']);
+
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 3);
+		expect(h.written, '没有差异就不该再写').toEqual(['# A\n']);
+	});
+
+	it('纯浏览跳过写盘的一轮不做自检：没写盘就无所谓「落盘落后」', async () => {
+		vi.useFakeTimers();
+		// 磁盘是**未规范化**的原文（多一个空行）：序列化结果与它不同，
+		// 但正文与加载基线逐字相同 ⇒ 走纯浏览守卫、跳过写盘
+		const disk = '# A\n\n';
+		const cachedRead = vi.fn(async () => disk);
+		const h = makeHarness({}, { cachedRead });
+
+		h.pipeline.markLoaded(h.file, node('Root', [node('A')]), disk);
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.written, '纯浏览不写盘').toEqual([]);
+
+		// 跳过之后活快照又变了（相当于紧接着的一次编辑）：这不是「上一轮写落后」，
+		// 自检不该在这里补排——新编辑自己会排下一轮（引擎 data_change → schedule）。
+		h.setTree(node('Root', [node('B')]));
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 3);
+		expect(h.written, '未写盘的轮次不做收尾补排').toEqual([]);
+	});
+
+	it('显式保存（命令 / 卸载）不做自检：不给已拆卸的视图留定时器', async () => {
+		vi.useFakeTimers();
+		const h = makeHarness();
+		h.gate(1);
+		// 卸载路径的写法：treeHint 与 checkExternal 都不带 → 走显式保存语义
+		const saving = h.pipeline.save();
+		await flushMicrotasks();
+		h.setTree(node('Root', [node('B')]));
+		h.release(0);
+		await saving;
+
+		const writes = h.written.length;
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 3);
+		expect(h.written.length, '显式保存后不得补排').toBe(writes);
+	});
+
+	it('外部改动冲突跳过：不做补排（不把冲突刷成重试风暴）', async () => {
+		vi.useFakeTimers();
+		let disk = '# A\n';
+		const cachedRead = vi.fn(async () => disk);
+		const h = makeHarness({}, { cachedRead });
+
+		await h.pipeline.save(); // 建立基线 = 磁盘原文
+		disk = '# A\n他处改动\n';
+		h.setTree(node('Root', [node('B')]));
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.onExternalChange).toHaveBeenCalledTimes(1);
+
+		const writes = h.written.length;
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 3);
+		expect(h.written.length, '冲突收场后不再补排').toBe(writes);
+	});
+
+	it('活快照每轮都在变：最多补排 3 次即停手（不空转）', async () => {
+		vi.useFakeTimers();
+		const h = makeHarness();
+		const base = h.modify.getMockImplementation() as
+			| ((target: TFile, content: string) => Promise<void>)
+			| undefined;
+		let variant = 0;
+		// 每次写盘后活快照又变成新内容 ⇒ 自检永远对不上
+		h.modify.mockImplementation((file: TFile, content: string) => {
+			variant++;
+			h.setTree(node('Root', [node(`N${variant}`)]));
+			return base ? base(file, content) : Promise.resolve();
+		});
+
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.written).toEqual(['# A\n']);
+
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 10);
+		// 首轮 + 3 次补排 = 4 次封顶
+		expect(h.written).toHaveLength(4);
+	});
+});

@@ -66,6 +66,7 @@ import { t, tf, type Language } from '../core/i18n';
 import {
 	applyColorDirectivesToTree,
 	applyRelationsToTree,
+	applySummariesToTree,
 	applyThemeConfig,
 	cancelEngineTimers,
 	centerContentAtScale,
@@ -445,6 +446,9 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 			// 联系（关系连线）：同一时机写进 data 树（只读嵌入没有编辑入口，
 			// 创建后不需要实时同步；交互副作用由 vendor 补丁 13 整段跳过）
 			applyRelationsToTree(tree);
+			// 概要（Summary）：同样只在这一个时机写（父节点 `generalization` 数组）——
+			// 只读嵌入不接 `syncLiveSummaries`，也没有建/改/删概要的入口。
+			applySummariesToTree(tree);
 			mindMap = createMindMap(el, tree, {
 				layout,
 				lineStyle: config.lineStyle,
@@ -682,6 +686,6 @@ function buildOutlineList(parent: HTMLElement, node: MindMapTreeNode): void {
 
 /** 节点显示文本（缺失按空串——引擎空文本节点即空框，同款容忍） */
 function nodeText(node: MindMapTreeNode): string {
-	const text: unknown = node.data?.text;
+	const text: unknown = node.data.text;
 	return typeof text === 'string' ? text : '';
 }

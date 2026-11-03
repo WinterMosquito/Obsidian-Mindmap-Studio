@@ -36,6 +36,9 @@ const mocks = vi.hoisted(() => {
 		// 「No "cancelEngineTimers" export is defined on the mock」
 		cancelEngineTimers: vi.fn(),
 		centerContentAtFullScale: vi.fn(),
+		// 「无保存视口时是否该 fit」的判据（100% 下装不下画布才 fit）：
+		// 默认 null（几何不可得）⇒ 走旧的「全尺度居中」，与既有用例一致
+		contentExceedsCanvasAtFullScale: vi.fn(),
 		countTreeNodes: vi.fn(),
 		createMindMap: vi.fn(),
 		destroyMindMap: vi.fn(),

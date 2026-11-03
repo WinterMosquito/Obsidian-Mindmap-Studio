@@ -359,7 +359,7 @@ function scheduleFlush(holder: HTMLElement): void {
 	if (flushScheduled) {
 		return;
 	}
-	const view = holder.ownerDocument ? holder.ownerDocument.defaultView : null;
+	const view = holder.ownerDocument.defaultView;
 	if (!view || typeof view.setTimeout !== 'function') {
 		return;
 	}
@@ -546,7 +546,7 @@ function schedulePump(holder: HTMLElement): void {
 	if (pumpScheduled) {
 		return;
 	}
-	const view = holder.ownerDocument ? holder.ownerDocument.defaultView : null;
+	const view = holder.ownerDocument.defaultView;
 	if (!view || typeof view.setTimeout !== 'function') {
 		return;
 	}

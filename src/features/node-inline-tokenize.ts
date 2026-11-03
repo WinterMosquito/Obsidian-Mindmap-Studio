@@ -622,7 +622,7 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 				kind: 'text',
 				text: body,
 				style,
-				...(nested && children ? { children } : {}),
+				...(nested ? { children } : {}),
 			});
 		}
 		cursor = match.index + match[0].length;

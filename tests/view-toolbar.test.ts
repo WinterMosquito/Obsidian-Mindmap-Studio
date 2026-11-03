@@ -84,6 +84,9 @@ vi.mock('../src/engine/mindmap', () => ({
 	zoomInMindMap: engineMocks.zoomInMindMap,
 	zoomOutMindMap: engineMocks.zoomOutMindMap,
 	supportsLineStyleSwitch: engineMocks.supportsLineStyleSwitch,
+	// 撤销/重做按钮的可用态：桩里恒为「没得撤/没得重做」（本文件只验图标线
+	// 与按下态，历史状态另见 engine-history-limit.test.ts）
+	readHistoryAvailability: () => ({ canUndo: false, canRedo: false }),
 }));
 
 vi.mock('../src/features/view-export', () => ({
@@ -148,6 +151,16 @@ class FakeEl {
 	addClass(cls: string): void {
 		if (!this.classes.includes(cls)) {
 			this.classes.push(cls);
+		}
+	}
+
+	/** 状态类切换（官方 Element.toggleClass）：撤销/重做按历史可用性开关 */
+	toggleClass(cls: string, value: boolean): void {
+		const at = this.classes.indexOf(cls);
+		if (value && at < 0) {
+			this.classes.push(cls);
+		} else if (!value && at >= 0) {
+			this.classes.splice(at, 1);
 		}
 	}
 
@@ -392,11 +405,12 @@ describe('buildToolbar（右缘四组结构）', () => {
 		expect(labels).not.toContain(t('zh', 'toolbar.palette'));
 		expect(labels).toContain(t('zh', 'toolbar.lineStyle'));
 		expect(labels).toContain(t('zh', 'toolbar.themeStyle'));
-		// 节点级动作：一直在右键菜单，屏上不重复
-		expect(labels).not.toContain(t('zh', 'toolbar.addChild'));
-		expect(labels).not.toContain(t('zh', 'toolbar.deleteNode'));
-		expect(labels).not.toContain(t('zh', 'toolbar.insertLink'));
-		expect(labels).not.toContain(t('zh', 'toolbar.insertImage'));
+		// 节点级动作：一直在右键菜单，屏上不重复（工具栏侧曾有一套同名重复文案
+		// `toolbar.addChild` 等，已随死代码清理删除，断言改用菜单自己的词条）
+		expect(labels).not.toContain(t('zh', 'menu.addChild'));
+		expect(labels).not.toContain(t('zh', 'menu.deleteNode'));
+		expect(labels).not.toContain(t('zh', 'menu.addLink'));
+		expect(labels).not.toContain(t('zh', 'menu.addImage'));
 	});
 
 	it('tooltip 统一落在左侧（对齐 Canvas 的 data-tooltip-position="left"）', () => {
@@ -563,6 +577,45 @@ describe('外观开关（边框 / 连线：点一下切到另一个值）', () =
 
 		expect(theme.attr['aria-label']).toBe(t('zh', 'toolbar.themeStyle'));
 		expect(line.attr['aria-label']).toBe(t('zh', 'toolbar.lineStyle'));
+	});
+
+	it('无障碍按下态：初始按当前档写 aria-pressed（边框=有边框，连线=曲线）', () => {
+		const bordered = makeView({ themeStyle: 'default', lineStyle: 'straight' });
+		buildToolbar(bordered.view);
+		const a = toggles(bordered);
+		expect(a.theme.attr['aria-pressed']).toBe('true');
+		expect(a.line.attr['aria-pressed']).toBe('false');
+
+		const plain = makeView({ themeStyle: 'borderless', lineStyle: 'curve' });
+		buildToolbar(plain.view);
+		const b = toggles(plain);
+		expect(b.theme.attr['aria-pressed']).toBe('false');
+		expect(b.line.attr['aria-pressed']).toBe('true');
+	});
+
+	it('无障碍按下态：切换后翻转，且不被 setTooltip 重写 aria-label 抹掉', () => {
+		const h = makeView({ themeStyle: 'default', lineStyle: 'straight' });
+		buildToolbar(h.view);
+		const { theme, line } = toggles(h);
+		expect(theme.attr['aria-pressed']).toBe('true');
+		expect(line.attr['aria-pressed']).toBe('false');
+
+		clickButton(theme); // 有边框 → 无边框
+		clickButton(line); // 折线 → 曲线
+
+		expect(theme.attr['aria-pressed']).toBe('false');
+		expect(line.attr['aria-pressed']).toBe('true');
+		// 提示在每次切换时重挂（官方 setTooltip 会重写 aria-label）：两者必须共存
+		expect(theme.attr['aria-label']).toBe(t('zh', 'toolbar.themeStyle'));
+		expect(line.attr['aria-label']).toBe(t('zh', 'toolbar.lineStyle'));
+	});
+
+	it('置灰的连线开关不报按下态（disabled 已表达不可用）', () => {
+		const h = makeView({ layout: 'timeline', lineStyle: 'straight' });
+		buildToolbar(h.view);
+		const { line } = toggles(h);
+
+		expect(line.attr['aria-pressed']).toBeUndefined();
 	});
 });
 

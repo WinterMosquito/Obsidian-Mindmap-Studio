@@ -21,6 +21,16 @@ import { AUTO_OPEN_SCAN_DEBOUNCE_MS, CORE_VIEW_TYPE } from '../core/constants';
 import { createDebouncer, type Debouncer } from '../core/concurrency';
 import { openAsMindMap } from '../markdown/md-open';
 
+/**
+ * `file-open` 未命中叶子时的重试延时（ms）。
+ *
+ * 一帧的量级：`file-open` 可能早于视图绑定文件，下一轮事件循环通常已就位。
+ * 取 `setTimeout` 而非 `requestAnimationFrame`——窗口不可见（最小化 / 被遮挡）时
+ * rAF 不执行，而启动恢复恰恰可能发生在这种状态下（与 AGENTS「引擎初始化排
+ * rAF」同一坑）。
+ */
+const FILE_OPEN_RETRY_DELAY_MS = 16;
+
 export class MindMapAutoOpener {
 	/** 宿主组件（register 时注入）：启动恢复定时器随其注销清理 */
 	private host: Component | null = null;
@@ -51,7 +61,16 @@ export class MindMapAutoOpener {
 		// 全量扫描都要遍历全部 markdown 叶子 + 逐叶读 frontmatter 判据（metadataCache
 		// 查询）——整个突发扫一次即可（见 scheduleDeclaredLeavesScan）。
 		component.registerEvent(
-			this.workspace.on('file-open', () => this.scheduleDeclaredLeavesScan()),
+			this.workspace.on('file-open', (file) => {
+				// 先按**这个文件**立即切一次（不防抖）：启动恢复时叶子一绑定文件
+				// 就切走，不必等 400ms 档位——期间 markdown 已经画满屏，正是用户
+				// 看到的「先闪一屏原文再变导图」（2026-11-03）。
+				if (file) {
+					this.switchFileNow(file);
+				}
+				// 兜底全量扫描（`active-leaf-change` 漏判、叶子尚未绑定文件等情况）
+				this.scheduleDeclaredLeavesScan();
+			}),
 		);
 		component.registerEvent(
 			this.workspace.on('active-leaf-change', (leaf) => {
@@ -67,8 +86,16 @@ export class MindMapAutoOpener {
 	 * 启动/布局就绪后多档延时恢复：Obsidian 恢复叶子是异步的，可能先建
 	 * markdown 视图、稍后才绑定文件，且切换到导图视图后还可能被尚未结束的
 	 * 恢复流程短暂覆盖。故多档延时扫描——早/中/晚各试一次。
+	 *
+	 * **首档取 0ms**（2026-11-03）：Obsidian 通常是先恢复完工作区、再加载社区
+	 * 插件，此时叶子**早已就绪**——原先首档 400ms 意味着启动后满屏 Markdown
+	 * 原文停留 400ms 才切成导图（实测：启用插件到视图切换 436ms，正是这一档）。
+	 * 立即试一次不成（重启早期叶子尚未绑定文件）仍有 400/1500/3500 兜底，
+	 * 多扫一次的代价只是几个 `instanceof`。
 	 */
-	scheduleStartupRestore(delaysMs: readonly number[] = [400, 1500, 3500]): void {
+	scheduleStartupRestore(
+		delaysMs: readonly number[] = [0, 400, 1500, 3500],
+	): void {
 		delaysMs.forEach((ms) => {
 			const id = window.setTimeout(() => this.activateDeclaredLeaves(), ms);
 			// 插件卸载后不得再扫描/切换视图：随宿主组件注销清理未触发的定时器
@@ -119,6 +146,42 @@ export class MindMapAutoOpener {
 		}
 	}
 
+	/**
+	 * `file-open` 的**立即**入口：只切刚打开的这个文件所在的 markdown 叶子。
+	 *
+	 * 与 `activateDeclaredLeaves` 的差异只有范围与时机（不全量遍历、不防抖）：
+	 * 启动恢复的每个叶子都会走一次 `file-open`，这里就地切走等于把「markdown
+	 * 画满屏等 400ms 档位」压到「画之前就切完」。判据仍只有注入的 `isDeclared`
+	 * 一份，`openAsMindMap` 里的并发去重保证不会与 `active-leaf-change` 抢着切。
+	 */
+	private switchFileNow(file: TFile, retried = false): void {
+		if (!this.isDeclared(file)) {
+			return;
+		}
+		let matched = false;
+		for (const leaf of this.workspace.getLeavesOfType(CORE_VIEW_TYPE.MARKDOWN)) {
+			const view = leaf.view;
+			// 启动早期叶子可能刚建、尚未绑定文件：按 `view.file` 精确匹配，
+			// 绑不上就交给重试与全量扫描（不猜、不扫别的叶子）
+			if (!(view instanceof MarkdownView) || view.file?.path !== file.path) {
+				continue;
+			}
+			matched = true;
+			this.switchToMindMap(leaf, file);
+		}
+		if (matched || retried) {
+			return;
+		}
+		// `file-open` 早于叶子绑定文件（启动恢复的常见顺序）：下一轮事件循环
+		// 再试一次——通常那时 `view.file` 已经就位。仍不成则有 400ms 起的档位
+		// 兜底，故只重试一次、不排链。
+		const timer = window.setTimeout(
+			() => this.switchFileNow(file, true),
+			FILE_OPEN_RETRY_DELAY_MS,
+		);
+		this.host?.register(() => window.clearTimeout(timer));
+	}
+
 	private autoSwitch(leaf: WorkspaceLeaf): void {
 		const markdownView = leaf.view;
 		if (!(markdownView instanceof MarkdownView)) {
@@ -139,7 +202,10 @@ export class MindMapAutoOpener {
 	 * 以未处理拒绝的形式静默消失。两条路径共用一处也避免后续再次分叉。
 	 */
 	private switchToMindMap(leaf: WorkspaceLeaf, file: TFile): void {
-		void openAsMindMap(leaf, file).catch((error) =>
+		// `Promise.resolve` 包一层：入口一旦被替换/裁剪成同步实现（测试桩、旧版
+		// shim），直接 `.catch` 会在 `void` 表达式上抛「undefined.catch」的
+		// 未捕获异常——扫描是后台动作，不该把插件事件链带崩
+		void Promise.resolve(openAsMindMap(leaf, file)).catch((error) =>
 			console.error('自动切换思维导图视图失败:', file.path, error),
 		);
 	}

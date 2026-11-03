@@ -1,4 +1,4 @@
-# 关键约定 K1–K155（详录）
+# 关键约定 K1–K159（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -71,6 +71,22 @@
 - [K53] **自绘（富）节点的渲染与编辑入口（方案 B Phase 1）**：含行内链接 / 轻标记 / **超长文本**（见⑦，引擎逐字符换行会对长行二次爆炸）且**无图**的节点由 `features/node-inline-content.ts` 生成 HTML（`a.internal-link[data-href]` / `a.external-link[href]`，与 Obsidian 锚点形态一致），经 `engine/mindmap.ts` 的 `createNodeContent` 钩子注入引擎 `isUseCustomNodeContent` + `customCreateNodeContent`（两键未入 d.cts，`Object.assign` 防腐透传；返回 null 的节点走默认 SVG 文本），点击复用 `view-wikilink` 既有节点内锚点分流（**零改造**）；悬停走**节点级预览**（不按锚点判定，见 K21/回撤说明）。八条边界：① **渲染源随编辑切换**——未编辑读 `mdRaw`，已编辑读 `data.text`（mdRaw 是解析期快照，判据与 rawOk 同源：`text === mdDerivedText`）；② 接管后引擎跳过 text/image/icon/hyperlink/tag/note/**prefix**，故**双链文档页图标在富节点上不再出现**（有意：内联锚点已承担「可点 + 目标名」，对齐阅读视图；三类图标体系仍服务未接管节点），含图节点整体不接管；③ 自绘节点无 `_textData`，引擎编辑框对其**静默 no-op**（`textEdit.show()` 的 `isUseCustomNodeContent()` 守卫）→ 编辑入口统一走 `features/view-node-actions.editNodeText`（默认节点→引擎编辑框、富节点→`ui/modal-text` 弹窗〔2026-09-28 K92 起：富节点主入口＝内联编辑器，弹窗收编为右键备选，分流入口自 `editNodeText` 移至 `editNodeTextInModal`〕；弹窗**两种模式**——纯链接节点别名、其余原文，见 K54），三处入口（双击 / 右键「编辑文本」/ F2）共用；④ **行内语法的显示层**（2026-09-15 扩至官方完整清单）：轻标记 `**粗**`/`__粗__`、`*斜*`/`_斜_`（下划线式要求两侧非字母数字，`snake_case` 不误判）、`` `码` ``（含双反引号跨度）、`~~删~~`、`==高亮==`、`***粗斜***` 只在渲染期剥成语义元素（`strong`/`em`/`code`/`del`/`mark`）；另有 `%%注释%%` **渲染期整段隐藏**（阅读视图口径）与反斜杠转义 `\*`（消费反斜杠、按字面显示——此前会被误渲染成斜体）。两类**隐藏语法**同样触发接管（转义恒触发；注释仅在**去掉后仍有可见内容**时触发，否则会渲染出一个空节点）；全部单层、不跨行、不嵌套、定界符内首尾须非空白，`data.text` 与文件原文一律保真；**含轻标记的节点同样被接管**（2026-09-15 修订：此前只按「含链接」接管，`**粗**` 在无链接节点里原样显示——用户实测发现），代价与含链接节点同款（编辑入口走弹窗，见③）；⑤ **导出保真**：自绘内容的布局/排版/配色/轻标记样式**全部内联在元素上**（`node-inline-content.ts` 的 `CONTENT_STYLES` / `INTERNAL_LINK_STYLES` / `EXTERNAL_LINK_STYLES` / `MARKUP_STYLES` 为唯一来源，`styles.css` 只留纯屏幕装饰）——引擎导出（vendor `getSvgData`）只注入 `joinCss()`（引擎自身 CSS）与 header/footer 的 cssText，**插件 styles.css 不在导出图里生效**，样式一旦只写在类规则里，导出 PNG 就会掉排版（foreignObject 尺寸仍按屏上测宽固定 → 溢出/错位）；⑥ **锚点级悬停预览**：富节点内每枚锚点各自预览**自己**的目标（节点级 `nodeLink` 取「首链」会与所见错位）——指针直接进入锚点走 `node_mouseenter` 的锚点分支，节点**内部**在锚点间移动不会重新触发引擎事件，故另有画布 `mouseover` 委托补齐；节点非锚点区域悬停不再预览；⑦ **性能收口**（2026-09-14，2026-09-15 修订）：段序列按**原文内容寻址**缓存（`segmentCache`，上限 512 满则整表清空——渲染期缓存，重建成本远低于内存风险；内容寻址天然避免跨导图串味）。**超长文本必须接管并截断展示**（原文 > `MAX_INLINE_CONTENT_CHARS`=2000 → 一并接管，尾部 `…` + `data-truncated` + `title` 提示，显示 ≤2000 字；文件与 `data.text` 一字不动，双击弹窗看/改全文）——**原「超长回落引擎」是陷阱**：引擎 `createTextNode` 的换行是**逐字符**迭代（每加一字重新拼接整行 + 重新测量一次），单行开销**二次增长**，用户实测「白屏 / 卡死后关闭」即由此而来；无头 Chrome 同机实测 20k 字单行：引擎 ≈ **+2.8s**（整轮 1.1s→3.9s）vs 自绘 HTML ≈ **0**。渲染成本由此与文本长度**脱钩**（每节点上界 = 2000 字）。**残留边界**：**含图 + 超长文本**的节点无法接管（图片走引擎图片通道），其长行仍由引擎换行承担——建议把该节点拆短（这类节点在方案 B 前也是同样代价）。⑧ **未解析链接弱化（注入式解析）**：库内锚点在目标**未解析**时加 `is-unresolved` 类 + 弱化配色（`--link-unresolved-color`/`-opacity`，字面量兜底供导出图用）——对齐 Obsidian 阅读视图「指向尚不存在的笔记的链接显示为更弱的颜色」，用户据此知道点击会新建/打不开。解析器由调用方注入（`InlineContentOptions.isResolvedLink`，生产在 `view.ts` 经 `view-link-navigator.isResolvedWikiLinkpath` 注入 `metadataCache.getFirstLinkpathDest`）——`node-inline-content` 必须能在无 Obsidian 运行时的页面里打包（`verify:visual` 直接打包它），故**不得**自己 import Obsidian；解析**每次构建实时求值**，不进段序列缓存（缓存按原文寻址，与库状态无关）。判据：`#区块`/`|别名` 不参与解析，`[[#标题]]` 这类同笔记内区块链接按「当前文件存在即已解析」处理。回归：`tests/node-inline-content.test.ts`（接管判定含「仅轻标记」「未闭合标记」「转义/注释」「超长回落」边界、轻标记扩展与转义/注释段序列、未解析标记 5 例、缓存命中、内联样式契约）、`tests/view-wikilink.test.ts`（锚点级悬停 6 例 + 未解析不预览 + 区块链接按目标解析 + 修饰键矩阵）、`tests/view-hotkeys.test.ts`（富节点分支）、`npm run verify:visual` 的 inline / markup / syntax / paragraph / hugeline 场景 + inline / export / scale 三个探针（foreignObject 装配、离屏测宽同源、合成点击命中锚点、`<strong>`/`<code>`/`<mark>` 渲染、仅轻标记节点也接管且无锚点、`\*转义\*` 消费反斜杠、`%%注释%%` 不进显示、未解析链接带 `is-unresolved`（对照组已解析链接不加标记）、超长节点接管 + 显示 ≤2000 字 + `…` + `data-truncated` + `title`、导出 SVG 内联样式、30 富节点全渲染且离屏测宽元素恒为 1；负向自检：关掉 `isUseCustomNodeContent` 报 7 项、去掉内联样式报 1 项、**解析桩改为恒真报「未解析链接未标记 is-unresolved（实得 0）」1 项、注释分支改为不隐藏报「%%注释%% 未被隐藏」1 项**——后两条用于证明新断言非空转，复查时实测过。**注**：该脚本跑在 `--virtual-time-budget` 下（时钟被虚拟化），**不做耗时断言**——性能基线需在真实时钟环境另设。
 
 - [K71] **往返幂等与空结构零丢失（2026-09-25，R1/R2/R8/R9）**：① **块首空行不输出**——`md-serialize.pushBlock` 剥块首空行：围栏相邻 flush 会把空行并入 plain 块 mdRaw（以 `\n` 开头），与补的分隔空行叠加曾致「`# 标题`+空行+围栏」每趟往返多一枚、无不动点；**只剥块首不剥块尾**——列表行不经 pushBlock（直接输出、无分隔逻辑），尾空行从不累积，剥除反而丢用户有意空行（`md-roundtrip.test.ts` 围栏黄金用例锁定）。② **空标题（`#`/`# `）保留为空文本 heading 节点**（此前丢弃＝保存后该行消失，与「空列表项退化 plain」口径对齐）：`classifyLines` 不再按 text 过滤；`#` 首趟归一为 `# `（序列化前缀携带尾随空格），第二趟起不动点；编辑合成走既有 heading 路径（`## 新文字`）。③ **等价性分级与规范化白名单成文**于 `docs/markdown-mindmap-standard.md` §3.6（L0 字节级 / L1 内容级两级定义，白名单 10 条）——**canonical 化函数与白名单一一对应，文档与测试不得漂移**。④ **生成式验证** `tests/md-roundtrip-property.test.ts`（fast-check，devDependency）：P1 不动点 T∘T=T（300 runs）/ P2 canonical 行序列守恒 / P3 任意输入不抛错 / P4 自建语料 `tests/fixtures/roundtrip/*.md`（8 份，正文-only，CRLF 程序生成防 autocrlf 检出漂移）+ 字符级变异冒烟；**生成空间按 #10 收窄**（空列表项钉 0 层缩进——text 为 null 与 `''` 都要覆盖）。⑤ **属性测试发现的既有缺陷已登记**（§3.6 #10）：根层缩进列表保存后缩进按树深度重排，紧随其后的缩进行被二次解析并作续行（内容不丢、第二趟收敛）——彻底修复需 `mdIndent` 类字段（解析/序列化/拆分三处联动），未实施。回归：`md-roundtrip.test.ts`「幂等修复（R1）」3 例 +「空标题保留」例；property 6 例。
+- [K156] **纯浏览不得改动文件：加载基线拦住「打开就重排」（2026-11-02 实机定位并修复）**：
+  ① **症状**：只是把笔记切到导图看一眼（**不编辑**），文件就被重写——`---` 后的空行、标题与列表之间的空行、列表项之间的空行全部消失（松散列表变紧凑列表，阅读视图行距随之变化），连续空行合并成一个。实测：新建文件 `mtime 13:10:27.577` → 打开后 1.1s 变 `13:10:28.693`，此时**尚未关闭视图**。
+  ② **成因**：序列化带规范化（空行归一 / 缩进统一 / 有序列表重排，见 `tests/md-roundtrip.test.ts` 的「规范化」组），与磁盘原文天然不等；而「无差异写盘跳过」比的是**磁盘当前内容**，规范化结果永远「有差异」⇒ 必写。触发源是加载期引擎发出的 `data_change`（`onRootDataChanged` → `scheduleSave`）排出的那一轮自动保存，以及 `onUnloadFile` 的无条件 `save`。
+  ③ **修法**：`SavePipeline.markLoaded(file, tree)` 在**加载完成、引擎建好之后**记下该文件的**正文**（`loadedBody`，`buildBody` 与写盘同一个实现）；`save()` 里若本轮正文与它**逐字相同**，说明本次会话没有任何内容级改动 ⇒ **跳过写盘**。判据刻意不是「与磁盘相同」：那正是拦不住规范化的地方；也刻意**不含文件头**——文件头恒取磁盘当前值、管线从不改它，所以「只在属性面板改了 frontmatter / 切了布局」不该连带把正文规范化一遍（自审发现并补测）。
+  ④ **三处不能省**：**只在加载路径记录**（设置刷新引起的引擎重建不得再记——会把尚未落盘的编辑误标成基线，下一轮保存被跳过）；跳过写盘时**仍按磁盘当前内容建立 `lastWritten` 基线**（否则后续真实编辑的自动保存会失去 P1a 外部改动检测，直接覆盖他处改动）；`markLoaded` 的 `tree` 必须与写盘取的**同一来源**（`engine.getDataSnapshot()`），否则两边不可比、判据恒假。
+  ⑤ **实机**（Obsidian 1.14.4）：`# 根` + 松散列表 + 连续双空行的文件，打开等 3s、再关闭，`mtime` 与内容**逐字不变**；随后在导图里改一个节点 → `- 一改` 正常落盘（规范化随真实编辑发生）；编辑后 120ms 内立即关闭也不丢（`onUnloadFile` 的兜底快照路径未被基线误伤）。
+  ⑥ **回归**：`tests/save-pipeline.test.ts`（加载后未编辑不写盘 / 加载后编辑照常写 / 跳过写盘仍建立外部改动基线：他处修改触发 P1a 跳过而非覆盖 / 重新 markLoaded 按新基线判定 / 未记录基线行为不变）。
+  ⑦ **后续修正（当日实机复演后追加，见 K160⑤）**：本会话**写过盘之后**「回到加载态」不再算纯浏览——磁盘上此刻是改后内容，跳过写盘会让撤销落空（屏上原样、文件改后、重开跳回）。守卫改由 `wroteSinceLoad` 分辨，写回的是**加载时的原样正文**（`loadedRawBody`），不是序列化结果。
+
+- [K158] **收尾一致性自检：写出的内容必须与活快照一致（2026-11-02 实机审核）**：
+  ① **线索**：实机见过一次（**至今未复现**）——勾选任务后 DOM 与节点 data 都是 `[x]`、文件仍是 `[ ]`，而 `lastWritten` 里已有该路径（说明确有一轮 save 完成过），此后 60s 内没有新的保存被排上，直到显式保存才写出。
+  ② **根因未定位**：可能的方向有两个（写盘用的是排空循环**开头**的快照；重入路径的 `pendingTree` 可能比本次编辑旧），都属于「快照陈旧」这一类，靠读代码分不出是哪一条。故按**不变式 + 自愈**处理，不赌单一路径。
+  ③ **修法**：`SavePipeline.save()` 排空循环收尾调 `reconcileAfterSave`——用与写盘**同一实现**（`serialize`）把活快照再序列化一次，与刚写出的内容比；不同即 `schedule()` 补排（走防抖，不在排空队列里自我嵌套）。每路径最多补 3 次（`MAX_CONSISTENCY_RETRIES`），超限只 `console.warn` 一次后停手（防「每轮都在变」的抖动空转）。
+  ④ **三种收场故意不补排**：P1a 外部冲突跳过、写盘异常（那时「活快照 ≠ 文件」是**预期**，补排只会把一次冲突刷成重试风暴）；以及**非自动保存**（命令 / 卸载）——显式保存的调用方本来就在同一个 tick 抓新鲜快照，没有「陈旧」可言，而卸载路径若在此补排，定时器会活过视图拆卸、落到下一个刚加载的文件上（那时基线还没记录，一次补排就变成「打开即重写」，自审发现）。
+  ⑤ **为什么值得每轮多一次 serialize**：写盘取的是排空开头的快照，一次真实差异就等于「用户编辑没落盘」；`serialize` 不产生 IO，代价远低于静默丢编辑。判据与写盘同源，不会误报。
+  ⑥ **回归**：`tests/save-pipeline.test.ts` +7 例（陈旧快照→补排一次并追平 / 内容一致→零额外写盘 / 冲突收场→不补排 / 每轮都变→4 次封顶 / 显式保存→不补排 / 纯浏览跳过→不补排 / 只改 frontmatter→不写盘）。
 
 ### 引擎行为、视口与布局
 
@@ -88,9 +104,10 @@
   → 按文件 `viewState.lineStyle` 覆盖 → 右栏「连线」开关 `view.applyLineStyle`
   → `EngineController.setLineStyle` 重算主题配置（`setThemeConfig` 的「仅连线类属性」差异走
   轻量重绘）。
-  **连线开关随布局收窄**：`supportsLineStyleSwitch` 为假的固定直线布局，右栏连线按钮**置灰**并只以「直线」作提示
-  **「直线」**（`lineStyle.fixedStraight`，语义＝连线由布局固有绘制，不再用会让人误以为可选的
-  「自动」）——这是**纯交互收窄**，文件里的偏好既不写入也不丢失，切回可切换布局后按会话偏好恢复；
+  **连线开关随布局收窄**：`supportsLineStyleSwitch` 为假的固定直线布局，右栏连线开关**置灰**
+  （图标恒为直线；tooltip 按 2026-10-23 裁决只报名字〔`toolbar.lineStyle`〕，`lineStyle.fixedStraight`
+  词条已随之删除），语义＝连线由布局固有绘制，不再用会让人误以为可选的
+  「自动」——这是**纯交互收窄**，文件里的偏好既不写入也不丢失，切回可切换布局后按会话偏好恢复；
   选项面自 2026-10-22 起**不再常驻**：**连线与边框**升为右缘竖栏的开关按钮
   （`view-toolbar.buildAppearanceGroup`，点一下互切并写回 `viewState`），
   **布局与配色**留在右键的级联菜单（`view-context-menu.addLayoutPaletteMenus`，
@@ -369,7 +386,7 @@
   ⑥ **回归**：`tests/view-node-relation.test.ts`（删线回收 / 多入边保留 / 删节点回收 / 实例树滞后按身份排除 / 同一节点 ref+id 合并一次改写）、`tests/engine-relations.test.ts`（`collectRelationTargets` 收集全树、`except` 排除、空引擎返空集）。
 
 - [K154] **联系线配色（2026-10-31）**：
-  ① **语法**：`%%rel:id | 标签 | geo=… | color=#rrggbb%%`——颜色是 `%%rel%%` 的**属性段**，不是独立指令：注释不能嵌套，且指令行整行有形状约束（`isDirectiveLine`）。解析从**尾部**逐段消费 `geo=` / `color=`（各至多一段、**顺序无关**、可全省略）；重复出现或形状不符（`foo=…`）即停、该段仍属标签——**绝不吞用户文字**（`%%rel:id | 公式 a=b%%` 的标签完整保留）。值非法（`red` / `#12345` / 带 alpha）**丢弃该段、保留边**（与 `geo=` 同一取舍：辅助数据坏了不该让整条边退化成普通注释）。写侧固定 `geo` → `color`，保证幂等（同内容重放不产生文件 diff）。归一复用 `domain/color.normalizeHexColor`（读侧收三位缩写，写侧恒 `#rrggbb`）。
+  ① **语法**：`%%rel:id | 标签 | geo=… | color=#rrggbb%%`——颜色是 `%%rel%%` 的**属性段**，不是独立指令：注释不能嵌套，且指令行整行有形状约束（`isDirectiveLine`）。解析从**尾部**逐段消费 `geo=` / `color=`（各至多一段、**顺序无关**、可全省略）；重复出现或形状不符（`foo=…`）即停、该段仍属标签——**绝不吞用户文字**（`%%rel:id | 公式 a=b%%` 的标签完整保留）。值非法（`red` / `#12345` / 带 alpha）**丢弃该段、保留边**（与 `geo=` 同一取舍：辅助数据坏了不该让整条边退化成普通注释）。写侧固定 `geo` → `color`，保证幂等（同内容重放不产生文件 diff）。归一复用 `domain/color.normalizeHexColor`（读侧收三位缩写，写侧恒 `#rrggbb`）。**一段一行**（2026-11-02）：同一节点的 `%%id%%` 与每条 `%%rel%%` 各占一行（写侧只产出段，行的拼接与顺序由 `domain/directive.renderDirectiveBlock` 统一——`renderDirectiveLine` 已删，它是不认识 `sum` 段的第二份写入口）——增删一条边只动它自己那一行（diff 能看出改的是哪条），枢纽节点不再出现 700 字符长行，且 `parseDirectiveLine` 的整行 fail-closed 只波及坏掉的那一行；旧的一行多段形态仍照读，**只在联系操作改写该节点时**归一（改文本走 `mdDirectiveTail` 原样回贴）。
   ② **入口只有一个：右键线**（与删线 / 改标签同形，2026-10-30「一切从线出发」裁决的延续）：默认 + **与节点配色同一套色族** + 自定义…。色族表复用 `view-node-color.nodeColorOptions`（同一个「薄荷」在节点上与在连线上是同一个 hex，一支子树和它的出边才像同一族）；「自定义…」复用 `ui/menu-submenu.addCustomColorItem`。带 `paletteNodeColor` 之外的实色（手写 hex）时勾在「自定义」上。
   ③ **落地**：`associativeLineStyle[目标 uid].associativeLineColor`（源节点 data）——引擎 `AssociativeLine.getStyleConfig(node, toNode)` 先读这份**按目标 uid** 的覆盖、缺键才回落到节点样式（＝主题）。**只写颜色**：宽度 / 虚线 / 标签字号仍由主题单一表达（越权写入会让「连线偏好」失效）；**激活色不覆盖**——点线时的高亮是「选中」这条独立语义（引擎默认 `rgba(2,167,240,1)`），跟着线色变反而看不出选中。整张映射**整体重建**（Markdown 是唯一真相），没着色的边**不占键** ⇒ 删掉 `color=` 段下一轮就回落主题；变化判据只比 `associativeLineColor`（data 可手改，别的键不该触发重画）。
   ④ **写回与既有编辑的交叉**：改色走 `rawWithState` + `applyRawNodeContents`（一次提交 / 一条撤销，与删线、改标签同通道）。两条**必须带走颜色**的路径：`updateRelationLabel`（已用 `...ref` 展开）、`persistRelationGeometry`（拖端点后重建 refs——颜色只存在于正文、引擎侧没有可回读的产物，必须从当前 ref 原样搬过去，否则**拖一次线就把颜色抹掉**）。
@@ -383,6 +400,66 @@
   ④ **为什么不用 `document.querySelectorAll('.menu')` 一把删**：那会绕过 `Menu` 的 Component 生命周期（`onHide` 回调、事件解绑、历史栈），留下悬空引用；我们只关**自己创建**的实例。
   ⑤ **实机**（Obsidian 1.14.4）：修复前连续右键两节点 `visibleCount=2`；修复后 `1`。右键线 → 打开「联系配色」子菜单（2 个 `.menu`，父 + 子）→ 再右键节点：`1`（父子一起收）。画布 `pointerdown` 后菜单立即为 0。`dev:errors` 干净。
   ⑥ **回归**：`tests/view-context-menu.test.ts`（连续右键两节点只留一个、`pointerdown` 收起）、`tests/view-node-relation.test.ts`（连续右键两条线只留一个）。
+
+
+
+- [K157] **长耗时导出必须有可见反馈（2026-11-02 实机定位并修复）**：
+  ① **症状**：首次「导出图片」整段无任何提示。实测 385 节点含公式的图 **24 025 ms**（同会话第二次 699 ms，小图 114 ms），期间界面毫无反馈——用户以为卡死，重复点击；而重复点击会叠加同一份字体预取的排空队列。
+  ② **成因**：`exportImageAs` 先 `await primeExportMathFonts()`（24 个 MathJax woff2 逐字节取回并内联，冷启动是唯一大头），随后才是引擎的 `doExport` 位图化；两条路径都没有 Notice。
+  ③ **修法**：`features/view-export.ts` 的 `showExportProgress(lang)`——**超过 `EXPORT_PROGRESS_DELAY_MS`（400ms）才弹**常驻 `new Notice(t(lang,'export.exporting'), 0)`，`finally` 里 `dismissProgress()`（清定时器 + `hide()`）。延迟的意义是**快路径不闪**：小图 114ms、含公式复导出 0.7s 都不出提示；慢路径（首次字体预取 / 超大图）一定有。文案 `export.exporting` 双语（「首次导出需准备数学字体，可能较慢」）——不解释原因时用户会把这个等待当成缺陷。
+  ④ **实机**（Obsidian 1.14.4）：把阈值临时置 0 复验——点击导出后 131ms 出现 `.notice`（文案正确），导出结束后 `.notice` 归 0（常驻提示确实被撤，不是留在屏上）；恢复 400ms 后快速导出实测不弹。
+  ⑤ **回归**：`tests/view-export.test.ts`（超阈值弹常驻并隐藏 / 快路径不弹且定时器已撤 / 失败路径同样撤）。`tests/mocks/obsidian.ts` 的 `Notice` 桩补 `hide()`（官方语义：`timeout=0` 常驻）。
+
+- [K159] **两态开关补 `aria-pressed`（2026-11-02 实机审核）**：
+  ① **症状**：竖栏「边框 / 连线」在 DOM 里恒为 `class="mindmap-tool-btn"` + `aria-label` 恒为名字，读屏器读到的只是一个普通按钮——当前档只由 Lucide 图标表达（`square` / `square-dashed`、`slash` / `spline`），而图标对读屏器是空的。
+  ② **修法**：`ToggleRowState` 增 `pressed`，`createToggleRow` 构建时写一次、每次 `syncState()` 重挂一次。**必须每次重挂**：官方 `setTooltip` 会重写 `aria-label`，而按下态不在 label 里，只写一次会被后续的 tooltip 刷新抹掉。口径＝**图标所示那一档**：边框＝有边框（`square`）、连线＝曲线（`spline`）。
+  ③ **视觉不变**：tooltip 仍只报名字、图标仍是唯一视觉状态（2026-10-23 裁决不受影响）；`aria-pressed` 只增加无障碍层信息。
+  ④ **置灰的连线开关不写**：固定直线布局下它没有两档可切，`disabled` 已表达不可用，再报按下态是假信息。
+  ⑤ **实机**（1.14.4）：初始 `边框=true / 连线=false`，各点一次后 `边框=false / 连线=true`，`aria-label` 仍为「边框 / 连线」；`data.json` 的 `themeStyle` / `lineStyle` 随切换正常落盘。
+  ⑥ **回归**：`tests/view-toolbar.test.ts` +3 例（初始按当前档 / 切换后翻转且 label 未被抹掉 / 置灰不报）。
+
+- [K160] **撤销链必须从「打开时」起算，且「撤到原样」要真的落盘（2026-11-02 实机定位并修复）**：
+  ① **症状（两条，互相掩盖）**：**(a)** 打开导图后**第一次**编辑按下 `Ctrl+Z` 毫无反应（实测：勾选 `- [ ] 甲` → 文件变 `- [x] 甲` → 撤销后仍是 `[x]`）；**(b)** 编辑 → 撤销后，屏上回到原样而**文件仍是改后内容**，关标签（卸载路径的显式保存同样被吞）再重开又跳回改后——「撤销了，但没撤」。
+  ② **(a) 的成因**：引擎创建后命令历史是空的，`addHistory` 只在命令收尾被调用（`recordHistory` 说明）⇒ 第一条快照永远是**第一次改动之后**的状态；`Command.back()` 要求 `activeHistoryIndex - 1 >= 0`，index 停在 0 就直接返回。故不仅首次编辑撤不掉，也永远**回不到打开时的原样**。实测 `history.length === 0` → 勾选后 `1/idx 0` → `BACK` 后仍 `0`。旁证：**点一下节点**会因别的通道（`applyRawNodeContent` → `recordHistory`）推一条快照，于是「先点后改」的编辑反而能撤——这正是缺陷被漏掉的原因。
+  ③ **(a) 的修法**：`mindmap-history.seedInitialHistory`，在 `createMindMap` 里挂**一次性** `node_tree_render_end`（`if (!isReadonly)`），首帧渲染落地时播种。**时机必须是渲染之后**：创建瞬间的树还没被引擎规范化（`expand` 等字段渲染期才补），此刻播种会与渲染后那条快照内容不同 ⇒ 实测「打开后 `2 条 / idx 1`」——第一次 `Ctrl+Z` 只翻了个看不见的字段，等于空转；改到渲染落地后，打开时恒为 `1 条 / idx 0`。**必须用非防抖的 `originAddHistory`**：`addHistory` 被引擎以 `addHistoryTime`（100ms）包装，播种若走它会被紧随的编辑合并掉，第 0 步又变成「编辑后」。实机验证：播种后首个动作即勾选复选框 → `2/idx 1` → `BACK` 文件逐字回到原样。
+  ④ **(b) 的成因**：K156 的纯浏览守卫只看「本轮序列化 == 加载时序列化」，**没看磁盘现在是什么**。本会话写出过一次编辑后，磁盘已是改后内容，此时「回到加载态」是一次真实改动，却被整轮跳过（`lastWritten` 还被顺手写成磁盘值，`reconcileAfterSave` 因此也判等成功，救不回来）。
+  ⑤ **(b) 的修法**：守卫加 `wroteSinceLoad`（`markLoaded` 复位、`vault.modify` 成功置位）；成立时改走真实写盘，内容取**加载时的原样正文** `loadedRawBody`（`MdParseResult` 新增 `body` 字段，`DocumentService.load` 透传）——否则「改了又撤」会把**没编辑过的行**按序列化规范化一遍（空行被吞、松散列表变紧凑），违反「未编辑行逐字回写」。**不能**改成「与磁盘比」：那会把「浏览期间他处改了文件」也变成一次覆盖（P1a 的职责）。
+  ⑥ **实机**（1.14.4，按真实路径复演）：点节点 → 双击改字 → Enter（`甲改` 落盘）→ `Ctrl+Z`（屏上 `甲`）→ 关标签 → 重开。修前：文件全程是 `甲改`、重开回到 `甲改`。修后：撤销即把 `甲`（原样正文）写回，重开显示 `甲`。
+  ⑦ **回归**：`tests/engine-history-limit.test.ts` +4 例（优先非防抖入口 / 缺 `originAddHistory` 时回落 / 引擎面缺失安全 no-op / 抛错只留痕）；`tests/save-pipeline.test.ts` +5 例（编辑后撤销回加载态→写回原样正文 / 卸载路径同样落盘 / 外部改写后显式保存照常写回 / 重新 `markLoaded` 复位写盘标记→纯浏览零写盘 / 未传 `rawBody` 时回落为序列化结果）。
+
+- [K161] **大图首帧要有可见反馈：2 s 的同步长任务不能只留一块空白画布（2026-11-02 实机测量）**：
+  ① **实测**（Obsidian 1.14.4 / 本机）：502 节点 → 引擎创建 38–86 ms、首帧 47–103 ms（无感）；5000 节点 → 引擎创建 148–165 ms、首帧 **2.24–2.57 s**。用 `PerformanceObserver('longtask')` 抓到**单个 2043–2393 ms 的任务**——整段界面无响应，画布空白且无任何提示。
+  ② **归属**：把 `mindMap.emit` 包一层计时后确认，本轮 `node_tree_render_end` 的**插件处理链只占 5.1 ms**（配色指令同步 + 联系同步 + 图片校正 + 数学重测），其余 **2218 ms 全在引擎 `_render()` 内**（布局 + 节点渲染，vendor 只读，插件侧无从拆分）。故本批**不改引擎**，只解决「用户不知道发生了什么」。
+  ③ **修法**：`features/view.showLargeMapRenderHint`——节点数 ≥ `LARGE_MAP_RENDER_HINT_NODES`（1000）时建一层 `.mindmap-render-hint`（文案 `view.renderingLargeMap`，双语、带 `{count}` 插值）。节点数在加载的 **rAF 回调里**用**解析出的树**算好（`countTreeNodes`，零拷贝）存进 `LoadSession.pendingRenderHint`，提示本体由 `onEngineReady` 建（时机理由见 ④、为什么不就地建见 ⑧）。
+  ④ **为什么这个时机才看得见**：引擎的 `render()` 只是 `setTimeout(0)`（vendor `Render.render`），而 `onEngineReady` 正是 `mindMap.render()` 之后的**同一个同步块**（`engine-controller.renderMindMap`）⇒ 提示在浏览器绘制这一帧之前落进 DOM、长任务开始前上屏。反过来在首帧事件里创建，就只能是一句自己都看不到的提示。
+  ⑤ **摘除**：首帧 `node_tree_render_end`（一次性，走 `engineEvents`，随引擎销毁回收）+ `RENDER_HINT_TIMEOUT_MS`（15 s）兜底，防渲染抛错时提示永久盖住画布；`onUnloadFile` / `onClose` 显式清，并把未消费的 `pendingRenderHint` 一并丢弃。层级 `z-index: 5` 低于竖栏与菜单，`pointer-events: none` 不吞事件。
+  ⑥ **阈值为什么是 1000**：500 节点首帧 ≤ 103 ms，提示只会闪一下；1000 起单次任务进入秒级。与 `PERFORMANCE_NODE_THRESHOLD`（500，决定引擎是否虚拟渲染）**无关**。
+  ⑦ **未做**：真正的「不冻结」要靠分片渲染（vendor 内部按分片 yield），收益大但属引擎改造，记入待办。
+  ⑧ **为什么不在 rAF 回调里就地建**（2026-11-02 实机复核）：`initMindMap` 在容器 0 尺寸（后台标签 / 折叠面板）时**不建引擎**，只挂 `ResizeObserver` 等尺寸就绪（`engine-controller.tryRender` 返回 false）⇒ 那一刻 `this.mindMap` 为 null，提示既绑不上 `node_tree_render_end`（只能等 15 s 兜底，而它是不透明全屏遮罩，切回来像卡死 15 s），同一根因还会让 `markLoaded(file, getDataSnapshot()=null, …)` 被它的空守卫**静默吞掉**——加载基线缺失后，该文件此后每轮自动保存都不再算「纯浏览」（打开即重排全文，K156 要消灭的行为在后台标签上复活）。故两者统一改为「加载路径留 pending（`LoadSession.pendingBaseline` / `pendingRenderHint`）→ `onEngineReady` 消费」，引擎同步建好的常规路径在加载回调里即完成，时序与原实现等价。
+
+- [K162] **概要（Summary，2026-11-02）**：
+  ① **语法**：`%%sum:<count> | 文字%%` 写在**第一个被覆盖的兄弟**上，`count` = 从它起连续覆盖的同级节点数（`1..999`）。锚第一个兄弟而不是父节点的理由：锚父节点得写「第几个到第几个」，在前面插兄弟会让整段区间错位；锚第一个兄弟时只有**区间内部**的增删才改变覆盖面，与「这一条起往后 N 条」的直觉一致。越界 `count` 读到即夹到最后一个兄弟（文件数字原样保留），重叠按文档序前者权威。
+  ② **指令块语法必须收口**（新增 `domain/directive`）：加 `sum` 时若在 `domain/relation` 里再抄一遍「整行由段组成」的扫描，两条判据迟早分叉（一行被关系侧认作正文、又被概要侧认作指令）。抽出后 `DIRECTIVE_KEYS` 是唯一关键字表，段形状 / 行判定 / 尾块拆贴 / 规范顺序（`id → rel → sum`）只此一处，`relation` 与 `summary` 只解释**自己 key 的 value**。**连带行为变化**：`isDirectiveLine` 不再判 value 合法性——写错的 value（`%%rel:xyz%%`）由「字面段落」变成「隐藏的指令行」，只丢语义、不再在画布上冒出一个空节点（`tests/relation-directive.test.ts` 同步改口径）。
+  ③ **引擎落点**：父节点 data 的 `generalization: [{uid, text, range:[start,end]}]`（`range` = 兄弟下标闭区间）。**单节点也用父节点形态** `range:[i,i]`：实机比对与引擎「挂在节点自己身上」的形态渲染完全相同，但模块只留一条路径。`uid` 按文档序分配 `sum-N`（同一棵树两次同步得到同一组 uid，不抖动）。
+  ④ **两个时机 + 补一轮渲染**：`applySummariesToTree`（创建引擎**前**写 data 树——视图与 ```mindmap 只读嵌入共用，嵌入不接同步、无编辑入口）与 `syncLiveSummaries`（`node_tree_render_end`，与配色 / 联系同一时机）。概要框是**布局产物**（括号按被覆盖兄弟的包围盒现算），当帧写 data 不会让已画好的括号跟着动 ⇒ `view.scheduleSummaryRender` 延后一拍整树再渲染；第二轮同步发现无变化即停（不会自激）。
+  ⑤ **编辑通道一律 raw**：文字走弹窗，**不用引擎内联编辑框**——概要文字只存在于正文的 `%%sum%%` 段，`SET_NODE_TEXT` 只改派生 data，下一轮同步就被正文覆盖（用户观感「打字一闪就没了」），与联系标签同一取舍。删除同理：概要节点**不在** data 树的 `children` 里，交给 `REMOVE_NODE` 会删掉**别的**兄弟，故 `deleteActiveNode` 与 `Delete` / `Backspace` 都先判概要节点；概要节点的右键菜单也独立（正文那套编辑项对它全是错的）。
+  ⑥ **互不抹除**：写联系只替换 `id` / `rel` 段、写概要只替换 `sum` 段，其余段逐字带回（实机：同一节点上 `%%rel%%` 与 `%%sum%%` 并存、两种指令各自生效）。
+  ⑦ **观感**：概要不吃「边框」开关（`generalization` 主题档恒为 1px 虚线框）——虚框是它唯一的身份线索（无边框档位下正文节点全透明），与联系线恒虚线同一取舍。
+  ⑧ **回归**：`tests/summary-directive.test.ts`（值语法 / 只动 sum 段 / 范围规划）、`tests/engine-summaries.test.ts`（父节点映射 / uid 唯一 / 空规划删键 / 同步幂等）、`tests/node-pick.test.ts`（会话唯一 / done 与 continue / 取消幂等 / 重建清理）。
+  ⑨ **长区间入口（2026-11-02 实机复核后补）**：鼠标只有 `Ctrl+单击` 能逐个加选（`Shift+单击` 引擎不支持、空白拖动是平移画布），而且右键一按下引擎就把多选高亮折叠成一个 —— 用户看到的证据全是「只能给一个节点加概要」。故菜单按选中集合分两条：「概要（覆盖 N 个）」直接建，「概要…」进入**两次点选**（起点 = 右键节点，再点一下落定终点；终点可点在起点前面，区间取两端之间）。点选会话抽到 `features/node-pick`，**联系也改走它**：`node_click` / `draw_click` 各只有一个，两特性各持一份必然互相看不见，`Esc` 也只能取消其中一方。失败路径（不同父节点 / 概要框或中心主题作终点 / 与已有概要重叠）一律**留在选点态**，换个终点再来 —— 重开一次菜单的成本比「猜哪里错了」低得多。**错误提示与常驻指引是两条**：`planPickedRun` 的失败原因用短提示（自散），「从谁开始、点哪里」的常驻 Notice 原样留着——把它改写成错误文案，用户反而看不到下一步该点什么。
+  ⑩ **反查必须用规划器的区间（2026-11-03 审查修复）**：概要节点是派生实例，正文里那条 `%%sum%%` 只能靠区间反查。**不能按 `count` 对宽度**：越界 `count` 读到即被夹到最后一个兄弟（文件里的数字刻意不改，见 ①），此后两者不再相等 —— 用户先给 4 个兄弟加概要、再删掉其中 1 个就必然踩到，表现是「右键概要 / 按 Delete 毫无反应」（`entryOfSummary` 返回 null，调用方静默 return）。修法：`domain/summary` 的规划本体收回私有 `planSummaryDeclarations`（范围 + **产出它的那条声明**），`planSummaryRanges`（区间，引擎落点用）与 `summaryEntryIndexOfRange`（反查，交互用）都是它的投影 —— 判据只有一份，将来改规划规则不会让反查漂移。反查失败**不静默**：给 `summary.unresolved` 提示（正文被手改、`range` 缺失这类真异常）。回归 `tests/summary-directive.test.ts` 的「反查」describe。
+
+- [K163] **右键拖拽＝框选，松手弹「选区菜单」（2026-11-03 实机定位）**：
+  ① **现象**：右键拉框能选中节点（引擎 `select` 插件），但松手后弹出的是**空白菜单**（新建节点 / 布局 / 配色 / 整理），跟刚框出来的选区毫无关系——用户观感是「框选没生效，只弹了个菜单」。根因：Windows 上 `contextmenu` 在 **mouseup 之后**派发，而画布空白处的处理器无条件 `preventDefault` + 弹空白菜单。
+  ② **判据**：画布 capture 记右键按下点（`pointerdown`，`button === 2`），`contextmenu` 到达时算位移，**> `RIGHT_DRAG_THRESHOLD_PX`（5px）视为拖拽**；起点**取用即清**（一次右键只判一次）。**不能问引擎**：插件在 `mouseup` 就复位 `isSelecting` 并移除选框，那一刻已经问不出「刚才是不是在拉框」。阈值 5px 是「滤掉手抖」与「允许小幅框选」的折中（实测 3px 抖动仍走单击）。
+  ③ **行为**：拖拽 + 框到了非根节点 ⇒ 弹**选区菜单**（`概要（覆盖 N 个）` / `复制`）；拖拽但没框到 ⇒ 一个菜单都不弹；右键从**节点**上拖开 ⇒ 节点菜单让位（节点吞掉右键拖动，框选不从节点起手，拖动是手势不是「打开菜单」）；单击 ⇒ 照旧。
+  ④ **为什么不放删除**：`deleteActiveNode` 只删一个节点（`requireActiveNode`），多选下与标题不符；真要批量删得先做批量通道。
+  ⑤ **已知边界**：框选是**相交判定**（vendor `checkInNodes`），垂直排布时下沿擦到下一个兄弟会顺手带上；框外的已选中节点会被移出选中集；`Ctrl`/`Cmd` + 左键拖也能框选（插件对修饰键旁路），但那条路径不产生 `contextmenu`，因此没有选区菜单。
+  ⑥ **选中是「防抖落地」的（第一版的坑）**：引擎的框选在**防抖的 mousemove** 里 `checkInNodes`，实测松手后**约 150ms** 才进 `activeNodeList`（`node_active` 由 `setTimeout(0)` 派发）。第一版在 `contextmenu` 里直接读选中：框住一段有节点时读到空 → 什么都不弹；框住空白时读到**上一轮的选中**（还没被清掉）→ 弹出一个「概要…」的**假菜单**（实机 2026-11-03 复现）。改为**一律挂起**（记松手点）→ 等 `node_active` 到了再按那时的选中决定弹不弹，另设 250ms 兜底（框出来的正好是原选中时引擎不发事件，此时仍应把菜单弹出来）。
+  ⑦ **松手压在节点上＝「什么都没弹」（2026-11-03 实机抓包，第一版漏掉的第二种失败）**：框选结束时鼠标常正好落在某个节点上（画布密集，框的下沿/右沿一扫而过）。节点自己的 `contextmenu` 处理器会把事件**吞掉**——既 emit 不到 `node_contextmenu`、也不冒泡到画布（实测整场只有 `node_active`，`node_contextmenu` 零次）。挂在冒泡阶段的判定因此永远轮不到 ⇒ 用户看到「框选完没有任何反应」。修法：把拖拽判定挪到画布 **capture** 阶段，判到拖拽就 `preventDefault` + `stopPropagation` + 挂起选区菜单（节点菜单不再参与）。
+  ⑧ **空白右键会清掉选中（用户视角：选区凭空消失）**：引擎在右键按下时 `clearActiveNodeList`（`draw_click`）。框选完随手右键一下，选区就没了、菜单里也没有概要。修法：按下时（capture，早于引擎）留一份选中；空白分支（非拖拽）先 `setActiveNodes` **复原**，菜单顶部给选区操作、分隔线之下给**空白菜单全套**（用户不该为了「新建节点」先取消选中）。节点分支不复原：它的条目是单节点语义（`deleteActiveNode` 取 active[0]），复原多选会让「删除节点」删错对象。
+  ⑨ **回归**：`tests/view-context-menu.test.ts` 新增 9 例（单击 / 手抖 3px / 拖拽后不立即弹且 `node_active` 才弹且报覆盖数 / 框住空白且松手时旧选中还在 → 落地后不弹 / 拖拽无选中 / 只框到根 / 从节点起手让位 / 左键不记起点 / 新按下作废挂起）。
+  ⑩ **陈旧「按下」必须清（2026-11-03 审查）**：`rightPressSelection` 只在**右键按下**时被覆盖，节点菜单消费掉这次按下后要显式删掉 —— 否则之后一次**没有右键按下**的 `contextmenu`（macOS `Ctrl+左键`、键盘菜单键）会走空白分支，把这份陈旧选中复原到画面上，弹出一个与当下无关的选区菜单。同时把冒泡分支里的拖拽判定删掉：起点已在 capture 取用即清，那里恒为 false（死分支），留着只会让人以为冒泡阶段也能判手势。
 
 ### Obsidian API 合规与工具链
 

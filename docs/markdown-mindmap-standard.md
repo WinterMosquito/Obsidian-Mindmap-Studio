@@ -116,12 +116,16 @@
 
 > **链接图标三类区分**（实现见 `src/engine/mindmap.ts`）：外部 URL = 引擎原生链接图标（`hyperlink` 通道）；双链指向文档 = 插件文档页图标（`opt.createNodePrefixContent` 前缀内容 `buildWikiDocIcon`，尺寸 `WIKI_DOC_ICON_SIZE`，参与节点测宽；悬停 title = 目标名，点击 = Obsidian 打开）——`[[笔记]]` 文档双链与 `![[笔记]]` 文档嵌入**共用此图标**（二者仅回写时差一个 `!`）；双链指向附件 = 回形针图标（引擎 `attachmentUrl` 原生，`node_attachmentClick` 由视图接管）。URL 本体一律不进入节点文本（icon-only），避免长 URL 撑宽节点与双重表达。
 >
-> **联系（关系连线）指令**（2026-10-30）：节点最后一个物理行的**下一行**，整行只由
-> `%%id:xxxxxx%%`（6 位小写十六进制）与 `%%rel:xxxxxx | 标签%%` 组成（`%%rel%%` 之后
-> 还可跟 `geo=` / `color=` 两个属性段，见下）；list 项按续行缩进。
+> **联系（关系连线）指令**（2026-10-30；2026-11-02 起**一段一行**）：节点最后一个物理行的
+> **下一行**起，每行只由**一个**指令段组成——`%%id:xxxxxx%%`（6 位小写十六进制）或
+> `%%rel:xxxxxx | 标签%%`（`%%rel%%` 之后还可跟 `geo=` / `color=` 两个属性段，见下）；
+> list 项按续行缩进；旧的一行多段形态（`%%id:x%% %%rel:y%%`）**读兼容**。
 > 指令行**不产出节点**（解析器唯一的特例：归属上一个节点），`text` / `mdDerivedText`
 > **都不含**它（剥进 `mdDirectiveTail`，合成时贴回末行），未编辑行仍逐字回写 `mdRaw`。
 > 行内形态（`标题 %%rel:xxxxxx%%`）**读兼容**，下次合成归一为独立行。
+> 判定只认**形状与已登记的 key**（`src/domain/directive.ts` 的 `id` / `rel` / `sum`）：
+> 写错的 value（`%%rel:xyz%%`）仍算指令行（隐藏、不产生语义），不再在画布上冒出一个空节点；
+> 不是 `key: value` 形态的（`%%备注%%`）仍按普通注释处理。
 > **为什么必须是独立行**（实机四组对照）：行尾注释会成为 Obsidian heading 文本的一部分
 > （`支付 %%id:9c2e%%`）⇒ `[[#支付]]` 解析失败、行尾 `^block-id` 失效；独立行则 heading
 > 干净、`[[#标题]]` 正常、阅读视图里是 **0 高度**空段落。实现 `src/domain/relation.ts`
@@ -129,8 +133,9 @@
 > （拼回）、`src/engine/mindmap-relations.ts`（引擎落地）、`src/features/view-node-relation.ts`
 > （建边/删边/改标签/删节点清入边）。
 >
-> **联系指令的写侧规范化**（未编辑行不受影响）：① 一条边一段，段序固定
-> `%%id%%` → `%%rel%%`（多条 rel 保持写入顺序）；② 清除「独占一行」的指令时整行连换行
+> **指令块的写侧规范化**（未编辑行不受影响）：① **一段一行**，段序固定
+> `%%id%%` → `%%rel%%` → `%%sum%%`（多条 rel 保持写入顺序；一条边一行，改哪条看哪行，
+> 枢纽节点不再出现 700 字符的长行）；② 清除「独占一行」的指令时整行连换行
 > 一起删（否则保存后文件凭空多一行）；③ 悬空边（目标 id 不存在）**不画线但原样保留**
 > ——那行没被编辑过，静默清理会破坏逐字保真；④ 删除节点时清掉指向它的 `%%rel%%`，
 > 与删除**同一步**撤销。
@@ -154,6 +159,18 @@
 > **入口**：右键联系线 →「联系配色」（默认 + 与节点配色同一套色族 + 自定义…）；
 > 「默认」= 删掉 `color=` 段，回落主题的 `associativeLineColor`。**只表达线本身**
 > （含箭头）：宽度 / 虚线 / 标签字号仍由主题决定，选中高亮也不随线色变。
+>
+> **概要（Summary，2026-11-02）**：`%%sum:<count> | 文字%%` 写在**第一个被覆盖的兄弟**的
+> 指令块里，`count` = 从它起**连续覆盖**的同级节点数（含自己，`1..999`）——
+> 例：`- 需求评审` 的下一行（按续行缩进）`%%sum:2 | 本周必须完成%%` 括住「需求评审 / 方案设计」两条。
+> 锚第一个兄弟而不是父节点：锚父节点得写「第几个到第几个」，在前面插一个兄弟整段就错位；
+> 锚第一个兄弟时只要**区间内部**不增删，覆盖面就不变。
+> 越界 `count` 读到即**夹到最后一个兄弟**（文件里的数字原样保留，静默改写会破坏逐字保真）；
+> 重叠（两条概要覆盖同一个兄弟）按文档序**前者权威**，后者丢弃。
+> **文字只存在于指令里**（与 `%%rel%%` 的标签同一取舍）：节点正文一个字符都不加，
+> 渲染由引擎按这份段派生。实现 `src/domain/summary.ts`（值语义 + 范围规划 + 区间反查）、
+> `src/engine/mindmap-summaries.ts`（引擎落点：父节点 data 的 `generalization`）、
+> `src/features/view-node-summary.ts`（建 / 改 / 删）、`src/ui/modal-summary-text.ts`（文字弹窗）。
 >
 > ⚠ **图标通道的可达性（2026-10-11 实机复核 + K118）**：三条通道都由**引擎默认节点内容**产生，而引擎在节点存在自绘内容时**早退**（vendor `createNodeData`：`if (this._customNodeContent) { mt(...); return; }`），跳过 `text/image/icon/hyperlink/tag/note/attachment/prefix/postfix` 全部默认内容。自 2026-10-09（`selfDrawPlainNodes` 去设置化）起**含文本节点一律自绘** ⇒ 三条图标通道只剩**插件不接管的节点**（空文本 / 含图）可达：
 > - `[[笔记]]`（带显示名）→ 自绘为**可点链接文本**，**不显示**文档页图标；`[[报告.pdf]]` 同理（不显示回形针）；
@@ -430,7 +447,7 @@ WeakMap 剪贴板已整体删除）。
 
 | 项 | 状态 |
 |---|---|
-| 核对依据 | **文件指针 / 行数：2026-10-21 复核；版本：2026-10-31 复核**；**行为结论沿用 2026-10-15 复核**（行数口径 = `tests/agents-md-sync.test.ts` 的 `countSourceLines`：按 `\n` 切分、末尾换行不计行。**不要**用 `Measure-Object -Line`，口径不同会对不上）：`src/markdown/md-outline.ts` 1159 行、`src/markdown/md-serialize.ts` 1248 行、`src/markdown/md-line-write.ts` 62 行、`src/markdown/links-split.ts` 487 行、`src/links/links-tree.ts` 454 行、`src/links/links-resolve.ts` 353 行、`src/domain/md-meta.ts` 207 行、`src/domain/url.ts` 237 行、`src/domain/pipe-table.ts` 190 行、`src/features/view-wikilink.ts` 411 行、`src/features/node-inline-content.ts` 87 行（barrel）、`src/features/node-inline-tokenize.ts` 1081 行、`src/features/node-inline-html.ts` 723 行、`src/features/node-content-factory.ts` 60 行、`src/features/view-node-actions.ts` 862 行、`src/features/view-dnd.ts` 553 行、`src/features/view-link-navigator.ts` 126 行、`src/features/view.ts` 1131 行、`src/features/view-clipboard.ts` 200 行、`src/features/mindmap-codeblock.ts` 549 行、`src/features/content-remeasure.ts` 502 行、`src/media/images-save.ts` 240 行、`src/ui/modal-text.ts` 101 行、`src/platform/clipboard.ts` 55 行、`src/platform/math-jax.ts` 1090 行、`src/platform/mindmap-auto-open.ts` 146 行、`src/services/document-service.ts` 367 行、`src/services/engine-controller.ts` 806 行、`src/engine/mindmap.ts` 714 行、`src/core/i18n.ts` 565 行、`src/core/constants.ts` 568 行、`src/main.ts` 523 行 + `manifest.json` 版本 **0.3.0**（`minAppVersion` 1.13.0）。**行数只是快照**（读取日 2026-10-21）：逻辑定位一律用 `path#符号`，勿引行号；`src/engine/` 现为 10 个文件（`mindmap.ts` + `mindmap-viewport.ts` 等，见 `AGENTS.md` 代码结构索引）。**当日实机核对（当时版本 0.2.1）**（部署该构建到库 `.obsidian/plugins/mindmap-studio/` → 重载）：`dev:errors` 无条目；URL 单独成节点在实机**显示为可点地址文本**（自绘锚点 1 枚、锚点文本即 URL 本体、引擎链接图标 **0** 枚）；popout 悬停预览通过（见「未复核项」行）。**次要观察（未归因）**：删除库内文件（其中一张正开在导图视图）并关弹窗窗口时，`dev:errors` 出现一批（50 条）`ResizeObserver loop completed with undelivered notifications`；对照实验（重建文件 + 开弹窗导图）**不产生新增**，且 `vendor/simple-mind-map.cjs` **零** `ResizeObserver`、插件两处 RO（`engine-controller` 零尺寸等待 / `mindmap-codeblock` 嵌入容器）在该场景均不活跃或已断开 ⇒ 现有证据指向核心/工作区自身，**未归因**（登记待观察） |
+| 核对依据 | **文件指针 / 行数：2026-10-21 复核；版本：2026-11-03 复核**；**行为结论沿用 2026-10-15 复核**（行数口径 = `tests/agents-md-sync.test.ts` 的 `countSourceLines`：按 `\n` 切分、末尾换行不计行。**不要**用 `Measure-Object -Line`，口径不同会对不上）：`src/markdown/md-outline.ts` 1159 行、`src/markdown/md-serialize.ts` 1248 行、`src/markdown/md-line-write.ts` 62 行、`src/markdown/links-split.ts` 487 行、`src/links/links-tree.ts` 454 行、`src/links/links-resolve.ts` 353 行、`src/domain/md-meta.ts` 207 行、`src/domain/url.ts` 237 行、`src/domain/pipe-table.ts` 190 行、`src/features/view-wikilink.ts` 411 行、`src/features/node-inline-content.ts` 87 行（barrel）、`src/features/node-inline-tokenize.ts` 1081 行、`src/features/node-inline-html.ts` 723 行、`src/features/node-content-factory.ts` 60 行、`src/features/view-node-actions.ts` 862 行、`src/features/view-dnd.ts` 553 行、`src/features/view-link-navigator.ts` 126 行、`src/features/view.ts` 1131 行、`src/features/view-clipboard.ts` 200 行、`src/features/mindmap-codeblock.ts` 549 行、`src/features/content-remeasure.ts` 502 行、`src/media/images-save.ts` 240 行、`src/ui/modal-text.ts` 101 行、`src/platform/clipboard.ts` 55 行、`src/platform/math-jax.ts` 1090 行、`src/platform/mindmap-auto-open.ts` 146 行、`src/services/document-service.ts` 367 行、`src/services/engine-controller.ts` 806 行、`src/engine/mindmap.ts` 714 行、`src/core/i18n.ts` 565 行、`src/core/constants.ts` 568 行、`src/main.ts` 523 行 + `manifest.json` 版本 **0.3.1**（`minAppVersion` 1.13.0）。**行数只是快照**（读取日 2026-10-21）：逻辑定位一律用 `path#符号`，勿引行号；`src/engine/` 现为 10 个文件（`mindmap.ts` + `mindmap-viewport.ts` 等，见 `AGENTS.md` 代码结构索引）。**当日实机核对（当时版本 0.2.1）**（部署该构建到库 `.obsidian/plugins/mindmap-studio/` → 重载）：`dev:errors` 无条目；URL 单独成节点在实机**显示为可点地址文本**（自绘锚点 1 枚、锚点文本即 URL 本体、引擎链接图标 **0** 枚）；popout 悬停预览通过（见「未复核项」行）。**次要观察（未归因）**：删除库内文件（其中一张正开在导图视图）并关弹窗窗口时，`dev:errors` 出现一批（50 条）`ResizeObserver loop completed with undelivered notifications`；对照实验（重建文件 + 开弹窗导图）**不产生新增**，且 `vendor/simple-mind-map.cjs` **零** `ResizeObserver`、插件两处 RO（`engine-controller` 零尺寸等待 / `mindmap-codeblock` 嵌入容器）在该场景均不活跃或已断开 ⇒ 现有证据指向核心/工作区自身，**未归因**（登记待观察） |
 | 相对上一版本文档的**事实修正** | 历次修正清单（①–⑰，含当时缺陷与依据）已外迁存档：[`markdown-mindmap-history.md`](markdown-mindmap-history.md)。标准文档只保留现况规则与判据。 |
 | 函数名核对 | 逻辑指针一律 `path#符号`，符号是否真实存在由 `tests/docs-standard.test.ts` 机械校验（含「目标文件内出现该符号」）；逐批核对清单（2026-09 起，含已删符号与旧归属）见 [`markdown-mindmap-history.md`](markdown-mindmap-history.md)。 |
 | 未复核项 | **无**。① 原「hover 预览在 popout 窗口下的实测」已于 **2026-10-15 实机实测通过**：在独立窗口（`app.workspace.getLeaf("window")` + `setViewState`，注意**必须另开一张导图**——同文件会命中「单实例让位」）打开探针导图，在**该窗口的 document** 里合成 `mouseenter`/`mouseover`/`mousemove` → 官方预览弹窗出现、内容正确（探针目标笔记正文），且**定位在锚点下方**（锚点 [739,433] / 弹窗 [563,465,451,135]：水平居中于锚点、垂直位于其下）——即 popout 下 `ensureOffsetSize` 补几何与「下方优先」定位均生效，无 `NaN` 塌陷。② 原「参考式链接往返」2026-09-13 已实施并登记（§3.5 / §5 第 2 项）。历史注记：本项原以为要依赖 `AGENTS.md` 的 `Node.instanceOf` 登记，该登记已不存在（现唯一 `instanceOf` 记录讲 `view-common.isTextEntryTarget`）。 |

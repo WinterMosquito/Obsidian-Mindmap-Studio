@@ -1,21 +1,19 @@
 /**
- * 联系（关系连线）指令的**唯一**解析与改写实现。
+ * 联系（关系连线）指令的**唯一**语义实现（语法层在 `domain/directive`）。
  *
- * 语法（**独立指令行**；行内尾插只是读取侧的兼容形态，2026-10-30 实机裁决）：
+ * 写在指令块里的两种段（**独立指令行、一段一行**，见 `domain/directive`）：
  *
  * ```markdown
  * ## 支付
- * %%id:9c2e%% %%rel:7f3a | 依赖%%
+ * %%id:9c2e%%
+ * %%rel:7f3a | 依赖 | geo=right,0,left,8,12,0,-30,-12 | color=#4a90d9%%
  * ```
  *
- * - 指令行 = 紧跟节点最后一个物理行的**独立一行**，整行只由指令段组成；
- *   缩进由序列化器按节点类型补（heading/plain 为 0，list 为该节点的续行缩进）；
- * - `%%id:xxxxxx%%` 给「**被指向**的节点」发文件内持久身份（懒加）；
+ * - `%%id:xxxxxx%%` 给「**被指向**的节点」发文件内持久身份（懒加：只有被指向才写）；
  * - `%%rel:xxxxxx | 标签%%` 在**源节点**上声明一条**有向**边（引擎画线恒在终点带箭头）；
  * - 标签之后可跟**属性段** `geo=…`（手绘几何）与 `color=#rrggbb`（线色）：各至多
  *   一段、顺序无关、可全省略；值非法时**丢弃该段、保留边**（几何/颜色是辅助数据，
- *   坏值不该让整条边退化成普通注释）。属性只能写在 `%%rel%%` 内部——注释不能嵌套，
- *   且指令行整行都有形状约束（见 {@link isDirectiveLine}）。
+ *   坏值不该让整条边退化成普通注释）。属性只能写在 `%%rel%%` 内部——注释不能嵌套。
  *
  * ## 为什么不是行内尾插（2026-10-30 实机实测）
  * 把指令写在标题行行尾会让 Obsidian 的 heading 缓存变成 `支付 %%id:9c2e%%`：
@@ -31,6 +29,10 @@
  */
 
 import { normalizeHexColor } from './color';
+import {
+	type DirectiveSegment,
+	splitDirectiveSegments,
+} from './directive';
 import { nodeInlineSource } from './md-meta';
 import { walkTree } from './tree';
 
@@ -97,20 +99,6 @@ export interface RelationState {
 /** 关系 id：6 位小写十六进制（与配色 hex 同字符集，但被 `id:` 前缀分流） */
 const ID_PATTERN = /^[0-9a-f]{6}$/;
 
-/** `id` / `rel` 两个指令关键字 */
-const KIND_PATTERN = /^\s*(id|rel)\s*:\s*([\s\S]*)$/i;
-
-/** 指令段：`%%…%%`（单行、body 内不含 `%%`） */
-function isSegmentShape(segment: string): boolean {
-	return (
-		segment.length >= 4 &&
-		segment.startsWith('%%') &&
-		segment.endsWith('%%') &&
-		!segment.slice(2, -2).includes('%%') &&
-		!segment.includes('\n')
-	);
-}
-
 /** id 归一：trim + 小写；不合法返回 null（fail-closed） */
 export function normalizeRelationId(value: string): string | null {
 	const id = value.trim().toLowerCase();
@@ -133,8 +121,8 @@ export function isWritableRelationLabel(label: string): boolean {
 	);
 }
 
-/** 一个已解析的指令段（`raw` 是它在原文里的逐字切片，改写时原样带回） */
-type ParsedSegment =
+/** 一段**已解释**的关系指令（`raw` 是它在原文里的逐字切片，改写时原样带回） */
+type ParsedRelationSegment =
 	| { kind: 'id'; id: string; raw: string }
 	| { kind: 'rel'; ref: RelationRef; raw: string };
 
@@ -268,21 +256,24 @@ export function sameRelationGeometry(
 	return renderRelationGeometry(a) === renderRelationGeometry(b);
 }
 
-/** 解析单个指令段；不是合法指令返回 null（调用方按普通注释处理） */
-function parseSegment(segment: string): ParsedSegment | null {
-	if (!isSegmentShape(segment)) {
-		return null;
+/**
+ * 解释**关系侧**的一段（`id` / `rel`）；其它 key（`sum`）与非法 value 返回 null。
+ *
+ * `sum` 段由 `domain/summary` 解释：同一行里两种段各管各的，互不吞并
+ * （这正是把行语法收进 `domain/directive` 的目的）。
+ */
+function parseRelationSegment(
+	segment: DirectiveSegment,
+): ParsedRelationSegment | null {
+	if (segment.key === 'id') {
+		const id = normalizeRelationId(segment.value);
+		return id ? { kind: 'id', id, raw: segment.raw } : null;
 	}
-	const match = KIND_PATTERN.exec(segment.slice(2, -2));
-	if (!match) {
+	if (segment.key !== 'rel') {
 		return null;
-	}
-	const value = (match[2] ?? '').trim();
-	if ((match[1] ?? '').toLowerCase() === 'id') {
-		const id = normalizeRelationId(value);
-		return id ? { kind: 'id', id, raw: segment } : null;
 	}
 	// rel：首个 `|` 之前是 id，之后是「标签」+ 若干属性段（`geo=` / `color=`）
+	const value = segment.value;
 	const pipe = value.indexOf('|');
 	const id = normalizeRelationId(pipe === -1 ? value : value.slice(0, pipe));
 	if (!id) {
@@ -319,90 +310,8 @@ function parseSegment(segment: string): ParsedSegment | null {
 			...(geo ? { geo } : {}),
 			...(color ? { color } : {}),
 		},
-		raw: segment,
+		raw: segment.raw,
 	};
-}
-
-/**
- * 把一行拆成**已解析**的指令段（本文件唯一的逐段解析入口）。
- *
- * 判定（`isDirectiveLine`）与状态读取（`relationStateOfSource`）共用同一份结果：
- * 后者此前先判定一遍、再取段一遍、再解一遍，同一条指令行在一次渲染里被解析三次。
- */
-function parseDirectiveLine(line: string): ParsedSegment[] | null {
-	const trimmed = line.trim();
-	if (!trimmed.startsWith('%%')) {
-		return null;
-	}
-	const parsed: ParsedSegment[] = [];
-	let rest = trimmed;
-	while (rest.length > 0) {
-		if (!rest.startsWith('%%')) {
-			return null;
-		}
-		const end = rest.indexOf('%%', 2);
-		if (end === -1) {
-			return null;
-		}
-		const segment = parseSegment(rest.slice(0, end + 2));
-		if (!segment) {
-			return null;
-		}
-		parsed.push(segment);
-		// 段间分隔空白：`%%a%% %%b%%`
-		rest = rest.slice(end + 2).replace(/^[ \t]+/, '');
-	}
-	return parsed;
-}
-
-/**
- * 该行是否**整行只由合法指令段组成**（解析层据此把行归属上一节点而不是新建节点）。
- */
-export function isDirectiveLine(line: string): boolean {
-	return parseDirectiveLine(line) !== null;
-}
-
-/**
- * 行尾连续的指令段（行内兼容形态：`标题 %%rel:x%%`）——剥掉后的文本 + **已解析**的段。
- *
- * 只认行尾：行中间的 `%%rel:…%%` 属普通注释（显示层隐藏、不产生关系）。
- */
-function splitTrailingSegments(line: string): {
-	text: string;
-	parsed: ParsedSegment[];
-} {
-	const parsed: ParsedSegment[] = [];
-	let end = line.length;
-	for (;;) {
-		let cursor = end;
-		while (cursor > 0 && (line[cursor - 1] === ' ' || line[cursor - 1] === '\t')) {
-			cursor--;
-		}
-		if (cursor < 2 || line.slice(cursor - 2, cursor) !== '%%') {
-			break;
-		}
-		const start = line.lastIndexOf('%%', cursor - 3);
-		if (start === -1) {
-			break;
-		}
-		const segment = parseSegment(line.slice(start, cursor));
-		if (!segment) {
-			break;
-		}
-		parsed.unshift(segment);
-		end = start;
-	}
-	// 段前的分隔空白一并吞掉：`标题 %%rel:x%%` → `标题`（不留行尾空格）
-	return { text: line.slice(0, end).trimEnd(), parsed };
-}
-
-/** 行内兼容形态的**原文**段序列（写回 / 测试用的对外形态） */
-export function stripTrailingSegments(line: string): {
-	text: string;
-	segments: string[];
-} {
-	const { text, parsed } = splitTrailingSegments(line);
-	return { text, segments: parsed.map((segment) => segment.raw) };
 }
 
 /** 空状态（冻结后全局复用：每次渲染的每个节点都会问一次，避免无谓分配） */
@@ -411,7 +320,7 @@ const EMPTY_STATE: RelationState = Object.freeze({ id: null, refs: [] });
 /**
  * 从一段「节点原文」读出关系状态。
  *
- * 覆盖两种真实形态：
+ * 覆盖两种真实形态（拆块由 `domain/directive` 唯一实现）：
  * - **标准形态**：末尾若干**指令行**（本插件写出）；
  * - **行内形态**：最后一个内容行的行尾指令段（用户手写 / 旧文件 / 粘贴片段）。
  *
@@ -423,31 +332,15 @@ export function relationStateOfSource(source: string): RelationState {
 	if (!source.includes('%%')) {
 		return EMPTY_STATE;
 	}
-	const lines = source.split('\n');
-	let index = lines.length - 1;
-	const fromDirectiveLines: ParsedSegment[] = [];
-	// 至少保留第一行作为内容行：整行都是指令的孤立节点按普通段落处理
-	while (index >= 1) {
-		const parsed = parseDirectiveLine(lines[index]!);
-		if (!parsed) {
-			break;
-		}
-		fromDirectiveLines.unshift(...parsed);
-		index -= 1;
-	}
-	// 末个内容行若是**整行指令行**（没有内容行，例如文件首部的孤立指令行），
-	// 不再按行内兼容形态剥离：那种行按普通段落处理，不该变成"空节点 + 一条关系"
-	const contentLine = lines[index] ?? '';
-	const inline = parseDirectiveLine(contentLine)
-		? []
-		: splitTrailingSegments(contentLine).parsed;
-	const segments = [...inline, ...fromDirectiveLines];
-	if (segments.length === 0) {
-		return EMPTY_STATE;
-	}
+	const { segments } = splitDirectiveSegments(source);
 	let id: string | null = null;
 	const refs: RelationRef[] = [];
-	for (const parsed of segments) {
+	for (const segment of segments) {
+		const parsed = parseRelationSegment(segment);
+		if (!parsed) {
+			// `sum` 段与坏 value 都走这里：既不是 id 也不是一条边
+			continue;
+		}
 		if (parsed.kind === 'id') {
 			// 首个合法 id 权威（重复 id 指令只保留第一处的语义）
 			id ??= parsed.id;
@@ -459,7 +352,7 @@ export function relationStateOfSource(source: string): RelationState {
 		}
 		refs.push(parsed.ref);
 	}
-	return { id, refs };
+	return id === null && refs.length === 0 ? EMPTY_STATE : { id, refs };
 }
 
 /** 节点数据 → 关系状态（读的是 `nodeInlineSource`，与配色同一份原文） */
@@ -469,71 +362,32 @@ export function relationStateOf(
 	return data ? relationStateOfSource(nodeInlineSource(data)) : EMPTY_STATE;
 }
 
-/** 状态 → 指令行文本（`''` = 无指令）；顺序固定 `id` 再 `rel`，多条 rel 保持原序 */
-export function renderDirectiveLine(state: RelationState): string {
-	const parts: string[] = [];
+/**
+ * 状态 → **关系侧**的指令段（`id` 在前，`rel` 按原序；不包含 `sum` 段）。
+ *
+ * 写侧的唯一原料：调用方把本函数的段与原文里**其它 key 的段**（概要）合到一起，
+ * 交给 `domain/directive.applyDirectiveBlock` 统一排序/拼接——这样改联系不会
+ * 抹掉概要，改概要也不会抹掉联系。
+ */
+export function relationSegmentsOf(state: RelationState): DirectiveSegment[] {
+	const segments: DirectiveSegment[] = [];
 	if (state.id) {
-		parts.push(`%%id:${state.id}%%`);
+		segments.push({
+			key: 'id',
+			value: state.id,
+			raw: `%%id:${state.id}%%`,
+		});
 	}
 	for (const ref of state.refs) {
 		// 属性段固定顺序 geo → color（解析侧顺序无关，写侧保持稳定以便幂等）
 		const geo = ref.geo ? ` | ${renderRelationGeometry(ref.geo)}` : '';
 		const color = ref.color ? ` | ${COLOR_PREFIX}${ref.color}` : '';
-		parts.push(
-			ref.label
-				? `%%rel:${ref.target} | ${ref.label}${geo}${color}%%`
-				: `%%rel:${ref.target}${geo}${color}%%`,
-		);
+		const value = ref.label
+			? `${ref.target} | ${ref.label}${geo}${color}`
+			: `${ref.target}${geo}${color}`;
+		segments.push({ key: 'rel', value, raw: `%%rel:${value}%%` });
 	}
-	return parts.join(' ');
-}
-
-/**
- * 把原文拆成「内容 + 末尾指令」（`tail` 为 `''` = 没有指令）。
- *
- * 只动末尾：行中间的指令段属于普通注释，不在这里处理（删了就是改用户正文）。
- * 内容侧与 `tail` 侧都保持原有顺序（行内段在前、指令行在后）——调用方重贴 tail
- * 时才能逐字还原。
- */
-export function splitDirectiveTail(source: string): {
-	content: string;
-	tail: string;
-} {
-	const lines = source.split('\n');
-	let end = lines.length - 1;
-	// 至少保留首行内容：整行都是指令的孤立节点不该被清成空串（故 `kept` 恒非空）
-	while (end >= 1 && isDirectiveLine(lines[end]!)) {
-		end -= 1;
-	}
-	const kept = lines.slice(0, end + 1);
-	const last = kept.length - 1;
-	const inline = stripTrailingSegments(kept[last]!);
-	// 只有**真的剥掉了段**才改写该行：没段时逐字保留（行尾两空格是 Markdown
-	// 硬换行，不是可以顺手清掉的空白）
-	if (inline.segments.length > 0) {
-		kept[last] = inline.text.trimEnd();
-	}
-	const tail = [...inline.segments, ...lines.slice(end + 1).map((line) => line.trim())]
-		.filter(Boolean)
-		.join('\n');
-	return { content: kept.join('\n'), tail };
-}
-
-/** 去掉原文末尾的全部指令（指令行 + 末行行尾段），返回剩下的内容 */
-export function stripDirectiveTail(source: string): string {
-	return splitDirectiveTail(source).content;
-}
-
-/**
- * 把新的指令行贴到原文末尾（`line` 为空则只做剥离）。
- *
- * 内容为空（空标题 / 空列表项）时**仍保留一个空内容行**：指令必须自占末行，
- * 否则它会被当成节点内容显示出来（`%%id:…%%` 直接出现在节点上）。与
- * `markdown/md-serialize.composeNodeContent` 同口径。
- */
-export function applyDirectiveLine(source: string, line: string): string {
-	const content = stripDirectiveTail(source);
-	return line ? `${content}\n${line}` : content;
+	return segments;
 }
 
 /** 已解析的边（两端均为真实节点） */

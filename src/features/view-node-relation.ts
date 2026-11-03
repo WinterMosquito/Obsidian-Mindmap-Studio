@@ -46,9 +46,12 @@ import {
 } from '../core/constants';
 import { t } from '../core/i18n';
 import {
-	applyDirectiveLine,
+	applyDirectiveBlock,
+	splitDirectiveSegments,
+} from '../domain/directive';
+import {
+	relationSegmentsOf,
 	relationStateOf,
-	renderDirectiveLine,
 	sameRelationGeometry,
 	type RelationGeometry,
 	type RelationRef,
@@ -69,6 +72,7 @@ import {
 import { composeNodeContent } from '../markdown/md-serialize';
 import { applyRawToNode } from '../markdown/md-line-write';
 import { applyRawNodeContents } from './node-inline-editor';
+import { cancelNodePick, startNodePick } from './node-pick';
 import type { MindMapViewContext, ViewNodeEditContext } from './view-context';
 import {
 	cancelRelationAnchor,
@@ -83,19 +87,13 @@ import {
 import { openRelationLabelModal } from '../ui/modal-relation-label';
 import { nodeColorOptions } from './view-node-color';
 
-/** 点选模式（「联系」后等待用户点目标节点）；按视图持有 */
-const pendingPick = new WeakMap<object, MindMapNode>();
-/** 点选模式的提示（选中目标后立刻收起，避免与新阶段的提示叠在一起） */
-const pickNotice = new WeakMap<object, Notice>();
-
-/** 收起「点击目标节点」提示（测试环境的 Notice 桩可能没有 hide） */
-function hidePickNotice(view: object): void {
-	const notice = pickNotice.get(view);
-	pickNotice.delete(view);
-	(
-		notice as unknown as { hide?: () => void } | undefined
-	)?.hide?.();
-}
+/**
+ * 点选模式（「联系」后等待用户点目标节点）——交给 `features/node-pick` 的统一会话。
+ *
+ * 2026-11-02 起不再自己维护 pending / Notice：概要做「起点 → 终点」两步点选时
+ * 也要这套东西，各持一份必然互相看不见（引擎 `node_click` 只有一个，谁先注册
+ * 谁先跑；Esc 也只能取消其中一方）。
+ */
 
 /** 生成本文件内未被占用的新 id */
 function nextRelationId(view: ViewNodeEditContext): string {
@@ -113,14 +111,23 @@ function relationIdOf(node: MindMapNode): string | null {
 	return relationStateOf(node.getData() as MdNodeData).id;
 }
 
-/** 把一个节点的「新关系状态」写回原文（不改 data：data 由重解析派生） */
+/**
+ * 把一个节点的「新关系状态」写回原文（不改 data：data 由重解析派生）。
+ *
+ * **只替换 `id` / `rel` 两种段**，原文里的其它段（`sum` 概要）逐字带回——
+ * 否则「拖一次联系线」就会把该节点的概要抹掉。
+ */
 function rawWithState(
 	data: MdNodeData,
 	app: App,
 	state: RelationState,
 ): string {
 	const raw = composeNodeContent(data, app);
-	return applyDirectiveLine(raw, renderDirectiveLine(state));
+	const { segments } = splitDirectiveSegments(raw);
+	const kept = segments.filter(
+		(segment) => segment.key !== 'id' && segment.key !== 'rel',
+	);
+	return applyDirectiveBlock(raw, [...relationSegmentsOf(state), ...kept]);
 }
 
 /** root（虚拟文档节点）没有正文行，指令无处落笔 */
@@ -542,32 +549,27 @@ export function teardownRelationInteraction(view: ViewNodeEditContext): void {
 		window.clearTimeout(pending);
 		geometryTimers.delete(view);
 	}
-	cancelRelationPicking(view);
+	// 点选会话是共享设施（联系 / 概要都可能是它的持有者）：关视图一律清掉
+	cancelNodePick(view);
 	cancelRelationAnchor(view);
 }
 
-/** 进入「联系」点选模式（下一次点中节点即建边） */
+/** 进入「联系」点选模式（下一次点中节点即进入手绘锚定） */
 export function startRelationPicking(
-	view: ViewNodeEditContext,
+	view: RelationAnchorHost,
 	from: MindMapNode,
 ): void {
 	if (rejectRoot(view, from)) {
 		return;
 	}
-	// 重复进入只留一条提示（否则连续点「联系」会叠出好几条一模一样的 Notice）
-	hidePickNotice(view);
-	pendingPick.set(view, from);
-	pickNotice.set(view, new Notice(t(view.lang, 'nodeRelation.addHint')));
-}
-
-/**
- * 退出点选模式（画布空白点击 / `Esc` / 引擎重建）。
- *
- * @returns 是否真的退出了（false = 本来就不在选点模式，`Esc` 据此让位给核心）
- */
-export function cancelRelationPicking(view: ViewNodeEditContext): boolean {
-	hidePickNotice(view);
-	return pendingPick.delete(view);
+	startNodePick(view, {
+		hint: t(view.lang, 'nodeRelation.addHint'),
+		onPick: (node) => {
+			completeRelationPick(view, from, node);
+			// 点回源节点 = 放弃：与旧实现一致，落点后一律结束会话
+			return 'done';
+		},
+	});
 }
 
 /**
@@ -577,38 +579,33 @@ export function cancelRelationPicking(view: ViewNodeEditContext): boolean {
  * 第二次点击才把 `%%rel:… | geo=…%%` 一次性写进正文。中途 Esc 不产生任何
  * 文件改动——几何一律由用户给出，插件不替用户选路线。
  *
- * @returns 是否消费了本次点击
  */
 function completeRelationPick(
 	view: RelationAnchorHost,
+	from: MindMapNode,
 	node: MindMapNode,
-): boolean {
-	const from = pendingPick.get(view);
-	if (!from) {
-		return false;
+): void {
+	// 点回源节点 = 放弃（会话由 node-pick 收尾）
+	if (from === node) {
+		return;
 	}
-	pendingPick.delete(view);
-	hidePickNotice(view);
-	if (from !== node) {
-		// 目标已有 id 且源已指向它：不必再走两次落定（否则用户点完两个柄
-		// 才发现文件没变）。目标还没有 id 时无法预判，照常进入锚定。
-		const fromState = relationStateOf(from.getData() as MdNodeData);
-		const targetId = relationStateOf(node.getData() as MdNodeData).id;
-		if (targetId && fromState.refs.some((ref) => ref.target === targetId)) {
-			new Notice(t(view.lang, 'nodeRelation.exists'));
-			return true;
-		}
-		const anchored = startRelationAnchor(view, from, node, (geometry) => {
-			createRelation(view, from, node, geometry);
-		});
-		// 节点尚未布局（引擎刚重建 / 极端时序）时拿不到节点盒，锚定无从下笔：
-		// 宁可建一条「没有 geo=」的边（端点交回引擎现算），也不能让提示消失而
-		// 文件毫无变化——那在用户眼里就是「点了没反应」。
-		if (!anchored) {
-			createRelation(view, from, node);
-		}
+	// 目标已有 id 且源已指向它：不必再走两次落定（否则用户点完两个柄
+	// 才发现文件没变）。目标还没有 id 时无法预判，照常进入锚定。
+	const fromState = relationStateOf(from.getData() as MdNodeData);
+	const targetId = relationStateOf(node.getData() as MdNodeData).id;
+	if (targetId && fromState.refs.some((ref) => ref.target === targetId)) {
+		new Notice(t(view.lang, 'nodeRelation.exists'));
+		return;
 	}
-	return true;
+	const anchored = startRelationAnchor(view, from, node, (geometry) => {
+		createRelation(view, from, node, geometry);
+	});
+	// 节点尚未布局（引擎刚重建 / 极端时序）时拿不到节点盒，锚定无从下笔：
+	// 宁可建一条「没有 geo=」的边（端点交回引擎现算），也不能让提示消失而
+	// 文件毫无变化——那在用户眼里就是「点了没反应」。
+	if (!anchored) {
+		createRelation(view, from, node);
+	}
 }
 
 /** 弹标签输入框并写回（双击线 / 右键线两个入口共用同一份预填与回写） */
@@ -706,7 +703,6 @@ function showRelationLineMenu(
 
 /**
  * 注册联系相关的交互（随引擎重建调用一次）：
- * - 点选模式：`node_click` 落点 / `draw_click` 取消；
  * - **双击联系线改标签**：画布 capture 拦截。引擎插件在 `clickPath.dblclick` 上
  *   挂了内置文本框，它只改 data、不进文件（下一次派生同步就会被覆盖，用户观感是
  *   「改了没保存」），故必须在捕获阶段拦下来，改走我们自己的弹窗；
@@ -721,11 +717,9 @@ export function setupRelationInteractions(
 	if (!view.mindMap || !view.canvasEl) {
 		return;
 	}
-	// 引擎重建（换文件 / 切回 Markdown 再回来）后旧节点引用一律作废：留着 pending
-	// 会让下一次「点目标节点」作用在一个不在树上的节点上——`applyRawNodeContents`
-	// 写的是游离 data，文件不会有任何变化，用户只觉得「点了没用」。重建即视为放弃。
-	cancelRelationPicking(view);
-	// 手绘锚定会话同样随引擎重建作废：overlay 挂在旧 draw 层上，节点引用也已失效
+	// 手绘锚定会话随引擎重建作废：overlay 挂在旧 draw 层上，节点引用也已失效
+	//（点选会话由 `features/node-pick.setupNodePick` 在同一时机清掉——那是
+	// 「联系」与「概要」共用的会话，不归本模块管）
 	cancelRelationAnchor(view);
 	// 画布指针手势时间戳（capture）：只有用户真的按过画布，几何才允许回写
 	for (const type of ['pointerdown', 'pointerup'] as const) {
@@ -736,15 +730,6 @@ export function setupRelationInteractions(
 			true,
 		);
 	}
-	view.engineEvents.onEngine(view.mindMap, 'node_click', (...args: unknown[]) => {
-		const node = args[0] as MindMapNode | undefined;
-		if (node) {
-			completeRelationPick(view, node);
-		}
-	});
-	view.engineEvents.onEngine(view.mindMap, 'draw_click', () => {
-		cancelRelationPicking(view);
-	});
 	view.engineEvents.onDom(
 		view.canvasEl,
 		'dblclick',

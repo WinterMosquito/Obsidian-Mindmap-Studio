@@ -3,6 +3,20 @@
    RichText 插件），引擎本体样式由 bundle 运行时注入 document.head（见 vendor/BUILD.md）。 */
 /* ========== MindMap Studio Plugin Styles ========== */
 
+/* 自动打开：切换期间的源视图遮罩。
+   Obsidian 打开文件**先**建 markdown 视图并渲染，之后插件才 setViewState 换视图；
+   启动恢复时叶子逐批恢复，中间能隔数百毫秒 ⇒ 用户看到「先闪一屏 Markdown 原文」。
+   只藏内容区（保留布局，不给标签栏/滚动条造成跳动），最坏是空一帧。
+   类由 markdown/md-open.ts 的 openAsMindMap 加/摘（成败都会摘）。
+
+   两条选择器**并列**（命中其一即生效）：`.workspace-leaf-content` 是当前
+   Obsidian 的叶子内容容器，`.view-content` 是官方视图内容容器的长期类名——
+   上游若调整层级，只靠前者会静默失效（退化成旧观感，不报错、也测不出来）。 */
+.workspace-leaf.mindmap-view-switching .workspace-leaf-content,
+.workspace-leaf.mindmap-view-switching .view-content {
+  visibility: hidden;
+}
+
 /* 视图容器 */
 .mindmap-view-container {
   display: flex;
@@ -259,6 +273,26 @@
 .mindmap-search-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-accent);
+}
+
+/* ========== 大图首帧渲染提示 ==========
+   引擎首帧是**一个同步长任务**（实测 5000 节点 ≈2.2 s），期间画布空白、界面无
+   响应。提示由 JS 在加载的 rAF 回调里创建（引擎的 render 排在 setTimeout(0)，
+   本次帧末即可绘制），首帧渲染结束即摘除。
+   z-index 必须低于竖栏（20）与右键菜单：它只覆盖画布，不盖控件；
+   pointer-events: none 保证渲染期间误触不会落在提示上。 */
+.mindmap-render-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  /* 盖住空白画布：不盖的话用户看到的是「一半空白 + 一半网格」的怪异中间态 */
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
 }
 
 /* ========== 小地图（左下角自动浮层，F12-M） ==========
@@ -671,3 +705,4 @@
 .mindmap-settings-tab .setting-item-description {
   white-space: pre-line;
 }
+

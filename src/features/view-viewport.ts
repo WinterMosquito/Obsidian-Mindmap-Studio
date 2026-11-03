@@ -236,7 +236,7 @@ function enqueueSmoothPan(
 ): void {
 	const canvas = view.canvasEl;
 	const mindMap = view.mindMap;
-	const win = canvas?.ownerDocument?.defaultView ?? null;
+	const win = canvas?.ownerDocument.defaultView ?? null;
 	if (!canvas || !mindMap || !win) {
 		return;
 	}

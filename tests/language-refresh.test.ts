@@ -41,7 +41,7 @@ describe('i18n.t（按语言取文案）', () => {
 		['menu.removeText', '移除文本', 'Remove text'],
 		['menu.resetZoom', '重置缩放', 'Reset zoom'],
 		['lineStyle.straight', '折线', 'Elbow'],
-		['lineStyle.fixedStraight', '直线', 'Straight'],
+		['lineStyle.curve', '曲线', 'Curve'],
 		// 状态栏单复数两把 key：中文同文、英文不同词
 		['common.nodeOne', '个节点', 'node'],
 		['common.nodeMany', '个节点', 'nodes'],

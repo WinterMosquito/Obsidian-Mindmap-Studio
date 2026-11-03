@@ -33,11 +33,6 @@ export interface WikilinkParts {
 	inner: string;
 }
 
-/** 是否为完整维基链接（`[[...]]` 整串；`[[x` 之类残缺形态不算） */
-export function isWikilink(link: string): boolean {
-	return WIKILINK_RE.test(link);
-}
-
 /** 解析维基链接；非 `[[...]]` 完整形态返回 null */
 export function parseWikilink(link: string): WikilinkParts | null {
 	const m = WIKILINK_RE.exec(link);

@@ -27,11 +27,23 @@ import { serializeMdBody } from '../markdown/md-serialize';
 import { forgetImageFail, walkResolveImagePaths } from '../media/images-path';
 import type { MindMapTreeNode } from '../core/engine-types';
 
+/**
+ * 收尾一致性补排的次数上限：超过即判定「每轮都在变」（抖动），只留痕不再补排。
+ * 正常编辑一轮就对得上（计数器随即清零），3 足够覆盖「编辑恰好落在排空尾」这类
+ * 真实的连发场景。
+ */
+const MAX_CONSISTENCY_RETRIES = 3;
+
 /** 单次文档加载结果（视图据此前导引擎并更新自身文档状态） */
 export interface DocumentLoadResult {
 	tree: MindMapTreeNode;
 	/** 原样保留的 frontmatter 块（含首尾 ---），保存时拼回文件头；无则 null */
 	frontmatter: string | null;
+	/**
+	 * 原样正文（frontmatter 之后，未规范化）：交给 `SavePipeline.markLoaded` 做
+	 * 「回到加载态」的逐字还原（见 `loadedRawBody`）。
+	 */
+	body: string;
 }
 
 /**
@@ -68,6 +80,7 @@ export class DocumentService {
 		return {
 			tree,
 			frontmatter: parsed.frontmatter,
+			body: parsed.body,
 		};
 	}
 }
@@ -138,9 +151,51 @@ export class SavePipeline {
 	 * 手动编辑）。显式保存（命令/卸载路径）不检测，成功后同样更新基线。
 	 */
 	private readonly lastWritten = new Map<string, string>();
+	/**
+	 * 「路径 → **加载完成时的正文**」基线（纯浏览不写盘，2026-11-02）。
+	 *
+	 * 序列化带规范化（空行归一、缩进统一、有序列表重排），与磁盘原文天然不等，
+	 * 单靠「无差异写盘跳过」拦不住：打开一次笔记（`onEngineReady` 后引擎会发
+	 * `data_change` → 排一轮自动保存）就把全文重写一遍——实测空行被吞、松散
+	 * 列表变紧凑，Git / 同步盘平白多一个 diff，而用户根本没编辑过。
+	 *
+	 * 判据：本轮正文与该基线**逐字相同** ⇒ 本次会话没有任何内容级改动 ⇒ 跳过
+	 * 写盘。只存正文（不含文件头）是刻意的：文件头恒取磁盘当前值、本管线从不
+	 * 修改它，所以「只在属性面板改了 frontmatter / 切了布局」不该连带把正文
+	 * 规范化一遍。基线只在**加载**时记录（`markLoaded`），编辑后不更新，故真实
+	 * 改动照常落盘。
+	 *
+	 * **但不能无条件跳过**：本会话一旦写过盘，磁盘上已是「编辑后」的内容，此时
+	 * 撤销回到加载态在磁盘上就是一次**真实改动**。故判定还要看
+	 * `wroteSinceLoad`——写过之后回到加载态必须落盘（写回 `loadedRawBody`），
+	 * 否则屏上是原样、文件里是改后，重开又跳回改后（2026-11-02 实机确认）。
+	 */
+	private readonly loadedBody = new Map<string, string>();
+	/**
+	 * 「路径 → **加载时的原样正文**」（`splitFrontmatter().body`，未规范化）。
+	 *
+	 * 撤销回到加载态且本会话写过盘时，写回这一段而不是 `serializeMdBody` 的
+	 * 结果：判据（`loadedBody`）本来就是拿序列化结果比的，两者等价；而磁盘上的
+	 * 原文可能带规范会改掉的形态（空行、松散列表），写序列化结果等于把用户
+	 * **没编辑过的行**重排一遍（违反「未编辑行逐字回写」）。
+	 */
+	private readonly loadedRawBody = new Map<string, string>();
+	/**
+	 * 「本会话**确实写出过**该文件」的路径集合（`vault.modify` 成功即加入）。
+	 *
+	 * 纯浏览守卫只在它为假时成立：写过之后，「回到加载态」不再是「文件本就该是
+	 * 那个样子」，而是要把原样**写回去**（见 `loadedBody` 的第二段说明）。
+	 * 只在 `markLoaded`（重新加载）时清除。
+	 */
+	private readonly wroteSinceLoad = new Set<string>();
 	/** 已就「外部修改」提示过的文件：**同一冲突**只提示一次（防告警疲劳）；
 	 * 成功落盘即解除（见写盘成功路径），让下一次冲突重新提示 */
 	private readonly externalConflictNotified = new Set<string>();
+	/**
+	 * 「路径 → 收尾一致性补排次数」（见 `reconcileAfterSave`）。每次真实差异
+	 * 递增，一旦某轮对得上就清零；达上限只留痕不再补排（防抖动空转）。
+	 */
+	private readonly consistencyRetries = new Map<string, number>();
 	/** 连续写盘失败次数（P1b）：成功一次即清零 */
 	private consecutiveSaveFailures = 0;
 	/** 连续失败达阈值后挂起自动保存（schedule 不再排程；显式 save 不受影响） */
@@ -184,6 +239,37 @@ export class SavePipeline {
 		}
 		this.lastWritten.delete(file.path);
 		this.externalConflictNotified.delete(file.path);
+	}
+
+	/**
+	 * 记录某文件**加载完成时的正文**（「纯浏览不写盘」的基线，见 `loadedBody`）。
+	 *
+	 * @param file 刚加载完成的文件
+	 * @param tree 该文件加载后的树快照（与写盘取的是同一个来源，两边才可比）
+	 * @param rawBody 磁盘上的**原样正文**（`DocumentLoadResult.body`）：撤销回到
+	 *   加载态时按它逐字还原。缺省则回落到序列化结果（仍能修正屏上/盘上分叉，
+	 *   只是没编辑过的行会被规范化）。
+	 *
+	 * **调用时机只有加载**：文件加载、引擎创建完成之后。引擎因设置刷新而重建时
+	 * 不能再调——那会把用户尚未落盘的编辑误标成基线，随后一轮保存被当成
+	 * 「纯浏览」跳过（编辑丢失）。
+	 */
+	markLoaded(
+		file: TFile,
+		tree: MindMapTreeNode | null,
+		rawBody?: string | null,
+	): void {
+		if (!tree) {
+			return;
+		}
+		this.loadedBody.set(file.path, this.buildBody(tree));
+		if (typeof rawBody === 'string') {
+			this.loadedRawBody.set(file.path, rawBody);
+		} else {
+			this.loadedRawBody.delete(file.path);
+		}
+		// 重新加载 ⇒ 「写过没有」重新起算（此时磁盘内容就是这次加载读到的内容）
+		this.wroteSinceLoad.delete(file.path);
 	}
 
 	/**
@@ -243,6 +329,18 @@ export class SavePipeline {
 		this.saveInProgress = true;
 		this.drainFile = target;
 		this.activeSave = this.enqueue(async () => {
+			/** 本轮最后写出的**正文**（收尾一致性自检用，判据与纯浏览守卫同源） */
+			let lastBody: string | null = null;
+			/**
+			 * 本轮是否**真的写过盘**。收尾自检只对写过的轮次有意义：没写盘的轮次
+			 * 只有两种——「纯浏览跳过」（磁盘本就该是那个样子）与「磁盘已等价」，
+			 * 两者的磁盘内容都等于本轮序列化结果，活快照若再变只可能是**新编辑**，
+			 * 而新编辑自己会排下一轮（`data_change` → `schedule`）。省下的是一次
+			 * 全树序列化，大图（数千节点）每轮都要付。
+			 */
+			let wroteDisk = false;
+			/** 本轮因冲突/异常提前收场：这类收场不该做一致性补排（会空转） */
+			let aborted = false;
 			try {
 				// 循环排空：写盘期间若又有编辑（savePending），继续写最新快照
 				let tree = this.takeTreeFor(target, treeHint);
@@ -268,6 +366,7 @@ export class SavePipeline {
 								this.pendingTree = null;
 								this.pendingFile = null;
 								tree = null;
+								aborted = true;
 								break;
 							}
 						}
@@ -279,19 +378,59 @@ export class SavePipeline {
 							current === null
 								? frontmatter
 								: splitFrontmatter(current).frontmatter;
-						const content = this.serialize(tree, header);
-						// 无差异写盘跳过：vault.modify 即使内容一字未变也会刷新 mtime 并
-						// 惊动元数据缓存与同步，而「自动整理」这类操作只清拖拽坐标、
-						// Markdown 文本没变。比对以**文件当前内容**为准——只跳过
-						// 「要写的正是文件里已有的内容」，绝不吞掉真实差异；
-						// 读取失败一律照常写盘（fail-open）。
-						if (current !== content) {
+						// 正文与文件头分开算：判据只看**正文**（见下面的纯浏览守卫）——
+						// 文件头恒取磁盘当前值、本管线从不修改它，故「只在属性面板改了
+						// frontmatter」不该触发一次全文重写。
+						const body = this.buildBody(tree);
+						lastBody = body;
+						// 纯浏览不写盘（2026-11-02）：本轮**正文**与加载时逐字相同
+						// ⇒ 本次会话没有任何内容级改动。规范化结果不落盘——否则只是
+						// 打开看一眼，文件就被重排（空行被吞、松散列表变紧凑），
+						// Git / 同步盘平白多一个 diff。判据刻意不含文件头：布局/属性
+						// 由用户在属性面板改，本管线回贴的又是**磁盘当前值**，
+						// 那种改动不需要（也不该）带着正文一起重写。
+						const loadedBody = this.loadedBody.get(target.path);
+						const atLoadedState = loadedBody !== undefined && loadedBody === body;
+						// 「本会话写过盘」之后，回到加载态在磁盘上**是一次真实改动**
+						//（磁盘此刻是编辑后的内容），故守卫不成立、必须写盘；写回的
+						// 是加载时的原样正文，避免把没编辑过的行规范化一遍。
+						// 实测症状（2026-11-02）：编辑 → Ctrl+Z 屏上回到原样、文件仍是
+						// 改后内容，关闭再重开又跳回改后（撤销等于没发生）。
+						const wroteSinceLoad = this.wroteSinceLoad.has(target.path);
+						const content =
+							atLoadedState && wroteSinceLoad
+								? this.wrapBase(
+										this.loadedRawBody.get(target.path) ?? body,
+										header,
+									)
+								: this.wrapBase(body, header);
+						if (atLoadedState && !wroteSinceLoad) {
+							// 基线仍按**磁盘当前内容**建立：后续真实编辑触发的自动
+							// 保存要走 P1a 外部改动检测，基线缺失会让它把「他处刚改
+							// 过」误当成「首次保存」而直接覆盖。读不到内容就不动基线
+							//（下次照旧 fail-open）。
+							if (current !== null && current !== this.lastWritten.get(target.path)) {
+								this.lastWritten.set(target.path, current);
+							}
+						} else if (current !== content) {
+							// 无差异写盘跳过：vault.modify 即使内容一字未变也会刷新 mtime
+							// 并惊动元数据缓存与同步，而「自动整理」这类操作只清拖拽
+							// 坐标、Markdown 文本没变。比对以**文件当前内容**为准——只
+							// 跳过「要写的正是文件里已有的内容」，绝不吞掉真实差异；
+							// 读取失败一律照常写盘（fail-open）。
 							await this.deps.app.vault.modify(target, content);
+							// P1a：本轮内容成为该文件的新基线
+							this.lastWritten.set(target.path, content);
+							// 写过之后「纯浏览」不再成立：即使随后撤销回加载态，磁盘
+							// 上也必须再写一次把原样还原（见守卫处的说明）
+							this.wroteSinceLoad.add(target.path);
+							wroteDisk = true;
+						} else {
+							// 磁盘内容与本轮序列化结果等价：同样更新基线
+							this.lastWritten.set(target.path, content);
 						}
-						// P1a：本轮内容成为该文件的新基线（无差异跳过同样更新——磁盘
-						// 内容与本轮序列化结果等价）；P1b：一次成功即清零失败计数并
-						// 解除自动保存挂起（显式保存成功同样恢复）。
-						this.lastWritten.set(target.path, content);
+						// P1b：一次成功即清零失败计数并解除自动保存挂起（显式保存
+						// 成功同样恢复）。
 						// 冲突已解除：本轮落盘成功即把「已提示」标记还给下一次冲突
 						//（只 add 不 delete 会让同一文件的第二次外部改动**静默**扣住
 						// 不写盘——用户以为自动保存正常，编辑其实一直没落盘）
@@ -306,6 +445,7 @@ export class SavePipeline {
 						this.savePending = false;
 						this.pendingTree = null;
 						this.pendingFile = null;
+						aborted = true;
 						tree = null;
 						// P1b：连续失败达阈值 → 挂起自动保存（一次性提示），显式
 						// 保存不受影响；任何一次成功都会解除挂起并清零计数。
@@ -328,12 +468,70 @@ export class SavePipeline {
 					// 此刻引擎活快照若可得必然比请求时刻的兜底快照新）
 					tree = this.takeTreeFor(target);
 				}
+				// 收尾一致性自检（2026-11-02）：本轮写完，活快照必须与该轮写出
+				// 的内容一致。不一致只有一种解释——这一轮读到的是**陈旧快照**，
+				// 磁盘上的反而是旧的（实机见过一次：DOM 与 data 都已是 `[x]`，
+				// 文件仍是 `[ ]`，且此后没有新的保存被排上，直到显式保存）。
+				// 这里补排一次自动保存把差异追平；连续失败只留痕、不再空转。
+				//
+				// **只对自动保存做**：显式保存（命令 / 卸载）的调用方本来就在同一个
+				// tick 里抓新鲜快照，没有「陈旧」可言；而卸载路径若在此补排，定时器
+				// 会活过视图拆卸、可能落到下一个刚加载的文件上（那时的基线还没记录，
+				// 一次补排就变成「打开即重写」——正是本批要消灭的行为）。
+				// **也只对写过盘的轮次做**：没写盘的轮次磁盘本就等于本轮序列化结果，
+				// 活快照若再变只可能是新编辑，而新编辑会自己排下一轮（见 `wroteDisk`）。
+				if (checkExternal && !aborted && wroteDisk && lastBody !== null) {
+					this.reconcileAfterSave(target, lastBody);
+				}
 			} finally {
 				this.saveInProgress = false;
 				this.drainFile = null;
 			}
 		});
 		return this.activeSave;
+	}
+
+	/**
+	 * 收尾一致性自检：活快照序列化后仍与本轮写出不同 ⇒ 补排一次保存。
+	 *
+	 * 为什么值得每轮多一次序列化：写盘用的是「排空循环开头的快照」，而快照
+	 * 可能早于本次编辑（引擎 `getData()` 在原地点被替换后、或重入路径取到
+	 * 上一轮的 pendingTree）。一次真实差异意味着**用户编辑没落盘**，代价远高于
+	 * 一次 serialize（无 IO）。判据与写盘同源（`serialize`），不会误报。
+	 *
+	 * 不在这里直接 `await save()`：那会在排空队列里自我嵌套；交给防抖调度，
+	 * 下一次自然带上 `checkExternal` 与最新快照。每路径最多补排
+	 * `MAX_CONSISTENCY_RETRIES` 次（真出现「每轮都在变」的抖动时只留痕）。
+	 */
+	private reconcileAfterSave(target: TFile, writtenBody: string): void {
+		if (!this.deps.app.vault.getFileByPath(target.path)) {
+			return;
+		}
+		const live = this.deps.getSnapshotFor(target);
+		if (!live) {
+			// 引擎已交班/销毁（卸载路径）：无从比较，交给下一位持有者
+			return;
+		}
+		// 与纯浏览守卫同一判据（只比正文）：文件头恒取磁盘当前值，与本轮
+		// 是否「落盘落后」无关——把文件头算进比较只会带来一次无谓的补排。
+		if (this.buildBody(live) === writtenBody) {
+			this.consistencyRetries.delete(target.path);
+			return;
+		}
+		const retries = (this.consistencyRetries.get(target.path) ?? 0) + 1;
+		if (retries > MAX_CONSISTENCY_RETRIES) {
+			// 只提示一次（诊断线索），不抛错、不挂起自动保存：用户的下一次
+			// 编辑仍会正常排程，卸载/显式保存也会把最新内容写出去。
+			if (retries === MAX_CONSISTENCY_RETRIES + 1) {
+				console.warn(
+					'保存后仍有未落盘的内容差异，已停止自动补排',
+					target.path,
+				);
+			}
+			return;
+		}
+		this.consistencyRetries.set(target.path, retries);
+		this.schedule();
 	}
 
 	/**
@@ -372,13 +570,20 @@ export class SavePipeline {
 	}
 
 	/**
-	 * 序列化为 md 大纲 + 原样文件头（布局不入文件），保证尾随换行。
+	 * 树 → Markdown 正文（不含文件头）。**纯浏览守卫与写盘共用这一段**：
+	 * 两边必须逐字可比，另写一份就等于判据失真。
+	 */
+	private buildBody(tree: MindMapTreeNode): string {
+		return serializeMdBody(tree, this.deps.app);
+	}
+
+	/**
+	 * 正文 + 原样文件头拼成落盘内容（布局不入文件），保证尾随换行。
 	 *
 	 * 文件头**只有 BOM**（无属性块）时不能补换行——那会把 BOM 单独变成一行、
 	 * 改动文件结构；其余形态（`---…---`）需要一个换行与正文分隔。
 	 */
-	private serialize(tree: MindMapTreeNode, header: string | null): string {
-		const body = serializeMdBody(tree, this.deps.app);
+	private wrapBase(body: string, header: string | null): string {
 		let content: string;
 		if (!header) {
 			content = body;

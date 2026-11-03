@@ -17,6 +17,7 @@ import {
 	getNodeDataString,
 	getRenderRoot,
 	isCustomNodeContent,
+	isSummaryNode,
 	moveNodeInSiblings,
 	setNodeText,
 	startNodeTextEdit,
@@ -41,6 +42,7 @@ import { isHyperlinkProtocolUrl } from '../domain/url';
 import { relationStateOf } from '../domain/relation';
 import { composeNodeContent, isPureLinkNode } from '../markdown/md-serialize';
 import { stripInboundRelations } from './view-node-relation';
+import { editSummaryText, removeSummary } from './view-node-summary';
 
 import {
 	isDocumentExtension,
@@ -525,6 +527,12 @@ export function editNodeText(view: ViewNodeEditContext, node: MindMapNode): void
 	if (!view.mindMap) {
 		return;
 	}
+	// 概要节点是**派生实例**：它的文字只存在于正文的 `%%sum%%` 段里，引擎编辑框 /
+	// 内联原文编辑器改的都是派生 data（下一轮同步被正文覆盖回来）⇒ 走概要弹窗
+	if (isSummaryNode(node)) {
+		void editSummaryText(view, node);
+		return;
+	}
 	if (!isCustomNodeContent(node)) {
 		startNodeTextEdit(view.mindMap, node);
 		return;
@@ -712,6 +720,12 @@ export function deleteActiveNode(view: ViewNodeEditContext): void {
 	}
 	if (node.isRoot) {
 		new Notice(t(view.lang, 'common.rootCannotDelete'));
+		return;
+	}
+	// 概要节点不在 data 树的 children 里：交给 `REMOVE_NODE` 会去删一个并不存在的
+	// 兄弟（`parent.children[index]` 是**别的节点**）。删除概要只摘正文里那条段。
+	if (isSummaryNode(node)) {
+		removeSummary(view, node);
 		return;
 	}
 	const parent = node.parent;

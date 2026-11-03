@@ -2,7 +2,7 @@
  * view-paste 回归：画布/窗口粘贴图片的分发与回显（features/view-paste）。
  *
  * 覆盖：
- * - `setupPasteHandler`：容器 paste 监听注册（无 containerEl 时不注册）；
+ * - `setupPasteHandler`：容器 paste 监听注册；
  * - `handleWindowPaste` 三道豁免：已消费（defaultPrevented）/ 目标在容器内
  *   （容器监听已处理）/ **输入类目标**内（不劫持——判定走共享的
  *   `view-common.isTextEntryTarget`，按 `tagName` / `isContentEditable` 取形，
@@ -105,7 +105,7 @@ interface RawViewStub {
 }
 
 function makeView(
-	options: { withContainer?: boolean; withEngine?: boolean; filePath?: string | null } = {},
+	options: { withEngine?: boolean; filePath?: string | null } = {},
 ) {
 	const registrations: PasteRegistration[] = [];
 	/** 容器桩：contains 判定集合由用例填充（「目标在容器内」豁免） */
@@ -118,7 +118,7 @@ function makeView(
 		(file: unknown) => `app://local/${(file as { path: string }).path}`,
 	);
 	const raw: RawViewStub = {
-		containerEl: options.withContainer === false ? null : containerEl,
+		containerEl,
 		engineEvents: {
 			onDom: (el, type, handler) => registrations.push({ el, type, handler }),
 		},
@@ -188,14 +188,6 @@ describe('setupPasteHandler（容器粘贴监听）', () => {
 		expect(registrations).toHaveLength(1);
 		expect(registrations[0]!.type).toBe('paste');
 		expect(registrations[0]!.el).toBe(view.containerEl);
-	});
-
-	it('无 containerEl：不注册（容器未构建时安全返回）', () => {
-		const { view, registrations } = makeView({ withContainer: false });
-
-		setupPasteHandler(view);
-
-		expect(registrations).toHaveLength(0);
 	});
 
 	it('容器监听触发：粘贴图片走完整链路（接管 + 写图 + 落盘提示）', async () => {

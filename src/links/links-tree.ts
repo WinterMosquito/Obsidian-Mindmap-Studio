@@ -397,8 +397,8 @@ function updateReferences(
 		// 文档双链通道（非引擎字段，引擎类型未声明故为 any）：与 hyperlink
 		// 同语义更新，否则重命名后引用失联。typeof 收窄以通过 lint 严格类型
 		const docData = node.data;
-		const docWikiLink: unknown = docData?.mdWikiLinkpath;
-		if (docData && typeof docWikiLink === 'string' && docWikiLink) {
+		const docWikiLink: unknown = docData.mdWikiLinkpath;
+		if (typeof docWikiLink === 'string' && docWikiLink) {
 			const parts = parseWikilink(docWikiLink);
 			if (parts && targets.linkTargets.includes(parts.target)) {
 				// 同 hyperlink：删除模式保留未解析链接（K55）

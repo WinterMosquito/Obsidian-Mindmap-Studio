@@ -19,7 +19,11 @@
  * 本文件只验纯逻辑，不需要真实引擎（也避免 Node 下引擎顶层求值触碰 document）。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { ENGINE_COMMANDS, moveNodeInSiblings } from '../src/engine/mindmap';
+import {
+	ENGINE_COMMANDS,
+	moveNodeInSiblings,
+	siblingMoveBlocker,
+} from '../src/engine/mindmap';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 
 vi.mock('../vendor/simple-mind-map.cjs', () => ({
@@ -179,5 +183,47 @@ describe('moveNodeInSiblings：拒绝分支（引擎会静默 no-op，返回值�
 		};
 		expect(moveNodeInSiblings(engine, middle!, 1)).toBe('detached');
 		expect(execCommand).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * 纯判据 `siblingMoveBlocker`：右键菜单据此**置灰**「上移 / 下移」。
+ *
+ * 为什么单测它：这是「点了才知道不能点」的唯一替代品——判据若不执行任何动作
+ * 就能给出结论，菜单才能在渲染时就把按钮灰掉。它与 `moveNodeInSiblings` 必须
+ * 是同一份实现（后者内部调它），否则菜单与动作迟早各说各话。
+ */
+describe('siblingMoveBlocker：不执行动作、只回答「能不能移」', () => {
+	it('中间兄弟：两个方向都可移（null）', () => {
+		const [, middle] = makeSiblings();
+		expect(siblingMoveBlocker(middle, -1)).toBeNull();
+		expect(siblingMoveBlocker(middle, 1)).toBeNull();
+	});
+
+	it('首个兄弟只能下移、末个只能上移', () => {
+		const [first, , last] = makeSiblings();
+		expect(siblingMoveBlocker(first, -1)).toBe('atTop');
+		expect(siblingMoveBlocker(first, 1)).toBeNull();
+		expect(siblingMoveBlocker(last, 1)).toBe('atBottom');
+		expect(siblingMoveBlocker(last, -1)).toBeNull();
+	});
+
+	it('根节点 / 无父 / 空节点：各自的拒绝原因，且不抛', () => {
+		const root = { isRoot: true, parent: null } as unknown as MindMapNode;
+		expect(siblingMoveBlocker(root, -1)).toBe('root');
+		expect(siblingMoveBlocker(null, 1)).toBe('detached');
+		expect(siblingMoveBlocker(undefined, -1)).toBe('detached');
+
+		const orphan = {
+			isRoot: false,
+			parent: null,
+		} as unknown as MindMapNode;
+		expect(siblingMoveBlocker(orphan, 1)).toBe('detached');
+	});
+
+	it('只有单个兄弟：两个方向都无处可移（各自落到边界原因）', () => {
+		const [only] = makeSiblings(1);
+		expect(siblingMoveBlocker(only, -1)).toBe('atTop');
+		expect(siblingMoveBlocker(only, 1)).toBe('atBottom');
 	});
 });

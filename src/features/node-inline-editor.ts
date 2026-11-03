@@ -351,7 +351,7 @@ function commitSession(
 	const value = el.value;
 	el.remove();
 	// 焦点归还 body：引擎快捷键（Delete/Tab/F2 等）要求事件目标为 document.body
-	el.ownerDocument?.body.focus();
+	el.ownerDocument.body.focus();
 	if (view.mindMap !== mindMap) {
 		// 引擎已重建：重建路径已提前提交过，残留会话不再写（防重复/错树）
 		return;

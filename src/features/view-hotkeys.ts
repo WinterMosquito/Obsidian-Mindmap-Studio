@@ -6,7 +6,7 @@
  * - `F2`（编辑当前节点）——输入中让位 / 已在编辑忽略 / 无激活节点仍吞键，
  *   见 handleEditNodeHotkey；
  * - `Delete` / `Backspace`（删选中的联系线，其次删激活节点），见 handleDeleteNodeHotkey；
- * - `Escape`（取消「联系」的点选模式）——只在确实选点时接管，其余交回核心；
+ * - `Escape`（取消「联系 / 概要」的点选模式）——只在确实选点时接管，其余交回核心；
  * - `Shift+1` / `Shift+2`（缩放至全览 / 选区），输入框内让位。
  *
  * 判定一律「必须接管才吞键」：这些键在核心与其他视图里都有原生语义，吞错一个就是
@@ -17,10 +17,8 @@ import { ENGINE_COMMANDS, getActiveNode } from '../engine/mindmap';
 import { isAnyNodeEditing } from './node-inline-editor';
 import { isTextEntryTarget } from './view-common';
 import { deleteActiveNode, editNodeText } from './view-node-actions';
-import {
-	cancelRelationPicking,
-	removeActiveRelationLine,
-} from './view-node-relation';
+import { cancelNodePick } from './node-pick';
+import { removeActiveRelationLine } from './view-node-relation';
 import { fitToScreen, zoomToSelection } from './view-viewport';
 import type { ViewNodeEditContext } from './view-context';
 
@@ -98,7 +96,7 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 	// 线同理，引擎那份会把「删文件里的边」变成「只清屏上的线」）。
 	scope.register([], 'Delete', (evt) => handleDeleteNodeHotkey(view, evt));
 	scope.register([], 'Backspace', (evt) => handleDeleteNodeHotkey(view, evt));
-	// 联系「联系」的点选模式：`Esc` 取消。
+	// 点选模式（联系 / 概要共用的会话）：`Esc` 取消。
 	//
 	// Notice 文案一直承诺着「Esc 取消」，而实现里只有「点空白」一个退出口
 	// （2026-10-30 补上）：Esc 落在别处会把视图/标签页一起带走，比「没反应」更糟。
@@ -107,7 +105,7 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 		if (isTextEntryTarget(evt.target)) {
 			return true; // 输入框 / 内联编辑器里的 Esc 归它们自己
 		}
-		if (!cancelRelationPicking(view)) {
+		if (!cancelNodePick(view)) {
 			return true; // 不在选点模式：Esc 归核心（关弹窗 / 退出全屏 / 关标签页）
 		}
 		evt.preventDefault();

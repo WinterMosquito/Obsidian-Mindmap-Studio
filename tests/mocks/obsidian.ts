@@ -47,7 +47,27 @@ export class PluginSettingTab {
 }
 
 export class Notice {
-	constructor(_message?: string, _timeout?: number) {}
+	/** 本次测试里创建过的全部提示（按创建顺序；`setMessage` 原地改写同一个实例） */
+	static instances: Notice[] = [];
+	/** 当前文案（`setMessage` 会原地改写：多步提示靠它推进） */
+	message: string;
+	hidden = false;
+
+	constructor(message = '', _timeout?: number) {
+		this.message = message;
+		Notice.instances.push(this);
+	}
+
+	/** 官方契约：`new Notice(msg, 0)` 常驻，直到 `hide()`（导出进度提示用它） */
+	hide(): void {
+		this.hidden = true;
+	}
+
+	/** 官方 API：原地改文案（不重新计时、不换位置） */
+	setMessage(message: string): this {
+		this.message = message;
+		return this;
+	}
 }
 
 /** 供 links-resolve 的 file:// 分支做 instanceof 判定（getBasePath 由测试覆写） */

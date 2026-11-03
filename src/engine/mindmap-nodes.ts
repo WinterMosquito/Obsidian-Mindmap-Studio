@@ -210,6 +210,29 @@ export function getActiveNodes(mindMap: MindMap | null): MindMapNode[] {
 }
 
 /**
+ * 把选中集合**恢复**成给定节点（先清空再加）。
+ *
+ * 用途：右键空白时引擎会 `clearActiveNodeList`（`draw_click`），用户的多选
+ * 就这么没了——弹出「对选区做什么」的菜单之前先把它复原（2026-11-03）。
+ *
+ * **不主动派发 `node_active`**：本函数只修显示态，调用方（右键菜单）不需要
+ * 再触发一次「选中变了」的编排（那会把挂起的选区菜单自己刷出来）。
+ */
+export function setActiveNodes(
+	mindMap: MindMap | null,
+	nodes: readonly MindMapNode[],
+): void {
+	const renderer = mindMap?.renderer;
+	if (!renderer) {
+		return;
+	}
+	renderer.clearActiveNodeList();
+	for (const node of nodes) {
+		renderer.addNodeToActiveList(node);
+	}
+}
+
+/**
  * 选中集合里的**最上层子集**：任一祖先同时被选中的节点被剔除
  * （子树随祖先整棵生效，不必逐节点处理）。
  *
@@ -647,6 +670,37 @@ export type SiblingMoveOutcome =
 	| 'detached';
 
 /**
+ * 上/下移的**纯判据**（不执行任何动作）：`null` = 可以移动，其余为拒绝原因。
+ *
+ * 为什么单独抽出：右键菜单需要据此**置灰**——首/尾兄弟点「上移 / 下移」只会在
+ * 动作层拿到一句「已是第一个」，点下去才知道不能点；而真正执行时也要走同一
+ * 判定，两处各写一份迟早漂移（硬规则 5：不造第二份判定）。
+ */
+export function siblingMoveBlocker(
+	node: MindMapNode | null | undefined,
+	offset: -1 | 1,
+): Exclude<SiblingMoveOutcome, 'moved'> | null {
+	if (!node) {
+		return 'detached';
+	}
+	if (node.isRoot) {
+		return 'root';
+	}
+	const siblings = node.parent?.children;
+	if (!Array.isArray(siblings)) {
+		return 'detached';
+	}
+	const index = siblings.indexOf(node);
+	if (index === -1) {
+		return 'detached';
+	}
+	if (offset < 0 ? index === 0 : index === siblings.length - 1) {
+		return offset < 0 ? 'atTop' : 'atBottom';
+	}
+	return null;
+}
+
+/**
  * 兄弟间上/下移的唯一实现（右键菜单「上移节点 / 下移节点」，2026-10-14）：
  * 与相邻兄弟交换顺序，并**清除参与交换两节点的自由拖拽坐标**。
  *
@@ -665,20 +719,12 @@ export function moveNodeInSiblings(
 	node: MindMapNode,
 	offset: -1 | 1,
 ): SiblingMoveOutcome {
-	if (node.isRoot) {
-		return 'root';
+	const blocker = siblingMoveBlocker(node, offset);
+	if (blocker) {
+		return blocker;
 	}
-	const siblings = node.parent?.children;
-	if (!Array.isArray(siblings)) {
-		return 'detached';
-	}
+	const siblings = node.parent?.children as MindMapNode[];
 	const index = siblings.indexOf(node);
-	if (index === -1) {
-		return 'detached';
-	}
-	if (offset < 0 ? index === 0 : index === siblings.length - 1) {
-		return offset < 0 ? 'atTop' : 'atBottom';
-	}
 	// 被移动节点与交换对象都清掉自定义坐标：二者回到布局位置后，交换后的顺序
 	// 才如实落在画面上（只清一个会让另一个仍停在手动摆放的绝对位置）
 	const swap = siblings[offset < 0 ? index - 1 : index + 1];

@@ -38,10 +38,8 @@ import {
 	startNodeTextEdit,
 } from '../src/engine/mindmap';
 import { openNodeTextModal } from '../src/ui/modal-text';
-import {
-	cancelRelationPicking,
-	removeActiveRelationLine,
-} from '../src/features/view-node-relation';
+import { cancelNodePick } from '../src/features/node-pick';
+import { removeActiveRelationLine } from '../src/features/view-node-relation';
 import {
 	isAnyNodeEditing,
 	openNodeInlineEditor,
@@ -66,6 +64,10 @@ vi.mock('../src/engine/mindmap', () => ({
 	// 大图 fit 的计数入口（fitToScreen 经此判断是否提示+让帧）：0 节点 ⇒ 同步 fit
 	countMindMapNodes: (): number => 0,
 	getActiveNodes: vi.fn((): unknown[] => []),
+	// 概要节点判定（`Delete` 先判概要再删正文节点）：本文件只验证键位转发，
+	// 概要删除路径由 tests/engine-summaries.test.ts 与实机覆盖
+	isSummaryNode: vi.fn((): boolean => false),
+	summaryAnchorOf: vi.fn((): null => null),
 	getNodeGroupEl: vi.fn((): Element | null => null),
 	panMindMap: vi.fn(),
 	zoomMindMapAt: vi.fn(),
@@ -84,11 +86,16 @@ vi.mock('../src/features/node-inline-editor', () => ({
 // 插件文本弹窗（**备选入口**：右键「在弹窗中编辑」）在 Node 环境无法开窗，替换为 spy
 vi.mock('../src/ui/modal-text', () => ({ openNodeTextModal: vi.fn() }));
 
-// 联系线的删除 / 点选取消入口（Delete、Backspace、Escape 的落点）：本文件只验证
-// 「何时调用」，写正文与状态清理的落地由 tests/view-node-relation.test.ts 直测
+// 联系线的删除入口（Delete / Backspace 的落点）：本文件只验证「何时调用」，
+// 写正文与状态清理的落地由 tests/view-node-relation.test.ts 直测
 vi.mock('../src/features/view-node-relation', () => ({
-	cancelRelationPicking: vi.fn(() => false),
 	removeActiveRelationLine: vi.fn(() => false),
+}));
+
+// 点选会话的取消入口（Esc 的落点，联系 / 概要共用）：落地由
+// tests/node-pick.test.ts 直测，这里只验证「Esc 何时被消费」
+vi.mock('../src/features/node-pick', () => ({
+	cancelNodePick: vi.fn(() => false),
 }));
 
 /**
@@ -427,7 +434,7 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 		// 联系线：默认「没有激活的线」——删除键照旧走节点通道
 		vi.mocked(removeActiveRelationLine).mockReset().mockReturnValue(false);
 		// 联系点选模式：默认「不在选点」——Esc 交回核心
-		vi.mocked(cancelRelationPicking).mockReset().mockReturnValue(false);
+		vi.mocked(cancelNodePick).mockReset().mockReturnValue(false);
 	});
 
 	it('视图无作用域时自行创建（否则 scope?.register 静默失效）并注册 10 个快捷键', () => {
@@ -621,18 +628,18 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 		expect(getActiveNode).toHaveBeenCalledTimes(1);
 	});
 
-	it('Escape：正在「联系」选点时取消并吞键', () => {
+	it('Escape：正在点选（联系 / 概要）时取消并吞键', () => {
 		const { host, view } = makeHost();
 		registerViewHotkeys(host);
 		const handler = find(asScopeStub(view.scope), 'Escape', [])?.handler as (
 			e: KeyboardEvent,
 		) => unknown;
-		vi.mocked(cancelRelationPicking).mockReturnValue(true);
+		vi.mocked(cancelNodePick).mockReturnValue(true);
 
 		const { evt, preventDefault } = fakeKeyEvent({ tagName: 'svg' });
 		// 返回 false = 已消费：否则核心会把视图/标签页一起带走
 		expect(handler(evt)).toBe(false);
-		expect(cancelRelationPicking).toHaveBeenCalledWith(view);
+		expect(cancelNodePick).toHaveBeenCalledWith(view);
 		expect(preventDefault).toHaveBeenCalledTimes(1);
 	});
 
@@ -647,7 +654,7 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 			tagName: 'svg',
 		});
 		expect(handler(evt)).toBe(true);
-		expect(cancelRelationPicking).toHaveBeenCalledTimes(1);
+		expect(cancelNodePick).toHaveBeenCalledTimes(1);
 		expect(preventDefault).not.toHaveBeenCalled();
 		expect(stopPropagation).not.toHaveBeenCalled();
 	});
@@ -660,7 +667,7 @@ describe('registerViewHotkeys（视图作用域接线）', () => {
 		) => unknown;
 
 		expect(handler(fakeKeyEvent({ tagName: 'INPUT' }).evt)).toBe(true);
-		expect(cancelRelationPicking).not.toHaveBeenCalled();
+		expect(cancelNodePick).not.toHaveBeenCalled();
 	});
 
 	it('引擎缺失（mindMap 为 null）：注册照常完成，不抛异常', () => {

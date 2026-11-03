@@ -171,7 +171,7 @@ function resolveGrammar(lang: string, prism: PrismLike | null): object | null {
  * （与 `platform/math-jax` 的主窗口 MathJax 边界同款，但这里可零成本修掉。）
  */
 function readPrismSurface(context: HTMLElement | null): PrismLike | null {
-	const owner = context?.ownerDocument?.defaultView as
+	const owner = context?.ownerDocument.defaultView as
 		| (Window & { Prism?: PrismLike })
 		| undefined;
 	return owner?.Prism ?? (window as unknown as { Prism?: PrismLike }).Prism ?? null;
@@ -355,7 +355,7 @@ export function renderCodeWithPrism(
 				// 空产物而代码非空 = 语法异常 → 保留字面（不渲染空白块）
 				return;
 			}
-			const doc = holder.ownerDocument ?? document;
+			const doc = holder.ownerDocument;
 			const nodes: Node[] = [];
 			const collector: CodeAppendTarget = {
 				appendChild: (node: Node) => {

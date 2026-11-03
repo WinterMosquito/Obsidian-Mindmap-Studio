@@ -23,7 +23,7 @@ import type { TranslationKey } from '../core/i18n';
 import type { MindMapNode } from '../core/engine-types';
 import type { MdNodeData } from '../core/node-data';
 import { COLOR_DIRECTIVE_NONE, inheritedColorOf } from '../domain/color';
-import { splitDirectiveTail } from '../domain/relation';
+import { splitDirectiveTail } from '../domain/directive';
 import { nodeInlineSource } from '../domain/md-meta';
 import { composeNodeContent } from '../markdown/md-serialize';
 import { applyRawNodeContent } from './node-inline-editor';

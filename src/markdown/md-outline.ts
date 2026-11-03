@@ -31,7 +31,7 @@ import {
 import { isUrlLikeText } from '../domain/url';
 import { parseTaskPrefix, stripTaskPrefix } from '../domain/md-task';
 import { isIndentedCodeLine } from '../core/constants';
-import { isDirectiveLine, stripTrailingSegments } from '../domain/relation';
+import { isDirectiveLine, stripTrailingSegments } from '../domain/directive';
 import type { MdTokenSegment } from '../domain/md-meta';
 import type { MdNodeData } from '../core/node-data';
 import { classifyLines, leadingSpaces } from './md-outline-lines';
@@ -54,6 +54,14 @@ export interface MdParseResult {
 	tree: MindMapTreeNode;
 	/** 原样保留的 frontmatter 块（含首尾 ---），无则为 null */
 	frontmatter: string | null;
+	/**
+	 * 原样正文（frontmatter 之后，未做任何规范化）。
+	 *
+	 * 供保存管线做「回到加载态」的**逐字还原**：撤销到打开时的状态时，写回的
+	 * 必须是这段原文，而不是 `serializeMdBody` 的规范化结果——否则用户一次
+	 * 「改了又撤」，没编辑过的行（空行、松散列表）照样被重排。
+	 */
+	body: string;
 }
 
 /** UTF-8 BOM：Windows 编辑器/同步工具可能写在文件开头（Obsidian 自己不加） */
@@ -547,7 +555,7 @@ export function parseMdOutline(
 	// 虚拟文档根：text=文件名；回写时不输出该行
 	const root: MindMapTreeNode = { data: { text: rootName }, children: [] };
 	if (lines.length === 0) {
-		return { frontmatter, tree: root };
+		return { frontmatter, tree: root, body };
 	}
 
 	/** heading 栈：[节点, # 数量]；虚拟根视作 level 0 恒在栈底 */
@@ -773,7 +781,7 @@ export function parseMdOutline(
 		attachList(line.text, line.marker ?? '-', line.indent);
 	}
 	flushPlain();
-	return { frontmatter, tree: root };
+	return { frontmatter, tree: root, body };
 }
 
 /**

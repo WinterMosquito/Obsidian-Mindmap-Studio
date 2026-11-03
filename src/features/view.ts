@@ -18,7 +18,7 @@ import {
 	type ViewStateResult,
 	WorkspaceLeaf,
 } from 'obsidian';
-import { Language, t } from '../core/i18n';
+import { Language, t, tf } from '../core/i18n';
 import { readNodeDataString } from '../core/node-data';
 import { postProcessExportSvg } from '../platform/export-svg-postprocess';
 import {
@@ -31,6 +31,7 @@ import { createDebouncer, createThrottler, type Debouncer } from '../core/concur
 import {
 	AUTO_SPLIT_CHECK_DELAY_MS,
 	DEFAULT_PALETTE,
+	LARGE_MAP_RENDER_HINT_NODES,
 	normalizeLineStylePreference,
 	normalizePalettePreference,
 	normalizeThemeStyle,
@@ -42,8 +43,11 @@ import {
 	applyColorDirectivesToTree,
 	applyImageSizeCorrectionsToEngine,
 	applyRelationsToTree,
+	applySummariesToTree,
+	countTreeNodes,
 	getRenderRoot,
 	syncLiveRelations,
+	syncLiveSummaries,
 	syncNodeColorDirectives,
 } from '../engine/mindmap';
 import {
@@ -64,6 +68,7 @@ import {
 } from '../domain/mindmap-property';
 import { registerWikilinkInteractions } from './view-wikilink';
 import { setupNodeTaskInteraction } from './view-node-task';
+import { setupNodePick } from './node-pick';
 import {
 	schedulePersistRelationGeometry,
 	setupRelationInteractions,
@@ -101,7 +106,12 @@ import {
 	refreshSearchBarLabels,
 } from './view-search';
 import { exportImage } from './view-export';
-import { arrangeMindMap, buildToolbar, refreshToolbar } from './view-toolbar';
+import {
+	arrangeMindMap,
+	buildToolbar,
+	refreshToolbar,
+	syncHistoryButtons,
+} from './view-toolbar';
 import { setupDragAndDrop } from './view-dnd';
 import { setupContextMenu } from './view-context-menu';
 import { registerViewHotkeys } from './view-hotkeys';
@@ -142,6 +152,14 @@ const READY_TIMEOUT_MS = 10_000;
  * 无事件级合并）——限流到至多每窗口一次、尾随保证最后尺寸落地。
  */
 const RESIZE_THROTTLE_MS = 100;
+
+/**
+ * 大图首帧提示的兜底摘除时限（毫秒）。
+ *
+ * 正常路径由首帧渲染结束摘除（大图 2–3 s）。兜底只防「渲染抛错 / 事件没来」时
+ * 提示永久盖住画布：宁可多显示几秒，也不能让用户只剩一块空白。
+ */
+const RENDER_HINT_TIMEOUT_MS = 15_000;
 
 /**
  * 可在**不重建引擎**的前提下完成刷新的 LIVE_REFRESH 键（键集合由 `settings.ts`
@@ -289,6 +307,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	private autoSplitDebouncer: Debouncer = createDebouncer(AUTO_SPLIT_CHECK_DELAY_MS);
 
 	/**
+	 * 概要框的补渲染是否已排队（`syncLiveSummaries` 改了 data 才排）。
+	 *
+	 * 概要框是**布局产物**：`node_tree_render_end` 里写进 data 的那一轮，
+	 * 括号已经按旧数据画完了，必须再渲染一轮才会出现/移动。用布尔位合并同一
+	 * 轮里的多次请求（连续编辑只补一次），回调里按「引擎仍是同一实例」兜底。
+	 */
+	private summaryRenderQueued = false;
+
+	/**
 	 * resize 节流器（见 RESIZE_THROTTLE_MS）：窗口/侧栏拖动的连续尺寸变化合并到
 	 * 每窗口至多一次整树重排；onClose 取消（视图关闭后不再触碰引擎）。
 	 */
@@ -329,6 +356,18 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 旧文件的写盘会拼上新文件的文件头、或丢掉旧文件的文件头。
 	 */
 	private readonly frontmatterByPath = new Map<string, string | null>();
+	/**
+	 * 大图首帧渲染提示（`view.renderingLargeMap`）。
+	 *
+	 * 引擎首帧是**一个同步长任务**（实测 5000 节点 ≈2.2 s），期间画布空白、
+	 * 界面完全无响应。提示在加载的 rAF 回调里创建——引擎的 `render()` 排在
+	 * `setTimeout(0)`（见 vendor `Render.render`），本次帧末就会绘制，提示因此在
+	 * 长任务开始**之前**已经上屏；首帧渲染结束（`node_tree_render_end`）即摘除。
+	 * 亦步亦趋地跟引擎生命周期：视图关闭 / 引擎销毁 / 兜底超时都会清掉。
+	 */
+	private renderHintEl: HTMLElement | null = null;
+	/** 提示的兜底摘除定时器（渲染异常时不让它永久留在屏上） */
+	private renderHintTimer: number | null = null;
 
 	/**
 	 * 自绘内容「定稿 → 尺寸同步」会话（P4 / K88 / K104 / K116）。
@@ -475,6 +514,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				this.titleRenamer.schedule();
 			},
 			onDataChanged: () => {
+				// 撤销/重做按钮的可用态跟着历史走（引擎在命令收尾 addHistory 后发
+				// 本事件）：不刷就会一直是亮的，点了没反应（2026-11-03 实机）
+				syncHistoryButtons(this);
 				this.scheduleAutoSplitCheck();
 				// 拖动联系线端点/控制点只改 data（引擎命令），这里把它写回正文——
 				// 不写的话重开文件几何就回到自动计算（用户观感「改了不保存」）。
@@ -498,7 +540,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				registerWikilinkInteractions(this);
 				// 任务复选框：画布 capture 接管点击（点一下即切换，见 view-node-task）
 				setupNodeTaskInteraction(this);
-				// 联系（关系连线）：点选落点 + 双击线改标签（capture 拦引擎内联框）
+				// 点选会话（联系 / 概要共用）：node_click 落点 + 空白/Esc 取消。
+				// 必须排在两个特性之前：它们只负责「进入会话」，事件绑定点只有这里一处。
+				setupNodePick(this);
+				// 联系（关系连线）：双击线改标签（capture 拦引擎内联框）
 				setupRelationInteractions(this);
 				// 标签 pill：画布 capture 接管点击 → 官方标签搜索（私有触点）
 				registerTagClicks(this.engineEvents, this.canvasEl, this.app, this.lang);
@@ -735,6 +780,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 挂起的图片尺寸校正属于本文件：文件已卸载，丢弃（引擎随后销毁，
 		// 回灌会落空，留着只会在新文件上误判）
 		this.loadSession.pendingImageCorrections = null;
+		// 同理：0 尺寸等待期间没来得及消费的「加载基线 / 大图提示」也属于本文件。
+		// 留着会让下一个文件用旧路径的基线（基线核对不通过，只是白留）或旧节点数。
+		this.loadSession.pendingBaseline = null;
+		this.loadSession.pendingRenderHint = null;
+		this.clearRenderHint();
 		// 数学重测节点同属本引擎：随引擎销毁一并丢弃（否则跨文件累积持有旧节点）
 		this.contentRemeasure.resetNodes();
 		// 文件切换后允许再次加载同一路径（新会话）。仅清理「仍属于本次卸载」的
@@ -823,6 +873,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			// 联系（关系连线）：同样必须在创建引擎**之前**写进 data 树——引擎会克隆
 			// 数据，建好后再改这棵树不再生效（首帧即带线，不额外渲染一次）。
 			applyRelationsToTree(tree);
+			// 概要（Summary）：同一时机（父节点的 `generalization` 数组），首帧即带
+			// 概要框——否则打开文件后要等一次额外渲染才出现。
+			applySummariesToTree(tree);
 			void collectImageSizeCorrections(tree)
 				.then((corrections) => {
 					// 加载期间文件已切换：丢弃过期结果
@@ -858,6 +911,24 @@ export class MindMapView extends FileView implements MindMapViewContext {
 						return;
 					}
 					this.engine.initMindMap(tree);
+					// 「加载时序列化基线」与「大图首帧提示」都需要**引擎已存在**这一刻：
+					// 前者取树快照、后者要绑首帧事件。而 `initMindMap` 在容器 0 尺寸
+					// （后台标签/折叠面板）时**只挂 ResizeObserver 等尺寸**，此刻
+					// `getDataSnapshot()` 为 null——直接调 markLoaded 会被它的空守卫
+					// 静默吞掉，该文件此后每轮自动保存都不再算「纯浏览」（打开即重排
+					// 全文）；提示则会因绑不上 `node_tree_render_end` 而挂到 15 s 兜底。
+					// 故两者一律留到 `onEngineReady`（引擎真正建好的那一刻）消费。
+					this.loadSession.pendingBaseline = {
+						path: file.path,
+						rawBody: doc.body,
+					};
+					const hintCount = countTreeNodes(tree);
+					this.loadSession.pendingRenderHint =
+						hintCount >= LARGE_MAP_RENDER_HINT_NODES ? hintCount : null;
+					// 常规路径（尺寸就绪、引擎同步建好）：本文即完成，时序与原先等价——
+					// 引擎 render 仍在 setTimeout(0) 里，提示在长任务前上屏。
+					this.recordLoadedBaseline(file);
+					this.showLargeMapRenderHint();
 				},
 			);
 		} catch (error) {
@@ -866,6 +937,90 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			console.error('加载思维导图失败:', file.path, error);
 			new Notice(`${t(this.lang, 'common.notLoaded')}`);
 		}
+	}
+
+	/**
+	 * 记录「加载时序列化」基线（纯浏览不写盘，见 `SavePipeline.markLoaded`）：
+	 * 引擎建好后立刻取同一份快照——此后任何一轮保存若序列化结果与它逐字相同，
+	 * 就说明本次会话没有内容级改动，写盘一律跳过。
+	 *
+	 * `rawBody` 是磁盘上的**原样正文**：本会话写过盘之后，撤销回到加载态要按它
+	 * 逐字还原（否则屏上原样、文件里还是改后内容）。
+	 *
+	 * 引擎尚未创建（0 尺寸等待）时**不动** `pendingBaseline`，留给 `onEngineReady`
+	 * 补记——此时直接调 `markLoaded` 会被它的空守卫吞掉，而基线缺失会让此后每轮
+	 * 自动保存都失去「纯浏览」判定（打开即重排全文）。
+	 *
+	 * **只在加载路径调**：设置刷新引起的引擎重建不写 `pendingBaseline`，因此
+	 * 不会把尚未落盘的编辑误标成基线（随后一轮保存被跳过 = 丢编辑）。
+	 */
+	private recordLoadedBaseline(file: TFile): void {
+		const pending = this.loadSession.pendingBaseline;
+		if (pending?.path !== file.path) {
+			return;
+		}
+		const snapshot = this.engine.getDataSnapshot();
+		if (!snapshot) {
+			return;
+		}
+		this.savePipeline.markLoaded(file, snapshot, pending.rawBody);
+		this.loadSession.pendingBaseline = null;
+	}
+
+	/**
+	 * 大图首帧渲染提示：节点数 ≥ `LARGE_MAP_RENDER_HINT_NODES` 才建（小图首帧
+	 * 50–100 ms，提示只会闪一下）。
+	 *
+	 * **为什么此刻建就能看见**：引擎的 `render()` 只是 `setTimeout(0)`（vendor
+	 * `Render.render`），本回调返回后浏览器先绘制这一帧、再跑那个长任务 ⇒ 提示
+	 * 恰好在冻结之前上屏。反过来，若在长任务**之后**才建（如首帧事件里），就成
+	 * 了一句自己都看不到的提示。
+	 *
+	 * 节点数取自 `pendingRenderHint`（加载路径用解析出的树算好，零拷贝）：引擎
+	 * 未建时连 `mindMap` 都没有，`getData()` 更无从谈起。
+	 *
+	 * **两条调用路径接力消费同一份 pending**：加载回调（rAF 内）先试一次，容器
+	 * 0 尺寸时引擎未建、原样保留；`onEngineReady` 再试。谁先看到引擎谁用掉它。
+	 *
+	 * 摘除走首帧渲染结束（一次性）+ 兜底定时器（防渲染异常时永久盖住画布）。
+	 */
+	private showLargeMapRenderHint(): void {
+		this.clearRenderHint();
+		const count = this.loadSession.pendingRenderHint;
+		if (count === null || count < LARGE_MAP_RENDER_HINT_NODES) {
+			return;
+		}
+		const mindMap = this.mindMap;
+		if (!mindMap) {
+			// 引擎尚未建：容器 0 尺寸（后台标签 / 折叠面板）时 `initMindMap` 只挂
+			// ResizeObserver 等尺寸（见加载回调的说明），本方法在加载路径上必然
+			// 撞到这一刻。这里**保留** pending 交给 `onEngineReady`（引擎真正建好
+			// 那一刻会再调本方法消费它）；此刻绝不建提示——绑不上
+			// `node_tree_render_end`，只剩 15 s 兜底定时器摘除，等于一块盖住
+			// 画布的不透明遮罩。
+			return;
+		}
+		// 一次性：建成就清，免得引擎刷新时重复消费同一份节点数
+		this.loadSession.pendingRenderHint = null;
+		const el = this.containerEl.createDiv({ cls: 'mindmap-render-hint' });
+		el.setText(tf(this.lang, 'view.renderingLargeMap', { count }));
+		this.renderHintEl = el;
+		this.renderHintTimer = this.containerEl.win.setTimeout(() => {
+			this.clearRenderHint();
+		}, RENDER_HINT_TIMEOUT_MS);
+		this.engineEvents.onEngine(mindMap, 'node_tree_render_end', () => {
+			this.clearRenderHint();
+		});
+	}
+
+	/** 摘除首帧渲染提示（幂等；首帧结束 / 引擎换代 / 视图关闭 / 兜底超时共用） */
+	private clearRenderHint(): void {
+		if (this.renderHintTimer !== null) {
+			this.containerEl.win.clearTimeout(this.renderHintTimer);
+			this.renderHintTimer = null;
+		}
+		this.renderHintEl?.remove();
+		this.renderHintEl = null;
 	}
 
 	// ---- 「按文件偏好」的读取兜底 ----
@@ -934,6 +1089,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	/** 引擎就绪收尾：重建工具栏（连线开关态跟随文件布局）；md 模式补返回按钮 */
 	private onEngineReady(): void {
+		// 加载基线与大图首帧提示：容器 0 尺寸（后台标签）时加载那一刻引擎还没建，
+		// 两者都挂在 `LoadSession` 的 pending 字段上等这一刻（见各自字段说明）。
+		// 此刻引擎的 `render()` 已排进 setTimeout(0)、尚未执行 ⇒ 提示仍赶得上首帧；
+		// 引擎同步建好的常规路径则早在加载回调里就消费掉了，这里是无操作。
+		const loadedFile = this.file;
+		if (loadedFile) {
+			this.recordLoadedBaseline(loadedFile);
+		}
+		this.showLargeMapRenderHint();
 		// 数学重测集合换新：引擎（重）建后节点对象全部是新实例，旧引用已随上一
 		// 个引擎销毁而失效——不清则 ① 旧节点被长期持有（换文件/设置刷新累积成
 		// 内存泄漏）；② 字体钩子会对**已销毁**的节点调重测（2026-09-28 复核修复）。
@@ -950,6 +1114,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		const mindMap = this.mindMap;
 		if (mindMap) {
 			this.engineEvents.onEngine(mindMap, 'node_tree_render_end', () => {
+				// 状态栏节点计数：加载那一刻引擎还没建（或 renderer.root 仍为 null）
+				// ⇒ `updateStatusBar` 算得 0，而此前没有后续刷新点，打开大图后状态栏
+				// 一直停在「0 个节点」，直到切走再切回（active-leaf-change）才恢复
+				//（2026-11-03 实机）。**不能按「第一次渲染」去重**：引擎初始化会先发
+				// 一轮该事件（那时 root 尚未回填，计数仍是 0），去重就把修复吃掉了
+				//（实测：加了首次标志仍显示 0）。这里每次都刷，成本由
+				// `updateStatusBar` 自带的 300ms 节流兜住。
+				updateStatusBar(this);
 				// 节点配色指令（`%%#hex%%`）：编辑 / 插入 / 撤销后重算，有变化再渲染一次。
 				// **必须挂渲染落地**（不是 `data_change`）：插件内联编辑走
 				// `applyRawNodeContent` 直接改 data 后 render，根本不发 `data_change`
@@ -961,6 +1133,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// 早于我们执行，不补画就要等下一轮渲染）。几何只认文件里的 `geo=`，
 				// 文件没写时保留 data 现有几何（用户刚拖完的那一轮）。
 				syncLiveRelations(mindMap);
+				// 概要（Summary）：同一时机重算父节点的 `generalization` 数组。
+				// 与联系不同，概要框是**布局产物**（括号位置取决于被覆盖兄弟的
+				// 包围盒），只改 data 不会让已画好的括号跟着动 ⇒ 有变化就补一轮
+				// 渲染；第二轮同步发现无变化即停，不会自激。
+				if (syncLiveSummaries(mindMap)) {
+					this.scheduleSummaryRender(mindMap);
+				}
 				if (this.applyPendingImageCorrections()) {
 					this.engine.scheduleViewportRecenter();
 				}
@@ -977,6 +1156,31 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 让开关态跟上——否则种子值为固定直线布局时，打开任何导图都会永久置灰
 		//（2026-10-23 修复）。
 		this.refreshToolbar();
+	}
+
+	/**
+	 * 排一次**概要框**的补渲染（同一轮只排一次）。
+	 *
+	 * 为什么不能像联系那样「改完 data 立刻补画」：联系线只改一条 SVG 路径，概要框
+	 * 要按被覆盖兄弟的新包围盒重新排版（引擎在整树渲染里现算括号），因此只能整树
+	 * 再渲染一轮。延后一拍（`setTimeout(0)`）而不是在 `node_tree_render_end` 回调
+	 * 里递归调 `render()`：那一拍引擎仍在自己的渲染栈里，递归会打乱它的帧状态。
+	 *
+	 * 兜底：文件切换 / 设置刷新后引擎已换实例（甚至视图已关闭）——回调里比一次
+	 * 实例，不符就丢弃这次补渲染。
+	 */
+	private scheduleSummaryRender(mindMap: MindMap): void {
+		if (this.summaryRenderQueued) {
+			return;
+		}
+		this.summaryRenderQueued = true;
+		this.containerEl.win.setTimeout(() => {
+			this.summaryRenderQueued = false;
+			if (this.mindMap !== mindMap) {
+				return;
+			}
+			mindMap.render();
+		}, 0);
 	}
 
 	/** 标题重命名已委托 TitleRenamer（view-title-renamer.ts） */
@@ -1257,16 +1461,23 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	/** 文档模式：切回 Markdown 编辑/阅读（恢复进入前模式；声明随之降级） */
 	backToMarkdown(): void {
-		if (this.file) {
-			this.engine.persistViewport();
-			void openAsMarkdown(
-				this.app,
-				this.leaf,
-				this.file,
-				this.mdBackMode,
-				this.lang,
-			);
+		if (!this.file) {
+			return;
 		}
+		this.engine.persistViewport();
+		const file = this.file;
+		void openAsMarkdown(
+			this.app,
+			this.leaf,
+			file,
+			this.mdBackMode,
+			this.lang,
+		).then(() => {
+			// 属性降级是**持久改动**（下次打开不再自动进导图），而界面只表现为换了
+			// 个视图 ⇒ 必须说清楚，否则用户以为只是切了显示（2026-11-03 实机：
+			// 点「返回」后 `Mindmap: LogicalStructure` 静默变成 `Mindmap: Markdown`）。
+			new Notice(t(this.lang, 'view.backToMarkdownDone'));
+		});
 	}
 
 	// ==================== 搜索栏（委托 view-search.ts） ====================
@@ -1355,10 +1566,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	override async onClose(): Promise<void> {
+		this.clearRenderHint();
 		this.engine.invalidateInit();
 		this.cancelPendingInit();
 		// 关闭后不再允许任何加载结果被应用（rAF 守卫依赖该字段）
 		this.loadSession.loadingFilePath = null;
+		// 未消费的加载基线与大图提示同样作废（关闭后不会再建引擎）
+		this.loadSession.pendingBaseline = null;
+		this.loadSession.pendingRenderHint = null;
 		this.savePipeline.cancelTimer();
 		this.cancelAutoSplitCheck();
 		this.resizeThrottler.cancel();

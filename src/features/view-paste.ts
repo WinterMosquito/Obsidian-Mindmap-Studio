@@ -18,9 +18,6 @@ import type { MindMapViewContext } from './view-context';
 
 /** 注册画布容器粘贴监听（引擎重建时随 initMindMap 调用） */
 export function setupPasteHandler(view: MindMapViewContext): void {
-	if (!view.containerEl) {
-		return;
-	}
 	// 需求 3：画布任意位置 Ctrl+V 粘贴图片（容器内监听）。
 	// 窗口级兜底在 onOpen 注册一次，避免每次刷新引擎累积监听。
 	view.engineEvents.onDom(view.containerEl, 'paste', (event) => {

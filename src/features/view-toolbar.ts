@@ -25,6 +25,7 @@ import { Notice, setIcon, setTooltip } from 'obsidian';
 import {
 	arrangeMindMap as arrangeMindMapEngine,
 	ENGINE_COMMANDS,
+	readHistoryAvailability,
 	resetZoom,
 	supportsLineStyleSwitch,
 	zoomInMindMap,
@@ -76,6 +77,8 @@ function buildAppearanceGroup(
 					? 'square-dashed'
 					: 'square',
 			tooltip: t(view.lang, 'toolbar.themeStyle'),
+			// 按下态 = 图标所示那一档（有边框）。两态开关，翻转即换档。
+			pressed: view.resolvePreference('themeStyle') !== 'borderless',
 		}),
 		toggle: () =>
 			view.applyThemeStyle(
@@ -92,6 +95,8 @@ function buildAppearanceGroup(
 			describe: () => ({
 				icon: 'slash',
 				tooltip: t(view.lang, 'toolbar.lineStyle'),
+				// 置灰态没有可切换的两档，不报按下态（`disabled` 已表达不可用）
+				pressed: false,
 			}),
 			disabled: true,
 		});
@@ -105,6 +110,8 @@ function buildAppearanceGroup(
 			icon:
 				view.resolvePreference('lineStyle') === 'curve' ? 'spline' : 'slash',
 			tooltip: t(view.lang, 'toolbar.lineStyle'),
+			// 按下态 = 图标所示那一档（曲线）
+			pressed: view.resolvePreference('lineStyle') === 'curve',
 		}),
 		toggle: () =>
 			view.applyLineStyle(
@@ -148,22 +155,67 @@ function buildViewportGroup(view: MindMapViewContext, rail: HTMLElement): void {
 	);
 }
 
+/** 视图 → 撤销/重做按钮（工具栏重建时整体替换；视图关闭后可回收） */
+const historyButtons = new WeakMap<
+	MindMapViewContext,
+	{ undo: HTMLButtonElement; redo: HTMLButtonElement }
+>();
+
 /** 组 4：历史 —— 撤销 / 重做 */
 function buildHistoryGroup(view: MindMapViewContext, rail: HTMLElement): void {
 	const group = rail.createDiv('mindmap-hud-group');
 	// 撤销/重做：竖栏只放图标，tooltip 只报动作名（快捷键由命令面板/热键承载）
-	createToolButton(group, t(view.lang, 'toolbar.undo'), 'undo', () => {
+	const undo = createToolButton(group, t(view.lang, 'toolbar.undo'), 'undo', () => {
 		view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
+		syncHistoryButtons(view);
 	});
-	createToolButton(group, t(view.lang, 'toolbar.redo'), 'redo', () => {
+	const redo = createToolButton(group, t(view.lang, 'toolbar.redo'), 'redo', () => {
 		view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+		syncHistoryButtons(view);
 	});
+	historyButtons.set(view, { undo, redo });
+	// 初始态：打开时历史里只有种子快照（`activeHistoryIndex = 0`）⇒ 撤销就该是灰的
+	syncHistoryButtons(view);
+}
+
+/**
+ * 按引擎历史状态刷新撤销/重做按钮的可用态（置灰 + `aria-disabled`）。
+ *
+ * 为什么必须做（2026-11-03 实机）：`activeHistoryIndex` 停在 0 时按钮仍是亮的、
+ * 可点的，点下去毫无反应——用户会以为「撤销坏了」，而不是「没得撤了」。
+ *
+ * 刷新时机：构建时一次，之后每次数据变更（引擎在命令收尾 `addHistory` 后会发
+ * `data_change`）与按钮自身点击后各一次。判据本身只读两个字段，可高频调用。
+ */
+export function syncHistoryButtons(view: MindMapViewContext): void {
+	const buttons = historyButtons.get(view);
+	if (!buttons) {
+		return;
+	}
+	const { canUndo, canRedo } = readHistoryAvailability(view.mindMap);
+	writeEnabled(buttons.undo, canUndo);
+	writeEnabled(buttons.redo, canRedo);
+}
+
+/** 写按钮可用态：`disabled` 管点击，`is-disabled` 管观感，`aria-disabled` 管读屏 */
+function writeEnabled(button: HTMLButtonElement, enabled: boolean): void {
+	button.disabled = !enabled;
+	// 与置灰开关（createToggleRow）同一表达：官方 `toggleClass`，不直连 classList
+	button.toggleClass('is-disabled', !enabled);
+	button.setAttribute('aria-disabled', String(!enabled));
 }
 
 /** 「状态开关」的显示态：图标与 tooltip 都随当前状态（`describe` 每次重算） */
 interface ToggleRowState {
 	icon: string;
 	tooltip: string;
+	/**
+	 * 开关的「按下」态（写进 `aria-pressed`）：屏上状态只由图标表达（2026-10-23
+	 * 裁决），而图标对读屏器是空的——不给它，两个开关读起来与普通按钮无异
+	 * （2026-11-02 审核）。口径按**图标所示那一档**取：边框＝有边框（`square`）、
+	 * 连线＝曲线（`spline`）。
+	 */
+	pressed: boolean;
 }
 
 /** 可点的开关：必须给 `toggle` */
@@ -210,13 +262,21 @@ function createToggleRow(
 		// 否则按钮会一直显示点击前的样子（2026-10-23 实机踩到）。
 		syncState();
 	});
-	/** 按当前状态回写图标与提示（构建时一次，之后每次切换一次） */
+	// 初始按下态：构建时就写，否则读屏器读到的只是「按钮」（图标差异不可见）
+	writePressed(initial.pressed);
+	/** 按当前状态回写图标、提示与按下态（构建时一次，之后每次切换一次） */
 	function syncState(): void {
 		const state = spec.describe();
 		setIcon(button, state.icon);
 		// **落位必须一起传**：官方按「本次调用」决定展示位置，省掉就回默认下方，
 		// 切换一次状态的按钮之后提示会从左侧跳到下方（2026-10-26 修）。
 		setTooltip(button, state.tooltip, HUD_TOOLTIP);
+		// 提示会重写 aria-label（官方行为）：按下态不是 label 的一部分，切完要重挂。
+		writePressed(state.pressed);
+	}
+	/** 写 `aria-pressed`（两态开关的无障碍状态；视觉仍只看图标） */
+	function writePressed(pressed: boolean): void {
+		button.setAttribute('aria-pressed', String(pressed));
 	}
 	return button;
 }

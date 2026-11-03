@@ -74,6 +74,14 @@ export interface MindMapNode {
 	getData(key?: string): unknown;
 	setData(data: Partial<MindMapNodeData>): void;
 	active(): void;
+	/**
+	 * 概要节点标记：引擎按父节点 data 的 `generalization[]` 为每条概要另建的
+	 * 实例（不在 `children` 里，`range` 指明它压着哪些兄弟）。
+	 * 访问点在 `engine/mindmap-summaries`（防腐收口），features 不得直读。
+	 */
+	isGeneralization?: boolean;
+	/** 概要节点所属的父节点实例（渲染期由引擎挂上） */
+	generalizationBelongNode?: MindMapNode | null;
 }
 
 export interface SetNodeImageOptions {
@@ -149,6 +157,10 @@ export class MindMap {
 		moveNodeToCenter(node: MindMapNode, resetScale?: boolean): void;
 		/** 把根（中心）节点移到视口中心 */
 		setRootNodeCenter(): void;
+		/** 清空选中集合（只改显示态，不派发 `node_active`） */
+		clearActiveNodeList(): void;
+		/** 把一个节点加入选中集合（只改显示态，不派发 `node_active`） */
+		addNodeToActiveList(node: MindMapNode): void;
 		/** 引擎内部的文本编辑插件实例（textEditNode 为编辑框 DOM） */
 		textEdit?: { textEditNode?: HTMLElement | null };
 	};

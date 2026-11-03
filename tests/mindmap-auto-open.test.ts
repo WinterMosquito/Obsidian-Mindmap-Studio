@@ -63,8 +63,8 @@ interface OpenerHarness {
 	register(): void;
 	/** 直接触发全叶子扫描（file-open 与 metadataCache changed 的共同入口） */
 	activate(): void;
-	/** 触发 file-open（回调恒不带参数） */
-	fireFileOpen(): void;
+	/** 触发 file-open（可带 file：实现用它做「立即切换」） */
+	fireFileOpen(file?: unknown): void;
 	/** 触发 active-leaf-change */
 	fireLeafChange(leaf: unknown): void;
 	setLeaves(leaves: unknown[]): void;
@@ -105,14 +105,15 @@ function setupHarness(
 	declaredPaths: readonly string[] = [],
 ): OpenerHarness {
 	const declared = new Set<string>(declaredPaths);
-	const fileOpenCallbacks: (() => void)[] = [];
+	const fileOpenCallbacks: ((file?: unknown) => void)[] = [];
 	const leafChangeCallbacks: ((leaf?: unknown) => void)[] = [];
 	const queriedTypes: string[] = [];
 	let leaves: unknown[] = [];
 	const workspace = {
 		on: (name: string, callback: (...args: unknown[]) => void): unknown => {
 			if (name === 'file-open') {
-				fileOpenCallbacks.push(() => callback());
+				// 真实签名带 file（实现用它做「立即切换」），桩不能吞掉这个参数
+				fileOpenCallbacks.push((file) => callback(file));
 			} else if (name === 'active-leaf-change') {
 				leafChangeCallbacks.push((leaf) => callback(leaf));
 			}
@@ -138,9 +139,9 @@ function setupHarness(
 		activate(): void {
 			opener.activateDeclaredLeaves();
 		},
-		fireFileOpen: (): void => {
+		fireFileOpen: (file?: unknown): void => {
 			for (const callback of fileOpenCallbacks) {
-				callback();
+				callback(file);
 			}
 		},
 		fireLeafChange: (leaf: unknown): void => {
@@ -312,7 +313,7 @@ describe('active-leaf-change 自动切换（单叶判定，不做全量扫描）
 });
 
 describe('scheduleStartupRestore（启动多档延时）', () => {
-	it('默认三档 400 / 1500 / 3500ms：每档精确触发一次全量扫描', () => {
+	it('默认四档 0 / 400 / 1500 / 3500ms：每档精确触发一次全量扫描', () => {
 		vi.useFakeTimers();
 		const harness = setupHarness(['a.md']);
 		const file = fakeFile('a.md');
@@ -321,31 +322,46 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 		harness.register();
 
 		harness.opener.scheduleStartupRestore();
-		// 调度本身不立即扫描（Obsidian 恢复叶子是异步的）
+		// 调度本身不同步扫描（走 setTimeout(…, 0)，不在 onload 栈里做重活）
 		expect(openAsMindMapMock).not.toHaveBeenCalled();
 
-		vi.advanceTimersByTime(399);
-		expect(openAsMindMapMock).toHaveBeenCalledTimes(0);
-		vi.advanceTimersByTime(1); // t = 400（早）
+		// 首档 0ms：Obsidian 通常「先恢复工作区、再加载插件」，此刻叶子早已就绪，
+		// 立即切走才不会让 Markdown 原文在启动后停留 400ms（2026-11-03 实测 436ms）
+		vi.advanceTimersByTime(0);
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
+
+		vi.advanceTimersByTime(399);
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
+		vi.advanceTimersByTime(1); // t = 400（早，叶子晚就绪时的兜底）
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(2);
 
 		vi.advanceTimersByTime(1099); // t = 1499
-		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
-		vi.advanceTimersByTime(1); // t = 1500（中）
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(2);
+		vi.advanceTimersByTime(1); // t = 1500（中）
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(3);
 
 		vi.advanceTimersByTime(1999); // t = 3499
-		expect(openAsMindMapMock).toHaveBeenCalledTimes(2);
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(3);
 		vi.advanceTimersByTime(1); // t = 3500（晚）
-		expect(openAsMindMapMock).toHaveBeenCalledTimes(3);
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(4);
 
-		// 只有三档：更晚不再扫描
+		// 只有四档：更晚不再扫描
 		vi.advanceTimersByTime(60_000);
-		expect(openAsMindMapMock).toHaveBeenCalledTimes(3);
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(4);
 
-		// 三档都是同一次恢复（同一 leaf/file 参数）
-		expect(openAsMindMapMock.mock.calls).toEqual([[leaf, file], [leaf, file], [leaf, file]]);
-		expect(harness.queriedTypes).toEqual(['markdown', 'markdown', 'markdown']);
+		// 四档都是同一次恢复（同一 leaf/file 参数）
+		expect(openAsMindMapMock.mock.calls).toEqual([
+			[leaf, file],
+			[leaf, file],
+			[leaf, file],
+			[leaf, file],
+		]);
+		expect(harness.queriedTypes).toEqual([
+			'markdown',
+			'markdown',
+			'markdown',
+			'markdown',
+		]);
 	});
 
 	it('自定义档位按传入毫秒触发（含单档），默认档位不参与', () => {
@@ -383,13 +399,15 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 		harness.register();
 		harness.opener.scheduleStartupRestore();
 
-		vi.advanceTimersByTime(400); // 早档已触发
+		vi.advanceTimersByTime(0); // 首档已触发
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
+		vi.advanceTimersByTime(400); // 早档已触发
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(2);
 
 		// 卸载插件：随宿主组件注销清理未触发的定时器
 		harness.unloadHost();
 		vi.advanceTimersByTime(60_000);
-		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(2);
 	});
 
 	it('未 register（无宿主组件）时仍按档扫描且不抛异常', () => {
@@ -412,11 +430,13 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 		harness.register();
 		harness.opener.scheduleStartupRestore();
 
-		vi.advanceTimersByTime(400); // 早档：切换到导图视图
+		vi.advanceTimersByTime(0); // 首档：切换到导图视图
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 
-		// 切换完成后该叶子不再是 markdown 叶子（视图类型已变）→ 中/晚档空转
+		// 切换完成后该叶子不再是 markdown 叶子（视图类型已变）→ 后续档空转
 		harness.setLeaves([]);
+		vi.advanceTimersByTime(400); // 早档：叶子集合已空
+		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 		vi.advanceTimersByTime(3100); // t = 3500，中档与晚档都已触发
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 
@@ -510,5 +530,78 @@ describe('file-open 防抖（scheduleDeclaredLeavesScan，2026-10-15）', () => 
 
 		expect(harness.queriedTypes).toEqual([]);
 		expect(openAsMindMapMock).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * `file-open` 的**立即**切换（不只走 50ms 防抖的全量扫描）。
+ *
+ * 为什么需要：启动恢复时叶子逐批恢复，只靠防抖扫描（或 400ms 档位）等于让
+ * markdown 画满屏再切——用户看到的就是「先闪一屏原文再变导图」（2026-11-03
+ * 实机反馈）。file-open 已带 file，据此就地切走即可，不必等任何计时器。
+ */
+describe('file-open：按文件名立即切换（不等待防抖/启动档位）', () => {
+	it('已声明的文件：当场切它所在的 markdown 叶子', () => {
+		const harness = setupHarness(['a.md']);
+		const file = fakeFile('a.md');
+		const leaf = { view: markdownViewWith({ file }) };
+		harness.setLeaves([leaf]);
+		harness.register();
+
+		harness.fireFileOpen(file);
+
+		expect(openAsMindMapMock, '不得依赖 50ms 防抖').toHaveBeenCalledTimes(1);
+		expect(openAsMindMapMock).toHaveBeenCalledWith(leaf, file);
+		// 防抖扫描已排上：本用例内卸载，避免定时器漏到下一个用例（那时 mock
+		// 已被 reset，后台扫描会撞到空返回值）
+		harness.unloadHost();
+	});
+
+	it('未声明为导图：不切（判据仍只有注入的这一份）', () => {
+		const harness = setupHarness();
+		const file = fakeFile('a.md');
+		harness.setLeaves([{ view: markdownViewWith({ file }) }]);
+		harness.register();
+
+		harness.fireFileOpen(file);
+
+		expect(openAsMindMapMock).not.toHaveBeenCalled();
+		harness.unloadHost();
+	});
+
+	it('叶子在 file-open 之后才绑定文件：下一轮事件循环重试并命中', () => {
+		vi.useFakeTimers();
+		const harness = setupHarness(['a.md']);
+		const file = fakeFile('a.md');
+		const view = markdownViewWith({ file: fakeFile('other.md') });
+		harness.setLeaves([{ view }]);
+		harness.register();
+
+		harness.fireFileOpen(file);
+		expect(openAsMindMapMock, '此刻绑定的是别的文件，不能猜').not.toHaveBeenCalled();
+
+		// 启动恢复的真实顺序：事件先到，文件随后才绑上
+		(view as unknown as { file: unknown }).file = file;
+		vi.advanceTimersByTime(16);
+		expect(openAsMindMapMock, '重试在 16ms 内命中，不必等 400ms 档位').toHaveBeenCalledTimes(1);
+		harness.unloadHost();
+	});
+
+	it('叶子始终没绑定该文件：只重试一次，之后交给全量扫描兜底', () => {
+		vi.useFakeTimers();
+		const harness = setupHarness(['a.md']);
+		const file = fakeFile('a.md');
+		harness.setLeaves([
+			{ view: markdownViewWith({ file: fakeFile('other.md') }) },
+		]);
+		harness.register();
+
+		harness.fireFileOpen(file);
+
+		expect(openAsMindMapMock).not.toHaveBeenCalled();
+		// 兜底扫描排上但同样不命中（那个叶子是别的文件）
+		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS + 10);
+		expect(openAsMindMapMock).not.toHaveBeenCalled();
+		harness.unloadHost();
 	});
 });

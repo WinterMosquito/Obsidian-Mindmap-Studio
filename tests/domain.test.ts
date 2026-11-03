@@ -15,7 +15,6 @@
 import { describe, expect, it } from 'vitest';
 import {
 	formatWikilink,
-	isWikilink,
 	linkDisplayText,
 	parseWikilink,
 	wikilinkLinkpath,
@@ -29,7 +28,7 @@ interface TNode {
 	children?: readonly TNode[] | null;
 }
 
-describe('isWikilink', () => {
+describe('整串判定（`parseWikilink` 的 null 契约）', () => {
 	it.each([
 		// 仅整串 `[[...]]` 形态命中（正则 ^...$ + inner 不含 `]`）
 		{ input: '[[note]]', expected: true, why: '最简形态' },
@@ -45,8 +44,8 @@ describe('isWikilink', () => {
 		{ input: '[[a]]]', expected: false, why: '多余右括号（尾锚点不匹配）' },
 		{ input: '[[a]]\n', expected: false, why: '尾部换行破坏整串匹配' },
 		{ input: '[ [a]]', expected: false, why: '方括号间有空格' },
-	])('isWikilink($input) === $expected（$why）', ({ input, expected }) => {
-		expect(isWikilink(input)).toBe(expected);
+	])('parseWikilink($input) === null ? false : true（$why）', ({ input, expected }) => {
+		expect(parseWikilink(input) !== null).toBe(expected);
 	});
 });
 

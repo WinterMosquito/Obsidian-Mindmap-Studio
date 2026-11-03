@@ -22,6 +22,7 @@ import {
 	arrangeMindMap,
 	cancelEngineTimers,
 	centerContentAtFullScale,
+	contentExceedsCanvasAtFullScale,
 	createMindMap,
 	destroyMindMap,
 	fitMindMap,
@@ -491,7 +492,20 @@ export class EngineController {
 					this.viewport.restoredSaved = true;
 				}
 			} else {
-				centerContentAtFullScale(mindMap);
+				// 无保存视口：默认 100% 居中（小图维持原观感）。但内容在 100% 下
+				// **装不进画布**时，「居中」等于「一打开就看不到大半张图」——
+				// 385 节点图首次打开只有约 1/10 可见，用户得自己点「总览」
+				//（2026-11-03 实机）。装不下就改走适应画布（超大图由 fit 自身的
+				// 可读下限兜底，不会缩成看不清的一片）。
+				if (contentExceedsCanvasAtFullScale(mindMap) === true) {
+					// fit 返回 null = 变换读取异常：回退旧的「全尺度居中」，
+					// 至少保证内容从可预期的位置开始（不阻断打开流程）
+					if (fitMindMap(mindMap) === null) {
+						centerContentAtFullScale(mindMap);
+					}
+				} else {
+					centerContentAtFullScale(mindMap);
+				}
 				this.viewport.defaultSignature = this.viewSignature();
 				this.viewport.restoredSaved = false;
 			}

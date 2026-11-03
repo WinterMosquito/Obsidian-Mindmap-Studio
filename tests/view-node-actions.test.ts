@@ -132,6 +132,10 @@ vi.mock('../src/engine/mindmap', () => ({
 		)?.getData?.(key);
 		return typeof value === 'string' ? value : '';
 	},
+	// 概要节点：删除 / 编辑入口都先判它（概要不在 data 树 children 里，
+	// 交给 REMOVE_NODE 会删错兄弟）。本文件只覆盖正文节点的编排，恒 false。
+	isSummaryNode: (): boolean => false,
+	summaryAnchorOf: (): null => null,
 }));
 
 vi.mock('../src/ui/modal-link', () => ({

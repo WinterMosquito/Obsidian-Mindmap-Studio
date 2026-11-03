@@ -9,6 +9,10 @@
  * （写正文的 `%%#hex%%`，见 view-node-color），落在**空白**处改整篇方案
  * （`data.json`），中心主题按空白处理（它没有正文行）。
  * 边框 / 连线不在这里（它们在右缘竖栏的开关按钮上）。
+ *
+ * 另承载**右键拖拽＝框选**的收尾（2026-11-03）：引擎 `select` 插件在右键拖动时画框
+ * 并落地选中，而 `contextmenu` 在 `mouseup` 之后才来——按「按下点 → 菜单点」的位移
+ * 区分手势：拖拽（>5px）不弹空白菜单，改弹**选区菜单**（概要 / 复制）；单击照旧。
  */
 import { Menu, Notice } from 'obsidian';
 import {
@@ -17,7 +21,10 @@ import {
 	getActiveNodes,
 	getNodeDataString,
 	getRenderRoot,
+	isSummaryNode,
 	resetZoom,
+	setActiveNodes,
+	siblingMoveBlocker,
 } from '../engine/mindmap';
 import {
 	isCustomPaletteValue,
@@ -56,9 +63,10 @@ import {
 } from './view-clipboard';
 import { openNodeImageFullscreen } from './view-image-fullscreen';
 import { startRelationPicking } from './view-node-relation';
+import { addSummaryItem, showSummaryMenu } from './view-node-summary';
 import { nodeLink } from './view-wikilink';
 import { arrangeMindMap } from './view-toolbar';
-import { t, type TranslationKey } from '../core/i18n';
+import { t, tf, type TranslationKey } from '../core/i18n';
 import { writeClipboardText } from '../platform/clipboard';
 import { renderHyperlink } from '../markdown/md-serialize';
 import type { MdNodeData } from '../core/node-data';
@@ -242,6 +250,151 @@ const rightClickSelection = new WeakMap<
 	{ node: MindMapNode; nodes: MindMapNode[] }
 >();
 
+/**
+ * 右键拖拽的起点（画布 capture 记录）：用来区分「右键单击＝菜单」与
+ * 「右键拖拽＝框选」（引擎 `select` 插件在右键拖动时画选框并落地选中，2026-11-03 实机复核）。
+ *
+ * 为什么不能直接问引擎：插件在 `mouseup` 就把 `isSelecting` 复位、选框也移除了，
+ * 而 Windows 的 `contextmenu` 在 **mouseup 之后**才派发——那一刻已经问不出
+ * 「刚才是不是在拉框」。
+ */
+const rightDragOrigin = new WeakMap<object, { x: number; y: number }>();
+
+/** 位移超过它才算拖拽（滤掉右键手抖，又不至于让小幅框选失效） */
+const RIGHT_DRAG_THRESHOLD_PX = 5;
+
+/**
+ * 右键按下**之前**的选中集合（画布 capture 记录）。
+ *
+ * 引擎在右键按下时就把选中清了（`draw_click`），等到 `contextmenu` 再读只剩空——
+ * 用户观感是「我选了 3 个，右键一下全没了」。捕获阶段先留一份，空白右键时用它
+ * 复原选中并出选区菜单（2026-11-03）。
+ */
+const rightPressSelection = new WeakMap<object, MindMapNode[]>();
+
+/** 取走按下前的选中（一次右键只判一次） */
+function takeRightPressSelection(view: object): MindMapNode[] {
+	const pressed = rightPressSelection.get(view) ?? [];
+	rightPressSelection.delete(view);
+	return pressed;
+}
+
+/**
+ * 框选松手后「等选中落地」的暂存：引擎的选中经**防抖的 mousemove** 落地
+ * （实测松手后约 150ms 才进 `activeNodeList`，见 K163），`contextmenu` 到达时
+ * 常常还读不到任何选中 —— 这一刻不能直接判定「没框到」。
+ */
+const pendingSelectionMenu = new WeakMap<
+	object,
+	{ x: number; y: number; timer: number }
+>();
+
+/** 等选中落地的上限（实测 150ms 左右落地；超时即放弃，不弹菜单） */
+const SELECTION_MENU_WAIT_MS = 250;
+
+/** 取消等待（新的按下 / 已经弹过 / 超时） */
+function clearPendingSelectionMenu(view: object): void {
+	const pending = pendingSelectionMenu.get(view);
+	if (!pending) {
+		return;
+	}
+	pendingSelectionMenu.delete(view);
+	window.clearTimeout(pending.timer);
+}
+
+/**
+ * 记下松手位置，等引擎把选中落地后再弹菜单。
+ *
+ * 兜底定时器到点也走一次 flush：框出来的刚好就是**原来的选中**时引擎不发
+ * `node_active`（选中集没变化），那时仍应把菜单弹出来。
+ */
+function armSelectionMenu(view: MindMapViewContext, event: MouseEvent): void {
+	clearPendingSelectionMenu(view);
+	const timer = window.setTimeout(
+		() => flushSelectionMenu(view),
+		SELECTION_MENU_WAIT_MS,
+	);
+	pendingSelectionMenu.set(view, { x: event.clientX, y: event.clientY, timer });
+}
+
+/**
+ * 选中已落地：把挂起的选区菜单弹出来（`node_active` 到达时调用）。
+ *
+ * 没有挂起、或最终一个可用节点都没选中 ⇒ 什么都不做（框了个空就不该弹菜单）。
+ */
+function flushSelectionMenu(view: MindMapViewContext): void {
+	if (!pendingSelectionMenu.has(view)) {
+		return;
+	}
+	const pending = pendingSelectionMenu.get(view)!;
+	clearPendingSelectionMenu(view);
+	const selection = getActiveNodes(view.mindMap).filter((item) => !item.isRoot);
+	if (selection.length > 0) {
+		showSelectionMenu(view, { x: pending.x, y: pending.y }, selection);
+	}
+}
+
+/**
+ * 本次右键从按下到弹出菜单之间是否发生了拖拽（**取用即清**：一次右键只判一次）。
+ *
+ * 没有起点记录时返回 false（键盘菜单键 / 拖拽结束后才到达的迟到事件）。
+ */
+function takeRightDrag(view: object, event: MouseEvent): boolean {
+	const origin = rightDragOrigin.get(view);
+	rightDragOrigin.delete(view);
+	if (!origin) {
+		return false;
+	}
+	return (
+		Math.hypot(event.clientX - origin.x, event.clientY - origin.y) >
+		RIGHT_DRAG_THRESHOLD_PX
+	);
+}
+
+/**
+ * 框选松手后的**选区菜单**（右键拖拽 > 5px 时替代空白菜单，2026-11-03）。
+ *
+ * 只放**作用于整个选中集合**的条目：
+ * - 「概要」：`addSummaryItem` 自己按集合算覆盖面（相邻同级 → `概要（覆盖 N 个）`
+ *   直接建；跳跃选中 / 跨分支 → `概要…` 进两次点选），标题本身就把数量说清楚了；
+ * - 「复制」：`copySelectedNodes` 本就按激活集合工作。
+ *
+ * **不放删除**：`deleteActiveNode` 只删一个节点，多选下与「删除 3 个」的直觉不符
+ * （实机复核 2026-11-03）——真要批量删得先做批量通道，不在本次范围。
+ */
+function showSelectionMenu(
+	view: MindMapViewContext,
+	at: { x: number; y: number },
+	selection: readonly MindMapNode[],
+	withBlankItems = false,
+): void {
+	const anchor = selection[0];
+	if (!anchor) {
+		return;
+	}
+	const menu = new Menu();
+	addSummaryItem(menu, view, anchor, selection);
+	menu.addItem((item) =>
+		item
+			// 多选时报数量（与「概要（覆盖 N 个）」同口径）：只写「复制节点」会让
+			// 用户不确定复制的是一整个选区还是一个节点
+			.setTitle(
+				selection.length > 1
+					? tf(view.lang, 'menu.copyNodeCount', { count: selection.length })
+					: t(view.lang, 'menu.copyNode'),
+			)
+			.setIcon('copy')
+			.onClick(() => copySelectedNodes(view)),
+	);
+	// 空白处右键（选中还在）时把空白菜单的能力一并给出：用户不该为了「新建节点」
+	// 先取消选中。两段之间加分隔线，读起来是「对选区做什么 / 对画布做什么」。
+	if (withBlankItems) {
+		menu.addSeparator();
+		addBlankMenuItems(menu, view);
+	}
+	showExclusiveMenu(view, menu, at);
+}
+
 /** 注册右键菜单监听（引擎重建时随 initMindMap 调用） */
 export function setupContextMenu(view: MindMapViewContext): void {
 	if (!view.canvasEl || !view.mindMap) {
@@ -273,7 +426,18 @@ export function setupContextMenu(view: MindMapViewContext): void {
 	view.engineEvents.onDom(
 		view.canvasEl,
 		'pointerdown',
-		() => closeOpenMenu(view),
+		(event) => {
+			closeOpenMenu(view);
+			// 新的按下作废上一次挂起的选区菜单（用户已经走开了）
+			clearPendingSelectionMenu(view);
+			// 右键按下即记起点：拖多远决定「弹菜单」还是「框选」；
+			// 同时留一份**按下前**的选中（引擎马上就会清掉它）
+			const press = event as MouseEvent;
+			if (press.button === 2) {
+				rightDragOrigin.set(view, { x: press.clientX, y: press.clientY });
+				rightPressSelection.set(view, getActiveNodes(view.mindMap));
+			}
+		},
 		true,
 	);
 	// 节点右键：引擎对节点 contextmenu 做了 stopPropagation，
@@ -281,10 +445,36 @@ export function setupContextMenu(view: MindMapViewContext): void {
 	view.engineEvents.onEngine(view.mindMap, 'node_contextmenu', (...args: unknown[]) => {
 		const event = args[0] as MouseEvent;
 		const node = args[1] as MindMapNode | undefined;
-		if (node) {
-			showNodeContextMenu(view, event, node);
+		if (!node) {
+			return;
 		}
+		// 拖拽已在画布 **capture** 阶段被吃掉（见 setupContextMenu 末尾），能走到
+		// 这里的一定是「右键单击」，直接开节点菜单。
+		showNodeContextMenu(view, event, node);
 	});
+	// 框选的选中是**防抖落地**的：等到了就把挂起的选区菜单弹出来
+	//（`node_active` 由引擎在选中集变化后经 `setTimeout(0)` 派发）
+	view.engineEvents.onEngine(view.mindMap, 'node_active', () => {
+		flushSelectionMenu(view);
+	});
+	// 框选松手时鼠标常**正好压在节点上**（画布密集）：节点自己的 contextmenu
+	// 处理器会把事件吞掉——既不 emit `node_contextmenu`、也不冒泡到画布（实机
+	// 2026-11-03 抓包：只看到 `node_active`，`node_contextmenu` 一次都没来）。
+	// 故拖拽必须在**capture 阶段**先吃掉：吞掉事件、改挂选区菜单。
+	view.engineEvents.onDom(
+		view.canvasEl,
+		'contextmenu',
+		(event) => {
+			const press = event as MouseEvent;
+			if (!takeRightDrag(view, press)) {
+				return; // 不是拖拽：交给冒泡阶段的节点 / 空白分支
+			}
+			press.preventDefault();
+			press.stopPropagation();
+			armSelectionMenu(view, press);
+		},
+		true,
+	);
 	// 空白处右键：画布委托。**留住**「命中节点则走节点菜单」这一支——节点自己的
 	// contextmenu 处理器**并非无条件** stopPropagation：`readonly` 或 `e.ctrlKey`
 	// 时它直接 return（上游 `render/node/MindMapNode.js`），事件会冒泡到画布。
@@ -292,6 +482,9 @@ export function setupContextMenu(view: MindMapViewContext): void {
 	// 复核：审计曾判其为死分支，实测依据不足）。
 	view.engineEvents.onDom(view.canvasEl, 'contextmenu', (event) => {
 		event.preventDefault();
+		// 拖拽（框选）已在上面 capture 里判完并 `stopPropagation`：能走到这里的一定
+		// 是「单击」，故这里只按落点分派，**不要再判一次手势**——`takeRightDrag`
+		// 取用即清，capture 已经消费掉起点，这里恒为 false（写了也只是死分支）。
 		const target = event.target as HTMLElement;
 		const nodeEl = target.closest<HTMLElement>('.smm-node');
 		const node = nodeEl ? findNodeByDom(view.mindMap, nodeEl) : null;
@@ -299,65 +492,84 @@ export function setupContextMenu(view: MindMapViewContext): void {
 			showNodeContextMenu(view, event, node);
 			return;
 		}
-		const menu = new Menu();
-		// 新建节点（官方 Canvas 空白双击/右键语义）：挂根节点下，占位名可改
-		menu.addItem((item) =>
-			item
-				.setTitle(t(view.lang, 'menu.newNode'))
-				.setIcon('plus')
-				.onClick(() => {
-					const root = getRenderRoot(view.mindMap);
-					if (root) {
-						createChildNodeBelow(view, root);
-					}
-				}),
-		);
-		menu.addItem((item) =>
-			item
-				.setTitle(t(view.lang, 'menu.pasteNode'))
-				.setIcon('clipboard')
-				.onClick(() => pasteClipboardIntoNode(view, null)),
-		);
-		menu.addSeparator();
-		menu.addItem((item) =>
-			item
-				.setTitle(t(view.lang, 'menu.resetZoom'))
-				.setIcon('rotate-ccw')
-				.onClick(() => resetZoom(view.mindMap)),
-		);
-		menu.addItem((item) =>
-			item
-				.setTitle(t(view.lang, 'command.fitCanvas'))
-				.setIcon('maximize')
-				.onClick(() => fitToScreen(view)),
-		);
-		menu.addItem((item) =>
-			item
-				.setTitle(t(view.lang, 'toolbar.arrange'))
-				.setIcon('sparkles')
-				.onClick(() => arrangeMindMap(view)),
-		);
-		// 外观四项拆两处入口：**布局 / 配色**在此处，**边框 / 连线**在右缘竖栏的
-		// 开关按钮（屏上不重复提供）。空白右键的「配色」= 整篇方案（data.json）。
-		// 勾选态＝当前生效值（`resolve*` 现算，不存第二份状态）。
-		menu.addSeparator();
-		addLayoutMenu(menu, view);
-		addPaletteMenu(menu, view);
-		menu.addSeparator();
-		menu.addItem((item) =>
-			item
-				.setTitle(t(view.lang, 'toolbar.undo'))
-				.setIcon('undo')
-				.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.BACK)),
-		);
-		menu.addItem((item) =>
-			item
-				.setTitle(t(view.lang, 'toolbar.redo'))
-				.setIcon('redo')
-				.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD)),
-		);
-		showExclusiveMenu(view, menu, { x: event.clientX, y: event.clientY });
+		// 空白右键：按下前有多选 ⇒ 弹「选区 + 空白」合并菜单。
+		// 引擎在右键按下时清了选中（`draw_click`），用户看到的是「选中没了、菜单里
+		// 也没有概要」；这里先把选中复原，再在菜单顶部给出选区操作（2026-11-03）。
+		const pressed = takeRightPressSelection(view);
+		if (pressed.length > 1) {
+			setActiveNodes(view.mindMap, pressed);
+			showSelectionMenu(view, { x: event.clientX, y: event.clientY }, pressed, true);
+			return;
+		}
+		showBlankMenu(view, event);
 	});
+}
+
+/** 空白画布的菜单（新建 / 粘贴 / 视图 / 外观 / 撤销重做） */
+function showBlankMenu(view: MindMapViewContext, event: MouseEvent): void {
+	const menu = new Menu();
+	addBlankMenuItems(menu, view);
+	showExclusiveMenu(view, menu, { x: event.clientX, y: event.clientY });
+}
+
+/** 空白菜单的条目（合并菜单复用它，避免两份口径漂移） */
+function addBlankMenuItems(menu: Menu, view: MindMapViewContext): void {
+	// 新建节点（官方 Canvas 空白双击/右键语义）：挂根节点下，占位名可改
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'menu.newNode'))
+			.setIcon('plus')
+			.onClick(() => {
+				const root = getRenderRoot(view.mindMap);
+				if (root) {
+					createChildNodeBelow(view, root);
+				}
+			}),
+	);
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'menu.pasteNode'))
+			.setIcon('clipboard')
+			.onClick(() => pasteClipboardIntoNode(view, null)),
+	);
+	menu.addSeparator();
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'menu.resetZoom'))
+			.setIcon('rotate-ccw')
+			.onClick(() => resetZoom(view.mindMap)),
+	);
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'command.fitCanvas'))
+			.setIcon('maximize')
+			.onClick(() => fitToScreen(view)),
+	);
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'toolbar.arrange'))
+			.setIcon('sparkles')
+			.onClick(() => arrangeMindMap(view)),
+	);
+	// 外观四项拆两处入口：**布局 / 配色**在此处，**边框 / 连线**在右缘竖栏的
+	// 开关按钮（屏上不重复提供）。空白右键的「配色」= 整篇方案（data.json）。
+	// 勾选态＝当前生效值（`resolve*` 现算，不存第二份状态）。
+	menu.addSeparator();
+	addLayoutMenu(menu, view);
+	addPaletteMenu(menu, view);
+	menu.addSeparator();
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'toolbar.undo'))
+			.setIcon('undo')
+			.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.BACK)),
+	);
+	menu.addItem((item) =>
+		item
+			.setTitle(t(view.lang, 'toolbar.redo'))
+			.setIcon('redo')
+			.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD)),
+	);
 }
 
 /** 节点右键菜单（含单独移除图片/附件） */
@@ -370,8 +582,18 @@ function showNodeContextMenu(
 	if (!mindMap) {
 		return;
 	}
+	// 按下时的选中已由节点菜单消费（它的条目是单节点语义）：清掉。留着的话，
+	// 下一次**没有右键按下**的 contextmenu（macOS `Ctrl+左键`、键盘菜单键）会在
+	// 空白分支把这份陈旧选中复原到画布上，弹出一个与当下无关的选区菜单。
+	rightPressSelection.delete(view);
 	// 引擎无 ACTIVE_NODE 命令；节点实例的 active() 是官方激活方式
 	node.active();
+	// 概要节点是**派生实例**（不在 data 树的 children 里）：正文节点那一整套
+	// 编辑项对它全是错的（改的是派生 data，下一轮同步就被正文覆盖）⇒ 独立菜单
+	if (isSummaryNode(node)) {
+		showSummaryMenu(view, event, node);
+		return;
+	}
 	const menu = new Menu();
 	menu.addItem((item) =>
 		item
@@ -392,27 +614,39 @@ function showNodeContextMenu(
 			.setIcon('plus')
 			.onClick(() => mindMap.execCommand(ENGINE_COMMANDS.INSERT_CHILD_NODE)),
 	);
-	menu.addItem((item) =>
-		item
+	// 中心主题是**虚拟文档根**（= 文件名，没有正文行）：它没有兄弟，也就没有
+	// 「同级」可加、没有可上移/下移的位置、删除等于删掉整棵树。这些条目照旧
+	// 摆着但置灰——照「联系 / 概要」的既有口径（本菜单其余项也不隐藏）：点了
+	// 没反应比灰着更让人以为坏了（2026-11-03 实机）。
+	menu.addItem((item) => {
+		const entry = item
 			.setTitle(t(view.lang, 'menu.addSibling'))
-			.setIcon('circle-plus')
-			.onClick(() => mindMap.execCommand(ENGINE_COMMANDS.INSERT_NODE)),
-	);
+			.setIcon('circle-plus');
+		return node.isRoot
+			? entry.setDisabled(true)
+			: entry.onClick(() => mindMap.execCommand(ENGINE_COMMANDS.INSERT_NODE));
+	});
 	// 兄弟间上/下移（引擎 UP_NODE / DOWN_NODE）：显式传节点——本菜单虽在入口处
-	// node.active()，但画布委托路径可能处于多选态，激活列表首位未必是右键目标；
-	// 根节点/首尾的拒绝与提示收口在 moveNodeUp/moveNodeDown（本层不预判）
-	menu.addItem((item) =>
-		item
+	// node.active()，但画布委托路径可能处于多选态，激活列表首位未必是右键目标。
+	// 置灰判据走 `siblingMoveBlocker`（与动作层同一份）：根节点没有兄弟，首个 /
+	// 末个兄弟也无处可移——这两处点下去只会拿到「已是第一个 / 最后一个」的提示，
+	// 属于「点了才知道不能点」（2026-11-03 实机）。
+	menu.addItem((item) => {
+		const entry = item
 			.setTitle(t(view.lang, 'menu.moveUp'))
-			.setIcon('arrow-up')
-			.onClick(() => moveNodeUp(view, node)),
-	);
-	menu.addItem((item) =>
-		item
+			.setIcon('arrow-up');
+		return siblingMoveBlocker(node, -1)
+			? entry.setDisabled(true)
+			: entry.onClick(() => moveNodeUp(view, node));
+	});
+	menu.addItem((item) => {
+		const entry = item
 			.setTitle(t(view.lang, 'menu.moveDown'))
-			.setIcon('arrow-down')
-			.onClick(() => moveNodeDown(view, node)),
-	);
+			.setIcon('arrow-down');
+		return siblingMoveBlocker(node, 1)
+			? entry.setDisabled(true)
+			: entry.onClick(() => moveNodeDown(view, node));
+	});
 	menu.addSeparator();
 	menu.addItem((item) =>
 		item
@@ -521,9 +755,12 @@ function showNodeContextMenu(
 	rightClickSelection.delete(view);
 	const targets =
 		snapshot && snapshot.node === node ? snapshot.nodes : [node];
-	// 「联系」独立成组（不与布局 / 配色同组）：它是**结构编辑**，那两项是外观。
+	// 「联系」与「概要」同组（不与布局 / 配色同组）：它们都是**结构编辑**，
+	// 那两项是外观。概要的落点有两种：选中集合够用（已多选相邻兄弟）就按选中建，
+	// 否则进入「起点 → 终点」两次点选（起点的默认值就是右键的这个节点）。
 	menu.addSeparator();
 	addRelationItem(menu, view, node);
+	addSummaryItem(menu, view, node, targets);
 	menu.addSeparator();
 	addLayoutMenu(menu, view);
 	// 中心主题是**虚拟文档根**（文件名，没有正文行）：节点颜色无处持久化，
@@ -534,11 +771,14 @@ function showNodeContextMenu(
 		addNodeColorMenu(menu, view, node, targets);
 	}
 	menu.addSeparator();
-	menu.addItem((item) =>
-		item
+	menu.addItem((item) => {
+		const entry = item
 			.setTitle(t(view.lang, 'menu.deleteNode'))
-			.setIcon('trash-2')
-			.onClick(() => deleteActiveNode(view)),
-	);
+			.setIcon('trash-2');
+		// 删中心主题 = 删整棵树（等于清空正文），不给这个一次性入口
+		return node.isRoot
+			? entry.setDisabled(true)
+			: entry.onClick(() => deleteActiveNode(view));
+	});
 	showExclusiveMenu(view, menu, { x: event.clientX, y: event.clientY });
 }

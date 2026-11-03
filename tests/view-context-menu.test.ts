@@ -194,6 +194,7 @@ const {
 	deleteActiveNodeMock,
 	moveNodeUpMock,
 	moveNodeDownMock,
+	siblingMoveBlockerMock,
 	removeNodeImageMock,
 	removeNodeTextMock,
 	addLinkToActiveNodeMock,
@@ -203,12 +204,14 @@ const {
 	applyRawNodeContentMock,
 	openColorInputModalMock,
 	getActiveNodesMock,
+	setActiveNodesMock,
 } = vi.hoisted(() => ({
 	applyRawNodeContentMock:
 		vi.fn<(view: unknown, node: unknown, raw: string) => void>(),
 	openColorInputModalMock:
 		vi.fn<(app: unknown, lang: string, current: string | null) => Promise<string | null>>(),
 	getActiveNodesMock: vi.fn<() => unknown[]>(() => []),
+	setActiveNodesMock: vi.fn<(mindMap: unknown, nodes: unknown[]) => void>(),
 	findNodeByDomMock: vi.fn<(mindMap: unknown, el: unknown) => unknown>(),
 	fitMindMapMock: vi.fn<(mindMap: unknown) => void>(),
 	resetZoomMock: vi.fn<(mindMap: unknown) => void>(),
@@ -222,6 +225,11 @@ const {
 	deleteActiveNodeMock: vi.fn<(view: unknown) => void>(),
 	moveNodeUpMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	moveNodeDownMock: vi.fn<(view: unknown, node: unknown) => void>(),
+	/**
+	 * 上/下移的置灰判据（真实实现在 engine/mindmap-nodes，与动作层同一份）。
+	 * 默认 `null`（可移动），需要验证置灰的用例自行 mockReturnValue。
+	 */
+	siblingMoveBlockerMock: vi.fn<(node: unknown, offset: number) => string | null>(),
 	removeNodeImageMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	removeNodeTextMock: vi.fn<(view: unknown, node: unknown) => void>(),
 	addLinkToActiveNodeMock: vi.fn<(view: unknown) => Promise<void>>(),
@@ -261,10 +269,18 @@ vi.mock('../src/engine/mindmap', () => ({
 			slate: '#475569',
 		})[palette] ?? '#000000',
 	getActiveNodes: getActiveNodesMock,
+	// 空白右键时把选中复原（引擎在按下时已清空）：本文件只验证「调用了几次、带了谁」
+	setActiveNodes: setActiveNodesMock,
+	// 概要节点判定（本文件只验证「菜单列了什么」：普通节点恒 false，
+	// 概要节点的独立菜单由 tests/view-node-summary 与实机覆盖）
+	isSummaryNode: (): boolean => false,
+	summaryAnchorOf: (): null => null,
 	// 最上层判定由 color-directive.test.ts 直测真实实现；这里只需恒等
 	topMostNodes: (nodes: unknown[]): unknown[] => nodes,
 	// 多选改色的收尾历史（批量写回后记一条快照，见 engine/mindmap-history）
 	recordHistory: vi.fn(),
+	// 上/下移的置灰判据（与动作层同一份实现，本文件只验证「据此置灰」）
+	siblingMoveBlocker: siblingMoveBlockerMock,
 }));
 
 // 节点配色落盘走「原文提交」通道（node-inline-editor）：本文件只验证「写了什么原文」
@@ -332,11 +348,27 @@ function zh(key: TranslationKey): string {
 	return t('zh', key);
 }
 
-/** 记录 onEngine/onDom 监听，供按事件名触发；并记录 onDom 的目标元素 */
+/**
+ * 记录 onEngine/onDom 监听，供按事件名触发；并记录 onDom 的目标元素。
+ *
+ * DOM 监听按 **capture / bubble 分桶**并分阶段触发（与浏览器一致）：
+ * 同一事件名可以同时有两条监听（`contextmenu` 的拖拽拦截在 capture、菜单在 bubble），
+ * 且 capture 里调了 `stopPropagation()` 就不会再走 bubble。
+ */
 function makeEngineBinder() {
 	const engineListeners = new Map<string, (...args: unknown[]) => void>();
-	const domListeners = new Map<string, (event: unknown) => void>();
+	const domCapture = new Map<string, ((event: unknown) => void)[]>();
+	const domBubble = new Map<string, ((event: unknown) => void)[]>();
 	const domTargets: unknown[] = [];
+	const addDom = (
+		bucket: Map<string, ((event: unknown) => void)[]>,
+		event: string,
+		listener: (event: unknown) => void,
+	): void => {
+		const list = bucket.get(event) ?? [];
+		list.push(listener);
+		bucket.set(event, list);
+	};
 	return {
 		onEngine(
 			_emitter: unknown,
@@ -345,8 +377,13 @@ function makeEngineBinder() {
 		): void {
 			engineListeners.set(event, listener);
 		},
-		onDom(target: unknown, event: string, listener: (event: unknown) => void): void {
-			domListeners.set(event, listener);
+		onDom(
+			target: unknown,
+			event: string,
+			listener: (event: unknown) => void,
+			options?: unknown,
+		): void {
+			addDom(options === true ? domCapture : domBubble, event, listener);
 			// 同一元素上绑多个事件时只记一次（断言的是「挂在哪个元素上」）
 			if (!domTargets.includes(target)) {
 				domTargets.push(target);
@@ -356,13 +393,24 @@ function makeEngineBinder() {
 			engineListeners.get(event)?.(...args);
 		},
 		fireDom(event: string, payload: unknown): void {
-			domListeners.get(event)?.(payload);
+			for (const listener of domCapture.get(event) ?? []) {
+				listener(payload);
+			}
+			// capture 里 stopPropagation 过 ⇒ 冒泡阶段收不到（与浏览器同）
+			const stop = (payload as { stopPropagation?: { mock?: { calls: unknown[] } } })
+				?.stopPropagation;
+			if (stop?.mock && stop.mock.calls.length > 0) {
+				return;
+			}
+			for (const listener of domBubble.get(event) ?? []) {
+				listener(payload);
+			}
 		},
 		hasEngine(event: string): boolean {
 			return engineListeners.has(event);
 		},
 		hasDom(event: string): boolean {
-			return domListeners.has(event);
+			return domCapture.has(event) || domBubble.has(event);
 		},
 		domTargets,
 	};
@@ -432,14 +480,37 @@ function makeView(options: { canvasEl?: unknown; mindMap?: unknown } = {}) {
 }
 
 /** 画布右键事件桩：target.closest 返回给定元素 */
-function fakeContextMenuEvent(closestResult: unknown) {
+function fakeContextMenuEvent(
+	closestResult: unknown,
+	at: { x: number; y: number } = { x: 120, y: 240 },
+) {
 	return {
 		preventDefault: vi.fn<() => void>(),
 		stopPropagation: vi.fn<() => void>(),
-		clientX: 120,
-		clientY: 240,
+		clientX: at.x,
+		clientY: at.y,
 		target: { closest: () => closestResult },
 	};
+}
+
+/**
+ * 同一父节点下的两个**连续兄弟**：`addSummaryItem` 靠 `node.parent.children`
+ * 认段与算覆盖面，光有 `getData` 的桩会一路走到「概要…」（两次点选）分支。
+ */
+function fakeSiblingPair(): [MindMapNode, MindMapNode] {
+	const parent = {
+		getData: (key?: string) => (key === undefined ? { text: '父' } : '父'),
+		children: [] as unknown[],
+	};
+	const make = (text: string) => ({
+		...fakeNode({ text }),
+		parent,
+		children: [] as unknown[],
+	});
+	const first = make('甲');
+	const second = make('乙');
+	parent.children.push(first, second);
+	return [first as unknown as MindMapNode, second as unknown as MindMapNode];
 }
 
 type MenuInstance = InstanceType<typeof FakeMenu>;
@@ -485,6 +556,8 @@ beforeEach(() => {
 	// 默认模拟「宿主没有 setSubmenu」→ 走回退路径；原生路径的用例自行开启
 	FakeMenu.supportSubmenu = false;
 	vi.clearAllMocks();
+	// 上/下移默认可移动（置灰用例自行覆盖返回值）
+	siblingMoveBlockerMock.mockReturnValue(null);
 	resetGetNodeDataString();
 	addLinkToActiveNodeMock.mockResolvedValue(undefined);
 	addImageToActiveNodeMock.mockResolvedValue(undefined);
@@ -492,6 +565,7 @@ beforeEach(() => {
 	openColorInputModalMock.mockReset();
 	openColorInputModalMock.mockResolvedValue(null);
 	getActiveNodesMock.mockReturnValue([]);
+	setActiveNodesMock.mockReset();
 });
 
 // 静态注册表跨用例共享：每个用例后清空，避免「上次用例的菜单」被 lastMenu 取到。
@@ -673,15 +747,27 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		imageBlock: [zh('menu.viewImageFullscreen'), zh('menu.removeImage')],
 		removeText: [zh('menu.removeText')],
 		/**
-		 * 节点菜单末尾一段：联系（关系连线，**直落条目 / 独立一组**）→ 视图级外观
-		 * （布局 / 配色，与空白右键同一份）→ 删除节点。顺序敏感：外观在删除**之前**，
-		 * 删除恒为最后一项；「联系」在根节点也出现（置灰），故各形态的序列都含它。
+		 * 节点菜单末尾一段：联系（关系连线）与概要（Summary）——**都是直落条目、
+		 * 独立一组** → 视图级外观（布局 / 配色，与空白右键同一份）→ 删除节点。
+		 * 顺序敏感：外观在删除**之前**，删除恒为最后一项；两项结构编辑在根节点也
+		 * 出现（置灰），故各形态的序列都含它们。
 		 *
 		 * 2026-10-30 用户裁决：「联系」不再套二级菜单、也不与布局 / 配色同组——
-		 * 它是结构编辑，那两项是视图级外观。
+		 * 它是结构编辑，那两项是视图级外观；2026-11-02 的「概要」同一归组。
 		 */
 		tail: [
 			zh('nodeRelation.add'),
+			// 单节点右键（本表除根节点外的全部用例）：没有够用的多选 ⇒
+			// 带省略号，点击后进两次点选
+			zh('summary.addPick'),
+			zh('toolbar.layout'),
+			zh('toolbar.palette'),
+			zh('menu.deleteNode'),
+		],
+		/** 中心主题：不能作概要对象 ⇒ 条目置灰（标题不带省略号，点不动） */
+		rootTail: [
+			zh('nodeRelation.add'),
+			zh('summary.add'),
 			zh('toolbar.layout'),
 			zh('toolbar.palette'),
 			zh('menu.deleteNode'),
@@ -841,7 +927,7 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		{
 			name: '根节点（中心主题）：条目与普通节点相同',
 			data: { text: '中心主题' },
-			expected: [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.tail],
+			expected: [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.rootTail],
 			hasClear: false,
 			hasImageBlock: false,
 			hasRemoveText: false,
@@ -877,8 +963,9 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 			} else {
 				expect(titles).not.toContain(zh('menu.removeText'));
 			}
-			// 基础条目恒在
-			for (const title of [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...G.tail]) {
+			// 基础条目恒在（中心主题的概要条目置灰、标题不带省略号）
+			const tail = form.isRoot ? G.rootTail : G.tail;
+			for (const title of [...G.edit, ...G.clip, ...G.link, ...G.imageBtn, ...tail]) {
 				expect(titles).toContain(title);
 			}
 		},
@@ -995,8 +1082,48 @@ describe('showNodeContextMenu（节点菜单，表驱动形态矩阵）', () => 
 		expect(moveNodeDownMock).toHaveBeenCalledWith(view, node);
 	});
 
-	it('根节点的删除条目照常给出：拒绝逻辑在 deleteActiveNode 内部（本层不预判）', () => {
+	it('中心主题：添加同级 / 上移 / 下移 / 删除 一律置灰且无点击（没有兄弟；删除等于清空整棵树）', () => {
+		// 2026-11-03 实机：这四项在中心主题上照旧可点，点下去要么毫无反应，要么
+		// 由动作层回一句「已是第一个」的假话——与同菜单里「联系」的置灰口径不符。
+		siblingMoveBlockerMock.mockReturnValue('root');
 		const node = { ...fakeNode({ text: '中心主题' }), isRoot: true };
+		const { menu } = openNodeMenu(node);
+		for (const key of [
+			'menu.addSibling',
+			'menu.moveUp',
+			'menu.moveDown',
+			'menu.deleteNode',
+		] as const) {
+			const item = menu.item(zh(key));
+			expect(item.disabled, key).toBe(true);
+			expect(item.click, key).toBeNull();
+		}
+	});
+
+	it('首个 / 末个兄弟：上移、下移按 siblingMoveBlocker 各自置灰（与动作层同一份判据）', () => {
+		// 2026-11-03：此前只有根节点置灰，首/末兄弟照旧可点，点了才拿到
+		// 「已是第一个 / 最后一个」——「点了才知道不能点」
+		const node = fakeNode({ text: '首项' });
+		siblingMoveBlockerMock.mockImplementation((_n, offset) =>
+			offset < 0 ? 'atTop' : null,
+		);
+		const first = openNodeMenu(node);
+		expect(first.menu.item(zh('menu.moveUp')).disabled).toBe(true);
+		expect(first.menu.item(zh('menu.moveUp')).click).toBeNull();
+		expect(first.menu.item(zh('menu.moveDown')).disabled).toBe(false);
+
+		// 末项：方向相反
+		siblingMoveBlockerMock.mockImplementation((_n, offset) =>
+			offset > 0 ? 'atBottom' : null,
+		);
+		const last = openNodeMenu(node);
+		expect(last.menu.item(zh('menu.moveDown')).disabled).toBe(true);
+		expect(last.menu.item(zh('menu.moveDown')).click).toBeNull();
+		expect(last.menu.item(zh('menu.moveUp')).disabled).toBe(false);
+	});
+
+	it('普通节点的删除照常可用：拒绝逻辑在 deleteActiveNode 内部（本层不预判）', () => {
+		const node = fakeNode({ text: 'x' });
 		const { menu, view } = openNodeMenu(node);
 		expect(menu.titles()).toContain(zh('menu.deleteNode'));
 		menu.click(zh('menu.deleteNode'));
@@ -1541,3 +1668,193 @@ describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
 		expect(minimapMocks.refreshMiniMapAfterRender).not.toHaveBeenCalled();
 	});
 });
+
+/**
+ * 右键拖拽＝框选（引擎 `select` 插件，2026-11-03 实机复核）：拖拽超过阈值时
+ * 松手**不弹**「空白菜单」，改成对刚框出来的选区出菜单（首项就是「概要」）。
+ *
+ * 为什么必须靠「按下点 → 菜单点」的位移判断：插件在 `mouseup` 就复位
+ * `isSelecting` 并移除选框，而 `contextmenu` 在 mouseup **之后**才派发。
+ */
+describe('右键拖拽＝框选：菜单让位与选区菜单', () => {
+	/** 右键在 `from` 按下、在 `to` 松手（并弹菜单） */
+	function rightGesture(
+		harness: ReturnType<typeof makeView>,
+		from: { x: number; y: number },
+		to: { x: number; y: number },
+	): void {
+		harness.binder.fireDom('pointerdown', {
+			button: 2,
+			clientX: from.x,
+			clientY: from.y,
+		});
+		harness.binder.fireDom('contextmenu', fakeContextMenuEvent(null, to));
+	}
+
+	it('单击（位移 0）：照旧弹空白菜单', () => {
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		rightGesture(harness, { x: 120, y: 240 }, { x: 120, y: 240 });
+
+		expect(lastMenu().titles()).toContain(zh('menu.newNode'));
+	});
+
+	it('手抖 3px（≤ 阈值）：仍算单击，照旧弹空白菜单', () => {
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		rightGesture(harness, { x: 120, y: 240 }, { x: 122, y: 242 });
+
+		expect(lastMenu().titles()).toContain(zh('menu.newNode'));
+	});
+
+	it('拖拽（> 阈值）：不立即弹；等 `node_active`（选中落地）后才弹选区菜单', () => {
+		const [first, second] = fakeSiblingPair();
+		// 松手那一刻**读到的可能是上一轮的选中**（引擎的框选经防抖落地），
+		// 所以这里特意先给一份"旧"选中，验证不会被立刻拿去弹菜单
+		getActiveNodesMock.mockReturnValue([first, second]);
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		rightGesture(harness, { x: 100, y: 100 }, { x: 300, y: 260 });
+		expect(FakeMenu.instances).toHaveLength(0);
+
+		harness.binder.fireEngine('node_active');
+
+		const menu = lastMenu();
+		// 框出来的两个节点是连续兄弟 ⇒ 直接建，标题把数量说清楚
+		// （「复制」同样报数量：只写「复制节点」看不出复制的是选区还是单个节点）
+		expect(menu.titles()).toEqual([
+			zh('summary.addCount').replace('{count}', '2'),
+			zh('menu.copyNodeCount').replace('{count}', '2'),
+		]);
+		// 关键：不再混进「跟选区无关」的空白菜单条目
+		expect(menu.titles()).not.toContain(zh('menu.newNode'));
+		expect(menu.titles()).not.toContain(zh('toolbar.layout'));
+	});
+
+	it('框住空区域（松手时旧选中还在）：落地后选中为空 ⇒ 一个菜单都不弹', () => {
+		const [first, second] = fakeSiblingPair();
+		// 松手前：上一轮留下的选中；框选落地后：空
+		getActiveNodesMock.mockReturnValue([first, second]);
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		rightGesture(harness, { x: 20, y: 20 }, { x: 120, y: 120 });
+		expect(FakeMenu.instances).toHaveLength(0);
+
+		getActiveNodesMock.mockReturnValue([]);
+		harness.binder.fireEngine('node_active');
+
+		expect(FakeMenu.instances).toHaveLength(0);
+	});
+
+	it('挂起的选区菜单会被下一次按下作废（用户已经走开了）', () => {
+		getActiveNodesMock.mockReturnValue([]);
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		rightGesture(harness, { x: 100, y: 100 }, { x: 300, y: 260 });
+
+		harness.binder.fireDom('pointerdown', {
+			button: 2,
+			clientX: 10,
+			clientY: 10,
+		});
+		const [first, second] = fakeSiblingPair();
+		getActiveNodesMock.mockReturnValue([first, second]);
+		harness.binder.fireEngine('node_active');
+
+		expect(FakeMenu.instances).toHaveLength(0);
+	});
+
+	it('拖拽但没框到任何节点：一个菜单都不弹（空白菜单也不弹）', () => {
+		getActiveNodesMock.mockReturnValue([]);
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		rightGesture(harness, { x: 100, y: 100 }, { x: 300, y: 260 });
+		harness.binder.fireEngine('node_active');
+
+		expect(FakeMenu.instances).toHaveLength(0);
+	});
+
+	it('拖拽只框到根节点：根不能作概要对象，同样不弹', () => {
+		getActiveNodesMock.mockReturnValue([{ isRoot: true }]);
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		rightGesture(harness, { x: 100, y: 100 }, { x: 300, y: 260 });
+		harness.binder.fireEngine('node_active');
+
+		expect(FakeMenu.instances).toHaveLength(0);
+	});
+
+	it('拖拽松手压在节点上（contextmenu 冒泡到画布）：先判手势，不弹节点菜单', () => {
+		const [first, second] = fakeSiblingPair();
+		getActiveNodesMock.mockReturnValue([first, second]);
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		harness.binder.fireDom('pointerdown', {
+			button: 2,
+			clientX: 100,
+			clientY: 100,
+		});
+		// 引擎的节点 contextmenu 并非无条件 stopPropagation：事件会冒泡到画布，
+		// 这里同时给出 nodeEl 命中（模拟"松手时鼠标正压在节点上"）
+		harness.binder.fireDom(
+			'contextmenu',
+			fakeContextMenuEvent({ tag: 'node' }, { x: 300, y: 260 }),
+		);
+		expect(FakeMenu.instances).toHaveLength(0);
+
+		harness.binder.fireEngine('node_active');
+		expect(lastMenu().titles()).toEqual([
+			zh('summary.addCount').replace('{count}', '2'),
+			zh('menu.copyNodeCount').replace('{count}', '2'),
+		]);
+	});
+
+	it('空白右键（按下前有多选）：复原选中，菜单 = 选区操作 + 空白操作', () => {
+		const [first, second] = fakeSiblingPair();
+		findNodeByDomMock.mockReturnValue(null);
+		getActiveNodesMock.mockReturnValue([first, second]);
+		const harness = makeView();
+		setupContextMenu(harness.view);
+
+		// 右键按下（此刻引擎还没清选中）→ 引擎清空 → 松手弹菜单
+		harness.binder.fireDom('pointerdown', {
+			button: 2,
+			clientX: 400,
+			clientY: 400,
+		});
+		getActiveNodesMock.mockReturnValue([]);
+		harness.binder.fireDom(
+			'contextmenu',
+			fakeContextMenuEvent(null, { x: 400, y: 400 }),
+		);
+
+		// 选中被复原（用户不该因为右键一下就把选区丢了）
+		expect(setActiveNodesMock).toHaveBeenCalledWith(
+			harness.raw.mindMap,
+			[first, second],
+		);
+		const titles = lastMenu().titles();
+		expect(titles).toContain(zh('summary.addCount').replace('{count}', '2'));
+		expect(titles).toContain(zh('menu.copyNodeCount').replace('{count}', '2'));
+		// 空白菜单的能力不能被吃掉（否则用户得先取消选中才能新建节点）
+		expect(titles).toContain(zh('menu.newNode'));
+		expect(titles).toContain(zh('toolbar.layout'));
+	});
+
+	it('左键按下不记起点：其后的右键仍按单击处理', () => {
+		const harness = makeView();
+		setupContextMenu(harness.view);
+		harness.binder.fireDom('pointerdown', {
+			button: 0,
+			clientX: 10,
+			clientY: 10,
+		});
+		harness.binder.fireDom(
+			'contextmenu',
+			fakeContextMenuEvent(null, { x: 400, y: 400 }),
+		);
+
+		expect(lastMenu().titles()).toContain(zh('menu.newNode'));
+	});
+});
+

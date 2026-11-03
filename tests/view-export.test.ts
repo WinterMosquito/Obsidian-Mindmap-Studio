@@ -41,6 +41,33 @@ vi.mock('../src/core/errors', () => ({
 	createWarnOnce: () => () => {},
 }));
 
+/**
+ * 进度提示捕获：导出慢路径（首次数学字体预取实测可达 24s）必须给可见反馈，
+ * 且结束/失败都要撤。「常驻」由 `timeout === 0` 表达，撤销由 hide 标记。
+ */
+const { noticeLog } = vi.hoisted(() => ({
+	noticeLog: [] as { message: string; timeout: number; hidden: boolean }[],
+}));
+
+vi.mock('obsidian', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('obsidian')>();
+	return {
+		...actual,
+		Notice: class {
+			private readonly entry: { message: string; timeout: number; hidden: boolean };
+
+			constructor(message?: string, timeout?: number) {
+				this.entry = { message: message ?? '', timeout: timeout ?? 0, hidden: false };
+				noticeLog.push(this.entry);
+			}
+
+			hide(): void {
+				this.entry.hidden = true;
+			}
+		},
+	};
+});
+
 import { exportImage, exportImageAs } from '../src/features/view-export';
 import { injectObsidianCssVarsIntoExportSvg } from '../src/platform/export-svg-postprocess';
 
@@ -83,6 +110,7 @@ function makeView(
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	noticeLog.length = 0;
 	anchor.href = '';
 	anchor.download = '';
 	vi.stubGlobal('createEl', createElMock);
@@ -184,6 +212,71 @@ describe('exportImageAs（按指定格式导出图片）', () => {
 
 		await expect(exportImageAs(view, 'svg')).resolves.toBeUndefined();
 		expect(notifyErrorMock).toHaveBeenCalledWith('zh', 'export.svgFailed', error);
+	});
+});
+
+describe('导出进度提示（慢路径可见反馈）', () => {
+	it('超过阈值仍未结束：弹常驻提示，导出完成即撤', async () => {
+		vi.useFakeTimers();
+		let finish!: (value: unknown) => void;
+		exportMock.mockImplementation(
+			() =>
+				new Promise<unknown>((resolve) => {
+					finish = resolve;
+				}),
+		);
+		const { view } = makeView();
+
+		const pending = exportImageAs(view, 'png');
+		await vi.advanceTimersByTimeAsync(400);
+
+		expect(noticeLog).toHaveLength(1);
+		expect(noticeLog[0]?.timeout, '常驻（不自动消失）').toBe(0);
+		expect(noticeLog[0]?.message).toContain('正在导出');
+
+		finish('data:image/png;base64,AA');
+		await pending;
+
+		expect(noticeLog[0]?.hidden, '结束后必须撤').toBe(true);
+	});
+
+	it('快速导出（未到阈值）：不弹进度提示，但必须报一句「已导出」', async () => {
+		vi.useFakeTimers();
+		exportMock.mockResolvedValue('data:image/png;base64,AA');
+		const { view } = makeView();
+
+		await exportImageAs(view, 'png');
+		// 进度提示（「正在导出…」）不该出现：快路径不该每点一次就闪一条
+		expect(noticeLog.filter((n) => n.message.includes('正在导出'))).toHaveLength(0);
+		// 但「导出了什么」必须说：文件落**系统下载目录**，界面没有别的动静，
+		// 不给这一句用户就不知道成没成、去哪找（2026-11-03 实机）
+		expect(noticeLog).toHaveLength(1);
+		expect(noticeLog[0]?.message).toContain('已导出');
+
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(noticeLog, '撤掉的定时器不得再弹').toHaveLength(1);
+	});
+
+	it('导出失败：提示同样撤掉（不把常驻提示留在屏上）', async () => {
+		vi.useFakeTimers();
+		let fail!: (error: unknown) => void;
+		exportMock.mockImplementation(
+			() =>
+				new Promise<unknown>((_resolve, reject) => {
+					fail = reject;
+				}),
+		);
+		const { view } = makeView();
+
+		const pending = exportImageAs(view, 'png');
+		await vi.advanceTimersByTimeAsync(400);
+		expect(noticeLog).toHaveLength(1);
+
+		fail(new Error('boom'));
+		await pending;
+
+		expect(noticeLog[0]?.hidden).toBe(true);
+		expect(notifyErrorMock).toHaveBeenCalledWith('zh', 'export.pngFailed', expect.anything());
 	});
 });
 

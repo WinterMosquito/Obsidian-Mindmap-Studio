@@ -113,7 +113,7 @@ export function isResolvedWikiLinkpath(
 	host: MindMapLinkHost,
 	linkpath: string,
 ): boolean {
-	const target = parseWikilink(`[[${linkpath}]]`)?.target?.trim() ?? '';
+	const target = parseWikilink(`[[${linkpath}]]`)?.target.trim() ?? '';
 	if (!target) {
 		return linkpath.startsWith('#') && host.file !== null;
 	}

@@ -21,7 +21,6 @@ import { t } from '../src/core/i18n';
 import type { MindMapNode } from '../src/core/engine-types';
 import type { MindMapViewContext } from '../src/features/view-context';
 import {
-	cancelRelationPicking,
 	removeActiveRelationLine,
 	schedulePersistRelationGeometry,
 	setupRelationInteractions,
@@ -29,6 +28,8 @@ import {
 	stripInboundRelations,
 } from '../src/features/view-node-relation';
 import { nodeColorOptions } from '../src/features/view-node-color';
+// 点选会话是共享设施（联系 / 概要共用）：取消入口在 node-pick，不在联系模块
+import { cancelNodePick, setupNodePick } from '../src/features/node-pick';
 
 /** 级联子菜单桩（`setSubmenu()` 的返回值；结构见 FakeMenuClass） */
 interface SubmenuStub {
@@ -494,12 +495,12 @@ describe('删除节点（stripInboundRelations）', () => {
 describe('点选模式（「联系」→ 点目标节点）', () => {
 	it('进入后 Esc 可取消；未进入时 Esc 不该被消费（返回 false）', () => {
 		const { view } = makeView();
-		expect(cancelRelationPicking(view)).toBe(false);
+		expect(cancelNodePick(view)).toBe(false);
 
 		startRelationPicking(view, sourceNode());
-		expect(cancelRelationPicking(view)).toBe(true);
+		expect(cancelNodePick(view)).toBe(true);
 		// 取消是幂等的：再按一次 Esc 已无状态可清
-		expect(cancelRelationPicking(view)).toBe(false);
+		expect(cancelNodePick(view)).toBe(false);
 	});
 
 	it('中心主题不能作起点：提示后不进入选点模式', () => {
@@ -507,7 +508,7 @@ describe('点选模式（「联系」→ 点目标节点）', () => {
 		const root = { ...nodeOf({ text: '我的导图' }), isRoot: true } as MindMapNode;
 
 		startRelationPicking(view, root);
-		expect(cancelRelationPicking(view)).toBe(false);
+		expect(cancelNodePick(view)).toBe(false);
 	});
 
 	/**
@@ -518,9 +519,11 @@ describe('点选模式（「联系」→ 点目标节点）', () => {
 		const { view } = makeView();
 		startRelationPicking(view, sourceNode());
 
-		setupRelationInteractions(view);
+		// 点选会话由共享设施 `features/node-pick` 统一持有：重建时由它清理
+		// （联系侧不再各自维护 pending，见 view-node-relation 的模块头）
+		setupNodePick(view);
 
-		expect(cancelRelationPicking(view)).toBe(false);
+		expect(cancelNodePick(view)).toBe(false);
 	});
 });
 

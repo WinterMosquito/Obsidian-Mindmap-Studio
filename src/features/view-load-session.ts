@@ -20,6 +20,9 @@
  *   （无人销毁）。取消逻辑收在 `cancelInitFrame` 一处。
  * - `pendingImageCorrections`：探测在首帧前起步、首帧后回灌；引擎尚未创建时
  *   留待 `onEngineReady`，文件切换/卸载时丢弃。
+ * - `pendingBaseline` / `pendingRenderHint`：同样等 `onEngineReady`——两者都
+ *   需要「引擎已存在」（前者取树快照、后者绑首帧事件），而 0 尺寸等待期恰好
+ *   没有引擎；文件切换/卸载时丢弃。
  */
 import type { ImageSizeCorrection } from '../media/images-path';
 
@@ -50,6 +53,31 @@ export class LoadSession {
 	 * 引擎尚未创建时留待 `onEngineReady`；文件切换/卸载时丢弃。
 	 */
 	pendingImageCorrections: ImageSizeCorrection[] | null = null;
+
+	/**
+	 * 挂起的「加载时序列化基线」记录（由 `SavePipeline.markLoaded` 落账）。
+	 *
+	 * 为什么不是「rAF 里 initMindMap 之后直接记」：`initMindMap` 在容器 0 尺寸
+	 * （后台标签/折叠面板）时**不建引擎**，只挂 ResizeObserver 等尺寸就绪，此刻
+	 * `getDataSnapshot()` 为 null，`markLoaded` 的空守卫会静默吞掉这次记录 ⇒ 该
+	 * 文件此后每轮自动保存都不再是「纯浏览」（打开即重排全文，正是要消灭的行为）。
+	 * 故把原样正文留在这里，由 `onEngineReady`（引擎真正建好那一刻）补记。
+	 *
+	 * **只在加载路径写入**（设置刷新重建不写，否则会把未落盘的编辑误标成基线），
+	 * 消费前还要核对路径——否则会把 A 文件的原文记成 B 文件的基线。
+	 */
+	pendingBaseline: { path: string; rawBody: string } | null = null;
+
+	/**
+	 * 挂起的「大图首帧提示」节点数（只有 ≥ 阈值时才有值，否则 null）。
+	 *
+	 * 与 `pendingBaseline` 同一个根因：提示必须赶在**首帧渲染开始之前**上屏
+	 * （引擎的 `render()` 排在 `setTimeout(0)`），而绑摘除事件需要 `mindMap` 已
+	 * 存在。0 尺寸等待时此刻 mindMap 为 null ⇒ 绑不上 `node_tree_render_end`，
+	 * 提示只能等 15 s 兜底，而它是不透明全屏遮罩（切回来会像卡死 15 s）。
+	 * 节点数在加载路径用解析出的树算好（零拷贝），交给 `onEngineReady` 消费。
+	 */
+	pendingRenderHint: number | null = null;
 
 	/**
 	 * 取消已排期的首帧初始化（幂等）。

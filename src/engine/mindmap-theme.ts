@@ -125,6 +125,23 @@ function buildThemeConfig(
 			paddingX: NODE_PADDING_X,
 			...preset.node,
 		},
+		// 概要（Summary）的**节点**样式：比正文节点轻一档（小一号字 + 虚线描边），
+		// 一眼看出「这是对一组主题的注释」而不是又一个主题。
+		//
+		// **刻意不吃「边框」开关**（不展开 `preset.node`）：正文主题在无边框档位下
+		// 是透明的，而概要是**注释性**元素——虚框是它唯一的身份线索，去掉就只剩一段
+		// 悬在括号旁的游离文字，也看不出「选中了哪个」。这与联系线恒为虚线同一取舍
+		// （那条线也不受边框开关影响）。描边色仍沿用色板真色。
+		generalization: {
+			fillColor: colors.secondFill,
+			color: text.secondText,
+			fontSize: variant.fontSizes.node - 1,
+			borderColor: colors.border,
+			borderWidth: 1,
+			borderDasharray: '4,4',
+			borderRadius: BORDER_RADIUS,
+			paddingX: NODE_PADDING_X,
+		},
 		lineColor: colors.line,
 		lineWidth: 1.5,
 		// 联系（关系连线）：比父子线更轻的辅助线——细、浅、虚线更密，且**不画在
@@ -135,6 +152,16 @@ function buildThemeConfig(
 		associativeLineDasharray: '4,4',
 		associativeLineTextColor: text.nodeText,
 		associativeLineTextFontSize: 12,
+		// 概要括号：与父子线同色同粗（它是一条**结构**线，不是另一种层级），
+		// 只有节点本身（上面的 `generalization` 档）做弱化。
+		generalizationLineColor: colors.line,
+		generalizationLineWidth: 1.5,
+		// 括号**起笔点与被覆盖节点右缘的距离**。引擎默认 0（紧贴右缘），而「＋」
+		// 展开按钮也挂在那里、垂直居中——括号线的控制点方向正好穿过按钮，想展开
+		// 子节点时容易点到线（2026-11-03 实机）。12px 让线从按钮外侧起笔；概要框
+		// 挂在线的外侧 `generalizationNodeMargin`（20）处，会同步外移 12px，仍在
+		// 一屏观感内。`d.cts` 未声明该键，与 marginX/lineStyle 同口径透传。
+		generalizationLineMargin: 12,
 		// 连线样式由偏好解析而来（resolveLineStyle：两态折线/曲线；目录组织图/
 		// 时间轴/鱼骨图由布局类自行绘制直线、不受本值影响）+ 收紧间距：视觉重量随
 		// 层级递减、提升一屏信息量。引擎运行时支持（vendor bundle 已验证

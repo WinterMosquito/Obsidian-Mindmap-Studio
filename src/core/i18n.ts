@@ -52,17 +52,11 @@ const ZH = {
 	'rename.titleFailed': '按中心节点重命名文件失败：',
 
 	// ===== 工具栏 =====
-	'toolbar.addChild': '添加子节点 (Tab)',
-	'toolbar.addSibling': '添加同级节点 (Enter)',
-	'toolbar.deleteNode': '删除节点 (Delete)',
 	'toolbar.undo': '撤销',
 	'toolbar.redo': '重做',
 	'toolbar.backToMarkdown': '返回',
 	'toolbar.arrange': '自动整理',
-	'toolbar.search': '搜索节点 (Ctrl+F)',
 	'toolbar.searchPlaceholder': '搜索节点…',
-	'toolbar.insertLink': '添加链接',
-	'toolbar.insertImage': '添加图片',
 	'toolbar.layout': '布局',
 	'toolbar.lineStyle': '连线',
 	'toolbar.palette': '配色',
@@ -83,6 +77,8 @@ const ZH = {
 	'menu.moveUp': '上移节点',
 	'menu.moveDown': '下移节点',
 	'menu.copyNode': '复制节点',
+	/** 多选时的复制：标题报数量（与「概要（覆盖 N 个）」同一口径） */
+	'menu.copyNodeCount': '复制 {count} 个节点',
 	'menu.pasteAsChild': '粘贴为子节点',
 	'menu.addLink': '添加链接',
 	// 与 Obsidian 阅读视图「链接右键」同款动作（官方 Canvas 亦有 Open in browser）
@@ -248,8 +244,6 @@ const ZH = {
 	// ===== 连线样式 =====
 	'lineStyle.curve': '曲线',
 	'lineStyle.straight': '折线',
-	// 固定直线布局（目录组织图/时间轴/鱼骨图）的描述：连线由布局类绘制、不可切换
-	'lineStyle.fixedStraight': '直线',
 
 	// ===== 主题选项 =====
 	'theme.default': '跟随 Obsidian',
@@ -285,6 +279,28 @@ const ZH = {
 	'nodeRelation.labelPlaceholder': '可选说明',
 	'nodeRelation.labelInvalid': '标签不能包含 %% 或 [[ ]]',
 	'nodeRelation.rootUnsupported': '中心主题不能作为联系端点',
+	// 概要（Summary）：节点右键建；概要节点右键改文字 / 删除
+	'summary.add': '概要',
+	/** 两次点选入口（没有够用的多选时） */
+	'summary.addPick': '概要…',
+	/** 选中集合够用：标题直接报覆盖数 */
+	'summary.addCount': '概要（覆盖 {count} 个）',
+	'summary.pickHint': '概要：从「{node}」开始，点击最后一个节点完成（Esc 取消）',
+	'summary.pickNotSibling': '终点必须与起点同级（Esc 取消）',
+	'summary.pickInvalid': '这里不能放概要（Esc 取消）',
+	'summary.pickOverlap': '与已有概要重叠，换个终点（Esc 取消）',
+	'summary.defaultText': '概要',
+	/** 创建场景的弹窗标题（与「编辑」区分：此前两处共用「编辑概要文字」） */
+	'summary.newText': '新建概要',
+	'summary.editText': '编辑概要文字',
+	'summary.delete': '删除概要',
+	'summary.textPlaceholder': '概要文字',
+	'summary.textInvalid': '文字不能包含 %% 或 [[ ]]',
+	'summary.textEmpty': '概要文字不能为空',
+	'summary.needSiblings': '概要只能覆盖相邻的同级节点',
+	'summary.rootUnsupported': '中心主题不能作为概要对象',
+	'summary.overlap': '该范围已有概要',
+	'summary.unresolved': '正文里找不到这条概要，请直接编辑笔记里的 %%sum%% 行',
 
 	// ===== 弹窗 - 自定义颜色 =====
 	'modal.color.title': '自定义颜色',
@@ -298,7 +314,16 @@ const ZH = {
 	'search.next': '下一个 (Enter)',
 	'search.close': '关闭 (Escape)',
 
+	// ===== 大图首帧渲染 =====
+	'view.renderingLargeMap': '正在渲染 {count} 个节点…',
+	// 「返回」把文件属性降级为 Markdown 是持久改动（下次不再自动进导图），
+	// 而界面只表现为换了个视图 ⇒ 必须告知，否则用户以为只是切换显示
+	'view.backToMarkdownDone': '已切回 Markdown；该文件属性已改为 Mindmap: Markdown',
+
 	// ===== 导出 =====
+	'export.exporting': '正在导出图片…（首次导出需准备数学字体，可能较慢）',
+	// 导出走浏览器下载，文件落在系统下载目录而不是库内——不报路径用户找不到
+	'export.done': '已导出 {name}（系统下载目录）',
 	'export.pngFailed': '导出 PNG 失败：',
 	'export.svgFailed': '导出 SVG 失败：',
 
@@ -370,17 +395,11 @@ const EN: Record<TranslationKey, string> = {
 	'rename.titleFailed': 'Failed to rename the file by its central node: ',
 
 	// ===== 工具栏 =====
-	'toolbar.addChild': 'Add child node (Tab)',
-	'toolbar.addSibling': 'Add sibling node (Enter)',
-	'toolbar.deleteNode': 'Delete node (Delete)',
 	'toolbar.undo': 'Undo',
 	'toolbar.redo': 'Redo',
 	'toolbar.backToMarkdown': 'Back',
 	'toolbar.arrange': 'Auto arrange',
-	'toolbar.search': 'Search nodes (Ctrl+F)',
 	'toolbar.searchPlaceholder': 'Search nodes…',
-	'toolbar.insertLink': 'Add link',
-	'toolbar.insertImage': 'Add image',
 	'toolbar.layout': 'Layout',
 	'toolbar.lineStyle': 'Line style',
 	'toolbar.palette': 'Palette',
@@ -400,6 +419,8 @@ const EN: Record<TranslationKey, string> = {
 	'menu.moveUp': 'Move node up',
 	'menu.moveDown': 'Move node down',
 	'menu.copyNode': 'Copy node',
+	/** Multi-selection copy: report the count (same convention as the summary item) */
+	'menu.copyNodeCount': 'Copy {count} topics',
 	'menu.pasteAsChild': 'Paste as child',
 	'menu.addLink': 'Add link',
 	'menu.openLinkNewTab': 'Open link in new tab',
@@ -565,8 +586,6 @@ const EN: Record<TranslationKey, string> = {
 	// ===== 连线样式 =====
 	'lineStyle.curve': 'Curve',
 	'lineStyle.straight': 'Elbow',
-	// 固定直线布局（目录组织图/时间轴/鱼骨图）的描述：连线由布局类绘制、不可切换
-	'lineStyle.fixedStraight': 'Straight',
 
 	// ===== 主题选项 =====
 	'theme.default': 'Follow Obsidian',
@@ -601,6 +620,27 @@ const EN: Record<TranslationKey, string> = {
 	'nodeRelation.labelPlaceholder': 'Optional label',
 	'nodeRelation.labelInvalid': 'Label cannot contain %% or [[ ]]',
 	'nodeRelation.rootUnsupported': 'The central topic cannot be linked',
+	// Summary (create from the node menu; edit text / delete from the summary node)
+	'summary.add': 'Summary',
+	'summary.addPick': 'Summary…',
+	'summary.addCount': 'Summary ({count} topics)',
+	'summary.pickHint': 'Summary: starting at "{node}" — click the last topic (Esc to cancel)',
+	'summary.pickNotSibling': 'The end must be a sibling of the start (Esc to cancel)',
+	'summary.pickInvalid': 'A summary cannot go here (Esc to cancel)',
+	'summary.pickOverlap': 'Overlaps an existing summary — pick another end (Esc to cancel)',
+	'summary.defaultText': 'Summary',
+	/** Create-mode dialog title (used to share "Edit summary text" with edit mode) */
+	'summary.newText': 'New summary',
+	'summary.editText': 'Edit summary text',
+	'summary.delete': 'Delete summary',
+	'summary.textPlaceholder': 'Summary text',
+	'summary.textInvalid': 'Text cannot contain %% or [[ ]]',
+	'summary.textEmpty': 'Summary text cannot be empty',
+	'summary.needSiblings': 'A summary can only cover adjacent sibling topics',
+	'summary.rootUnsupported': 'The central topic cannot be summarized',
+	'summary.overlap': 'This range already has a summary',
+	'summary.unresolved':
+		'This summary is no longer in the note text — edit its %%sum%% line directly',
 
 	// ===== 弹窗 - 自定义颜色 =====
 	'modal.color.title': 'Custom colour',
@@ -614,8 +654,20 @@ const EN: Record<TranslationKey, string> = {
 	'search.next': 'Next (Enter)',
 	'search.close': 'Close (Escape)',
 
+	// ===== 大图首帧渲染 =====
+	'view.renderingLargeMap': 'Rendering {count} nodes…',
+	// "Back" downgrades the file property to Markdown (persistent) while the UI
+	// only looks like a view switch — say so, or it reads as a display toggle
+	'view.backToMarkdownDone':
+		'Switched back to Markdown; the file property is now Mindmap: Markdown',
+
 	// ===== 导出 =====
+	'export.exporting':
+		'Exporting image… (first export prepares math fonts and may take a while)',
 	'export.pngFailed': 'Export PNG failed: ',
+	// Export uses browser download → the file lands in the OS download folder,
+	// not in the vault; without the path the user cannot find it
+	'export.done': 'Exported {name} (system downloads folder)',
 	'export.svgFailed': 'Export SVG failed: ',
 
 	// ===== 保存 =====
