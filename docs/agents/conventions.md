@@ -1,4 +1,4 @@
-# 关键约定 K1–K159（详录）
+# 关键约定 K1–K167（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -16,6 +16,10 @@
 | 架构边界与单一来源 | 改分层 / 新增模块 / 收口点判定 |
 | 交互对齐 Obsidian 官方 | 改点击 / 双击 / 悬停等交互 |
 | Obsidian API 合规与工具链 | 改构建 / lint / CI / 依赖 / 官方 API 用法 |
+
+查找命令（别通读本文件）：`grep -n "^- \[K" docs/agents/conventions.md` 列全部条目；已知编号直接
+`grep -n "\[K156\]" docs/agents/conventions.md`。**K 区间由 `tests/agents-md-sync.test.ts` 机械校验**
+（标题里的 `K1–K<n>` 必须等于实际最大编号；全仓引用的 `K<n>` 必须都有条目），故不必手工维护。
 
 ### 链接、图片与 Markdown 保真
 
@@ -87,6 +91,8 @@
   ④ **三种收场故意不补排**：P1a 外部冲突跳过、写盘异常（那时「活快照 ≠ 文件」是**预期**，补排只会把一次冲突刷成重试风暴）；以及**非自动保存**（命令 / 卸载）——显式保存的调用方本来就在同一个 tick 抓新鲜快照，没有「陈旧」可言，而卸载路径若在此补排，定时器会活过视图拆卸、落到下一个刚加载的文件上（那时基线还没记录，一次补排就变成「打开即重写」，自审发现）。
   ⑤ **为什么值得每轮多一次 serialize**：写盘取的是排空开头的快照，一次真实差异就等于「用户编辑没落盘」；`serialize` 不产生 IO，代价远低于静默丢编辑。判据与写盘同源，不会误报。
   ⑥ **回归**：`tests/save-pipeline.test.ts` +7 例（陈旧快照→补排一次并追平 / 内容一致→零额外写盘 / 冲突收场→不补排 / 每轮都变→4 次封顶 / 显式保存→不补排 / 纯浏览跳过→不补排 / 只改 frontmatter→不写盘）。
+
+- [K164] **列表缩进单位随文档走（2026-11-06）**：`MdNodeMeta.mdIndentUnit` 只记在**虚拟根**的 data 上（每层一个单位：`'\t'`，或 1–8 个空格的**原样串**，含 `' \t'` 这类混合），解析期由 `markdown/md-outline-lines.ts` 的 `classifyLines` 实测「第一处有缩进的列表行」的前导空白，序列化经 `markdown/md-serialize.ts` 的 `readIndentUnit`（文件内私有）取用（脏值回落 `'  '`；剪贴板大纲恒用默认——那是**新内容**，没有原文风格可继承）。**为什么必须是数据而不是常量**：此前恒写 2 空格，Tab / 4 空格缩进的笔记**改一个节点**就把全文缩进重排（2026-11-06 实机：整篇 diff），与「未编辑行逐字回写」直接冲突。**两把尺子不可互换**：`leadingIndent`（空格与 Tab 各计 1，用于续行 / 围栏块归层，与 `LIST_RE` 的 `(\s*)` 同口径）vs `leadingSpaces`（只数空格，只服务 frontmatter 块标量的 YAML 缩进判定）——把后者用在列表归层上，Tab 缩进文件的项内围栏会被拆成同级节点（2026-11-04 实机：4 个分支整层错位）。**归一**：混用缩进按第一层宽度归一；测不到单位（全文无缩进列表 / 新建文件）回落 2 空格。回归：`tests/md-roundtrip.test.ts`（Tab / 4 空格 / `' \t'` 混合三例 + 第二趟不动点 + 缺省回落）。
 
 ### 引擎行为、视口与布局
 
@@ -301,6 +307,17 @@
   ⑤ 保真与边界：哨兵同样只写正文（`mdRaw` 逐字保真）、不写 `data.json`；写入口复用 `setColorDirective` 的替换 / 追加 / 块级语法行另起一行；围栏代码 / 行内代码 / 数学内不识别；含图节点与「整行只有指令」的节点不自绘 ⇒ 字面显示（与既有注释同口径）。
   ⑥ 回归：`tests/color-directive.test.ts`（解析口径与 `#none` 拒绝 / 阻断继承的遍历 / 写·换·清哨兵 / 渲染期子树不挂色）、`tests/view-context-menu.test.ts`（「默认」在上层染色时写哨兵 / 上层无色时只删指令 / 上层已被哨兵挡住时删自身哨兵 / 哨兵与未写指令同勾「默认」/ 哨兵换色）。
 
+- [K165] **画布几何只读布局坐标，不读 DOM 包围盒（2026-11-04/06）**：节点盒的统一读取点是 `core/minimap-geometry.readNodeLayoutBox`（`left/top/width/height` 四字段；缺失 / 非有限 / 尺寸非正 ⇒ null），两个消费者——小地图的全树几何与「缩放到选区」的 `engine/mindmap-viewport.measureNodesCanvasBox`——都按 `screen = content × scale + translate` 换算（与 `projectViewportBox`、`mindmap-relations` 的手绘锚定同一口径，别另写一份）。**为什么不用 `getBoundingClientRect`**：性能模式把视口外节点 `removeSelf()` 摘出 DOM ⇒ 大选区只盖住可见部分（缩放落到错误范围），且同步块里是 N 次几何查询；布局几何剪枝后仍完整，离屏节点自然参与。**大图 resize 走尾随合并（`RESIZE_DEFER_MS = 180`，阈值 `LARGE_MAP_RENDER_HINT_NODES`）**：`onResize` 在 ≥1000 节点时只重置定时器、停手后做一次整树 `engine.resize()`；小图仍走 100ms 节流（实时跟手）。两条调度**互斥**：`scheduleDeferredResize` 先取消节流器，小图路径每次也都取消遗留尾随；`onUnloadFile` / `onClose` 必须取消未决尾随，否则它会落到新文件或已销毁的引擎上。代价要认：拖动期间画布保持旧尺寸（≤180ms），换来的是「拖动期每秒数次 0.4s 冻结」变「停手后一次」。回归：`tests/viewport.test.ts`（选区几何）/ `tests/view-resize.test.ts`（两种调度与互斥取消）/ `tests/view-minimap.test.ts`。
+
+- [K167] **节点配色的作用范围：颜色内容写在正文里，渲染侧只管连接线（2026-11-06 用户裁决 + 同日追加）**：
+  ① 问题：给一个节点上色后，整支子树都跟着变色（继承是唯一语义），用户要的是可选的「只给这一个节点」；同日追加「仅本节点档下，前后的连接线也不该带节点色」。
+  ② 关键取舍：**不**给 `walkColorDirectives` 加「按设置决定是否继承」的分支。颜色是写在正文里的**内容**，同一个 `.md` 换个库、换台机器、发给别人必须长得一样；设置项若参与「谁继承谁」，改一次设置所有存量彩色文件当场「掉色」。故作用范围**必须落在正文里**，两种档位＝两种写法。但**连接线着色不是节点自身的颜色内容**，而是「这一支往哪延伸」的线索：范围止于本节点时它没有对象，这一层派生显示态允许随设置走（与 `defaultTheme` 决定连线明暗色同性质）。两处消费因此分开——写入落正文，渲染只增删 `lineColor` 覆盖；随 `data.json` 漂的只有连线色，填充 / 描边 / 文字不会。
+  ③ 落法：`core/constants.NODE_COLOR_SCOPE_OPTIONS` 两档——`subtree`（出厂，＝引入本设置前的行为）只写选中节点的指令；`node` 再给**直接子节点**各补一条 `%%none%%`（`domain/color.scopeSentinels` 判定落点，与 `orphanSentinels` **互为对偶**：一个上色时补、一个撤色时收）。只补一层——哨兵自己会把 `null` 传下去，孙辈再写一条就是重复注释。跳过两类：本次也要上色的节点（马上有自己的指令）、**已有自身指令**的子节点（十六进制＝「这一支我另有安排」，哨兵＝「我显式要默认」，都是用户此前的显式选择，不越权改写）。
+  ④ 折叠口径随之分开：`subtree` 档多选仍走 `topMostNodes`（只写最上层，子孙靠继承）；`node` 档**不折叠**，每个被选中的节点各写一条——否则「父子同选」里的子节点会被写成一条哨兵，等于把用户选中的节点变成「无颜色」。
+  ⑤ 代价（要认）：哨兵让那一支**回落到整篇配色**，而不是「保持它原本从更高祖先继承到的颜色」——注释语法里没有「只挡这一层、继续吃上上层的色」这种表达。两个上色入口（右键节点「配色」/ 空白右键「按分支自动上色」）共用同一份定义，否则同一个设置会在一处静默失效。
+  ⑥ 连接线落地（`node` 档前后两条线都不染色）：`engine/mindmap-colors.applyColorStyle` 在 `colorLine === false` 时**不写 `lineColor`**（其余三键照旧，尤其 `borderColor` 要留给小地图墨色）。引擎 `styleLine(line, childNode)` 读的是**子节点**的 `lineColor` ⇒ 不写覆盖即让「父 → 本节点」回落整篇配色；「本节点 → 子节点」归子节点 data，哨兵已让它回落。判定唯一在 `core/constants.isNodeOnlyColorScope`，由 `features/view.colorLine()` 传给创建前的 `applyColorDirectivesToTree` 与渲染落地的 `syncNodeColorDirectives`；只读嵌入经 `MindmapEmbedConfig.colorLine` 由组合根注入（跟全局默认，同 `themeStyle`）。**切换即时生效**：`nodeColorScope` 进 `LIVE_REFRESH_SETTING_KEYS` + `IN_PLACE_REFRESH_KEYS`，`applySettingsChange` 只重算一次颜色（有变化才 `render()`）、不销毁重建引擎——5000 节点图不该为一个开关付整树 `structuredClone`。
+  ⑦ 回归：`tests/color-directive.test.ts`（`scopeSentinels` 四例 + 落地三例：仅本节点档不写 `lineColor` / 切档只增删覆盖且幂等 / 每次切换各渲染一次）、`tests/view-context-menu.test.ts`（仅本节点补哨兵 / 已有指令不改写 / 父子同选不折叠 / 父节点无变化时只有哨兵那批落地 / 出厂档不写哨兵 / 按分支自动上色同样跟档）、`tests/settings.test.ts`（白名单与脏值留痕 + 切换进差集 + 唯一判定）、`tests/mindmap-codeblock.test.ts`（组合根注入契约）。
+
 ### 架构边界与单一来源
 
 - [K28] URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；**URL 解码一律走 `domain/url.tryDecodeUri`**（2026-10-11 收口：失败返回 `null`，调用方按场景显式选「回落原样 `?? raw`」或「跳过该候选/该行」——此前这条口径在 `domain/url` ×2、`links/file-lookup` ×1、`links/links-resolve` ×3、`links/links-tree` ×1 各写一份 try/catch，`%` 是真实文件名里的常见字符而非常态外输入）；防抖/节流/串行队列/有界并发映射一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段；批量异步任务勿用无界 Promise.all，用 `mapWithConcurrency`）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
@@ -317,6 +334,8 @@
 - [K37] 命名对照：类名 `MindMapStudioPlugin/MindMapStudioSettings/MindMapStudioSettingTab`（历史上曾以插件旧名 TheMindMap 命名，已随品牌更名统一）。
 - [K50] **模块化设计是硬约束（不是可选项）**：写新逻辑前先回答「它属于哪个已有模块」——答不上来才允许新建文件，且新文件必须只承载一个可命名的关注点。四条强制边界：① **单一职责**——禁止把新职责「顺带」追加进已承担职责的文件，新职责要么进对应模块、要么成独立文件；② **分层单向**——依赖方向恒为 `domain → services → features → 根基础设施`（后者可依赖前者，反向禁止；domain 零依赖由 lint 机械强制，见 K28）；③ **收口唯一**——跨模块能力只允许一份实现（收口点清单见 K25 / K28 / K29），复用优先，严禁造第二份；④ **窄接口**——模块间以最窄契约交互（K31 / K32 的 `ViewDomContext` / `ViewEngineContext` 为示范），不得把整块装配面传给只需要一角的模块。超限文件的拆分判定见「文件规模与豁免」，新增特性落层自检见「新增功能检查清单」第 1 步。
 - [K51] **模块组与依赖矩阵（机械强制）**：src 按模块组组织（组成员见「代码结构」），依赖只能是矩阵许可集的子集——`domain`（L0 零依赖）← `core`（仅 domain）← `links`（core/domain）← `markdown`（core/links/domain）、`media`（core/links/domain）、`engine`（core/domain）、`platform`（core/links/markdown/domain）、`ui`（core/links/media/domain）、`services`（全部 L1 + domain）、`features`（全部下层）。**组合根（`main.ts`/`commands.ts`/`settings.ts`/`creation.ts`）只能被组合根本身引用**——下层引入口即违约；唯一豁免是**类型引用**（视图上下文契约需要 settings 的类型，编译期擦除无运行时耦合）。强制手段：**矩阵唯一定义在 `scripts/module-boundaries.mjs`**（勿在别处再抄一份——两份矩阵必然漂移），由两处共同消费：① `eslint.config.mts` 为每组生成 zone 块（`@typescript-eslint/no-restricted-imports` + `allowTypeImports`），说明符用**任意深度正则**匹配（`^\.\./(?:\.\./)*<组>(?:/|$)`）——`group: ['../x']` 只认字面量，某组新增子目录后 `../../x` 会静默绕过；② `tests/module-boundaries.test.ts` 用 TS AST 抽 import（含动态 `import()`）并按**解析后的真实路径**判层，补上 lint 结构上表达不了的三类：**组内成环**（同组 `./x` 相互引用，lint 只看跨组说明符）、**深层路径**、**`src/` 新增一级目录未登记**（无块覆盖它时 lint 全绿）。组内相对引用（`./x`）不受矩阵限制，但组内不得成环；新增文件先定组再导入。实测拦截力：探针文件分别触发「`core → features`（一层）」「`core/sub → features`（深层）」「`features` 值导入 `../settings`」与「`features` 内两文件互引」四条红灯，而 `import type ... from '../settings'` 按豁免放行。
+
+- [K166] **「内容是否已落盘」只有一个判据：本轮序列化 vs 加载基线（2026-11-06）**：`services/document-service.ts` 的 `SavePipeline.isAtLoadedState` 比较 `buildBody(活快照)` 与 `markLoaded` 记下的 `loadedBody`（**只比正文**：文件头恒取磁盘当前值、管线从不改它），三个消费面共用——① 纯浏览守卫（相同 ⇒ 不写盘）；② `checkDirty`（autoSave **关闭**时同样防抖的**只判定**轮次：不写盘、不动任何基线，结论经 `onDirty(dirty, file)` 交给状态栏）；③ 撤销回加载态时必须落盘（`wroteSinceLoad` 为真时写回 `loadedRawBody`）。**`schedule()` 因此返回 `ScheduleOutcome` 而不是 boolean**：`scheduled`（报「保存中」）/ `suspended`（上次写盘失败 ⇒ 报「未保存」）/ `off`（不猜，由 `onDirty` 定；否则「打开一张没改过的图」会当场误报）/ `noFile`。**状态栏是插件级共享元素**：只由**活动视图**写入（`setSaveState` 取 `getActiveViewOfType`），换文件复位 `idle`，切语言按当前状态重推。回归：`tests/save-pipeline.test.ts`（`onSaved` 6 例 + `onDirty` 5 例 + 去向 1 例）、`tests/view-status.test.ts`。
 
 ### 交互对齐 Obsidian 官方
 
@@ -1211,11 +1230,11 @@
   ⑥ **后续**：K97（同日用户两轮澄清定稿）把未设置尺寸的图从「按比例自适应」改为「**按图片原始大小展示**」；K96 的两个修复（uid 双通道、首帧补灌）与 `ensureDefaultImageSizes` 全部保留。
 
 - [K97] **图片尺寸口径（用户裁决终版）：未设置尺寸＝按图片原始大小展示，设置尺寸＝按参数展示（2026-09-28，两轮澄清后定稿）**
-  ① **口径**（**最终语义，勿再改**）：**未设置尺寸的图（`![[图]]`）按图片自身原始大小（1:1 自然尺寸）展示**——多大就多大，不统一高度、不比例缩放；**长边超过 `IMAGE_MAX_SIDE_PX`（480px）时等比缩小**（只缩不放：一张 2000px 截图否则会把画布版面压扁——节点是空间对象，与 `CODE_BLOCK_MAX_HEIGHT_PX` 同一理由）；**设置了官方尺寸参数**（`![[图|300]]` / `![[图|300x150]]` / `![alt|300](url)`）则按参数展示（仅宽时探测原始比例补高），**显式参数不受 480 上限约束**（用户意图优先，写 `|2000` 也照做）；**插入/拖入的图片等同未设置尺寸**（走自然尺寸路径、同上限）。探测失败（外链图离线等）→ 保持/回退默认盒 200×120（`custom:false`，引擎按 imgMax 约束、框内等比留白）。
+  ① **口径**（**最终语义，勿再改**）：**未设置尺寸的图（`![[图]]`）按图片自身原始大小（1:1 自然尺寸）展示**——多大就多大，不统一高度、不比例缩放；**长边超过 `IMAGE_MAX_SIDE_PX`（320px；2026-11-05 由 480 下调，只因观感，不改语义）时等比缩小**（只缩不放：一张 2000px 截图否则会把画布版面压扁——节点是空间对象，与 `CODE_BLOCK_MAX_HEIGHT_PX` 同一理由）；**设置了官方尺寸参数**（`![[图|300]]` / `![[图|300x150]]` / `![alt|300](url)`）则按参数展示（仅宽时探测原始比例补高），**显式参数不受该上限约束**（用户意图优先，写 `|2000` 也照做）；**插入/拖入的图片等同未设置尺寸**（走自然尺寸路径、同上限）。探测失败（外链图离线等）→ 保持/回退默认盒 200×120（`custom:false`，引擎按 imgMax 约束、框内等比留白）。
   ② **澄清过程**（防误改）：K96 修复让「高度统一 120、宽度按比例」的自适应首次生效（300×60 → 600×120 / 350×377 → 111×120）；用户先表述为「未设置按默认大小」→ 曾被实现为**统一 200×120**（错解），用户再澄清「按图片大小加载」＝**图片原始大小**；第三轮敲定长边 **480px** 封顶（推荐值：默认盒宽 200 的 2.4 倍 ≈ Obsidian 分栏半宽；用户既有样张 300×60、350×377 均不受影响）。三轮差异要记牢：**不是**统一盒、**不是**统一高度比例，而是**自然尺寸 1:1 + 长边封顶**。
-  ③ **实现**：`core/constants.IMAGE_MAX_SIDE_PX = 480` + `media/images-path.fitImageWithinMaxSide(w,h)`（纯函数：长边超限时等比收窄、只缩不放、最小 1px）——两条自然尺寸路径共用（`collectImageSizeCorrections` 无参数分支、`createNaturalSizeSetNodeImageOptions`）。`collectImageSizeCorrections` 无参数分支＝探测自然尺寸 → 套上限 → `{width, height, custom:true}` + `autoSize:true`（写树标 `mdImageAutoSize` → 序列化**跳过回写**：显示口径不写文件）；已有 `imageSize.custom`（用户拖宽）不覆盖；参数分支不变（不经 `fitImageWithinMaxSide`、`autoSize:false`）。`walkImageSizeCorrections`（去 Aspect 命名）；`computeAspectImageSize` 已删。`mindmap-theme.ts` 的 `imgMaxWidth/imgMaxHeight`（=200×120）**保留**：只约束 `custom:false` 兜底路径（首帧/探测失败），`getImgShowSize` 对 `custom:false` 必然读取、删之行为未定义（注释已写明防误删）。K96 的两个修复（uid 双通道回灌、首帧补灌）与 `ensureDefaultImageSizes`（首帧兜底）全部保留。
-  ④ **不变式**：自然尺寸（含 480 封顶后的尺寸）是**显示口径**、绝不回写（`mdImageAutoSize` 标记）；**插入/拖入**与**用户拖拽调宽**属用户意图、照旧回写 `|宽度`；**显式尺寸参数不受 480 上限约束**。
-  ⑤ **验证**：`tests/images-path.test.ts` **47** 例（`fitImageWithinMaxSide` 5 例含「用户样张 300×60 / 350×377 不受影响」与极端比例、自然尺寸校正+自动标记、超长边缩到 480、显式参数 2000 不受限、参数路径各形态、并发与缓存、失败回退）；全量用例 + lint + verify:visual 全绿；已部署 vault 并双哈希核对。
+  ③ **实现**：`core/constants.IMAGE_MAX_SIDE_PX = 320`（2026-11-05 由 480 下调，详见 ①） + `media/images-path.fitImageWithinMaxSide(w,h)`（纯函数：长边超限时等比收窄、只缩不放、最小 1px）——两条自然尺寸路径共用（`collectImageSizeCorrections` 无参数分支、`createNaturalSizeSetNodeImageOptions`）。`collectImageSizeCorrections` 无参数分支＝探测自然尺寸 → 套上限 → `{width, height, custom:true}` + `autoSize:true`（写树标 `mdImageAutoSize` → 序列化**跳过回写**：显示口径不写文件）；已有 `imageSize.custom`（用户拖宽）不覆盖；参数分支不变（不经 `fitImageWithinMaxSide`、`autoSize:false`）。`walkImageSizeCorrections`（去 Aspect 命名）；`computeAspectImageSize` 已删。`mindmap-theme.ts` 的 `imgMaxWidth/imgMaxHeight`（=200×120）**保留**：只约束 `custom:false` 兜底路径（首帧/探测失败），`getImgShowSize` 对 `custom:false` 必然读取、删之行为未定义（注释已写明防误删）。K96 的两个修复（uid 双通道回灌、首帧补灌）与 `ensureDefaultImageSizes`（首帧兜底）全部保留。
+  ④ **不变式**：自然尺寸（含 320 封顶后的尺寸）是**显示口径**、绝不回写（`mdImageAutoSize` 标记）；**插入/拖入**与**用户拖拽调宽**属用户意图、照旧回写 `|宽度`；**显式尺寸参数不受该上限约束**。
+  ⑤ **验证**：`tests/images-path.test.ts` **51** 例（`fitImageWithinMaxSide` 5 例含「上限内的存量图不受影响」与极端比例、自然尺寸校正+自动标记、超长边按 `IMAGE_MAX_SIDE_PX` 等比、显式参数 2000 不受限、参数路径各形态、并发与缓存、失败回退）；上限断言一律从常量派生（再调不碎测试）；全量用例 + lint + verify:visual 全绿；已部署 vault 并双哈希核对。
 
 - [K98] **新建节点按层级回写为 Markdown 标题（用户需求：「严格回写前六级子节点为六级标题」，2026-09-28）**
   ① **需求与背景**：解析侧 `#`~`######` ⇄ 第 1~6 层节点（既有，见 md-outline 文件头）；回写侧此前**未标注（新建）节点一律写 `-` 列表项**——用户在导图里画出的层级结构保存后会「塌成一层列表」。现改为**按层级回写**：第 1~6 层 → `#`~`######`（与解析侧严格对称）；第 7 层起 → 列表（缩进降级法，Markdown 只有 6 级标题）。
@@ -1823,7 +1842,7 @@
 
 - [K128] **配色（色相方案）维度（2026-10-21，用户裁决 + 实机取证）**：配色与「主题色」（明暗）、「主题」（节点形态）**三维正交**——它只换整套色板的色相。**它不是全局设置**：按文件记在 `data.json` 的 `viewState[<路径>].palette`，由**导图顶栏**切换（与布局 / 连线样式同一种「按文件记忆」形态）。用户裁决：配色是「这篇导图长什么样」，不该由全局设置统一；`MindMapStudioSettings` 因此**没有** `palette` 字段。
   - **① 数据形态：5 色 + 共用文字色**。每套只给 `rootFill` / `secondFill` / `nodeFill` / `border` / `line`；文字色三档（`TEXT_LIGHT` / `TEXT_DARK`）**不随配色变**、只按明暗定。理由：新增配色只需 5 个 hex，且不会出现「某套配色的浅底配错深字」这类不可读组合——文字色的对比度只需按明暗校核一次，不必每套重算。
-  - **② 七套与命名**（2026-10-29 增至七套：新增 `rose` 补上「琥珀 68° → 紫藤 305°」之间 120° 的色相空档；`forest` 由 `#2f7d5a`（h160）调到 `#3f7c2f`（h133）——原值与薄荷 h182 仅差 18°，节点级配色下主色 ΔE 仅 18.0、派生填充 2.7，实机两支几乎同色）：`default`（基准，与改造前逐值一致）/ `mint` / `amber` / `wisteria` / `forest` / `slate`，中文「默认 / 薄荷 / 琥珀 / 紫藤 / 森林 / 石板」。基准项叫「默认」而非「蓝」：它是「什么都不改」的那一项，与 `themeStyle.default` 同一命名口径。命名规则（用户）：颜色词尽量两字、物品/植物名不设限——六套全部落在物品/植物命名。**不叫「紫罗兰」**：颜色词且三字，违规；且 `#7c5cd6` 观感更接近紫藤（偏亮偏蓝）而非罗兰紫。
+  - **② 七套与命名**（**2026-11-05 整组换色板**：7 套统一改用 Tailwind 色阶——亮色 `rootFill` 600 档 / `secondFill` 50 档 / `border` 200 档 / `line` 400 档，暗色 800 / 950 / 900 档。旧值的问题是「根色偏灰、二级三级几乎与画布同色」，整图只剩一个色块；新色板浅档带明确色相，才看得出「这是薄荷 / 琥珀 / 紫藤」。同轮把「着色节点内表格线」改成按对比度兜底（45% 墨色不够时步进到 ≥2:1）。以下为历史：2026-10-29 增至七套：新增 `rose` 补上「琥珀 68° → 紫藤 305°」之间 120° 的色相空档；`forest` 由 `#2f7d5a`（h160）调到 `#3f7c2f`（h133）——原值与薄荷 h182 仅差 18°，节点级配色下主色 ΔE 仅 18.0、派生填充 2.7，实机两支几乎同色）：`default`（基准，与改造前逐值一致）/ `mint` / `amber` / `wisteria` / `forest` / `slate`，中文「默认 / 薄荷 / 琥珀 / 紫藤 / 森林 / 石板」。基准项叫「默认」而非「蓝」：它是「什么都不改」的那一项，与 `themeStyle.default` 同一命名口径。命名规则（用户）：颜色词尽量两字、物品/植物名不设限——六套全部落在物品/植物命名。**不叫「紫罗兰」**：颜色词且三字，违规；且 `#7c5cd6` 观感更接近紫藤（偏亮偏蓝）而非罗兰紫。
   - **③ id 冻结与唯一源**：`PALETTE_OPTIONS`（`core/constants`，`as const` 派生 `PaletteId`）是唯一源——工具栏选项面与 `viewState` 白名单共用它；`PALETTES`（`mindmap-theme-presets.ts`）用 `Record<PaletteId, …>` 反向约束（漏写即编译失败）；未知名回退 `default`（读取侧 `normalizePalette`，写入侧 `applyPalette` 同样归一，避免脏值在 `data.json` 里复利）。管线 `buildThemeConfig` 只多一次查表，零分支。
   - **④ 嵌入不吃配色**：`mindmap` 代码块**恒用 `DEFAULT_PALETTE`** —— `MindmapEmbedConfig` 不含该字段，`mount` 与 `css-change` 两处都写 `palette: DEFAULT_PALETTE`，并由契约测试锁死「两处出现 + 不读 `settings.palette`」。理由：嵌入是正文里的只读小盒，用户换配色属于「我的导图长什么样」，不该把正文里的嵌入一起染色（用户裁决）。
   - **⑤ 生效与验证**：切换经 `view.applyPalette` → `viewState.setPalette(路径)` + `engine.applyTheme()`（**原地换肤、不重建引擎**）；**不进** `LIVE_REFRESH_SETTING_KEYS`（它不是设置项）。实机：顶栏选 `mint` → 引擎 `root #2e9e8f` / `second #eaf7f4` / `line #93c9bf`，且 `viewState['示例/思维导图.md'].palette === 'mint'`（与 `view` 并存于同一条目）；`wisteria` → `#7c5cd6` / `#f3effc` / `#b8a6e0`；嵌入块在 `wisteria` 下仍为蓝。全量 82 文件 2214 用例 + `build` + `lint` + `lint:css` + `check:dead-code` 全绿。

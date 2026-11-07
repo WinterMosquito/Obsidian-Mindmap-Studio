@@ -131,6 +131,121 @@ function docExists(name: string): boolean {
 	}
 }
 
+/**
+ * `docs/agents/conventions.md`（K 编号的唯一载体）。
+ *
+ * 契约三 / 四都只读这一份：K 编号的定义面只有它，其余文件只**引用**。
+ */
+const CONVENTIONS_SOURCE = readFileSync(
+	path.join(ROOT, 'docs/agents/conventions.md'),
+	'utf8',
+);
+
+/** conventions.md 里已定义的 K 编号（`- [K123]`；`K28b` 这类子编号不参与编号空间） */
+function definedKNumbers(): Set<number> {
+	const defined = new Set<number>();
+	for (const match of CONVENTIONS_SOURCE.matchAll(/^-\s*\[K(\d+)\]/gm)) {
+		const value = match[1];
+		if (value !== undefined) {
+			defined.add(Number(value));
+		}
+	}
+	return defined;
+}
+
+/**
+ * 「会引用 K 编号」的文本面：src / tests / docs 的 .ts · .md，加根目录两份与 vendor 说明。
+ *
+ * **刻意排除** `vendor/upstream/` 与 `vendor/simple-mind-map.cjs`：那是压缩后的第三方
+ * 代码，`K73` 这类偶然 token 与我们的编号无关，扫进来只会造出假告警。
+ */
+function collectReferenceSources(): [string, string][] {
+	const files = [
+		...collectTextFiles('src'),
+		...collectTextFiles('tests'),
+		...collectTextFiles('docs'),
+	];
+	const extra = ['AGENTS.md', 'README.md', 'vendor/BUILD.md'];
+	const sources: [string, string][] = [];
+	for (const rel of [...files, ...extra]) {
+		try {
+			sources.push([rel, readFileSync(path.join(ROOT, rel), 'utf8')]);
+		} catch {
+			// 文件不存在（如 README.md 曾缺）：跳过，存在性由 docs 清单契约管
+		}
+	}
+	return sources;
+}
+
+/** 递归收集目录下 .ts / .md 文件（返回相对 ROOT 的 posix 路径） */
+function collectTextFiles(dir: string): string[] {
+	const files: string[] = [];
+	for (const entry of readdirSync(path.join(ROOT, dir), {
+		withFileTypes: true,
+	})) {
+		const rel = `${dir}/${entry.name}`;
+		if (entry.isDirectory()) {
+			files.push(...collectTextFiles(rel));
+		} else if (entry.name.endsWith('.ts') || entry.name.endsWith('.md')) {
+			files.push(rel);
+		}
+	}
+	return files;
+}
+
+describe('AGENTS.md 同步契约：K 编号（区间声明与交叉引用）', () => {
+	/**
+	 * 「声明的 K 区间」只查这两份。`line-count-log.md` 里的 `K1–K152` 是**历史批次读数**
+	 * （那一批当时的范围），不表达当前范围，纳入会永远红灯。
+	 */
+	const RANGE_SOURCES: readonly [string, string][] = [
+		['AGENTS.md', AGENTS_SOURCE],
+		['docs/agents/conventions.md', CONVENTIONS_SOURCE],
+	];
+
+	it('声明的 K 区间等于实际最大编号（新增条目后不必手算，但漏改会红灯）', () => {
+		const defined = definedKNumbers();
+		expect(defined.size, 'conventions.md 里应有 `- [K<n>]` 条目').toBeGreaterThan(0);
+		const max = Math.max(...defined);
+		const declared: { file: string; end: number }[] = [];
+		for (const [file, source] of RANGE_SOURCES) {
+			for (const match of source.matchAll(/K1\s*[–—-]\s*K(\d+)/g)) {
+				const end = match[1];
+				if (end !== undefined) {
+					declared.push({ file, end: Number(end) });
+				}
+			}
+		}
+		expect(
+			declared.length,
+			'至少两处声明：AGENTS.md 的 docs 清单条目 + conventions.md 的标题',
+		).toBeGreaterThanOrEqual(2);
+		const wrong = declared.filter((item) => item.end !== max);
+		expect(
+			wrong.map((item) => `${item.file}：声明到 K${item.end}，实际最大 K${max}`),
+			`K 区间声明与实际最大编号不符（新增 K 条目后同步上述两处；编号不连续时也只写最大编号）：\n` +
+				wrong.map((item) => `${item.file}：声明到 K${item.end}`).join('\n'),
+		).toEqual([]);
+	});
+
+	it('全仓引用的 K 编号都在 conventions.md 有对应条目（防悬空引用）', () => {
+		const defined = definedKNumbers();
+		const dangling = new Set<string>();
+		for (const [file, source] of collectReferenceSources()) {
+			for (const match of source.matchAll(/\bK(\d{1,3})\b/g)) {
+				const value = match[1];
+				if (value !== undefined && !defined.has(Number(value))) {
+					dangling.add(`${file}：K${value}`);
+				}
+			}
+		}
+		expect(
+			[...dangling],
+			'以下引用了不存在的 K 编号（K 编号一经分配永不复用：确需删除条目时把编号留空并保留占位，勿让引用悬空）：',
+		).toEqual([]);
+	});
+});
+
 describe('AGENTS.md 同步契约：代码文件登记完备性', () => {
 	it('src/ 下每个 TS 文件的文件名都在 AGENTS.md 中被提及', () => {
 		const files = collectTsFiles('src');
@@ -210,5 +325,91 @@ describe('AGENTS.md 同步契约：代码文件登记完备性', () => {
 				'（若该文档确已废弃，请连同源码中的引用一并删除登记；' +
 				'`release-notes-<tag>.md` 属模式行，不参与本检查）',
 		).toEqual([]);
+	});
+});
+
+/**
+ * 表格内的**未转义**竖线个数（`\|` 不计——GFM 会把它还原成字面 `|`）。
+ *
+ * 判据只看「前面连续多少个反斜杠」的奇偶：奇数＝已转义。
+ */
+function unescapedPipeCount(line: string): number {
+	let count = 0;
+	for (let i = 0; i < line.length; i++) {
+		if (line[i] !== '|') {
+			continue;
+		}
+		let backslashes = 0;
+		for (let k = i - 1; k >= 0 && line[k] === '\\'; k--) {
+			backslashes++;
+		}
+		if (backslashes % 2 === 0) {
+			count++;
+		}
+	}
+	return count;
+}
+
+describe('文档契约：Markdown 表格列数一致（`|` 必须转义）', () => {
+	/**
+	 * 动机（2026-11-06 审计）：**6 行 / 13 个**未转义的 `|` 落在单元格的**行内代码**里——
+	 * `%%rel:id | 标签 | geo=…`、`|deltaY| < 50`、`![[图.png|164]]`、含 `|`/`#` 的目标…
+	 * GFM 把它当列分隔符 ⇒ 该行凭空多出几列、后续内容被截断。这类问题在源码里
+	 * 几乎看不出来（都是「代码示例里的竖线」），只有渲染后才现形，故机械校验。
+	 *
+	 * 口径：**同一段连续以 `|` 开头的行**视为一张表，表头列数＝首行未转义竖线数；
+	 * 围栏代码块内的行跳过（示例代码里出现表格是合法的，且不该被当表头）。
+	 */
+	it('每张表的每个数据行都与表头同列数', () => {
+		const docs = [
+			...collectTextFiles('docs'),
+			'AGENTS.md',
+			'README.md',
+			'vendor/BUILD.md',
+		];
+		const broken: string[] = [];
+		for (const rel of docs) {
+			let lines: string[];
+			try {
+				lines = readFileSync(path.join(ROOT, rel), 'utf8').split('\n');
+			} catch {
+				continue;
+			}
+			/** 当前表的表头列数；0 ＝ 尚未遇到表头 */
+			let headerColumns = 0;
+			let fence: string | null = null;
+			for (let i = 0; i < lines.length; i++) {
+				const raw = lines[i] ?? '';
+				const trimmed = raw.trim();
+				const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
+				if (fenceMatch) {
+					const marker = fenceMatch[1] ?? '```';
+					if (fence === null) {
+						fence = marker;
+					} else if (marker.startsWith(fence[0] ?? '`')) {
+						fence = null;
+					}
+					headerColumns = 0;
+					continue;
+				}
+				if (fence !== null || !trimmed.startsWith('|')) {
+					headerColumns = 0;
+					continue;
+				}
+				const columns = unescapedPipeCount(trimmed);
+				if (headerColumns === 0) {
+					headerColumns = columns;
+					continue;
+				}
+				if (columns !== headerColumns) {
+					broken.push(
+						`${rel}:${i + 1} 列数 ${columns} ≠ 表头 ${headerColumns}（行内代码里的 \`|\` 要写成 \`\\|\`）`,
+					);
+				}
+			}
+		}
+		expect(broken, `以下表格行会被 GFM 拆成多余的列：\n${broken.join('\n')}`).toEqual(
+			[],
+		);
 	});
 });
