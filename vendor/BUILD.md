@@ -45,8 +45,8 @@
   （svg.js 横幅，`main.js` 同步保留）——逐库声明义务由 `vendor/THIRD-PARTY-NOTICES.md`
   承担（主载体），内联注释仅为补充佐证；其 §3 已按实测口径更新。
 
-**产物字节级身份**（2026-10-30 删除自动选路、回退补丁 15 的「绕行折点」分支后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
-`4cf277bbf32d72a9bda38257864acea13d64a7d53ef2310d6303fec48e156ca5`（415,183 B），
+**产物字节级身份**（2026-11-07 补丁 16/17 代码与注释整理后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
+`2d5c69e330dcdc95c56e14092d5de8f63c584957f88621da8d72badff3e70433`（415,727 B），
 由 `tests/vendor-contract.test.ts` 断言。**重新打包后必须同步更新此处与该测试里的常量**——
 它是最外层护栏：其余契约断言（导出类 / 原型方法 / 命令名 / 事件名令牌）都只钉在
 **API 面**上，对字节改动无感。（缺口来源：本文件第 22 行要求「不可手工编辑」，
@@ -366,6 +366,110 @@ drain 内继续入队是常态，若按「队列空否」重新派发，每层�
 **回归**：`tests/vendor-contract.test.ts` 字节护栏；实机采样脚本（沿 path 取点判定是否
 落在任一节点框内）改写后 4 条边均无自穿透。
 
+**补丁 16｜`upstream/src/layouts/Base.js` + `MindMap.js` + `OrganizationStructure.js` +
+`CatalogOrganization.js`（并收敛 `LogicalStructure.js`）· 布局平移延迟物化推广到其余布局**
+**立项依据**（2026-11-04 实机）：补丁 9 的「记账 + 末尾一次 O(n) 物化」只落在
+`LogicalStructure.adjustTopValue`，其余布局仍是**逐次立即平移**（`updateChildren`
+递归平移整棵兄弟子树）。计数探针实测 10000 节点 `Mindmap` 布局：`updateChildren`
+调用 **88,103 次**、平移 **132,212,852 节点次**（1322 万/万节点 ×130 倍），同一棵树切到
+逻辑结构布局为 **0 次**。CDP CPU 采样：单次编辑的非空闲采样 ~100% 落在该递归；打开
+10000 节点的单条长任务 **8.65 s**、单次编辑 **1.5–9.5 s**、5000 节点「自动整理」
+**2.22 s** 全由它贡献。逐布局单次编辑（5000 节点，同树同会话）：
+`logicalStructure 115 ms`、`mindMap 342 ms`、`timeline 1708 ms`、
+`catalogOrganization 1821 ms`、`organizationStructure 1954 ms`——差距就是这条路径。
+**做法**：把补丁 9 的实现抽到 `Base`（`beginOffsets` / `recordTopOffset` /
+`recordLeftOffset` / `applyOffsets`，单/双轴通用），`LogicalStructure` 改为复用同一份
+（不留第二实现）；`MindMap.adjustTopValue`、`OrganizationStructure.adjustLeftValue`、
+`CatalogOrganization.adjustLeftTopValue` 的 `updateBrothers*` 改为记账，task 末尾物化。
+**等价前提**（各调用点已逐个核对）：调整段只读 height / width / childrenArea* / margin；
+`CatalogOrganization` 的根收尾读**绝对坐标**（`getNodeBoundaries`），故在它之前先
+`applyOffsets()`；自定义位置语义沿用补丁 9（自身位移、继承截断、遍历不截断）。
+**同批后续（已由补丁 17 落地，见下）**：`Timeline` / `Fishbone` 的同类路径。
+**未纳入本批（2026-11-04 逐项研判结论）**：
+- `VerticalTimeline`：**不可达**——插件 `MINDMAP_LAYOUT_VALUES` 只映射 6 个布局 id，
+  `verticalTimeline*` 仅在小地图几何里作防御式字符串匹配。无需处理。
+- `Timeline` / `Fishbone`：**仍有实测痛点，但不是「绝对坐标」一句能带过**。10000 节点
+  单次编辑 `data_change` **6841 ms**、每次重排 `updateChildren` **84,856 次 /
+  99,624,363 节点次**（同规模 mindMap 修好后为 0 次）。可延迟的部分是
+  `updateBrothersTop`（只读 height / margin / expandBtnSize）与 Fishbone 的
+  同类递归；**不能直接延迟**的是两处读绝对坐标的收尾：`Timeline.adjustLeftTopValue`
+  的 post 回调按 `node.top` / `item.top` 做**镜像翻转**，`Timeline.updateBrothersLeft`
+  与 `Fishbone` 根收尾在 `item.left += totalAddWidth` 之后读 `getNodeBoundaries`。
+  可行方案（下一步，需独立 A/B）：延迟 `updateBrothersTop`，post 镜像改用
+  **按路径求和的物化值**（`matTop(node) = _top + Σ 路径上记账`，O(depth)）而不是
+  `applyOffsets()`（那会退化成 O(n·k)）；`totalAddWidth` 走的是**宽度差**、平移不变，
+  保持立即应用即可。
+**实测收益**（同机同夹具，realistic 形态 seed 20261005，深 8）：
+| 场景 | 改前 | 改后 |
+|---|---|---|
+| 打开 10000（Mindmap，首帧 / 收敛） | 8.89 s / 9.23 s | **0.32 s / 0.82 s** |
+| 打开 10000 最长长任务 | 8.65 s | **170 ms** |
+| 单次编辑 10000（→ `data_change` / → 渲染结束） | 1.51–9.55 s / 1.64 s | **131 ms / 203 ms** |
+| 单次编辑 5000（→ `data_change`） | 342–477 ms | **124 ms**（视口内节点更多） |
+| 布局重排 5000：mindMap / org / catalog | 2624 / 2465 / 2152 ms | **123 / 187 / 226 ms** |
+| 自动整理（最长长任务） | 2220 ms @5000 | **88 ms @10000** |
+**几何等价性**：改动前后对同一批夹具逐节点导出 `_top` / `_left` / `width` / `height` /
+`dir` / `expand`（DFS 序，uid 每会话随机故不计），**6 布局 × 800 节点 + 4 布局 × 5000
+节点全部 0 差异**（max|Δ| = 0.000000）。
+**2026-11-04 补充两轮专项（覆盖本补丁的边界语义）**：
+① **自定义位置**（`customTop`+`customLeft` 同时写，模拟拖拽落点；每布局 248 个节点，
+含兄弟跳过与继承截断两条路径）→ 四布局**生效坐标 0 差异**。唯一不同是这些节点被
+`customTop` **遮蔽**的 `_top`（原实现在 `_top += 0` 时把它归一成 `customTop`，
+延迟实现跳过零位移写入）；该字段全库唯一读点是 `get top()`，被遮蔽时不可见，且
+「清除自定义位置 / 自动整理」会整树重算 `_top` ⇒ 不可观测。
+② **概要**（41 条 `%%sum%%` → 40 个概要节点）→ 四布局含 `_generalizationNodeHeight`
+**0 差异**。
+**回归**：`npm test` 2789 passed / 103 files；`npm run lint`；`node scripts/build-vendor.mjs
+--check` 在未打补丁源上字节一致（证明本批 sha 变化只来自补丁本身）。
+
+**补丁 17｜`upstream/src/layouts/Timeline.js` + `Fishbone.js` + `fishboneUtils.js`
+（+ `Base.matTop`）· 时间轴 / 鱼骨图 top 轴延迟物化**
+**立项依据**（补丁 16 落地后仍在）：10000 节点单次重排 `updateChildren`
+**84,856 次 / 99,624,363 节点次**、单次编辑 `data_change` **6,841 ms**。两布局计数
+**逐位相同**——触发条件与 `walk` 顺序一致，只是位移量不同，说明是同一段
+`updateBrothersTop` 递归（每个节点向父链传播、每级平移兄弟的整棵子树）。
+**难点**：两处收尾镜像在**同一 task 内读绝对坐标**（`node.top` / `item.top`）——
+Timeline 的 top 轴镜像、Fishbone 上/下两支的镜像与 `updateChildrenPro`。直接延迟
+会读到记账前的值；把 `applyOffsets()` 前移又退化成 O(n·k)。
+**做法**：`Base.matTop(node)` 按祖先链求和（**O(层数)**）给出「物化后的 top」，
+语义与 `applyOffsets` 逐条对齐（自身位移无条件生效；祖先累计在最近一个
+`hasCustomPosition` 祖先处截断；带 `customTop` 的节点恒取 getter 值）。
+`Timeline.updateBrothersTop` / `Fishbone.updateBrothersTop` 改记账；镜像收尾改读
+`matTop` 并把位移写回账本（`recordTopOffset`）；**left 轴一律保持立即应用**——
+root 收尾一次 O(n)，且其后的 `getNodeBoundaries('h')` 读的是横向包围盒，与 top
+记账无关（Fishbone 的 `updateChildrenPro` 据此拆成「left 立即 + top 记账」两段）。
+**实测**：
+| 场景（10000 节点） | 改前 | 改后 |
+|---|---|---|
+| timeline 单次重排 `updateChildren` | 84,856 次 / 99.6M 节点次 | **1 次 / 10,000 节点次** |
+| timeline 单次重排耗时 | 7,273 ms | **37 ms** |
+| fishbone 单次重排 | 84,856 次 / 99.6M / 6,995 ms | **2 次 / 19,999 / 36 ms** |
+| 单次编辑 `data_change`（timeline / fishbone） | 6,841 ms / 同量级 | **123 ms / 121 ms** |
+**几何等价性**：补丁 16 → 17 对照，`timeline` + `fishbone` × {普通、自定义位置
+（每树 538 个节点带 `customTop`+`customLeft`）、概要（41 条 `%%sum%%`）、折叠
+（3 处深层分支，布局树 1202 → 1155 / 1027）} 共 **8 组、每组 1000–1202 节点，
+逐节点 0 差异**（`top`/`left`/`width`/`height`/`dir`/`expand`/概要高度）。
+⚠ 自定义位置用例**全是两轴同设**（拖拽即如此），见下方「已知差异」对单轴情形的说明。
+
+**已知差异（1 处，2026-11-06 审核，定性为修正而非回归）**：`applyOffsets` 在**携带
+位移的那个节点**上按 `hasCustomPosition()` 截断继承，而原 `updateChildren` 的截断点
+在**子节点**边界（位移先写给子节点，再由「该子节点是否自定义位置」决定是否继续下传）
+——父节点自身的自定义位置原本**不**阻止其后代随之移动。
+三种情形逐一核对：
+1. **无自定义位置**：两条路径完全等价；
+2. **两轴都自定义**（`customLeft` + `customTop`，拖拽必然如此）：原实现的位移量恒为
+   **0**——`let _top = item.top` 与 `item.top - _top` 都走 getter `customTop || _top`，
+   赋值前后读到的都是 `customTop` ⇒ 传给子节点的 delta = 0；新实现虽记下非零位移，
+   但 `hasCustomPosition()` 在**该节点**上截断继承 ⇒ 后代同样不动。**结果相同**；
+3. **单轴自定义**（`customTop` 有、`customLeft` 无 ⇒ `hasCustomPosition()` 为假）：
+   原实现因上面的 getter 遮蔽而 delta = 0（后代不动），新实现按记账移动后代。
+   **判定为修正**：`updateBrothers*` 各路径对同形节点本来就会移动后代（那里的位移量
+   是显式传入的，不经 getter 反算），新行为与它们一致；旧行为是访问器遮蔽的副作用。
+   附注：`customTop === 0` 时 getter 的 `||` 会落到 `_top`，属上游既有怪癖，不在本
+   补丁范围内（未改）。
+**回归**：`npm test` / `npm run lint` / `npm run verify:visual`（六布局渲染探针含
+timeline + fishbone）。
+
 **已否决的假设（2026-10-05 实测证伪，勿重做）｜`transform()` 读取器 memo 化（补丁 11 的前一版）**
 假设：「视口剔除判据 `checkIsInClient` 每节点每次渲染都调 `mindMap.draw.transform()`，
 而 svg.js 的读取器是重路径（`new Matrix(el).decompose()` → 读 DOM 属性 + 正则 split +
@@ -547,3 +651,6 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
 | 2026-10-05 | 0.14.0-fix.3 + 补丁 ×10 | 补丁 10（视口可见集合未变时短路）：性能模式 `view_data_change` 无条件触发的全树分片重绘，实机 5001 节点 **70.8ms/次 → 短路后 0.6ms**（仅签名计算，零渲染事件）；移除监听对照 **0 次**（收益上限）；可见集合真变化时仍正常重绘；签名与 `checkIsInClient` 同式 + transform 提出循环（0.6ms vs 朴素 12.1ms）；sha256/字节数同步（`f51a257a…` / 411,736 B） |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×9 | 许可声明口径修正（**无产物变更，sha256 不变**）：`THIRD-PARTY-NOTICES.md` §3 与本文档的「内联注释覆盖」表述改为**实测口径**——`--legal-comments=inline` 实际仅保留 **1 段**（svg.js 横幅，`main.js` 同），逐库声明义务由 `THIRD-PARTY-NOTICES.md` 承担（主载体）、内联注释仅为补充佐证；`.github/workflows/release.yml` 注释同步（原「0 命中」为 2026-09-17 审计时点口径）并移除指向已删审计文档的悬空引用 |
 | 2026-10-17 | 0.14.0-fix.3 + 补丁 ×12 | 补丁 12（**异步分片改批量消费**）：async 通道原为「每子节点一个 `setTimeout(0)`」，命中 HTML 嵌套定时器 4ms 下限——5000 节点「整树可见」实测 **27.5–38s**（关掉剪枝仍 19.7s ⇒ 排除剪枝；按补丁 6 的单节点 ≈0.2ms 推算，差值即排队延迟）。改为队列 + **MessageChannel** 批量消费（8ms/批；无 MessageChannel 退回 `setTimeout`），回调、`node_tree_render_end`、销毁断链语义均保持，任务抛错显式续跑。实机：剪枝 → 全树可见（5000 节点）**27.5–38s → 820ms**；`适应画布` **27.5s → 52ms**（配合插件侧 `LARGE_MAP_MIN_FIT_SCALE = 0.1`，DOM 5000 → 393；1000 节点仍走真 fit，比例 0.034 不受影响）。sha256/字节数同步（`85905272…` / 414,469 B） |
+| 2026-11-04 | 0.14.0-fix.3 + 补丁 ×17 | 补丁 17（**时间轴 / 鱼骨图 top 轴延迟物化**）：两布局的 `updateBrothersTop` 递归同样逐次平移兄弟子树——10000 节点 **84,856 次调用 / 9962 万节点次 / 单次编辑 6.8s**（两布局计数逐位相同，同一递归形状）。难点是镜像收尾在同一 task 内读绝对 `top`，故新增 `Base.matTop`（祖先链求和，O(层数)）代替「前移 `applyOffsets`」（那会退化成 O(n·k)）；left 轴保持立即应用（root 一次 O(n)，`getNodeBoundaries('h')` 只读横向）。实机：timeline/fishbone 单次重排 **7.3s/7.0s → 37ms/36ms**、单次编辑 **6841ms → 123ms**；几何 A/B（8 组场景：普通/自定义位置/概要/折叠 × 两布局，1000–1202 节点）**0 差异**。sha256/字节数同步（`e45b9fec…` / 415,674 B） |
+| 2026-11-04 | 0.14.0-fix.3 + 补丁 ×16 | 补丁 16（**布局平移延迟物化推广**）：补丁 9 只覆盖逻辑结构图，其余布局仍逐次立即平移。计数探针（10000 节点 Mindmap）：`updateChildren` **88,103 次 / 1.322 亿节点次**，逻辑结构同树 **0 次**；CDP 采样显示它占打开 ~99%。实现抽到 `Base`（单/双轴记账 + 一次物化），MindMap / OrganizationStructure / CatalogOrganization 接入，LogicalStructure 改复用（不留第二份）。实机：打开 10000 **8.89s → 0.32s**（最长长任务 8.65s → 170ms）、单次编辑 10000 **1.5–9.5s → 131ms**、布局重排 5000 三布局 **2.1–2.6s → 0.12–0.23s**、自动整理最长长任务 **2220ms → 88ms**；几何 A/B（6 布局 × 800 + 4 布局 × 5000，逐节点 `_top`/`_left`）**0 差异**。Timeline / VerticalTimeline / Fishbone 因读绝对坐标的累计式暂不纳入。sha256/字节数同步（`9ce643a0…` / 415,476 B） |
+| 2026-11-07 | 0.14.0-fix.3 + 补丁 ×17 | 补丁 16/17 代码与注释整理（**无行为变更**）：`Base` 账本字段在构造函数定形；`applyOffsets` 内层 `forEach` 改显式下标循环（少一层闭包分配）、`matTop` 自身位移单次取值；各布局接入处把未重新赋值的局部变量改 `const`，`fishboneUtils` 的 `_top` / `_left` 改语义化命名（`topOffset` / `prevLeft`）；压缩与本文档重复的注释，并补注「0 位移不写」这一已知差异。sha256/字节数同步（`2d5c69e3…` / 415,727 B） |

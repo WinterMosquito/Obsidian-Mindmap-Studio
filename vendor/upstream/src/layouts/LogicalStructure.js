@@ -112,10 +112,11 @@ class LogicalStructure extends Base {
     // 节点次**（约节点数的 584 倍：同一子树被多级祖先的 updateBrothers 反复
     // 平移）。因本 task 的 difference 判定只读 childrenAreaHeight2/height/
     // margin（不读 top）、task 内无外部观察者（同步段，物化前置无消费者），
-    // 平移可安全延迟：updateBrothers 只做**记账**（子树根 + 累计 offset），
-    // task 末尾一次自顶向下物化（O(n)）。位移线性可加、平移不改结构 ⇒ 与
-    // 原实现语义等价（几何输出逐字节一致，多布局探针与位置断言兜底）。
-    this._topOffsetMap = new Map()
+    // 补丁 9 / 16（2026-11-04）：平移延迟物化——updateBrothers 只记账
+    // （子树根 + 累计 offset），task 末尾一次自顶向下物化（O(n)）。位移线性
+    // 可加、平移不改结构 ⇒ 与原实现等价（几何输出逐字节一致，多布局探针与
+    // 位置断言兜底）。实现已抽到 Base，供其余布局复用，不留第二份判定。
+    this.beginOffsets()
     walk(
       this.root,
       null,
@@ -135,69 +136,29 @@ class LogicalStructure extends Base {
       null,
       true
     )
-    this.applyTopOffsets()
+    this.applyOffsets()
   }
 
-  //  更新兄弟节点的top（补丁 9：记账，不立即平移）
+  //  更新兄弟节点的top（补丁 9 / 16：记账，不立即平移）
   updateBrothers(node, addHeight) {
     if (node.parent) {
       let childrenList = node.parent.children
       let index = getNodeIndexInNodeList(node, childrenList)
-      const map = this._topOffsetMap
       childrenList.forEach((item, _index) => {
         if (item.uid === node.uid || item.hasCustomPosition()) {
           // 适配自定义位置
           return
         }
-        let _offset = 0
-        // 上面的节点往上移
+        // 上面的节点往上移 / 下面的节点往下移（自身 offset 0，不记账）
         if (_index < index) {
-          _offset = -addHeight
+          this.recordTopOffset(item, -addHeight)
         } else if (_index > index) {
-          // 下面的节点往下移
-          _offset = addHeight
-        }
-        if (_offset !== 0) {
-          // 该兄弟及其整棵子树平移 _offset：记账到子树根（多次记账累加）
-          map.set(item, (map.get(item) || 0) + _offset)
+          this.recordTopOffset(item, addHeight)
         }
       })
       // 更新父节点的位置
       this.updateBrothers(node.parent, addHeight)
     }
-  }
-
-  //  物化记账的 top 位移（补丁 9）：自顶向下传播累计值，每节点一次加法
-  applyTopOffsets() {
-    const map = this._topOffsetMap
-    this._topOffsetMap = null
-    if (!map || map.size === 0) {
-      return
-    }
-    // 等价性要点（对齐原实现的 updateChildren 递归语义）：
-    // ① 节点**自身**的位移无条件应用（原实现 `item[prop] += offset` 无条件）；
-    // ② 「祖先记账」的继承在 hasCustomPosition 节点处**截断**（原实现
-    //    `!item.hasCustomPosition()` 才递归进其 children），故 nextAcc = 0；
-    // ③ 但**遍历不截断**——被截断的只是「继承来的累计」，节点自身作为
-    //    记账根的位移仍要生效（原实现中这些节点经 updateBrothers 直接
-    //    调用 updateChildren 平移，不经其自定义位置祖先）。
-    const apply = (node, acc) => {
-      const own = map.get(node)
-      const total = own === undefined ? acc : acc + own
-      if (total !== 0) {
-        // 无 customTop 分量的节点字段直写（补丁 8 口径，避免访问器）
-        if (node.customTop === undefined) {
-          node._top += total
-        } else {
-          node.top += total
-        }
-      }
-      if (node.children && node.children.length) {
-        const nextAcc = node.hasCustomPosition() ? 0 : total
-        node.children.forEach(child => apply(child, nextAcc))
-      }
-    }
-    apply(this.root, 0)
   }
 
   //  绘制连线，连接该节点到其子节点

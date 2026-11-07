@@ -103,6 +103,10 @@ class OrganizationStructure extends Base {
 
   //  调整节点left
   adjustLeftValue() {
+    // 自有补丁 16（2026-11-04）：延迟物化（与 MindMap / LogicalStructure 同一套
+    // 账本）。difference 只读 childrenAreaWidth2 / width / margin（不读 left），
+    // task 内无外部观察者 ⇒ updateBrothers 只记账，末尾一次 O(n) 物化。
+    this.beginOffsets()
     walk(
       this.root,
       null,
@@ -122,9 +126,10 @@ class OrganizationStructure extends Base {
       null,
       true
     )
+    this.applyOffsets()
   }
 
-  //  更新兄弟节点的left
+  //  更新兄弟节点的left（补丁 16：只记账，不立即平移）
   updateBrothers(node, addWidth) {
     if (node.parent) {
       let childrenList = node.parent.children
@@ -134,18 +139,11 @@ class OrganizationStructure extends Base {
           // 适配自定义位置
           return
         }
-        let _offset = 0
-        // 上面的节点往上移
+        // 上面的节点往上移 / 下面的节点往下移（自身 offset 0，不记账）
         if (_index < index) {
-          _offset = -addWidth
+          this.recordLeftOffset(item, -addWidth)
         } else if (_index > index) {
-          // 下面的节点往下移
-          _offset = addWidth
-        }
-        item.left += _offset
-        // 同步更新子节点的位置
-        if (item.children && item.children.length) {
-          this.updateChildren(item.children, 'left', _offset)
+          this.recordLeftOffset(item, addWidth)
         }
       })
       // 更新父节点的位置

@@ -242,6 +242,11 @@ class Fishbone extends Base {
 
   //  调整节点left、top
   adjustLeftTopValue() {
+    // 自有补丁 17（2026-11-04）：top 轴延迟物化（同 Timeline / 补丁 16 账本）。
+    // 10000 节点实测 6.8s / `updateChildren` 84,856 次 / 平移 9962 万节点次。
+    // left 轴保持立即应用（根收尾一次 O(n)，其后的 `getNodeBoundaries('h')`
+    // 读横向包围盒，与 top 记账无关）。
+    this.beginOffsets()
     walk(
       this.root,
       null,
@@ -292,6 +297,7 @@ class Fishbone extends Base {
       },
       true
     )
+    this.applyOffsets()
   }
 
   //  递归计算节点的宽度
@@ -331,7 +337,7 @@ class Fishbone extends Base {
     })
   }
 
-  //  调整兄弟节点的top
+  //  调整兄弟节点的top（补丁 17：只记账，不立即平移）
   updateBrothersTop(node, addHeight) {
     if (node.parent && !node.parent.isRoot) {
       let childrenList = node.parent.children
@@ -341,15 +347,9 @@ class Fishbone extends Base {
           // 适配自定义位置
           return
         }
-        let _offset = 0
-        // 下面的节点往下移
+        // 下面的节点往下移（其余 offset 0，不记账）
         if (_index > index) {
-          _offset = addHeight
-        }
-        item.top += _offset
-        // 同步更新子节点的位置
-        if (item.children && item.children.length) {
-          this.updateChildren(item.children, 'top', _offset)
+          this.recordTopOffset(item, addHeight)
         }
       })
       // 更新父节点的位置

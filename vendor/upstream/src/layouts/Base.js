@@ -19,6 +19,10 @@ class Base {
     this.lru = new Lru(this.mindMap.opt.maxNodeCacheCount)
     // 当initRootNodePosition不为默认的值时，根节点的位置距默认的配置时根节点距离的差值
     this.rootNodeCenterOffset = null
+    // 补丁 16：布局平移账本（null = 未开账；由 beginOffsets 开启、applyOffsets 摘走）。
+    // 在构造函数里定形，避免首次 beginOffsets 才新增属性触发隐藏类转换。
+    this._offsetTop = null
+    this._offsetLeft = null
   }
 
   //  计算节点位置
@@ -432,6 +436,125 @@ class Base {
       })
     }
     walk(children)
+  }
+
+  //  自有补丁 16（2026-11-04）：布局平移**延迟物化**的公共实现。
+  //
+  //  背景：`adjustTopValue` / `adjustLeftValue` 这类收尾调整反复对「兄弟的整棵
+  //  子树」做立即平移（`updateChildren`），同一子树会被多级祖先各平移一次 ⇒
+  //  总量是**节点数 × 层数**量级。10000 节点思维导图实测：`updateChildren`
+  //  被调 8.8 万次、平移 1.32 亿节点次，占打开耗时 ~99%（CDP 采样）。
+  //
+  //  补丁 9 已对逻辑结构图改成「记账 + task 末尾一次 O(n) 物化」，本组函数把它
+  //  抽到 Base 供其余布局复用（同一实现，不另写一份判定）：
+  //  - `beginOffsets()`：调整段开头开新账本（每轮重置，防上一轮残留）；
+  //  - `recordTopOffset` / `recordLeftOffset`：只累加「子树根 → 累计位移」；
+  //  - `applyOffsets()`：自顶向下一次传播（每节点每分量一次加法）。
+  //
+  //  等价前提（各调用点必须自证）：
+  //  ① 调整段内部**不读**被平移的坐标——difference / totalHeight 只读
+  //     height / width / childrenArea* / margin；
+  //  ② 若段内确有读绝对坐标的点（`getNodeBoundaries` / `getNodeAreaWidth`
+  //     的绝对位置形态），必须在 `applyOffsets()` **之后**执行
+  //     （CatalogOrganization 的根收尾即按此排序）；
+  //  ③ 自定义位置（`hasCustomPosition`，两轴都设）语义与原 `updateChildren`
+  //     一致：节点自身照常位移，**继承截断**（不再传给子节点），遍历不截断。
+  beginOffsets() {
+    this._offsetTop = new Map()
+    this._offsetLeft = new Map()
+  }
+
+  //  记账：某节点及其整棵子树统一位移 offset。
+  //  未开账本（null）或 0 位移时静默忽略——账本只在 beginOffsets /
+  //  applyOffsets 之间有效，跨轮残留的写入不应生效。
+  recordTopOffset(node, offset) {
+    if (!offset || !this._offsetTop) return
+    this._offsetTop.set(node, (this._offsetTop.get(node) || 0) + offset)
+  }
+
+  recordLeftOffset(node, offset) {
+    if (!offset || !this._offsetLeft) return
+    this._offsetLeft.set(node, (this._offsetLeft.get(node) || 0) + offset)
+  }
+
+  //  自有补丁 17（2026-11-04）：记账期间读「**物化后**的 top」。
+  //
+  //  Timeline / Fishbone 的收尾镜像要在同一 task 内读绝对坐标（`node.top` /
+  //  `item.top`）再据此算出新位置。延迟物化期间这些读到的还是记账前的值，
+  //  必须换算：`_top` + 路径上累计的记账。语义与 `applyOffsets` 逐条对齐——
+  //  ① 节点自身的记账无条件生效（原实现 `item[prop] += offset` 无条件）；
+  //  ② 祖先累计在**最近一个** `hasCustomPosition()` 祖先处截断（其子节点从 0
+  //     重新累计），故向上扫描时遇到第一个自定义位置祖先即停止；
+  //  ③ 带 `customTop` 的节点有效坐标恒为 `customTop`（getter 语义），且
+  //     `applyOffsets` 对它只写 `_top` ⇒ 物化前后读到的都是同一个值。
+  //
+  //  复杂度 O(层数)：只走祖先链，不做整树传播（那会退化成 O(n·k)）。
+  matTop(node) {
+    const map = this._offsetTop
+    if (!map || map.size === 0) return node.top
+    if (node.customTop !== undefined) return node.top
+    let acc = 0
+    let cur = node.parent
+    while (cur) {
+      if (cur.hasCustomPosition()) break
+      acc += map.get(cur) || 0
+      cur = cur.parent
+    }
+    return node.top + acc + (map.get(node) || 0)
+  }
+
+  //  物化：把记账的 top / left 位移自顶向下传播，每节点每分量一次加法。
+  //  先把账本摘走再遍历：递归期间若再有 record* 不会污染本轮，重入也安全。
+  applyOffsets() {
+    const topMap = this._offsetTop
+    const leftMap = this._offsetLeft
+    this._offsetTop = null
+    this._offsetLeft = null
+    const hasTop = !!topMap && topMap.size > 0
+    const hasLeft = !!leftMap && leftMap.size > 0
+    if (!hasTop && !hasLeft) {
+      return
+    }
+    const apply = (node, accTop, accLeft) => {
+      const ownTop = hasTop ? topMap.get(node) : undefined
+      const ownLeft = hasLeft ? leftMap.get(node) : undefined
+      const top = accTop + (ownTop || 0)
+      const left = accLeft + (ownLeft || 0)
+      // 补丁 8 口径：无该分量自定义位置的节点字段直写，避免访问器。
+      // 有该分量（如 customTop）时沿用原 `item[prop] += offset` 写法：
+      // 读 getter（customTop 优先）再加，写 setter（只落 _top）——
+      // 有效坐标仍由 getter 的 customTop 决定，物化前后读到的是同一个值。
+      // 0 位移不写：这类节点被 customTop 遮蔽的 `_top` 不再归一为 customTop
+      // （补丁 16 唯一已知差异，getter 遮蔽后不可观测，见 vendor/BUILD.md）。
+      if (top !== 0) {
+        if (node.customTop === undefined) {
+          node._top += top
+        } else {
+          node.top += top
+        }
+      }
+      if (left !== 0) {
+        if (node.customLeft === undefined) {
+          node._left += left
+        } else {
+          node.left += left
+        }
+      }
+      const children = node.children
+      if (children && children.length) {
+        // 继承在 hasCustomPosition（**两轴都**自定义）处截断；单轴不截断
+        // （与原 updateChildren 的 `!hasCustomPosition()` 递归条件一致）。
+        // 节点自身的位移已在上方生效，截断的只是传给子节点的累计值。
+        const cut = node.hasCustomPosition()
+        const nextTop = cut ? 0 : top
+        const nextLeft = cut ? 0 : left
+        // 显式下标循环：物化是 O(n) 热路径，避免每层 forEach 的闭包分配
+        for (let i = 0; i < children.length; i++) {
+          apply(children[i], nextTop, nextLeft)
+        }
+      }
+    }
+    apply(this.root, 0, 0)
   }
 
   //  递归计算节点的宽度

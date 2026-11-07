@@ -148,6 +148,14 @@ class MindMap extends Base {
 
   //  调整节点top
   adjustTopValue() {
+    // 自有补丁 16（2026-11-04）：延迟物化。原实现对兄弟子树**立即全量平移**
+    // （`updateChildren`），同一子树被多级祖先反复平移 ⇒ 10000 节点实测
+    // `updateChildren` 8.8 万次 / 平移 1.32 亿节点次，占打开耗时 ~99%。
+    // 本 task 的 difference 判定只读 leftChildrenAreaHeight2 /
+    // rightChildrenAreaHeight2 / height / margin（**不读 top**），task 内无
+    // 外部观察者 ⇒ updateBrothers 只记账，task 末尾一次 O(n) 物化。
+    // 位移线性可加、平移不改结构 ⇒ 与原实现等价（几何 A/B 逐节点对照兜底）。
+    this.beginOffsets()
     walk(
       this.root,
       null,
@@ -166,9 +174,10 @@ class MindMap extends Base {
       null,
       true
     )
+    this.applyOffsets()
   }
 
-  //  更新兄弟节点的top
+  //  更新兄弟节点的top（补丁 16：只记账，不立即平移）
   updateBrothers(node, leftAddHeight, rightAddHeight) {
     if (node.parent) {
       // 过滤出和自己同方向的节点
@@ -181,22 +190,15 @@ class MindMap extends Base {
           // 适配自定义位置
           return
         }
-        let _offset = 0
-        let addHeight =
+        const addHeight =
           item.dir === CONSTANTS.LAYOUT_GROW_DIR.LEFT
             ? leftAddHeight
             : rightAddHeight
-        // 上面的节点往上移
+        // 上面的节点往上移 / 下面的节点往下移（自身 offset 0，不记账）
         if (_index < index) {
-          _offset = -addHeight
+          this.recordTopOffset(item, -addHeight)
         } else if (_index > index) {
-          // 下面的节点往下移
-          _offset = addHeight
-        }
-        item.top += _offset
-        // 同步更新子节点的位置
-        if (item.children && item.children.length) {
-          this.updateChildren(item.children, 'top', _offset)
+          this.recordTopOffset(item, addHeight)
         }
       })
       // 更新父节点的位置

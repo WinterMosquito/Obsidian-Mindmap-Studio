@@ -106,6 +106,11 @@ class CatalogOrganization extends Base {
 
   //  调整节点left、top
   adjustLeftTopValue() {
+    // 自有补丁 16（2026-11-04）：延迟物化（与 MindMap / OrganizationStructure
+    // 同一套账本）。判定段只读 `getNodeAreaWidth`（**宽度**，整体平移不变）与
+    // height / margin ⇒ 兄弟子树平移只记账；**根收尾读绝对坐标**
+    // （`getNodeBoundaries`），故必须在它之前先物化。
+    this.beginOffsets()
     walk(
       this.root,
       null,
@@ -141,6 +146,8 @@ class CatalogOrganization extends Base {
       },
       (node, parent, isRoot) => {
         if (isRoot) {
+          // 先物化记账的 left / top：下面的边界计算读的是**绝对坐标**
+          this.applyOffsets()
           let { right, left } = this.getNodeBoundaries(node, 'h')
           let childrenWidth = right - left
           let offset = node.left - left - (childrenWidth - node.width) / 2
@@ -149,9 +156,12 @@ class CatalogOrganization extends Base {
       },
       true
     )
+    // 兜底：上面的根回调通常已物化；若 walk 的根回调未走到（防御分支），
+    // 在这里补一次。applyOffsets 先摘账本，空账本上是 no-op，重复调用无害。
+    this.applyOffsets()
   }
 
-  //  调整兄弟节点的left
+  //  调整兄弟节点的left（补丁 16：只记账，不立即平移）
   updateBrothersLeft(node, addWidth) {
     if (node.parent) {
       let childrenList = node.parent.children
@@ -161,18 +171,14 @@ class CatalogOrganization extends Base {
           // 适配自定义位置
           return
         }
-        item.left += addWidth
-        // 同步更新子节点的位置
-        if (item.children && item.children.length) {
-          this.updateChildren(item.children, 'left', addWidth)
-        }
+        this.recordLeftOffset(item, addWidth)
       })
       // 更新父节点的位置
       this.updateBrothersLeft(node.parent, addWidth)
     }
   }
 
-  //  调整兄弟节点的top
+  //  调整兄弟节点的top（补丁 16：只记账，不立即平移）
   updateBrothersTop(node, addHeight) {
     if (node.parent && !node.parent.isRoot) {
       let childrenList = node.parent.children
@@ -182,15 +188,9 @@ class CatalogOrganization extends Base {
           // 适配自定义位置
           return
         }
-        let _offset = 0
-        // 下面的节点往下移
+        // 下面的节点往下移（其余 offset 0，不记账）
         if (_index > index) {
-          _offset = addHeight
-        }
-        item.top += _offset
-        // 同步更新子节点的位置
-        if (item.children && item.children.length) {
-          this.updateChildren(item.children, 'top', _offset)
+          this.recordTopOffset(item, addHeight)
         }
       })
       // 更新父节点的位置

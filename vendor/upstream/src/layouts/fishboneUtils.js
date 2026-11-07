@@ -88,18 +88,19 @@ export default {
       }
     },
     adjustLeftTopValueAfter({ parent, node, ctx }) {
-      // 将二级节点的子节点移到上方
+      // 将二级节点的子节点移到上方（补丁 17：top 轴读 matTop / 写账本，left 立即）
       if (parent && parent.isRoot) {
         // 遍历二级节点的子节点
         let marginY = ctx.getMarginY(node.layerIndex + 1)
         let totalHeight = node.expandBtnSize + marginY
+        const nodeTop = ctx.matTop(node)
         node.children.forEach(item => {
           // 调整top
-          let nodeTotalHeight = ctx.getNodeAreaHeight(item)
-          let _top = item.top
-          let _left = item.left
-          item.top =
-            node.top - (item.top - node.top) - nodeTotalHeight + node.height
+          const nodeTotalHeight = ctx.getNodeAreaHeight(item)
+          const itemTop = ctx.matTop(item)
+          const target =
+            nodeTop - (itemTop - nodeTop) - nodeTotalHeight + node.height
+          const prevLeft = item.left
           // 调整left
           item.left =
             node.left +
@@ -107,11 +108,11 @@ export default {
             (nodeTotalHeight + totalHeight) /
               Math.tan(degToRad(ctx.mindMap.opt.fishboneDeg))
           totalHeight += nodeTotalHeight
-          // 同步更新后代节点
-          ctx.updateChildrenPro(item.children, {
-            top: item.top - _top,
-            left: item.left - _left
-          })
+          // 该节点及整棵子树：top 记账（收尾统一物化），left 立即应用
+          ctx.recordTopOffset(item, target - itemTop)
+          if (item.children && item.children.length) {
+            ctx.updateChildren(item.children, 'left', item.left - prevLeft)
+          }
         })
       }
     }
@@ -225,9 +226,8 @@ export default {
               (hasChildren ? item.expandBtnSize : 0)
             : 0
           offset -= hasChildren ? marginY : 0
-          let _top = totalHeight + offset
-          let _left = item.left
-          item.top += _top
+          const topOffset = totalHeight + offset
+          const prevLeft = item.left
           // 调整left
           item.left =
             node.left +
@@ -236,11 +236,11 @@ export default {
               Math.tan(degToRad(ctx.mindMap.opt.fishboneDeg))
           totalHeight += offset
           totalHeight2 += nodeTotalHeight
-          // 同步更新后代节点
-          ctx.updateChildrenPro(item.children, {
-            top: _top,
-            left: item.left - _left
-          })
+          // 该节点及整棵子树：top 记账（补丁 17，收尾统一物化），left 立即应用
+          ctx.recordTopOffset(item, topOffset)
+          if (item.children && item.children.length) {
+            ctx.updateChildren(item.children, 'left', item.left - prevLeft)
+          }
         })
       }
     }

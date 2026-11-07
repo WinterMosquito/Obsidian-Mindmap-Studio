@@ -114,6 +114,11 @@ class Timeline extends Base {
 
   //  调整节点left、top
   adjustLeftTopValue() {
+    // 自有补丁 17（2026-11-04）：top 轴延迟物化（与补丁 16 同一套账本）。
+    // 10000 节点实测：本函数内 `updateChildren` 被调 84,856 次 / 平移 9962 万
+    // 节点次、单次编辑 6.8s。left 轴保持立即应用（root 一次 O(n)，且其后的
+    // `getNodeBoundaries('h')` 读横向包围盒，与 top 记账互不影响）。
+    this.beginOffsets()
     walk(
       this.root,
       null,
@@ -149,18 +154,21 @@ class Timeline extends Base {
           parent.isRoot &&
           node.dir === CONSTANTS.LAYOUT_GROW_DIR.TOP
         ) {
-          // 遍历二级节点的子节点
+          // 遍历二级节点的子节点（补丁 17：读 matTop 取物化值，位移写进账本）
+          const nodeTop = this.matTop(node)
           node.children.forEach(item => {
-            let totalHeight = this.getNodeAreaHeight(item)
-            let _top = item.top
-            item.top =
-              node.top - (item.top - node.top) - totalHeight + node.height
-            this.updateChildren(item.children, 'top', item.top - _top)
+            const totalHeight = this.getNodeAreaHeight(item)
+            const itemTop = this.matTop(item)
+            const target =
+              nodeTop - (itemTop - nodeTop) - totalHeight + node.height
+            // 等价于原实现「item.top = target + updateChildren(children, target - itemTop)」
+            this.recordTopOffset(item, target - itemTop)
           })
         }
       },
       true
     )
+    this.applyOffsets()
   }
 
   //  递归计算节点的宽度
@@ -200,7 +208,7 @@ class Timeline extends Base {
     })
   }
 
-  //  调整兄弟节点的top
+  //  调整兄弟节点的top（补丁 17：只记账，不立即平移）
   updateBrothersTop(node, addHeight) {
     if (node.parent && !node.parent.isRoot) {
       let childrenList = node.parent.children
@@ -210,15 +218,9 @@ class Timeline extends Base {
           // 适配自定义位置
           return
         }
-        let _offset = 0
-        // 下面的节点往下移
+        // 下面的节点往下移（其余 offset 0，不记账）
         if (_index > index) {
-          _offset = addHeight
-        }
-        item.top += _offset
-        // 同步更新子节点的位置
-        if (item.children && item.children.length) {
-          this.updateChildren(item.children, 'top', _offset)
+          this.recordTopOffset(item, addHeight)
         }
       })
       // 更新父节点的位置
