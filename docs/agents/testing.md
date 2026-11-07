@@ -204,3 +204,29 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
   会让版权行正则 `(.+)$` 匹配失败、规则静默失效，故加固之，勿改回逐字一致）。
 - lint 的 cwd 依赖（manifest 读取）与 `no-unsupported-api` 的静默失效路径已上收至
   「关键约定」K43 / K44（工具链行为与其它承重配置同处维护，避免两处副本漂移）。
+
+## 文档契约测试（`agents-md-sync` / `docs-standard`）
+
+文档不是「写完就算」：**它的关键不变量由测试兜住**，漏做是红灯，不靠自觉。六条契约在
+`tests/agents-md-sync.test.ts`：
+
+1. **源文件登记**：`src/**` 与 `tests/**` 每个 `.ts` 的 basename 都要以**独立 token** 出现在
+   `AGENTS.md` 的代码结构清单里（按 `[^\w.-]+` 切词——`tree.ts` 不会被 `links-tree.ts` 误命中）。
+2. **文档登记**：`AGENTS.md` 的 `docs/` 清单里列出的每个具体文档必须真实存在
+   （`release-notes-<tag>.md` 是模式行，跳过）。
+3. **K 区间**：`AGENTS.md` docs 清单与 `conventions.md` 标题里的 `K1–K<n>` 必须等于
+   `conventions.md` 的**实际最大编号**（2026-11-06 加；此前靠人工追，日志里连改过三次）。
+4. **K 交叉引用**：全仓（`src` / `tests` / `docs` / `AGENTS.md` / `README.md` / `vendor/BUILD.md`）
+   引用的 `K<n>` 都要有 `- [K<n>]` 条目，悬空引用红灯。**扫面刻意排除** `vendor/upstream/` 与
+   `vendor/simple-mind-map.cjs`——压缩代码里的偶然 token 会造假告警。
+5. **表格列数**：每张 Markdown 表的每个数据行都要与表头**同列数**——行内代码（代码示例、
+   正则、wikilink 尺寸）里的 `|` 必须写成 `\|`。GFM 把它当列分隔符，不转义就多出几列、内容被
+   截断，而源码里几乎看不出来（2026-11-06 审计一次抓出 6 行 / 13 个）。围栏代码块内的行不参与。
+6. **豁免表行数**：`AGENTS.md` 登记的行数与实测偏差不得超过 `min(登记值 +15%, 登记值 +50 行)`
+   ——文件改大/缩小后忘回填会红灯。精确回填跑 `npm run check:gates -- --fix-lines`（两表同批）。
+
+另两条独立契约：`tests/docs-standard.test.ts`（标准文档引用的符号真实存在 ＋ 附录版本指针
+== `manifest.version`）、`tests/module-boundaries.test.ts`（依赖图 / 组内成环 / 新组未登记）。
+
+**改这些判据时**：口径写进**测试文件头注释**（为什么这样写、换一种写法会误伤什么），别只写进
+提交信息——那段注释才是下一个人（或 agent）的上下文。

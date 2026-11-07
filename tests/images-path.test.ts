@@ -10,7 +10,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, TFile } from 'obsidian';
-import { IMAGE_HEIGHT, IMAGE_WIDTH } from '../src/core/constants';
+import {
+	IMAGE_HEIGHT,
+	IMAGE_MAX_SIDE_PX,
+	IMAGE_WIDTH,
+} from '../src/core/constants';
 import { fileLookupIndex } from '../src/links/file-lookup';
 import {
 	applyImageSizeCorrectionsToTree,
@@ -430,44 +434,44 @@ describe('probeImageNaturalSize（自然尺寸探测与缓存，stub Image）', 
 	});
 });
 
-describe('fitImageWithinMaxSide（长边上限 480，K97 配套）', () => {
-	it('长边未超限：原样返回（含用户既有样张，不受影响）', () => {
-		// 样张：300×60 与 350×377 —— 上线后这些图必须保持原尺寸
+describe('fitImageWithinMaxSide（长边上限，K97 配套）', () => {
+	// 用常量而非字面量：上限随观感调整（2026-11-05：480 → 320）时不碎测试
+	const MAX = IMAGE_MAX_SIDE_PX;
+	const scaled = (width: number, height: number) => ({
+		width: Math.max(1, Math.round((width * MAX) / Math.max(width, height))),
+		height: Math.max(1, Math.round((height * MAX) / Math.max(width, height))),
+	});
+
+	it('长边未超限：原样返回（上限内的存量图不受影响）', () => {
+		// 样张：300×60 与 260×280 —— 都在上限内，上线后必须保持原尺寸
 		expect(fitImageWithinMaxSide(300, 60)).toEqual({ width: 300, height: 60 });
-		expect(fitImageWithinMaxSide(350, 377)).toEqual({
-			width: 350,
-			height: 377,
+		expect(fitImageWithinMaxSide(260, 280)).toEqual({
+			width: 260,
+			height: 280,
 		});
 		// 恰好等于上限：不缩
-		expect(fitImageWithinMaxSide(480, 10)).toEqual({ width: 480, height: 10 });
+		expect(fitImageWithinMaxSide(MAX, 10)).toEqual({ width: MAX, height: 10 });
 	});
 
 	it('宽度超限（横图）：按长边等比缩到上限', () => {
-		// 2000×600（10:3）→ 长边 480：480×144
-		expect(fitImageWithinMaxSide(2000, 600)).toEqual({
-			width: 480,
-			height: 144,
-		});
+		// 2000×600（10:3）→ 长边上限
+		expect(fitImageWithinMaxSide(2000, 600)).toEqual(scaled(2000, 600));
 	});
 
 	it('高度超限（竖长图）：同样按长边等比缩', () => {
-		// 400×3000 → 长边 480：64×480
-		expect(fitImageWithinMaxSide(400, 3000)).toEqual({
-			width: 64,
-			height: 480,
-		});
+		expect(fitImageWithinMaxSide(400, 3000)).toEqual(scaled(400, 3000));
 	});
 
 	it('正方形超限：两边同为上限', () => {
 		expect(fitImageWithinMaxSide(1000, 1000)).toEqual({
-			width: 480,
-			height: 480,
+			width: MAX,
+			height: MAX,
 		});
 	});
 
 	it('极端比例：短边最小 1px（取整不归零）', () => {
-		expect(fitImageWithinMaxSide(1, 2000)).toEqual({ width: 1, height: 480 });
-		expect(fitImageWithinMaxSide(2000, 1)).toEqual({ width: 480, height: 1 });
+		expect(fitImageWithinMaxSide(1, 2000)).toEqual({ width: 1, height: MAX });
+		expect(fitImageWithinMaxSide(2000, 1)).toEqual({ width: MAX, height: 1 });
 	});
 
 	it('非法输入（NaN / Infinity / 非正）：回退默认盒，绝不产出 NaN 尺寸', () => {
@@ -546,14 +550,14 @@ describe('walkImageSizeCorrections（树级校正）', () => {
 		expect(dataOf(tree).mdImageAutoSize).toBe(true);
 	});
 
-	it('未设置尺寸且超长边（2000×600）：缩到长边 480 并标自动标记（K97 上限）', async () => {
+	it('未设置尺寸且超长边（2000×600）：缩到长边上限并标自动标记（K97 上限）', async () => {
 		const tree = node({ text: '', image: probeUrl('huge.png') });
 		const pending = walkImageSizeCorrections(tree);
 		lastImage().emitLoad(2000, 600);
 		await expect(pending).resolves.toBe(true);
 		expect(tree.data.imageSize).toEqual({
-			width: 480,
-			height: 144,
+			width: IMAGE_MAX_SIDE_PX,
+			height: Math.round((600 * IMAGE_MAX_SIDE_PX) / 2000),
 			custom: true,
 		});
 		// 缩放后仍属自动尺寸：序列化不回写

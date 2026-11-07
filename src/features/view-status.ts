@@ -25,7 +25,10 @@ import type { MindMapViewContext } from './view-context';
  * 状态栏子系统所需的最窄访问面：引擎实例 + 插件服务（状态栏展示）。
  * R4 上下文瘦身示范：不依赖整个装配面（MindMapView 结构化实现，传入即兼容）。
  */
-type StatusViewContext = Pick<MindMapViewContext, 'mindMap' | 'plugin'>;
+type StatusViewContext = Pick<
+	MindMapViewContext,
+	'mindMap' | 'plugin' | 'saveState'
+>;
 
 /** 节点计数节流窗口（data_change 高频事件下避免每次全树遍历） */
 const STATUS_BAR_THROTTLE_MS = 300;
@@ -54,6 +57,9 @@ export function updateStatusBar(view: StatusViewContext): void {
 		view.plugin.statusBar.clear();
 		return;
 	}
+	// 保存状态不过节流：失败/未保存的可见性不该被 300ms 窗口推迟。
+	// 幂等——服务内部按值去重，重复推同值不写 DOM。
+	view.plugin.statusBar.showSaveState(view.saveState);
 	// 引擎可能在调度与尾随触发之间被销毁（刷新/关闭），回调内重查
 	throttlerOf(view).run(() => {
 		if (!view.mindMap) {

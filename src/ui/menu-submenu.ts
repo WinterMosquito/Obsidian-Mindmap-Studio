@@ -90,8 +90,9 @@ export function showExclusiveMenu(
 /**
  * 原生级联子菜单的**私有触点**（规则 9 登记；唯一出处）。
  *
- * `MenuItem.setSubmenu` **不在** `obsidian.d.ts`，但 Obsidian 1.14.4 运行时确实
- * 有（主程序源码 `setSubmenu` + 实机核对）。真实语义：
+ * `MenuItem.setSubmenu` **不在** `obsidian.d.ts`，但 1.14.4 运行时确实有
+ * （主程序源码 + 实机核对）；2026-11-06 在 **1.15.0**（Electron 43.8.4）复核仍在：
+ * 节点「配色」父项带 `has-submenu`、点击展开原生级联并成功写入颜色。真实语义：
  * - **无参调用**：内部 `new Menu()`、给条目加 `has-submenu` 与右向箭头，
  *   返回那个菜单——要往里 `addItem` 的是**返回值**；
  * - 展开与定位由宿主 `Menu` 负责：悬停约 250ms（或点击）展开，位置贴住父项右缘；

@@ -680,7 +680,7 @@ export interface ThemeConfigInput {
 	lineStyle: string;
 	/** 边框样式 id（default＝有边框 / borderless＝无边框） */
 	themeStyle: string;
-	/** 配色 id（default/mint/amber/wisteria/forest/slate） */
+	/** 配色：预设 id（见 `core/constants.PALETTE_OPTIONS`）或自定义 `#rrggbb` */
 	palette: string;
 }
 
@@ -725,15 +725,19 @@ export function applyThemeConfig(
  * - **收敛于下一次**：在 `node_tree_render_end` 里再 `render()` 会重新进本回调，
  *   但 render 不改 data ⇒ 第二次必判无变化，最多多渲染一轮，不会自激；
  * - **只读嵌入没有编辑入口**，不需要调用本函数（创建前已写好样式）。
+ *
+ * @param colorLine 连接线是否跟着节点色（作用范围「仅本节点」时为 false）。
+ *   设置切换走这里原地重算：颜色内容不变，只增删 `lineColor` 覆盖。
  */
 export function syncNodeColorDirectives(
 	mindMap: MindMap | null,
 	readDirective: ColorDirectiveReader,
+	colorLine = true,
 ): boolean {
 	if (!mindMap) {
 		return false;
 	}
-	if (!applyLiveColorDirectives(getRenderRoot(mindMap), readDirective)) {
+	if (!applyLiveColorDirectives(getRenderRoot(mindMap), readDirective, colorLine)) {
 		return false;
 	}
 	mindMap.render();

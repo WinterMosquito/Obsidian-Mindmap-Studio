@@ -172,17 +172,20 @@ vi.mock('../src/engine/mindmap', () => ({
 	//（同一色会让勾选态断言失去意义——六个预设会同时被勾上）
 	paletteNodeColor: (id: string): string =>
 		({
-			mint: '#22c55e',
-			amber: '#f59e0b',
-			rose: '#f43f5e',
-			wisteria: '#8b5cf6',
-			forest: '#15803d',
-			slate: '#64748b',
+			// 键名随 PALETTE_OPTIONS（2026-11-05 改为颜色名）；值只是任意测试色
+			teal: '#22c55e',
+			orange: '#f59e0b',
+			crimson: '#f43f5e',
+			purple: '#8b5cf6',
+			green: '#15803d',
+			grey: '#64748b',
 		})[id] ?? '#4a90d9',
 }));
 
 // 原文提交通道（真实实现在 node-inline-editor）：只验证写进去的原文
 vi.mock('../src/features/node-inline-editor', () => ({
+	// 联系只走批量通道；单项版是 view-node-color 的依赖面，同样要给出来
+	applyRawNodeContent: vi.fn(),
 	applyRawNodeContents: mocks.applyRawNodeContents,
 }));
 

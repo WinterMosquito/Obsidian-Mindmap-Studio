@@ -31,6 +31,7 @@ import { createDebouncer, createThrottler, type Debouncer } from '../core/concur
 import {
 	AUTO_SPLIT_CHECK_DELAY_MS,
 	DEFAULT_PALETTE,
+	isNodeOnlyColorScope,
 	LARGE_MAP_RENDER_HINT_NODES,
 	normalizeLineStylePreference,
 	normalizePalettePreference,
@@ -44,6 +45,7 @@ import {
 	applyImageSizeCorrectionsToEngine,
 	applyRelationsToTree,
 	applySummariesToTree,
+	countMindMapNodes,
 	countTreeNodes,
 	getRenderRoot,
 	syncLiveRelations,
@@ -99,6 +101,7 @@ import type {
 	ViewPluginContext,
 } from './view-context';
 import { DocumentService, SavePipeline } from '../services/document-service';
+import type { SaveState } from '../services/status-bar';
 import { EngineController } from '../services/engine-controller';
 import {
 	buildSearchBar,
@@ -154,6 +157,19 @@ const READY_TIMEOUT_MS = 10_000;
 const RESIZE_THROTTLE_MS = 100;
 
 /**
+ * 大图 resize 的**尾随合并**窗口（毫秒）：停止拖动后这么久再做一次整树重排。
+ *
+ * 为什么另开一条（2026-11-04 实机实测）：5000 节点图单轮 `render()` 的同步长任务
+ * ≈0.4 s，100 ms 节流在 1.2 s 拖动里仍排 **5 轮**（长任务合计 **1.58 s**、4 个
+ * >50 ms 卡顿帧）。尾随合并把整段拖动压成一次重排；代价是拖动期间画布仍是旧
+ * 尺寸（≤180 ms 的空白 / 裁切），换掉每秒数次的长冻结。
+ *
+ * 阈值复用 `LARGE_MAP_RENDER_HINT_NODES`（1000）：此规模以下单轮 render 只有
+ * 几十毫秒，实时重排的体验更好；之上正是引擎进异步通道、而**布局仍同步**的区间。
+ */
+const RESIZE_DEFER_MS = 180;
+
+/**
  * 大图首帧提示的兜底摘除时限（毫秒）。
  *
  * 正常路径由首帧渲染结束摘除（大图 2–3 s）。兜底只防「渲染抛错 / 事件没来」时
@@ -166,10 +182,12 @@ const RENDER_HINT_TIMEOUT_MS = 15_000;
  * 的 `diffLiveRefreshKeys` 产出；这里只决定「收到这个键时做什么」）。
  *
  * - `defaultTheme`：引擎 `setThemeConfig` 通道原地生效（与 css-change 同款）；
- * - `defaultLineStyle`：**故意留空**——会话字段在 `loadMindMapFromFile` 里已按
- *   「文件显式选择 ?? 默认值」定值，此后默认值变更对已打开的图**本就不生效**
- *   （重建一轮也不会有任何可见变化）⇒ 跳过即行为等价的优化（省掉整树
- *   `structuredClone` + 全量重渲染，实测口径见 K58）。
+ * - `defaultThemeStyle` / `defaultLineStyle`：**故意留空**——会话字段在
+ *   `loadMindMapFromFile` 里已按「文件显式选择 ?? 默认值」定值，此后默认值
+ *   变更对已打开的图**本就不生效**（重建一轮也不会有任何可见变化）⇒ 跳过即
+ *   行为等价的优化（省掉整树 `structuredClone` + 全量重渲染，实测口径见 K58）；
+ * - `nodeColorScope`：只改「连接线要不要跟着节点色」这层派生样式，重算一次
+ *   颜色即可（见 `applySettingsChange`）。
  *
  * `defaultLayout` 已不在 LIVE_REFRESH 键内（2026-10-29）：逐文件布局只存在于
  * 文件属性，它是新建文件的种子值——改它对任何已打开/已存在文件都无影响。
@@ -187,6 +205,13 @@ const RENDER_HINT_TIMEOUT_MS = 15_000;
  * - `language`：引擎无 `lang` 选项，语言在创建期被闭包捕获两处（默认节点文案与
  *   自绘钩子的 `lang` 实参），重建才能让两者一致（UI 侧另有 `refreshLanguageUi`）。
  */
+const IN_PLACE_REFRESH_KEYS = new Set([
+	'defaultTheme',
+	'defaultThemeStyle',
+	'defaultLineStyle',
+	'nodeColorScope',
+]);
+
 /**
  * 按文件偏好 → 会话字段名（`MindMapView` 上的私有字段）。
  *
@@ -201,12 +226,6 @@ const SESSION_FIELDS = {
 	palette: 'currentPalette',
 	themeStyle: 'currentThemeStyle',
 } as const satisfies Record<PreferenceKey, string>;
-
-const IN_PLACE_REFRESH_KEYS = new Set([
-	'defaultTheme',
-	'defaultThemeStyle',
-	'defaultLineStyle',
-]);
 
 /**
  * 从视图状态读「进入前 md 模式」（唯一的取值 + 白名单判定）。
@@ -228,6 +247,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	searchBarEl: HTMLElement | null = null;
 	searchInput: HTMLInputElement | null = null;
 	searchCountEl: HTMLElement | null = null;
+	/**
+	 * 保存状态（状态栏展示，见 `services/status-bar` 的 `SaveState`）：
+	 * 排程 → saving；一轮排空成功 → saved；失败 / 外部冲突 / 自动保存挂起 →
+	 * unsaved。写入只在本视图为活动视图时发生（状态栏是共享元素，后台视图的
+	 * 写盘结果不该盖掉前台那张图的状态）；切回本视图时由 `updateStatusBar`
+	 * 按本字段重新推送。
+	 */
+	saveState: SaveState = 'idle';
 	// 外观项（布局/连线/配色/边框）都没有屏上下拉，故无 select 字段——
 	// 当前值经 `resolveLayout()` / `resolvePreference(key)` 现算给右键勾选态与竖栏开关。
 	/** 当前深色主题（css-change 时重算；仅本类与引擎控制器装配面使用） */
@@ -320,6 +347,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * 每窗口至多一次整树重排；onClose 取消（视图关闭后不再触碰引擎）。
 	 */
 	private readonly resizeThrottler = createThrottler(RESIZE_THROTTLE_MS);
+
+	/**
+	 * 大图 resize 的尾随定时器（见 `RESIZE_DEFER_MS`）：拖动中只重排计时器，
+	 * 停止后再做一次整树 resize；`onClose` / 换文件时取消。
+	 */
+	private resizeDeferTimer: number | null = null;
 
 	/**
 	 * 内联内容构建选项（**视图实例级一次**，2026-10-02）：内容只依赖视图，与
@@ -426,15 +459,33 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				this.frontmatterByPath.get(file.path) ?? null,
 			isAutoSave: () => this.plugin.settings.autoSave,
 			onSaveError: (error) => {
+				this.setSaveState('unsaved');
 				notifyError(this.lang, 'save.failed', error);
 			},
 			// P1a：自动保存检测到外部修改 → 提示跳过（不覆盖他处改动）
 			onExternalChange: (file) => {
+				this.setSaveState('unsaved');
 				notifyError(this.lang, 'save.externalChangeSkipped', file.path);
 			},
 			// P1b：连续失败挂起自动保存 → 一次性提示（显式保存不受影响）
 			onAutoSaveSuspended: () => {
+				this.setSaveState('unsaved');
 				notifyError(this.lang, 'save.autoSuspended', '');
+			},
+			// 一轮排空成功（含无差异跳过）→ 状态栏「已保存」。
+			// 按路径核对：排空期间视图可能已切到别的文件（旧文件的成功与本视图无关）。
+			onSaved: (file) => {
+				if (this.file?.path === file.path) {
+					this.setSaveState('saved');
+				}
+			},
+			// 自动保存关闭：只判定、不写盘（`checkDirty`）。与加载基线逐字相同 ⇒
+			// 「已保存」（磁盘本就是这个内容）；有差异 ⇒「未保存」并把结论留到下
+			// 一次判定或一次显式保存。同样按路径核对。
+			onDirty: (dirty, file) => {
+				if (this.file?.path === file.path) {
+					this.setSaveState(dirty ? 'unsaved' : 'saved');
+				}
 			},
 		});
 		this.titleRenamer = new TitleRenamer({
@@ -761,6 +812,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.engine.invalidateInit();
 		this.cancelPendingInit();
 		this.savePipeline.cancelTimer();
+		// 未决的大图尾随 resize 属旧文件：留着会在新文件上多跑一轮整树重排
+		this.cancelDeferredResize();
 		this.titleRenamer.cancel();
 		// 小地图会话持有本引擎引用 + 定时器 + 面板 DOM：与其它会话同期收尾。
 		// **必须在 await 之前**——await 期间新文件可能已接管视图并重建了会话，
@@ -803,6 +856,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	private async loadMindMapFromFile(file: TFile): Promise<void> {
 		this.loadSession.loadingFilePath = file.path;
+		// 换文件即复位：上一张图的「已保存 / 未保存」不属于本文件。
+		// （`idle` 只收起状态段，节点数由随后的渲染结束事件刷新。）
+		this.setSaveState('idle');
 		// 三项「按文件偏好」一次合成：缺省值统一在 resolveFilePreferences 里给，
 		// 避免某一维回落到硬编码默认而漏掉设置项（2026-10-21 themeStyle 踩过此坑）。
 		// 布局不在其中——它只认文件属性（`data.json` 不再保存逐文件布局）。
@@ -869,7 +925,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			// 节点配色指令（`%%#hex%%`）：必须在 `initMindMap` **之前**写进 data 树
 			// （引擎 `MindMapNode.handleData` 会克隆数据，建好后再改这棵树不再生效）。
 			// 创建后编辑/撤销引起的变化走 `node_tree_render_end` 的实时同步。
-			applyColorDirectivesToTree(tree, colorDirectiveOf);
+			applyColorDirectivesToTree(tree, colorDirectiveOf, this.colorLine());
 			// 联系（关系连线）：同样必须在创建引擎**之前**写进 data 树——引擎会克隆
 			// 数据，建好后再改这棵树不再生效（首帧即带线，不额外渲染一次）。
 			applyRelationsToTree(tree);
@@ -1127,7 +1183,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// `applyRawNodeContent` 直接改 data 后 render，根本不发 `data_change`
 				// （K108）；撤销时 `data_change` 又在渲染排队前发出，那时 renderer.root
 				// 还是旧树。此刻根节点已是新树、数据已定稿，同步一次即覆盖全部通道。
-				syncNodeColorDirectives(mindMap, colorDirectiveOf);
+				syncNodeColorDirectives(mindMap, colorDirectiveOf, this.colorLine());
 				// 联系（关系连线）：同一时机重算——编辑 / 插入 / 撤销都会改变指令。
 				// 有变化时它会自行补画一次线（插件的 renderAllLines 绑在本事件上但
 				// 早于我们执行，不补画就要等下一轮渲染）。几何只认文件里的 `geo=`，
@@ -1380,10 +1436,30 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		}
 		if (changedKeys.has('defaultTheme')) {
 			// 主题（明暗）变更 → 引擎原地换 themeConfig
-			// （边框与配色不是设置项：按文件记，走右栏开关 / 右键菜单的 applyThemeStyle、applyPalette；
-			//   defaultThemeStyle 只影响新建导图，这里重算也不会改动当前文件）
+			// （边框与配色不是设置项：按文件记，走右栏开关 / 右键菜单的
+			// applyThemeStyle、applyPalette；defaultThemeStyle 只影响新建导图，
+			// 这里没有分支，保留在集合里只为避免无谓重建）
 			this.applyTheme();
 		}
+		if (changedKeys.has('nodeColorScope')) {
+			// 只增删 `lineColor` 覆盖：颜色内容（填充 / 描边 / 文字）不变，重算一次
+			// 即有变化 → 内部自行 render 一轮；引擎与视口都保留。
+			syncNodeColorDirectives(
+				this.mindMap,
+				colorDirectiveOf,
+				this.colorLine(),
+			);
+		}
+	}
+
+	/**
+	 * 节点配色是否给**连接线**着色（作用范围设置项的渲染侧唯一读数）。
+	 *
+	 * 「仅本节点」档不染连接线：连线是「颜色往哪一支延伸」的线索，范围止于本节点
+	 * 时，进 / 出两条线都应回落整篇配色。创建前写 data 树与渲染落地重算共用它。
+	 */
+	private colorLine(): boolean {
+		return !isNodeOnlyColorScope(this.plugin.settings.nodeColorScope);
 	}
 
 	private applyTheme(): void {
@@ -1392,7 +1468,33 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	/** 安排一次防抖自动保存（view-toolbar.ts / view-node-actions.ts 等外部模块调用） */
 	scheduleSave(): void {
-		this.savePipeline.schedule();
+		// 三种去向对状态栏的含义不同（见 `ScheduleOutcome`）：只有真的排上了才报
+		// 「保存中」；被挂起 ⇒ 上一次写盘失败、内容确实没落盘，报「未保存」；
+		// 自动保存关闭时 `schedule()` 另开一轮**只判定**（`onDirty`），这里不猜——
+		// 猜的话「打开一张没改过的图」会当场报未保存。
+		const outcome = this.savePipeline.schedule();
+		if (outcome === 'scheduled') {
+			this.setSaveState('saving');
+		} else if (outcome === 'suspended') {
+			this.setSaveState('unsaved');
+		}
+	}
+
+	/**
+	 * 更新保存状态并同步状态栏（幂等）。
+	 *
+	 * 只在**本视图是活动视图**时写共享状态栏：多个导图标签并存时，后台那张图的
+	 * 写盘结果不该覆盖前台显示的状态。切回本视图由 `active-leaf-change` 的
+	 * `updateStatusBar` 按 `saveState` 重新推送。
+	 */
+	private setSaveState(state: SaveState): void {
+		if (this.saveState === state) {
+			return;
+		}
+		this.saveState = state;
+		if (this.app.workspace.getActiveViewOfType(MindMapView) === this) {
+			this.plugin.statusBar.showSaveState(state);
+		}
 	}
 
 	/**
@@ -1577,6 +1679,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.savePipeline.cancelTimer();
 		this.cancelAutoSplitCheck();
 		this.resizeThrottler.cancel();
+		this.cancelDeferredResize();
 		this.titleRenamer.cancel();
 		cancelStatusBarUpdate(this);
 		// 交互会话收尾（图片调宽）：会话期间的临时 window 监听
@@ -1620,26 +1723,66 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// dispose 另取消未决的重排批次（关闭后不再有宏任务在跑）。
 		this.contentRemeasure.dispose();
 		this.engine.destroyInstance();
-		// 清空状态栏后，若仍有其他打开的思维导图视图则恢复其计数
-		//（状态栏为插件级共享元素，本视图关闭不应清空其他视图的计数）。
+		// 清空状态栏，再把**当前活动**的导图视图重新推上去（状态栏是插件级共享
+		// 元素：本视图关闭不该清掉别人的计数，也不该把**后台**视图的计数/保存
+		// 状态留在前台）。无活动导图（切到普通笔记）就保持清空。
 		this.plugin.statusBar.clear();
-		this.app.workspace.getLeavesOfType(VIEW_TYPE).forEach((leaf) => {
-			const other = leaf.view;
-			if (other instanceof MindMapView && other !== this && other.mindMap) {
-				updateStatusBar(other);
-			}
-		});
+		const active = this.app.workspace.getActiveViewOfType(MindMapView);
+		if (active && active !== this && active.mindMap) {
+			updateStatusBar(active);
+		}
 	}
 
 	override onResize(): void {
+		// 大图：拖动期间**不**整树重排（单轮 ≈0.4 s @5000，见 RESIZE_DEFER_MS），
+		// 停止拖动后合并成一次；小图仍走 100 ms 节流，保持实时跟手。
+		if (countMindMapNodes(this.mindMap) >= LARGE_MAP_RENDER_HINT_NODES) {
+			this.scheduleDeferredResize();
+			return;
+		}
+		// 从大图切到小图（换文件 / 删节点跨过阈值）时旧尾随仍在：留着会在
+		// 180ms 后再补一轮整树 render，正是本策略要消灭的成本
+		this.cancelDeferredResize();
 		// 首次立即执行、窗口内合并 + 尾随（最后尺寸必然落地）：拖动窗口/侧栏期间
 		// 不再是每个 resize 事件一次整树 render（见 RESIZE_THROTTLE_MS）
-		this.resizeThrottler.run(() => {
-			this.engine.resize();
-			// 可见性采样（自绘内容尺寸自愈，见 content-remeasure ④）：叶子由隐藏
-			// 转可见时容器尺寸 0→非 0，本回调必然触发；先 resize 再自愈——
-			// 若 resize 已使尺寸正确，自愈的症状扫描自然为空（幂等、无脏零成本）
-			this.contentRemeasure.syncVisibility();
-		});
+		this.resizeThrottler.run(() => this.applyResize());
+	}
+
+	/**
+	 * 大图 resize 的尾随合并：每次尺寸变化只重置计时器，停止拖动 `RESIZE_DEFER_MS`
+	 * 后做一次整树 resize。
+	 *
+	 * 必须同时取消小图节流器：从大图切到小图（或反过来）时，旧节拍里挂着的尾随
+	 * 会在新策略下多跑一轮整树 render，正是本策略要消灭的成本。
+	 */
+	private scheduleDeferredResize(): void {
+		this.resizeThrottler.cancel();
+		if (this.resizeDeferTimer !== null) {
+			this.containerEl.win.clearTimeout(this.resizeDeferTimer);
+		}
+		this.resizeDeferTimer = this.containerEl.win.setTimeout(() => {
+			this.resizeDeferTimer = null;
+			this.applyResize();
+		}, RESIZE_DEFER_MS);
+	}
+
+	/** 取消未决的大图尾随 resize（幂等；换文件 / 关闭时调用） */
+	private cancelDeferredResize(): void {
+		if (this.resizeDeferTimer !== null) {
+			this.containerEl.win.clearTimeout(this.resizeDeferTimer);
+			this.resizeDeferTimer = null;
+		}
+	}
+
+	/**
+	 * 应用一次尺寸变化：引擎 resize + 可见性采样。
+	 *
+	 * 采样理由（content-remeasure ④）：叶子由隐藏转可见时容器尺寸 0→非 0，
+	 * 本回调必然触发；先 resize 再自愈——若 resize 已使尺寸正确，自愈的症状
+	 * 扫描自然为空（幂等、无脏零成本）。
+	 */
+	private applyResize(): void {
+		this.engine.resize();
+		this.contentRemeasure.syncVisibility();
 	}
 }

@@ -62,6 +62,10 @@ interface Harness {
 	onExternalChange: ReturnType<typeof vi.fn>;
 	/** P1b：自动保存挂起回调（连续失败达阈值时触发一次） */
 	onAutoSaveSuspended: ReturnType<typeof vi.fn>;
+	/** 一轮排空成功回调（状态栏「已保存」的数据源） */
+	onSaved: ReturnType<typeof vi.fn>;
+	/** autoSave 关闭时的只判定回调（状态栏「未保存」的数据源） */
+	onDirty: ReturnType<typeof vi.fn>;
 	file: TFile;
 	setTree(tree: MindMapTreeNode | null): void;
 	setFile(file: TFile | null): void;
@@ -130,6 +134,8 @@ function makeHarness(
 	const onSaveError = vi.fn();
 	const onExternalChange = vi.fn();
 	const onAutoSaveSuspended = vi.fn();
+	const onSaved = vi.fn();
+	const onDirty = vi.fn();
 	const deps: SavePipelineDeps = {
 		app,
 		getFile: () => currentFile,
@@ -141,6 +147,8 @@ function makeHarness(
 		onSaveError,
 		onExternalChange,
 		onAutoSaveSuspended,
+		onSaved,
+		onDirty,
 		...overrides,
 	};
 
@@ -152,6 +160,8 @@ function makeHarness(
 		onSaveError,
 		onExternalChange,
 		onAutoSaveSuspended,
+		onSaved,
+		onDirty,
 		file,
 		setTree: (t) => {
 			if (currentFile) {
@@ -854,6 +864,8 @@ describe('P1a/P1b：外部改动检测与连续失败降级', () => {
 		await h.pipeline.save();
 		await h.pipeline.save();
 		expect(h.onAutoSaveSuspended).toHaveBeenCalledTimes(1);
+		// 挂起态的去向是 `suspended`（内容确实没落盘），视图据此报「未保存」
+		expect(h.pipeline.schedule()).toBe('suspended');
 
 		// 挂起后 schedule 不再排程：防抖到点也不产生新的写盘调用
 		vi.useFakeTimers();
@@ -1189,5 +1201,155 @@ describe('SavePipeline（收尾一致性自检：写出的内容必须与活快�
 		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 10);
 		// 首轮 + 3 次补排 = 4 次封顶
 		expect(h.written).toHaveLength(4);
+	});
+});
+
+describe('SavePipeline（排空成功回调 onSaved）', () => {
+	it('写盘成功：回调一次且带目标文件（状态栏「已保存」的数据源）', async () => {
+		const h = makeHarness();
+
+		await h.pipeline.save();
+
+		expect(h.modify).toHaveBeenCalledTimes(1);
+		expect(h.onSaved).toHaveBeenCalledTimes(1);
+		expect(h.onSaved).toHaveBeenCalledWith(h.file);
+	});
+
+	it('无差异跳过写盘：仍回调一次（磁盘已是目标状态，语义上「已保存」）', async () => {
+		const cachedRead = vi.fn(async () => '# A\n');
+		const h = makeHarness({}, { cachedRead });
+
+		await h.pipeline.save();
+
+		expect(h.modify).not.toHaveBeenCalled();
+		expect(h.onSaved).toHaveBeenCalledTimes(1);
+	});
+
+	it('写盘失败：不回调（失败态由 onSaveError 表达）', async () => {
+		const h = makeHarness();
+		h.modify.mockRejectedValueOnce(new Error('磁盘已满'));
+
+		await h.pipeline.save();
+
+		expect(h.onSaveError).toHaveBeenCalledTimes(1);
+		expect(h.onSaved).not.toHaveBeenCalled();
+	});
+
+	it('外部改动冲突跳过：只有成功轮次回调（冲突轮不报「已保存」）', async () => {
+		let disk = '- Root\n- A\n';
+		const cachedRead = vi.fn(async () => disk);
+		const h = makeHarness({}, { cachedRead });
+		h.modify.mockImplementation(async (_target: TFile, content: string) => {
+			disk = content;
+		});
+
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.onSaved).toHaveBeenCalledTimes(1);
+
+		disk = '# 别人改过的内容\n';
+		await h.pipeline.save(undefined, undefined, { checkExternal: true });
+		expect(h.onExternalChange).toHaveBeenCalledTimes(1);
+		expect(h.onSaved, '冲突轮不回调').toHaveBeenCalledTimes(1);
+	});
+
+	it('文件在排空前已被删除：不写盘也不回调', async () => {
+		const h = makeHarness();
+		h.setExists(false);
+
+		await h.pipeline.save();
+
+		expect(h.modify).not.toHaveBeenCalled();
+		expect(h.onSaved).not.toHaveBeenCalled();
+	});
+
+	it('schedule 的去向：scheduled / off / noFile（视图据此决定报什么）', () => {
+		const on = makeHarness();
+		expect(on.pipeline.schedule()).toBe('scheduled');
+		on.pipeline.cancelTimer();
+
+		const off = makeHarness({ isAutoSave: () => false });
+		expect(off.pipeline.schedule()).toBe('off');
+
+		const noFile = makeHarness();
+		noFile.setFile(null);
+		expect(noFile.pipeline.schedule()).toBe('noFile');
+	});
+});
+
+describe('SavePipeline（autoSave 关闭：只判定不写盘 onDirty）', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** 与 harness 默认树同形（序列化 = `# A\n`），用作加载基线 */
+	const loadedTree = (): MindMapTreeNode => node('Root', [node('A')]);
+
+	it('与加载基线逐字相同：onDirty(false)，且绝不写盘', async () => {
+		const h = makeHarness({ isAutoSave: () => false });
+		h.pipeline.markLoaded(h.file, loadedTree());
+
+		h.pipeline.schedule();
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS);
+
+		expect(h.onDirty).toHaveBeenCalledTimes(1);
+		expect(h.onDirty).toHaveBeenCalledWith(false, h.file);
+		expect(h.modify).not.toHaveBeenCalled();
+	});
+
+	it('偏离加载基线：onDirty(true)（状态栏「未保存」的数据源），仍不写盘', async () => {
+		const h = makeHarness({ isAutoSave: () => false });
+		h.pipeline.markLoaded(h.file, loadedTree());
+
+		h.setTree(node('Root', [node('A'), node('B')]));
+		h.pipeline.schedule();
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS);
+
+		expect(h.onDirty).toHaveBeenCalledWith(true, h.file);
+		expect(h.modify).not.toHaveBeenCalled();
+		// 判定不碰写盘基线：随后的显式保存照常落盘
+		await h.pipeline.save();
+		expect(h.modify).toHaveBeenCalledTimes(1);
+	});
+
+	it('撤销回到加载态：结论回到 false（同一条判据，双向都成立）', async () => {
+		const h = makeHarness({ isAutoSave: () => false });
+		h.pipeline.markLoaded(h.file, loadedTree());
+
+		h.setTree(node('Root', [node('B')]));
+		h.pipeline.schedule();
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS);
+		expect(h.onDirty).toHaveBeenLastCalledWith(true, h.file);
+
+		h.setTree(loadedTree());
+		h.pipeline.schedule();
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS);
+		expect(h.onDirty).toHaveBeenLastCalledWith(false, h.file);
+	});
+
+	it('没有加载基线 / 没有快照：不表态（任何结论都是猜的）', async () => {
+		const h = makeHarness({ isAutoSave: () => false });
+		h.pipeline.schedule(); // 未 markLoaded
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS);
+		expect(h.onDirty).not.toHaveBeenCalled();
+
+		h.pipeline.markLoaded(h.file, loadedTree());
+		h.setFile(null); // 引擎已交班：getSnapshotFor 取到 null
+		h.pipeline.schedule();
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS);
+		expect(h.onDirty).not.toHaveBeenCalled();
+	});
+
+	it('cancelTimer 一并取消未决的判定（文件切换 / 关闭）', async () => {
+		const h = makeHarness({ isAutoSave: () => false });
+		h.pipeline.markLoaded(h.file, loadedTree());
+
+		h.pipeline.schedule();
+		h.pipeline.cancelTimer();
+		await vi.advanceTimersByTimeAsync(AUTO_SAVE_DEBOUNCE_MS * 3);
+
+		expect(h.onDirty).not.toHaveBeenCalled();
 	});
 });

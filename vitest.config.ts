@@ -12,8 +12,10 @@ export default defineConfig({
 		environment: 'node',
 		include: ['tests/**/*.test.ts'],
 		setupFiles: ['tests/setup.ts'],
-		// 回归套件含 5 万级深树用例，放宽单测超时
-		testTimeout: 30_000,
+		// 默认 5 s：只有压力用例需要放宽，超时写在**用例级**
+		// （md-roundtrip 的 5 万级深树 30 s / prism-code 的缓存填充 15 s）；
+		// 全局放宽会掩盖其它慢/挂用例。
+		testTimeout: 5_000,
 		coverage: {
 			provider: 'v8',
 			// vendor 为预打包产物不测；i18n/constants 为纯文案/常量表

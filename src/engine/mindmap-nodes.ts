@@ -271,6 +271,24 @@ export function getRenderRoot(mindMap: MindMap | null): MindMapNode | null {
 }
 
 /**
+ * 「分支层」：从根往下第一层**有多个兄弟**的节点。
+ *
+ * 用途：按分支自动上色（`features/view-node-color.applyBranchColors`）——不按
+ * 固定深度取，因为 `# 标题` + `- 列表` 与 `# 项目` + `## 模块` 两种常见结构的
+ * 分支分别落在第 1 / 2 层（根是文件名，比「文档标题」多占一层）。一路单链
+ * （每层都只有一个孩子）时没有可分配的对象，返回空数组。
+ */
+export function branchLayerOf(
+	children: readonly MindMapNode[],
+): readonly MindMapNode[] {
+	let layer = children;
+	while (layer.length === 1) {
+		layer = layer[0]?.children ?? [];
+	}
+	return layer.length > 1 ? layer : [];
+}
+
+/**
  * 整棵**渲染树**的节点数（大图判定、状态栏计数共用口径）。
  *
  * 为什么按渲染树而不是 DOM：性能模式的 `removeSelf` 只把 group 摘下、不改

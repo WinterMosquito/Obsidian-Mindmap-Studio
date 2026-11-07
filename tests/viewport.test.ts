@@ -21,7 +21,7 @@
  *   改为等待回填后执行（超上限放弃）——本文件钉住「延后执行」与「上限放弃」两条。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { MindMap } from '../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 import {
 	HEAVY_FIT_NODE_THRESHOLD,
 	RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,
@@ -34,6 +34,7 @@ import {
 	contentExceedsCanvasAtFullScale,
 	fitMindMap,
 	isContentVisibleInCanvas,
+	measureNodesCanvasBox,
 	resetZoom,
 } from '../src/engine/mindmap';
 
@@ -699,5 +700,101 @@ describe('contentExceedsCanvasAtFullScale（小地图自动启用判据）', () 
 			}),
 		).toBe(true);
 		expect(rect).not.toHaveBeenCalled();
+	});
+});
+
+describe('measureNodesCanvasBox（选区包围盒：布局几何，不依赖 DOM）', () => {
+	/** 只提供 `getDrawTransform` 需要的变换读数 */
+	function makeGeometryMap(
+		transform: {
+			scaleX: number;
+			scaleY: number;
+			translateX: number;
+			translateY: number;
+		} = { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 },
+	) {
+		return {
+			view: { getTransformData: () => ({ transform }) },
+		} as unknown as MindMap;
+	}
+
+	function node(
+		left: unknown,
+		top: unknown,
+		width: unknown,
+		height: unknown,
+	): MindMapNode {
+		return { left, top, width, height } as unknown as MindMapNode;
+	}
+
+	it('恒等变换：并集 = 各节点盒的并集（画布局部坐标）', () => {
+		const mindMap = makeGeometryMap();
+		const box = measureNodesCanvasBox(mindMap, [
+			node(100, 50, 100, 50),
+			node(300, 150, 100, 50),
+		]);
+
+		expect(box).toEqual({ left: 100, top: 50, right: 400, bottom: 200 });
+	});
+
+	it('缩放/平移后按 scale + translate 投影（与 projectViewportBox 同口径）', () => {
+		const mindMap = makeGeometryMap({
+			scaleX: 2,
+			scaleY: 2,
+			translateX: -100,
+			translateY: -50,
+		});
+		const box = measureNodesCanvasBox(mindMap, [node(100, 50, 100, 50)]);
+
+		// x1 = 100×2−100 = 100；x2 = 200×2−100 = 300；y 同理 50 → 150
+		expect(box).toEqual({ left: 100, top: 50, right: 300, bottom: 150 });
+	});
+
+	it('视口外节点同样参与：几何在性能模式摘 DOM 后仍完整（大选区不被裁）', () => {
+		const mindMap = makeGeometryMap();
+		const box = measureNodesCanvasBox(mindMap, [
+			node(0, 0, 10, 10),
+			// 远在视口外（旧 DOM 口径会因 removeSelf 拿不到包围盒而漏掉）
+			node(10_000, 0, 100, 50),
+		]);
+
+		expect(box).toEqual({ left: 0, top: 0, right: 10_100, bottom: 50 });
+	});
+
+	it('缺几何 / 尺寸非正 / 非数字：逐条跳过；全部无效 → null', () => {
+		const mindMap = makeGeometryMap();
+
+		expect(
+			measureNodesCanvasBox(mindMap, [
+				node(undefined, undefined, undefined, undefined),
+				node(0, 0, 0, 50),
+				node('x', 0, 10, 10),
+				node(10, 20, 30, 40),
+			]),
+		).toEqual({ left: 10, top: 20, right: 40, bottom: 60 });
+		expect(
+			measureNodesCanvasBox(mindMap, [
+				node(undefined, undefined, undefined, undefined),
+				node(0, 0, 0, 0),
+			]),
+		).toBeNull();
+		expect(measureNodesCanvasBox(mindMap, [])).toBeNull();
+	});
+
+	it('变换读不到（引擎中间态）按恒等处理，不抛错', () => {
+		const mindMap = {
+			view: {
+				getTransformData: () => {
+					throw new Error('引擎中间态');
+				},
+			},
+		} as unknown as MindMap;
+
+		expect(measureNodesCanvasBox(mindMap, [node(10, 20, 30, 40)])).toEqual({
+			left: 10,
+			top: 20,
+			right: 40,
+			bottom: 60,
+		});
 	});
 });

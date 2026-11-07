@@ -14,9 +14,11 @@
  * **会话决策**，不是引擎取样——取样正确性由 `tests/minimap-geometry.test.ts`
  * 与实机验收覆盖。
  *
- * 一条易回归的契约：窗口缩放时视口框**只重投影、不重画**，且投影必须用
- * `getCanvasSize` 的**实时画布**——绘制快照 `geometry.canvas` 到下一次 30s
- * 节拍前都是旧值（K140，2026-10-26 实机 29.7s 才更新的根因）。
+ * 两条易回归的契约：
+ * 1. 窗口缩放时视口框**只重投影、不重画**——绘制快照 `geometry.canvas` 到下一次
+ *    30s 节拍前都是旧值（K140，2026-10-26 实机 29.7s 才更新的根因）；
+ * 2. 画布尺寸走**会话缓存**（`resize` 事件刷新），视口框每帧重投影不得再读实时
+ *    矩形——否则平移/缩放期间形成「写样式 → 强制布局读矩形」的抖动（2026-11-04）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MiniMapContext } from '../src/features/view-minimap';
@@ -454,6 +456,30 @@ describe('setupMiniMap：装配即画首帧', () => {
 		active.binder.emitEngine('resize');
 		active.win.runFrames();
 		expect(box.style.width).toBe('40%');
+	});
+
+	it('视口框投影不每帧读画布尺寸：缓存只在 resize 时刷新', () => {
+		active = createHarness();
+		setupMiniMap(active.view);
+		active.win.runFrames();
+		// 装配期 `refresh` 读过一次（判据与首帧取图共用）
+		const afterSetup = mocks.getCanvasSize.mock.calls.length;
+		expect(afterSetup).toBeGreaterThan(0);
+
+		// 平移/缩放唤醒 → 每帧重投影，但不再触碰实时矩形（无强制布局）
+		for (let i = 0; i < 3; i++) {
+			active.binder.emitEngine('view_data_change');
+			active.win.runFrames();
+		}
+		expect(mocks.getCanvasSize).toHaveBeenCalledTimes(afterSetup);
+
+		// 窗口缩放：resize 刷新缓存，框按新画布重投影（100%）
+		mocks.getCanvasSize.mockReturnValue({ width: 1600, height: 600 });
+		active.binder.emitEngine('resize');
+		active.win.runFrames();
+		expect(mocks.getCanvasSize.mock.calls.length).toBeGreaterThan(afterSetup);
+		const box = childOf(panelOf(active), 'mindmap-minimap-view');
+		expect(box.style.width).toBe('100%');
 	});
 
 	it('视口整个在右下外侧 → 框退到面板内沿，四边都不会被裁', () => {

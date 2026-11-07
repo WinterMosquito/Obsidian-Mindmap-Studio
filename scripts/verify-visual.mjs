@@ -586,7 +586,7 @@ import { hideCopyButtonsInExportSvg, registerCodeBlockInteractions } from ${JSON
 import { openNodeInlineEditor } from ${JSON.stringify(inlineEditorModule)};
 import { postProcessExportSvg } from ${JSON.stringify(exportPostprocessModule)};
 import { injectMathStylesIntoExportSvg, pinMathContainerHeightsInExportSvg } from ${JSON.stringify(mathJaxModule)};
-import { EMBED_CANVAS_CLASS, EMBED_NOTICE_CLASS, EMBED_OUTLINE_CLASS, MindmapEmbedRenderChild } from ${JSON.stringify(mindmapCodeblockModule)};
+import { EMBED_CANVAS_CLASS, EMBED_NOTICE_CLASS, EMBED_OUTLINE_CLASS, EMBED_READONLY_CLASS, MindmapEmbedRenderChild } from ${JSON.stringify(mindmapCodeblockModule)};
 
 const scenarios = ${serialized};
 
@@ -685,6 +685,10 @@ HTMLElement.prototype.createEl = function (tag, info) {
 };
 HTMLElement.prototype.createDiv = function (info) {
 	return this.createEl('div', info);
+};
+// 官方还有 createSpan（嵌入的只读角标用它；lint 规则 prefer-create-el 强制）
+HTMLElement.prototype.createSpan = function (info) {
+	return this.createEl('span', info);
 };
 // Obsidian 的 Element.isShown()（祖先链无 display:none）；无头页没有它。
 // 2026-10-14：content-remeasure 的可见性守卫（flush / retryDeferred /
@@ -815,6 +819,12 @@ window.setTimeout(() => {
 			);
 		}
 		const notice = embedBig.holder.querySelector('.' + EMBED_NOTICE_CLASS);
+		// —— 只读角标（2026-11-04）：嵌入没有编辑入口，挂引擎路径必须有可见标识 ——
+		const readonlyBadges = [
+			...embedSmall.holder.querySelectorAll('.' + EMBED_READONLY_CLASS),
+		];
+		const readonlyBadge =
+			readonlyBadges.length === 1 ? readonlyBadges[0].textContent : null;
 		// —— 契约 ⑤：卸载即清 DOM（防隐藏视图子树的「空壳」残留，见 onunload）——
 		const embedUnload = mountEmbed('map-embed-unload', '# 卸载验证');
 		embedUnload.child.onunload();
@@ -841,6 +851,7 @@ window.setTimeout(() => {
 			embedTableCount: embedTable.holder.querySelectorAll(
 				'foreignObject table',
 			).length,
+			readonlyBadge,
 			unloadLeftover,
 		});
 	} catch (error) {
@@ -4243,6 +4254,12 @@ function checkEmbed(dom) {
 				`挂载点带 resize 手柄（computed resize=${probe.resize}）：嵌入不可调节`,
 			);
 		}
+	}
+	// 只读角标（2026-11-04）：嵌入没有编辑入口，必须有且只有一个可见标识
+	if (probe.readonlyBadge !== '只读') {
+		failures.push(
+			`只读角标缺失或文案不符：${JSON.stringify(probe.readonlyBadge)}（应为「只读」）`,
+		);
 	}
 	// 块体 `# 中心主题 / ## 分支 A / - 叶子 1 / - 叶子 2` = 4 个节点
 	if (probe.mountedNodes !== 4) {

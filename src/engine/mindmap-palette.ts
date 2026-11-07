@@ -8,14 +8,17 @@
  * - **落地**在 `mindmap-theme`：把这里的产物拼成引擎 themeConfig；
  * - 零引擎依赖、纯计算：`normalize*` 兜住手改 `data.json` 的脏值，可直接单测。
  */
-import { normalizePalette } from '../core/constants';
-import type { PaletteId } from '../core/constants';
 import {
-	contrastTextColor,
-	mixHex,
-	normalizeHexColor,
-} from '../domain/color';
-import { PALETTES, type PaletteColors } from './mindmap-theme-presets';
+	normalizeCustomPaletteColor,
+	normalizePalette,
+} from '../core/constants';
+import type { PaletteId } from '../core/constants';
+import { contrastTextColor, hexToHsl, hslToHex } from '../domain/color';
+import {
+	NODE_COLORS,
+	PALETTES,
+	type PaletteColors,
+} from './mindmap-theme-presets';
 
 /**
  * 文字色三档——**不随配色变**，只按明暗定。
@@ -48,17 +51,6 @@ export interface ThemeTextColors {
 }
 
 /**
- * 配色偏好值里的**自定义色**：值是十六进制时返回归一的 `#rrggbb`，否则 null
- * （＝预设 id）。「自定义配色」的唯一识别口——别在调用方各写一遍 `typeof` 防御。
- *
- * 入参声明 `unknown`：验证脚手架 / 引擎中间态可能传进非字符串，若不挡住，
- * `normalizeHexColor` 的 `value.trim()` 会当场抛错、整图渲染中断。
- */
-function customPaletteColor(value: unknown): string | null {
-	return typeof value === 'string' ? normalizeHexColor(value) : null;
-}
-
-/**
  * 双链文档自绘图标（节点前缀内容）的描边色：与**当前配色**同源，
  * 避免在 mindmap.ts 里手写色值。亮色用该配色的根节点主色，暗色用 nodeText 中性灰
  * （暗色下各配色的 rootFill 都很深，拿它当图标色会看不见）。
@@ -67,7 +59,7 @@ function customPaletteColor(value: unknown): string | null {
  * （暗色也用——用户选的就是这个色相，回退到中性灰会让图标与整篇脱节）。
  */
 export function getDocIconColor(isDark: boolean, palette: string): string {
-	const custom = customPaletteColor(palette);
+	const custom = normalizeCustomPaletteColor(palette);
 	if (custom) {
 		return custom;
 	}
@@ -77,38 +69,58 @@ export function getDocIconColor(isDark: boolean, palette: string): string {
 }
 
 /**
- * 节点级配色菜单里「某一套配色」对应的**主色**：取该配色的 `rootFill`（亮色档
- * ——节点颜色写进 Markdown 后不随明暗变，见 `domain/color` 的口径）。
+ * 节点级配色菜单里「某一套配色」对应的**填充色**：取 `NODE_COLORS[id].fill`
+ * （2026-11-05 起与整篇的 `rootFill` 分开——那个是根节点用的中深色，铺满整支
+ * 会变成一片实色块，实机已验证难看）。
  *
- * 注意它是**主色/色相锚**，不是画布上的填充色：落地由
- * `domain/color.nodeColorScale` 派生「浅填充 + 主色线 + 深字」（2026-10-29）。
- * 菜单仍用这个 hex 与正文里的指令做等值比较（勾选态），所以必须是**写进文件的
- * 那一个值**，不能换成派生后的 fill。
+ * 它既是写进文件的 hex，也是**画布上的填充色本体**（`nodeColorScale` 只补
+ * 文字色）。菜单用这个 hex 与正文里的指令做等值比较（勾选态），所以必须是
+ * **写进文件的那一个值**；配套的深色线条由 `NODE_COLORS` 的 `line` 给。
  *
- * 这是「配色 → 主色」的唯一定义：新增配色时菜单自动多一项，勿在菜单层
+ * 这是「配色 → 节点填充色」的唯一定义：新增配色时菜单自动多一项，勿在菜单层
  * 手抄色值。
  */
 export function paletteNodeColor(palette: PaletteId): string {
-	return PALETTES[palette].light.rootFill;
+	return NODE_COLORS[palette].fill;
 }
 
 /**
  * 自定义整篇配色（值 = 一个十六进制）→ 五档色板。
  *
- * 派生规则：根节点用原色（承载反白字，与已知配色的 rootFill 同角色），
- * 二/三级节点向画布底色靠拢（86% / 93%）、描边 50%、连线 35%——层级递减关系与
- * `PALETTES` 的设计约束一致，只是**从用户给的一个色相推出来**。混色实现在
- * `domain/color.mixHex`（纯函数，可直测）。
+ * **与预设走同一套明度阶梯**，只把色相与饱和度从用户色带过来：
+ * - 亮色 `L` = 90 / 96 / 82 / 55（second / node / border / line），`S` 缩放
+ *   0.5 / 0.3 / 0.55 / 0.8；
+ * - 暗色 `L` = 16 / 12 / 26 / 45，`S` 缩放 0.4 / 0.3 / 0.4 / 0.7（暗档本色域窄，
+ *   缩得少一点才看得出色相）；
+ * - 根节点就是用户色本身（`rootFill` = 该十六进制）。
+ *
+ * 早先按「向画布底混 86% / 93% / 50% / 35%」派生，同一色走两条路径得到两种观感
+ * （2026-11-05 实机对照，拿 `#2d62be` 分别走预设「湛蓝」与自定义）：
+ * 描边比预设深一档（`#96b1df` vs `#c1cde1`）、连线反而更浅（`#7799d5` vs
+ * `#537dc6`，比自己的描边还浅，结构感倒挂）、二级文字也更黑（按亮度算成
+ * `#1e293b`，预设是柔和的 `#64748b`）。用户说的「自定义样式不一样」就是这三处。
+ *
+ * 混白只能调明度、会顺带冲掉饱和度；HSL 改 L 保 S 才是「同一个色的浅档」。
  */
 function deriveCustomPalette(hex: string, isDark: boolean): PaletteColors {
-	const background = isDark ? BACKGROUND_DARK : BACKGROUND_LIGHT;
-	return {
-		rootFill: hex,
-		secondFill: mixHex(hex, background, 0.86),
-		nodeFill: mixHex(hex, background, 0.93),
-		border: mixHex(hex, background, 0.5),
-		line: mixHex(hex, background, 0.35),
-	};
+	const hsl = hexToHsl(hex) ?? { h: 0, s: 0, l: 0 };
+	const step = (lightness: number, saturationScale: number): string =>
+		hslToHex(hsl.h, hsl.s * saturationScale, lightness);
+	return isDark
+		? {
+				rootFill: hex,
+				secondFill: step(16, 0.4),
+				nodeFill: step(12, 0.3),
+				border: step(26, 0.4),
+				line: step(45, 0.7),
+			}
+		: {
+				rootFill: hex,
+				secondFill: step(90, 0.5),
+				nodeFill: step(96, 0.3),
+				border: step(82, 0.55),
+				line: step(55, 0.8),
+			};
 }
 
 /** 一次配色解析的完整产物：画布底色 + 五档填充/线色 + 三档文字色 */
@@ -122,21 +134,22 @@ export interface PaletteTheme {
  * 配色值（预设 id 或自定义十六进制）→ 一套完整色值。**两种形态的唯一分派点**。
  *
  * 预设 id 走 `normalizePalette` 兜脏值后直接取 `PALETTES` 的亮/暗档（数据即设计
- * 校核过的组合，文字色只按明暗定）；自定义值没有设计校核，故由主色派生五档、
- * 每一档的文字色按该档亮度现算。
+ * 校核过的组合，文字色只按明暗定）；自定义值由主色按**同一套明度阶梯**派生五档，
+ * 二级 / 三级文字色也沿用预设那组固定值（浅档上的深字，观感因此一致）——只有
+ * **根节点**的文字色必须现算：用户可以给任意色，浅底色上白字会看不见。
  */
 export function resolvePaletteTheme(value: string, isDark: boolean): PaletteTheme {
-	const custom = customPaletteColor(value);
+	const custom = normalizeCustomPaletteColor(value);
 	if (custom) {
 		const colors = deriveCustomPalette(custom, isDark);
+		const presetText = isDark ? TEXT_DARK : TEXT_LIGHT;
 		return {
 			background: isDark ? BACKGROUND_DARK : BACKGROUND_LIGHT,
 			colors,
-			// 自定义填充无法预设文字色：按每一档的亮度现算（与节点颜色同一份判定）
 			text: {
 				rootText: contrastTextColor(colors.rootFill),
-				secondText: contrastTextColor(colors.secondFill),
-				nodeText: contrastTextColor(colors.nodeFill),
+				secondText: presetText.secondText,
+				nodeText: presetText.nodeText,
 			},
 		};
 	}

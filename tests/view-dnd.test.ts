@@ -788,7 +788,12 @@ describe('库内文件拖入：分发分支', () => {
 		expect(h.saveImageToVault).not.toHaveBeenCalled();
 	});
 
-	it('可链接附件（表驱动扩展名）：选中走回形针通道，未选中在根节点下新建并携带附件数据', async () => {
+	// 表驱动：耗时随 `ATTACHMENT_EXTENSIONS` 条目线性增长（实测约 2.1 s），
+	// 全局超时已回落到 5 s（见 vitest.config.ts），慢机上余量不够，故用例级放宽
+	it(
+		'可链接附件（表驱动扩展名）：选中走回形针通道，未选中在根节点下新建并携带附件数据',
+		{ timeout: 15_000 },
+		async () => {
 		for (const extension of ATTACHMENT_EXTENSIONS) {
 			resetHarnessMocks();
 			const name = `报告.${extension}`;

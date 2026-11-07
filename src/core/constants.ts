@@ -206,8 +206,8 @@ export interface ThemeStyleOption {
  * 数组一项，漏写外观配置即编译失败，不存在「类型与选项表两处维护」的漂移面。
  *
  * ⚠ **id 与 UI 名、默认值三者互不相干**：`default` 的显示名是「有边框」，
- * 出厂默认另由 `DEFAULT_THEME_STYLE` 决定（当前为 `borderless`）。不要因为
- * 某个 id 叫 `default` 就把它当默认值——改默认只改 `DEFAULT_THEME_STYLE`。
+ * 出厂默认另由 `DEFAULT_THEME_STYLE` 决定（当前为 `default`＝有边框）。不要
+ * 因为某个 id 叫 `default` 就把它当默认值——改默认只改 `DEFAULT_THEME_STYLE`。
  */
 export const THEME_STYLE_OPTIONS = [
 	{ value: 'default', label: 'themeStyle.default' },
@@ -220,14 +220,19 @@ export type ThemeStyleId = (typeof THEME_STYLE_OPTIONS)[number]['value'];
 /**
  * 出厂默认边框样式（`DEFAULT_SETTINGS.defaultThemeStyle` 与脏值归一共同引用）。
  *
- * 2026-10-25 用户裁决改为**无边框**（原为「有边框＝存量外观，升级观感零变化」），
+ * 2026-11-05 改回**有边框**：字号梯度调到 24/16/13、垂直内边距拉到 7–14 之后，
+ * 无边框档（填充也置透明）在实机上退化成「大纲 + 一条线」——层级只剩缩进
+ * （对比截图见 `00-开发支撑/tmp-shot-batch1*.png`）。有边框档的浅底 + 1px 描边
+ * 正好把每一级托成卡片，是当前这套字号 / 内边距最合身的搭配。
+ *
  * **改这一行即改出厂默认**——`THEME_STYLE_OPTIONS` 的顺序、id 里的 `default`
  * 字样都不参与默认值判定。
  *
- * 存量导图不受影响：边框按文件记在 `viewState[<路径>].themeStyle`，只有「该文件
- * 没记过」才用这里的默认（见 `services/view-state.resolveFilePreferences`）。
+ * 按文件值记在 `viewState[<路径>].themeStyle`：**显式切过**竖栏开关的文件保持
+ * 原值，从没切过的（含新建与 `mindmap` 嵌入）跟着这里的默认走
+ * （见 `services/view-state.resolveFilePreferences`）。
  */
-export const DEFAULT_THEME_STYLE: ThemeStyleId = 'borderless';
+export const DEFAULT_THEME_STYLE: ThemeStyleId = 'default';
 
 /**
  * 从选项表挑出合法值；未知 / 非字符串 / 空串一律回退 `fallback`。
@@ -286,12 +291,17 @@ export interface PaletteOption {
  */
 export const PALETTE_OPTIONS = [
 	{ value: 'default', label: 'palette.default' },
-	{ value: 'mint', label: 'palette.mint' },
-	{ value: 'amber', label: 'palette.amber' },
-	{ value: 'rose', label: 'palette.rose' },
-	{ value: 'wisteria', label: 'palette.wisteria' },
-	{ value: 'forest', label: 'palette.forest' },
-	{ value: 'slate', label: 'palette.slate' },
+	// 顺序按色相环排（青 → 蓝 → 紫 → 绯 → 橙 → 黄 → 绿 → 灰 → 雾白），
+	// 菜单里相邻两项的色相也是相邻的，方便对照着挑
+	{ value: 'teal', label: 'palette.teal' },
+	{ value: 'blue', label: 'palette.blue' },
+	{ value: 'purple', label: 'palette.purple' },
+	{ value: 'crimson', label: 'palette.crimson' },
+	{ value: 'orange', label: 'palette.orange' },
+	{ value: 'gold', label: 'palette.gold' },
+	{ value: 'green', label: 'palette.green' },
+	{ value: 'grey', label: 'palette.grey' },
+	{ value: 'mist', label: 'palette.mist' },
 ] as const satisfies readonly PaletteOption[];
 
 /** 配色 id（从选项表派生；勿手写第二份字面量联合） */
@@ -299,6 +309,22 @@ export type PaletteId = (typeof PALETTE_OPTIONS)[number]['value'];
 
 /** 未设置时的配色（＝本特性引入前的蓝色基准，升级观感零变化） */
 export const DEFAULT_PALETTE: PaletteId = 'default';
+
+/**
+ * 旧配色 id → 现 id（2026-11-05 由「植物 / 物品名」改为直白的颜色名）。
+ *
+ * **只做读兼容**：存量 `data.json` 里的 `palette` 字段仍认这些值（打开即按
+ * 对应新配色渲染），任何一次显式切换都会把新 id 写回去。不带这个映射，
+ * 老文件会静默回落成 `default`（用户以为配色丢了）。
+ */
+const LEGACY_PALETTE_IDS: Readonly<Record<string, PaletteId>> = {
+	mint: 'teal',
+	amber: 'orange',
+	rose: 'crimson',
+	wisteria: 'purple',
+	forest: 'green',
+	slate: 'grey',
+};
 
 /**
  * 脏值归一（渲染侧兜底）：未知 id / 手改 data.json / 空串 / 非字符串
@@ -310,6 +336,12 @@ export const DEFAULT_PALETTE: PaletteId = 'default';
  * 不先经本函数，否则自定义值会被压回 `default`）。
  */
 export function normalizePalette(value: unknown): PaletteId {
+	if (typeof value === 'string') {
+		const legacy = LEGACY_PALETTE_IDS[value];
+		if (legacy) {
+			return legacy;
+		}
+	}
 	return pickOption(value, PALETTE_OPTIONS, DEFAULT_PALETTE);
 }
 
@@ -325,9 +357,73 @@ export function normalizePalettePreference(value: unknown): string {
 	return hex ?? normalizePalette(value);
 }
 
-/** 该配色值是否是「自定义色」（十六进制），而非预设 id */
+/**
+ * 自定义配色值（十六进制）的**唯一识别口**：归一为小写 `#rrggbb`，非自定义
+ * 返回 null。
+ *
+ * 入参声明 `unknown`：渲染 / 验证脚手架可能传入非字符串，不能直接交给
+ * `normalizeHexColor`（它的 `value.trim()` 会当场抛错、整图渲染中断）。
+ * `view-context-menu` 的「是否自定义」判定与 `mindmap-palette` 的分派共用
+ * 这一份，勿在调用方各写一遍 `typeof` 防御。
+ */
+export function normalizeCustomPaletteColor(value: unknown): string | null {
+	return typeof value === 'string' ? normalizeHexColor(value) : null;
+}
+
+/** 该配色值是否是「自定义色」（十六进制），而非预设 id（`normalizeCustomPaletteColor` 的布尔包装） */
 export function isCustomPaletteValue(value: string): boolean {
-	return normalizeHexColor(value) !== null;
+	return normalizeCustomPaletteColor(value) !== null;
+}
+
+export interface NodeColorScopeOption {
+	value: string;
+	label: TranslationKey;
+}
+
+/**
+ * **节点级配色**（右键「配色」写 `%%#hex%%`）的作用范围（设置项 `nodeColorScope`）。
+ *
+ * 两处消费，分工明确：
+ * - **写入侧**（上色时落成两种 Markdown）：`subtree` 只给选中节点写指令、后代靠
+ *   继承拿到同一色（本特性引入前的行为）；`node` 再给**直接子节点**补哨兵
+ *   `%%none%%`，让继承在这一层终止（语义见 `domain/color.COLOR_DIRECTIVE_NONE`）。
+ * - **渲染侧**（只管连接线）：`node` 档**不把节点色写进 `lineColor`**——连接线是
+ *   「这一支往哪延伸」的线索，范围既然只到本节点，前后的线就不该再带它的色；
+ *   节点自身的填充 / 描边 / 文字三个键照旧由正文决定，继承遍历
+ *   （`domain/color.walkColorDirectives`）一个字都不改。
+ *
+ * 为什么颜色内容仍完全由正文决定：填充是指令写在文件里的**内容**，换库、换机、
+ * 发给别人必须同一个样子；只有「连接线要不要跟着节点色」这层派生显示状态随
+ * 设置走（`data.json`），与 `defaultTheme` 决定连线明暗色同性质。代价要认：
+ * 两台机器设置不同时，同一份文件的连接线颜色可能不同，节点填充不会。
+ *
+ * `value` 发布即冻结（写进 `data.json`），显示名只走 `label`。
+ */
+export const NODE_COLOR_SCOPE_OPTIONS = [
+	{ value: 'subtree', label: 'settings.nodeColorScope.subtree' },
+	{ value: 'node', label: 'settings.nodeColorScope.node' },
+] as const satisfies readonly NodeColorScopeOption[];
+
+/** 节点配色的作用范围（从选项表派生；勿手写第二份字面量联合） */
+export type NodeColorScope = (typeof NODE_COLOR_SCOPE_OPTIONS)[number]['value'];
+
+/**
+ * 出厂作用范围＝**含子节点**（本特性引入前的既有行为，升级后观感零变化）。
+ *
+ * 改这一行即改出厂默认；`DEFAULT_SETTINGS.nodeColorScope` 与显式读取处的兜底
+ * 都引它，别在两处各写一遍字面量。
+ */
+export const DEFAULT_NODE_COLOR_SCOPE: NodeColorScope = 'subtree';
+
+/**
+ * 作用范围是否**只覆盖选中节点本体**（全仓唯一判定，勿在 features / engine 另写
+ * `scope === 'node'`）。
+ *
+ * 两个消费面共用：写入侧据此补哨兵（`features/view-node-color`），渲染侧据此
+ * 决定连接线是否跟着节点色（`engine/mindmap-colors` 的 `colorLine`）。
+ */
+export function isNodeOnlyColorScope(scope: NodeColorScope): boolean {
+	return scope === 'node';
 }
 
 /**
@@ -770,12 +866,17 @@ export const IMAGE_HEIGHT = 120;
  *
  * 封顶而非无限：导图节点是**空间对象**——一张 2000px 截图会把画布版面压扁，
  * 与 `CODE_BLOCK_MAX_HEIGHT_PX` 同一理由（轻量渲染定位）。数值口径：默认盒
- * 宽 200 的 2.4 倍，≈ Obsidian 分栏可视宽的一半——单节点不霸屏、图片仍可辨；
- * 要看清原图细节点击图片打开全屏（`onNodeImageClick`）。
+ * 宽 200 的 1.6 倍——单节点不霸屏、图片仍可辨；要看清原图细节点击图片打开
+ * 全屏（`onNodeImageClick`）。
+ *
+ * 2026-11-05 由 480 下调到 320：32 节点的验收图上，一张 200×200 的图就吃掉
+ * 约三分之一高度，fit 后整图被迫缩到 0.6–0.7；真实截图（1440×900）按 480 缩
+ * 仍有 480×300，同一屏放不下两支。参数尺寸（`![[图|2000]]`）仍不受此限。
+ *
  * 与引擎主题的 `imgMaxWidth/imgMaxHeight` 分工：后者只约束 `custom:false`
  * 的兜底路径（首帧/探测失败），本值约束 `custom:true` 的自然尺寸路径。
  */
-export const IMAGE_MAX_SIDE_PX = 480;
+export const IMAGE_MAX_SIDE_PX = 320;
 
 /**
  * 节点内代码块（自绘 ``` 围栏段）的最大显示高度（像素）。

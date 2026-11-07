@@ -53,12 +53,21 @@ export function setupDragAndDrop(view: MindMapViewContext): void {
 		if (!event.dataTransfer) {
 			return;
 		}
-		const hasFileData =
-			event.dataTransfer.types.includes('text/plain') ||
-			event.dataTransfer.files.length > 0 ||
-			Array.from(event.dataTransfer.types).some((type) =>
-				type.toLowerCase().includes('file'),
-			);
+		// 不建中间数组：dragover 约 60 Hz，`Array.from(types)` 每个事件一次分配。
+		// `types` 是 DOMStringList（可下标访问），for 循环在浏览器与测试桩上都成立。
+		const types = event.dataTransfer.types;
+		let hasFileData =
+			types.includes('text/plain') ||
+			event.dataTransfer.files.length > 0;
+		if (!hasFileData) {
+			for (let i = 0; i < types.length; i++) {
+				const type = types[i];
+				if (typeof type === 'string' && type.toLowerCase().includes('file')) {
+					hasFileData = true;
+					break;
+				}
+			}
+		}
 		if (hasFileData) {
 			event.preventDefault();
 			event.stopPropagation();

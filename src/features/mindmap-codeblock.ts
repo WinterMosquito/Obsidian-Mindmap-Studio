@@ -103,6 +103,11 @@ export const EMBED_CONTAINER_CLASS = 'tmm-embed';
 export const EMBED_CANVAS_CLASS = 'tmm-embed-canvas';
 /** 空态 / 降级 / 失败提示行类名 */
 export const EMBED_NOTICE_CLASS = 'tmm-embed-notice';
+/**
+ * 只读角标类名（2026-11-04，U2）：嵌入与文件视图外观一致，但没有任何编辑入口
+ * ——不给可见标识时用户会反复尝试双击 / 拖拽。纯装饰，`pointer-events: none`。
+ */
+export const EMBED_READONLY_CLASS = 'tmm-embed-readonly';
 /** 超限降级的只读大纲类名 */
 export const EMBED_OUTLINE_CLASS = 'tmm-embed-outline';
 
@@ -127,6 +132,8 @@ const EMBED_FIT_PADDING = 12;
  * 用户订正）。**布局另有块体首行的 `%%layout: …%%` 指令可覆盖**，此时这里的值是
  * 回退值（见 `parseEmbedLayoutDirective`）。
  * `palette` **没有全局默认**（只有按文件记），故恒用 `DEFAULT_PALETTE`。
+ * 节点配色的作用范围也取**全局设置** `nodeColorScope`：嵌入的颜色来自块体正文，
+ * 但「连接线要不要跟着节点色」是显示偏好，与主视图同一个口径。
  */
 export interface MindmapEmbedConfig {
 	/** 引擎 layout id：**块体首行没有 `%%layout: …%%` 指令时的回退值** */
@@ -136,6 +143,8 @@ export interface MindmapEmbedConfig {
 	themePref: string;
 	/** 边框样式：取全局设置 `defaultThemeStyle`（非右栏/右键按文件值） */
 	themeStyle: string;
+	/** 节点配色是否给连接线着色（`nodeColorScope === 'node'` 时为 false） */
+	colorLine: boolean;
 	lang: Language;
 }
 
@@ -336,6 +345,12 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		ensureUniqueUids(display);
 		this.pendingTree = display;
 		this.canvasEl = container.createDiv(EMBED_CANVAS_CLASS);
+		// 只读角标：与画布同级、绝对定位在右上角（不参与布局、不吃指针）。
+		// 只在真正挂引擎的路径加——空态 / 超限大纲 / 失败提示各自已有可见文案。
+		container.createSpan({
+			cls: EMBED_READONLY_CLASS,
+			text: t(lang, 'mindmapEmbed.readonly'),
+		});
 		this.initMindMap();
 	}
 
@@ -442,7 +457,7 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		try {
 			// 节点配色指令（`%%#hex%%`）：在创建**之前**写进 data 树——引擎会克隆
 			// 数据，建好后再改这棵树不再生效（只读嵌入没有编辑入口，无需实时同步）。
-			applyColorDirectivesToTree(tree, colorDirectiveOf);
+			applyColorDirectivesToTree(tree, colorDirectiveOf, config.colorLine);
 			// 联系（关系连线）：同一时机写进 data 树（只读嵌入没有编辑入口，
 			// 创建后不需要实时同步；交互副作用由 vendor 补丁 13 整段跳过）
 			applyRelationsToTree(tree);

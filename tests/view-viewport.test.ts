@@ -30,7 +30,9 @@ import {
 const mocks = vi.hoisted(() => ({
 	fitMindMap: vi.fn(),
 	getActiveNodes: vi.fn((): unknown[] => []),
-	getNodeGroupEl: vi.fn((): unknown => null),
+	/** 选区缩放改用布局几何（P1-2）：画布尺寸与选区包围盒都由引擎层给出 */
+	getCanvasSize: vi.fn((): unknown => ({ width: 400, height: 300 })),
+	measureNodesCanvasBox: vi.fn((): unknown => null),
 	panMindMap: vi.fn(),
 	zoomMindMapAt: vi.fn(),
 	/** 平滑循环用：读到「平移后的变换」才能判定未被引擎夹住 */
@@ -51,8 +53,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../src/engine/mindmap', () => ({
 	fitMindMap: mocks.fitMindMap,
 	getActiveNodes: mocks.getActiveNodes,
+	getCanvasSize: mocks.getCanvasSize,
 	getDrawTransform: mocks.getDrawTransform,
-	getNodeGroupEl: mocks.getNodeGroupEl,
+	measureNodesCanvasBox: mocks.measureNodesCanvasBox,
 	panMindMap: mocks.panMindMap,
 	zoomMindMapAt: mocks.zoomMindMapAt,
 	countMindMapNodes: mocks.countMindMapNodes,
@@ -109,25 +112,17 @@ function makeCanvas(rect: {
 	} as unknown as HTMLElement;
 }
 
-/** 选区几何：画布 400×300，单节点盒 100×50 位于 (100,50)-(200,100) */
+/** 选区几何：画布 400×300，单节点盒在画布局部坐标 (100,50)-(200,100) */
 const CANVAS_RECT = { left: 0, top: 0, width: 400, height: 300 };
-const NODE_RECT = {
-	left: 100,
-	top: 50,
-	width: 100,
-	height: 50,
-	right: 200,
-	bottom: 100,
-};
+const NODE_BOX = { left: 100, top: 50, right: 200, bottom: 100 };
 
 function makeView(overrides: { nodes?: unknown[] } = {}) {
 	const engineEvents = makeEngineEvents();
 	const canvasEl = makeCanvas(CANVAS_RECT);
 	const mindMap = { id: 'mm' } as unknown as MindMap;
 	mocks.getActiveNodes.mockReturnValue(overrides.nodes ?? []);
-	mocks.getNodeGroupEl.mockReturnValue({
-		getBoundingClientRect: () => NODE_RECT,
-	});
+	// 布局几何（已应用当前变换）由引擎层给出；本测试只验证「包围盒 → 倍率」这一跳
+	mocks.measureNodesCanvasBox.mockReturnValue(NODE_BOX);
 	const view = {
 		mindMap,
 		canvasEl,
@@ -257,7 +252,8 @@ function makeWheelEvent(
 beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.getActiveNodes.mockReturnValue([]);
-	mocks.getNodeGroupEl.mockReturnValue(null);
+	mocks.getCanvasSize.mockReturnValue({ width: 400, height: 300 });
+	mocks.measureNodesCanvasBox.mockReturnValue(null);
 	mocks.panMindMap.mockReset();
 	mocks.getDrawTransform.mockReset();
 	mocks.getDrawTransform.mockReturnValue({
@@ -572,67 +568,62 @@ describe('zoomToSelection（官方 Shift+2）', () => {
 		const zoomOrder = mocks.zoomMindMapAt.mock.invocationCallOrder[0]!;
 		const panOrder = mocks.panMindMap.mock.invocationCallOrder[0]!;
 		expect(zoomOrder).toBeLessThan(panOrder);
+		// 几何来源：引擎层按「节点列表 + 当前变换」算出的画布局部包围盒
+		expect(mocks.measureNodesCanvasBox).toHaveBeenCalledWith(
+			mindMap,
+			expect.any(Array),
+		);
 	});
 
-	it('多节点：取并集包围盒（跨节点整体可见）', () => {
-		const { view, mindMap } = makeView({
-			nodes: [{}, {}],
+	it('多节点：取几何并集包围盒（跨节点整体可见）', () => {
+		const { view, mindMap } = makeView({ nodes: [{}, {}] });
+		// 并集 = (100,50)-(400,200)：面积 300×150，中心 (250,125)
+		mocks.measureNodesCanvasBox.mockReturnValue({
+			left: 100,
+			top: 50,
+			right: 400,
+			bottom: 200,
 		});
-		mocks.getNodeGroupEl
-			.mockReturnValueOnce({ getBoundingClientRect: () => NODE_RECT })
-			.mockReturnValueOnce({
-				getBoundingClientRect: () => ({
-					left: 300,
-					top: 150,
-					width: 100,
-					height: 50,
-					right: 400,
-					bottom: 200,
-				}),
-			});
 
 		expect(zoomToSelection(view)).toBe(true);
 
-		// 并集 = (100,50)-(400,200)：面积 300×150，中心 (250,125)
 		expect(mocks.zoomMindMapAt).toHaveBeenCalledWith(
 			mindMap,
 			Math.min((400 * 0.88) / 300, (300 * 0.88) / 150),
 			250,
 			125,
 		);
+		expect(mocks.panMindMap).toHaveBeenCalledWith(mindMap, -50, 25);
 	});
 
 	it('无激活节点 → false 且不触碰视口（调用方回落「适应画布」）', () => {
 		const { view } = makeView();
 
 		expect(zoomToSelection(view)).toBe(false);
+		expect(mocks.measureNodesCanvasBox).not.toHaveBeenCalled();
 		expect(mocks.zoomMindMapAt).not.toHaveBeenCalled();
 		expect(mocks.panMindMap).not.toHaveBeenCalled();
 	});
 
-	it('拿不到包围盒（未渲染/0 尺寸）→ false，不做除零平移', () => {
+	it('几何不可得（节点未布局 / 引擎中间态）→ false，不做除零平移', () => {
 		const { view } = makeView({ nodes: [{}] });
-		mocks.getNodeGroupEl.mockReturnValue(null);
+		mocks.measureNodesCanvasBox.mockReturnValue(null);
 
 		expect(zoomToSelection(view)).toBe(false);
 		expect(mocks.zoomMindMapAt).not.toHaveBeenCalled();
+		expect(mocks.panMindMap).not.toHaveBeenCalled();
+	});
 
-		// 有元素但尺寸为 0（引擎折叠/离屏）同样回落
-		mocks.getNodeGroupEl.mockReturnValue({
-			getBoundingClientRect: () => ({
-				left: 0,
-				top: 0,
-				width: 0,
-				height: 0,
-				right: 0,
-				bottom: 0,
-			}),
-		});
+	it('画布尺寸为 0（初始化中）→ false，不出 Infinity 倍率', () => {
+		const { view } = makeView({ nodes: [{}] });
+		// 画布尺寸以引擎读数为准（不做 DOM 矩形换算）
+		mocks.getCanvasSize.mockReturnValue({ width: 0, height: 0 });
+
 		expect(zoomToSelection(view)).toBe(false);
 		expect(mocks.zoomMindMapAt).not.toHaveBeenCalled();
 	});
 
-	it('画布尺寸为 0（初始化中）→ false，不出 Infinity 倍率', () => {
+	it('不读画布 DOM 矩形：canvasEl 尺寸为 0 时仍按引擎画布尺寸工作', () => {
 		const engineEvents = makeEngineEvents();
 		const view = {
 			mindMap: {} as MindMap,
@@ -640,12 +631,10 @@ describe('zoomToSelection（官方 Shift+2）', () => {
 			engineEvents: engineEvents as unknown,
 		} as unknown as ViewportContext;
 		mocks.getActiveNodes.mockReturnValue([{}]);
-		mocks.getNodeGroupEl.mockReturnValue({
-			getBoundingClientRect: () => NODE_RECT,
-		});
+		mocks.measureNodesCanvasBox.mockReturnValue(NODE_BOX);
 
-		expect(zoomToSelection(view)).toBe(false);
-		expect(mocks.zoomMindMapAt).not.toHaveBeenCalled();
+		expect(zoomToSelection(view)).toBe(true);
+		expect(mocks.zoomMindMapAt).toHaveBeenCalled();
 	});
 });
 

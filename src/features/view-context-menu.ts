@@ -39,8 +39,10 @@ import {
 	showExclusiveMenu,
 } from '../ui/menu-submenu';
 import {
+	applyBranchColors,
 	applyNodeColor,
 	effectiveNodeColorOf,
+	hasBranchLayer,
 	nodeColorOptions,
 } from './view-node-color';
 import { fitToScreen } from './view-viewport';
@@ -126,8 +128,9 @@ function addLayoutMenu(menu: Menu, view: MindMapViewContext): void {
 /**
  * 空白画布的「配色」：改**整篇**方案（写 `data.json` 的 `viewState[路径].palette`）。
  *
- * 预设 6 项之后多一项「自定义」：值是一个十六进制，同样按文件记；读取侧
- * `normalizePalettePreference` 保留它，渲染侧由 `mindmap-palette` 派生五档色板。
+ * 预设项（`PALETTE_OPTIONS`，现为 10 项）之后多一项「自定义」：值是一个十六进制，
+ * 同样按文件记；读取侧 `normalizePalettePreference` 保留它，渲染侧由
+ * `mindmap-palette` 派生五档色板。
  */
 function addPaletteMenu(menu: Menu, view: MindMapViewContext): void {
 	const current = view.resolvePreference('palette');
@@ -150,6 +153,17 @@ function addPaletteMenu(menu: Menu, view: MindMapViewContext): void {
 				initial: custom ? current : null,
 				onPick: (color) => view.applyPalette(color),
 			});
+			// 分支配色（2026-11-05）：给「分支层」的每个节点依次写一个主色。
+			// 只在确实有多个分支时出现——单链文档没有可分配的对象。
+			if (hasBranchLayer(view)) {
+				submenu.addSeparator();
+				submenu.addItem((item) =>
+					item
+						.setTitle(t(view.lang, 'palette.branchColors'))
+						.setIcon('git-branch')
+						.onClick(() => applyBranchColors(view)),
+				);
+			}
 		},
 	});
 }
@@ -161,8 +175,9 @@ function addPaletteMenu(menu: Menu, view: MindMapViewContext): void {
  * 首项「默认」＝**回到整篇配色**（必要时由 `applyNodeColor` 落哨兵挡继承，用户
  * 无需知道）；末项「自定义」收十六进制 / RGB。
  *
- * **分组与空白右键的整篇配色完全一致**：默认 + 五个颜色同组，只在「自定义」前画
- * 一条分隔线，两处标题序列逐项相同（节点侧曾多画一条线，2026-10-27 实机指出）。
+ * **分组与空白右键的整篇配色完全一致**：默认 + 九个颜色同组（`nodeColorOptions`
+ * 只排除「默认」那一套），只在「自定义」前画一条分隔线，两处标题序列逐项相同
+ *（节点侧曾多画一条线，2026-10-27 实机指出）。
  *
  * `targets` 是右键时**还没被引擎折叠**的选中集合（见 `rightClickSelection`）。
  *

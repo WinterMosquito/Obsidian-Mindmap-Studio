@@ -7,16 +7,19 @@ import {
 } from 'obsidian';
 import {
 	DEFAULT_LINE_STYLE,
+	DEFAULT_NODE_COLOR_SCOPE,
 	DEFAULT_THEME_STYLE,
 	EXPORT_IMAGE_FORMAT_OPTIONS,
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
 	LAYOUT_OPTIONS,
 	LINE_STYLE_OPTIONS,
+	NODE_COLOR_SCOPE_OPTIONS,
 	SAVE_LOCATION_OPTIONS,
 	THEME_OPTIONS,
 	THEME_STYLE_OPTIONS,
 	type ExportImageFormat,
+	type NodeColorScope,
 	type SaveLocation,
 } from './core/constants';
 import { Language, LANGUAGE_OPTIONS, t, type TranslationKey } from './core/i18n';
@@ -46,10 +49,25 @@ export interface MindMapStudioSettings {
 	 * （故不在 `LIVE_REFRESH_SETTING_KEYS` 里）。
 	 */
 	defaultLayout: string;
-	/** 默认连线样式（auto/curve/direct/straight；auto＝随布局） */
+	/**
+	 * 默认连线样式：`straight`（折线）/ `curve`（曲线）；旧 `auto` / `direct`
+	 * 在读取侧归一为折线（见 `core/constants.normalizeLineStylePreference`）。
+	 */
 	defaultLineStyle: string;
 	/** 主题（明暗配色）：default＝跟随 Obsidian / light / dark */
 	defaultTheme: string;
+	/**
+	 * **节点级配色**（右键「配色」写 `%%#hex%%`）的作用范围：
+	 * `subtree`＝选中节点及其全部后代同色（本特性引入前的行为，出厂默认）；
+	 * `node`＝仅选中节点变色（写入时给直接子节点补哨兵 `%%none%%` 阻断继承）。
+	 *
+	 * 取值见 `core/constants.NODE_COLOR_SCOPE_OPTIONS`（id 发布即冻结）。
+	 * **写入**决定正文落哪种形态；**渲染**只影响连接线是否跟着节点色
+	 * （填充 / 描边 / 文字恒由正文指令决定——换台机器打开也是文件里的样子）。
+	 * 因连接线可见，它**在** `LIVE_REFRESH_SETTING_KEYS` 里（重算一次颜色即可，
+	 * 不重建引擎）。
+	 */
+	nodeColorScope: NodeColorScope;
 	/**
 	 * 默认边框样式（即节点外观 `themeStyle`）：只作用于**新建**导图的初始值，
 	 * 单篇导图由右缘竖栏「边框」开关按文件覆盖（`viewState[<路径>].themeStyle`）；
@@ -89,9 +107,11 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	// 新建默认折线；存量的 auto/direct 在读取侧归一为折线（见 constants 归一函数）
 	defaultLineStyle: DEFAULT_LINE_STYLE,
 	defaultTheme: 'default',
-	// 新建导图默认**无边框**（2026-10-25 用户裁决，改自「有边框＝存量观感」）；
-	// 单篇由右缘竖栏「边框」开关覆盖，存量文件各记各的、不受此默认影响
+	// 新建导图默认**有边框**（2026-11-05 改回：字号 / 内边距调整后，无边框档
+	// 退化成「大纲 + 一条线」）；单篇由右缘竖栏覆盖，显式切过的文件保持原值
 	defaultThemeStyle: DEFAULT_THEME_STYLE,
+	// 节点配色出厂**含子节点**：与引入本设置前一致，升级观感零变化
+	nodeColorScope: DEFAULT_NODE_COLOR_SCOPE,
 	// 默认跟随官方「新建笔记的默认位置」（经 getNewFileParent 完整生效）——
 	// 与引入本设置前的行为一致；另三档为用户显式覆盖
 	saveLocation: 'obsidian',
@@ -250,6 +270,9 @@ export function sanitizeSettings(
 		defaultThemeStyle:
 			pickFrom('defaultThemeStyle', THEME_STYLE_OPTIONS) ??
 			DEFAULT_SETTINGS.defaultThemeStyle,
+		nodeColorScope:
+			pickFrom('nodeColorScope', NODE_COLOR_SCOPE_OPTIONS) ??
+			DEFAULT_SETTINGS.nodeColorScope,
 
 		saveLocation:
 			pickFrom('saveLocation', SAVE_LOCATION_OPTIONS) ??
@@ -294,6 +317,9 @@ const LIVE_REFRESH_SETTING_KEYS = [
 	'defaultThemeStyle',
 	'enableDrag',
 	'language',
+	// 作用范围切换要当场看到连接线变化；视图走原地重算（见
+	// features/view.applySettingsChange），不重建引擎
+	'nodeColorScope',
 ] as const satisfies readonly (keyof MindMapStudioSettings)[];
 
 type LiveRefreshSettingKey = (typeof LIVE_REFRESH_SETTING_KEYS)[number];
@@ -381,6 +407,9 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 		const lineStyleOptions = this.localizedOptions(LINE_STYLE_OPTIONS);
 		const themeOptions = this.localizedOptions(THEME_OPTIONS);
 		const themeStyleOptions = this.localizedOptions(THEME_STYLE_OPTIONS);
+		const nodeColorScopeOptions = this.localizedOptions(
+			NODE_COLOR_SCOPE_OPTIONS,
+		);
 		const saveLocationOptions = this.localizedOptions(SAVE_LOCATION_OPTIONS);
 		const exportImageFormatOptions = this.localizedOptions(
 			EXPORT_IMAGE_FORMAT_OPTIONS,
@@ -443,6 +472,15 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 							type: 'dropdown',
 							key: 'defaultTheme',
 							options: themeOptions,
+						},
+					},
+					{
+						name: t(this.lang, 'settings.nodeColorScope'),
+						desc: t(this.lang, 'settings.nodeColorScopeDesc'),
+						control: {
+							type: 'dropdown',
+							key: 'nodeColorScope',
+							options: nodeColorScopeOptions,
 						},
 					},
 				],

@@ -394,7 +394,7 @@ export function measureMiniMapBounds(
 	let maxY = -Infinity;
 	const walk = (node: MiniMapGeometryNode): void => {
 		total++;
-		const box = toBox(node);
+		const box = readNodeLayoutBox(node);
 		if (box) {
 			minX = Math.min(minX, box.x);
 			minY = Math.min(minY, box.y);
@@ -453,7 +453,7 @@ export function buildMiniMapMarks(
 		parentIndex: number | undefined,
 		depth: number,
 	): void => {
-		const box = toBox(node);
+		const box = readNodeLayoutBox(node);
 		let currentParent = parentIndex;
 		// 根恒留（缩略图的第一眼锚点）：它是 DFS 首个节点（seen = 0），
 		// 0 % stride 恒为 0，无须按 depth 特判
@@ -577,7 +577,20 @@ function isTransparentColor(value: string): boolean {
 	return Number.isFinite(alpha) && alpha === 0;
 }
 
-function toBox(node: MiniMapGeometryNode | null): MiniMapBox | null {
+/**
+ * 引擎节点的**布局盒**（`left/top/width/height`，布局坐标）→ 归一盒；不可得
+ * （未布局 / 已销毁 / 尺寸非正）返回 null。
+ *
+ * 全仓唯一的读取点：小地图的全树几何（`measureMiniMapBounds` / 缩略标记）与
+ * 「缩放到选区」（`engine/mindmap-viewport.measureNodesCanvasBox`）都走它——
+ * 两处各写一份判断，迟早会在「零尺寸节点算不算」「NaN 怎么兜」上漂移。
+ *
+ * 入参按结构类型收（`left/top/width/height` 四个数值字段），故调用方不必是
+ * `MindMapNode`：渲染树节点与剪贴板快照都能直接传。
+ */
+export function readNodeLayoutBox(
+	node: MiniMapGeometryNode | null,
+): MiniMapBox | null {
 	if (!node) {
 		return null;
 	}

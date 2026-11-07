@@ -377,3 +377,91 @@ node scripts/gen-perf-fixture.mjs --out "<vault>/fixtures/bench/realistic-5000.m
 - 架构与豁免理由：`docs/agents/architecture.md`
 - 引擎补丁与性能实测账本：`vendor/BUILD.md`
 - 测试分层与 CI：`docs/agents/testing.md`
+
+---
+
+## §10 2026-11-04 性能/体验批（P0 三项 + U1 保存状态 + P1 三项 + U2）
+
+**产物指纹**：`main.js` **705,619 B**（sha256 `c1557114…ec5b510b`，gzip **214,592 B**；`npm run build`，含 P1 三项 + U2）。中间产物：P0+U1 为 704,378 B（`796ec245…955111d`），P0+U1+P1-1/P1-2 为 704,867 B（`e4bdbf73…9d0b16fa96`），P1-3 为 705,469 B（`982a6096…d9ca3e78f`）。`styles.css` **26,493 B**。较 §3 的 2026-11-02 读数 +15,844 B，来自缓存表 / 状态栏状态段 / 选区几何 / resize 策略 / 只读角标 / 新增注释。
+
+**P0-1 派生色阶缓存（`domain/color.nodeContentTones`）**
+
+| 项 | 读数 | 复现命令 |
+| --- | --- | --- |
+| 单次成本（缓存前） | 2.359 µs | 20 万次同值调用（5 色循环） |
+| 单次成本（缓存后） | **0.129 µs** | 同上（`Map` 命中 + LRU 提升） |
+| 预期收益（5000 节点全着色打开） | **≈22 ms** | 10,000 次调用 × (2.359−0.129) µs；预测量与正式构建各一次 |
+
+**P0-2 dragover**：去掉每事件（≈60 Hz）的 `Array.from(types)` 分配；行为断言由 `tests/view-dnd.test.ts` 的表驱动用例覆盖（三命中一放行不变）。
+
+**打开基准（同轮 2 次，取最小；`npm run verify:visual -- --require-chrome --bench-open`）**
+
+| 轮次 | 500 | 5000 | 10000 | 说明 |
+| --- | --- | --- | --- | --- |
+| P0 构建 | 509 ms | 817 ms | 1183 ms | 首次 |
+| P0+U1 构建 | **530 ms** | **820 ms** | **1188 ms** | 复跑；两轮差异 <4% |
+
+⚠ 与 §2 的 455/761/1112 ms **不可直接相减**（不同日期/机器负载）。同一构建两轮互证，且 DOM 与内部节点计数逐列与 §2 完全一致（24/15/15、371/3701/7401、475/4750/9500、测量缓存命中 100%）——按 §2「读数解释」，这不构成代码回归判定。
+
+**U1 保存状态（状态栏）**：实机（`D:\Obsidian\Mindmap Studio`，窗口可见）执行 `view.scheduleSave()` 后观测：
+
+- 同步：`22 个节点 · 保存中…`
+- 2 s 后：`22 个节点 · 已保存`（`saveState = "saved"`）
+- 切到普通笔记：状态栏清空；切回导图：`22 个节点 · 已保存`
+- `obsidian dev:errors`：`No errors captured.`
+
+**P1-1 小地图视口框：画布尺寸缓存（2026-11-04）**
+
+`updateBox` 不再每帧 `getCanvasSize`（`getBoundingClientRect` 强制布局），改为会话缓存 `canvasSize`，刷新点只有“引擎 `resize` 事件”（vendor `resize()` 无条件派发）与 `refresh`/`applyFrame` 取样。实机（22 节点配色夹具，小地图已启用，画布 883×840）：
+
+| 场景 | 读数 | 方法 |
+| --- | --- | --- |
+| 连续 5 次平移（每次 `view_data_change` → rAF 重投影） | 画布 `getBoundingClientRect` 读取 **0 次** | 实例级计数包裹 `canvasEl.getBoundingClientRect`，测前注入、测后还原 |
+| 同上，视口框仍跟手 | `left` 25.8% → **22.7%**（`top` 不变） | 读 `.mindmap-minimap-view` 的 `style` |
+| 模拟窗口缩小（画布 500）后 `mindMap.resize()` | 框宽 27.9% → **15.8%**（`mindMap.width` 500） | 断言缓存随 `resize` 刷新 |
+| 还原画布（883×840） | 框宽回到 **27.9%**；`dev:errors` 干净 | 同上 |
+
+**P1-2 缩放到选区（Shift+2）：改布局几何**
+
+`zoomToSelection` 不再逐节点读 DOM 包围盒，改用 `engine/mindmap-viewport.measureNodesCanvasBox`（节点 `left/top/width/height` + `getDrawTransform`）。实机（同上夹具）：
+
+| 步骤 | 读数 |
+| --- | --- |
+| 激活一级节点（`node.active()`） | `activeNodeList = 1`；变换 `scale 0.7989 / tx −226.997 / ty 72.794`；节点盒 `left 712.11 / top 421.20 / 88×26.79` |
+| 合成 `Shift+2`（`KeyboardEvent` on `body`，`shiftKey: true`） | `scale = 4`（`MAX_GESTURE_SCALE` 钳制）、`tx −2582.875 / ty −1318.396` |
+| 节点中心落点 | 屏幕 **(441.6, 420.0)** = 画布 `883.17×840` 的中心；`dev:errors` 干净 |
+
+（旧实现下视口外节点会被性能模式 `removeSelf()` 摘出 DOM，大选区只能盖住可见部分；本次几何口径不再依赖 DOM，`tests/viewport.test.ts` 的“视口外节点同样参与”用例锁死。）
+
+**P1-3 大图拖窗 resize：尾随合并（2026-11-04 实测后落地）**
+
+策略：节点数 ≥ `LARGE_MAP_RENDER_HINT_NODES`（1000）时，`onResize` 只重置一个 180 ms 尾随定时器，停止拖动后做一次 `engine.resize()`；小图仍走 100 ms 节流。`onUnloadFile` / `onClose` 取消未决定时器。
+
+实机探针（5000 节点夹具 `tmp-perf-5000.md`，画布 883×840，24 次宽度变化 / 50 ms 间隔 = 1.2 s 拖动；`PerformanceObserver('longtask')` + rAF 帧间隔，读取窗口 6 s）：
+
+| 指标 | 改前（100 ms 节流） | 改后（尾随合并） |
+| --- | --- | --- |
+| `render()` 次数 | **5** | **1** |
+| 长任务（>50 ms）个数 | **4** | **1** |
+| 长任务合计 | **1583 ms** | **416 ms** |
+| 最长长任务 | 409 ms | 416 ms |
+| 卡顿帧（rAF 间隔 >50 ms） | **4** | **1** |
+
+结论：把「拖动期间每秒数次 0.4 s 冻结」压成「停止后一次 0.4 s 重排」；剩余单次长任务来自引擎同步布局，插件侧无法再拆（vendor `renderAsync` 只分片内容渲染）。代价是拖动期间画布仍为旧尺寸（≤180 ms），停止后立即补上。测试：`tests/view-resize.test.ts` 6 例（阈值边界 / 拖动期不重排 / 窗口重置 / 取消 / 大图切小图）。
+
+**U2 只读嵌入角标（2026-11-04）**
+
+嵌入与文件视图外观一致，但没有任何编辑入口；此前没有可见标识（用户会反复尝试双击/拖拽）。现在在挂引擎的路径上创建 `span.tmm-embed-readonly`（`createSpan`，文案 `mindmapEmbed.readonly`：只读 / Read-only），绝对定位在容器右上角、`pointer-events: none`、不参与布局；空态/超限大纲/失败提示不加（各自已有可见文案）。
+
+实机（`示例/测试/嵌入示例.md`，阅读/实时预览）：
+
+| 项 | 读数 |
+| --- | --- |
+| 角标数 / 文案 | 1 个可见（共 1 个渲染中的嵌入）/ `只读` |
+| 尺寸与落点 | 36×19 px；距容器上边 7 px、右边 9 px（700×279 的嵌入内） |
+| 计算样式 | `opacity 0.85`、`pointer-events: none` |
+| `dev:errors` | `No errors captured.` |
+
+（无头视觉探针同步加断言：`checkEmbed` 要求 `.tmm-embed-readonly` 恰好一个且文案为 `只读`；`verify:visual` 的 `embed` 场景通过。）
+
+**本轮门禁**：`npm test` **103 文件 / 2789 用例全通过**（全局 `testTimeout` 已从 30 s 收回 **5 s**；压力用例挂用例级超时：5 万级深树 30 s、缓存填充 15 s）；`npm run lint` 0 warning；`npm run check:dead-code` 通过；`verify:visual --require-chrome` **15 场景 / 19 探针全通过**；`lint:css` 通过。

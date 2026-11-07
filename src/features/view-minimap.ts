@@ -83,6 +83,17 @@ interface MiniMapSession {
 	image: HTMLImageElement;
 	viewBox: HTMLElement;
 	geometry: MiniMapGeometry | null;
+	/**
+	 * 画布尺寸缓存（视口框投影用）。
+	 *
+	 * 为什么不是每帧读：`getCanvasSize` 走 `getBoundingClientRect`，而视口框每次
+	 * 更新都会写 `style.left/top/...` ⇒ 下一帧再读就是一次强制布局（平移/缩放
+	 * 期间每帧一次）。刷新点只有两处：引擎 `resize` 事件（vendor `resize()`
+	 * **无条件**派发，窗口/侧栏尺寸变化必经）与 `refresh`/`applyFrame` 的取样。
+	 * **不能**退回 `geometry.canvas`：那是上次绘制的快照，可能到 30s 节拍才更新
+	 * （K140，2026-10-26 实机 29.7s 才动的根因）。
+	 */
+	canvasSize: MiniMapSize | null;
 	enabled: boolean;
 	ready: boolean;
 	visible: boolean;
@@ -150,6 +161,7 @@ export function setupMiniMap(view: MiniMapContext): void {
 		image,
 		viewBox,
 		geometry: null,
+		canvasSize: null,
 		enabled: false,
 		ready: false,
 		visible: false,
@@ -176,6 +188,9 @@ export function setupMiniMap(view: MiniMapContext): void {
 		drawWhenLanded(session);
 	});
 	binder.onEngine(mindMap, 'resize', () => {
+		// 画布尺寸缓存的**唯一刷新点**（vendor `resize()` 无条件派发；视口框投影
+		// 不再每帧读实时矩形，见 `MiniMapSession.canvasSize`）
+		session.canvasSize = getCanvasSize(mindMap) ?? session.canvasSize;
 		noteChange(session);
 		// 窗口尺寸变化是**用户手势**：与渲染落地分流，淡出后也应重新亮起
 		// （画布变窄后「100% 下装不下」往往才成立，用户需要它）
@@ -308,6 +323,9 @@ function refresh(session: MiniMapSession): void {
 		disable(session);
 		return;
 	}
+	// 判据与首帧取图共用这一次读数：缓存同步更新，后续视口框投影直接取用
+	// （不再每帧 `getBoundingClientRect`，见 MiniMapSession.canvasSize）
+	session.canvasSize = canvasSize;
 	// 判据与首帧取图共用**同一份**全树测量：同一时刻、同一口径，且省一遍遍历
 	// （此前判据 1 次 + `buildMiniMapMarks` 内部 1 次 + 取图 1 次）。
 	const measured = measureMiniMapContent(mindMap);
@@ -346,6 +364,9 @@ function disable(session: MiniMapSession): void {
 	session.dirty = false;
 	session.drawAfterRender = false;
 	session.geometry = null;
+	// 判据失效后画布尺寸缓存一并清掉：重新启用时由 `refresh` 重新读数，
+	// 不让「停用期间窗口变窄/变宽」的旧值带进下一次投影。
+	session.canvasSize = null;
 	session.lastDrawAt = 0;
 	// 悬停态必须复位：面板一隐藏（`visibility: hidden` + `pointer-events: none`）
 	// 就收不到 `mouseleave`，残留的 `hovering=true` 会让重新启用后的会话永不淡出
@@ -511,6 +532,9 @@ function applyFrame(session: MiniMapSession, frame: MiniMapFrame): void {
 		canvas: frame.canvas,
 		signature: frame.signature,
 	};
+	// 取图这一拍拿到的画布尺寸同样是最新的（`captureMiniMap` 自测或调用方传入），
+	// 顺手刷新缓存——淡出重亮、切布局补画都会经过这里。
+	session.canvasSize = frame.canvas;
 	session.panel.style.width = `${frame.panel.width}px`;
 	session.panel.style.height = `${frame.panel.height}px`;
 	session.image.src = frame.image;
@@ -636,12 +660,13 @@ function updateBox(session: MiniMapSession): void {
 	const box = projectViewportBox({
 		content: geometry.content,
 		panel: geometry.panel,
-		// 画布尺寸读**实时**量测：`geometry.canvas` 只是上次绘制时的快照，窗口
-		// 缩放后到下一次 `draw`（最长 30s 刷新窗口）之前都是旧的 ⇒ 框会按旧画布
-		// 投影，大小与位置双错（2026-10-26 实机：6× 下宽度停在 14.5%，正确
-		// 20.7%；延迟 29.7s）。面板尺寸仍用快照——它必须与面板 DOM 当前值一致
-		// （`applyFrame` 写入；CSS 过渡期间百分比随面板同步缩放）。
-		canvas: getCanvasSize(mindMap) ?? geometry.canvas,
+		// 画布尺寸取**resize 事件刷新的缓存**：`getCanvasSize` 是实时矩形（强制
+		// 布局），每帧读会在平移/缩放期间形成「写样式 → 读矩形」的抖动；而
+		// `geometry.canvas` 是绘制快照，最长 30s 才更新（2026-10-26 实机：6× 下
+		// 宽度停在 14.5%、正确 20.7%，延迟 29.7s）——两者都不能作为每帧来源。
+		// 缓存缺失（首帧前 / 刚启用）才退回实时读。面板尺寸仍用快照——它必须与
+		// 面板 DOM 当前值一致（`applyFrame` 写入；CSS 过渡期间百分比随面板同步缩放）。
+		canvas: session.canvasSize ?? getCanvasSize(mindMap) ?? geometry.canvas,
 		transform: getDrawTransform(mindMap),
 	});
 	if (!box) {

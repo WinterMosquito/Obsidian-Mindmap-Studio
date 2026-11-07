@@ -4,7 +4,8 @@
  * 服务对象：节点配色指令 `%%#89CFF0%%`（`features/node-inline-tokenize` 解析、
  * `engine/mindmap-colors` 落地）、「自定义」入口的人类输入（`parseColorInput`）、
  * 自定义整篇配色（`engine/mindmap-palette.deriveCustomPalette` 用 `mixHex` 派生
- * 五档）、**节点色阶**（`nodeColorScale`：指令主色 → 填充 / 线条 / 文字）与着色
+ * 五档）、**节点色阶**（`nodeColorScale`：指令色 → 填充 / 文字；结构线另有出处，
+ * 见 `engine/mindmap-theme-presets.nodeLineColorOf`）与着色
  * 节点的内容色阶（`nodeContentTones`）。都是可直测的纯计算，故放 domain。
  */
 
@@ -114,6 +115,63 @@ export function mixHex(from: string, to: string, ratioTo: number): string {
 }
 
 /**
+ * `#rrggbb` → HSL（H 0–360、S / L 0–100）；非法输入返回 null。
+ *
+ * 用途：自定义整篇配色要**只改明度、保留色相**（见
+ * `engine/mindmap-palette.deriveCustomPalette`），混白会把饱和度一起冲掉。
+ */
+export function hexToHsl(
+	hex: string,
+): { h: number; s: number; l: number } | null {
+	const color = normalizeHexColor(hex);
+	if (!color) {
+		return null;
+	}
+	const r = Number.parseInt(color.slice(1, 3), 16) / 255;
+	const g = Number.parseInt(color.slice(3, 5), 16) / 255;
+	const b = Number.parseInt(color.slice(5, 7), 16) / 255;
+	const max = Math.max(r, g, b);
+	const min = Math.min(r, g, b);
+	const lightness = (max + min) / 2;
+	const delta = max - min;
+	if (delta === 0) {
+		return { h: 0, s: 0, l: lightness * 100 };
+	}
+	const saturation = delta / (1 - Math.abs(2 * lightness - 1));
+	let hue: number;
+	if (max === r) {
+		hue = ((g - b) / delta) % 6;
+	} else if (max === g) {
+		hue = (b - r) / delta + 2;
+	} else {
+		hue = (r - g) / delta + 4;
+	}
+	hue *= 60;
+	return {
+		h: hue < 0 ? hue + 360 : hue,
+		s: saturation * 100,
+		l: lightness * 100,
+	};
+}
+
+/** HSL（H 0–360、S / L 0–100）→ `#rrggbb`；S / L 会被夹到合法区间 */
+export function hslToHex(h: number, s: number, l: number): string {
+	const hue = ((h % 360) + 360) % 360;
+	const saturation = Math.min(100, Math.max(0, s)) / 100;
+	const lightness = Math.min(100, Math.max(0, l)) / 100;
+	const k = (n: number): number => (n + hue / 30) % 12;
+	const a = saturation * Math.min(lightness, 1 - lightness);
+	const channel = (n: number): number =>
+		lightness -
+		a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+	const toHex = (value: number): string =>
+		Math.round(value * 255)
+			.toString(16)
+			.padStart(2, '0');
+	return `#${toHex(channel(0))}${toHex(channel(8))}${toHex(channel(4))}`;
+}
+
+/**
  * **自定义整篇配色**的三档文字色：浅底用深字、深底用白字。
  *
  * 深字取亮色主题的正文色 `#1e293b`（与 `mindmap-palette.TEXT_LIGHT.secondText`
@@ -184,55 +242,42 @@ export function contrastRatio(a: string, b: string): number {
 const NODE_INK_PREFERRED = '#111827';
 
 /**
- * 节点色阶：`%%#hex%%` 的**主色** → 填充 / 线条 / 文字三档（2026-10-29 用户裁决）。
+ * 节点色阶：`%%#hex%%` 的**原色** → 填充 / 文字两档。
  *
- * ## 为什么指令色不再是「填充色」
- * 菜单给出的取值来自整篇配色的 `rootFill`（`mindmap-palette.paletteNodeColor`），
- * 那是**一个节点**的中深色（设计约束见 `mindmap-theme-presets.PALETTES`：承载
- * 反白字）。节点色沿子树下传，一支动辄几十个节点 —— 直接把中深色铺满整支，
- * 就是大面积高饱和实色：白字/黑字都被迫贴着 4.5 的底线（实测 4.82–5.41），
- * 同时丢掉「深字浅底」的阅读优势（Buchner & Baumgartner 2007：正极性校对成绩
- * 稳定更好，与照度、对比度无关）。
+ * ## 写的颜色就是画布上的填充色（2026-11-04 用户裁决）
+ * 早先把指令色当「色相锚」、填充洗成 16% 的浅色（2026-10-29 方案），换来的是
+ * **写的和显示的对不上**：选 `#2e9e8f` 得到 `#deefed`，看着像没生效（「显示不
+ * 清楚是我们设定的颜色不合理，而不是颜色的问题」）。现在直出——颜色不合适当场
+ * 换色板，不在渲染期偷偷加工。
  *
- * ## 三档按面积分配（Itten 的面积-明度反比）
- * - `fill`：大面积填充 = 主色向画布白混 84%（L* ≈ 91–93、C* 6–10，深字对比 ≥ 13；
- *   石板那支 C* ≈ 2 是刻意的降噪档）；比「只差 2–5%」的整篇二级填充深一档，
- *   才在整图缩放下看得出色族；
- * - `line`：连线 / 描边 = **保留主色**。1.5px 细线面积小、视觉权重在「长度」上，
- *   由它承担「这是哪一支」的辨识度；也是小地图墨色的来源；
- * - `ink`：`nodeInkColor(fill)` —— 浅底上恒为柔和深灰蓝，不再出现白字/黑字跳变。
+ * ## 两档
+ * - `fill`：就是这个色；
+ * - `ink`：`nodeInkColor(fill)` —— 深底白字、浅底柔和深字，按填充亮度现算，
+ *   任何 hex 都有 ≥4.5 的文字（最差退纯黑/纯白）。
  *
- * **不读主题**：写进文件的实色不随明暗变（既有口径），混色基准因此是恒定的
- * 画布白 `#ffffff`，深色主题下同一份文件仍得到同一组颜色。
+ * **结构线（连线 / 描边）不在这里**：那是「同色相深一档」，需要预设配对表
+ * （`engine/mindmap-theme-presets.NODE_COLORS` + `nodeLineColorOf`）。把它塞进
+ * domain 只能是「线 = 填充」这一种退化答案，与画布上的实际取色相反——2026-11-06
+ * 审核删掉了这个字段（留着就是第二份「线是什么」的定义）。
+ *
+ * **不读主题**：写进文件的实色不随明暗变（既有口径），深色主题下同一份文件
+ * 得到同一组颜色。
  */
 export interface NodeColorScale {
 	fill: string;
-	line: string;
 	ink: string;
 }
 
 /**
- * 主色 → 填充的混色比例（0.84 = 只留 16% 主色）。
+ * 原色 → 两档色阶（节点填充与文字的**唯一**派生点）。
  *
- * 取值理由：整篇配色的 `secondFill` 是 0.86（与画布只差 2–5%），在整图缩放下
- * 几乎无色；再浅一档（0.88）连「哪一支是什么颜色」都要靠并排看。0.84 落在
- * L* ≈ 91–93、C* 6–10（同上，石板除外）：既在大色块下不压屏（深字对比仍有
- * ≥ 13:1），又能让色族在 fit 缩放下可辨。
- */
-const NODE_FILL_MIX = 0.84;
-/** 混色基准（画布白；不随明暗切换，见上面「不读主题」） */
-const NODE_FILL_BASE = '#ffffff';
-
-/**
- * 主色 → 三档色阶（节点级配色的**唯一**派生点）。
- *
- * 入参是归一后的 `#rrggbb`（脏值兜底为柔和墨色，保证永不返回非法值）；
- * `line` 同时服务 `lineColor` 与 `borderColor` —— 二者语义都是「结构线」。
+ * 入参是归一后的 `#rrggbb`（脏值兜底为柔和墨色，保证永不返回非法值）。
+ * `lineColor` / `borderColor` 由 `engine/mindmap-colors` 经 `nodeLineColorOf`
+ * 取（预设查表 / 自定义按同色相深一档），本函数不参与。
  */
 export function nodeColorScale(base: string): NodeColorScale {
 	const color = normalizeHexColor(base) ?? NODE_INK_PREFERRED;
-	const fill = mixHex(color, NODE_FILL_BASE, NODE_FILL_MIX);
-	return { fill, line: color, ink: nodeInkColor(fill) };
+	return { fill: color, ink: nodeInkColor(color) };
 }
 
 /** 节点正文墨色（节点级配色专用）：首选柔和色，不达标才退纯黑/纯白 */
@@ -262,9 +307,9 @@ export function nodeInkColor(fill: string): string {
  * 三者都只依赖节点底色与墨色，不读主题变量——导出 SVG 与屏幕因此同一份字面量。
  */
 export interface NodeContentTones {
-	ink: string;
-	chip: string;
-	border: string;
+	readonly ink: string;
+	readonly chip: string;
+	readonly border: string;
 }
 
 /** 码块与底色的最小可见阶差（WCAG 比值；1.12 ≈ 一眼能看出「这里有一块」） */
@@ -273,23 +318,81 @@ const CHIP_MIN_CONTRAST = 1.12;
 const CHIP_SHIFT = 0.12;
 /** 已贴边时的反向兜底：朝墨色偏，保证码块仍有一块可辨的底 */
 const CHIP_SHIFT_TOWARD_INK = 0.1;
-/** 表格线与表格外框的墨色比例（45% 在任意底色上都看得出网格） */
+/** 表格线与表格外框的墨色比例（45% 起步；深底上不够时按步进加深，见 `tableLineTone`） */
 const BORDER_INK_MIX = 0.45;
+/** 表格线与底色的最小对比（结构线索，宁可重一点也不该消失） */
+const TABLE_LINE_MIN_CONTRAST = 2;
+/** 深底兜底的最大墨色比例（再深就等于把网格画成实线） */
+const TABLE_LINE_MAX_MIX = 0.7;
 
+/**
+ * 表格线 / 外框色：45% 墨色起步，**深底上按 5% 步进加深到 ≥2:1**。
+ *
+ * 固定 45% 在浅底上够用，但节点色直出后底色普遍变深（2026-11-05 新色板的
+ * `#e11d48` 实测只有 1.88:1），网格线会糊成一片。判据是**实际达成的对比**，
+ * 不是亮度阈值——与 `nodeContentTones` 里 chip 的兜底同一思路。
+ */
+function tableLineTone(background: string, ink: string): string {
+	let mix = BORDER_INK_MIX;
+	let color = mixHex(background, ink, mix);
+	while (
+		mix < TABLE_LINE_MAX_MIX &&
+		contrastRatio(color, background) < TABLE_LINE_MIN_CONTRAST
+	) {
+		mix += 0.05;
+		color = mixHex(background, ink, mix);
+	}
+	return color;
+}
+
+/**
+ * 派生色阶缓存（2026-11-04 性能批，见 nodeContentTones 的说明）。
+ *
+ * 键是**归一后**的 `#rrggbb`（`#89CFF0` / `#89cff0` / `#8cf` 共用一条）：节点填充
+ * 只有「整篇配色五档 + 节点级主色混白」少数几种，命中率接近 100%。
+ * 条目数上限防御脏数据；LRU 提升与 `features/node-inline-tokenize` 的段缓存同口径。
+ */
+const CONTENT_TONES_CACHE_MAX = 64;
+const contentTonesCache = new Map<string, NodeContentTones>();
+
+/**
+ * 着色节点内的内容色阶（码块 / 表头 / 网格线）。返回值**共享且只读**——调用方
+ * 不得原地修改（`NodeContentTones` 的字段均为 readonly）。
+ *
+ * 缓存理由（2026-11-04 实测）：单次 ≈2.36 µs（正则 + 两次对比度 + 两次混色），
+ * 而每个自绘节点在「首帧前预测量」与「正式内容构建」各读一次——5000 节点全着色图
+ * 单次打开约 1 万次同值重算（≈24 ms），节点拖宽 / 字体重测还会再付。
+ */
 export function nodeContentTones(fill: string): NodeContentTones {
 	const background = normalizeHexColor(fill) ?? '#ffffff';
+	const cached = contentTonesCache.get(background);
+	if (cached) {
+		// LRU 提升：删后重插 → 回到队尾
+		contentTonesCache.delete(background);
+		contentTonesCache.set(background, cached);
+		return cached;
+	}
 	const ink = nodeInkColor(background);
 	// 码块要与底色拉开，方向必须**背离墨色**（白墨→压暗、黑墨→提亮）
 	const awayFromInk = ink === '#ffffff' ? '#000000' : '#ffffff';
 	const lifted = mixHex(background, awayFromInk, CHIP_SHIFT);
-	return {
+	const tones: NodeContentTones = {
 		ink,
 		chip:
 			contrastRatio(lifted, background) >= CHIP_MIN_CONTRAST
 				? lifted
 				: mixHex(background, ink, CHIP_SHIFT_TOWARD_INK),
-		border: mixHex(background, ink, BORDER_INK_MIX),
+		border: tableLineTone(background, ink),
 	};
+	while (contentTonesCache.size >= CONTENT_TONES_CACHE_MAX) {
+		const oldest = contentTonesCache.keys().next().value;
+		if (oldest === undefined) {
+			break;
+		}
+		contentTonesCache.delete(oldest);
+	}
+	contentTonesCache.set(background, tones);
+	return tones;
 }
 
 /**
@@ -356,4 +459,114 @@ export function inheritedColorOf<T extends { parent?: T | null }>(
 		}
 	}
 	return null;
+}
+
+/**
+ * 子树里**已经没人可挡**的哨兵 `%%none%%`：把某个节点的颜色撤掉之后，它那些
+ * 「当初只为挡住这一支父色」的哨兵不再表达任何东西——屏上照旧是整篇配色，
+ * 文件里却白留一行注释（2026-11-04 实机：删掉父色后 `%%none%%` 仍在）。
+ *
+ * 判据与 `walkColorDirectives` 同源，只是只看**自己这一支**：
+ * - 自身是 `%%none%%` → 收下，并继续下探（它的子孙当初也靠它挡住同一个色源）；
+ * - 自身是 `#rrggbb` → **整支止步**：它重新成了色源，子孙的哨兵挡的是它，
+ *   删掉会让那些子孙反而吃到它的颜色（与本次操作无关）；
+ * - 自身没写指令 → 继续下探。
+ *
+ * `root` 自身不进结果，它的语义由 `rootDirective` 显式告知——**必须传「即将写入
+ * 的那个指令」而不是让本函数去读**：调用方据此可以在**同一次批量**里同时写主改动
+ * 与清理（读实时数据就等于要求先落地，多付一轮整树重渲，2026-11-06 收敛）。
+ * `rootDirective` 是十六进制时直接返回空：它成了新色源，子孙的哨兵挡的正是它。
+ *
+ * 返回顺序＝先序（children 原顺序），调用方按此批量写回，落盘顺序稳定。
+ */
+export function orphanSentinels<T extends { children?: readonly T[] | null }>(
+	root: T,
+	readDirective: (node: T) => string | null,
+	rootDirective: string | null,
+): T[] {
+	// 本节点即将成为色源（换了某个颜色）：子孙的哨兵挡的正是它，删掉等于让它们
+	// 反而吃到这个颜色（与本次操作无关，用户也没选它们）。
+	if (rootDirective !== null && rootDirective !== COLOR_DIRECTIVE_NONE) {
+		return [];
+	}
+	const found: T[] = [];
+	const stack: T[] = [];
+	/** 逆序压栈 ⇒ 出栈顺序与 children 原顺序一致（与 walkColorDirectives 同口径） */
+	const descend = (node: T): void => {
+		const children = node.children;
+		if (!children) {
+			return;
+		}
+		for (let index = children.length - 1; index >= 0; index--) {
+			stack.push(children[index]!);
+		}
+	};
+	descend(root);
+	while (stack.length > 0) {
+		const node = stack.pop()!;
+		const own = readDirective(node);
+		if (own === null) {
+			descend(node);
+			continue;
+		}
+		// 非空只有两种：哨兵（可删，继续下探）与十六进制（新色源，整支保留）
+		if (own === COLOR_DIRECTIVE_NONE) {
+			found.push(node);
+			descend(node);
+		}
+	}
+	return found;
+}
+
+/**
+ * 「仅本节点」作用域（设置项 `nodeColorScope === 'node'`）的哨兵落点：给这些节点的
+ * **直接子节点**各补一条 `%%none%%`，让本次上色不外溢到子树。
+ *
+ * ## 为什么改子节点，而不是改渲染
+ * 继承（自身指令 → 最近祖先）是正文语义的一部分，不是视图偏好：同一个文件换个库、
+ * 换台机器、发给别人都得是同一个样子。因此「只给这一个节点上色」只能**在正文里**
+ * 表达，而白话里唯一能说「到此为止」的句式就是哨兵（`COLOR_DIRECTIVE_NONE`：
+ * 显式无节点色 + 阻断祖先色下传）。渲染侧一个字都不用改。
+ *
+ * ## 只补一层，不补整片
+ * 哨兵把 `null` 传给后代，继续往下写等于重复注释（`walkColorDirectives` 同口径）。
+ *
+ * ## 跳过谁
+ * - **本次也要上色的节点**（`colored`，多选时父子同选）：它马上就有自己的指令，
+ *   哨兵会被同批覆盖，写了也是白写；
+ * - **自己已经有指令的节点**：十六进制是「这一支我另有安排」，哨兵是「我显式要
+ *   默认」，两者都是用户此前的显式选择——本动作不越权改写（与 `orphanSentinels`
+ *   同一条口径）。
+ *
+ * ## 代价（调用方要认）
+ * 哨兵让子节点**回落到整篇配色**，而不是「保持它原本从更高祖先继承到的颜色」——
+ * 注释语法里没有「只挡这一层、继续吃上上层的色」这种表达。所以给一个深处节点
+ * 上色并选「仅本节点」时，它下面那一支会变成整篇配色，而不是祖上的颜色。
+ *
+ * ## 回收
+ * 本节点一旦撤色（改写成哨兵或删掉指令），这些哨兵就再没东西可挡，
+ * `orphanSentinels` 会把它们一并删掉——两条判据互为对偶，勿在别处另写一份。
+ *
+ * 返回顺序＝`roots` 的给定顺序 × 各自 `children` 的原顺序（写入顺序因此稳定）。
+ */
+export function scopeSentinels<T extends { children?: readonly T[] | null }>(
+	roots: readonly T[],
+	readDirective: (node: T) => string | null,
+	colored: ReadonlySet<T>,
+): T[] {
+	const found: T[] = [];
+	const seen = new Set<T>();
+	for (const root of roots) {
+		for (const child of root.children ?? []) {
+			if (seen.has(child) || colored.has(child)) {
+				continue;
+			}
+			if (readDirective(child) !== null) {
+				continue;
+			}
+			seen.add(child);
+			found.push(child);
+		}
+	}
+	return found;
 }

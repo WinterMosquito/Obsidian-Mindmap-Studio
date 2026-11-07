@@ -36,6 +36,7 @@ import {
 	EMBED_CONTAINER_CLASS,
 	EMBED_NOTICE_CLASS,
 	EMBED_OUTLINE_CLASS,
+	EMBED_READONLY_CLASS,
 	embedDisplayTree,
 	parseEmbedLayoutDirective,
 	shouldRenderOutline,
@@ -310,7 +311,7 @@ describe('跨文件契约', () => {
 	 * 首次布局都按容器尺寸换算，高度为 0 时嵌入会**静默不建引擎**——块体看起来
 	 * 「什么都没渲染」，却没有任何单测会红）。删掉那条规则或改错类名，本用例报红。
 	 */
-	it('styles.css 含四个嵌入类名与画布高度基准', () => {
+	it('styles.css 含五个嵌入类名与画布高度基准', () => {
 		const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
 		for (const cls of [
@@ -318,12 +319,18 @@ describe('跨文件契约', () => {
 			EMBED_CANVAS_CLASS,
 			EMBED_NOTICE_CLASS,
 			EMBED_OUTLINE_CLASS,
+			EMBED_READONLY_CLASS,
 		]) {
 			expect(css, `styles.css 缺少 .${cls}`).toContain(`.${cls}`);
 		}
 		expect(css).toMatch(
 			/\.tmm-embed-canvas\s*\{[^}]*height:\s*var\(--tmm-embed-height/,
 		);
+	});
+
+	it('只读角标有双语词条（嵌入没有编辑入口的可见提示）', () => {
+		expect(t('zh', 'mindmapEmbed.readonly')).toBe('只读');
+		expect(t('en', 'mindmapEmbed.readonly')).toBe('Read-only');
 	});
 
 	it('空态与超限提示用独立 i18n 词条（降级不得静默）', () => {
@@ -473,5 +480,22 @@ describe('跨文件契约', () => {
 		expect(mainSource).toMatch(
 			/themeStyle: this\.settings\.defaultThemeStyle/,
 		);
+	});
+
+	it('节点配色的作用范围同样由组合根注入：嵌入不自己读 settings', () => {
+		const source = readFileSync(
+			new URL('../src/features/mindmap-codeblock.ts', import.meta.url),
+			'utf8',
+		);
+		const mainSource = readFileSync(
+			new URL('../src/main.ts', import.meta.url),
+			'utf8',
+		);
+		// 创建期写 data 树时透传 config：只读嵌入与可编辑视图同一个口径
+		expect(source).toMatch(
+			/applyColorDirectivesToTree\(tree, colorDirectiveOf, config\.colorLine\)/,
+		);
+		expect(source).not.toMatch(/settings\.nodeColorScope/);
+		expect(mainSource).toMatch(/colorLine: !isNodeOnlyColorScope\(/);
 	});
 });

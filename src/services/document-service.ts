@@ -119,7 +119,30 @@ export interface SavePipelineDeps {
 	 * `schedule()` 不再排程（防告警疲劳），显式 save 不受影响，一次成功即恢复。
 	 */
 	onAutoSaveSuspended?(): void;
+	/**
+	 * 一轮排空**成功结束**（含「无差异跳过写盘」）时的回调：视图据此把状态栏
+	 * 从「保存中」切到「已保存」。冲突跳过与写盘异常不调用（两者已有各自的
+	 * 「未保存」语义，见 onExternalChange / onSaveError）。
+	 */
+	onSaved?(file: TFile): void;
+	/**
+	 * autoSave **关闭**时「有没有未落盘的改动」的判定结果（`SchedulePipeline.checkDirty`，
+	 * 只读、不写盘）。`false` ＝ 与加载基线逐字相同（回到加载态 / 还没编辑过）。
+	 *
+	 * 与 `onSaved` 的分工：`onSaved` 来自真的排空过一轮（含无差异跳过），本回调
+	 * 来自「根本没排程、只做比较」的路径——两者都终结「保存中」，但只有前者能
+	 * 说「刚写过盘」。带 `file`：防抖窗口内视图可能已换文件，判决属于旧文件。
+	 */
+	onDirty?(dirty: boolean, file: TFile): void;
 }
+
+/**
+ * `SavePipeline.schedule()` 的去向（见该方法文档）。
+ *
+ * 用字符串联合而不是 boolean：调用方要区分「排上了」「被挂起」「自动保存关着」
+ * ——三者对状态栏的含义完全不同（保存中 / 未保存 / 由 `onDirty` 判定）。
+ */
+export type ScheduleOutcome = 'scheduled' | 'off' | 'suspended' | 'noFile';
 
 /**
  * 保存管线：防抖调度 + 串行写盘排空 + 卸载前快照兜底。
@@ -133,6 +156,11 @@ export interface SavePipelineDeps {
  */
 export class SavePipeline {
 	private debouncer = createDebouncer(AUTO_SAVE_DEBOUNCE_MS);
+	/**
+	 * autoSave 关闭时的「只判定」防抖器（见 `checkDirty`）：与写盘防抖器分开，
+	 * 因为两者互斥地使用（同一时刻只有一个在排程），分开后语义不会互相干扰。
+	 */
+	private dirtyDebouncer = createDebouncer(AUTO_SAVE_DEBOUNCE_MS);
 	/** 串行写盘队列：所有 save 调用共享，调用方可 await 完整排空 */
 	private enqueue = createSerialQueue();
 	private saveInProgress = false;
@@ -203,24 +231,75 @@ export class SavePipeline {
 
 	constructor(private readonly deps: SavePipelineDeps) {}
 
-	/** 安排一次防抖自动保存（view-toolbar / view-node-actions 等外部模块调用） */
-	schedule(): void {
+	/**
+	 * 安排一次防抖自动保存（view-toolbar / view-node-actions 等外部模块调用）。
+	 *
+	 * **返回值分四种**（调用方据此决定状态栏说什么，别只判真假）：
+	 * - `scheduled`：真的排上了 → 报「保存中」；
+	 * - `suspended`：连续失败被挂起 → 报「未保存」（内容确实没落盘）；
+	 * - `off`：自动保存关闭 → 不报「保存中」（永远不会收尾），改由
+	 *   `checkDirty`（同样防抖）判定「有没有未落盘的改动」；
+	 * - `noFile`：还没有文件（加载中 / 已卸载）→ 什么也别报。
+	 */
+	schedule(): ScheduleOutcome {
 		// P1b 连续失败降级：挂起后不再排程（防告警疲劳）；显式 save 仍可用，
 		// 一次成功即解除挂起（见写盘成功路径）。
 		if (this.autoSaveSuspended) {
-			return;
+			return 'suspended';
 		}
-		if (!this.deps.isAutoSave() || !this.deps.getFile()) {
-			return;
+		const file = this.deps.getFile();
+		if (!file) {
+			return 'noFile';
+		}
+		if (!this.deps.isAutoSave()) {
+			// 自动保存关闭时仍要回答「有没有未落盘的改动」——否则编辑过的文档在
+			// 状态栏上没有任何线索（关掉一次性提示之后，用户只能靠记忆）。
+			// 只判定、不写盘：判据就是「本轮序列化 vs 加载基线」，与纯浏览守卫同源。
+			this.dirtyDebouncer.schedule(() => this.checkDirty(file));
+			return 'off';
 		}
 		this.debouncer.schedule(() => {
 			void this.save(undefined, undefined, { checkExternal: true });
 		});
+		return 'scheduled';
 	}
 
 	/** 取消尚未执行的防抖保存（文件切换/视图关闭时调用） */
 	cancelTimer(): void {
 		this.debouncer.cancel();
+		this.dirtyDebouncer.cancel();
+	}
+
+	/**
+	 * autoSave 关闭时的**只判定**轮次：内存正文是否已偏离加载基线。
+	 *
+	 * 不写盘、不动任何基线（`lastWritten` / `wroteSinceLoad` / 冲突提示），只经
+	 * `onDirty` 把判决交给视图。判据与 `save` 的纯浏览守卫**同源**——都走
+	 * `isAtLoadedState`，否则「状态栏说未保存、保存时却跳过」这类分叉迟早出现。
+	 *
+	 * 取不到快照（引擎已交班/销毁）或还没记基线（加载未完成）时**不表态**：
+	 * 此时任何结论都是猜的。
+	 */
+	private checkDirty(file: TFile): void {
+		const tree = this.deps.getSnapshotFor(file);
+		if (!tree) {
+			return;
+		}
+		const atLoadedState = this.isAtLoadedState(file, this.buildBody(tree));
+		if (atLoadedState === null) {
+			return;
+		}
+		this.deps.onDirty?.(!atLoadedState, file);
+	}
+
+	/**
+	 * 本轮正文是否**逐字等于加载基线**：`null` = 基线未知（尚未 `markLoaded`）。
+	 *
+	 * 纯浏览守卫（`save`）与 `checkDirty` 共用这一处，判据只有一份。
+	 */
+	private isAtLoadedState(file: TFile, body: string): boolean | null {
+		const loaded = this.loadedBody.get(file.path);
+		return loaded === undefined ? null : loaded === body;
 	}
 
 	/**
@@ -389,8 +468,8 @@ export class SavePipeline {
 						// Git / 同步盘平白多一个 diff。判据刻意不含文件头：布局/属性
 						// 由用户在属性面板改，本管线回贴的又是**磁盘当前值**，
 						// 那种改动不需要（也不该）带着正文一起重写。
-						const loadedBody = this.loadedBody.get(target.path);
-						const atLoadedState = loadedBody !== undefined && loadedBody === body;
+						// 判据与 `checkDirty`（autoSave 关闭时的状态栏判定）同源。
+						const atLoadedState = this.isAtLoadedState(target, body) === true;
 						// 「本会话写过盘」之后，回到加载态在磁盘上**是一次真实改动**
 						//（磁盘此刻是编辑后的内容），故守卫不成立、必须写盘；写回的
 						// 是加载时的原样正文，避免把没编辑过的行规范化一遍。
@@ -482,6 +561,18 @@ export class SavePipeline {
 				// 活快照若再变只可能是新编辑，而新编辑会自己排下一轮（见 `wroteDisk`）。
 				if (checkExternal && !aborted && wroteDisk && lastBody !== null) {
 					this.reconcileAfterSave(target, lastBody);
+				}
+				// 本轮排空成功（含无差异跳过）：通知视图「已保存」。冲突跳过
+				// （aborted）与异常（catch 内 break）不走这里——两者已分别经
+				// onExternalChange / onSaveError 给出「未保存」语义。
+				// 文件在排空期间被删除、或本轮根本没取到快照（引擎已交班 ⇒ 一行
+				// 都没写）时同样不报：状态栏的「已保存」只能来自真的排空过一轮。
+				if (
+					!aborted &&
+					lastBody !== null &&
+					this.deps.app.vault.getFileByPath(target.path)
+				) {
+					this.deps.onSaved?.(target);
 				}
 			} finally {
 				this.saveInProgress = false;

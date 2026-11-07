@@ -12,7 +12,7 @@ import type { App, TFile, WorkspaceLeaf } from 'obsidian';
 import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { EventBinder } from '../core/event-binder';
 import type { Language } from '../core/i18n';
-import type { StatusBarService } from '../services/status-bar';
+import type { SaveState, StatusBarService } from '../services/status-bar';
 import type { MindMapStudioSettings } from '../settings';
 import type { PreferenceKey, ViewStateStore } from '../services/view-state';
 
@@ -145,6 +145,13 @@ export interface MindMapViewContext
 	// ---- 行为 ----
 	/** 调度防抖保存（data 变更后调用） */
 	scheduleSave(): void;
+	/**
+	 * 当前保存状态（状态栏展示用；切换视图后由 `updateStatusBar` 重新推给服务）。
+	 *
+	 * 由视图在「排程 / 一轮成功 / 失败或冲突」三处更新；`idle` 表示尚未发生
+	 * 保存动作，状态栏只显示节点数。
+	 */
+	readonly saveState: SaveState;
 	/**
 	 * 节点内容提交完成通知（编辑面成员，见 `ViewNodeEditContext`）。
 	 * 装配面须同时具备本成员：右键菜单/工具栏等持有 `MindMapViewContext`

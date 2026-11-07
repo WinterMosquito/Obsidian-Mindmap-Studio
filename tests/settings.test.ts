@@ -21,7 +21,9 @@ import {
 	EXPORT_IMAGE_FORMAT_OPTIONS,
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
+	isNodeOnlyColorScope,
 	LAYOUT_OPTIONS,
+	NODE_COLOR_SCOPE_OPTIONS,
 	SAVE_LOCATION_OPTIONS,
 	THEME_OPTIONS,
 } from '../src/core/constants';
@@ -64,6 +66,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLineStyle: 'curve',
 			defaultTheme: 'dark',
 			defaultThemeStyle: 'borderless',
+			nodeColorScope: 'node',
 			saveLocation: 'folder',
 			saveFolder: '笔记/导图',
 			autoSave: false,
@@ -78,6 +81,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLineStyle: 'curve',
 			defaultTheme: 'dark',
 			defaultThemeStyle: 'borderless',
+			nodeColorScope: 'node',
 			saveLocation: 'folder',
 			saveFolder: '笔记/导图',
 			autoSave: false,
@@ -89,7 +93,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		});
 	});
 
-	it('defaultThemeStyle 白名单：合法边框样式保留，未知值与旧数据回退出厂默认（无边框）', () => {
+	it('defaultThemeStyle 白名单：合法边框样式保留，未知值与旧数据回退出厂默认（有边框）', () => {
 		expect(
 			sanitizeSettings({ defaultThemeStyle: 'borderless' }).defaultThemeStyle,
 		).toBe('borderless');
@@ -100,10 +104,39 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			expect(
 				sanitizeSettings({ defaultThemeStyle: bad }).defaultThemeStyle,
 				String(bad),
-			).toBe('borderless');
+			).toBe('default');
 		}
-		// 缺省（data.json 无此键）落到出厂默认「无边框」（2026-10-25 用户裁决）
-		expect(sanitizeSettings({}).defaultThemeStyle).toBe('borderless');
+		// 缺省（data.json 无此键）落到出厂默认「有边框」（2026-11-05 改回）
+		expect(sanitizeSettings({}).defaultThemeStyle).toBe('default');
+	});
+
+	/**
+	 * 节点配色作用范围（2026-11-06）：出厂**含子节点**＝本特性引入前的行为，
+	 * 升级后既有用户的观感零变化；`node` 档改变「上色写几行」与「连接线是否
+	 * 跟着节点色」，节点自身的填充 / 描边 / 文字仍完全由正文决定。
+	 */
+	it('nodeColorScope 白名单：两档保留，未知值与旧数据回退出厂「含子节点」', () => {
+		for (const option of NODE_COLOR_SCOPE_OPTIONS) {
+			expect(
+				sanitizeSettings({ nodeColorScope: option.value }).nodeColorScope,
+			).toBe(option.value);
+			// 作用范围的**唯一判定**：写入侧补哨兵、渲染侧跳过 lineColor 共用它
+			expect(isNodeOnlyColorScope(option.value)).toBe(option.value === 'node');
+		}
+		const report: SettingsSanitizeReport = { dropped: [] };
+		expect(
+			sanitizeSettings({ nodeColorScope: 'subtree-only' }, report)
+				.nodeColorScope,
+		).toBe('subtree');
+		expect(report.dropped, '非法作用范围须留痕').toContain('nodeColorScope');
+		for (const bad of ['', 'NODE', 42, null]) {
+			expect(
+				sanitizeSettings({ nodeColorScope: bad }).nodeColorScope,
+				String(bad),
+			).toBe(DEFAULT_SETTINGS.nodeColorScope);
+		}
+		// 缺省（data.json 无此键）落到出厂默认：与引入本设置前的行为一致
+		expect(sanitizeSettings({}).nodeColorScope).toBe('subtree');
 	});
 
 	it('defaultLineStyle 白名单：两态保留，旧词汇 auto/direct 与坏值回退折线', () => {
@@ -324,6 +357,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultLineStyle: DEFAULT_SETTINGS.defaultLineStyle,
 			defaultTheme: DEFAULT_SETTINGS.defaultTheme,
 			defaultThemeStyle: DEFAULT_SETTINGS.defaultThemeStyle,
+			nodeColorScope: DEFAULT_SETTINGS.nodeColorScope,
 			saveLocation: DEFAULT_SETTINGS.saveLocation,
 			saveFolder: DEFAULT_SETTINGS.saveFolder,
 			exportScale: DEFAULT_SETTINGS.exportScale,
@@ -347,6 +381,7 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 		'defaultThemeStyle',
 		'enableDrag',
 		'language',
+		'nodeColorScope',
 	];
 
 	it('首次应用（无快照）返回全部即时刷新键：视图走最完整路径', () => {
@@ -370,6 +405,15 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 			{ ...DEFAULT_SETTINGS },
 		);
 		expect(changed.size).toBe(0);
+	});
+
+	it('作用范围切换必须进差集：连接线着色变了，当前视图当场原地重算', () => {
+		expect([
+			...diffLiveRefreshKeys(
+				{ ...DEFAULT_SETTINGS },
+				{ ...DEFAULT_SETTINGS, nodeColorScope: 'node' },
+			),
+		]).toEqual(['nodeColorScope']);
 	});
 
 	it('只反映真变化的键（含「与新默认值同形」的 falsy 边界）', () => {

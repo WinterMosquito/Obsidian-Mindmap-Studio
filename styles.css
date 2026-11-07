@@ -670,6 +670,23 @@
   overflow: hidden;
 }
 
+/* 只读角标（嵌入形态没有编辑入口）：纯装饰，绝对定位不占布局、不吃指针 */
+.tmm-embed-readonly {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.4;
+  opacity: 0.85;
+  pointer-events: none;
+  user-select: none;
+}
+
 /* 空态 / 超限降级 / 渲染失败提示行：单行弱化，不抢正文注意力 */
 .tmm-embed-notice {
   padding: 6px 10px;

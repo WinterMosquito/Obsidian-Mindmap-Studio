@@ -12,15 +12,36 @@
  * 本模块零 vendor 依赖（仅常量与类型），可直接单测。
  */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_THEME_STYLE, PALETTE_OPTIONS } from '../src/core/constants';
-import { contrastRatio, nodeColorScale } from '../src/domain/color';
+import {
+	DEFAULT_THEME_STYLE,
+	normalizePalette,
+	PALETTE_OPTIONS,
+} from '../src/core/constants';
+import {
+	contrastRatio,
+	hexToHsl,
+	nodeColorScale,
+	relativeLuminance,
+} from '../src/domain/color';
 import { paletteNodeColor } from '../src/engine/mindmap-palette';
 import {
 	getThemeConfig,
 	resolveLineStyle,
 	supportsLineStyleSwitch,
 } from '../src/engine/mindmap-theme';
-import { PALETTES } from '../src/engine/mindmap-theme-presets';
+import {
+	NODE_COLORS,
+	nodeLineColorOf,
+	PALETTES,
+} from '../src/engine/mindmap-theme-presets';
+
+/** 读取 getThemeConfig 返回值中某一层级的节点 token */
+function tokenOf(
+	config: Record<string, unknown>,
+	level: 'root' | 'second' | 'node',
+): Record<string, unknown> {
+	return config[level] as Record<string, unknown>;
+}
 
 describe('supportsLineStyleSwitch（布局是否支持三态切换）', () => {
 	it('逻辑结构图 / 思维导图 / 组织结构图支持切换', () => {
@@ -115,14 +136,8 @@ describe('getThemeConfig（lineStyle 两态：偏好 / 布局 / 默认）', () =
 });
 
 describe('getThemeConfig（边框：节点外观，与主题色正交）', () => {
-	/** 读取某一层级的节点 token（getThemeConfig 返回 Record<string, unknown>） */
-	const tokenOf = (
-		config: Record<string, unknown>,
-		level: 'root' | 'second' | 'node',
-	): Record<string, unknown> => config[level] as Record<string, unknown>;
-
 	it('有边框（default）沿用色板：second / node 有填充与 1px 描边', () => {
-		// 出厂默认已改为无边框（2026-10-25 用户裁决），故这里**显式**取 default
+		// 显式传 id，避免用例依赖出厂默认值
 		for (const isDark of [false, true]) {
 			const config = getThemeConfig(
 				isDark,
@@ -164,22 +179,33 @@ describe('getThemeConfig（边框：节点外观，与主题色正交）', () =>
 			getThemeConfig(false, 'logicalStructure', 'straight', 'borderless'),
 			'root',
 		);
-		expect(root.fillColor).toBe('#4a90d9');
+		expect(root.fillColor).toBe(PALETTES.default.light.rootFill);
 		expect(root.borderWidth).toBe(0);
 	});
 
-	it('边框不得越权改字体度量与连线（各有单一来源）', () => {
-		const config = getThemeConfig(
-			false,
-			'logicalStructure',
-			'straight',
-			'borderless',
-		);
-		expect(tokenOf(config, 'node').fontSize).toBe(13);
-		expect(tokenOf(config, 'second').fontSize).toBe(14);
-		expect(config.marginX).toBe(60);
-		expect(config.marginY).toBe(24);
-		expect(config.lineWidth).toBe(1.5);
+	it('边框不得越权改字体度量与连线（两档取值完全一致）', () => {
+		// 不锁具体数值：字号 / 间距 / 线宽各有单一来源（2026-11-05 起字号梯度为
+		// 24/16/13），本用例只验证「换边框档位不会连带改它们」。
+		const metrics = (themeStyle: string): Record<string, unknown> => {
+			const config = getThemeConfig(
+				false,
+				'logicalStructure',
+				'straight',
+				themeStyle,
+			);
+			return {
+				rootFont: tokenOf(config, 'root').fontSize,
+				secondFont: tokenOf(config, 'second').fontSize,
+				nodeFont: tokenOf(config, 'node').fontSize,
+				secondWeight: tokenOf(config, 'second').fontWeight,
+				nodePaddingX: tokenOf(config, 'node').paddingX,
+				nodePaddingY: tokenOf(config, 'node').paddingY,
+				marginX: config.marginX,
+				marginY: config.marginY,
+				lineWidth: config.lineWidth,
+			};
+		};
+		expect(metrics('borderless')).toEqual(metrics('default'));
 	});
 
 	it('边框与主题色、连线偏好互不干扰（三维正交）', () => {
@@ -221,11 +247,6 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 	/** 从选项表派生（新增配色时这里不再需要手改，防漏测） */
 	const PALETTE_IDS = PALETTE_OPTIONS.map((option) => option.value);
 
-	const tokenOf = (
-		config: Record<string, unknown>,
-		level: 'root' | 'second' | 'node',
-	): Record<string, unknown> => config[level] as Record<string, unknown>;
-
 	const configOf = (
 		isDark: boolean,
 		palette: string,
@@ -233,18 +254,26 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 	): Record<string, unknown> =>
 		getThemeConfig(isDark, 'logicalStructure', 'straight', themeStyle, palette);
 
-	it('默认配色为蓝，逐值与改造前一致（升级零变化）', () => {
-		// 填充色只在「有边框」形态上可见；出厂默认已改无边框，故显式取 default
+	it('默认配色逐值取自 PALETTES.default（亮暗两档，升级即换肤）', () => {
+		// 填充色只在「有边框」形态上可见；文件记录可能是无边框，故显式取 default
 		const light = configOf(false, 'default');
-		expect(tokenOf(light, 'root').fillColor).toBe('#4a90d9');
-		expect(tokenOf(light, 'second').fillColor).toBe('#f1f5f9');
-		expect(tokenOf(light, 'node').fillColor).toBe('#f8fafc');
-		expect(tokenOf(light, 'second').borderColor).toBe('#cbd5e1');
-		expect(light.lineColor).toBe('#94a3b8');
+		expect(tokenOf(light, 'root').fillColor).toBe(
+			PALETTES.default.light.rootFill,
+		);
+		expect(tokenOf(light, 'second').fillColor).toBe(
+			PALETTES.default.light.secondFill,
+		);
+		expect(tokenOf(light, 'node').fillColor).toBe(
+			PALETTES.default.light.nodeFill,
+		);
+		expect(tokenOf(light, 'second').borderColor).toBe(
+			PALETTES.default.light.border,
+		);
+		expect(light.lineColor).toBe(PALETTES.default.light.line);
 
 		const dark = configOf(true, 'default');
-		expect(tokenOf(dark, 'root').fillColor).toBe('#2d2d2d');
-		expect(dark.lineColor).toBe('#4a4a4a');
+		expect(tokenOf(dark, 'root').fillColor).toBe(PALETTES.default.dark.rootFill);
+		expect(dark.lineColor).toBe(PALETTES.default.dark.line);
 	});
 
 	it('联系（关系连线）取更轻的辅助线：同连线色、1.5px、4,4 虚线、12px 标签', () => {
@@ -291,9 +320,26 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 		expect(darkRootTexts.size).toBe(1);
 	});
 
+	/**
+	 * 2026-11-05 配色 id 由植物/物品名改为颜色名。**只改名的读兼容**：
+	 * 存量 `data.json` 里的旧 id 打开即按对应新配色渲染，不能静默回落 default
+	 * （否则用户以为配色丢了）。
+	 */
+	it('旧配色 id 读兼容：六个别名逐一映射到新 id，脏值仍回落 default', () => {
+		expect(normalizePalette('mint')).toBe('teal');
+		expect(normalizePalette('amber')).toBe('orange');
+		expect(normalizePalette('rose')).toBe('crimson');
+		expect(normalizePalette('wisteria')).toBe('purple');
+		expect(normalizePalette('forest')).toBe('green');
+		expect(normalizePalette('slate')).toBe('grey');
+		// 新 id 原样、未知值回退
+		expect(normalizePalette('teal')).toBe('teal');
+		expect(normalizePalette('nope')).toBe('default');
+	});
+
 	it('配色与无边框正交：root 保留配色、second / node 被置透明', () => {
-		const config = configOf(false, 'mint', 'borderless');
-		expect(tokenOf(config, 'root').fillColor).toBe('#2e9e8f');
+		const config = configOf(false, 'teal', 'borderless');
+		expect(tokenOf(config, 'root').fillColor).toBe(PALETTES.teal.light.rootFill);
 		expect(tokenOf(config, 'node').fillColor).toBe('transparent');
 		expect(tokenOf(config, 'second').borderWidth).toBe(0);
 	});
@@ -304,14 +350,14 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 	 * 实机上两支几乎同色——本用例把「主色 ΔE ≥ 25 / 派生填充 ΔE ≥ 5」写成契约。
 	 *
 	 * 参与比较的档位**从选项表派生**（新增配色自动纳入，不会因为漏改一张手写表而
-	 * 静默漏测），只排除两档：`default`（整篇基准蓝，不是节点菜单项）与 `slate`
+	 * 静默漏测），只排除两档：`default`（整篇基准蓝，不是节点菜单项）与 `grey`
 	 * （刻意的中性降噪档，C* ≈ 13，不参与彩色两两比较）。
 	 */
 	const COLORFUL_PALETTES = PALETTE_IDS.filter(
-		(palette) => palette !== 'default' && palette !== 'slate',
+		(palette) => palette !== 'default' && palette !== 'grey',
 	);
 
-	it('彩色预设两两可辨：主色 ΔE76 ≥ 25、派生填充 ≥ 5，且主色都承载得住反白字', () => {
+	it('彩色预设两两可辨：主色 ΔE76 ≥ 25，节点色直出主色，且主色都承载得住反白字', () => {
 		const colorful = COLORFUL_PALETTES;
 		const lab = (hex: string): [number, number, number] => {
 			const channel = (index: number): number => {
@@ -343,16 +389,55 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 					deltaE(left, right),
 					`${colorful[i]} vs ${colorful[j]} 主色`,
 				).toBeGreaterThanOrEqual(25);
-				expect(
-					deltaE(nodeColorScale(left).fill, nodeColorScale(right).fill),
-					`${colorful[i]} vs ${colorful[j]} 派生填充`,
-				).toBeGreaterThanOrEqual(5);
 			}
 		}
 		for (const palette of colorful) {
 			const root = PALETTES[palette].light.rootFill;
+			// 2026-11-04 直出：节点填充就是主色本身，不再洗成浅档
+			expect(nodeColorScale(root).fill, `${palette} 直出`).toBe(root);
 			// root 承载反白字：设计约束是 ≥3:1（加粗大字可读）
 			expect(contrastRatio(root, '#ffffff'), palette).toBeGreaterThanOrEqual(3);
+		}
+	});
+
+	/**
+	 * 两套色板的**同色相**契约（2026-11-05 审核补漏）。
+	 *
+	 * `NODE_COLORS` 管「点给某个节点的填充 / 线条」，`PALETTES` 管「整篇层级色」，
+	 * 是同一套色语言的两种用途，但代码上只有人眼对齐——此前测试只锁了「两者不是
+	 * 同一个值」，把某个节点色挪 40° 也不会有红灯。
+	 *
+	 * 判据：同 id 的两个 hex 色相**差 ≤ 8°**（实测最大 3.6°，出现在 `default` 的
+	 * 210.6 / 214.2——差值来自六位取整与「填充按另一档明度反推」的浮点误差）；明度
+	 * 分工固定为「根色中深（承载反白字）→ 填充最浅（大面积铺开不压屏）→ 线条深于
+	 * 填充（fit 缩放下结构线仍可见）」。
+	 */
+	it('两套色板同色相：节点填充 / 线条与整篇根色不各说各话', () => {
+		const hueOf = (hex: string): number => {
+			const hsl = hexToHsl(hex);
+			if (!hsl) {
+				throw new Error(`不是合法色值：${hex}`);
+			}
+			return hsl.h;
+		};
+		/** 色相环上的最短距离（0–180） */
+		const hueGap = (a: string, b: string): number => {
+			const diff = Math.abs(hueOf(a) - hueOf(b));
+			return Math.min(diff, 360 - diff);
+		};
+		for (const palette of PALETTE_IDS) {
+			const { fill, line } = NODE_COLORS[palette];
+			const root = PALETTES[palette].light.rootFill;
+			expect(hueGap(fill, root), `${palette}：填充 vs 整篇根色`).toBeLessThanOrEqual(8);
+			expect(hueGap(line, fill), `${palette}：线条 vs 填充`).toBeLessThanOrEqual(8);
+			expect(
+				relativeLuminance(fill),
+				`${palette}：填充应浅于整篇根色`,
+			).toBeGreaterThan(relativeLuminance(root));
+			expect(
+				relativeLuminance(line),
+				`${palette}：线条应深于填充`,
+			).toBeLessThan(relativeLuminance(fill));
 		}
 	});
 
@@ -366,7 +451,7 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 
 	it('未知 / 空 / 大小写不符的配色回退「默认」（手改 data.json 不致渲染失败）', () => {
 		const defaultRoot = tokenOf(configOf(false, 'default'), 'root').fillColor;
-		for (const bad of ['nope', '', 'DEFAULT', 'mint ']) {
+		for (const bad of ['nope', '', 'DEFAULT', 'teal ']) {
 			expect(tokenOf(configOf(false, bad), 'root').fillColor, bad).toBe(defaultRoot);
 		}
 	});
@@ -402,6 +487,44 @@ describe('getThemeConfig（自定义整篇配色：一个十六进制 → 五档
 		expect(tokenOf(dark, 'root').color).toBe('#ffffff');
 	});
 
+	/**
+	 * 2026-11-05 实机对照的缺陷：同一个 `#2d62be`，预设「湛蓝」与自定义走两条
+	 * 派生路径 → 描边更深、连线更浅（比自己的描边还浅）、二级文字更黑。
+	 * 现在两边共用同一套明度阶梯，只允许色相/饱和度不同。
+	 */
+	it('自定义色与预设同一套明度阶梯（同色 → 同样的深浅与文字色）', () => {
+		const custom = configOf(false, '#2d62be');
+		const preset = configOf(false, 'blue');
+		expect(tokenOf(custom, 'root').fillColor).toBe(
+			tokenOf(preset, 'root').fillColor,
+		);
+		const lum = (value: unknown): number => relativeLuminance(value as string);
+		for (const level of ['second', 'node'] as const) {
+			expect(
+				Math.abs(
+					lum(tokenOf(custom, level).fillColor) -
+						lum(tokenOf(preset, level).fillColor),
+				),
+				level,
+			).toBeLessThan(0.04);
+		}
+		// 描边与连线也同阶梯（旧实现里连线反而比描边浅，结构感倒挂）
+		expect(
+			Math.abs(
+				lum(tokenOf(custom, 'second').borderColor) -
+					lum(tokenOf(preset, 'second').borderColor),
+			),
+		).toBeLessThan(0.04);
+		expect(
+			Math.abs(lum(custom.lineColor) - lum(preset.lineColor)),
+		).toBeLessThan(0.04);
+		// 二/三级文字色沿用预设那组固定值，不再按每档亮度各算一次
+		expect(tokenOf(custom, 'node').color).toBe(tokenOf(preset, 'node').color);
+		expect(tokenOf(custom, 'second').color).toBe(
+			tokenOf(preset, 'second').color,
+		);
+	});
+
 	it('亮 / 暗两档各自向背景靠拢（同一主色在暗色下派生更深）', () => {
 		const lightSecond = tokenOf(configOf(false, '#89cff0'), 'second')
 			.fillColor as string;
@@ -417,8 +540,17 @@ describe('getThemeConfig（自定义整篇配色：一个十六进制 → 五档
 		}
 	});
 
-	it('节点配色菜单的色值与配色数据同源（paletteNodeColor）', () => {
-		expect(paletteNodeColor('mint')).toBe(PALETTES.mint.light.rootFill);
+	it('节点配色菜单取「节点填充色」而非整篇根色（2026-11-05 分流）', () => {
+		// 填充是柔和浅色（写进正文、大面积铺开不刺眼），与整篇 rootFill（中深、承载反白字）不同
+		expect(paletteNodeColor('teal')).toBe(NODE_COLORS.teal.fill);
+		expect(paletteNodeColor('teal')).not.toBe(PALETTES.teal.light.rootFill);
+		// 线条是同色相深档（比填充深一截，用于结构与描边），与填充成对
+		expect(nodeLineColorOf(NODE_COLORS.teal.fill)).toBe(NODE_COLORS.teal.line);
+		expect(NODE_COLORS.teal.line).not.toBe(NODE_COLORS.teal.fill);
+		// 自定义 hex 没有配对：按同色相深一档（浅填充也要看得见结构线）
+		expect(nodeLineColorOf('#89cff0')).toBe('#228dc0');
+		// 深色输入不会黑成一团：L 下限 22 托底
+		expect(nodeLineColorOf('#123456')).toBe('#173859');
 	});
 });
 
@@ -433,7 +565,7 @@ describe('getThemeConfig（自定义整篇配色：一个十六进制 → 五档
 describe('generalizationLineMargin（概要括号不与「＋」按钮抢位）', () => {
 	it('各配色 / 明暗下都留出正留白，且不小于展开按钮的半径量级', () => {
 		for (const isDark of [false, true]) {
-			for (const palette of ['default', 'mint', '#89cff0']) {
+			for (const palette of ['default', 'teal', '#89cff0']) {
 				const margin = getThemeConfig(
 					isDark,
 					'logicalStructure',

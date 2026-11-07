@@ -9,7 +9,7 @@
  * mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
  */
 import { Menu, Plugin, TFile, TFolder } from 'obsidian';
-import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, SETTINGS_APPLY_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS, CODE_BLOCK_LANGUAGE } from './core/constants';
+import { VIEW_TYPE, SETTINGS_PERSIST_DEBOUNCE_MS, SETTINGS_APPLY_DEBOUNCE_MS, VIEW_STATE_PERSIST_MS, CODE_BLOCK_LANGUAGE, isNodeOnlyColorScope } from './core/constants';
 import { createDebouncer } from './core/concurrency';
 import {
 	MindMapStudioSettings,
@@ -149,6 +149,10 @@ export default class MindMapStudioPlugin extends Plugin {
 							lineStyle: this.settings.defaultLineStyle,
 							themePref: this.settings.defaultTheme,
 							themeStyle: this.settings.defaultThemeStyle,
+							// 只读嵌入跟全局作用范围：仅本节点档不把节点色写到连接线
+							colorLine: !isNodeOnlyColorScope(
+								this.settings.nodeColorScope,
+							),
 							lang: this.settings.language,
 						}),
 					),
@@ -503,6 +507,14 @@ export default class MindMapStudioPlugin extends Plugin {
 		this.forEachMindMapView((view) => {
 			view.refreshSearchBarLabels();
 		});
+		// 静态标签「思维导图」只作无视图时的占位：活动导图存在时用视图自身的
+		// 计数 + 保存状态覆盖它（否则切一次语言，状态栏的「已保存 / 未保存」消失）。
+		// 引擎未建好（加载中，`mindMap === null`）时不推：`updateStatusBar` 那条
+		// 分支会 `clear()`，把刚写上的静态标签一起抹掉，状态栏变空白。
+		const active = this.app.workspace.getActiveViewOfType(MindMapView);
+		if (active?.mindMap) {
+			updateStatusBar(active);
+		}
 	}
 
 	/**

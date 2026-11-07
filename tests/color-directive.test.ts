@@ -7,9 +7,10 @@
  *    仍按普通注释（渲染期隐藏，2026-10-27 用户裁决）；
  * 2. **继承**（`domain/color.walkColorDirectives`）：就近覆盖——自身指令优先，
  *    否则取最近祖先，清空指令即回落主题；
- * 3. **落地**（`engine/mindmap-colors`）：指令色是**主色**——填充取派生浅档、
- *    连线/描边保留主色、文字色按填充算（`domain/color.nodeColorScale`）；
- *    清空时删除样式键（否则残留覆盖会一直压着主题配色）。
+ * 3. **落地**（`engine/mindmap-colors`）：指令色**就是填充色**——填充原样、
+ *    连线/描边取同色相深一档（`mindmap-theme-presets.nodeLineColorOf`）、
+ *    文字色按填充亮度算（`domain/color.nodeColorScale`）；清空时删除样式键
+ *    （否则残留覆盖会一直压着主题配色）。
  *
  * 引擎侧只测纯函数与数据写入，不构造真实 `MindMap`（`syncNodeColorDirectives`
  * 用一个最小替身验证「有变化才重渲染」）。
@@ -25,11 +26,14 @@ import {
 	nodeContentTones,
 	nodeInkColor,
 	normalizeHexColor,
+	orphanSentinels,
 	parseColorInput,
 	relativeLuminance,
+	scopeSentinels,
 	walkColorDirectives,
 } from '../src/domain/color';
-import { topMostNodes } from '../src/engine/mindmap-nodes';
+import { branchLayerOf, topMostNodes } from '../src/engine/mindmap-nodes';
+import { NODE_COLORS } from '../src/engine/mindmap-theme-presets';
 import {
 	colorDirectiveOf,
 	setColorDirective,
@@ -148,48 +152,62 @@ describe('自定义颜色输入（十六进制 / RGB）', () => {
 	});
 });
 
-describe('节点色阶（主色 → 填充 / 线条 / 文字）', () => {
-	it('填充是主色向画布白混 84%（L* ≈ 92、深字可读），线条保留归一的原色', () => {
+describe('节点色阶（原色 → 填充 / 文字）', () => {
+	it('填充就是归一后的原色（2026-11-04 直出，不再向白混）', () => {
 		expect(nodeColorScale('#89CFF0')).toEqual({
-			fill: '#ecf7fd',
-			line: '#89cff0',
+			fill: '#89cff0',
 			ink: '#111827',
 		});
-		// 中深色与浅色一样落浅底：不再出现「整支一片中深色」
+		// 深色不洗淡：原样铺，文字改白
 		expect(nodeColorScale('#123456')).toEqual({
-			fill: '#d9dfe4',
-			line: '#123456',
-			ink: '#111827',
+			fill: '#123456',
+			ink: '#ffffff',
 		});
 	});
 
-	it('任意主色：填充上的柔和墨色都 ≥ 4.5（不再退纯白/纯黑）', () => {
-		for (const base of ['#7c5cd6', '#2e9e8f', '#2f7d5a', '#c2761a', '#475569', '#000000']) {
+	it('墨色按填充亮度现算：任意色都 ≥ 4.5', () => {
+		for (const base of [
+			'#7c5cd6',
+			'#2e9e8f',
+			'#2f7d5a',
+			'#c2761a',
+			'#475569',
+			'#89cff0',
+			'#000000',
+			'#ffffff',
+		]) {
 			const { fill, ink } = nodeColorScale(base);
-			expect(ink, `${base} 的墨色`).toBe('#111827');
 			expect(contrastRatio(ink, fill), `${base} 的对比`).toBeGreaterThanOrEqual(4.5);
 		}
+		// 中深底首选墨色不够时退白（不是恒为深字）
+		expect(nodeColorScale('#2e9e8f').ink).toBe('#111827');
+		expect(nodeColorScale('#7c5cd6').ink).toBe('#ffffff');
 	});
 
 	it('非法主色兜底（不返回空值），三位缩写先归一', () => {
 		const fallback = nodeColorScale('not-a-colour');
-		expect(fallback.line).toBe('#111827');
+		expect(fallback.fill).toBe('#111827');
 		expect(normalizeHexColor(fallback.fill)).toBe(fallback.fill);
-		expect(nodeColorScale('#0aF').line).toBe('#00aaff');
+		expect(nodeColorScale('#0aF').fill).toBe('#00aaff');
 	});
 });
 
 describe('节点墨色与派生内容色', () => {
-	/** 各套配色的**主色**（`paletteNodeColor` = 各配色 light.rootFill） */
-	const PALETTE_NODE_COLORS = [
-		'#2e9e8f',
-		'#c2761a',
-		'#b8455f',
-		'#7c5cd6',
-		'#3f7c2f',
-		'#475569',
-	] as const;
-	/** 菜单点下去后画布上真正的填充（派生浅档，2026-10-29） */
+	/** 各套配色的**节点填充色**（`paletteNodeColor` = `NODE_COLORS[id].fill`，随色板走） */
+	const PALETTE_NODE_COLORS = (
+		[
+			'teal',
+			'blue',
+			'purple',
+			'crimson',
+			'orange',
+			'gold',
+			'green',
+			'grey',
+			'mist',
+		] as const
+	).map((id) => NODE_COLORS[id].fill);
+	/** 菜单点下去后画布上真正的填充（= 主色直出，2026-11-04） */
 	const PALETTE_FILLS = PALETTE_NODE_COLORS.map(
 		(base) => nodeColorScale(base).fill,
 	);
@@ -206,7 +224,7 @@ describe('节点墨色与派生内容色', () => {
 		expect(nodeInkColor('#808080')).toBe('#000000');
 	});
 
-	it('五套配色派生出的填充：正文与码块均 ≥ 4.5，网格线 ≥ 2', () => {
+	it('五套配色直出的填充：正文与码块均 ≥ 4.5，网格线 ≥ 2', () => {
 		for (const fill of PALETTE_FILLS) {
 			const tones = nodeContentTones(fill);
 			expect(
@@ -232,6 +250,29 @@ describe('节点墨色与派生内容色', () => {
 				contrastRatio(tones.ink, tones.chip),
 				`${fill} 码块文字`,
 			).toBeGreaterThanOrEqual(4.5);
+		}
+	});
+
+	it('派生色阶按归一色缓存：同色不同写法命中同一对象，结果不随缓存改变', () => {
+		// 缓存键是归一后的 #rrggbb（见 nodeContentTones 的说明）
+		const first = nodeContentTones('#89CFF0');
+		expect(nodeContentTones('#89cff0')).toBe(first);
+		// 三位写法 `#8cf` 归一为 `#88ccff`：与六位**同色**才命中同一条
+		expect(nodeContentTones('#8cf')).toBe(nodeContentTones('#88CCFF'));
+		// 命中缓存不改变任何一档（三档仍是合法的 #rrggbb）
+		for (const value of [first.ink, first.chip, first.border]) {
+			expect(value).toMatch(/^#[0-9a-f]{6}$/);
+		}
+		expect(nodeContentTones('#89cff0')).toEqual(first);
+	});
+
+	it('缓存有界：超过上限后仍返回正确结果（淘汰不影响计算）', () => {
+		for (let i = 0; i < 100; i++) {
+			const fill = `#${i.toString(16).padStart(6, '0')}`;
+			const tones = nodeContentTones(fill);
+			expect(contrastRatio(tones.ink, fill), fill).toBeGreaterThanOrEqual(
+				4.5,
+			);
 		}
 	});
 });
@@ -375,6 +416,34 @@ describe('最上层节点（多选合并）', () => {
 	});
 });
 
+/**
+ * 分支配色（2026-11-05）：给「分支层」的每个节点依次写一个主色。分支 = 从根
+ * 往下第一层有多个兄弟的节点——`# 标题` + 列表与 `# 项目` + `## 模块` 两种结构
+ * 分别落在第 1 / 2 层（根是文件名，多占一层）；单链文档没有对象可分配。
+ */
+describe('分支层识别（按分支自动上色）', () => {
+	const node = (children: MindMapNode[] = []): MindMapNode =>
+		({ children }) as unknown as MindMapNode;
+
+	it('根的直接子节点就有多个：就是分支层', () => {
+		const layer = branchLayerOf([node(), node()]);
+		expect(layer).toHaveLength(2);
+	});
+
+	it('一路单链：下探到「有兄弟」的那一层（`# 标题` + 列表结构）', () => {
+		const branchA = node([node(), node()]);
+		const branchB = node([node()]);
+		const title = node([branchA, branchB]);
+		expect(branchLayerOf([title])).toEqual([branchA, branchB]);
+	});
+
+	it('没有并列：返回空（不写任何颜色）', () => {
+		expect(branchLayerOf([])).toEqual([]);
+		// 每层都只有一个孩子
+		expect(branchLayerOf([node([node([node()])])])).toEqual([]);
+	});
+});
+
 describe('就近覆盖的继承遍历', () => {
 	it('父节点颜色传给全部后代，子节点自身指令覆盖', () => {
 		const tree = {
@@ -481,6 +550,172 @@ describe('自上层继承（inheritedColorOf）', () => {
 	});
 });
 
+/**
+ * 撤掉父色后，后代里当初只为挡它的 `%%none%%` 就成了无主注释（屏上无差别，
+ * 文件里多一行）。判定必须与继承同口径：**遇到自身有色的分支就止步**——
+ * 那支的哨兵挡的是新的色源，删掉会让子孙反而吃到它。
+ */
+describe('无主哨兵（撤掉祖先色后清理）', () => {
+	interface Tree {
+		name: string;
+		children?: Tree[];
+	}
+	const readOwn =
+		(directives: Record<string, string | null>) =>
+		(node: Tree): string | null =>
+			directives[node.name] ?? null;
+
+	it('只收挡本支的哨兵：后代重新染色的分支整支止步（先序）', () => {
+		const tree: Tree = {
+			name: 'root',
+			children: [
+				{
+					name: 'a',
+					children: [
+						{ name: 'a1', children: [{ name: 'a11', children: [] }] },
+						{ name: 'a2', children: [{ name: 'a21', children: [] }] },
+					],
+				},
+			],
+		};
+		const directives: Record<string, string | null> = {
+			a1: 'none',
+			a11: 'none',
+			a2: '#222222',
+			a21: 'none',
+		};
+		expect(
+			orphanSentinels(tree, readOwn(directives), null).map((node) => node.name),
+		).toEqual(['a1', 'a11']);
+	});
+
+	it('中间层没写指令：继续下探，命中更深的哨兵', () => {
+		const tree: Tree = {
+			name: 'root',
+			children: [
+				{
+					name: 'a',
+					children: [{ name: 'a1', children: [{ name: 'a11', children: [] }] }],
+				},
+			],
+		};
+		expect(
+			orphanSentinels(tree, readOwn({ a11: 'none' }), null).map(
+				(node) => node.name,
+			),
+		).toEqual(['a11']);
+	});
+
+	it('root 自身不进结果（语义由 rootDirective 显式告知）', () => {
+		const tree: Tree = { name: 'root', children: [] };
+		expect(orphanSentinels(tree, readOwn({ root: 'none' }), 'none')).toEqual([]);
+	});
+
+	it('没有哨兵：空数组（调用方据此跳过写盘）', () => {
+		const tree: Tree = {
+			name: 'root',
+			children: [{ name: 'a', children: [{ name: 'a1', children: [] }] }],
+		};
+		expect(orphanSentinels(tree, readOwn({ a: '#111111' }), null)).toEqual([]);
+	});
+
+	/**
+	 * 判据由调用方显式给「即将写入的指令」，故本函数可以**在落地之前**跑——
+	 * 主改动与清理因此能合并成同一批（2026-11-06：一次改色只付一轮整树重渲）。
+	 * 反过来，换成某个颜色时不能清：那些哨兵挡的正是新颜色。
+	 */
+	it('本节点即将成为色源（换色）：一律返回空，子孙的哨兵必须保留', () => {
+		const tree: Tree = {
+			name: 'root',
+			children: [{ name: 'a1', children: [{ name: 'a11', children: [] }] }],
+		};
+		const directives = { a1: 'none', a11: 'none' };
+		expect(orphanSentinels(tree, readOwn(directives), '#333333')).toEqual([]);
+		// 同一个树体：改成「默认」时两支哨兵都成了无主（rootDirective = none 也能挡）
+		expect(
+			orphanSentinels(tree, readOwn(directives), 'none').map(
+				(node) => node.name,
+			),
+		).toEqual(['a1', 'a11']);
+	});
+});
+
+/**
+ * 「仅本节点」作用域（设置项 `nodeColorScope === 'node'`，2026-11-06）：给直接子节点
+ * 补哨兵 `%%none%%`，让上色不外溢。判据与 `orphanSentinels` **互为对偶**——一个在
+ * 上色时补，一个在撤色时收，两者共用同一套「谁有显式指令」的口径。
+ */
+describe('仅本节点作用域（scopeSentinels）', () => {
+	interface Tree {
+		name: string;
+		children?: Tree[];
+	}
+	const readOwn =
+		(directives: Record<string, string | null>) =>
+		(node: Tree): string | null =>
+			directives[node.name] ?? null;
+	const names = (nodes: Tree[]): string[] => nodes.map((node) => node.name);
+
+	it('收下「没有自身指令」的直接子节点；已有指令（十六进制 / 哨兵）的不动', () => {
+		const tree: Tree = {
+			name: 'a',
+			children: [
+				{ name: 'a1', children: [] },
+				{ name: 'a2', children: [] },
+				{ name: 'a3', children: [] },
+				{ name: 'a4', children: [] },
+			],
+		};
+		const directives = { a2: '#222222', a3: 'none' };
+		expect(
+			names(scopeSentinels([tree], readOwn(directives), new Set([tree]))),
+		).toEqual(['a1', 'a4']);
+	});
+
+	/** 只补**一层**：哨兵把 null 传给后代，孙辈再写一条就是重复注释。 */
+	it('孙辈不进结果（哨兵自己会把「无节点色」传下去）', () => {
+		const tree: Tree = {
+			name: 'a',
+			children: [
+				{
+					name: 'a1',
+					children: [{ name: 'a11', children: [{ name: 'a111', children: [] }] }],
+				},
+			],
+		};
+		expect(
+			names(scopeSentinels([tree], readOwn({}), new Set([tree]))),
+		).toEqual(['a1']);
+	});
+
+	/** 多选时父子同选：子节点马上会拿到自己的指令，哨兵写了也会被同批覆盖。 */
+	it('本次也要上色的节点不进结果（父子同选）', () => {
+		const child: Tree = { name: 'a1', children: [] };
+		const tree: Tree = { name: 'a', children: [child] };
+		expect(
+			names(scopeSentinels([tree], readOwn({}), new Set([tree, child]))),
+		).toEqual([]);
+	});
+
+	it('顺序＝roots 给定顺序 × children 原顺序；叶节点无子不进结果', () => {
+		const first: Tree = {
+			name: '甲',
+			children: [{ name: '甲1', children: [] }, { name: '甲2', children: [] }],
+		};
+		const second: Tree = { name: '乙', children: [{ name: '乙1', children: [] }] };
+		const leaf: Tree = { name: '丙', children: [] };
+		expect(
+			names(
+				scopeSentinels(
+					[first, second, leaf],
+					readOwn({}),
+					new Set([first, second, leaf]),
+				),
+			),
+		).toEqual(['甲1', '甲2', '乙1']);
+	});
+});
+
 interface FakeData {
 	text?: string;
 	mdRaw?: string;
@@ -496,28 +731,57 @@ function fakeTree(data: FakeData, children: MindMapTreeNode[] = []): MindMapTree
 }
 
 describe('data 树落地（引擎创建前）', () => {
-	it('填充取派生浅档，连线与描边保留主色，文字色恒为柔和深灰蓝', () => {
+	it('填充是原色、线条同色相深一档，文字色按填充亮度算（深底白字）', () => {
 		const light = fakeTree({ text: '浅', mdRaw: '浅 %%#89CFF0%%' });
 		const dark = fakeTree({ text: '深', mdRaw: '深 %%#123456%%' });
 		const root = fakeTree({ text: 'root', mdRaw: 'root' }, [light, dark]);
 
 		applyColorDirectivesToTree(root, colorDirectiveOf);
 
+		// 填充仍是「写的那个色」；线/描边走同色相深档（2026-11-05：自定义节点色
+		// 与预设一样是「浅底 + 深线」，不再自己跟自己同色）
 		expect(light.data).toMatchObject({
-			fillColor: '#ecf7fd',
-			borderColor: '#89cff0',
-			lineColor: '#89cff0',
+			fillColor: '#89cff0',
+			borderColor: '#228dc0',
+			lineColor: '#228dc0',
 			color: '#111827',
 		});
-		// 中深主色同样落浅底：不再出现「深底白字」的大面积实色
+		// 深色不洗淡：原样铺开，文字改白，线更深一档
 		expect(dark.data).toMatchObject({
-			fillColor: '#d9dfe4',
-			borderColor: '#123456',
-			lineColor: '#123456',
-			color: '#111827',
+			fillColor: '#123456',
+			borderColor: '#173859',
+			lineColor: '#173859',
+			color: '#ffffff',
 		});
 		// 未写指令的根节点不产生任何样式键（走整篇配色）
 		expect(root.data.fillColor).toBeUndefined();
+	});
+
+	/**
+	 * 作用范围「仅本节点」（2026-11-06）：连接线不该带节点色。`lineColor` 是
+	 * 「本节点 → 父节点」那条线的色（引擎 `styleLine(line, childNode)`），不写覆盖
+	 * 即回落整篇配色；「本节点 → 子节点」那条线归子节点 data，哨兵也让它回落。
+	 * 其余三键仍是正文决定的**颜色内容**——描边尤其要留着，小地图墨色读它。
+	 */
+	it('仅本节点档：不写 lineColor，填充 / 描边 / 文字三键照旧', () => {
+		const inherited = fakeTree({ text: '子', mdRaw: '子' });
+		const colored = fakeTree(
+			{ text: '甲', mdRaw: '甲 %%#89CFF0%%' },
+			[inherited],
+		);
+		const root = fakeTree({ text: 'root', mdRaw: 'root' }, [colored]);
+
+		applyColorDirectivesToTree(root, colorDirectiveOf, false);
+
+		expect(colored.data).toMatchObject({
+			fillColor: '#89cff0',
+			borderColor: '#228dc0',
+			color: '#111827',
+		});
+		expect(colored.data).not.toHaveProperty('lineColor');
+		// 继承色本身没有被改：取消的只是「连接线跟着节点色」这层覆盖
+		expect(inherited.data.fillColor).toBe('#89cff0');
+		expect(inherited.data).not.toHaveProperty('lineColor');
 	});
 
 	it('后代继承最近祖先；指令被删掉后样式键一并清除', () => {
@@ -525,7 +789,7 @@ describe('data 树落地（引擎创建前）', () => {
 		const root = fakeTree({ text: 'root', mdRaw: 'root %%#ff0000%%' }, [child]);
 
 		applyColorDirectivesToTree(root, colorDirectiveOf);
-		expect(child.data.fillColor).toBe('#ffd6d6');
+		expect(child.data.fillColor).toBe('#ff0000');
 
 		// 模拟用户把指令删掉后重新解析
 		root.data.mdRaw = 'root';
@@ -562,10 +826,33 @@ describe('实时节点树同步（引擎创建后）', () => {
 
 		expect(applyLiveColorDirectives(root, colorDirectiveOf)).toBe(true);
 		expect(child.getData()).toMatchObject({
-			fillColor: '#d6ffd6',
-			lineColor: '#00ff00',
+			fillColor: '#00ff00',
+			lineColor: '#089108',
 		});
 		expect(applyLiveColorDirectives(root, colorDirectiveOf)).toBe(false);
+	});
+
+	/** 设置切换走原地重算：只增删 `lineColor`，返回 true 才会触发那一轮 render。 */
+	it('切换作用范围：只增删 lineColor 覆盖，颜色内容不变且改动可被检出', () => {
+		const child = fakeNode({ text: '子', mdRaw: '子 %%#00ff00%%' });
+		const root = fakeNode({ text: 'root', mdRaw: 'root' }, [child]);
+
+		expect(applyLiveColorDirectives(root, colorDirectiveOf, true)).toBe(true);
+		const data = child.getData() as FakeData;
+		expect(data.lineColor).toBe('#089108');
+
+		// 切到「仅本节点」：删掉连线覆盖
+		expect(applyLiveColorDirectives(root, colorDirectiveOf, false)).toBe(true);
+		expect(data).not.toHaveProperty('lineColor');
+		expect(data.fillColor).toBe('#00ff00');
+		expect(data.borderColor).toBe('#089108');
+		expect(data.color).toBeDefined();
+		// 幂等：同一档再算一次不重复触发渲染
+		expect(applyLiveColorDirectives(root, colorDirectiveOf, false)).toBe(false);
+
+		// 切回「含子节点」：连线色恢复
+		expect(applyLiveColorDirectives(root, colorDirectiveOf, true)).toBe(true);
+		expect(data.lineColor).toBe('#089108');
 	});
 
 	it('指令移除后清空覆盖（回落主题）', () => {
@@ -586,8 +873,8 @@ describe('实时节点树同步（引擎创建后）', () => {
 		]);
 
 		expect(applyLiveColorDirectives(root, colorDirectiveOf)).toBe(true);
-		expect(root.getData()).toMatchObject({ fillColor: '#ffd6d6' });
-		expect(colored.getData()).toMatchObject({ fillColor: '#ffd6d6' });
+		expect(root.getData()).toMatchObject({ fillColor: '#ff0000' });
+		expect(colored.getData()).toMatchObject({ fillColor: '#ff0000' });
 		expect(blocked.getData()).not.toHaveProperty('fillColor');
 		expect(grand.getData()).not.toHaveProperty('fillColor');
 	});
@@ -608,6 +895,26 @@ describe('syncNodeColorDirectives：只在有变化时重渲染', () => {
 
 		expect(syncNodeColorDirectives(mindMap, colorDirectiveOf)).toBe(false);
 		expect(render).toHaveBeenCalledTimes(1);
+	});
+
+	it('作用范围每次切换各渲染一次（原地重算，不重建引擎）', () => {
+		const child = fakeNode({ text: '子', mdRaw: '子 %%#0000ff%%' });
+		const root = fakeNode({ text: 'root', mdRaw: 'root' }, [child]);
+		const render = vi.fn();
+		const mindMap = {
+			renderer: { root },
+			render,
+		} as unknown as MindMap;
+
+		expect(syncNodeColorDirectives(mindMap, colorDirectiveOf, true)).toBe(true);
+		expect(render).toHaveBeenCalledTimes(1);
+		expect(syncNodeColorDirectives(mindMap, colorDirectiveOf, false)).toBe(true);
+		expect(render).toHaveBeenCalledTimes(2);
+		// 同档重复不算变化（渲染落地会再进一次同步，不能自激）
+		expect(syncNodeColorDirectives(mindMap, colorDirectiveOf, false)).toBe(false);
+		expect(render).toHaveBeenCalledTimes(2);
+		expect(syncNodeColorDirectives(mindMap, colorDirectiveOf, true)).toBe(true);
+		expect(render).toHaveBeenCalledTimes(3);
 	});
 
 	it('空引擎（未就绪）不抛错', () => {

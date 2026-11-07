@@ -58,8 +58,9 @@ import {
 	countMindMapNodes,
 	fitMindMap,
 	getActiveNodes,
+	getCanvasSize,
 	getDrawTransform,
-	getNodeGroupEl,
+	measureNodesCanvasBox,
 	panMindMap,
 	zoomMindMapAt,
 } from '../engine/mindmap';
@@ -334,58 +335,50 @@ function cancelSmoothPan(view: ViewportContext): void {
 /**
  * 缩放到选区（官方 `Shift+2` / 右键「Zoom to selection」）。
  *
- * 实现口径：取**激活节点**的 DOM 包围盒（已含当前缩放），按画布留边算出倍率，
- * 以包围盒中心为锚点缩放，再平移使该中心落到画布中心。
+ * 实现口径（2026-11-04 修订）：取**激活节点**的**布局几何**（`left/top/width/
+ * height` + 当前变换）算包围盒，按画布留边算出倍率，以包围盒中心为锚点缩放，
+ * 再平移使该中心落到画布中心。
  *
- * @returns 是否完成；无选中节点（或拿不到包围盒）返回 false，由调用方回落到
+ * **不用 DOM 包围盒**：性能模式把视口外节点 `removeSelf()` 摘出 DOM，
+ * `getNodeGroupEl` 对这些节点返回空 ⇒ 大选区只能盖住可见部分（缩放落到错误
+ * 范围）；布局几何在剪枝后仍完整。换算收口在
+ * `engine/mindmap-viewport.measureNodesCanvasBox`（与 `projectViewportBox` 同一
+ * 变换口径），本模块只做「包围盒 → 倍率」。
+ *
+ * @returns 是否完成；无选中节点（或拿不到几何）返回 false，由调用方回落到
  *   「适应画布」（官方 `Shift+2` 在空选区下无意义，回退更友好）。
  */
 export function zoomToSelection(view: ViewportContext): boolean {
 	const mindMap = view.mindMap;
-	const canvas = view.canvasEl;
-	if (!mindMap || !canvas) {
+	if (!mindMap) {
 		return false;
 	}
 	const nodes = getActiveNodes(mindMap);
 	if (nodes.length === 0) {
 		return false;
 	}
-	const canvasRect = canvas.getBoundingClientRect();
-	let minX = Number.POSITIVE_INFINITY;
-	let minY = Number.POSITIVE_INFINITY;
-	let maxX = Number.NEGATIVE_INFINITY;
-	let maxY = Number.NEGATIVE_INFINITY;
-	for (const node of nodes) {
-		const el = getNodeGroupEl(node);
-		if (!el) {
-			continue;
-		}
-		const rect = el.getBoundingClientRect();
-		if (rect.width <= 0 || rect.height <= 0) {
-			continue;
-		}
-		minX = Math.min(minX, rect.left - canvasRect.left);
-		minY = Math.min(minY, rect.top - canvasRect.top);
-		maxX = Math.max(maxX, rect.right - canvasRect.left);
-		maxY = Math.max(maxY, rect.bottom - canvasRect.top);
-	}
-	if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+	const canvasSize = getCanvasSize(mindMap);
+	if (!canvasSize || canvasSize.width <= 0 || canvasSize.height <= 0) {
 		return false;
 	}
-	const width = maxX - minX;
-	const height = maxY - minY;
-	if (width <= 0 || height <= 0 || canvasRect.width <= 0 || canvasRect.height <= 0) {
+	const box = measureNodesCanvasBox(mindMap, nodes);
+	if (!box) {
+		return false;
+	}
+	const width = box.right - box.left;
+	const height = box.bottom - box.top;
+	if (width <= 0 || height <= 0) {
 		return false;
 	}
 	const factor = Math.min(
-		(canvasRect.width * SELECTION_FIT_PADDING) / width,
-		(canvasRect.height * SELECTION_FIT_PADDING) / height,
+		(canvasSize.width * SELECTION_FIT_PADDING) / width,
+		(canvasSize.height * SELECTION_FIT_PADDING) / height,
 	);
-	const centerX = (minX + maxX) / 2;
-	const centerY = (minY + maxY) / 2;
+	const centerX = (box.left + box.right) / 2;
+	const centerY = (box.top + box.bottom) / 2;
 	// 锚定包围盒中心缩放 → 该点不动；再平移到画布中心
 	zoomMindMapAt(mindMap, factor, centerX, centerY);
-	panMindMap(mindMap, canvasRect.width / 2 - centerX, canvasRect.height / 2 - centerY);
+	panMindMap(mindMap, canvasSize.width / 2 - centerX, canvasSize.height / 2 - centerY);
 	return true;
 }
 

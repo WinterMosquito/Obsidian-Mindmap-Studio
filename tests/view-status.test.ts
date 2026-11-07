@@ -49,6 +49,7 @@ interface Harness {
 		available: boolean;
 		clear: ReturnType<typeof vi.fn>;
 		showNodeCount: ReturnType<typeof vi.fn>;
+		showSaveState: ReturnType<typeof vi.fn>;
 	};
 }
 
@@ -57,15 +58,21 @@ interface Harness {
  * 每个用例都新建视图对象：节流器按视图存在 WeakMap 里（按视图隔离状态）。
  */
 function makeView(
-	options: { mindMap?: MindMap | null; available?: boolean } = {},
+	options: {
+		mindMap?: MindMap | null;
+		available?: boolean;
+		saveState?: MindMapViewContext['saveState'];
+	} = {},
 ): Harness {
 	const statusBar = {
 		available: options.available ?? true,
 		clear: vi.fn(),
 		showNodeCount: vi.fn(),
+		showSaveState: vi.fn(),
 	};
 	const view = {
 		mindMap: options.mindMap === undefined ? ({} as MindMap) : options.mindMap,
+		saveState: options.saveState ?? 'idle',
 		plugin: { statusBar },
 	} as unknown as MindMapViewContext;
 	return { view, statusBar };
@@ -230,6 +237,42 @@ describe('updateStatusBar（节流与降级）', () => {
 	});
 });
 
+describe('updateStatusBar（保存状态）', () => {
+	it('保存状态立即推送，不受计数节流窗口影响', () => {
+		const { view, statusBar } = makeView({ saveState: 'saving' });
+		countMindMapNodesMock.mockReturnValue(3);
+
+		updateStatusBar(view); // 立即计数 + 推 saving
+		expect(statusBar.showSaveState).toHaveBeenCalledWith('saving');
+		expect(statusBar.showNodeCount).toHaveBeenCalledWith(3);
+
+		// 窗口内改状态：计数被节流，但状态必须立刻可见（未保存不能被推迟）
+		(view as unknown as { saveState: string }).saveState = 'unsaved';
+		updateStatusBar(view);
+		expect(statusBar.showSaveState).toHaveBeenLastCalledWith('unsaved');
+		expect(countMindMapNodesMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('引擎缺失：清空状态栏，不推送状态（没有可归属的文件）', () => {
+		const { view, statusBar } = makeView({ mindMap: null, saveState: 'unsaved' });
+
+		updateStatusBar(view);
+		expect(statusBar.clear).toHaveBeenCalledTimes(1);
+		expect(statusBar.showSaveState).not.toHaveBeenCalled();
+	});
+
+	it('状态栏不可用：连状态也不推（零开销路径）', () => {
+		const { view, statusBar } = makeView({
+			available: false,
+			saveState: 'unsaved',
+		});
+
+		updateStatusBar(view);
+		expect(statusBar.showSaveState).not.toHaveBeenCalled();
+		expect(statusBar.showNodeCount).not.toHaveBeenCalled();
+	});
+});
+
 describe('cancelStatusBarUpdate（视图关闭清理）', () => {
 	it('取消未决尾随：关闭后不再有刷新落到已销毁视图', () => {
 		const { view, statusBar } = makeView();
@@ -343,5 +386,54 @@ describe('ElementStatusBarService（状态栏计数文案与惰性元素）', ()
 		service.showNodeCount(2);
 		service.clear();
 		expect(el.texts).toEqual(['2 个节点', '']);
+	});
+
+	it('计数 + 保存状态组合成一行；idle 只显示计数', () => {
+		const el = new FakeStatusEl();
+		const service = makeService(() => el, () => 'zh');
+
+		service.showNodeCount(22);
+		service.showSaveState('saving');
+		service.showSaveState('saved');
+		service.showSaveState('idle');
+		expect(el.texts).toEqual([
+			'22 个节点',
+			'22 个节点 · 保存中…',
+			'22 个节点 · 已保存',
+			'22 个节点',
+		]);
+	});
+
+	it('状态先于计数到达：先只显示状态，计数到达后补齐（状态不丢）', () => {
+		const el = new FakeStatusEl();
+		const service = makeService(() => el, () => 'zh');
+
+		service.showSaveState('saved');
+		service.showNodeCount(3);
+		expect(el.texts).toEqual(['已保存', '3 个节点 · 已保存']);
+	});
+
+	it('同值重复推送不写 DOM（每次渲染结束都推状态的幂等前提）', () => {
+		const el = new FakeStatusEl();
+		const service = makeService(() => el, () => 'zh');
+
+		service.showNodeCount(5);
+		service.showSaveState('saved');
+		service.showSaveState('saved');
+		service.showNodeCount(5);
+		expect(el.texts).toEqual(['5 个节点', '5 个节点 · 已保存']);
+	});
+
+	it('未保存态在英文下按语言格式化；clear 连状态一起复位', () => {
+		const el = new FakeStatusEl();
+		const service = makeService(() => el, () => 'en');
+
+		service.showNodeCount(1);
+		service.showSaveState('unsaved');
+		expect(el.texts.at(-1)).toBe('1 node · Unsaved');
+		service.clear();
+		service.showNodeCount(1);
+		// clear 复位状态 ⇒ 重新计数时不再带 Unsaved
+		expect(el.texts.at(-1)).toBe('1 node');
 	});
 });

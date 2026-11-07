@@ -7,12 +7,13 @@
  * 另把 `mindmap-viewport-canvas.getCanvasSize` 转出（视图层小地图的唯一画布尺寸
  * 来源，见下方 export 处的说明）。
  */
-import type { MindMap } from '../../vendor/simple-mind-map.cjs';
+import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
 import { HEAVY_FIT_NODE_THRESHOLD } from '../core/constants';
 import { createWarnOnce } from '../core/errors';
 import {
 	contentExceedsCanvas,
 	measureMiniMapBounds,
+	readNodeLayoutBox,
 	type MiniMapMeasure,
 	type MiniMapSize,
 } from '../core/minimap-geometry';
@@ -849,6 +850,50 @@ export interface DrawTransform {
 	scaleY: number;
 	translateX: number;
 	translateY: number;
+}
+
+/**
+ * 选区在**画布局部坐标**（CSS px，已应用当前缩放/平移）下的包围盒。
+ *
+ * 为什么不用 DOM 包围盒（2026-11-04 修订）：性能模式把视口外节点 `removeSelf()`
+ * **摘出 DOM**，`getNodeGroupEl` 对这些节点返回空 ⇒ 旧实现只能盖住可见那部分，
+ * 大选区「缩放到选区」会落到错误范围；另外逐节点 `getBoundingClientRect` 在
+ * 同步块里是 N 次几何查询。布局几何（`left/top/width/height`）在剪枝后仍完整
+ * （`countMindMapNodes` 同源），一次变换即可，且离屏节点自然参与。
+ *
+ * 与 `projectViewportBox` 的变换口径一致：屏幕局部坐标 = 布局坐标 × scale + translate。
+ * 几何全不可得（未布局 / 引擎中间态）时返回 null，由调用方回落到「适应画布」。
+ */
+export function measureNodesCanvasBox(
+	mindMap: MindMap | null,
+	nodes: readonly MindMapNode[],
+): { left: number; top: number; right: number; bottom: number } | null {
+	const transform = getDrawTransform(mindMap);
+	let left = Number.POSITIVE_INFINITY;
+	let top = Number.POSITIVE_INFINITY;
+	let right = Number.NEGATIVE_INFINITY;
+	let bottom = Number.NEGATIVE_INFINITY;
+	for (const node of nodes) {
+		// 节点盒读取与缩略图共用 `core/minimap-geometry.readNodeLayoutBox`：引擎
+		// `d.cts` 未声明 `left/top/width/height`（运行时由布局写入），那里已把
+		// 「字段缺失 / 非有限值 / 尺寸非正 ⇒ null」的兜底做掉，不再各写一份
+		const box = readNodeLayoutBox(node);
+		if (!box) {
+			continue;
+		}
+		const x1 = box.x * transform.scaleX + transform.translateX;
+		const y1 = box.y * transform.scaleY + transform.translateY;
+		const x2 = (box.x + box.width) * transform.scaleX + transform.translateX;
+		const y2 = (box.y + box.height) * transform.scaleY + transform.translateY;
+		left = Math.min(left, x1);
+		top = Math.min(top, y1);
+		right = Math.max(right, x2);
+		bottom = Math.max(bottom, y2);
+	}
+	if (!Number.isFinite(left) || !Number.isFinite(top)) {
+		return null;
+	}
+	return { left, top, right, bottom };
 }
 
 export function getDrawTransform(mindMap: MindMap | null): DrawTransform {

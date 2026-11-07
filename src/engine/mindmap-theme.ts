@@ -22,9 +22,27 @@ import {
 	type PaletteColors,
 } from './mindmap-theme-presets';
 
-const BORDER_RADIUS = 5;
-/** 节点水平内边距：略大于引擎默认值（15），仅作左右留白 */
-const NODE_PADDING_X = 16;
+/**
+ * 节点圆角：中心 8、其余 6（2026-11-05 实机）。
+ *
+ * 统一 5 在 fit 到 0.6 倍时圆角只剩 3px，观感与直角无异；分级给值后中心仍是
+ * 「块」、下级仍是「标签」，但中心的棱角明显更软。
+ */
+const ROOT_RADIUS = 8;
+const NODE_RADIUS = 6;
+/**
+ * 水平 / 垂直内边距：引擎默认 `paddingX 15`、`paddingY 5`。
+ *
+ * 12–14px 的字号配 5px 垂直内边距，文字上下几乎贴边（实机基线截图），一行字
+ * 看起来像「一条线」而不是「一个节点」。中心 / 一级 / 其余分级给值，让缩放后
+ * 仍能看出三层不同的呼吸感。
+ */
+const ROOT_PADDING_X = 30;
+const SECOND_PADDING_X = 18;
+const NODE_PADDING_X = 12;
+const ROOT_PADDING_Y = 14;
+const SECOND_PADDING_Y = 9;
+const NODE_PADDING_Y = 7;
 
 /** 判断指定主题偏好下是否使用暗色配色 */
 export function isDarkTheme(themePref: string, isDark: boolean): boolean {
@@ -101,18 +119,22 @@ function buildThemeConfig(
 			fontWeight: 'bold',
 			borderColor: 'transparent',
 			borderWidth: 0,
-			borderRadius: BORDER_RADIUS,
-			paddingX: NODE_PADDING_X,
+			borderRadius: ROOT_RADIUS,
+			paddingX: ROOT_PADDING_X,
+			paddingY: ROOT_PADDING_Y,
 			...preset.root,
 		},
 		second: {
 			fillColor: colors.secondFill,
 			color: text.secondText,
 			fontSize: variant.fontSizes.second,
+			// 一级是「标签」：加粗一档，缩放后仍与三级分得开（只靠字号差 3px 不够）
+			fontWeight: 600,
 			borderColor: colors.border,
 			borderWidth: 1,
-			borderRadius: BORDER_RADIUS,
-			paddingX: NODE_PADDING_X,
+			borderRadius: NODE_RADIUS,
+			paddingX: SECOND_PADDING_X,
+			paddingY: SECOND_PADDING_Y,
 			...preset.second,
 		},
 		node: {
@@ -121,8 +143,9 @@ function buildThemeConfig(
 			fontSize: variant.fontSizes.node,
 			borderColor: colors.border,
 			borderWidth: 1,
-			borderRadius: BORDER_RADIUS,
+			borderRadius: NODE_RADIUS,
 			paddingX: NODE_PADDING_X,
+			paddingY: NODE_PADDING_Y,
 			...preset.node,
 		},
 		// 概要（Summary）的**节点**样式：比正文节点轻一档（小一号字 + 虚线描边），
@@ -139,11 +162,14 @@ function buildThemeConfig(
 			borderColor: colors.border,
 			borderWidth: 1,
 			borderDasharray: '4,4',
-			borderRadius: BORDER_RADIUS,
+			borderRadius: NODE_RADIUS,
 			paddingX: NODE_PADDING_X,
 		},
 		lineColor: colors.line,
-		lineWidth: 1.5,
+		// 父子线 2px（原 1.5）：fit 到 0.6 倍时 1.5px 只剩 0.9px，整棵树的结构
+		// 线几乎消失（2026-11-05 实机基线）。辅助线（联系 / 概要括号）仍 1.5，
+		// 视觉重量继续随层级递减。
+		lineWidth: 2,
 		// 联系（关系连线）：比父子线更轻的辅助线——细、浅、虚线更密，且**不画在
 		// 节点之上**（该开关是 opt 不是 theme，见 engine/mindmap.createMindMap）。
 		// 标签自带描边光晕（vendor 补丁 14），压在任何元素上都可读。
@@ -217,7 +243,9 @@ export function getThemeConfig(
 		isDark,
 		{
 			background,
-			fontSizes: { root: 16, second: 14, node: 13 },
+			// 字号梯度 24 / 16 / 13（2026-11-05 实机）：原 16/14/13 在 fit 到
+			// 0.6 倍时只剩 9.6 / 8.4 / 7.8px，三层只差 1px，层级读不出来。
+			fontSizes: { root: 24, second: 16, node: 13 },
 			lineStyle: resolveLineStyle(lineStylePreference, layout),
 			themeStyle: normalizeThemeStyle(themeStyle),
 		},

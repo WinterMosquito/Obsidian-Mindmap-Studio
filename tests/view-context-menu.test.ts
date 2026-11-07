@@ -202,12 +202,21 @@ const {
 	openNodeImageFullscreenMock,
 	arrangeMindMapMock,
 	applyRawNodeContentMock,
+	applyRawNodeContentsMock,
+	branchLayerOfMock,
+	getRenderRootMock,
 	openColorInputModalMock,
 	getActiveNodesMock,
 	setActiveNodesMock,
 } = vi.hoisted(() => ({
 	applyRawNodeContentMock:
 		vi.fn<(view: unknown, node: unknown, raw: string) => void>(),
+	applyRawNodeContentsMock:
+		vi.fn<(view: unknown, entries: unknown, options?: unknown) => void>(),
+	// 分支层识别（真实实现见 engine/mindmap-nodes，由 color-directive.test.ts 直测；
+	// 本文件只验证「菜单项出没出现」与「点了写什么」）
+	branchLayerOfMock: vi.fn<(children: unknown[]) => unknown[]>(() => []),
+	getRenderRootMock: vi.fn<() => unknown>(() => null),
 	openColorInputModalMock:
 		vi.fn<(app: unknown, lang: string, current: string | null) => Promise<string | null>>(),
 	getActiveNodesMock: vi.fn<() => unknown[]>(() => []),
@@ -260,13 +269,17 @@ vi.mock('../src/engine/mindmap', () => ({
 	// 节点配色：色值来源与选中集合（真实实现见 engine/mindmap-theme 与 -nodes）
 	paletteNodeColor: (palette: string): string =>
 		({
-			default: '#4a90d9',
-			mint: '#2e9e8f',
-			amber: '#c2761a',
-			rose: '#b8455f',
-			wisteria: '#7c5cd6',
-			forest: '#3f7c2f',
-			slate: '#475569',
+			// 与 NODE_COLORS[*].fill 同值（2026-11-05 第三版色板；default 回撤旧基准）
+			default: '#a8c7f0',
+			teal: '#c8e0e5',
+			blue: '#c5d2e8',
+			purple: '#dec6e6',
+			orange: '#edd6c0',
+			gold: '#ede4bf',
+			crimson: '#eac2c6',
+			green: '#cae2d4',
+			grey: '#d4d6d9',
+			mist: '#e7e8ea',
 		})[palette] ?? '#000000',
 	getActiveNodes: getActiveNodesMock,
 	// 空白右键时把选中复原（引擎在按下时已清空）：本文件只验证「调用了几次、带了谁」
@@ -277,6 +290,9 @@ vi.mock('../src/engine/mindmap', () => ({
 	summaryAnchorOf: (): null => null,
 	// 最上层判定由 color-directive.test.ts 直测真实实现；这里只需恒等
 	topMostNodes: (nodes: unknown[]): unknown[] => nodes,
+	// 分支配色的两个依赖（同上：只桩接口，不复制判定）
+	getRenderRoot: getRenderRootMock,
+	branchLayerOf: branchLayerOfMock,
 	// 多选改色的收尾历史（批量写回后记一条快照，见 engine/mindmap-history）
 	recordHistory: vi.fn(),
 	// 上/下移的置灰判据（与动作层同一份实现，本文件只验证「据此置灰」）
@@ -286,6 +302,7 @@ vi.mock('../src/engine/mindmap', () => ({
 // 节点配色落盘走「原文提交」通道（node-inline-editor）：本文件只验证「写了什么原文」
 vi.mock('../src/features/node-inline-editor', () => ({
 	applyRawNodeContent: applyRawNodeContentMock,
+	applyRawNodeContents: applyRawNodeContentsMock,
 }));
 
 vi.mock('../src/ui/modal-color', () => ({
@@ -429,7 +446,14 @@ function fakeNode(data: Record<string, unknown>) {
  * 视图桩：返回原始对象（非只读 cast），便于用例模拟「引擎被重建」时把
  * mindMap 置空——这正是注册后引擎换代时菜单需要防御的场景。
  */
-function makeView(options: { canvasEl?: unknown; mindMap?: unknown } = {}) {
+function makeView(
+	options: {
+		canvasEl?: unknown;
+		mindMap?: unknown;
+		/** 节点配色的作用范围（`applyNodeColor` / `applyBranchColors` 读它） */
+		nodeColorScope?: 'node' | 'subtree';
+	} = {},
+) {
 	const binder = makeEngineBinder();
 	const execCommand = vi.fn<(command: string) => void>();
 	const render = vi.fn<() => void>();
@@ -464,6 +488,10 @@ function makeView(options: { canvasEl?: unknown; mindMap?: unknown } = {}) {
 			preferences[key],
 		// 布局不在 PreferenceKey 里（它存文件属性），勾选态单独走 resolveLayout
 		resolveLayout: (): string => preferences.layout,
+		// 插件能力的窄化面：节点配色只读 `settings.nodeColorScope`（写入侧作用范围）
+		plugin: {
+			settings: { nodeColorScope: options.nodeColorScope ?? 'subtree' },
+		},
 	};
 	return {
 		view: raw as unknown as MindMapViewContext,
@@ -1201,7 +1229,25 @@ describe('节点右键「配色」：写 Markdown 颜色指令', () => {
 		return { ...harness, node, menu: lastMenu(), submenu };
 	}
 
-	it('条目与空白右键的整篇配色一致：默认 + 六种配色 + 自定义（不列「蓝」）', () => {
+	/**
+	 * 断言「这一行原文被写回该节点」。
+	 *
+	 * 节点配色走**批量**通道（`applyRawNodeContents`，渲染 / 存盘 / 历史各一次）：
+	 * 单项写回逐节点调用会让多选上色把整树重渲 N 次（2026-11-06 优化）。
+	 */
+	function expectColorWrite(
+		view: unknown,
+		node: unknown,
+		raw: string,
+	): void {
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[{ node, raw }],
+			{ afterCommit: false },
+		);
+	}
+
+	it('条目与空白右键的整篇配色一致：默认 + 九种配色 + 自定义（不列「蓝」）', () => {
 		const { submenu } = openColorMenu(colorNode('项目'));
 		const titles = submenu.titles();
 		// 与空白右键同一组标题（首项「默认」语义不同，但样式一致，2026-10-27 裁决）
@@ -1226,7 +1272,7 @@ describe('节点右键「配色」：写 Markdown 颜色指令', () => {
 	 */
 	it('继承父色的子节点：勾在父色上，不勾「默认」', () => {
 		const amber = nodeColorOptions().find(
-			(option) => option.value === 'amber',
+			(option) => option.value === 'orange',
 		);
 		expect(amber).toBeTruthy();
 		const parent = colorNode(`父 %%${amber!.color}%%`, '父');
@@ -1245,24 +1291,20 @@ describe('节点右键「配色」：写 Markdown 颜色指令', () => {
 		const node = { ...colorNode('项目', '项目'), parent };
 		const { submenu, view } = openColorMenu(node);
 		submenu.click(zh('menu.color.follow'));
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
-			view,
-			node,
-			'项目 %%none%%',
-		);
+		expectColorWrite(view, node, '项目 %%none%%');
 	});
 
 	it('点「默认」且上层本就没色：只删指令，不往文件里塞哨兵', () => {
 		const node = colorNode('项目 %%#ff0000%%');
 		const { submenu, view } = openColorMenu(node);
 		submenu.click(zh('menu.color.follow'));
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(view, node, '项目');
+		expectColorWrite(view, node, '项目');
 		// 已无指令可删 ⇒ 不写盘、也不产生一条多余的哨兵
-		applyRawNodeContentMock.mockClear();
+		applyRawNodeContentsMock.mockClear();
 		const again = colorNode('项目');
 		const second = openColorMenu(again);
 		second.submenu.click(zh('menu.color.follow'));
-		expect(applyRawNodeContentMock).not.toHaveBeenCalled();
+		expect(applyRawNodeContentsMock).not.toHaveBeenCalled();
 	});
 
 	it('点「默认」且上层已被更上面的哨兵挡住：删掉自身哨兵（不留垃圾）', () => {
@@ -1270,7 +1312,7 @@ describe('节点右键「配色」：写 Markdown 颜色指令', () => {
 		const child = { ...colorNode('子 %%none%%', '子'), parent };
 		const { submenu, view } = openColorMenu(child);
 		submenu.click(zh('menu.color.follow'));
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(view, child, '子');
+		expectColorWrite(view, child, '子');
 	});
 
 	it('哨兵节点勾在「默认」上（与没写指令同一个勾）', () => {
@@ -1286,13 +1328,9 @@ describe('节点右键「配色」：写 Markdown 颜色指令', () => {
 	it('哨兵换成颜色：替换原位，不叠加第二条', () => {
 		const node = colorNode('项目 %%none%%');
 		const { submenu } = openColorMenu(node);
-		const mint = nodeColorOptions().find((option) => option.value === 'mint');
-		submenu.click(zh('nodeColor.mint'));
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
-			expect.anything(),
-			node,
-			`项目 %%${mint?.color}%%`,
-		);
+		const mint = nodeColorOptions().find((option) => option.value === 'teal');
+		submenu.click(zh('nodeColor.teal'));
+		expectColorWrite(expect.anything(), node, `项目 %%${mint?.color}%%`);
 	});
 
 	it('宿主提供原生 setSubmenu 时：交给宿主展开，不再绑点击弹出', () => {
@@ -1344,37 +1382,25 @@ describe('节点右键「配色」：写 Markdown 颜色指令', () => {
 	it('选颜色：指令追加在原文末尾，交给原文提交通道（同一条编辑链）', () => {
 		const node = colorNode('项目');
 		const { submenu, view } = openColorMenu(node);
-		const mint = nodeColorOptions().find((option) => option.value === 'mint');
-		submenu.click(zh('nodeColor.mint'));
-		expect(applyRawNodeContentMock).toHaveBeenCalledTimes(1);
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
-			view,
-			node,
-			`项目 ${`%%${mint?.color}%%`}`,
-		);
+		const mint = nodeColorOptions().find((option) => option.value === 'teal');
+		submenu.click(zh('nodeColor.teal'));
+		expect(applyRawNodeContentsMock).toHaveBeenCalledTimes(1);
+		expectColorWrite(view, node, `项目 ${`%%${mint?.color}%%`}`);
 	});
 
 	it('已有指令：替换原指令，不在后面再叠一条', () => {
 		const node = colorNode('项目 %%#ff0000%%');
 		const { submenu } = openColorMenu(node);
-		submenu.click(zh('nodeColor.amber'));
-		const amber = nodeColorOptions().find((option) => option.value === 'amber');
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
-			expect.anything(),
-			node,
-			`项目 %%${amber?.color}%%`,
-		);
+		submenu.click(zh('nodeColor.orange'));
+		const amber = nodeColorOptions().find((option) => option.value === 'orange');
+		expectColorWrite(expect.anything(), node, `项目 %%${amber?.color}%%`);
 	});
 
 	it('跟随整篇（= 清除节点颜色）：删掉指令并吞掉多余空格', () => {
 		const node = colorNode('项目 %%#ff0000%% 说明');
 		const { submenu } = openColorMenu(node);
 		submenu.click(zh('menu.color.follow'));
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
-			expect.anything(),
-			node,
-			'项目 说明',
-		);
+		expectColorWrite(expect.anything(), node, '项目 说明');
 	});
 
 	it('自定义：弹窗返回值（归一后的十六进制）写进原文', async () => {
@@ -1383,11 +1409,7 @@ describe('节点右键「配色」：写 Markdown 颜色指令', () => {
 		const { submenu } = openColorMenu(node);
 		submenu.click(zh('palette.custom'));
 		await vi.waitFor(() => {
-			expect(applyRawNodeContentMock).toHaveBeenCalledWith(
-				expect.anything(),
-				node,
-				'项目 %%#123456%%',
-			);
+			expectColorWrite(expect.anything(), node, '项目 %%#123456%%');
 		});
 	});
 
@@ -1439,18 +1461,17 @@ describe('节点右键「配色」：写 Markdown 颜色指令', () => {
 			clientX: 1,
 			clientY: 1,
 		} as MouseEvent);
-		lastShownMenu()?.click(zh('nodeColor.forest'));
-		const forest = nodeColorOptions().find((option) => option.value === 'forest');
-		expect(applyRawNodeContentMock).toHaveBeenCalledTimes(2);
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+		lastShownMenu()?.click(zh('nodeColor.green'));
+		const forest = nodeColorOptions().find((option) => option.value === 'green');
+		// 多选合并成**一次**批量写回（渲染 / 存盘 / 历史各一次）
+		expect(applyRawNodeContentsMock).toHaveBeenCalledTimes(1);
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
 			expect.anything(),
-			first,
-			`甲 %%${forest?.color}%%`,
-		);
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
-			expect.anything(),
-			second,
-			`乙 %%${forest?.color}%%`,
+			[
+				{ node: first, raw: `甲 %%${forest?.color}%%` },
+				{ node: second, raw: `乙 %%${forest?.color}%%` },
+			],
+			{ afterCommit: false },
 		);
 	});
 });
@@ -1544,8 +1565,8 @@ describe('画布空白右键菜单', () => {
 		const paletteMenu = lastShownMenu();
 		// 预设 6 项 + 「自定义…」一项（2026-10-27 新增）
 		expect(paletteMenu?.items).toHaveLength(PALETTE_OPTIONS.length + 1);
-		paletteMenu?.click(zh('palette.mint'));
-		expect(applyPalette).toHaveBeenCalledWith('mint');
+		paletteMenu?.click(zh('palette.teal'));
+		expect(applyPalette).toHaveBeenCalledWith('teal');
 
 		// 自定义：弹窗返回归一色值后按文件写入（整篇配色）
 		openColorInputModalMock.mockResolvedValue('#89cff0');
@@ -1602,8 +1623,10 @@ describe('画布空白右键菜单', () => {
 
 describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
 	/** 只补 applyNodeColor 用得到的字段：引擎 + app（原文合成要经 app 判定可回写） */
-	function makeColorView(): MindMapViewContext {
-		const harness = makeView();
+	function makeColorView(
+		nodeColorScope: 'node' | 'subtree' = 'subtree',
+	): MindMapViewContext {
+		const harness = makeView({ nodeColorScope });
 		return { ...harness.view, app: {} } as unknown as MindMapViewContext;
 	}
 
@@ -1616,12 +1639,30 @@ describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
 		const view = makeColorView();
 		const node = colorNode({ text: '项目', mdRaw: '项目', mdDerivedText: '项目' });
 		applyNodeColor(view, [node], '#89cff0');
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
 			view,
-			node,
-			'项目 %%#89cff0%%',
+			[{ node, raw: '项目 %%#89cff0%%' }],
+			{ afterCommit: false },
 		);
 		expect(minimapMocks.refreshMiniMapAfterRender).toHaveBeenCalledWith(view);
+	});
+
+	it('多选上色：多个节点合并成**一次**批量落地（渲染 / 存盘 / 历史各一次）', () => {
+		// 逐节点落地时，选 10 个节点就是整树重渲 10 次（大图上十几秒冻结）。
+		const view = makeColorView();
+		const a = colorNode({ text: '甲', mdRaw: '甲', mdDerivedText: '甲' });
+		const b = colorNode({ text: '乙', mdRaw: '乙', mdDerivedText: '乙' });
+		applyNodeColor(view, [a, b], '#89cff0');
+		expect(applyRawNodeContentsMock).toHaveBeenCalledTimes(1);
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[
+				{ node: a, raw: '甲 %%#89cff0%%' },
+				{ node: b, raw: '乙 %%#89cff0%%' },
+			],
+			{ afterCommit: false },
+		);
+		expect(minimapMocks.refreshMiniMapAfterRender).toHaveBeenCalledTimes(1);
 	});
 
 	it('原文没变（重复点同一颜色）：不写盘、也不刷小地图', () => {
@@ -1632,7 +1673,7 @@ describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
 			mdDerivedText: '项目',
 		});
 		applyNodeColor(view, [node], '#89cff0');
-		expect(applyRawNodeContentMock).not.toHaveBeenCalled();
+		expect(applyRawNodeContentsMock).not.toHaveBeenCalled();
 		expect(minimapMocks.refreshMiniMapAfterRender).not.toHaveBeenCalled();
 	});
 
@@ -1650,10 +1691,10 @@ describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
 
 		applyNodeColor(view, [node], '#89cff0');
 
-		expect(applyRawNodeContentMock).toHaveBeenCalledWith(
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
 			view,
-			node,
-			`支付 %%#89cff0%%\n${tail}`,
+			[{ node, raw: `支付 %%#89cff0%%\n${tail}` }],
+			{ afterCommit: false },
 		);
 	});
 
@@ -1664,8 +1705,261 @@ describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
 			getData: () => ({ text: 'root' }),
 		} as unknown as MindMapNode;
 		applyNodeColor(view, [root], '#89cff0');
-		expect(applyRawNodeContentMock).not.toHaveBeenCalled();
+		expect(applyRawNodeContentsMock).not.toHaveBeenCalled();
 		expect(minimapMocks.refreshMiniMapAfterRender).not.toHaveBeenCalled();
+	});
+
+	/** 带子树的节点桩：清理只在「撤色」路径读 children / parent */
+	function treeNode(
+		raw: string,
+		display: string,
+		children: MindMapNode[] = [],
+	): MindMapNode {
+		return {
+			isRoot: false,
+			getData: () => ({ text: display, mdRaw: raw, mdDerivedText: display }),
+			children,
+		} as unknown as MindMapNode;
+	}
+
+	it('「默认」撤掉父色：后代里只挡它的哨兵一并清掉（合并成**一次**批量落地）', () => {
+		const view = makeColorView();
+		const grandchild = treeNode('孙 %%none%%', '孙');
+		const child = treeNode('子 %%none%%', '子', [grandchild]);
+		const node = treeNode('父 %%#ff0000%%', '父', [child]);
+
+		applyNodeColor(view, [node], null);
+
+		// 判据由 `orphanSentinels` 的 `rootDirective` 显式给出，故清理可以与主改动
+		// 同批落地：一次改色只付一轮整树重渲（2026-11-06 收敛，此前是两批）。
+		expect(applyRawNodeContentsMock).toHaveBeenCalledTimes(1);
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[
+				{ node, raw: '父' },
+				{ node: child, raw: '子' },
+				{ node: grandchild, raw: '孙' },
+			],
+			{ afterCommit: false },
+		);
+		expect(minimapMocks.refreshMiniMapAfterRender).toHaveBeenCalledTimes(1);
+	});
+
+	it('后代重新染色的分支保住哨兵（它挡的是新的色源）', () => {
+		const view = makeColorView();
+		const grandchild = treeNode('孙 %%none%%', '孙');
+		const child = treeNode('子 %%#222222%%', '子', [grandchild]);
+		const node = treeNode('父 %%#ff0000%%', '父', [child]);
+
+		applyNodeColor(view, [node], null);
+
+		// 只有主改动那一批，没有第二批清哨兵
+		expect(applyRawNodeContentsMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('换成某个颜色：不清哨兵（那些哨兵挡的正是新颜色）', () => {
+		const view = makeColorView();
+		const child = treeNode('子 %%none%%', '子');
+		const node = treeNode('父 %%#ff0000%%', '父', [child]);
+
+		applyNodeColor(view, [node], '#89cff0');
+
+		// 只有主改动那一批，没有第二批清哨兵
+		expect(applyRawNodeContentsMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('上层仍在染色（本节点改写成哨兵）：子孙的哨兵同样成了冗余', () => {
+		const view = makeColorView();
+		const upstream = treeNode('祖父 %%#c2761a%%', '祖父');
+		const child = treeNode('子 %%none%%', '子');
+		const node = treeNode('父', '父', [child]);
+		(node as unknown as { parent: MindMapNode }).parent = upstream;
+
+		applyNodeColor(view, [node], null);
+
+		// 本节点改写成哨兵 ⇒ 它自己也成了「挡住的上层」；子孙的哨兵同样冗余，
+		// 与主改动同批落地。
+		expect(applyRawNodeContentsMock).toHaveBeenCalledTimes(1);
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[
+				{ node, raw: '父 %%none%%' },
+				{ node: child, raw: '子' },
+			],
+			{ afterCommit: false },
+		);
+	});
+
+	/**
+	 * 作用范围「仅本节点」（设置项 `nodeColorScope === 'node'`，2026-11-06）：
+	 * 差别**只写在正文里**——给直接子节点补一条哨兵把继承切断，渲染侧不变。
+	 */
+	it('仅本节点：给直接子节点补哨兵，与主改动同批落地', () => {
+		const view = makeColorView('node');
+		const grandchild = treeNode('孙', '孙');
+		const child = treeNode('子', '子', [grandchild]);
+		const node = treeNode('父', '父', [child]);
+
+		applyNodeColor(view, [node], '#89cff0');
+
+		// 只补**一层**：哨兵自己会把「无节点色」传下去，再写一条等于重复注释
+		expect(applyRawNodeContentsMock).toHaveBeenCalledTimes(1);
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[
+				{ node, raw: '父 %%#89cff0%%' },
+				{ node: child, raw: '子 %%none%%' },
+			],
+			{ afterCommit: false },
+		);
+		expect(minimapMocks.refreshMiniMapAfterRender).toHaveBeenCalledTimes(1);
+	});
+
+	it('仅本节点：子节点自己已有指令时不改写（十六进制与哨兵都是用户此前的显式选择）', () => {
+		const view = makeColorView('node');
+		const colored = treeNode('甲 %%#222222%%', '甲');
+		const blocked = treeNode('乙 %%none%%', '乙');
+		const node = treeNode('父', '父', [colored, blocked]);
+
+		applyNodeColor(view, [node], '#89cff0');
+
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[{ node, raw: '父 %%#89cff0%%' }],
+			{ afterCommit: false },
+		);
+	});
+
+	it('仅本节点 + 父子同选：两个都拿到指令，子节点不会被写成哨兵', () => {
+		const view = makeColorView('node');
+		const child = treeNode('子', '子');
+		const node = treeNode('父', '父', [child]);
+
+		applyNodeColor(view, [node, child], '#89cff0');
+
+		// 「只写最上层」的折叠只在「含子节点」档成立：这一档里子节点也被选中了
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[
+				{ node, raw: '父 %%#89cff0%%' },
+				{ node: child, raw: '子 %%#89cff0%%' },
+			],
+			{ afterCommit: false },
+		);
+	});
+
+	it('仅本节点：父节点原文没变（已是同色）时，只有补哨兵那一批落地', () => {
+		const view = makeColorView('node');
+		const child = treeNode('子', '子');
+		const node = treeNode('父 %%#89cff0%%', '父', [child]);
+
+		applyNodeColor(view, [node], '#89cff0');
+
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[{ node: child, raw: '子 %%none%%' }],
+			{ afterCommit: false },
+		);
+	});
+
+	it('含子节点（出厂默认）：不写任何哨兵，子树靠继承', () => {
+		const view = makeColorView();
+		const child = treeNode('子', '子');
+		const node = treeNode('父', '父', [child]);
+
+		applyNodeColor(view, [node], '#89cff0');
+
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[{ node, raw: '父 %%#89cff0%%' }],
+			{ afterCommit: false },
+		);
+	});
+});
+
+describe('空白右键「配色」：按分支自动上色', () => {
+	/** 打开空白菜单 → 弹出「配色」子菜单（分支配色只在空白菜单里，不混进节点菜单） */
+	function openPaletteMenu(nodeColorScope: 'node' | 'subtree' = 'subtree') {
+		const harness = makeView({ nodeColorScope });
+		const view = { ...harness.view, app: {} } as unknown as MindMapViewContext;
+		setupContextMenu(view);
+		harness.binder.fireDom('contextmenu', fakeContextMenuEvent(null));
+		lastMenu().click(zh('toolbar.palette'), {
+			clientX: 5,
+			clientY: 5,
+		} as MouseEvent);
+		const submenu = lastShownMenu();
+		if (!submenu) {
+			throw new Error('配色子菜单未弹出');
+		}
+		return { ...harness, view, submenu };
+	}
+
+	it('没有并列分支（单链文档）：不出现这一项', () => {
+		getRenderRootMock.mockReturnValue({ children: [] });
+		branchLayerOfMock.mockReturnValue([]);
+		const { submenu } = openPaletteMenu();
+		expect(submenu.titles()).not.toContain(zh('palette.branchColors'));
+	});
+
+	it('有分支：出现该项；点一下按顺序把主色批量写进各分支', () => {
+		const first = {
+			...fakeNode({ text: '甲', mdRaw: '甲', mdDerivedText: '甲' }),
+			parent: null,
+		};
+		const second = {
+			...fakeNode({ text: '乙', mdRaw: '乙', mdDerivedText: '乙' }),
+			parent: null,
+		};
+		getRenderRootMock.mockReturnValue({ children: [first, second] });
+		branchLayerOfMock.mockReturnValue([first, second]);
+		const { submenu, view } = openPaletteMenu();
+		expect(submenu.titles()).toContain(zh('palette.branchColors'));
+
+		submenu.click(zh('palette.branchColors'));
+
+		const [mint, amber] = nodeColorOptions();
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[
+				{ node: first, raw: `甲 %%${mint?.color}%%` },
+				{ node: second, raw: `乙 %%${amber?.color}%%` },
+			],
+			{ afterCommit: false },
+		);
+		expect(minimapMocks.refreshMiniMapAfterRender).toHaveBeenCalledWith(view);
+	});
+
+	it('作用范围「仅本节点」：分支的子节点同样补哨兵（两个上色入口共用一份定义）', () => {
+		const child = {
+			...fakeNode({ text: '子', mdRaw: '子', mdDerivedText: '子' }),
+			parent: null,
+		};
+		const first = {
+			...fakeNode({ text: '甲', mdRaw: '甲', mdDerivedText: '甲' }),
+			parent: null,
+			children: [child],
+		};
+		const second = {
+			...fakeNode({ text: '乙', mdRaw: '乙', mdDerivedText: '乙' }),
+			parent: null,
+			children: [],
+		};
+		getRenderRootMock.mockReturnValue({ children: [first, second] });
+		branchLayerOfMock.mockReturnValue([first, second]);
+		const { submenu, view } = openPaletteMenu('node');
+		submenu.click(zh('palette.branchColors'));
+
+		const [mint, amber] = nodeColorOptions();
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[
+				{ node: first, raw: `甲 %%${mint?.color}%%` },
+				{ node: second, raw: `乙 %%${amber?.color}%%` },
+				{ node: child, raw: '子 %%none%%' },
+			],
+			{ afterCommit: false },
+		);
 	});
 });
 
