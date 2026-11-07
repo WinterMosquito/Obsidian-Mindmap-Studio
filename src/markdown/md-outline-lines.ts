@@ -44,8 +44,33 @@ export function fenceMarker(
 	return { char: m[1]![0]!, length: m[1]!.length };
 }
 
+/**
+ * 缩进单位是否合法：1–8 个空格 / 制表符的任意组合（`'  '` / `'\t'` / `' \t'`）。
+ *
+ * 解析侧（`noteIndent`）与写入侧（`readIndentUnit`）共用这一份判据：前者过滤
+ * 行首空白，后者拒绝脏值。**必须保留混合形态**——`' \t'` 被折成 `'\t'` 会少
+ * 一个字符宽，重写后整层左移（2026-11-06）。长度上限 8：更长的前缀多半来自
+ * 粘贴或异常文件，不当作层级单位。
+ */
+export function isValidIndentUnit(value: unknown): value is string {
+	return typeof value === 'string' && /^[ \t]{1,8}$/.test(value);
+}
+
+/** `classifyLines` 的产物：分类后的行 + 文档自己的列表缩进单位 */
+export interface ClassifiedLines {
+	lines: ParsedLine[];
+	/**
+	 * 文档列表层级的**缩进单位**（实测；`null` = 全文没有缩进列表，无可测信息）。
+	 *
+	 * 取**第一处有缩进的列表行**的前导空白**原样**（合法形态见
+	 * `isValidIndentUnit`）：它只描述「一层有多宽」，供序列化按原文风格重写
+	 * 缩进。两层写法不一致（2 空格 + 4 空格）时按第一层归一。
+	 */
+	indentUnit: string | null;
+}
+
 /** 逐行分类（围栏整体原样保留；围栏外空行与分隔线忽略） */
-export function classifyLines(body: string): ParsedLine[] {
+export function classifyLines(body: string): ClassifiedLines {
 	const out: ParsedLine[] = [];
 	const rawLines = body.split(/\r?\n/);
 	/** 当前围栏（分隔符字符与长度）；null = 不在围栏内 */
@@ -54,6 +79,14 @@ export function classifyLines(body: string): ParsedLine[] {
 	let lastLineIsFence = false;
 	/** 围栏外暂存的连续空行：仅当与围栏相邻时才写入（保证围栏仍可识别） */
 	let pendingBlank = 0;
+	/** 缩进单位（见 ClassifiedLines.indentUnit）：只认第一处有缩进的列表行 */
+	let indentUnit: string | null = null;
+	/** 记录第一处合法缩进（一旦测到就不再改：混用缩进按第一层归一） */
+	const noteIndent = (prefix: string): void => {
+		if (indentUnit === null && isValidIndentUnit(prefix)) {
+			indentUnit = prefix;
+		}
+	};
 
 	/**
 	 * 开围栏行是否在**同一行内自闭合**（```` ```code``` ````）：
@@ -87,7 +120,8 @@ export function classifyLines(body: string): ParsedLine[] {
 	};
 
 	const pushRaw = (raw: string): void => {
-		out.push({ kind: 'plain', indent: leadingSpaces(raw), text: raw, raw });
+		// 与 plain 分支同口径（Tab 计 1）：围栏块要按缩进并入所属列表项
+		out.push({ kind: 'plain', indent: leadingIndent(raw), text: raw, raw });
 	};
 
 	for (let i = 0; i < rawLines.length; i++) {
@@ -171,6 +205,7 @@ export function classifyLines(body: string): ParsedLine[] {
 		const l = line.match(LIST_RE);
 		if (l) {
 			const text = l[3]!.trim();
+			noteIndent(l[1]!);
 			if (text) {
 				out.push({
 					kind: 'list',
@@ -204,6 +239,7 @@ export function classifyLines(body: string): ParsedLine[] {
 		//（docs/markdown-mindmap-standard.md §3.6 白名单 #6）。
 		const emptyList = rawLine.match(/^(\s*)([-*+]|\d+\.)[ \t]+$/);
 		if (emptyList) {
+			noteIndent(emptyList[1]!);
 			out.push({
 				kind: 'list',
 				indent: emptyList[1]!.length,
@@ -214,20 +250,45 @@ export function classifyLines(body: string): ParsedLine[] {
 		}
 		out.push({
 			kind: 'plain',
-			indent: leadingSpaces(line),
+			// **缩进必须与列表项同口径**（空格 / 制表符各计 1 字符）：`LIST_RE` 的
+			// 缩进捕获是 `(\s*)`（Tab 计 1），此处若只数空格，Tab 缩进文件的列表项
+			// indent ≥ 1、其续行与围栏块 indent 恒为 0 ⇒「续行缩进大于列表项」永不
+			// 成立 ⇒ 项内围栏被拆成同级节点、后续兄弟整层错位（2026-11-04 实机：
+			// Tab 缩进的 `07 富内容.md` 加载即被拆平，保存后 4 个分支错位）。
+			indent: leadingIndent(line),
 			text: line.trim(),
 			// 原文（含前导缩进与行尾空格）供 mdRaw 逐字回写：缩进代码块的前导缩进、
 			// 「行尾两空格 = 硬换行」都是 Markdown 语义，trim 掉就等于改动文件
 			raw: rawLine,
 		});
 	}
-	return out;
+	return { lines: out, indentUnit };
 }
 
 /**
- * 行首空格数（制表符不计，与 `LIST_RE` 的 `\s*` 缩进口径分开表达）。
+ * 行首缩进**字符数**（空格与制表符各计 1）——与 `LIST_RE` 的 `(\s*)` 捕获同口径。
  *
- * 与 `splitFrontmatter` 的块标量缩进判定共用，故随分类逻辑一并搬出并导出。
+ * 只用于**续行 / 围栏块归层**判定（`plain.indent`）：这些行要与列表项 indent
+ * 比较大小，两者必须同一把尺子。`leadingSpaces` 另有用途（frontmatter 块标量
+ * 的缩进判定只认空格），不要合并。
+ *
+ * 不导出：唯一消费者是本文件的 `classifyLines`（`check:dead-code` 会把无主导出
+ * 当失败）。行为由 `md-roundtrip.test.ts` 的 Tab 缩进用例覆盖。
+ */
+function leadingIndent(line: string): number {
+	let n = 0;
+	while (n < line.length && (line[n] === ' ' || line[n] === '\t')) {
+		n++;
+	}
+	return n;
+}
+
+/**
+ * 行首**空格**数（制表符不计——它不是列表缩进的尺子，而是 YAML 块标量的尺子）。
+ *
+ * 唯一消费者是 `splitFrontmatter` 的块标量缩进判定：YAML 的块标量缩进必须是
+ * 空格，Tab 在那里本就不合法。**列表归层请用 `leadingIndent`**（Tab 计 1，
+ * 与 `LIST_RE` 的 `\s*` 同口径），两者不可互换。
  */
 export function leadingSpaces(line: string): number {
 	let n = 0;

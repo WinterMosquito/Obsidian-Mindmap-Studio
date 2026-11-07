@@ -550,10 +550,16 @@ export function parseMdOutline(
 	rootName: string,
 ): MdParseResult {
 	const { body, frontmatter } = splitFrontmatter(content);
-	const lines = classifyLines(body);
+	const { lines, indentUnit } = classifyLines(body);
 
 	// 虚拟文档根：text=文件名；回写时不输出该行
-	const root: MindMapTreeNode = { data: { text: rootName }, children: [] };
+	const rootData: MdNodeData = { text: rootName };
+	if (indentUnit !== null) {
+		// 列表缩进风格随树走（只记在根上）：序列化按它重写缩进，Tab / 4 空格
+		// 文件不会因为改了一个节点就被整篇改成 2 空格（见 MdNodeMeta.mdIndentUnit）
+		rootData.mdIndentUnit = indentUnit;
+	}
+	const root: MindMapTreeNode = { data: rootData, children: [] };
 	if (lines.length === 0) {
 		return { frontmatter, tree: root, body };
 	}

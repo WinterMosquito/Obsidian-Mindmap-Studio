@@ -29,6 +29,7 @@ import { readNodeDataString } from '../core/node-data';
 import { isNodeTextEdited } from '../domain/md-meta';
 import { withTaskPrefix } from '../domain/md-task';
 import { tokenizeInline } from './md-outline';
+import { isValidIndentUnit } from './md-outline-lines';
 import {
 	anchorInsertPoint,
 	inLinkSyntax,
@@ -697,7 +698,27 @@ export function serializeMdBody(
 	tree: MindMapTreeNode,
 	app: App | null = null,
 ): string {
-	return serializeTrees(tree.children ?? [], app, false);
+	return serializeTrees(
+		tree.children ?? [],
+		app,
+		false,
+		readIndentUnit(tree.data),
+	);
+}
+
+/** 列表缩进单位的**默认值**（新建文件 / 根 data 无 `mdIndentUnit` 时）：2 空格 */
+const DEFAULT_INDENT_UNIT = '  ';
+
+/**
+ * 取本文档的列表缩进单位（`MdNodeMeta.mdIndentUnit` 的唯一读取面）。
+ *
+ * 合法性由 `isValidIndentUnit` 统一判定（与解析侧同一份判据）；手改数据 /
+ * 旧版本写出的脏值一律回落 2 空格——缩进字符串会直接拼进每一行，放任任意值
+ * 等于让一份脏数据毁掉整篇排版。
+ */
+function readIndentUnit(data: unknown): string {
+	const value = (data as { mdIndentUnit?: unknown } | null)?.mdIndentUnit;
+	return isValidIndentUnit(value) ? value : DEFAULT_INDENT_UNIT;
 }
 
 /**
@@ -716,18 +737,22 @@ export function serializeSubtreesToOutline(
 	trees: readonly MindMapTreeNode[],
 	app: App | null = null,
 ): string {
-	return serializeTrees(trees, app, true);
+	// 剪贴板是**新内容**，没有「原文风格」可继承：恒用默认 2 空格
+	return serializeTrees(trees, app, true, DEFAULT_INDENT_UNIT);
 }
 
 /**
  * 大纲序列化的共用实现。
  * @param headingsAsList 剪贴板形态：标题/段落一并走列表分支
  *   （见 serializeSubtreesToOutline）
+ * @param indentUnit 每层缩进单位（文档形态取自根 data，见 readIndentUnit）：
+ *   同一份实现按原文风格输出，Tab / 4 空格缩进的文件不会因一次编辑被整篇重排
  */
 function serializeTrees(
 	siblings: readonly MindMapTreeNode[],
 	app: App | null,
 	headingsAsList: boolean,
+	indentUnit: string,
 ): string {
 	const out: string[] = [];
 
@@ -912,8 +937,12 @@ function serializeTrees(
 						: data.mdMarker || '-';
 			frame.orderedCount =
 				data.mdMarker === 'ordered' ? frame.orderedCount + 1 : 0;
-			const indent = '  '.repeat(frame.listIndent);
-			out.push(...nodeLines(child, indent + marker + ' ', indent + '  '));
+			// 每层一个**文档自己的**缩进单位；续行多给一个单位（与
+			// `\t` / 2 空格 / 4 空格三种原文风格都对齐，见 MdNodeMeta.mdIndentUnit）
+			const indent = indentUnit.repeat(frame.listIndent);
+			out.push(
+				...nodeLines(child, indent + marker + ' ', indent + indentUnit),
+			);
 			stack.push({
 				children: child.children ?? [],
 				index: 0,

@@ -5,8 +5,8 @@
  * - 「不动点」用例一律比对**完整字符串**（parse → serialize → parse → serialize
  *   两趟逐字相等）：只有全串相等才能证明「未编辑的原文逐字回写」，
  *   toContain 会放过前缀/缩进/空行漂移这类真正的数据损坏；
- * - 「规范化」用例给出**精确期望串**（空行被吞、缩进统一 2 空格、有序列表重排、
- *   tab 缩进归一），把「允许的规范化」与「数据丢失」区分开；
+ * - 「规范化」用例给出**精确期望串**（空行被吞、有序列表重排、缩进单位随文档
+ *   保留），把「允许的规范化」与「数据丢失」区分开；
  * - 会破坏不动点的输入单独断言其降级路径（rawOk 失败 → 走合成/剥离），
  *   并记录当前实现的确切输出——回归被改动时测试会直接失败而不是静默接受。
  *
@@ -20,6 +20,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { App, TFile } from 'obsidian';
 import { parseMdOutline } from '../src/markdown/md-outline';
+import { isValidIndentUnit } from '../src/markdown/md-outline-lines';
 import { serializeMdBody } from '../src/markdown/md-serialize';
 import {
 	buildDefaultMindMapName,
@@ -60,6 +61,12 @@ function textsOf(root: MNode): string[] {
 	return collect(root).map(({ node }) =>
 		typeof node.data.text === 'string' ? node.data.text : '',
 	);
+}
+
+/** 虚拟根上记录的列表缩进单位（解析期实测；无缩进列表时为 undefined） */
+function indentUnitOf(tree: MNode): string | undefined {
+	const value = tree.data.mdIndentUnit;
+	return typeof value === 'string' ? value : undefined;
 }
 
 /** 树中是否存在满足条件的节点 */
@@ -367,7 +374,8 @@ describe('层级深度', () => {
 		expect(out2, '深层列表往返不动点').toBe(out1);
 	});
 
-	it('5 万级深树：uid 修复 + 序列化走显式栈，不触发 RangeError', () => {
+	// 压力用例：唯一需要放宽超时的场景（全局已回落到 5 s，见 vitest.config.ts）
+	it('5 万级深树：uid 修复 + 序列化走显式栈，不触发 RangeError', { timeout: 30_000 }, () => {
 		const depth = 50000;
 		const root: MNode = { data: { text: 'deep0' }, children: [] };
 		let cursor = root;
@@ -609,6 +617,95 @@ describe('往返不动点', () => {
 			['```', 'code', '```'].join('\n'),
 		);
 		expect(first.out2, '第二趟不动点').toBe(first.out1);
+	});
+
+	it('Tab 缩进的列表 + 项内围栏：解析层级与 2 空格同构、往返不漂移（2026-11-04 实机缺陷）', () => {
+		// 实机症状：Tab 缩进的文件加载时列表层级就已经被拆平——`plain` 行的
+		// indent 只数空格（Tab 缩进恒 0），而列表项 indent 按字符数（Tab 计 1），
+		// 「续行缩进 > 列表项缩进」永不成立 ⇒ 项内围栏被拆成同级 plain 节点、
+		// 其后的兄弟整层上提。点一次复选框写回后就把这个错位树落盘，
+		// 重开看起来像「4 个分支消失」。
+		// 修复：`plain.indent` 改用与 `LIST_RE` 同口径的 `leadingIndent`（Tab 计 1）。
+		const md = [
+			'- 根',
+			'\t- 代码',
+			'\t\t```js',
+			'\t\tx = 1',
+			'\t\t```',
+			'\t- 之后',
+		].join('\n');
+		const tree1 = parseMdOutline(md, '根').tree as MNode;
+		const root1 = tree1.children[0]!;
+		expect(root1.children.length, '根下有 2 个兄弟（围栏并入「代码」而非另立节点）').toBe(
+			2,
+		);
+		expect(root1.children[0]!.data.text, '「代码」文本含围栏块').toContain(
+			'```js',
+		);
+		expect(root1.children[1]!.data.text, '「之后」仍是第二项').toBe('之后');
+
+		// 与 2 空格缩进**同构**：同一形状换成 2 空格，树形状必须一致
+		const spaced = parseMdOutline(
+			md.replace(/\t/g, '  '),
+			'根',
+		).tree as MNode;
+		expect(textsOf(tree1), 'Tab 与 2 空格解析出同样的文本序列').toEqual(
+			textsOf(spaced),
+		);
+
+		// 往返：**原样**回写（缩进单位随文档走，不再被规范化成 2 空格），
+		// 第二趟仍是不动点
+		const first = roundTrip(md);
+		expect(first.out1, '缩进单位沿原文（Tab），首趟即逐字回写').toBe(md);
+		expect(first.out2, '第二趟不动点').toBe(first.out1);
+	});
+
+	it('缩进单位随文档：4 空格缩进不被改写成 2 空格（2026-11-06 实机）', () => {
+		// 实机症状：Tab / 4 空格缩进的文件改一个节点文本，全文缩进被重排成 2 空格
+		// （整篇 diff）。修复：解析期测出「一层有多宽」记在根 data，序列化按它输出。
+		const md = [
+			'- 根',
+			'    - 子一',
+			'        - 孙',
+			'    - 子二',
+		].join('\n');
+		const tree = parseMdOutline(md, '根').tree as MNode;
+		expect(indentUnitOf(tree)).toBe('    ');
+		const first = roundTrip(md);
+		expect(first.out1, '4 空格缩进逐字回写').toBe(md);
+		expect(first.out2, '第二趟不动点').toBe(first.out1);
+	});
+
+	it('缩进单位原样记录：空格 + Tab 混用不被折成单个 Tab（2026-11-06 审核）', () => {
+		// 旧实现见 Tab 就把整段前缀记成 `'\t'`，`' \t'` 少一个字符宽 ⇒ 重写后整层
+		// 左移。现在原样记录（1–8 个空格 / 制表符的任意组合），`readIndentUnit` 也
+		// 不再收窄成「纯空格或单个 Tab」。
+		const md = ['- 根', ' \t- 子一', ' \t \t- 孙', ' \t- 子二'].join('\n');
+		const tree = parseMdOutline(md, '根').tree as MNode;
+		expect(indentUnitOf(tree)).toBe(' \t');
+		const first = roundTrip(md);
+		expect(first.out1, '混合缩进逐字回写').toBe(md);
+		expect(first.out2, '第二趟不动点').toBe(first.out1);
+	});
+
+	it('缩进单位缺省：全文无缩进列表 / 新建树仍按 2 空格输出', () => {
+		// 无缩进信息时不写 mdIndentUnit，序列化走默认 2 空格（历史口径不变）
+		const flat = ['- 甲', '- 乙'].join('\n');
+		const tree = parseMdOutline(flat, '根').tree as MNode;
+		expect(tree.data).not.toHaveProperty('mdIndentUnit');
+		expect(roundTrip(flat).out1).toBe(flat);
+	});
+
+	it('缩进单位合法性：1–8 个空格 / Tab，其余判脏', () => {
+		// 解析侧与写入侧共用同一判据（含混合形态），此处直接锁住边界
+		expect(isValidIndentUnit('  ')).toBe(true);
+		expect(isValidIndentUnit('\t')).toBe(true);
+		expect(isValidIndentUnit(' \t')).toBe(true);
+		expect(isValidIndentUnit(' '.repeat(8))).toBe(true);
+		expect(isValidIndentUnit('')).toBe(false);
+		expect(isValidIndentUnit(' '.repeat(9))).toBe(false);
+		expect(isValidIndentUnit('  x')).toBe(false);
+		expect(isValidIndentUnit(null)).toBe(false);
 	});
 });
 
@@ -2455,15 +2552,25 @@ describe('plain 行保真（缩进与行尾空格）', () => {
 		expect(roundTrip(md).out2, '不动点').toBe(md);
 	});
 
-	it('列表续行：行首缩进仍按既有规范归一（由序列化器补 2 空格），行尾空格保真', () => {
+	it('列表续行：续行缩进 = 列表缩进 + 文档单位（此例 2 空格），行尾空格保真', () => {
 		const md = '- a\n    续行  \n    再续';
-		expect(roundTrip(md).out1, '行首缩进归一、行尾两空格保留').toBe(
+		expect(roundTrip(md).out1, '行首缩进按文档单位重写、行尾两空格保留').toBe(
 			'- a\n  续行  \n  再续',
 		);
 	});
 
-	it('对照：列表自身的 Tab 缩进仍归一为 2 空格（列表缩进规范未被本修复改动）', () => {
-		expect(roundTrip('- a\n\t- b').out1).toBe('- a\n  - b');
+	it('列表自身的缩进单位随文档：Tab 文件仍写 Tab（2026-11-06 改口径）', () => {
+		// 此前这里断言「列表缩进恒归一为 2 空格」。实机（2026-11-06）证明那会让
+		// **任何一次编辑**把 Tab / 4 空格文件整篇重排（改一个节点文本 ⇒ 全文
+		// diff）。缩进单位改为解析期实测、记在根 data（MdNodeMeta.mdIndentUnit），
+		// 序列化按原文风格输出；只有测不到单位时（无缩进列表 / 新建文件）才用 2 空格。
+		expect(roundTrip('- a\n\t- b').out1, 'Tab 缩进保留').toBe('- a\n\t- b');
+		expect(roundTrip('- a\n    - b').out1, '4 空格缩进保留').toBe(
+			'- a\n    - b',
+		);
+		expect(roundTrip('- a\n  - b').out1, '2 空格缩进保持不变').toBe(
+			'- a\n  - b',
+		);
 	});
 
 	it('对照：段落间空行仍按既有规范化吞掉（非本修复范围）', () => {

@@ -140,6 +140,17 @@ export interface MdNodeMeta {
 	mdLevel?: number;
 	/** 列表标记：'-' / '*' / '+'，有序列表为 'ordered' */
 	mdMarker?: string;
+	/**
+	 * 本文档列表层级的**缩进单位**（1–8 个空格 / 制表符的任意组合，如 `'  '` /
+	 * `'\t'` / `'    '` / `' \t'`）：只记在**虚拟根**的 data 上，普通节点不写。
+	 *
+	 * 序列化按树深度每层输出一个单位。缺省 `'  '` 是历史口径；Tab / 4 空格文件
+	 * 若也按 2 空格重写，**任何一次编辑**都会把整篇缩进重排（实机 2026-11-06：
+	 * 改一个节点文本，全文 `\t` 变两个空格），与「未编辑行逐字回写」相悖。
+	 * 解析侧 `classifyLines` 实测（`ClassifiedLines.indentUnit`），写入侧
+	 * `md-serialize.readIndentUnit` 统一校验（脏值回落 `'  '`）。
+	 */
+	mdIndentUnit?: string;
 	/** 链接样式：wiki 双链 / md 标准链接 */
 	mdLinkStyle?: MdLinkStyle;
 	/** md 链接的标签文本（autolink 时为目标 URL） */

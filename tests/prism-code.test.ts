@@ -608,7 +608,12 @@ describe('产物缓存（尺寸同步的同步命中路径）', () => {
 		expect(getRenderedCodeNodes('const', 'ts')).toBeNull();
 	});
 
-	it('FIFO 封顶：超上限的写入淘汰最旧条目且不超过 max', async () => {
+	// 压力用例：逐条填满缓存（实测约 2.7 s），5 s 全局超时在慢机上余量不足
+	// （见 vitest.config.ts），故在用例级放宽
+	it(
+		'FIFO 封顶：超上限的写入淘汰最旧条目且不超过 max',
+		{ timeout: 15_000 },
+		async () => {
 		const {
 			renderCodeWithPrism: rawRender,
 			getRenderedCodeNodes,
