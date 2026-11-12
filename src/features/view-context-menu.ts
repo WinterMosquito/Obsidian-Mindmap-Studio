@@ -32,6 +32,7 @@ import {
 	PALETTE_OPTIONS,
 } from '../core/constants';
 import { COLOR_DIRECTIVE_NONE } from '../domain/color';
+import type { DocumentSyntax } from '../markdown/md-heading-syntax';
 import {
 	addCascadingMenu,
 	addCustomColorItem,
@@ -162,6 +163,37 @@ function addPaletteMenu(menu: Menu, view: MindMapViewContext): void {
 						.setTitle(t(view.lang, 'palette.branchColors'))
 						.setIcon('git-branch')
 						.onClick(() => applyBranchColors(view)),
+				);
+			}
+		},
+	});
+}
+
+/**
+ * 空白右键的「层级语法」：**整篇重排**（无序列表 ⇄ 标题，双向），改写正文并落
+ * 一条撤销历史。
+ *
+ * 只在空白菜单出现：作用对象是整篇，放进节点右键会让人误以为只改该节点
+ * （布局 / 配色能在节点右键，是因为它们本就按整篇生效、且不动正文）。
+ * 勾选态取自正文实测（`resolveDocumentSyntax`），不存第二份状态。
+ */
+function addSyntaxMenu(menu: Menu, view: MindMapViewContext): void {
+	const current = view.resolveDocumentSyntax();
+	const options: readonly { value: DocumentSyntax; label: TranslationKey }[] = [
+		{ value: 'list', label: 'syntax.list' },
+		{ value: 1, label: 'syntax.heading1' },
+		{ value: 2, label: 'syntax.heading2' },
+	];
+	addCascadingMenu(menu, view.lang, {
+		title: 'syntax.title',
+		icon: 'heading',
+		build: (submenu) => {
+			for (const option of options) {
+				submenu.addItem((item) =>
+					item
+						.setTitle(t(view.lang, option.label))
+						.setChecked(option.value === current)
+						.onClick(() => view.applyDocumentSyntax(option.value)),
 				);
 			}
 		},
@@ -572,18 +604,31 @@ function addBlankMenuItems(menu: Menu, view: MindMapViewContext): void {
 	menu.addSeparator();
 	addLayoutMenu(menu, view);
 	addPaletteMenu(menu, view);
+	addSyntaxMenu(menu, view);
 	menu.addSeparator();
 	menu.addItem((item) =>
 		item
 			.setTitle(t(view.lang, 'toolbar.undo'))
 			.setIcon('undo')
-			.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.BACK)),
+			.onClick(() => {
+				if (view.undo) {
+					view.undo();
+				} else {
+					view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
+				}
+			}),
 	);
 	menu.addItem((item) =>
 		item
 			.setTitle(t(view.lang, 'toolbar.redo'))
 			.setIcon('redo')
-			.onClick(() => view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD)),
+			.onClick(() => {
+				if (view.redo) {
+					view.redo();
+				} else {
+					view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+				}
+			}),
 	);
 }
 

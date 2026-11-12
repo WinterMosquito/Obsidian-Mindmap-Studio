@@ -19,6 +19,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { App, TFile } from 'obsidian';
+import type { MindMapTreeNode } from '../src/core/engine-types';
 import { parseMdOutline } from '../src/markdown/md-outline';
 import { isValidIndentUnit } from '../src/markdown/md-outline-lines';
 import { serializeMdBody } from '../src/markdown/md-serialize';
@@ -320,6 +321,18 @@ describe('解析结构', () => {
 		expect(li.data.mdRaw, 'mdRaw 存未加前缀的原始行').toBe('第一行\n续行');
 	});
 
+	it('续行的**相对内容列缩进**记在 mdContinuationIndents（脚注续行判据）', () => {
+		// 内容列 = 2（`- ` 之后）：缩进 2 的续行相对 0、缩进 6 的相对 4。
+		// 渲染层据此区分「定义正文的续行」与「同节点里的下一段正文」（mdRaw 已
+		// trimStart，绝对缩进只剩这一份）。
+		const r = parseMdOutline(
+			'- 正文\n  [^1]: 定义\n  接着的正文\n      缩进续行\n',
+			'根',
+		);
+		const li = r.tree.children[0]!;
+		expect((li.data as MdData).mdContinuationIndents).toEqual([0, 0, 0, 4]);
+	});
+
 	it('相邻 plain 行合并为一个多行段落节点（段落语义）', () => {
 		const r = parseMdOutline('# H\n\n第一行\n第二行\n', '根');
 		const plains = collect(r.tree as MNode).filter(
@@ -506,11 +519,42 @@ describe('往返不动点', () => {
 		expect(out2).toBe(out1);
 	});
 
-	it('规范化：有序列表重排为 1..n，且无序项打断计数', () => {
+	it('有序编号保真：手写编号原样回写，不重排（K170）', () => {
 		const md = ['# O', '- a', '3. b', '4. c', '- d', '2. e'].join('\n');
 		const { out1, out2 } = roundTrip(md);
-		expect(out1).toBe(['# O', '- a', '1. b', '2. c', '- d', '1. e'].join('\n'));
-		expect(out2, '重排结果稳定').toBe(out1);
+		expect(out1).toBe(['# O', '- a', '3. b', '4. c', '- d', '2. e'].join('\n'));
+		expect(out2, '保真结果稳定').toBe(out1);
+	});
+
+	it('配色指令独立行（K174）：标题 / 列表项重解析归属上一节点，往返不动点', () => {
+		const heading = ['# 标题', '%%#89cff0%%', '- 子'].join('\n');
+		const h = roundTrip(heading);
+		expect(h.out1, '独立行不被当成新节点').toBe(heading);
+		expect(h.out2).toBe(h.out1);
+		const list = ['- 甲', '  %%#89cff0%%', '- 乙'].join('\n');
+		const l = roundTrip(list);
+		expect(l.out1, '缩进的独立行仍是该列表项的指令').toBe(list);
+		expect(l.out2).toBe(l.out1);
+	});
+
+	it('围栏代码里的指令同形态不被抽走（fenced 守卫）', () => {
+		const md = [
+			'标题',
+			'```js',
+			'%%rel:abc%%',
+			'%%#fff%%',
+			'```',
+			'- 后',
+		].join('\n');
+		const r = roundTrip(md);
+		expect(r.out1, '代码块内容逐字保留').toBe(md);
+		expect(r.out2).toBe(r.out1);
+	});
+
+	it('旧的行内配色指令在写成标题时挪到独立行（heading 缓存不再被污染）', () => {
+		const r = roundTrip('# 标题 %%#89cff0%%');
+		expect(r.out1).toBe(['# 标题', '%%#89cff0%%'].join('\n'));
+		expect(r.out2).toBe(r.out1);
 	});
 
 	it('规范化：跳级标题之间补空行（块分隔），层级关系不变', () => {
@@ -658,6 +702,55 @@ describe('往返不动点', () => {
 		const first = roundTrip(md);
 		expect(first.out1, '缩进单位沿原文（Tab），首趟即逐字回写').toBe(md);
 		expect(first.out2, '第二趟不动点').toBe(first.out1);
+	});
+
+	it('空格的项内围栏：闭合行与内容同缩进（第 4 列）也能闭合，后续兄弟不丢（2026-11-09 修）', () => {
+		// 实机症状：`  - ```js` + 4 空格内容 + 4 空格闭合行 ⇒ 闭合判据当时是
+		// 「≤3 空格」的**绝对**口径（CommonMark 的「相对定界符 ≤3」被误读），4 空格
+		// 的闭合行永远认不出 ⇒ 围栏状态不退出，其后的兄弟节点 / 标题整段被吞进
+		// 代码内容（一张示例导图里排在代码块之后的分支全部消失）。
+		const md = [
+			'# 标题',
+			'- 代码',
+			'  - ```js',
+			'    x = 1',
+			'    ```',
+			'- 之后',
+			'- 再之后',
+		].join('\n');
+		const tree = parseMdOutline(md, '根').tree as MNode;
+		const heading = tree.children[0]!;
+		const items = heading.children;
+		expect(items).toHaveLength(3);
+		expect(items[0]!.data.text, '围栏并入「代码」').toBe('代码');
+		expect(items[0]!.children[0]!.data.text, '子节点是围栏块').toContain('```js');
+		expect(items[1]!.data.text).toBe('之后');
+		expect(items[2]!.data.text).toBe('再之后');
+	});
+
+	it('项内围栏的闭合行**比定界符多缩进**超过 3 列：不闭合（仍按内容保留）', () => {
+		// 反向守卫：不能为了修上面的缺陷把所有带 ``` 的行都当闭合行
+		const md = [
+			'- 代码',
+			'  - ```js',
+			'    x = 1',
+			'        ```',
+			'    y = 2',
+			'    ```',
+			'x',
+		].join('\n');
+		const tree = parseMdOutline(md, '根').tree as MNode;
+		const first = tree.children[0]!;
+		expect(first.data.text, '围栏并入「代码」').toBe('代码');
+		const block = first.children[0]!;
+		const blockText = String(block.data.text);
+		// 续行并入时行首缩进会被剥掉（序列化按树深度补），故用「定界符出现次数 +
+		// 后文是否仍在块内」判定：早闭合会让 `y = 2` 掉出块外、只剩 2 处 ```
+		expect(blockText, '八空格缩进不闭合：y = 2 仍在块内').toContain('y = 2');
+		expect(
+			blockText.match(/```/g)?.length,
+			'三处定界符（开 + 内容里那一行 + 真闭合）',
+		).toBe(3);
 	});
 
 	it('缩进单位随文档：4 空格缩进不被改写成 2 空格（2026-11-06 实机）', () => {
@@ -2428,13 +2521,10 @@ describe('视图状态（ViewStateStore）', () => {
 // 十二、新建正文（属性声明块 + 标准 Markdown 大纲；声明判据见 mindmap-property）
 // ---------------------------------------------------------------------------
 describe('新建导图正文', () => {
-	it('属性声明块恒为 `Mindmap: Mindmap`（与语言无关），块后空行分隔正文', () => {
-		expect(
-			createDefaultMarkdownContent('zh').startsWith('---\nMindmap: Mindmap\n---\n\n'),
-		).toBe(true);
-		expect(
-			createDefaultMarkdownContent('en').startsWith('---\nMindmap: Mindmap\n---\n\n'),
-		).toBe(true);
+	it('属性声明块恒为双键（与语言无关），块后空行分隔正文', () => {
+		const header = '---\nMindmap: Mindmap\nMindmap Layout: mindmap\n---\n\n';
+		expect(createDefaultMarkdownContent('zh').startsWith(header)).toBe(true);
+		expect(createDefaultMarkdownContent('en').startsWith(header)).toBe(true);
 	});
 
 	it('新建默认正文是标准 Markdown：文件头被识别、解析为 3 个列表子主题且往返稳定', () => {
@@ -2445,9 +2535,13 @@ describe('新建导图正文', () => {
 			'- Enter：添加同级节点',
 			'',
 		].join('\n');
-		expect(content).toBe(`---\nMindmap: Mindmap\n---\n\n${body}`);
+		expect(content).toBe(
+			`---\nMindmap: Mindmap\nMindmap Layout: mindmap\n---\n\n${body}`,
+		);
 		const r = parseMdOutline(content, '根');
-		expect(r.frontmatter, '属性块逐字保留为文件头').toBe('---\nMindmap: Mindmap\n---\n');
+		expect(r.frontmatter, '属性块逐字保留为文件头').toBe(
+			'---\nMindmap: Mindmap\nMindmap Layout: mindmap\n---\n',
+		);
 		expect(r.tree.children).toHaveLength(3);
 		expect(r.tree.children.map((c) => (c.data as MdData).mdMarker)).toEqual([
 			'-',
@@ -2523,6 +2617,29 @@ describe('列表项围栏', () => {
 		// 两个代码块的续行缩进逐字保留
 		expect(out1).toContain('- ```js\n  const a = 1;\n  ```');
 		expect(out1).toContain('- ```\n  echo hi\n  ```');
+	});
+
+	it('闭合行缩进比开栏更浅也认（2026-11-12：`  ```js` + 顶格闭合）', () => {
+		// CommonMark 只限定「闭合行缩进不超过开栏 +3」，**没有下限**；
+		// 此前要求 closeIndent >= column ⇒ 围栏永不闭合，兄弟节点被吞进代码。
+		const md = ['- 甲', '  ```js', '  const a = 1;', '```', '- 乙'].join('\n');
+		const tree = parseMdOutline(md, '根').tree;
+		expect(tree.children, '两个节点：甲（含围栏块）+ 乙').toHaveLength(2);
+		expect(
+			String(tree.children[0]!.data.text),
+			'围栏整块并入甲（含顶格闭合行）',
+		).toBe('甲\n```js\nconst a = 1;\n```');
+		expect(
+			String(tree.children[1]!.data.text),
+			'乙不得被吞进代码内容',
+		).toBe('乙');
+		expect(tree.children[0]!.children, '围栏内容不产出子节点').toHaveLength(0);
+
+		const out1 = serializeMdBody(tree, null);
+		expect(out1, '闭合行按树深度补缩进（结构等价，非逐字）').toBe(
+			['- 甲', '  ```js', '  const a = 1;', '  ```', '- 乙'].join('\n'),
+		);
+		expect(roundTrip(out1).out1, '二次往返不动点').toBe(out1);
 	});
 });
 
@@ -2614,5 +2731,83 @@ describe('分隔线与 setext H2 下划线', () => {
 		// 旧行为整行丢弃；现在保留，且空行由序列化器的块分隔规则补出（原文无空行）
 		expect(roundTrip('- a\n---').out1).toBe('- a\n\n---');
 		expect(roundTrip('# H\n---').out1).toBe('# H\n\n---');
+	});
+});
+
+describe('段落父带子节点（K171④）', () => {
+	it('序列化按列表项输出：子级不再掉层，重解析层级保持', () => {
+		const tree = {
+			data: { text: '根' },
+			children: [
+				{
+					data: { text: '段', mdType: 'plain' },
+					children: [
+						{
+							data: { text: '子', mdType: 'list', mdMarker: '-' },
+							children: [],
+						},
+					],
+				},
+			],
+		} as MindMapTreeNode;
+		const out = serializeMdBody(tree, null);
+		expect(out).toBe(['- 段', '  - 子'].join('\n'));
+		const again = parseMdOutline(out, '根');
+		const seg = again.tree.children[0]!;
+		expect(seg.data.mdType).toBe('list');
+		expect(seg.children).toHaveLength(1);
+		expect(seg.children[0]!.data.text).toBe('子');
+	});
+});
+
+describe('逐字保真（2026-11-11 修复回归）', () => {
+	it('列表行尾两空格（硬换行）随未编辑节点回写', () => {
+		const md = ['- 甲节点  ', '- 乙节点'].join('\n');
+		expect(serializeMdBody(parseMdOutline(md, '根').tree, null)).toBe(md);
+	});
+
+	it('标题行尾空白保留（不再被解析层 trim）', () => {
+		expect(
+			serializeMdBody(parseMdOutline('# 标题  \n', '根').tree, null),
+		).toBe('# 标题  ');
+	});
+
+	it('多行节点续行里的双链 / 外链不被当成「链接已清除」吞掉', () => {
+		const md = [
+			'- 引用块',
+			'  > 正文 [[地球]] 与 [外链](https://example.com)',
+			'- 丙节点',
+		].join('\n');
+		expect(serializeMdBody(parseMdOutline(md, '根').tree, null)).toBe(md);
+	});
+
+	it('首行链接被清除时仍走合成剥离（回归：不在修复多行时失效）', () => {
+		const { tree, data } = firstChild('- [[旧目标]] 标题\n');
+		delete data.mdWikiLinkpath;
+		expect(serializeMdBody(tree, null)).toBe('- 旧目标 标题');
+	});
+
+	it('只改首行时，未编辑的续行逐字回写（不再按剥壳文本重排）', () => {
+		// 2026-11-12 审核定位：`rawOk` 因首行改动失败后，续行取自 `text`
+		// （剥壳显示文本）⇒ 续行里的 `[[ ]]` / 行尾指令全被吞。
+		const { tree, data } = firstChild(
+			['- 甲', '  第二行 [[地球]]', '  第三行 `==高亮==`'].join('\n') + '\n',
+		);
+		// 只改首行（续行显示文本保持解析期快照）
+		data.text = '甲改\n第二行 地球\n第三行 `==高亮==`';
+		expect(serializeMdBody(tree, null)).toBe(
+			['- 甲改', '  第二行 [[地球]]', '  第三行 `==高亮==`'].join('\n'),
+		);
+	});
+
+	it('续行本身被改过时以用户输入为准（不复活旧原文）', () => {
+		const { tree, data } = firstChild(
+			['- 甲', '  第二行 [[地球]]'].join('\n') + '\n',
+		);
+		// 续行也被改过（与解析期快照不同）⇒ 以 text 为准
+		data.text = '甲改\n第二行 地球改过';
+		expect(serializeMdBody(tree, null)).toBe(
+			['- 甲改', '  第二行 地球改过'].join('\n'),
+		);
 	});
 });

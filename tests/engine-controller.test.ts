@@ -13,8 +13,9 @@
  * - 引用预检：无关文件的重命名/删除必须零拷贝短路，命中才 getData + 整树替换
  *   （replaceMindMapData——保留撤销历史，勿退回会清空历史的引擎 setData）；
  * - 图片点击的拖拽抑制窗口（含 300ms 边界）；
- * - refresh 的深拷贝重建、persistViewport 的按路径写入，以及
- *   restoreOrFitViewport「有保存视口优先恢复，否则默认 100% + 内容包围盒居中」。
+ * - refresh 的深拷贝重建、persistViewport 的按路径写入（含 2026-11-11 的
+ *   「视口仍是打开时的默认视口 ⇒ 不写盘」），以及 restoreOrFitViewport
+ *   「有保存视口优先恢复，否则默认 100% + 内容包围盒居中」。
  *
  * 引擎本体（vendor bundle）不在 Node 下加载，故 vi.mock('../src/engine/mindmap')
  * 桩掉防腐封装面；引用更新真实实现涉及 Obsidian 库 API，同样桩掉 links-rename，
@@ -1192,6 +1193,124 @@ describe('EngineController 视口持久化与恢复', () => {
 
 		expect(console.warn).toHaveBeenCalled();
 		expect(h.viewState.getView(h.file!.path)).toBeUndefined();
+	});
+
+	it('persistViewport：视口仍是打开时自动设置的默认视口 ⇒ 不写盘（2026-11-11）', () => {
+		vi.useFakeTimers();
+		const h = readyHarness();
+		const engine = h.engines[0]!;
+		const defaultView = {
+			transform: { scaleX: 1, scaleY: 1, translateX: 10, translateY: 20 },
+			state: { scale: 1, x: 10, y: 20, sx: 0, sy: 0 },
+		};
+		engine.view.getTransformData.mockReturnValue(defaultView);
+		// 建立默认视口（居中/适配）并记下签名
+		vi.advanceTimersByTime(150);
+
+		const setView = vi.spyOn(h.viewState, 'setView');
+		h.controller.persistViewport();
+
+		expect(setView).not.toHaveBeenCalled();
+		expect(h.viewState.getView(h.file!.path)).toBeUndefined();
+	});
+
+	it('真实关闭顺序（persistViewport → invalidateInit）：默认视口仍不写盘', () => {
+		vi.useFakeTimers();
+		const h = readyHarness();
+		const engine = h.engines[0]!;
+		engine.view.getTransformData.mockReturnValue({
+			transform: { scaleX: 1, scaleY: 1, translateX: 10, translateY: 20 },
+			state: { scale: 1, x: 10, y: 20 },
+		});
+		vi.advanceTimersByTime(150);
+
+		const setView = vi.spyOn(h.viewState, 'setView');
+		// view.ts 的 onUnloadFile / onClose 顺序即此（2026-11-11 实机修正前是反的）
+		h.controller.persistViewport();
+		h.controller.invalidateInit();
+
+		expect(setView).not.toHaveBeenCalled();
+	});
+
+	it('顺序契约：invalidateInit 会清空视口判据（故持久化必须排在它之前）', () => {
+		vi.useFakeTimers();
+		const h = readyHarness();
+		h.engines[0]!.view.getTransformData.mockReturnValue({
+			transform: { scaleX: 1, scaleY: 1, translateX: 10, translateY: 20 },
+			state: { scale: 1, x: 10, y: 20 },
+		});
+		vi.advanceTimersByTime(150);
+
+		expect(h.controller.viewport.defaultSignature).not.toBeNull();
+		h.controller.invalidateInit();
+		// 判据被 reset：此后 persistViewport 只可能落盘 ⇒ 两条关闭路径必须
+		// 先调 persistViewport（见 engine-controller.persistViewport 的时机契约）
+		expect(h.controller.viewport.defaultSignature).toBeNull();
+		expect(h.controller.viewport.restoredSaved).toBe(false);
+	});
+
+	it('已恢复保存视口：150ms 兜底直接收手、不再读 store（2026-11-11 回归）', () => {
+		vi.useFakeTimers();
+		const h = readyHarness();
+		// 首帧已应用保存视口：defaultSignature 为 null、restoredSaved 为 true
+		h.controller.viewport.restoredSaved = true;
+		const spy = vi.spyOn(h.viewState, 'getView');
+		spy.mockClear();
+
+		vi.advanceTimersByTime(150);
+
+		expect(spy, '兜底不得重读 store（否则会捡走另一视图刚写入的视口）').not.toHaveBeenCalled();
+	});
+
+	it('重算窗口不重读 store：另一视图写入保存视口后，本视图仍按默认视口重算', () => {
+		vi.useFakeTimers();
+		const h = readyHarness();
+		const engine = h.engines[0]!;
+		engine.view.getTransformData.mockReturnValue({
+			transform: { scaleX: 1, scaleY: 1, translateX: 10, translateY: 20 },
+			state: { scale: 1, x: 10, y: 20 },
+		});
+		// 本视图打开时 store 里没有保存视口 ⇒ 走默认居中并记下签名
+		vi.advanceTimersByTime(150);
+		expect(mocks.centerContentAtFullScale).toHaveBeenCalledTimes(1);
+
+		// 同一文件的另一视图此刻关闭，把它的视口写进了 store
+		h.viewState.hydrate({
+			viewState: {
+				[h.file!.path]: {
+					view: {
+						transform: { scaleX: 2, scaleY: 2, translateX: 99, translateY: 88 },
+						state: { scale: 2, x: 99, y: 88 },
+					},
+				},
+			},
+		});
+
+		// 预算内的布局落地：只重算默认视口，不把别人的保存视口捡过来
+		fireEngineEvent(engine, 'node_tree_render_end');
+		expect(engine.view.setTransformData).not.toHaveBeenCalled();
+		expect(mocks.centerContentAtFullScale).toHaveBeenCalledTimes(2);
+	});
+
+	it('persistViewport：用户平移过（签名失配）⇒ 照常写盘', () => {
+		vi.useFakeTimers();
+		const h = readyHarness();
+		const engine = h.engines[0]!;
+		engine.view.getTransformData.mockReturnValue({
+			transform: { scaleX: 1, scaleY: 1, translateX: 10, translateY: 20 },
+			state: { scale: 1, x: 10, y: 20 },
+		});
+		vi.advanceTimersByTime(150);
+
+		const panned = {
+			transform: { scaleX: 1.2, scaleY: 1.2, translateX: 33, translateY: 44 },
+			state: { scale: 1.2, x: 33, y: 44 },
+		};
+		engine.view.getTransformData.mockReturnValue(panned);
+
+		h.controller.persistViewport();
+
+		expect(h.viewState.getView(h.file!.path)).toEqual(panned);
 	});
 
 	it('首帧后（150ms）无保存视口：默认 100% + 整体内容包围盒居中，不 fit', () => {

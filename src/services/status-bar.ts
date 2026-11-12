@@ -16,7 +16,7 @@ import { t, type Language, type TranslationKey } from '../core/i18n';
  * - `idle`：没有进行中的写盘、也没有失败（新加载 / 已清空）——不计入文案；
  * - `saving`：已排程或正在写盘；
  * - `saved`：最近一轮排空成功（含「无差异跳过」）；
- * - `unsaved`：写盘失败 / 外部改动冲突跳过 / 自动保存挂起——常驻到下一次成功。
+ * - `unsaved`：写盘失败——常驻到下一次成功。
  */
 export type SaveState = 'idle' | 'saving' | 'saved' | 'unsaved';
 

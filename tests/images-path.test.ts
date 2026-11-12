@@ -33,6 +33,9 @@ import {
 	resolveImagePath,
 	walkImageSizeCorrections,
 	walkResolveImagePaths,
+	withDefaultImageSizes,
+	imageSizeKey,
+	reuseKnownImageSizes,
 } from '../src/media/images-path';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
@@ -296,6 +299,113 @@ describe('ensureDefaultImageSizes（引擎硬要求：image 节点必有 imageSi
 		});
 		// 幂等：再填一次为 no-op（已有的不动）
 		expect(ensureDefaultImageSizes(tree)).toBe(0);
+	});
+});
+
+describe('withDefaultImageSizes（应用会话快照前的引擎可渲染形态）', () => {
+	// 场景来源（2026-11-12 实机）：含 `![[图]]` 的导图做一次外部写入，外部分支
+	// 重载的树来自解析器（不产 imageSize），直接交给引擎后 `getImgShowSize`
+	// 对缺失值解构抛错 ⇒ `renderer.root` 变 null、视图停在旧画面且不再重绘。
+	it('无缺尺寸图片时原样返回（零拷贝：跨视图广播是热路径）', () => {
+		const tree = node({ text: 'root' }, [
+			node({
+				text: '',
+				image: probeUrl('keep.png'),
+				imageSize: { width: 10, height: 10, custom: true },
+			}),
+			node({ text: '无图节点' }),
+		]);
+
+		expect(withDefaultImageSizes(tree)).toBe(tree);
+	});
+
+	it('有缺尺寸图片时返回副本并补齐，原树字段一个不改（派生字段不回灌会话树）', () => {
+		const tree = node({ text: 'root' }, [
+			node({ text: '', image: probeUrl('deep.png') }, [
+				node({ text: '', image: probeUrl('nested.png') }),
+			]),
+		]);
+
+		const prepared = withDefaultImageSizes(tree);
+		const expected = {
+			width: IMAGE_WIDTH,
+			height: IMAGE_HEIGHT,
+			custom: false,
+		};
+
+		expect(prepared).not.toBe(tree);
+		expect(tree.children?.[0]?.data.imageSize).toBeUndefined();
+		expect(tree.children?.[0]?.children?.[0]?.data.imageSize).toBeUndefined();
+		expect(prepared.children?.[0]?.data.imageSize).toEqual(expected);
+		expect(prepared.children?.[0]?.children?.[0]?.data.imageSize).toEqual(
+			expected,
+		);
+		// 其余字段逐字保留（地址改写/裁剪会让图片指向错文件）
+		expect(prepared.children?.[0]?.children?.[0]?.data.image).toBe(
+			probeUrl('nested.png'),
+		);
+	});
+});
+
+describe('reuseKnownImageSizes（外部写入重载后复用已定稿尺寸）', () => {
+	// 2026-11-12 实机复验：外部写入重载只补默认盒，加载期异步探测回灌不会
+	// 为快照重跑 ⇒ 160×160 / 147×147 会跳回 200×120。快照应用前引擎还在，
+	// 那份 custom:true 的定稿尺寸按「地址 + 尺寸参数」搬过来即可。
+	const EXACT = { width: 160, height: 160, custom: true };
+	const PARAM = { width: 147, height: 147, custom: true };
+
+	it('没有已知尺寸时原样返回（零拷贝）', () => {
+		const tree = node({ text: 'root' }, [
+			node({ text: '', image: probeUrl('a.png') }),
+		]);
+
+		expect(reuseKnownImageSizes(tree, new Map())).toBe(tree);
+	});
+
+	it('命中则拷贝后复用，原树一个字段不改；未命中的仍停在默认盒', () => {
+		const tree = withDefaultImageSizes(
+			node({ text: 'root' }, [
+				node({ text: '', image: probeUrl('a.png') }),
+				node({ text: '', image: probeUrl('b.png') }),
+			]),
+		);
+		const known = new Map([[imageSizeKey({ image: probeUrl('a.png') }), EXACT]]);
+
+		const prepared = reuseKnownImageSizes(tree, known);
+
+		expect(prepared).not.toBe(tree);
+		expect(prepared.children?.[0]?.data.imageSize).toEqual(EXACT);
+		expect(prepared.children?.[1]?.data.imageSize).toEqual({
+			width: IMAGE_WIDTH,
+			height: IMAGE_HEIGHT,
+			custom: false,
+		});
+		expect(tree.children?.[0]?.data.imageSize).toEqual({
+			width: IMAGE_WIDTH,
+			height: IMAGE_HEIGHT,
+			custom: false,
+		});
+	});
+
+	it('同一张图不同尺寸参数各取各的；已有 custom 尺寸的节点不动', () => {
+		const url = probeUrl('same.png');
+		const tree = withDefaultImageSizes(
+			node({ text: 'root' }, [
+				node({ text: '', image: url }),
+				node({ text: '', image: url, mdImageWidth: 147 }),
+				node({ text: '', image: url, imageSize: EXACT }),
+			]),
+		);
+		const known = new Map([
+			[imageSizeKey({ image: url }), EXACT],
+			[imageSizeKey({ image: url, mdImageWidth: 147 }), PARAM],
+		]);
+
+		const prepared = reuseKnownImageSizes(tree, known);
+
+		expect(prepared.children?.[0]?.data.imageSize).toEqual(EXACT);
+		expect(prepared.children?.[1]?.data.imageSize).toEqual(PARAM);
+		expect(prepared.children?.[2]?.data.imageSize).toEqual(EXACT);
 	});
 });
 

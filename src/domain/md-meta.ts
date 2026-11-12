@@ -61,6 +61,23 @@ export function nodeInlineSource(data: Record<string, unknown>): string {
 	return tail ? `${text}\n${tail}` : text;
 }
 
+/**
+ * 节点的**续行相对缩进表**（`mdRaw` 逐行对应）；不可用时返回 `undefined`。
+ *
+ * 与 `nodeInlineSource` 同一「是否已编辑」判据：`text` 被改过后 `mdRaw` 的快照
+ * 与当前行不再对应，缩进表随之作废（返回 undefined ⇒ 读侧按行首空白现算）。
+ * 新建 / 粘贴节点没有该字段，同样返回 undefined（fail-open：按原文判断）。
+ */
+export function nodeContinuationIndents(
+	data: Record<string, unknown>,
+): readonly number[] | undefined {
+	if (isNodeTextEdited(data.text, data.mdDerivedText)) {
+		return undefined;
+	}
+	const value = data.mdContinuationIndents;
+	return Array.isArray(value) ? (value as number[]) : undefined;
+}
+
 /** 行类型（data.mdType）：md 三种行形态 */
 type MdLineType = 'heading' | 'list' | 'plain';
 
@@ -138,8 +155,18 @@ export interface MdNodeMeta {
 	mdType?: MdLineType;
 	/** 标题级别 1-6（跳级保留原始 # 数） */
 	mdLevel?: number;
-	/** 列表标记：'-' / '*' / '+'，有序列表为 'ordered' */
+	/**
+	 * 列表标记：`'-'` / `'*'` / `'+'`，有序列表为 `'ordered'`。
+	 *
+	 * **转标题后保留**（标题行不写它）：转回列表时据此恢复原标记
+	 * （`*` / `+` 不会退化成 `-`）。序列化的标题分支忽略该字段。
+	 */
 	mdMarker?: string;
+	/**
+	 * 有序列表项的**原编号**（`5.` → 5）：序列化优先用它，未编辑项不会被
+	 * 重排成 1、2、3…。新建 / 无编号项回落到前一项 + 1。
+	 */
+	mdOrderedNumber?: number;
 	/**
 	 * 本文档列表层级的**缩进单位**（1–8 个空格 / 制表符的任意组合，如 `'  '` /
 	 * `'\t'` / `'    '` / `' \t'`）：只记在**虚拟根**的 data 上，普通节点不写。
@@ -151,6 +178,35 @@ export interface MdNodeMeta {
 	 * `md-serialize.readIndentUnit` 统一校验（脏值回落 `'  '`）。
 	 */
 	mdIndentUnit?: string;
+	/**
+	 * **逐行的续行相对缩进**（列数；与 `mdRaw` 的行一一对应，index 0 恒为 0）。
+	 *
+	 * 列表项的续行在 `mdRaw` 里是 `trimStart` 形态（行首缩进由序列化按树深度重补），
+	 * 绝对缩进就此丢失；而 Markdown 判定「这一行是不是上一段的续行」用的是**相对
+	 * 内容起始列**的缩进（`ParsedLine.contentColumn`）。脚注定义的续行正是靠它区分：
+	 * 同样的两行文本，缩进 0 在阅读视图里是**另一段正文**，缩进 4 才是定义正文
+	 * （2026-11-12 实机：`- 正文 / [^1]: 定义 / 接着的正文` 的第三行曾被当成
+	 * 定义续行一起隐藏，节点上少一段）。
+	 *
+	 * 只由解析层写（仅列表项续行，含空白续行的 0），渲染层只读；不落盘、不进正文。
+	 * `text` 被编辑过后本表与 `text` 的行不再对应，读侧必须经
+	 * `nodeContinuationIndents`（与 `nodeInlineSource` 同一「是否已编辑」判据）。
+	 */
+	mdContinuationIndents?: number[];
+	/**
+	 * 本文档**顶层标题的起始级别**（1–6，只记在**虚拟根**的 data 上）。
+	 *
+	 * 解析侧实测（顶层 heading 的**最小** `mdLevel`；无顶层标题时不记），写入侧
+	 * `md-heading-syntax.readHeadingStart` 读取并钳制，序列化用它决定「根级新建
+	 * 节点写几个 `#`」。缺省 1 是历史口径（K98 的「第 1 层 → `#`」）。
+	 *
+	 * 取**最小**而非首个：新节点恒追加在末尾，取最小级别才能稳定 pop 回根子节点
+	 * （`## 甲` + `# 乙` 这类手改混排取 1 才安全）。
+	 *
+	 * 为什么必须实测而不是读设置：逐文件的语法风格只存在于正文（设置项只管
+	 * 新建导图的种子与空文档），否则「改设置」会改写所有存量文件的行为。
+	 */
+	mdHeadingStart?: number;
 	/** 链接样式：wiki 双链 / md 标准链接 */
 	mdLinkStyle?: MdLinkStyle;
 	/** md 链接的标签文本（autolink 时为目标 URL） */

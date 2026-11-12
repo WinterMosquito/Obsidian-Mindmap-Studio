@@ -42,6 +42,15 @@ export class LoadSession {
 	loadingFilePath: string | null = null;
 
 	/**
+	 * 加载代际：每次 `loadMindMapFromFile` 自增。
+	 *
+	 * `onUnloadFile` 在 `await session.detach()` 期间可能已有新文件接管视图
+	 * （`onLoadFile` → `loadMindMapFromFile`）。销毁引擎前必须核对代际，
+	 * 否则会把新文件的引擎拆掉（2026-11-11 静态审查定位的竞态）。
+	 */
+	generation = 0;
+
+	/**
 	 * 待执行的引擎初始化帧（`loadMindMapFromFile` 用 rAF 等首帧布局就绪）。
 	 * 必须可取消：视图关闭/文件切换后该回调仍会执行，届时容器可能仍在 DOM
 	 * 且尺寸非零，会在已关闭的视图上建出完整引擎实例（无人销毁）。
@@ -66,7 +75,7 @@ export class LoadSession {
 	 * **只在加载路径写入**（设置刷新重建不写，否则会把未落盘的编辑误标成基线），
 	 * 消费前还要核对路径——否则会把 A 文件的原文记成 B 文件的基线。
 	 */
-	pendingBaseline: { path: string; rawBody: string } | null = null;
+	pendingBaseline: { path: string } | null = null;
 
 	/**
 	 * 挂起的「大图首帧提示」节点数（只有 ≥ 阈值时才有值，否则 null）。

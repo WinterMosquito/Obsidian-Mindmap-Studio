@@ -31,6 +31,7 @@ import { createDebouncer, createThrottler, type Debouncer } from '../core/concur
 import {
 	AUTO_SPLIT_CHECK_DELAY_MS,
 	DEFAULT_PALETTE,
+	headingStartOfSyntax,
 	isNodeOnlyColorScope,
 	LARGE_MAP_RENDER_HINT_NODES,
 	normalizeLineStylePreference,
@@ -38,16 +39,22 @@ import {
 	normalizeThemeStyle,
 	VIEW_TYPE,
 } from '../core/constants';
-import type { MindMap, MindMapNode } from '../core/engine-types';
-import { createWarnOnce, notifyError } from '../core/errors';
+import type {
+	MindMap,
+	MindMapNode,
+	MindMapTreeNode,
+} from '../core/engine-types';
+import { notifyError } from '../core/errors';
 import {
 	applyColorDirectivesToTree,
 	applyImageSizeCorrectionsToEngine,
 	applyRelationsToTree,
+	applySessionSnapshot,
 	applySummariesToTree,
 	countMindMapNodes,
 	countTreeNodes,
 	getRenderRoot,
+	readHistoryAvailability,
 	syncLiveRelations,
 	syncLiveSummaries,
 	syncNodeColorDirectives,
@@ -61,22 +68,27 @@ import { LoadSession } from './view-load-session';
 import {
 	collectImageSizeCorrections,
 	ensureDefaultImageSizes,
+	imageSizeKey,
+	reuseKnownImageSizes,
+	type ImageSizeValue,
 } from '../media/images-path';
+
 import { openAsMarkdown, readDeclaredLayout } from '../markdown/md-open';
 import {
-	layoutIdOfPropertyValue,
-	layoutPropertyValue,
-	setMindMapProperty,
+	normalizeLayoutId,
+	setMindMapLayout,
 } from '../domain/mindmap-property';
 import { registerWikilinkInteractions } from './view-wikilink';
 import { setupNodeTaskInteraction } from './view-node-task';
-import { setupNodePick } from './node-pick';
+import { cancelNodePick, setupNodePick } from './node-pick';
+import { cancelRelationAnchor } from './view-relation-anchor';
 import {
 	schedulePersistRelationGeometry,
 	setupRelationInteractions,
 	teardownRelationInteraction,
 } from './view-node-relation';
 import { registerTagClicks } from './view-tag';
+import { setupFootnoteInteractions } from './view-footnote';
 import {
 	closeInlineEditor,
 	isAnyNodeEditing,
@@ -100,7 +112,11 @@ import type {
 	MindMapViewContext,
 	ViewPluginContext,
 } from './view-context';
-import { DocumentService, SavePipeline } from '../services/document-service';
+import {
+	DocumentSession,
+	type SessionSaveState,
+	type SessionViewPort,
+} from '../services/document-session';
 import type { SaveState } from '../services/status-bar';
 import { EngineController } from '../services/engine-controller';
 import {
@@ -145,6 +161,17 @@ import {
 	runAutoSplitCheck,
 	splitAllLinksInDocument,
 } from './view-split-links';
+import {
+	applyDocumentSyntax as applyDocumentSyntaxFeature,
+	cancelSyntaxGuard,
+	resolveDocumentSyntax as resolveDocumentSyntaxFeature,
+	scheduleSyntaxGuard,
+	setupSyntaxGuard,
+} from './view-syntax';
+import {
+	seedHeadingStart,
+	type DocumentSyntax,
+} from '../markdown/md-heading-syntax';
 
 /** 视图装配完成信号超时（毫秒）：正常 onOpen 会 resolve；超时表示装配未完成，降级继续加载 */
 const READY_TIMEOUT_MS = 10_000;
@@ -240,7 +267,10 @@ function readMdBackMode(state: unknown): 'source' | 'preview' {
 		: 'source';
 }
 
-export class MindMapView extends FileView implements MindMapViewContext {
+export class MindMapView
+	extends FileView
+	implements MindMapViewContext, SessionViewPort
+{
 	plugin: ViewPluginContext;
 	canvasEl: HTMLElement | null = null;
 	toolbarEl: HTMLElement | null = null;
@@ -260,10 +290,22 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/** 当前深色主题（css-change 时重算；仅本类与引擎控制器装配面使用） */
 	private isDark = false;
 
-	/** md 文档读取/解析（渲染层数据面） */
-	private documents: DocumentService;
-	/** 保存管线（防抖 + 串行排空 + 卸载快照兜底） */
-	private savePipeline: SavePipeline;
+	/**
+	 * 本文件所属的**文档会话**（Level B）：一份权威树 + 一条撤销线 + 一条保存
+	 * 管线，同文件其余视图共享它。引擎树只是会话的只读投影。
+	 *
+	 * 为空表示尚未加载 / 已卸载（`scheduleSave` / 提交 / 撤销都静默跳过）。
+	 */
+	private session: DocumentSession | null = null;
+	/**
+	 * 编辑提交是否已「上膛」：引擎首帧渲染结束前置 false。
+	 *
+	 * 必须挡住这一刻：`seedInitialHistory`（K160）在首帧渲染结束时记一条历史，
+	 * 引擎会发一次 `data_change`——若不挡，会话会把**引擎规范化后的树**当成
+	 * 一次编辑入栈（多一条按 Ctrl+Z 毫无反应的幽灵历史），并排一次保存。
+	 * 用户编辑不可能早于首帧（那时画布上还没有节点）。
+	 */
+	private commitsArmed = false;
 	/** 引擎实例生命周期（防腐收口，引擎内部访问不再出现在本类） */
 	private engine: EngineController;
 	/**
@@ -302,8 +344,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	/**
 	 * 当前布局（引擎 layout id）。
 	 *
-	 * **唯一持久化位是文件属性**（frontmatter 的 `Mindmap` 值）：加载时读声明
-	 * （`readDeclaredLayout`），切换时写属性（`applyLayout`）。
+	 * **唯一持久化位是文件属性**（frontmatter 的 `Mindmap Layout` 键）：加载时
+	 * 读布局（`readDeclaredLayout`），切换时写布局键（`applyLayout`）。`Mindmap`
+	 * 键只是启用开关，不承载布局（2026-11-07 拆分）。
 	 *
 	 * 字段初值给 `null` 只为满足构造顺序，构造函数随即赋 `settings.defaultLayout`
 	 * （见构造函数注释）——`onOpen` 建工具栏早于文件加载，引擎那时尚未创建，而竖栏
@@ -383,13 +426,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	private mdBackMode: 'source' | 'preview' = 'source';
 	/**
-	 * 按文件键保留的 frontmatter 块（保存时拼回文件头；条目在 onUnloadFile
-	 * 写盘结束后清理）。**必须按文件取值**：core 切换 FileView 的文件时不 await
-	 * onUnloadFile，「最近加载的那一份」在换文件期间已属于新文件——若用单值字段，
-	 * 旧文件的写盘会拼上新文件的文件头、或丢掉旧文件的文件头。
-	 */
-	private readonly frontmatterByPath = new Map<string, string | null>();
-	/**
 	 * 大图首帧渲染提示（`view.renderingLargeMap`）。
 	 *
 	 * 引擎首帧是**一个同步长任务**（实测 5000 节点 ≈2.2 s），期间画布空白、
@@ -420,14 +456,6 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		getContentRoot: () => this.canvasEl,
 	});
 
-	/**
-	 * 「冗余 leaf 摘除失败」告警留痕（同一视图只提示一次）。
-	 *
-	 * 失败只留空标签页，用户已经收到「该导图已在其他标签页打开」的提示（不二次
-	 * 打扰）；但空 leaf 残留本身**只能靠日志发现**，属无痕退化 ⇒ 必须留痕。
-	 */
-	private warnDuplicateLeafDetach = createWarnOnce();
-
 	/** 引擎实例（view-* 模块经 context 只读访问） */
 	get mindMap(): MindMap | null {
 		return this.engine.mindMap;
@@ -447,47 +475,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// body.hasClass('theme-dark')（核心 CSS 类，官方 d.ts 中不存在）
 		this.isDark = this.app.isDarkMode();
 
-		this.documents = new DocumentService(this.app);
-		this.savePipeline = new SavePipeline({
-			app: this.app,
-			getFile: () => this.file,
-			// 内容一律按目标文件取：引擎已交班给别的文件时返回 null，管线改用
-			// 排空期提前抓的兜底快照——绝不把新文件的内容写进旧文件（归属不变式）。
-			getSnapshotFor: (file) =>
-				this.file?.path === file.path ? this.engine.getDataSnapshot() : null,
-			getFrontmatterFor: (file) =>
-				this.frontmatterByPath.get(file.path) ?? null,
-			isAutoSave: () => this.plugin.settings.autoSave,
-			onSaveError: (error) => {
-				this.setSaveState('unsaved');
-				notifyError(this.lang, 'save.failed', error);
-			},
-			// P1a：自动保存检测到外部修改 → 提示跳过（不覆盖他处改动）
-			onExternalChange: (file) => {
-				this.setSaveState('unsaved');
-				notifyError(this.lang, 'save.externalChangeSkipped', file.path);
-			},
-			// P1b：连续失败挂起自动保存 → 一次性提示（显式保存不受影响）
-			onAutoSaveSuspended: () => {
-				this.setSaveState('unsaved');
-				notifyError(this.lang, 'save.autoSuspended', '');
-			},
-			// 一轮排空成功（含无差异跳过）→ 状态栏「已保存」。
-			// 按路径核对：排空期间视图可能已切到别的文件（旧文件的成功与本视图无关）。
-			onSaved: (file) => {
-				if (this.file?.path === file.path) {
-					this.setSaveState('saved');
-				}
-			},
-			// 自动保存关闭：只判定、不写盘（`checkDirty`）。与加载基线逐字相同 ⇒
-			// 「已保存」（磁盘本就是这个内容）；有差异 ⇒「未保存」并把结论留到下
-			// 一次判定或一次显式保存。同样按路径核对。
-			onDirty: (dirty, file) => {
-				if (this.file?.path === file.path) {
-					this.setSaveState(dirty ? 'unsaved' : 'saved');
-				}
-			},
-		});
+		// 保存管线归会话（Level B）：同一文件的多个视图共享一条管线，保存的是
+		// 会话权威树而非某个视图的陈旧快照；视图只经 `session.scheduleSave()`
+		// 请求排程。
 		this.titleRenamer = new TitleRenamer({
 			app: this.app,
 			getFile: () => this.file,
@@ -560,7 +550,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			// 每个快捷键都会问一次，非剪贴板键由 view-clipboard 放行。
 			beforeShortcutRun: (key) => handleClipboardShortcut(this, key),
 			onRootDataChanged: () => {
-				this.scheduleSave();
+				// 先提交到会话（发起视图是唯一提交口；接收视图的应用通道不发
+				// `data_change`，故同一次编辑只进会话一次）。
+				// **只有真的提交了才排保存**：首帧前的 `data_change` 是引擎自身
+				// 规范化（`seedInitialHistory` 播种），不是用户编辑——照旧排程会让
+				// 每次打开都空报「保存中…」两秒、再空跑一轮无差异写盘（2026-11-09
+				// 实机：刚打开的文件状态栏就是「保存中…」）。
+				if (this.commitSession()) {
+					this.scheduleSave();
+				}
 				updateStatusBar(this);
 				this.titleRenamer.schedule();
 			},
@@ -569,6 +567,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				// 本事件）：不刷就会一直是亮的，点了没反应（2026-11-03 实机）
 				syncHistoryButtons(this);
 				this.scheduleAutoSplitCheck();
+				// 层级语法的同级一致性守卫（拖拽 / 粘贴 / 撤销重做后兜底；
+				// 拖拽期间由 node_dragend 触发，见 view-syntax 文件头）
+				scheduleSyntaxGuard(this);
 				// 拖动联系线端点/控制点只改 data（引擎命令），这里把它写回正文——
 				// 不写的话重开文件几何就回到自动计算（用户观感「改了不保存」）。
 				schedulePersistRelationGeometry(this);
@@ -598,6 +599,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				setupRelationInteractions(this);
 				// 标签 pill：画布 capture 接管点击 → 官方标签搜索（私有触点）
 				registerTagClicks(this.engineEvents, this.canvasEl, this.app, this.lang);
+				// 脚注徽标：点击定位定义节点 + 悬停预览（同一 capture 范式）。
+				// 索引读**本视图引擎的渲染树**（uid 只在引擎侧存在；会话树无 uid）
+				setupFootnoteInteractions({
+					events: this.engineEvents,
+					canvasEl: this.canvasEl,
+					lang: this.lang,
+					getMindMap: () => this.mindMap,
+					contentOptions: this.inlineContentOptions,
+					// 浮层内的链接可点：与节点超链接同一分流（库内路径 / 外部 URL）
+					openLink: (link) => this.openHyperlink(link),
+				});
 				// 节点内代码块的复制按钮（悬停显形 → 点击复制 → ✓ 反馈）
 				registerCodeBlockInteractions(this);
 				// 画布视口手势（Ctrl+滚轮缩放 / 滚轮平移 / 中键拖）：对齐官方 Canvas
@@ -611,6 +623,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 				setupNodeWidthRefresh(this);
 				// 左下角小地图（自动出现/淡出，无手动入口；见 view-minimap 文件头）
 				setupMiniMap(this);
+				// 层级语法守卫：拖拽开始/结束的时序感知（见 view-syntax 文件头）
+				setupSyntaxGuard(this);
 			},
 			onEngineReady: () => this.onEngineReady(),
 			onReferencesChanged: () => {
@@ -736,47 +750,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	override async onLoadFile(file: TFile): Promise<void> {
-		// P0 同文件互斥（2026-09-28 加固）：同一导图文件只允许一个
-		// MindMapView 持有引擎——两实例各自独立引擎 + 独立保存管线，防抖窗口
-		// 交错时**后写覆盖先写**（保存互踩、丢编辑）。Obsidian 允许同一文件
-		// 多标签（Ctrl+点击新开、重启后布局恢复都会走到这里）。
-		// 处理：提示 + 激活既有 leaf，本 leaf 延迟摘除（onLoadFile 内同步
-		// detach 会与装载流程竞争）；未初始化即摘除的空实例，其 onClose 各步
-		// （persistViewport/getDataSnapshot/destroyInstance）均有空守卫，安全。
-		const duplicateLeaf = this.app.workspace
-			.getLeavesOfType(VIEW_TYPE)
-			.find((leaf) => {
-				const other = leaf.view;
-				return (
-					other instanceof MindMapView &&
-					other !== this &&
-					(other.loadSession.loadingFilePath ?? other.file?.path) === file.path
-				);
-			});
-		if (duplicateLeaf) {
-			new Notice(t(this.lang, 'common.mindMapAlreadyOpen'));
-			// 官方契约：revealLeaf 返回 Promise（obsidian.d.ts 明言「await 它以确保视图
-			// 已加载」），故挂 catch 兜住拒绝——此处**不另弹 Notice**：上面已提示
-			// 「该导图已在其他标签页打开」，再弹一条是重复打扰。
-			void this.app.workspace
-				.revealLeaf(duplicateLeaf)
-				.catch((error: unknown) => {
-					console.warn('切换到已打开的导图标签页失败:', error);
-				});
-			window.setTimeout(() => {
-				try {
-					this.leaf.detach();
-				} catch (error) {
-					// 摘除失败（leaf 已被外部关闭等）：不再二次提示用户，但上次
-					// 「让位」是否真的生效只能靠日志发现 ⇒ 留痕一次
-					this.warnDuplicateLeafDetach(
-						'冗余标签页摘除失败（可能残留空标签页）',
-						error,
-					);
-				}
-			}, 0);
-			return;
-		}
+		// 同一文件允许多个导图视图并存（2026-11-07）：与 Obsidian 多标签一致，
+		// 各自拥有独立引擎与保存管线；关闭时各自保存、后关闭者胜（见 SavePipeline）。
 		// 等待装配完成（onOpen 尚未执行时挂起，替代原 10ms 轮询）。
 		// 10s 超时降级：正常装配毫秒级完成；超时表示 onOpen 未 resolveReady
 		// （异常路径/极端情形），继续加载但 DOM 可能不完整。
@@ -809,9 +784,20 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	override async onUnloadFile(file: TFile): Promise<void> {
 		const unloadingPath = this.loadSession.loadingFilePath;
+		// 会话引用留到内联编辑提交之后再摘：`closeInlineEditor` 要经会话提交
+		// 最后一次输入（先置 null 会把用户刚打的字丢掉）。
+		const session = this.session;
+		// 提交闸必须在 `closeInlineEditor` **之后**才关：关闭/切文件时编辑器里的
+		// 最后一次输入要经 `commitSession` 进会话（2026-11-11 实机：先关闸会丢字）。
+		// 本方法后续不会再产生用户编辑，晚置 false 不会引入重复提交。
+		const generation = this.loadSession.generation;
+		// **必须先于 `invalidateInit`**：它 `viewport.reset()` 会清掉
+		// `defaultSignature` / `restoredSaved`，之后 persistViewport 的
+		// 「视口仍是打开时自动设置的那个」判据恒不成立（2026-11-11 实机：
+		// 判据被清空 ⇒ 纯浏览也会写入 data.json）。视口读取与作废顺序无关。
+		this.engine.persistViewport();
 		this.engine.invalidateInit();
 		this.cancelPendingInit();
-		this.savePipeline.cancelTimer();
 		// 未决的大图尾随 resize 属旧文件：留着会在新文件上多跑一轮整树重排
 		this.cancelDeferredResize();
 		this.titleRenamer.cancel();
@@ -823,13 +809,17 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 内联编辑会话必须先提交（用户输入落节点数据 + scheduleSave），
 		// 否则随后的写盘拿不到刚输入的内容（引擎随后销毁）
 		closeInlineEditor(this);
-		// 先保存当前视口，再写盘正文（引擎随后销毁）
-		this.engine.persistViewport();
-		// 显式传入本文件与**本文件**的树快照（同步抓取，不受后续 await 影响）：
-		// core 不 await onUnloadFile，await 期间新文件可能已接管引擎与 this.file，
-		// 隐式取值会把新文件的内容写进本文件（见 SavePipeline 归属不变式）。
-		await this.savePipeline.save(file, this.engine.getDataSnapshot());
-		this.frontmatterByPath.delete(file.path);
+		// 编辑器提交完成：现在才关提交闸、摘引用（await 期间新文件可能已接管本视图；
+		// 解绑即 flush）——视口已在上面先行落定
+		this.commitsArmed = false;
+		this.session = null;
+		// 每次解绑都 flush（对齐官方 `TextFileView.onUnloadFile`：关闭即保存，
+		// 无差异由管线跳过）；最后一个视图解绑时会话销毁、键移除。
+		// core 不 await onUnloadFile，故内容取会话权威树（不读引擎活快照——
+		// await 期间引擎可能已交给新文件）。
+		if (session) {
+			await session.detach(this);
+		}
 		// 挂起的图片尺寸校正属于本文件：文件已卸载，丢弃（引擎随后销毁，
 		// 回灌会落空，留着只会在新文件上误判）
 		this.loadSession.pendingImageCorrections = null;
@@ -846,7 +836,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		if (this.loadSession.loadingFilePath === unloadingPath) {
 			this.loadSession.loadingFilePath = null;
 		}
-		this.engine.destroyInstance();
+		// await 期间新文件可能已接管并建好新引擎：只有代际未变时才销毁，
+		// 否则会把 B 的引擎拆掉（2026-11-11 静态审查定位的生命周期竞态）。
+		if (this.loadSession.generation === generation) {
+			this.engine.destroyInstance();
+		}
 	}
 
 	/** 取消尚未执行的引擎初始化帧（幂等） */
@@ -855,6 +849,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	private async loadMindMapFromFile(file: TFile): Promise<void> {
+		// 新一次加载 = 新代际：`onUnloadFile` 的 await 后据此判断是否还能销毁引擎
+		this.loadSession.generation += 1;
 		this.loadSession.loadingFilePath = file.path;
 		// 换文件即复位：上一张图的「已保存 / 未保存」不属于本文件。
 		// （`idle` 只收起状态段，节点数由随后的渲染结束事件刷新。）
@@ -890,12 +886,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.currentThemeStyle = normalizeThemeStyle(prefs.themeStyle);
 		this.currentPalette = normalizePalettePreference(prefs.palette);
 		try {
-			const doc = await this.documents.load(file);
-			// 加载期间文件已切换：丢弃过期结果
+			// 会话是**唯一读取口**：第一个视图读盘并建会话，后续视图直接加入
+			// 同一会话（不读磁盘——磁盘可能落后于未保存改动，读了就会覆盖）。
+			const session = await this.plugin.sessions.acquire(file);
+			// 加载期间文件已切换：丢弃过期结果（会话仍留在注册表，供别的视图用）
 			if (this.loadSession.loadingFilePath !== file.path) {
 				return;
 			}
-			this.frontmatterByPath.set(file.path, doc.frontmatter);
+			this.session = session;
+			session.attach(this);
 			// 复问声明：此刻引擎尚未创建（initMindMap 在下一帧的 rAF 里），
 			// 更新会话值即可让「竖栏 / 右键勾选态」与「引擎创建用的布局」同时对齐
 			// 磁盘真值，不必等一次 `metadataCache.changed` 再重排。
@@ -905,7 +904,22 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			}
 			// mdBackMode 的读入已前移到 setState 覆写：官方 view.getState() 不保留
 			// 传入 state，从此处经 leaf.getViewState() 读回是恒失败链路（2026-10-15）。
-			const tree = doc.tree;
+			//
+			// 深拷贝会话树再装饰：配色 / 联系 / 概要 / 图片尺寸都写 data，不能让
+			// 这些**显示派生**字段回灌进会话权威树（写盘只读 md 字段，但会话树
+			// 要跨视图逐字可比）。引擎 `handleData` 会再克隆一次。
+			const tree = session.cloneTree();
+			if (!tree) {
+				throw new Error('会话树尚未就绪');
+			}
+			// 空导图的标题起始级别取设置（有内容的文件一律以正文实测为准）。
+			// **必须在引擎创建前**写进 data 树：引擎会克隆数据，且建好后再改
+			// 这棵树不再生效（与配色 / 联系 / 概要同一时机）。空树在引擎侧不会
+			// 补默认节点（实测 kids=0），故「正文没有节点」是可靠判据。
+			seedHeadingStart(
+				tree,
+				headingStartOfSyntax(this.plugin.settings.newMapSyntax),
+			);
 			// 图片尺寸（2026-09-28 用户裁决 K97）：**未设置尺寸的图片一律按默认
 			// 大小展示**（IMAGE_WIDTH×IMAGE_HEIGHT，框内等比留白不变形），只有
 			// 官方尺寸参数 `![[图|300]]` 的节点才按参数定尺寸——取消此前的
@@ -966,6 +980,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 					if (this.loadSession.loadingFilePath !== file.path) {
 						return;
 					}
+					// 首帧渲染结束前不接受编辑提交（挡 `seedInitialHistory` 的
+					// `data_change`，见 commitsArmed 字段说明）
+					this.commitsArmed = false;
 					this.engine.initMindMap(tree);
 					// 「加载时序列化基线」与「大图首帧提示」都需要**引擎已存在**这一刻：
 					// 前者取树快照、后者要绑首帧事件。而 `initMindMap` 在容器 0 尺寸
@@ -974,10 +991,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 					// 静默吞掉，该文件此后每轮自动保存都不再算「纯浏览」（打开即重排
 					// 全文）；提示则会因绑不上 `node_tree_render_end` 而挂到 15 s 兜底。
 					// 故两者一律留到 `onEngineReady`（引擎真正建好的那一刻）消费。
-					this.loadSession.pendingBaseline = {
-						path: file.path,
-						rawBody: doc.body,
-					};
+					// 原样正文由会话持有（`markLoaded` 的 rawBody 参数），这里只留
+					// 「哪个文件还没记基线」——多视图共享会话，只能记一次。
+					this.loadSession.pendingBaseline = { path: file.path };
 					const hintCount = countTreeNodes(tree);
 					this.loadSession.pendingRenderHint =
 						hintCount >= LARGE_MAP_RENDER_HINT_NODES ? hintCount : null;
@@ -997,18 +1013,15 @@ export class MindMapView extends FileView implements MindMapViewContext {
 
 	/**
 	 * 记录「加载时序列化」基线（纯浏览不写盘，见 `SavePipeline.markLoaded`）：
-	 * 引擎建好后立刻取同一份快照——此后任何一轮保存若序列化结果与它逐字相同，
-	 * 就说明本次会话没有内容级改动，写盘一律跳过。
-	 *
-	 * `rawBody` 是磁盘上的**原样正文**：本会话写过盘之后，撤销回到加载态要按它
-	 * 逐字还原（否则屏上原样、文件里还是改后内容）。
+	 * 引擎建好后取同一份快照交给会话——此后任何一轮保存若序列化结果与它逐字
+	 * 相同，就说明本次会话没有内容级改动，写盘一律跳过。
 	 *
 	 * 引擎尚未创建（0 尺寸等待）时**不动** `pendingBaseline`，留给 `onEngineReady`
-	 * 补记——此时直接调 `markLoaded` 会被它的空守卫吞掉，而基线缺失会让此后每轮
-	 * 自动保存都失去「纯浏览」判定（打开即重排全文）。
+	 * 补记——此时 `getDataSnapshot()` 为 null。
 	 *
-	 * **只在加载路径调**：设置刷新引起的引擎重建不写 `pendingBaseline`，因此
-	 * 不会把尚未落盘的编辑误标成基线（随后一轮保存被跳过 = 丢编辑）。
+	 * **只在加载路径调**：设置刷新引起的引擎重建不写 `pendingBaseline`，且会话
+	 * 侧只认第一次（`baselineRecorded`）——不会把尚未落盘的编辑误标成基线。
+	 * 多视图共享会话时同样只记一次（用哪个视图的引擎快照都一样：同一棵会话树）。
 	 */
 	private recordLoadedBaseline(file: TFile): void {
 		const pending = this.loadSession.pendingBaseline;
@@ -1019,7 +1032,7 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		if (!snapshot) {
 			return;
 		}
-		this.savePipeline.markLoaded(file, snapshot, pending.rawBody);
+		this.session?.markLoadedFromEngine(snapshot);
 		this.loadSession.pendingBaseline = null;
 	}
 
@@ -1153,6 +1166,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		if (loadedFile) {
 			this.recordLoadedBaseline(loadedFile);
 		}
+		// 引擎就绪即向会话报到：加载期间别的视图可能已提交新内容（本视图拿到的
+		// 是当时的会话树），这里补一次「落后就应用」。
+		this.session?.onViewReady(this);
 		this.showLargeMapRenderHint();
 		// 数学重测集合换新：引擎（重）建后节点对象全部是新实例，旧引用已随上一
 		// 个引擎销毁而失效——不清则 ① 旧节点被长期持有（换文件/设置刷新累积成
@@ -1170,6 +1186,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		const mindMap = this.mindMap;
 		if (mindMap) {
 			this.engineEvents.onEngine(mindMap, 'node_tree_render_end', () => {
+				// 首帧已落地：此后引擎发的 `data_change` 才是真实编辑提交
+				// （`seedInitialHistory` 的那一次发生在同一事件里、本回调之前，
+				// 因此仍被挡在提交口外）
+				this.commitsArmed = true;
 				// 状态栏节点计数：加载那一刻引擎还没建（或 renderer.root 仍为 null）
 				// ⇒ `updateStatusBar` 算得 0，而此前没有后续刷新点，打开大图后状态栏
 				// 一直停在「0 个节点」，直到切走再切回（active-leaf-change）才恢复
@@ -1289,9 +1309,10 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	async applyLayout(engineLayoutId: string): Promise<void> {
 		// 入口归一（与 `applyLineStyle` 同精神）：值域唯一源是 `LAYOUT_OPTIONS`，而本
-		// 方法对接口上任意字符串开放。非法值既不能写进文件（会落成默认值、冒充一次
-		// 用户选择），也不能交给引擎（未知布局）——直接忽略并留痕。
-		const layoutId = layoutIdOfPropertyValue(engineLayoutId);
+		// 方法对接口上任意字符串开放（引擎 id 或属性都接受）。非法值既不能写进文件
+		// （会落成默认值、冒充一次用户选择），也不能交给引擎（未知布局）——直接忽略
+		// 并留痕。
+		const layoutId = normalizeLayoutId(engineLayoutId);
 		if (layoutId === null) {
 			console.warn('未知的布局 id，已忽略:', engineLayoutId);
 			return;
@@ -1306,17 +1327,13 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			this.pendingLayoutWrite = layoutId;
 			try {
 				// 先落正文：属性写入会重写整个文件，未排空的编辑会被旧正文覆盖
-				await this.savePipeline.save();
+				await this.session?.flush();
 				await this.app.fileManager.processFrontMatter(
 					file,
 					(frontmatter: Record<string, unknown>) => {
-						setMindMapProperty(frontmatter, layoutPropertyValue(layoutId));
+						setMindMapLayout(frontmatter, layoutId);
 					},
 				);
-				// 这次写入绕过了保存管线：基线必须作废，否则下一次自动保存会把
-				// 它误判成「他处修改」而整轮跳过（此后每次编辑都静默不落盘）。
-				// 失败路径不当作废——文件没被改，基线仍然有效。
-				this.savePipeline.forgetBaseline(file);
 			} catch (error) {
 				// 用户可感：画面不动、文件不改，重开仍是旧布局——必须提示
 				notifyError(this.lang, 'view.layoutWriteFailed', error);
@@ -1354,13 +1371,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
-	 * 跟随文件属性的**外部**变更：重读本文件声明，值变了就只应用引擎侧，**不回写
-	 * 文件**（属性是用户/其它窗格/同步写的，我们只是跟随）。
+	 * 跟随 `Mindmap Layout` 的**外部**变更：重读本文件布局，值变了就只应用引擎侧，
+	 * **不回写文件**（属性是用户/其它窗格/同步写的，我们只是跟随）。
 	 *
-	 * 由组合根在 `metadataCache.changed` 时调用（见 main.ts）。四条早退：
-	 * - 无文件 / 声明不是布局（`Markdown`、未知值、无键）⇒ 什么都不做。**刻意不
-	 *   抽走已打开的视图**：运行中把正在编辑的图踢回 Markdown 会丢上下文；「是不是
-	 *   导图」只决定打开时怎么进。
+	 * 由组合根在 `metadataCache.changed` 时调用（见 main.ts）。三条早退：
+	 * - 无文件 ⇒ 什么都不做。**刻意不抽走已打开的视图**：`Mindmap` 开关被外部改成
+	 *   非启用值时也不把正在编辑的图踢回 Markdown（「是不是导图」只决定打开时怎么进）。
+	 * - 布局键缺失/非法 ⇒ 什么都不做（**不**回落设置项「默认布局」：那个值只做新建
+	 *   种子，见下方实现注释）。
 	 * - 本视图正在写这一项的布局（`pendingLayoutWrite`）⇒ 让位，由 `applyLayout`
 	 *   收尾统一应用。它的 `await` 与 `changed` 谁先到由宿主实现决定，不挡就会对
 	 *   同一布局应用两次（双重重排 + 竖栏连建两次）。
@@ -1369,8 +1387,19 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 */
 	syncDeclaredLayout(): void {
 		const file = this.file;
+		if (!file) {
+			return;
+		}
+		// 布局键缺失/非法 ⇒ 早退，**不回落设置项**：`defaultLayout` 只是新建文件的
+		// 种子值，对已打开的图不生效（见文件头 `LIVE_REFRESH` 说明）。这里回落会
+		// 变成「隐式实时生效」——无布局键的文件（手写 `Mindmap: Mindmap`）在用户
+		// 改了默认布局之后，随便一次 metadata 变化（含自己的自动保存）就把画面换掉。
+		// 打开时的兜底仍由 `loadMindMapFromFile` 负责。
 		const declared = readDeclaredLayout(this.app, file);
-		if (declared === null || declared === this.pendingLayoutWrite) {
+		if (declared === null) {
+			return;
+		}
+		if (declared === this.pendingLayoutWrite) {
 			return;
 		}
 		if (declared === this.currentLayout) {
@@ -1420,6 +1449,21 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	/**
+	 * 应用层级语法（右键「层级语法」级联调用）：整篇重排正文。
+	 *
+	 * 与上面三项偏好**不同性质**：它改写正文（列表 ⇄ 标题），因此不进
+	 * `commitPreference`、不落 `data.json`——落的是文件本身（见 view-syntax）。
+	 */
+	applyDocumentSyntax(syntax: DocumentSyntax): void {
+		applyDocumentSyntaxFeature(this, syntax);
+	}
+
+	/** 本文件当前的层级语法（右键级联勾选态） */
+	resolveDocumentSyntax(): DocumentSyntax {
+		return resolveDocumentSyntaxFeature(this);
+	}
+
+	/**
 	 * 应用设置变更（LIVE_REFRESH 键的**变更子集**，由 `diffLiveRefreshKeys` 产出）：
 	 * 能原地生效的绝不重建引擎。
 	 *
@@ -1431,6 +1475,8 @@ export class MindMapView extends FileView implements MindMapViewContext {
 			(key) => !IN_PLACE_REFRESH_KEYS.has(key),
 		);
 		if (requiresRebuild) {
+			// 重建引擎会重新播种历史（发一次 data_change）：挡在提交口外
+			this.commitsArmed = false;
 			this.engine.refresh();
 			return;
 		}
@@ -1466,18 +1512,162 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.engine.applyTheme();
 	}
 
-	/** 安排一次防抖自动保存（view-toolbar.ts / view-node-actions.ts 等外部模块调用） */
+	/** 安排一次 2 秒防抖自动保存（view-toolbar.ts / view-node-actions.ts 等外部模块调用） */
 	scheduleSave(): void {
-		// 三种去向对状态栏的含义不同（见 `ScheduleOutcome`）：只有真的排上了才报
-		// 「保存中」；被挂起 ⇒ 上一次写盘失败、内容确实没落盘，报「未保存」；
-		// 自动保存关闭时 `schedule()` 另开一轮**只判定**（`onDirty`），这里不猜——
-		// 猜的话「打开一张没改过的图」会当场报未保存。
-		const outcome = this.savePipeline.schedule();
-		if (outcome === 'scheduled') {
-			this.setSaveState('saving');
-		} else if (outcome === 'suspended') {
-			this.setSaveState('unsaved');
+		// 保存归会话（同文件多视图一条管线）：视图只请求排程，不持有管线。
+		this.session?.scheduleSave();
+	}
+
+	/**
+	 * 把本视图的引擎快照提交给会话（**唯一的编辑提交口**）。
+	 *
+	 * 只在发起编辑的视图上被调用（引擎 `data_change` 只由它的 `addHistory`
+	 * 发出）；接收视图的应用通道不发该事件 ⇒ 同一次编辑只提交一次。
+	 * 会话未加载 / 基线未记录（引擎首帧前）时静默丢弃——那两种时刻不可能有
+	 * 用户编辑。
+	 */
+	private commitSession(replaceCurrent = false): boolean {
+		if (!this.commitsArmed) {
+			return false;
 		}
+		const snapshot = this.engine.getDataSnapshot();
+		if (!snapshot) {
+			return false;
+		}
+		// 传本视图作 origin：广播时跳过它（它已经是新内容）
+		if (replaceCurrent) {
+			// 派生归一（层级语法守卫）：算这次编辑的一部分，不新增历史（K188）
+			return this.session?.updateCurrent(snapshot, this) ?? false;
+		}
+		return this.session?.commit(snapshot, this) ?? false;
+	}
+
+	/**
+	 * 派生归一后把权威树同步进会话（`view-syntax` 守卫调用）。
+	 *
+	 * 守卫就地改 md 字段、不发 `data_change`，故保存排程里没有它的改动；
+	 * 不同步会让「屏上已升级 / 文件没写」（K188）。
+	 */
+	commitDerivedTree(): void {
+		this.commitSession(true);
+	}
+
+	/**
+	 * 撤销一步（会话时间线；所有视图同步回退）。
+	 *
+	 * **方法名必须是接口上的 `undo` / `redo`**：`view-hotkeys` / 竖栏 /
+	 * 右键菜单都按 `MindMapViewContext.undo?` 判定，名字对不上时它们是
+	 * `undefined`，会静默退回引擎历史（每视图一条、与会话时间线分叉）。
+	 * 2026-11-09 实机：会话撤销从未被调用过（`typeof view.undo === 'undefined'`）。
+	 */
+	undo(): void {
+		if (this.session?.undo()) {
+			syncHistoryButtons(this);
+		}
+	}
+
+	/** 重做一步（同上） */
+	redo(): void {
+		if (this.session?.redo()) {
+			syncHistoryButtons(this);
+		}
+	}
+
+	/** 撤销 / 重做可用态（会话是唯一来源；无会话时退回引擎历史） */
+	historyAvailability(): { canUndo: boolean; canRedo: boolean } {
+		return (
+			this.session?.historyAvailability() ??
+			readHistoryAvailability(this.mindMap)
+		);
+	}
+
+	// ==================== SessionViewPort（会话 → 视图的窄接口） ====================
+
+	/** 会话版路径（视图未绑定文件时为空串） */
+	get path(): string {
+		return this.file?.path ?? '';
+	}
+
+	/** 本视图此刻是否是活动视图（状态栏只由活动视图写，K166） */
+	get isActiveView(): boolean {
+		return this.app.workspace.getActiveViewOfType(MindMapView) === this;
+	}
+
+	/**
+	 * 应用快照前：把持有**节点对象引用**的会话全部收干净。
+	 *
+	 * 快照应用会重建节点实例（`renderer.setData`），旧引用全部失效——内联编辑器
+	 * 不提交就会把旧原文写回新树（覆盖对侧改动）；点选 / 联系锚定留着会对
+	 * 已销毁节点操作。
+	 */
+	beforeApplySnapshot(): void {
+		closeInlineEditor(this);
+		cancelNodePick(this);
+		cancelRelationAnchor(this);
+	}
+
+	/**
+	 * 应用会话快照（引擎层唯一通道：不进历史、不发 `data_change`）。
+	 *
+	 * 树由会话侧备好：`DocumentSession.applyToPort` 已补齐图片默认尺寸
+	 * （外部分支重载的树来自解析器，缺 `imageSize` 会让引擎整图中断）。
+	 * 本视图再把自己引擎里**已定稿**的尺寸复用进去：加载期的异步探测回灌
+	 * 不会为快照重跑，不复用会让外部写入后图片突然缩回默认盒（K198 ⑤）。
+	 */
+	applySnapshot(tree: MindMapTreeNode): boolean {
+		return applySessionSnapshot(
+			this.mindMap,
+			reuseKnownImageSizes(tree, this.knownImageSizes()),
+		);
+	}
+
+	/**
+	 * 当前引擎里 `custom:true` 的定稿图片尺寸，按「地址 + 官方尺寸参数」索引。
+	 *
+	 * 必须在**应用快照之前**读：应用后引擎树就被新树替换了。默认盒
+	 * （`custom:false` / 缺字段）不收，否则会把「曾回落到默认」的态固化下来。
+	 */
+	private knownImageSizes(): Map<string, ImageSizeValue> {
+		const known = new Map<string, ImageSizeValue>();
+		const root = getRenderRoot(this.mindMap);
+		if (!root) {
+			return known;
+		}
+		const stack: MindMapNode[] = [root];
+		while (stack.length > 0) {
+			const node = stack.pop()!;
+			const data = node.getData() as Record<string, unknown> | undefined;
+			const size = data?.imageSize as ImageSizeValue | undefined;
+			if (typeof data?.image === 'string' && size?.custom) {
+				known.set(imageSizeKey(data), { ...size });
+			}
+			for (const child of node.children ?? []) {
+				stack.push(child);
+			}
+		}
+		return known;
+	}
+
+
+	/** 应用后只刷新界面：状态栏计数与历史按钮（不排保存 / 不跑守卫） */
+	afterApplySnapshot(): void {
+		updateStatusBar(this);
+		syncHistoryButtons(this);
+	}
+
+	/** 保存状态回写（是否推给共享状态栏由 `setSaveState` 按活动态决定） */
+	setSessionSaveState(state: SessionSaveState): void {
+		this.setSaveState(state);
+	}
+
+	/** 外部写入重载且本地有草稿：提示一次（与官方「已被外部修改」同位置） */
+	notifyExternalReload(): void {
+		new Notice(t(this.lang, 'save.externalReloaded'));
+	}
+
+	/** 本次提交基于旧树、已被会话拒绝：提示一次（不写盘） */
+	notifyStaleCommit(): void {
+		new Notice(t(this.lang, 'save.staleCommit'));
 	}
 
 	/**
@@ -1511,7 +1701,12 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	 * `onDataChanged`），保证两条编辑通道与引擎编辑框行为一致。
 	 */
 	notifyNodeContentCommitted(node: MindMapNode): void {
-		this.scheduleSave();
+		// 插件侧编辑通道同样要先落会话（否则同文件另一视图看不到本次编辑）。
+		// 只有真的提交进会话才排保存：广播应用期间（`applying`）或提交基于
+		// 旧树被拒时，权威树没变，排保存只会把旧内容写出去（K194）。
+		if (this.commitSession()) {
+			this.scheduleSave();
+		}
 		updateStatusBar(this);
 		this.titleRenamer.schedule();
 		// 候选先入集、再延后一拍检查（与引擎 data_change 路径同序）：
@@ -1668,6 +1863,9 @@ export class MindMapView extends FileView implements MindMapViewContext {
 	}
 
 	override async onClose(): Promise<void> {
+		// **必须先于 `invalidateInit`**（同 onUnloadFile）：作废会 `viewport.reset()`
+		// 清掉「打开时的默认视口」判据，晚一步调用就会把纯浏览也写成条目。
+		this.engine.persistViewport();
 		this.clearRenderHint();
 		this.engine.invalidateInit();
 		this.cancelPendingInit();
@@ -1676,8 +1874,11 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		// 未消费的加载基线与大图提示同样作废（关闭后不会再建引擎）
 		this.loadSession.pendingBaseline = null;
 		this.loadSession.pendingRenderHint = null;
-		this.savePipeline.cancelTimer();
+		// 会话引用留到内联编辑提交之后再摘（同 onUnloadFile：先置 null 会丢输入）
+		const session = this.session;
+		// 提交闸同样留到 `closeInlineEditor` 之后（同 onUnloadFile：先关闸会丢最后一次输入）
 		this.cancelAutoSplitCheck();
+		cancelSyntaxGuard(this);
 		this.resizeThrottler.cancel();
 		this.cancelDeferredResize();
 		this.titleRenamer.cancel();
@@ -1695,8 +1896,14 @@ export class MindMapView extends FileView implements MindMapViewContext {
 		this.loadSession.whenReady = new Promise(() => {});
 		// 内联编辑会话提交（同 onUnloadFile：输入必须先落数据再写盘）
 		closeInlineEditor(this);
-		this.engine.persistViewport();
-		await this.savePipeline.save();
+		// 编辑器提交完成后再关闸/摘引用（同 onUnloadFile 的顺序契约）
+		this.commitsArmed = false;
+		// 视口已在方法开头先行落定（必须先于 invalidateInit）
+		this.session = null;
+		// 解绑即 flush（对齐官方 onUnloadFile；最后一个视图解绑时会话销毁）
+		if (session) {
+			await session.detach(this);
+		}
 		// 视图级注册的**对称回收**：`onClose` 不触发 Component 卸载，而
 		// `registerEvent` / `registerDomEvent` / `scope.register` 的清理时机分别是
 		// 卸载与作用域销毁 ⇒ 同一实例经历多次 onClose→onOpen 时这些注册会逐次叠加，

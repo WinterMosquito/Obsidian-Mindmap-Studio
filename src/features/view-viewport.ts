@@ -53,6 +53,8 @@
  * 「选区 → 视口」的换算。
  */
 import { Notice } from 'obsidian';
+import { elementFromTarget } from '../core/event-binder';
+import { FOOTNOTE_PREVIEW_CLASS } from '../core/constants';
 import { tf } from '../core/i18n';
 import {
 	countMindMapNodes,
@@ -197,6 +199,12 @@ function handleWheelGesture(view: ViewportContext, event: WheelEvent): void {
 	}
 	const target = event.target as Node | null;
 	if (!target || !canvas.contains(target)) {
+		return;
+	}
+	// 脚注浮层内的滚动归浮层自己：这里只**放行**（不 preventDefault、不 stop，
+	// 否则「想翻脚注 → 图缩了 / 图跑了」）。浮层自身另有 wheel 监听负责
+	// stopPropagation，挡住画布上的引擎平移（见 view-footnote 的 ensurePopover）。
+	if (elementFromTarget(event.target)?.closest(`.${FOOTNOTE_PREVIEW_CLASS}`)) {
 		return;
 	}
 	// 编辑中让位：引擎的 wheel 负责提交编辑（引擎编辑框 hide / 内联编辑器

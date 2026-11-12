@@ -12,7 +12,13 @@ npm run lint:css    # stylelint：styles.css 的 CSS 检查（规则面照抄官
 npm run check:release # 发布元数据护栏（versions.json 形状 / 当前版本与 minAppVersion 一致 / README 非空 / License：缺失 error、非 OSI warn，见 K109）
 npm run check:dead-code # knip 死代码检查（未使用文件/导出/类型；见 K57）
 npm run verify:visual  # 无头 Chrome 渲染契约验证（scripts/verify-visual.mjs）
+npm run check:gates  # 上链的可执行形态：按 git 变更集算附加门禁、顺序执行、首败即停（--dry-run 只看计划）
 ```
+
+`check:gates` 的边界：豁免表行数对账（精确差）与「未登记超限」核对**每次都跑**，前者可用
+`--fix-lines` 回填（`AGENTS.md` 唯一那张）；`--all` 会连 `build:vendor` 一起跑——重打包依赖须先
+安装（`@svgdotjs/svg.js` 等，见 `vendor/BUILD.md`「打包面依赖」，本仓库 `package.json` **有意**不
+声明），只改普通源文件时**不要**加 `--all`（变更集规则会自动跳过它）。
 
 CI（`.github/workflows/lint.yml`）执行顺序：`check:release` → build → `npm test -- --reporter=verbose --bail=1` →
 coverage（主矩阵版本，并上传 coverage 产物）→ lint → `lint:css` → `check:dead-code`（knip，见 K57）→ `lint:scanner`（社区目录对照，主矩阵版本）→
@@ -72,7 +78,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 > `OBSIDIAN_SHIM_SOURCE` 补同名导出，否则会停在构建阶段 `No matching export … for import "x"`
 > （2026-10-23 因 `platform/math-jax-fonts.ts` 新增 `requestUrl` 踩到；同期 `tests/mocks/obsidian.ts` 也要补）。
 - `verify:visual`：把 `src/engine/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
-  `styles.css` 在无头 Chrome 里渲染 **15 个场景**（plain / doc / url / empty / attach / docnode / long / inline / markup / syntax / math / codeblock / paragraph / table / hugeline；2026-10-23 复测，逐项 ✓ 计 34 条 = 15 + 19）并断言 `--dump-dom`——三类链接图标分流与
+  `styles.css` 在无头 Chrome 里渲染 **16 个场景**（plain / doc / url / empty / attach / docnode / long / inline / markup / syntax / math / codeblock / paragraph / table / callout / hugeline；2026-11-11 加 `callout`，逐项 ✓）并断言 `--dump-dom`——三类链接图标分流与
   图标尺寸（18×18）、回形针标题、画布铺满容器、节点测宽随文本（不被容器拉平）、
   仅轻标记（无链接）节点也走自绘（`markup` 场景）、**轻标记扩展与隐藏语法**（`syntax`
   场景：`==高亮==`→`<mark>`、`__粗__`→`<strong>`、`\*转义\*` 消费反斜杠、
@@ -188,15 +194,16 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
   项目自有覆盖：domain 零依赖边界（含「裸说明符」闭包，2026-09-17 加；用 `regex` 而非
   `group: ['*']`——后者按 `allowRelativePaths: true` 匹配，会误伤 `./md-meta` 这类组内相对引用）、
   统一解析入口强制（全部插件代码直调
-  getAbstractFileByPath 拦截；豁免清单 = `src/links/links-resolve.ts`（**唯一真实收口点**）
-  + `src/links/file-lookup.ts`（**陈旧豁免**，该文件已无此调用，待清理——见审计报告 V18），
+  getAbstractFileByPath 拦截；豁免清单 = `src/links/links-resolve.ts`（**唯一真实收口点**；
+  `file-lookup.ts` 的陈旧豁免已于 2026-11-09 撤销——该文件已无此调用），
   存在性检查特例 eslint-disable 注明理由）、模块依赖矩阵 zone（K51）、
   **官方 7 条依赖禁令**（axios / superagent / got / ofetch / ky / node-fetch / moment；
   2026-09-17 补回——模块边界块用的是 `{ patterns }` 形式，会**替换**而非合并官方那份
   legacy 数组形式的禁令，故必须自带）、`tests/**` 仅关两条 obsidianmd 规则
   （`no-global-this` 与 `rule-custom-message`）、
-  system-open 的裸 `require` **未声明 globals**——它能通过只是因为 `isDesktopOnly: true`
-  带进了 `globals.node`（**cwd 相关**，见 K43；属待补的 V18）……
+  system-open 的裸 `require` 已由 eslint 配置**显式声明**（2026-11-09）：此前能通过只因
+  `isDesktopOnly: true` 带进了 `globals.node`，而那次注入挂在 manifest 读取上
+  （**cwd 相关**，见 K43），属「配置承重」……
   manifest.json 与 LICENSE 显式纳入 lint（官方 recommended 不自动拾取两者：
   validate-manifest 自挂 files 块 + ts parser；validate-license 依赖官方内置未导出的
   plain-text parser，等价实现在 scripts/plain-text-parser.mjs——该实现的唯一有意差异是
@@ -223,7 +230,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
    正则、wikilink 尺寸）里的 `|` 必须写成 `\|`。GFM 把它当列分隔符，不转义就多出几列、内容被
    截断，而源码里几乎看不出来（2026-11-06 审计一次抓出 6 行 / 13 个）。围栏代码块内的行不参与。
 6. **豁免表行数**：`AGENTS.md` 登记的行数与实测偏差不得超过 `min(登记值 +15%, 登记值 +50 行)`
-   ——文件改大/缩小后忘回填会红灯。精确回填跑 `npm run check:gates -- --fix-lines`（两表同批）。
+   ——文件改大/缩小后忘回填会红灯。精确回填跑 `npm run check:gates -- --fix-lines`（`AGENTS.md` 唯一那张表；`architecture.md` 自 2026-11-09 起不再复制）。
 
 另两条独立契约：`tests/docs-standard.test.ts`（标准文档引用的符号真实存在 ＋ 附录版本指针
 == `manifest.version`）、`tests/module-boundaries.test.ts`（依赖图 / 组内成环 / 新组未登记）。

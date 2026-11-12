@@ -233,6 +233,103 @@ export function setActiveNodes(
 }
 
 /**
+ * 渲染树的**节点数据快照**（文档序：先序 DFS，与 `walkTree` 一致）。
+ *
+ * 与「会话权威树」的区别是本函数的全部存在理由：**会话树没有 uid**——uid 由
+ * `ensureUniqueUids` 在 `engine-controller.initMindMap` 里补，补的是传给引擎的那份
+ * 克隆（见 `markdown/markdown.ensureUniqueUids`）。任何「按 uid 定位」的索引因此
+ * 只能读引擎侧，读会话树会拿到空 uid、点击静默无反应（2026-11-11 脚注索引踩到）。
+ *
+ * 数据是引擎节点 `nodeData` 的**活引用**：调用方只读，不得改（改 data 要走命令/
+ * 快照通道）；性能模式只把视口外节点摘出 DOM，渲染树仍是完整的，故快照不缺节点。
+ *
+ * @returns 引擎尚未渲染（root 为 null）时为空数组
+ */
+export function collectRenderNodeData(
+	mindMap: MindMap | null,
+): Record<string, unknown>[] {
+	const root = mindMap?.renderer?.root ?? null;
+	if (!root) {
+		return [];
+	}
+	const out: Record<string, unknown>[] = [];
+	walkTree(root, (node) => {
+		const data = node.getData?.() as
+			| Record<string, unknown>
+			| null
+			| undefined;
+		if (data) {
+			out.push(data);
+		}
+	});
+	return out;
+}
+
+/**
+ * 定位到指定 uid 的节点：展开其祖先链 → 移到视口中心。**不选中**。
+ *
+ * 为什么不用引擎现成的 `goTargetNode`：它内部会 `targetNode.active()`，给节点加
+ * 选中描边（`.smm-node.active`）。脚注跳转是**导航**不是**选择**——定义行已被渲染
+ * 剥离 / 折叠成 chip，被高亮圈住的往往只是表格或「脚注 N」小胶囊，没有信息量
+ * （2026-11-11 实机复现：「还是有节点被高亮圈住」）。故按引擎同样的三步自己组合，
+ * 只去掉 `active()` 这一步；上游三个方法齐全时走这条，缺失时回退 `goTargetNode`。
+ *
+ * ⚠ **回调是异步的**：`expandToNodeUid` 在需要展开祖先时走
+ * `mindMap.render(callback)`，而 `Render.render` 用 `setTimeout(…, 0)` 延迟执行 ⇒
+ * 居中在**下一个宏任务**才发生。本函数因此只回答「是否已发起」，不承诺「已居中」；
+ * **命中判据由调用方持有**：脚注索引的 uid 取自同一棵渲染树
+ * （`collectRenderNodeData`），查得到就必然存在。
+ *
+ * **不写任何 data / 历史**：展开祖先只改布局态（`data.expand`），居中只改视口变换。
+ *
+ * @returns 是否已发起定位（引擎缺失 / uid 空 / 抛错时 false）
+ */
+export function revealNodeByUid(
+	mindMap: MindMap | null,
+	uid: string,
+): boolean {
+	if (!mindMap || !uid || !mindMap.renderer) {
+		return false;
+	}
+	const renderer = mindMap.renderer as unknown as {
+		expandToNodeUid?: (target: string, callback?: () => void) => void;
+		findNodeByUid?: (target: string) => MindMapNode | null;
+		moveNodeToCenter?: (node: MindMapNode) => void;
+		goTargetNode?: (target: string) => void;
+	};
+	if (
+		typeof renderer.expandToNodeUid === 'function' &&
+		typeof renderer.findNodeByUid === 'function' &&
+		typeof renderer.moveNodeToCenter === 'function'
+	) {
+		try {
+			renderer.expandToNodeUid(uid, () => {
+				const node = renderer.findNodeByUid?.(uid) ?? null;
+				if (node) {
+					renderer.moveNodeToCenter?.(node);
+				}
+			});
+		} catch (error) {
+			console.warn('定位节点失败:', uid, error);
+			return false;
+		}
+		return true;
+	}
+	// 回退：上游方法缺失时退化成 `goTargetNode`（会连带选中，但至少能定位）
+	if (typeof renderer.goTargetNode !== 'function') {
+		console.warn('引擎缺少定位方法，无法定位节点:', uid);
+		return false;
+	}
+	try {
+		renderer.goTargetNode(uid);
+	} catch (error) {
+		console.warn('定位节点失败:', uid, error);
+		return false;
+	}
+	return true;
+}
+
+/**
  * 选中集合里的**最上层子集**：任一祖先同时被选中的节点被剔除
  * （子树随祖先整棵生效，不必逐节点处理）。
  *

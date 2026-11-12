@@ -104,6 +104,36 @@ export const SAVE_LOCATION_OPTIONS: SaveLocationOption[] = [
 	{ value: 'folder', label: 'settings.saveLocation.folder' },
 ];
 
+/**
+ * 新建导图的**层级语法**：前几级写无序列表，还是写 Markdown 标题。
+ *
+ * 三态而非「语法 + 起点」两个字段：后者能表达出非法组合（列表 + 起点）。
+ * `h1` / `h2` 的差别只是顶层写 `#` 还是 `##`；6 级之后一律回落列表（Markdown
+ * 只有 6 级标题）。**只决定新建导图的种子正文与「空文档」的初始级别**——已存在
+ * 文件的风格由正文自身决定（根 data 的 `mdHeadingStart`，见 md-heading-syntax）。
+ */
+export type NewMapSyntax = 'list' | 'h1' | 'h2';
+
+export interface NewMapSyntaxOption {
+	value: NewMapSyntax;
+	label: TranslationKey;
+}
+
+/** 层级语法选项（设置面板下拉与 sanitizeSettings 白名单共用） */
+export const NEW_MAP_SYNTAX_OPTIONS: NewMapSyntaxOption[] = [
+	{ value: 'list', label: 'syntax.list' },
+	{ value: 'h1', label: 'syntax.heading1' },
+	{ value: 'h2', label: 'syntax.heading2' },
+];
+
+/** 出厂＝无序列表（＝本特性引入前的行为，升级观感零变化） */
+export const DEFAULT_NEW_MAP_SYNTAX: NewMapSyntax = 'list';
+
+/** 该档对应的**顶层标题级别**（1 / 2）；`list` 档为 `null` */
+export function headingStartOfSyntax(syntax: NewMapSyntax): 1 | 2 | null {
+	return syntax === 'h1' ? 1 : syntax === 'h2' ? 2 : null;
+}
+
 export interface LayoutOption {
 	value: MindMapLayoutId;
 	label: TranslationKey;
@@ -790,16 +820,12 @@ export const SETTINGS_PERSIST_DEBOUNCE_MS = 400;
 export const SETTINGS_APPLY_DEBOUNCE_MS = 250;
 /**
  * 自动保存防抖（SavePipeline 引擎修改触发）。
- * 设为 800ms——比视图状态持久化长（避免引擎高频数据变更时与磁盘 I/O 争抢），
- * 但不超过用户感知阈值（秒级无响应会被认为卡死）。
+ *
+ * **照搬 Obsidian `TextFileView.requestSave()` 的固定值（2 秒）**：
+ * `obsidian.d.ts` 明写「Request a save, debounced by 2 seconds」。插件不再提供
+ * 「自动保存」开关，这个值就是唯一的自动保存节奏；关闭/切换文件时另走立即保存。
  */
-export const AUTO_SAVE_DEBOUNCE_MS = 800;
-/**
- * 连续自动保存失败达到该次数后**挂起自动保存**（P1b 降级）：
- * 磁盘满/权限类失败重试无意义，继续每次弹错只会造成告警疲劳；
- * 显式保存（命令/卸载路径）不受影响，一次成功即解除挂起。
- */
-export const SAVE_FAILURE_SUSPEND_THRESHOLD = 3;
+export const AUTO_SAVE_DEBOUNCE_MS = 2000;
 /**
  * 引擎数据变更后「自动拆分混排双链」检查的延后一拍（毫秒）。
  * 文本编辑提交与数据写入可能在同一轮事件里，立刻检查会读到编辑框尚未收起的
@@ -903,6 +929,15 @@ export const CORE_VIEW_TYPE = {
  * 声明数据源），故集中为常量，避免拼写漂移。
  */
 export const HOVER_LINK_EVENT = 'hover-link';
+
+/**
+ * 脚注悬浮预览层（浮层）的类名——**跨模块契约**。
+ *
+ * 生产方 `features/view-footnote`（懒建时设类名），消费方 `features/view-viewport`
+ * （滚轮手势要放行浮层内的滚动，否则「想滚脚注、结果图缩了/图跑了」）。
+ * 放 `core` 而不是任一侧：两边都不该为八行判定新增跨组依赖（K150 ⑧ 的教训）。
+ */
+export const FOOTNOTE_PREVIEW_CLASS = 'mindmap-footnote-preview';
 
 /*
  * 小地图（F12-M）参数——**唯一来源**，`core/minimap-geometry` 与视图层共用。

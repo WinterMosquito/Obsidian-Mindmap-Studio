@@ -23,8 +23,34 @@ interface ParsedLine {
 	 * `text` 仍是 trim 后的显示文本（行首缩进不该出现在节点文本里）。
 	 */
 	raw?: string;
+	/**
+	 * 标题/列表行 **marker 之后**的原文（含行尾空白、不含前导缩进与 marker）。
+	 *
+	 * `raw` 只对 plain 行有意义（plain 要整行原文）；标题与列表的 `mdRaw` 是
+	 * 「标记后的内容」，序列化时前缀由树深度现拼。行尾两空格的硬换行必须
+	 * 留在这里，否则第一次编辑就会把它 trim 掉（2026-11-11 实机）。
+	 */
+	rawContent?: string;
 	level?: number;
 	marker?: string;
+	/** 有序列表项的原编号（`5.` → 5；仅 `marker === 'ordered'` 时有值） */
+	orderedNumber?: number;
+	/**
+	 * 列表项**内容起始列**（缩进 + 标记 + 标记后空白）：项内续行的缩进基准。
+	 *
+	 * 续行被并入 `mdRaw` 时会 `trimStart`（行首缩进由序列化器按树深度重补），
+	 * 绝对缩进就此丢失；而「这一行是不是上一段的续行」在 Markdown 里是**相对**
+	 * 内容列判定的（脚注定义的续行、段落懒续行同理）。解析层把相对缩进记进
+	 * `MdNodeMeta.mdContinuationIndents`，供渲染层（脚注剥行）复现宿主口径。
+	 */
+	contentColumn?: number;
+	/**
+	 * 围栏内（含定界符与相邻空行）：行内容按**代码**处理。
+	 *
+	 * 围栏里的 `%%rel:…%%` / `%%#hex%%` 是代码，不是指令——解析层据此跳过
+	 * 「指令行归属上一节点」的两条分支，否则代码块里的一行会被抽走。
+	 */
+	fenced?: boolean;
 }
 
 /**
@@ -56,6 +82,22 @@ export function isValidIndentUnit(value: unknown): value is string {
 	return typeof value === 'string' && /^[ \t]{1,8}$/.test(value);
 }
 
+/**
+ * 有序标记 → 可原样写回的编号（`5.` → 5）。
+ *
+ * 只收**安全整数**：写入侧按原编号逐字回写（`md-serialize` 的 `mdOrderedNumber`
+ * 分支），超出 `Number.MAX_SAFE_INTEGER` 的编号会被 `String(n)` 写成指数形式
+ * （`1e+21.`）——那不是列表项，重开时整行退化成段落。这类极端编号（≥ 16 位，
+ * 手写文件才会出现）不保真，交回序列化按「前一项 + 1」现算。
+ * `0` 是合法起始编号（`0. 甲`），故不排除。
+ */
+function orderedNumberOf(
+	marker: string,
+): { orderedNumber: number } | Record<string, never> {
+	const value = Number.parseInt(marker, 10);
+	return Number.isSafeInteger(value) && value >= 0 ? { orderedNumber: value } : {};
+}
+
 /** `classifyLines` 的产物：分类后的行 + 文档自己的列表缩进单位 */
 export interface ClassifiedLines {
 	lines: ParsedLine[];
@@ -69,12 +111,91 @@ export interface ClassifiedLines {
 	indentUnit: string | null;
 }
 
+/** 围栏状态：分隔符字符 / 长度 / **定界符所在列**（闭合按相对列判定） */
+export interface FenceBoundary {
+	char: string;
+	length: number;
+	column: number;
+}
+
+/**
+ * 围栏闭合行判定（**唯一实现**：`classifyLines` / `node-inline-tokenize` /
+ * `md-footnote` 共用）。
+ *
+ * CommonMark 的相对口径：闭合串同字符、长度不小于开串，缩进**不超过**定界符
+ * 所在列 3 列以上（可以更少），且行尾只剩空白。列表项内的定界符本就在第 4 列，
+ * 用绝对 ≤3 空格判定会永远认不出闭合（2026-11-09 实机：后续节点被吞进代码）。
+ *
+ * **闭合行允许比开栏缩进更少**（2026-11-12 修正）：`  ```js` 开在第 2 列、
+ * 闭合行顶格是手写文件的常见排法，此前要求 `closeIndent >= fence.column` 会
+ * 认不出闭合，围栏状态永不退出、其后兄弟节点 / 标题整段被吞进代码内容
+ * （与 2026-11-09 同类，只是触发形态换成「闭合比开栏浅」）。
+ */
+export function isFenceCloseLine(
+	rawLine: string,
+	fence: FenceBoundary,
+): boolean {
+	const closeIndent = leadingIndent(rawLine);
+	const closeMarker = rawLine.slice(closeIndent).match(/^(`{3,}|~{3,})/);
+	if (!closeMarker) {
+		return false;
+	}
+	const marker = closeMarker[1]!;
+	return (
+		marker[0] === fence.char &&
+		marker.length >= fence.length &&
+		closeIndent <= fence.column + 3 &&
+		/^[ \t]*$/.test(rawLine.slice(closeIndent + marker.length))
+	);
+}
+
+/**
+ * 开围栏行是否在**同一行内自闭合**（```` ```code``` ````）：
+ * 去掉开围栏后的余文以同字符、不小于开围栏长度的连续串结尾。
+ *
+ * 此类行是「一行的围栏」，**不进入围栏状态**——否则围栏永不闭合，后续行被
+ * 整段吞进代码内容（2026-09-28 修）。**唯一实现**：`classifyLines` 与
+ * `md-footnote` 的索引/剥离共用（渲染侧 `node-inline-tokenize` 亦调本函数）。
+ */
+export function isSelfClosedFenceLine(
+	restAfterMarker: string,
+	char: string,
+	length: number,
+): boolean {
+	const run = char === '~' ? '~' : '`';
+	// 纯字符串扫描，等价于 `${run}{${length},}[ \t]*$`：run 只有两个取值、
+	// length 取值域很小，而本函数**每个围栏行**都会调用——为它每行新建并
+	// 编译一个正则不值得。先剥行尾空白，再数行尾连续同字符的个数
+	let end = restAfterMarker.length;
+	while (end > 0) {
+		const code = restAfterMarker.charCodeAt(end - 1);
+		if (code !== 0x20 /* 空格 */ && code !== 0x09 /* 制表符 */) {
+			break;
+		}
+		end -= 1;
+	}
+	let count = 0;
+	while (end > 0 && restAfterMarker[end - 1] === run) {
+		count += 1;
+		end -= 1;
+	}
+	return count >= length;
+}
+
 /** 逐行分类（围栏整体原样保留；围栏外空行与分隔线忽略） */
 export function classifyLines(body: string): ClassifiedLines {
 	const out: ParsedLine[] = [];
 	const rawLines = body.split(/\r?\n/);
-	/** 当前围栏（分隔符字符与长度）；null = 不在围栏内 */
-	let fence: { char: string; length: number } | null = null;
+	/**
+	 * 当前围栏：分隔符字符 / 长度 / **定界符所在列**（`column`）。null = 不在围栏内。
+	 *
+	 * `column` 是闭合判据的基准（2026-11-09 修）：列表项内的围栏（`  - ```js`）
+	 * 其定界符在**第 4 列**，内容与闭合行同样缩进 4 列；而 `fenceMarker` 只认
+	 * ≤3 空格（CommonMark 的「相对定界符 ≤3」被误读成绝对值）⇒ 闭合行永远认不出、
+	 * 围栏状态永不退出，**其后的兄弟节点 / 标题整段被吞进代码内容**。闭合行改为
+	 * 按「开列 −0/+3」（CommonMark 的相对口径，闭合行可以更浅）。
+	 */
+	let fence: { char: string; length: number; column: number } | null = null;
 	/** 上一条输出行是否属于围栏块（决定后续空行是否保留为分隔） */
 	let lastLineIsFence = false;
 	/** 围栏外暂存的连续空行：仅当与围栏相邻时才写入（保证围栏仍可识别） */
@@ -88,40 +209,16 @@ export function classifyLines(body: string): ClassifiedLines {
 		}
 	};
 
-	/**
-	 * 开围栏行是否在**同一行内自闭合**（```` ```code``` ````）：
-	 * 去掉开围栏后的余文以同字符、不小于开围栏长度的连续串结尾。
-	 * 此类行是「一行的围栏」，**不进入围栏状态**——否则围栏永不闭合，
-	 * 后续行被整段吞进代码内容（2026-09-28 修）。
-	 */
-	const selfClosed = (
-		restAfterMarker: string,
-		char: string,
-		length: number,
-	): boolean => {
-		const run = char === '~' ? '~' : '`';
-		// 纯字符串扫描，等价于 `${run}{${length},}[ \t]*$`：run 只有两个取值、
-		// length 取值域很小，而本函数**每个围栏行**都会调用——为它每行新建并
-		// 编译一个正则不值得。先剥行尾空白，再数行尾连续同字符的个数
-		let end = restAfterMarker.length;
-		while (end > 0) {
-			const code = restAfterMarker.charCodeAt(end - 1);
-			if (code !== 0x20 /* 空格 */ && code !== 0x09 /* 制表符 */) {
-				break;
-			}
-			end -= 1;
-		}
-		let count = 0;
-		while (end > 0 && restAfterMarker[end - 1] === run) {
-			count += 1;
-			end -= 1;
-		}
-		return count >= length;
-	};
-
-	const pushRaw = (raw: string): void => {
-		// 与 plain 分支同口径（Tab 计 1）：围栏块要按缩进并入所属列表项
-		out.push({ kind: 'plain', indent: leadingIndent(raw), text: raw, raw });
+	const pushRaw = (raw: string, indent = leadingIndent(raw)): void => {
+		// 与 plain 分支同口径（Tab 计 1）：围栏块要按缩进并入所属列表项。
+		// `fenced` 标记供解析层区分「代码内容」与真正的指令行（见 ParsedLine）。
+		out.push({
+			kind: 'plain',
+			indent,
+			text: raw,
+			raw,
+			fenced: true,
+		});
 	};
 
 	for (let i = 0; i < rawLines.length; i++) {
@@ -129,16 +226,14 @@ export function classifyLines(body: string): ClassifiedLines {
 
 		// —— 围栏内：内容逐行原样保留（空行/缩进/类标题列表行都是代码内容）——
 		if (fence) {
-			pushRaw(rawLine);
+			// **按定界符所在列计入缩进**（不是本行自己的缩进）：围栏块是一个整体，
+			// 闭合行/内容行可以比定界符更浅（CommonMark 只限定「不超过 +3」）。
+			// 用本行缩进会让顶格闭合行掉出所属列表项、单独变成一个节点
+			// （2026-11-12：`  ```js` + 顶格 ` ```` ` 的文件因此多出一个 ` ``` ` 节点）。
+			pushRaw(rawLine, fence.column);
 			lastLineIsFence = true;
-			// 闭合：同字符、长度 ≥ 起始，行尾无其他内容
-			const close = fenceMarker(rawLine);
-			if (
-				close &&
-				close.char === fence.char &&
-				close.length >= fence.length &&
-				/^[ \t]*$/.test(rawLine.slice(rawLine.indexOf(close.char) + close.length))
-			) {
+			// 闭合判定只此一份（`isFenceCloseLine`，md-footnote 共用）
+			if (isFenceCloseLine(rawLine, fence)) {
 				fence = null;
 			}
 			continue;
@@ -158,12 +253,16 @@ export function classifyLines(body: string): ClassifiedLines {
 				pushRaw('');
 				pendingBlank--;
 			}
-			// 同行自闭合（```code```）不进入围栏状态（见 selfClosed）
+			// 同行自闭合（```code```）不进入围栏状态（见 isSelfClosedFenceLine）
 			const restAfterMarker = rawLine.slice(
 				rawLine.indexOf(open.char) + open.length,
 			);
-			if (!selfClosed(restAfterMarker, open.char, open.length)) {
-				fence = open;
+			if (!isSelfClosedFenceLine(restAfterMarker, open.char, open.length)) {
+				fence = {
+					...open,
+					// 定界符所在列（本路径下 ≤3）：闭合行按它 ±3 判定
+					column: Math.max(0, rawLine.indexOf(open.char)),
+				};
 			}
 			pushRaw(rawLine);
 			lastLineIsFence = true;
@@ -199,7 +298,15 @@ export function classifyLines(body: string): ClassifiedLines {
 			// 丢弃会让该行在保存后消失。引擎对空文本节点有既有先例（图片独占 /
 			// URL icon-only 子节点），序列化经前缀 `#×N ` 合成输出 `## `
 			//（尾随空格由前缀携带），往返为不动点。
-			out.push({ kind: 'heading', indent: 0, text, level: h[1]!.length });
+			out.push({
+				kind: 'heading',
+				indent: 0,
+				text,
+				level: h[1]!.length,
+				// 取 marker 后的原文：`line` 已 trimEnd，行尾空格要从 rawLine 补回
+				rawContent:
+					h[2] === undefined ? '' : rawLine.slice(line.length - h[2].length),
+			});
 			continue;
 		}
 		const l = line.match(LIST_RE);
@@ -207,11 +314,18 @@ export function classifyLines(body: string): ClassifiedLines {
 			const text = l[3]!.trim();
 			noteIndent(l[1]!);
 			if (text) {
+				const ordered = /^\d+\.$/.test(l[2]!);
 				out.push({
 					kind: 'list',
 					indent: l[1]!.length,
 					text,
-					marker: /^\d+\.$/.test(l[2]!) ? 'ordered' : l[2],
+					marker: ordered ? 'ordered' : l[2],
+					// marker 后的原文（含行尾空白）：`line` 已 trimEnd，从 rawLine 补回
+					rawContent: rawLine.slice(line.length - (l[3]?.length ?? 0)),
+					// 内容起始列（相对缩进的基准，见 ParsedLine.contentColumn）
+					contentColumn: line.length - (l[3]?.length ?? 0),
+					// 原编号随行保留：序列化优先用它（否则 `5.` 会被重排成 `1.`）
+					...(ordered ? orderedNumberOf(l[2]!) : {}),
 				});
 				// 列表项文本以围栏开始（```js）：项内即围栏——置围栏状态，让续行
 				// 走「围栏内容」分支逐字保留、闭合行正确**闭合**。此前围栏状态不
@@ -222,8 +336,14 @@ export function classifyLines(body: string): ClassifiedLines {
 				if (openInList) {
 					const marker = openInList[1]!;
 					const rest = text.slice(marker.length);
-					if (!selfClosed(rest, marker[0]!, marker.length)) {
-						fence = { char: marker[0]!, length: marker.length };
+					if (!isSelfClosedFenceLine(rest, marker[0]!, marker.length)) {
+						fence = {
+							char: marker[0]!,
+							length: marker.length,
+							// 列表项内的定界符在第 indent + marker + 空格 列：闭合行
+							// （与内容同列）必须能认出来，见 fence 变量注释
+							column: Math.max(0, rawLine.indexOf(marker[0]!)),
+						};
 					}
 				}
 			}
@@ -240,11 +360,13 @@ export function classifyLines(body: string): ClassifiedLines {
 		const emptyList = rawLine.match(/^(\s*)([-*+]|\d+\.)[ \t]+$/);
 		if (emptyList) {
 			noteIndent(emptyList[1]!);
+			const ordered = /^\d+\.$/.test(emptyList[2]!);
 			out.push({
 				kind: 'list',
 				indent: emptyList[1]!.length,
 				text: '',
-				marker: /^\d+\.$/.test(emptyList[2]!) ? 'ordered' : emptyList[2],
+				marker: ordered ? 'ordered' : emptyList[2],
+				...(ordered ? orderedNumberOf(emptyList[2]!) : {}),
 			});
 			continue;
 		}

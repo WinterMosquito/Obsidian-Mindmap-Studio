@@ -15,6 +15,7 @@ import {
 	diffLiveRefreshKeys,
 	reportDroppedSettings,
 	sanitizeSettings,
+	shouldOfferColorScopeCleanup,
 	type SettingsSanitizeReport,
 } from '../src/settings';
 import {
@@ -67,9 +68,9 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultTheme: 'dark',
 			defaultThemeStyle: 'borderless',
 			nodeColorScope: 'node',
+			newMapSyntax: 'h2',
 			saveLocation: 'folder',
 			saveFolder: '笔记/导图',
-			autoSave: false,
 			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
@@ -82,9 +83,9 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultTheme: 'dark',
 			defaultThemeStyle: 'borderless',
 			nodeColorScope: 'node',
+			newMapSyntax: 'h2',
 			saveLocation: 'folder',
 			saveFolder: '笔记/导图',
-			autoSave: false,
 			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
@@ -194,12 +195,6 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 	});
 
 	it('布尔字段只认真布尔：字符串/数字/空值一律回退默认', () => {
-		expect(sanitizeSettings({ autoSave: 'true' }).autoSave).toBe(
-			DEFAULT_SETTINGS.autoSave,
-		);
-		expect(sanitizeSettings({ autoSave: 0 }).autoSave).toBe(
-			DEFAULT_SETTINGS.autoSave,
-		);
 		expect(sanitizeSettings({ enableDrag: 1 }).enableDrag).toBe(
 			DEFAULT_SETTINGS.enableDrag,
 		);
@@ -207,7 +202,6 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			DEFAULT_SETTINGS.autoSplitMixedLinks,
 		);
 		// 合法布尔即使是 false 也必须保留（false 不等于"缺失"）
-		expect(sanitizeSettings({ autoSave: false }).autoSave).toBe(false);
 		expect(sanitizeSettings({ enableDrag: false }).enableDrag).toBe(false);
 		// 自动拆分默认关（false）→ 开启必须被采纳
 		expect(sanitizeSettings({ autoSplitMixedLinks: true }).autoSplitMixedLinks).toBe(
@@ -350,7 +344,6 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultTheme: 'not-a-theme',
 			exportScale: 'abc',
 			language: 'en',
-			autoSave: 'yes',
 		});
 		expect(out).toEqual({
 			defaultLayout: 'fishbone',
@@ -358,11 +351,11 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			defaultTheme: DEFAULT_SETTINGS.defaultTheme,
 			defaultThemeStyle: DEFAULT_SETTINGS.defaultThemeStyle,
 			nodeColorScope: DEFAULT_SETTINGS.nodeColorScope,
+			newMapSyntax: DEFAULT_SETTINGS.newMapSyntax,
 			saveLocation: DEFAULT_SETTINGS.saveLocation,
 			saveFolder: DEFAULT_SETTINGS.saveFolder,
 			exportScale: DEFAULT_SETTINGS.exportScale,
 			language: 'en',
-			autoSave: DEFAULT_SETTINGS.autoSave,
 			autoSplitMixedLinks: DEFAULT_SETTINGS.autoSplitMixedLinks,
 			enableDrag: DEFAULT_SETTINGS.enableDrag,
 			exportImageFormat: DEFAULT_SETTINGS.exportImageFormat,
@@ -432,11 +425,11 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 			),
 		]).toEqual(['enableDrag']);
 
-		// 非即时刷新键（导出倍率 / 自动保存）变化不触发任何视图刷新
+		// 非即时刷新键（导出倍率）变化不触发任何视图刷新
 		expect(
 			diffLiveRefreshKeys(
 				{ ...DEFAULT_SETTINGS },
-				{ ...DEFAULT_SETTINGS, exportScale: 4, autoSave: false },
+				{ ...DEFAULT_SETTINGS, exportScale: 4 },
 			).size,
 		).toBe(0);
 	});
@@ -460,6 +453,25 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 });
 
 /**
+ * 清理询问的触发面（K175）：只有「仅本节点」→「含子节点」才询。
+ * 反方向不询（切到「仅本节点」时旧哨兵正是该档的机制）；同值与脏值也不询。
+ */
+describe('shouldOfferColorScopeCleanup（清理旧哨兵的询问时机）', () => {
+	it('只有「仅本节点」→「含子节点」才询', () => {
+		expect(shouldOfferColorScopeCleanup('node', 'subtree')).toBe(true);
+		expect(shouldOfferColorScopeCleanup('subtree', 'node')).toBe(false);
+		expect(shouldOfferColorScopeCleanup('subtree', 'subtree')).toBe(false);
+		expect(shouldOfferColorScopeCleanup('node', 'node')).toBe(false);
+	});
+
+	it('脏值 / 非字符串一律不询（面板不会给出，但不赌）', () => {
+		expect(shouldOfferColorScopeCleanup(undefined, 'subtree')).toBe(false);
+		expect(shouldOfferColorScopeCleanup('node', 1)).toBe(false);
+		expect(shouldOfferColorScopeCleanup(null, null)).toBe(false);
+	});
+});
+
+/**
  * 非法设置的回退**必须可见**（2026-10-11）。
  *
  * 背景：坏值此前静默回退默认，用户看到的现象是「设置没生效」——属无痕退化
@@ -475,7 +487,7 @@ describe('sanitizeSettings：非法值诊断报告', () => {
 		expect(empty.dropped).toEqual([]);
 
 		const partial = newReport();
-		sanitizeSettings({ autoSave: false }, partial);
+		sanitizeSettings({ enableDrag: false }, partial);
 		expect(partial.dropped).toEqual([]);
 	});
 
@@ -486,14 +498,12 @@ describe('sanitizeSettings：非法值诊断报告', () => {
 				language: 'fr', // 非 zh/en
 				defaultLayout: 'zigzag', // 白名单外
 				defaultLineStyle: 42, // 类型错误
-				autoSave: 'true', // 伪布尔
 				exportScale: 'abc', // 非数字
 				defaultTheme: 'dark', // 合法：不该出现
 			},
 			report,
 		);
 		expect([...report.dropped].sort()).toEqual([
-			'autoSave',
 			'defaultLayout',
 			'defaultLineStyle',
 			'exportScale',

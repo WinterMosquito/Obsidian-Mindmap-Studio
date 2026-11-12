@@ -21,9 +21,17 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildInlineNodeContent,
 	buildInlineSegments,
+	buildInlineTextContent,
+	CALLOUT_BLOCK_CLASS,
+	FOOTNOTE_ID_ATTR,
+	FOOTNOTE_IDS_ATTR,
+	FOOTNOTE_REF_CLASS,
+	FOOTNOTE_SUMMARY_CLASS,
 	inlineContentPreview,
 	MAX_INLINE_CONTENT_CHARS,
+	MERMAID_BLOCK_CLASS,
 	NODE_INLINE_CONTENT_CLASS,
+	QUOTE_BLOCK_CLASS,
 	segmentCacheStats,
 } from '../src/features/node-inline-content';
 import { CODE_BLOCK_MAX_HEIGHT_PX } from '../src/core/constants';
@@ -398,6 +406,15 @@ describe('轻标记扩展（显示层，不回写）', () => {
 		expect(code?.text).toContain('E = mc^2');
 	});
 
+	it('未闭合围栏：其后全部内容都是代码，围栏里的 `> [!x]` 不成标注盒（2026-11-12 实机）', () => {
+		const src = '未闭合\n```\n> [!warning] 这段是代码\n> 第二行';
+		const segments = buildInlineSegments(src);
+		expect(segments.some((segment) => segment.kind === 'quote')).toBe(false);
+		const code = segments.find((segment) => segment.style === 'code');
+		expect(code?.block).toBe(true);
+		expect(code?.text).toContain('> [!warning] 这段是代码');
+	});
+
 	it('围栏块段：block 标记 + 语言行剥离（`js` 不进显示/复制内容，但**留在lang 字段**）', () => {
 		// lang 必须贯通到段上：高亮/语言类都靠它（此前被丢弃 ⇒ 无从高亮）
 		expect(buildInlineSegments('```js\nconst a = 1;\n```')).toEqual([
@@ -431,6 +448,18 @@ describe('轻标记扩展（显示层，不回写）', () => {
 				text: '```js\nx\n```',
 				style: 'code',
 				block: true,
+			},
+		]);
+	});
+
+	it('开 3 闭 4（CommonMark 允许闭合串不短于开串）仍是整块围栏', () => {
+		expect(buildInlineSegments('```js\nx\n````')).toEqual([
+			{
+				kind: 'text',
+				text: 'x',
+				style: 'code',
+				block: true,
+				lang: 'js',
 			},
 		]);
 	});
@@ -655,6 +684,37 @@ function fakeNodeWithField(
 
 function attrsOf(el: unknown): Map<string, string> {
 	return (el as FakeElement).attributes;
+}
+
+/** 递归收集桩树的可见文本（含文本节点） */
+function textOf(node: unknown): string {
+	if (node instanceof FakeTextNode) {
+		return node.text;
+	}
+	if (node instanceof FakeElement) {
+		return node.textContent + node.children.map(textOf).join('');
+	}
+	return '';
+}
+
+/** 按 className 递归找元素（深度优先 = 文档顺序） */
+function findByClass(
+	node: unknown,
+	className: string,
+): FakeElement | undefined {
+	if (!(node instanceof FakeElement)) {
+		return undefined;
+	}
+	if (node.className === className) {
+		return node;
+	}
+	for (const child of node.children) {
+		const hit = findByClass(child, className);
+		if (hit) {
+			return hit;
+		}
+	}
+	return undefined;
 }
 
 describe('buildInlineNodeContent（接管判定）', () => {
@@ -1047,6 +1107,160 @@ describe('buildInlineNodeContent（接管判定）', () => {
 		).not.toBeNull();
 	});
 
+	it('mermaid 围栏：注入 renderMermaid 后渲染为图容器（SVG 根元素原样放入）', () => {
+		const raw = '```mermaid\nflowchart LR\n  A-->B\n```';
+		const svg = new FakeElement();
+		svg.tagName = 'svg';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{ renderMermaid: () => svg as unknown as Node },
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		expect(block.className).toBe(MERMAID_BLOCK_CLASS);
+		// 注入面给的是**已解析的 SVG 根元素**：本模块只 append（不经 innerHTML）
+		const [graphic, copy] = childrenOf(block) as FakeElement[];
+		expect(graphic).toBe(svg);
+		// 容器**可悬停**（复制按钮靠 :hover 显形）；让位的是图本身
+		expect(styleOf(block).pointerEvents).toBe('auto');
+		expect(styleOf(svg).pointerEvents).toBe('none');
+		expect(styleOf(block).lineHeight).toBe('0');
+		// 复制按钮（P2）：复用代码块的类名与 data-code 契约 → 点击委托零改动
+		expect(copy?.className).toBe('tmm-code-copy');
+		expect(attrsOf(copy).get('data-code')).toBe('flowchart LR\n  A-->B');
+		expect(attrsOf(copy).get('aria-label')).toBe('复制 Mermaid 源码');
+		// 容器不可命中 ⇒ 按钮必须自己放行，否则点击穿透到画布
+		expect(styleOf(copy).pointerEvents).toBe('auto');
+	});
+
+	it('围栏内的 URL / 双链：**整块保留**（行内 token 不得先把围栏切碎）', () => {
+		// 2026-11-09 修：`pushInlineText` 先切链接，含 URL 的围栏会被切成几段，
+		// `MARKUP_RE` 的 fence 分支再也配不上 ⇒ 代码块退化成字面文本
+		//（实机：mermaid 的 `click A "https://…"` 让整张图不渲染）
+		const raw = '```js\nfetch("https://example.com/");\nvar a = [[1,2]];\n```';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		expect(block.className).toBe('tmm-codeblock');
+		const pre = childrenOf(block)[1] as FakeElement;
+		const code = childrenOf(pre)[0] as FakeElement;
+		expect((childrenOf(code)[0] as FakeTextNode).text).toBe(
+			'fetch("https://example.com/");\nvar a = [[1,2]];',
+		);
+	});
+
+	it('mermaid 围栏带 `click A "url"`：仍整张渲染（围栏不被 URL 切碎）', () => {
+		const raw =
+			'```mermaid\nflowchart LR\n  A-->B\n  click A "https://example.com/"\n```';
+		const svg = new FakeElement();
+		svg.tagName = 'svg';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{ renderMermaid: () => svg as unknown as Node },
+		)!;
+		expect((childrenOf(el)[0] as FakeElement).className).toBe(
+			MERMAID_BLOCK_CLASS,
+		);
+	});
+
+	it('mermaid 图**不跟节点级配色**：着色节点上的图与无色节点完全一致（2026-11-09 裁决）', () => {
+		// 图是「内容」、节点色是「装饰」：同一段源码在任何节点里都必须长一样，
+		// 只跟明暗主题走。图内的纸/墨/线全部由 CSS 变量（`--pele-*`）解析。
+		const raw = '```mermaid\nflowchart LR\n  A-->B\n```';
+		const build = (fillColor?: string) => {
+			const applied: string[] = [];
+			const svg = new FakeElement();
+			svg.tagName = 'svg';
+			(
+				svg.style as unknown as {
+					setProperty: (name: string, value: string) => void;
+				}
+			).setProperty = (name) => {
+				applied.push(name);
+			};
+			const el = buildInlineNodeContent(
+				fakeNode({
+					text: raw,
+					mdRaw: raw,
+					mdDerivedText: raw,
+					...(fillColor ? { fillColor } : {}),
+				}),
+				asDocument(new FakeDocument()),
+				{},
+				'zh',
+				{ renderMermaid: () => svg as unknown as Node },
+			)!;
+			return { applied, block: childrenOf(el)[0] as FakeElement };
+		};
+
+		const plain = build();
+		const coloured = build('#e11d48');
+		// 一个 `--pele-*` 都不写：颜色一律交给主题（着色节点不再改图）
+		expect(plain.applied).toEqual([]);
+		expect(coloured.applied).toEqual([]);
+		expect(styleOf(coloured.block)).toEqual(styleOf(plain.block));
+	});
+
+	it('mermaid 图有**不透明纸面**：容器底色跟主题、不跟节点色', () => {
+		// 纸面必须内联（类规则不进导出克隆）；宿主有 `--pele-bg` 用它，
+		// 缺失时退回 `--background-primary`（老版本 Obsidian 的兜底）
+		const raw = '```mermaid\nflowchart LR\n  A-->B\n```';
+		const svg = new FakeElement();
+		svg.tagName = 'svg';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw, fillColor: '#e11d48' }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{ renderMermaid: () => svg as unknown as Node },
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		expect(styleOf(block).backgroundColor).toBe(
+			'var(--pele-bg, var(--background-primary))',
+		);
+	});
+
+	it('mermaid 渲染失败（null）：**静默回落**代码块，源码仍可见可编辑', () => {
+		const raw = '```mermaid\n这不是一张图\n```';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{ renderMermaid: () => null },
+		)!;
+		const block = childrenOf(el)[0] as FakeElement;
+		expect(block.className).toBe('tmm-codeblock');
+		const button = childrenOf(block)[0] as FakeElement;
+		expect(attrsOf(button).get('data-code')).toBe('这不是一张图');
+	});
+
+	it('mermaid 判定走归一后的语言码（`Mermaid` 同样命中），源码已剥信息行', () => {
+		const raw = '```Mermaid\nflowchart LR\n  A-->B\n```';
+		const seen: string[] = [];
+		buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{
+				renderMermaid: (source) => {
+					seen.push(source);
+					return null;
+				},
+			},
+		);
+		// 信息行（```Mermaid）不进源码，首尾空行由 trimEdges 裁掉
+		expect(seen).toEqual(['flowchart LR\n  A-->B']);
+	});
+
 	it('行内数学未注入 renderMath：仍接管（占位字面显示，与引擎一致但保留通道）', () => {
 		const node = fakeNode({
 			text: '$x$',
@@ -1145,6 +1359,180 @@ describe('轻标记（渲染期样式，不改动回写原文）', () => {
 		expect((first.children[0] as FakeTextNode).text).toBe('粗');
 		expect((children[2] as FakeElement).tagName).toBe('code');
 		expect((children[4] as FakeElement).className).toBe('internal-link');
+	});
+});
+
+/**
+ * 脚注引用（`[^id]`）：**渲染期识别，回写零改动**。
+ *
+ * 段序列只承载 id（正文在交互层现查，见 `InlineSegment.footnote`），故这里锁的是
+ * 「什么时候不识别」——受保护区（码 / 数学 / 注释 / 围栏）与定义行本身。识别面
+ * 放大到这些地方，用户写的代码或定义标记就会被莫名换成徽标。
+ */
+describe('脚注引用（[^id] 徽标）', () => {
+	it('段序列：id 即显示形态；命名脚注同权', () => {
+		expect(buildInlineSegments('见[^1] 与 [^note]。')).toEqual([
+			{ kind: 'text', text: '见' },
+			{ kind: 'footnote', text: '1', footnote: '1' },
+			{ kind: 'text', text: ' 与 ' },
+			{ kind: 'footnote', text: 'note', footnote: 'note' },
+			{ kind: 'text', text: '。' },
+		]);
+	});
+
+	it('定义行保持字面（`(?!:)`）：不产出徽标', () => {
+		expect(buildInlineSegments('[^1]: 定义正文')).toEqual([
+			{ kind: 'text', text: '[^1]: 定义正文' },
+		]);
+	});
+
+	it('id 允许含逗号：`[^a,b]` 是**一个** id（与定义侧字符类同源）', () => {
+		expect(buildInlineSegments('见[^a,b]')).toEqual([
+			{ kind: 'text', text: '见' },
+			{ kind: 'footnote', text: 'a,b', footnote: 'a,b' },
+		]);
+	});
+
+	it('反斜杠奇偶：`\\[^1]` 按字面、`\\\\[^1]` 仍是真引用（2026-11-12 审核）', () => {
+		const single = buildInlineSegments('\\[^1]');
+		expect(single.some((segment) => segment.kind === 'footnote')).toBe(false);
+		const doubled = buildInlineSegments('\\\\[^1]');
+		expect(doubled.some((segment) => segment.kind === 'footnote')).toBe(true);
+	});
+
+	it('受保护区不识别：行内码 / 数学 / 注释 / 围栏代码块', () => {
+		expect(buildInlineSegments('`[^1]`')).toEqual([
+			{ kind: 'text', text: '[^1]', style: 'code' },
+		]);
+		expect(buildInlineSegments('$[^1]$')).toEqual([
+			{ kind: 'text', text: '[^1]', style: 'math' },
+		]);
+		// 注释整段不进显示（与阅读视图一致），自然也不产生徽标
+		expect(buildInlineSegments('%%[^1]%%')).toEqual([]);
+		const fence = buildInlineSegments('```\n[^1]\n```');
+		expect(fence).toHaveLength(1);
+		expect(fence[0]?.style).toBe('code');
+		expect(fence[0]?.block).toBe(true);
+	});
+
+	it('链接标签里的同形文本不算（链接 token 先被整体消费）', () => {
+		const segments = buildInlineSegments('[^1](https://example.com)');
+		expect(segments.some((segment) => segment.kind === 'footnote')).toBe(false);
+	});
+
+	it('id 里的 `#` 不切成标签；反斜杠紧跟的 `[^` 保持字面', () => {
+		expect(buildInlineSegments('见[^note#1]')).toEqual([
+			{ kind: 'text', text: '见' },
+			{ kind: 'footnote', text: 'note#1', footnote: 'note#1' },
+		]);
+		// 本模块的可转义白名单不含方括号：整串按字面（含反斜杠），**不**从
+		// 第二个字符起误配出一枚 id 带反斜杠的徽标
+		const escaped = buildInlineSegments('\\[^1\\]');
+		expect(escaped.some((segment) => segment.kind === 'footnote')).toBe(false);
+		expect(escaped.map((segment) => segment.text).join('')).toBe('\\[^1\\]');
+	});
+
+	it('DOM：sup 徽标 + a[data-footnote-id]，无 href / data-href（不进链接三通道）', () => {
+		const el = buildInlineNodeContent(
+			fakeNode({ mdRaw: '见[^1]' }),
+			asDocument(new FakeDocument()),
+		)!;
+		const sup = childrenOf(el)[1] as FakeElement;
+		expect(sup.tagName).toBe('sup');
+		expect(sup.className).toBe(FOOTNOTE_REF_CLASS);
+		const anchor = sup.children[0] as FakeElement;
+		expect(anchor.tagName).toBe('a');
+		expect(attrsOf(anchor).get(FOOTNOTE_ID_ATTR)).toBe('1');
+		// view-wikilink 的 ANCHOR_SELECTOR 是 `a.internal-link, a.external-link, a[href]`
+		expect(attrsOf(anchor).has('href')).toBe(false);
+		expect(attrsOf(anchor).has('data-href')).toBe(false);
+		expect(anchor.textContent).toBe('1');
+		// 读屏可辨识：可见文字只有 id，动作由 aria-label 补
+		// 不写 aria-label / title（否则 Obsidian tooltip 与浏览器原生 tooltip 各弹一个）
+		expect(attrsOf(anchor).has('aria-label')).toBe(false);
+		expect(attrsOf(anchor).has('title')).toBe(false);
+		expect(attrsOf(anchor).get('role')).toBe('doc-noteref');
+		// **不要内边距**：每枚多占 2px，窄节点上会把第二个徽标挤到第二行
+		// （内容盒 31→51 而引擎框不变 ⇒ 溢出，实机 2026-11-11 复现）
+		expect(anchor.style.padding).toBeUndefined();
+		expect(sup.style.color).toContain('var(--link-color');
+	});
+
+	it('表格单元格里的徽标同样可命中（同一套段管线）', () => {
+		const raw = '| 备注 |\n| --- | --- |\n| 见[^1] |';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+		)!;
+		const found: FakeElement[] = [];
+		const scan = (node: unknown): void => {
+			if (!(node instanceof FakeElement)) {
+				return;
+			}
+			if (node.attributes.has(FOOTNOTE_ID_ATTR)) {
+				found.push(node);
+			}
+			for (const child of node.children) {
+				scan(child);
+			}
+		};
+		scan(el);
+		expect(found).toHaveLength(1);
+		expect(found[0]?.getAttribute(FOOTNOTE_ID_ATTR)).toBe('1');
+	});
+
+	it('定义行不渲染：含正文的节点只剥定义行，剩余内容照常', () => {
+		const raw = '| 项 | 说明 |\n| --- | --- |\n| 甲 | 见[^1] |\n[^1]: 定义正文';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+		)!;
+		const text = textOf(el);
+		expect(text).not.toContain('定义正文');
+		expect(text).toContain('见');
+		// 表格段仍在（定义行剥离不影响其它块）
+		expect(findByClass(el, FOOTNOTE_SUMMARY_CLASS)).toBeUndefined();
+	});
+
+	it('纯定义节点：接管并渲染汇总 chip（不回落引擎的 data.text）', () => {
+		const raw = '[^1]: 甲\n[^2]: 乙';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+		);
+		expect(el).not.toBeNull();
+		const chip = findByClass(el!, FOOTNOTE_SUMMARY_CLASS);
+		// 分隔符是**换行**而不是逗号：id 允许含逗号（`[^a,b]` 是一个 id）
+		expect(chip?.getAttribute(FOOTNOTE_IDS_ATTR)).toBe('1\n2');
+		expect(chip?.textContent).toBe('脚注');
+	});
+
+	it('重复定义的 chip：id 列表去重（索引只认首个生效）', () => {
+		const raw = '[^a]: 甲\n[^a]: 甲二\n[^b]: 乙';
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+		)!;
+		const chip = findByClass(el, FOOTNOTE_SUMMARY_CLASS);
+		expect(chip?.getAttribute(FOOTNOTE_IDS_ATTR)).toBe('a\nb');
+		expect(chip?.textContent).toBe('脚注');
+	});
+
+	it('buildInlineTextContent：预览复用同一套段管线（粗体 + 徽标）', () => {
+		const el = buildInlineTextContent(
+			asDocument(new FakeDocument()),
+			'**粗** 见[^1]',
+			'zh',
+		);
+		const children = childrenOf(el);
+		expect((children[0] as FakeElement).tagName).toBe('strong');
+		const sup = children.find(
+			(child) => (child as FakeElement).tagName === 'sup',
+		) as FakeElement | undefined;
+		expect(sup?.className).toBe(FOOTNOTE_REF_CLASS);
+		expect(
+			(sup?.children[0] as FakeElement | undefined)?.getAttribute(FOOTNOTE_ID_ATTR),
+		).toBe('1');
 	});
 });
 
@@ -1395,6 +1783,36 @@ describe('渲染期缓存与超长回落（性能收口）', () => {
 			'x'.repeat(MAX_INLINE_CONTENT_CHARS),
 		);
 		expect((childrenOf(el)[1] as FakeTextNode).text).toBe('…');
+	});
+
+	it('超长 mermaid 节点：图**不参与截断预算**（整段进渲染通道，源码不丢）', () => {
+		// 图不能被切一半：源码超 MAX_INLINE_CONTENT_CHARS 时仍整段交给渲染通道；
+		// 体积门限在 platform/mermaid（超限是**整张回退成代码块**，不是画半张）
+		const body = `flowchart LR\n${Array.from(
+			{ length: 200 },
+			(_, i) => `  N${i}-->N${i + 1}`,
+		).join('\n')}`;
+		const raw = `\`\`\`mermaid\n${body}\n\`\`\``;
+		expect(body.length).toBeGreaterThan(MAX_INLINE_CONTENT_CHARS);
+
+		const seen: string[] = [];
+		const el = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+			{},
+			'zh',
+			{
+				renderMermaid: (source) => {
+					seen.push(source);
+					return null;
+				},
+			},
+		)!;
+		expect(seen).toEqual([body]);
+		// 渲染失败 → 回落代码块；**不挂** data-truncated（源码一个字都没丢）
+		const block = childrenOf(el)[0] as FakeElement;
+		expect(block.className).toBe('tmm-codeblock');
+		expect(attrsOf(el).get('data-truncated')).toBeUndefined();
 	});
 
 	it('截断不切出半个链接：整枚放不下就整枚不显示', () => {
@@ -1963,5 +2381,318 @@ describe('着色节点的轻渲染派生色', () => {
 		// P2 只作用于着色节点：未着色节点仍是「删除线 + 75% 透明」、代码块无边框
 		expect(styleOf(findTag(box, 'del')!).opacity).toBe('0.75');
 		expect(styleOf(findClass(box, 'tmm-codeblock')!).border).toBeUndefined();
+	});
+});
+
+/**
+ * 引用块 / 标注（2026-11-11）：`>` 行在解析层是 `plain` 行，显示层把
+ * 「前缀 + `[!type]` 头部」还原成盒子。判定口径的回归在 `tests/callout.test.ts`，
+ * 本组锁**段切分与 DOM 装配**：块级顺序（引用 → 围栏 → 表格 → 行内）、正文递归、
+ * 嵌套深度上限、折叠标记只作装饰、图标注入、原子截断。
+ */
+describe('引用块 / 标注段（`>` 前缀 + `[!type]` 头部）', () => {
+	const doc = () => asDocument(new FakeDocument());
+
+	/** 未编辑节点（text === mdDerivedText ⇒ 渲染源是 mdRaw，与 rawOk 同口径） */
+	function rawNode(raw: string): MindMapNode {
+		return fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw });
+	}
+
+	/** 桩树里按 className 找第一个元素（className 是空格分隔的整串） */
+	function findClass(node: unknown, token: string): FakeElement | null {
+		if (node instanceof FakeElement) {
+			if (node.className.split(/\s+/).includes(token)) {
+				return node;
+			}
+			for (const child of node.children) {
+				const hit = findClass(child, token);
+				if (hit) {
+					return hit;
+				}
+			}
+		}
+		return null;
+	}
+
+	/** 桩树里按 className 计数（嵌套深度断言用） */
+	function countClass(node: unknown, token: string): number {
+		if (!(node instanceof FakeElement)) {
+			return 0;
+		}
+		const self = node.className.split(/\s+/).includes(token) ? 1 : 0;
+		return (
+			self +
+			node.children.reduce<number>((sum, child) => sum + countClass(child, token), 0)
+		);
+	}
+
+	/** 桩树里的可见文本（`textContent` 与子节点各有一份来源，两者都算） */
+	function textOf(node: unknown): string {
+		if (node instanceof FakeTextNode) {
+			return node.text;
+		}
+		if (node instanceof FakeElement) {
+			return (
+				node.textContent +
+				node.children.map((child) => textOf(child)).join('')
+			);
+		}
+		return '';
+	}
+
+	describe('段切分', () => {
+		it('单行标注 + 正文：一个 quote 段，头部进模型、正文剥掉 `>` 前缀', () => {
+			const segments = buildInlineSegments('> [!info] 标题\n> 正文');
+			expect(segments).toHaveLength(1);
+			expect(segments[0]!.kind).toBe('quote');
+			// 段 text 是**原文切片**（含 `>` 前缀）：截断计量与预览都按它
+			expect(segments[0]!.text).toBe('> [!info] 标题\n> 正文');
+			expect(segments[0]!.quote?.header).toMatchObject({
+				canonical: 'info',
+				title: '标题',
+			});
+			expect(segments[0]!.quote?.body).toBe('正文');
+		});
+
+		it('普通引用：同一段型、header 为 null、正文是全部行', () => {
+			const segments = buildInlineSegments('> 引用一句\n> 第二句');
+			expect(segments).toHaveLength(1);
+			expect(segments[0]!.quote?.header).toBeNull();
+			expect(segments[0]!.quote?.body).toBe('引用一句\n第二句');
+		});
+
+		it('段落夹标注：文本 / 引用 / 文本三段，顺序即文档顺序', () => {
+			const segments = buildInlineSegments('前文\n> [!tip] 提示\n> 内容\n后文');
+			expect(segments.map((segment) => segment.kind)).toEqual([
+				'text',
+				'quote',
+				'text',
+			]);
+			expect(segments[0]!.text).toBe('前文');
+			expect(segments[2]!.text).toBe('后文');
+		});
+
+		it('**空行分隔的两个标注仍各自成盒**（实机 2026-11-11：解析层吃掉空行）', () => {
+			// 解析层把段落之间的空行归一掉（白名单 #2）⇒ 两个标注到达渲染层时是
+			// 一整段连续的 `>` 行。若不在第二个头部处断块，它会变成前一个标注正文里
+			// 的一行字面文本（实机四个类型全部中招）。
+			const segments = buildInlineSegments(
+				'> [!note] 甲\n> 甲正文\n> [!abstract] 乙\n> 乙正文',
+			);
+			const quotes = segments.filter((segment) => segment.kind === 'quote');
+			expect(quotes).toHaveLength(2);
+			expect(quotes[0]!.quote?.header?.canonical).toBe('note');
+			expect(quotes[0]!.quote?.body).toBe('甲正文');
+			expect(quotes[1]!.quote?.header?.canonical).toBe('abstract');
+			expect(quotes[1]!.quote?.body).toBe('乙正文');
+		});
+
+		it('**嵌套头部不算块边界**：`> > [!x]` 剥一层后以 `>` 开头，仍进正文', () => {
+			const segments = buildInlineSegments('> [!info] 外层\n> > [!todo] 内层');
+			const quotes = segments.filter((segment) => segment.kind === 'quote');
+			expect(quotes).toHaveLength(1);
+			expect(quotes[0]!.quote?.body).toBe('> [!todo] 内层');
+		});
+
+		it('列表项续行形态（`- 事项` + 缩进的 `>` 行）：首行是文本、其余成标注', () => {
+			// 解析侧把续行的**行首缩进**剥进 mdRaw（`trimStart`），故 `>` 落在列 0；
+			// 这是「列表里写标注」的生产形态，锁住它不被并成一整段文本
+			const segments = buildInlineSegments('事项\n> [!note] 备注\n> 内容');
+			expect(segments.map((segment) => segment.kind)).toEqual(['text', 'quote']);
+			expect(segments[1]!.quote?.header).toMatchObject({ canonical: 'note' });
+			expect(segments[1]!.quote?.body).toBe('内容');
+		});
+
+		it('**围栏在引用块内部**（顺序契约）：整段不被 fence 分支抽走', () => {
+			const raw = '> [!note]\n> ```js\n> const a = 1;\n> ```';
+			const segments = buildInlineSegments(raw);
+			// 若围栏先切，这里会变成「quote + codeblock」两段，标注只剩首行
+			expect(segments).toHaveLength(1);
+			expect(segments[0]!.quote?.body).toBe('```js\nconst a = 1;\n```');
+		});
+
+		it('围栏**里**的 `>` 行不成引用（保护区）', () => {
+			const segments = buildInlineSegments('```md\n> [!note]\n> x\n```');
+			expect(segments).toHaveLength(1);
+			expect(segments[0]!.style).toBe('code');
+			expect(segments[0]!.block).toBe(true);
+			expect(segments[0]!.text).toBe('> [!note]\n> x');
+		});
+
+		it('注释块里的 `>` 行不成引用（保护区）', () => {
+			const segments = buildInlineSegments('%%\n> [!note]\n> x\n%%');
+			expect(segments.some((segment) => segment.kind === 'quote')).toBe(false);
+		});
+
+		it('嵌套只剥一层：内层 `> [!todo]` 留在 body 里（DOM 递归再切）', () => {
+			const segments = buildInlineSegments('> [!question] 外层\n> > [!todo] 内层');
+			expect(segments).toHaveLength(1);
+			expect(segments[0]!.quote?.body).toBe('> [!todo] 内层');
+		});
+
+		it('换行归属：全部段的 text 拼接仍等于原文（预览依赖该不变量）', () => {
+			const raw = '前文\n> [!tip] 提示\n> 内容\n\n后文';
+			expect(buildInlineSegments(raw).map((segment) => segment.text).join('')).toBe(
+				raw,
+			);
+		});
+	});
+
+	describe('DOM 装配', () => {
+		it('标注盒子：类名 + data-callout + 类型色标题 + 正文递归', () => {
+			const el = buildInlineNodeContent(
+				rawNode('> [!info] 标题\n> 正文 **粗**'),
+				doc(),
+			)!;
+			expect(el).not.toBeNull();
+			const box = findClass(el, CALLOUT_BLOCK_CLASS)!;
+			expect(box).not.toBeNull();
+			expect(box.getAttribute('data-callout')).toBe('info');
+			expect(box.getAttribute('data-callout-type')).toBe('info');
+			// 底色与宿主 `.callout` 同款（color-mix 10% 类型色），且走 var() 链
+			expect(String(styleOf(box).backgroundColor)).toContain('color-mix(in oklch');
+			expect(String(styleOf(box).backgroundColor)).toContain('--callout-info');
+			const title = findClass(box, 'mindmap-node-callout-title')!;
+			expect(textOf(title)).toBe('标题');
+			expect(styleOf(title).color).toBe('var(--callout-info, #086ddd)');
+			// 正文走同一套段管线：轻标记照样渲染成语义元素
+			const content = findClass(box, 'mindmap-node-callout-content')!;
+			expect(textOf(content)).toBe('正文 粗');
+			expect(childrenOf(content).some((child) => child instanceof FakeElement)).toBe(
+				true,
+			);
+		});
+
+		it('标题走行内管线：`[[双链]]` / 粗体按宿主口径渲染（2026-11-12 实机）', () => {
+			const el = buildInlineNodeContent(
+				rawNode('> [!info] 见 [[笔记]] 与 **粗体**\n> 正文'),
+				doc(),
+			)!;
+			const title = findClass(el, 'mindmap-node-callout-title-inner')!;
+			// 显示文本仍是剥壳后的样子（链接只留显示名）
+			expect(textOf(title)).toBe('见 笔记 与 粗体');
+			expect(findClass(title, 'internal-link'), '标题里的双链是锚点').not.toBeNull();
+			const tags: string[] = [];
+			const walk = (node: unknown): void => {
+				if (!(node instanceof FakeElement)) {
+					return;
+				}
+				tags.push(node.tagName);
+				for (const child of node.children) {
+					walk(child);
+				}
+			};
+			walk(title);
+			expect(tags, '标题里的粗体是 <strong>').toContain('strong');
+		});
+
+		it('标题以 `>` 起首：按行内内容处理（不产出嵌套引用盒，2026-11-12 实机）', () => {
+			const el = buildInlineNodeContent(
+				rawNode('> [!info] > 嵌套\n> 正文'),
+				doc(),
+			)!;
+			const title = findClass(el, 'mindmap-node-callout-title-inner')!;
+			expect(findClass(title, QUOTE_BLOCK_CLASS)).toBeNull();
+			expect(textOf(title)).toBe('> 嵌套');
+		});
+
+		it('未写标题：显示**类型标识**的 Title Case（不是规范类型）', () => {
+			const el = buildInlineNodeContent(rawNode('> [!faq]'), doc())!;
+			const box = findClass(el, CALLOUT_BLOCK_CLASS)!;
+			expect(box.getAttribute('data-callout')).toBe('question');
+			expect(textOf(findClass(box, 'mindmap-node-callout-title')!)).toBe('Faq');
+		});
+
+		it('图标注入：按类型取官方 id，缺失即整段省略（不占位）', () => {
+			const ids: string[] = [];
+			const icon = new FakeElement();
+			const el = buildInlineNodeContent(rawNode('> [!warning] 注意'), doc(), {}, 'zh', {
+				resolveCalloutIcon: (iconId) => {
+					ids.push(iconId);
+					return icon as unknown as Node;
+				},
+			})!;
+			expect(ids).toEqual(['lucide-alert-triangle']);
+			const iconBox = findClass(el, 'mindmap-node-callout-icon')!;
+			expect(iconBox.children[0]).toBe(icon);
+			// 图标与标题同义，进无障碍树只会重复朗读
+			expect(iconBox.getAttribute('aria-hidden')).toBe('true');
+
+			const plain = buildInlineNodeContent(rawNode('> [!warning] 注意'), doc())!;
+			expect(findClass(plain, 'mindmap-node-callout-icon')).toBeNull();
+		});
+
+		it('折叠标记只作装饰：`-` 显示合拢箭头，正文**照常展开**', () => {
+			const el = buildInlineNodeContent(
+				rawNode('> [!tip]- 折叠标题\n> 正文'),
+				doc(),
+			)!;
+			const box = findClass(el, CALLOUT_BLOCK_CLASS)!;
+			expect(box.getAttribute('data-callout-fold')).toBe('-');
+			expect(textOf(findClass(box, 'mindmap-node-callout-fold')!)).toBe('▸');
+			// 折叠态是视图态、不进文件，节点重建即丢 ⇒ 不实现交互、内容恒可见
+			expect(findClass(box, 'mindmap-node-callout-content')).not.toBeNull();
+		});
+
+		it('仅标题的标注不建正文容器（空盒只多出高度）', () => {
+			const el = buildInlineNodeContent(rawNode('> [!tip] 仅标题'), doc())!;
+			expect(findClass(el, 'mindmap-node-callout-content')).toBeNull();
+		});
+
+		it('普通引用：引用盒子（无标题行），左竖线走 blockquote 变量', () => {
+			const el = buildInlineNodeContent(rawNode('> 引用一句'), doc())!;
+			const box = findClass(el, QUOTE_BLOCK_CLASS)!;
+			expect(box).not.toBeNull();
+			expect(findClass(box, 'mindmap-node-callout-title')).toBeNull();
+			expect(String(styleOf(box).borderInlineStart)).toContain(
+				'var(--blockquote-border-color',
+			);
+			expect(textOf(el)).toBe('引用一句');
+		});
+
+		it('嵌套两层照常建盒，第三层按字面（深度上限，内容不丢）', () => {
+			const el = buildInlineNodeContent(
+				rawNode('> [!note] L1\n> > [!info] L2\n> > > [!tip] L3'),
+				doc(),
+			)!;
+			expect(countClass(el, CALLOUT_BLOCK_CLASS)).toBe(2);
+			expect(textOf(el)).toContain('> [!tip] L3');
+		});
+
+		it('着色节点：盒子加派生边框（类型色底在彩色节点上看不出来）', () => {
+			const raw = '> [!info] 标题\n> 正文';
+			const node = fakeNode({
+				text: raw,
+				mdRaw: raw,
+				mdDerivedText: raw,
+				fillColor: '#cfe8ff',
+			});
+			const el = buildInlineNodeContent(node, doc())!;
+			const box = findClass(el, CALLOUT_BLOCK_CLASS)!;
+			const tones = nodeContentTones('#cfe8ff');
+			expect(styleOf(box).border).toBe(`1px solid ${tones.border}`);
+			// 标题仍是类型色：换成墨色就丢了标注的类型语义
+			expect(styleOf(findClass(box, 'mindmap-node-callout-title')!).color).toBe(
+				'var(--callout-info, #086ddd)',
+			);
+		});
+
+		it('表格单元格里的 `>` 行按字面（单元格内不建块级盒子）', () => {
+			const el = buildInlineNodeContent(
+				rawNode('| 列 |\n|---|\n| > x |'),
+				doc(),
+			)!;
+			expect(findClass(el, CALLOUT_BLOCK_CLASS)).toBeNull();
+			expect(findClass(el, QUOTE_BLOCK_CLASS)).toBeNull();
+			expect(textOf(el)).toContain('> x');
+		});
+
+		it('超长标注**整块保留**（原子段）：不切半张盒子，只补 `…` 与截断标记', () => {
+			const raw = `> [!note] ${'长'.repeat(MAX_INLINE_CONTENT_CHARS + 50)}`;
+			const el = buildInlineNodeContent(rawNode(raw), doc())!;
+			expect(findClass(el, CALLOUT_BLOCK_CLASS)).not.toBeNull();
+			expect(el.getAttribute('data-truncated')).toBe('true');
+			expect(textOf(el)).toContain('…');
+		});
 	});
 });

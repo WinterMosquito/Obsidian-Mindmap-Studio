@@ -317,6 +317,21 @@ const SCENARIOS = [
 		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0 },
 	},
 	{
+		name: 'callout',
+		label: '标注 / 引用：`> [!type]` 自绘为内联样式盒子（类型色走 var() 链）',
+		data: {
+			// 2026-11-11：`>` 行在解析层是 plain 行，显示层把「前缀 + `[!type]` 头部」
+			// 还原成盒子。一个节点里同时放两种形态（空行分段）：
+			// ① 标注（标题 + 正文，正文里带行内码）：类型色 / 圆角 / 正文递归；
+			// ② 普通引用：左竖线走 blockquote 变量、无标题行。
+			text: '> [!info] 提示标题\n> 正文 `码`\n\n> 引用一句',
+			mdDerivedText: '> [!info] 提示标题\n> 正文 `码`\n\n> 引用一句',
+			mdRaw: '> [!info] 提示标题\n> 正文 `码`\n\n> 引用一句',
+			mdType: 'plain',
+		},
+		expect: { docIcon: 0, linkIcon: 0, attachIcon: 0 },
+	},
+	{
 		name: 'hugeline',
 		label: '超长单行（20k）→ 必须接管并截断展示（绝不回落引擎）',
 		data: {
@@ -503,6 +518,12 @@ export function normalizePath(p) {
 	return String(p).replace(/\\\\/g, '/');
 }
 export function setIcon() {}
+// 标注图标（platform/callout-icon 的具名导入）：垫片返回 null = 宿主没有这个图标，
+// 即**生产环境的降级路径**（图标缺失 ⇒ 省略图标、保留标题与类型色）。探针因此
+// 断言的是"无图标时盒子仍成立"，图标本身的取用由 platform 层直连宿主 getIcon。
+export function getIcon() {
+	return null;
+}
 // math-jax 的具名导入（探针不触发真实 MathJax 渲染，仅保证模块图可链接）
 export function loadMathJax() {
 	return Promise.resolve();
@@ -577,8 +598,8 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		null,
 		'\t',
 	);
-	return `import { applyImageSizeCorrectionsToEngine, applyPerformanceMode, centerContentAtFullScale, countTreeNodes, createMindMap, fitMindMap, HISTORY_BUDGET_BYTES, isCustomNodeContent, previewNodeImageSize, refreshNodeCustomContent, replaceMindMapData, resetZoom, resolveHistoryLimit, setNodeImageSize, setNodeText } from ${JSON.stringify(mindmapModule)};
-import { ensureDefaultImageSizes } from ${JSON.stringify(imagesPathModule)};
+	return `import { applyImageSizeCorrectionsToEngine, applyPerformanceMode, applySessionSnapshot, centerContentAtFullScale, countTreeNodes, createMindMap, fitMindMap, HISTORY_BUDGET_BYTES, isCustomNodeContent, previewNodeImageSize, refreshNodeCustomContent, replaceMindMapData, resetZoom, resolveHistoryLimit, setNodeImageSize, setNodeText } from ${JSON.stringify(mindmapModule)};
+import { ensureDefaultImageSizes, withDefaultImageSizes, imageSizeKey, reuseKnownImageSizes } from ${JSON.stringify(imagesPathModule)};
 import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
 import { buildInlineNodeContent, segmentCacheStats } from ${JSON.stringify(inlineContentModule)};
 import { gateNodeWidthHandles } from ${JSON.stringify(nodeWidthModule)};
@@ -1742,6 +1763,22 @@ window.setTimeout(() => {
 							100,
 					) / 100
 				: null;
+		// 标注 / 引用场景（2026-11-11）：盒子必须落在 foreignObject 内、类型色与圆角
+		// 必须是**内联样式算出来的值**（无头页没有 styles.css / app.css ⇒ 能算出
+		// rgb(8, 109, 221) 就证明 --callout-info 的 var() 链确实落在元素上）
+		const calloutHolder = groupOf('callout');
+		const calloutBox = calloutHolder
+			? calloutHolder.querySelector('foreignObject .mindmap-node-callout')
+			: null;
+		const calloutTitleInner = calloutBox
+			? calloutBox.querySelector('.mindmap-node-callout-title-inner')
+			: null;
+		const calloutContent = calloutBox
+			? calloutBox.querySelector('.mindmap-node-callout-content')
+			: null;
+		const quoteBox = calloutHolder
+			? calloutHolder.querySelector('foreignObject .mindmap-node-quote')
+			: null;
 		// 超长单行场景：必须被接管（长行交给引擎会二次复杂度卡死）
 		const hugeHolder = groupOf('hugeline');
 		const hugeRegion = hugeHolder
@@ -2017,6 +2054,31 @@ window.setTimeout(() => {
 				? window.getComputedStyle(tableEl).borderCollapse
 				: null,
 			tableOverflowPx,
+			// 标注 / 引用（2026-11-11）：盒子结构、类型色、圆角、正文递归、引用左竖线
+			calloutInForeignObject: insideForeignObject(calloutBox),
+			calloutKind: calloutBox ? calloutBox.getAttribute('data-callout') : null,
+			calloutTitleText: calloutTitleInner ? calloutTitleInner.textContent : null,
+			calloutTitleColor: calloutTitleInner
+				? window.getComputedStyle(calloutTitleInner).color
+				: null,
+			calloutBackground: calloutBox
+				? window.getComputedStyle(calloutBox).backgroundColor
+				: null,
+			calloutRadius: calloutBox
+				? window.getComputedStyle(calloutBox).borderRadius
+				: null,
+			calloutContentText: calloutContent ? calloutContent.textContent : null,
+			// 正文里的行内码仍走同一套段管线（递归不是「纯文本铺开」）
+			calloutCodeCount: calloutContent
+				? calloutContent.querySelectorAll('code').length
+				: -1,
+			quoteBoxCount: calloutHolder
+				? calloutHolder.querySelectorAll('foreignObject .mindmap-node-quote')
+					.length
+				: -1,
+			quoteBorderWidth: quoteBox
+				? window.getComputedStyle(quoteBox).borderInlineStartWidth
+				: null,
 			// 对照：纯文本节点未被接管（自绘锚点数为 0）
 			plainAnchors: plainHolder
 				? plainHolder.querySelectorAll(
@@ -2648,7 +2710,54 @@ window.setTimeout(() => {
 								report.fixAfterWidth === 120 ||
 								Date.now() > fixDeadline
 							) {
-								imageProbe.textContent = JSON.stringify(report);
+								// **会话快照通道回归位**（2026-11-12 实机缺陷）：外部分支
+								// 重载的树来自解析器（不产 imageSize）。生产路径
+								// DocumentSession.applyToPort 先过 withDefaultImageSizes、
+								// view.applySnapshot 再复用引擎已定稿尺寸才进引擎；
+								// 此处用同一组函数复刻该时序，断言整图渲染没被打断、
+								// 图片也没退回默认盒（裸树会让 root 变 null，见 rawHasRoot）。
+								// 应用前先从**当前引擎**收已定稿尺寸（生产：view.knownImageSizes）；
+								// 主组此刻是 120×40 custom:true。不复用就会退回 200×120 默认盒。
+								const knownSizes = new Map();
+								const collectSizes = (n) => {
+									if (!n) return;
+									const d = n.getData ? n.getData() : null;
+									if (d && d.image && d.imageSize && d.imageSize.custom) {
+										knownSizes.set(imageSizeKey(d), d.imageSize);
+									}
+									(n.children || []).forEach(collectSizes);
+								};
+								collectSizes(map.renderer.root);
+								report.snapKnownSizes = knownSizes.size;
+								report.snapApplied = applySessionSnapshot(
+									map,
+									reuseKnownImageSizes(
+										withDefaultImageSizes(makeTree()),
+										knownSizes,
+									),
+								);
+								const snapDeadline = Date.now() + 1200;
+								const waitSnap = () => {
+									report.snapRoot = !!map.renderer.root;
+									report.snapNodes = map.renderer.root
+										? (map.renderer.root.children || []).length + 1
+										: 0;
+									report.snapImage = !!holder.querySelector('image');
+									const child = map.renderer.root?.children?.[0];
+									report.snapEngineSize = child?.getData?.()?.imageSize ?? null;
+									report.snapDomWidth = sizeOf(holder, 'width');
+									if (
+										(report.snapRoot &&
+											report.snapImage &&
+											report.snapDomWidth === 120) ||
+										Date.now() > snapDeadline
+									) {
+										imageProbe.textContent = JSON.stringify(report);
+										return;
+									}
+									window.setTimeout(waitSnap, 40);
+								};
+								window.setTimeout(waitSnap, 60);
 								return;
 							}
 							window.setTimeout(() => waitFix(fixDeadline), 40);
@@ -4616,7 +4725,12 @@ function checkAnchor(dom) {
  * - **端到端修复链路**（K96）：建图后立即回灌（保留）+ 首帧渲染完成事件补灌
  *   → 最终渲染宽度必须为 120；匹配硬前提是**树 data.uid === 引擎节点 data.uid**
  *   （真实路径下对象身份不同一——引擎包装/拷贝，`identitySame` 预期 false，仅记录）；
- * - 主组回灌用**树 data**（生产同款）且必须命中 1 条（证明 uid 通道有效）。
+ * - 主组回灌用**树 data**（生产同款）且必须命中 1 条（证明 uid 通道有效）；
+ * - **会话快照通道**（2026-11-12 实机缺陷的回归位）：把「解析器产物」（有 image、
+ *   无 imageSize）经 `withDefaultImageSizes` 后交给 `applySessionSnapshot`，
+ *   必须仍渲染出 root + 1 个节点 + `<image>`（裸树会整图中断，见 `rawHasRoot`）；
+ *   再按生产时序先收引擎已定稿尺寸、经 `reuseKnownImageSizes` 复用 ⇒ 快照后
+ *   仍是 120×40 `custom:true`（引擎 data 与 DOM 宽度都核对，退回 200×120 默认盒即红）。
  * 对照组「不填默认值」只记录不断言（`rawHasRoot` 预期 false，留作证据）。
  */
 function checkImageCorrection(dom, diag) {
@@ -4672,8 +4786,41 @@ function checkImageCorrection(dom, diag) {
 			`修复链路模拟：补灌后渲染宽度 ${probe.fixAfterWidth} ≠ 120（端到端未生效）`,
 		);
 	}
+	// 会话快照通道（2026-11-12 实机缺陷）：外部分支重载的树来自解析器，不含
+	// imageSize；应用前不补齐会让 `getImgShowSize` 解构抛错 ⇒ root 变 null、
+	// 视图停在旧画面（含 `![[图]]` 的导图只要有一次外部写入即触发）。
+	if (probe.snapApplied !== true) {
+		failures.push('会话快照应用返回非 true（引擎未接受快照）');
+	}
+	if (probe.snapRoot !== true) {
+		failures.push(
+			'应用「解析器产物」快照后 renderer.root 为空：缺 imageSize 打断整图渲染',
+		);
+	}
+	if (probe.snapNodes !== 2) {
+		failures.push(`快照后渲染树节点数 ${probe.snapNodes} ≠ 2`);
+	}
+	if (probe.snapImage !== true) {
+		failures.push('快照后未渲染出 <image>（图片节点丢失）');
+	}
+	// 尺寸复用（2026-11-12 实机 P2）：快照应用前引擎已定稿 120×40 custom:true，
+	// 应用后必须还是它；退回 200×120 默认盒即为「外部写入后图片突然变小」。
+	if (probe.snapKnownSizes !== 1) {
+		failures.push(`应用前收集到 ${probe.snapKnownSizes} 份定稿尺寸 ≠ 1`);
+	}
+	const expectedSize = { width: 120, height: 40, custom: true };
+	if (JSON.stringify(probe.snapEngineSize) !== JSON.stringify(expectedSize)) {
+		failures.push(
+			`快照后引擎图片尺寸 ${JSON.stringify(probe.snapEngineSize)} ≠ 120×40 custom:true（已定稿尺寸未复用）`,
+		);
+	}
+	if (probe.snapDomWidth !== 120) {
+		failures.push(
+			`快照后 <image> 宽度 ${probe.snapDomWidth} ≠ 120（尺寸复用没落到 DOM）`,
+		);
+	}
 	diag.log(
-		`      ⓘ 回灌前 ${probe.beforeWidth}×${probe.beforeHeight} → 回灌后 ${probe.afterWidth}×${probe.afterHeight}；首帧前 rootNull=${probe.preReadyRootNull} applied=${probe.preReadyApplied}；修复链路 preApplied=${probe.fixPreApplied} onReadyApplied=${probe.fixOnReadyApplied} 终值宽=${probe.fixAfterWidth}；匹配 身份同一=${probe.identitySame} uid同一=${probe.uidSame}；不填默认值的对照组 hasRoot=${probe.rawHasRoot}`,
+		`      ⓘ 回灌前 ${probe.beforeWidth}×${probe.beforeHeight} → 回灌后 ${probe.afterWidth}×${probe.afterHeight}；首帧前 rootNull=${probe.preReadyRootNull} applied=${probe.preReadyApplied}；修复链路 preApplied=${probe.fixPreApplied} onReadyApplied=${probe.fixOnReadyApplied} 终值宽=${probe.fixAfterWidth}；匹配 身份同一=${probe.identitySame} uid同一=${probe.uidSame}；不填默认值的对照组 hasRoot=${probe.rawHasRoot}；快照通道 root=${probe.snapRoot} 节点=${probe.snapNodes} image=${probe.snapImage} 定稿尺寸=${probe.snapKnownSizes} 引擎=${JSON.stringify(probe.snapEngineSize)} DOM宽=${probe.snapDomWidth}`,
 	);
 	return failures;
 }
@@ -5402,6 +5549,63 @@ function checkInline(dom) {
 	if (!(probe.tableOverflowPx <= 0.5)) {
 		failures.push(
 			`表格超出内容盒 ${probe.tableOverflowPx}px（max-width:100% + 单元格折行失效 → 会撑爆节点）`,
+		);
+	}
+	// 标注 / 引用（2026-11-11）：盒子在 foreignObject 内、类型色与圆角由**内联样式**
+	// 算出（无头页没有 styles.css / app.css ⇒ 计算值非空即证明样式确实内联）；
+	// 正文递归不是「铺平文本」（行内码仍是 <code>），普通引用另有左竖线
+	if (probe.calloutInForeignObject !== true) {
+		failures.push(
+			'标注盒子未落在 foreignObject 内（`>` 行未被自绘接管 → 引擎按字面 SVG 文本渲染 `[!info]`）',
+		);
+	}
+	if (probe.calloutKind !== 'info') {
+		failures.push(
+			`标注 data-callout 为 ${JSON.stringify(probe.calloutKind)} ≠ "info"（类型归一或属性落地失效）`,
+		);
+	}
+	if (probe.calloutTitleText !== '提示标题') {
+		failures.push(
+			`标注标题为 ${JSON.stringify(probe.calloutTitleText)} ≠ "提示标题"（头部解析 / 标题落点漂移）`,
+		);
+	}
+	if (probe.calloutTitleColor !== 'rgb(8, 109, 221)') {
+		failures.push(
+			`标注标题色为 ${JSON.stringify(probe.calloutTitleColor)} ≠ "rgb(8, 109, 221)"（类型色 var() 链未落到元素上，导出图会丢色）`,
+		);
+	}
+	if (probe.calloutRadius !== '6px') {
+		failures.push(
+			`标注圆角为 ${JSON.stringify(probe.calloutRadius)} ≠ "6px"（内联圆角失效）`,
+		);
+	}
+	if (
+		typeof probe.calloutBackground !== 'string' ||
+		probe.calloutBackground === 'rgba(0, 0, 0, 0)' ||
+		probe.calloutBackground === 'transparent'
+	) {
+		failures.push(
+			`标注底色为 ${JSON.stringify(probe.calloutBackground)}（color-mix 未解析 → 盒子看不见）`,
+		);
+	}
+	if (probe.calloutContentText !== '正文 码') {
+		failures.push(
+			`标注正文为 ${JSON.stringify(probe.calloutContentText)} ≠ "正文 码"（正文没有递归进段管线）`,
+		);
+	}
+	if (probe.calloutCodeCount !== 1) {
+		failures.push(
+			`标注正文里的行内码元素数 ${probe.calloutCodeCount} ≠ 1（递归渲染退化成铺平文本）`,
+		);
+	}
+	if (probe.quoteBoxCount !== 1) {
+		failures.push(
+			`普通引用盒子数 ${probe.quoteBoxCount} ≠ 1（无 [!type] 头的引用块未被单独成盒）`,
+		);
+	}
+	if (probe.quoteBorderWidth !== '2px') {
+		failures.push(
+			`引用左竖线宽 ${JSON.stringify(probe.quoteBorderWidth)} ≠ "2px"（blockquote 变量链未落地）`,
 		);
 	}
 	if (!(probe.childWidth > 0) || !(probe.childHeight > 0)) {

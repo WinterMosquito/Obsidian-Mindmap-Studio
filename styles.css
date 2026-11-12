@@ -629,6 +629,35 @@
   .tmm-codeblock:not(:hover) > .tmm-code-copy {
     display: none;
   }
+
+  /* mermaid 图容器复用同一个复制按钮（`tmm-code-copy` + `data-code`），故显隐
+     规则与代码块成对：外观仍全内联，这里只加一条「不悬停就藏」。 */
+  .tmm-mermaid:not(:hover) > .tmm-code-copy {
+    display: none;
+  }
+}
+
+/* ========== mermaid 图的主题变量兜底（K173） ========== */
+/* Pele 产物里的颜色全是 `var(--pele-*)`。**新版 Obsidian** 自己在 `body` 上定义了
+   整套 `--pele-*`（映射 `--mermaid-*`），本段因此只是「同义复述 + 追加兜底」：
+   取值链与宿主一致，所以 1.15 上观感零差异；**老版本 / 无 Pele 的宿主**没有这套
+   变量，就落到最后的 Obsidian 通用变量（`--background-primary` / `--text-normal` …），
+   于是「暗色主题给白底图」不会发生。
+   ⚠ 只跟**明暗**走，不跟节点色：图是「贴纸」，不是节点的一部分（2026-11-09 裁决）。 */
+.tmm-mermaid {
+  --pele-bg: var(--mermaid-background, var(--background-primary));
+  --pele-fg: var(--mermaid-text-color, var(--text-normal));
+  --pele-muted: var(--mermaid-muted-color, var(--text-muted));
+  --pele-line: var(--mermaid-line-color, var(--text-faint));
+  --pele-surface: var(--mermaid-surface, var(--background-secondary));
+  --pele-surface-alt: var(--mermaid-surface-alt, var(--background-secondary-alt));
+  --pele-border: var(--mermaid-border-color, var(--background-modifier-border));
+  --pele-accent: var(--mermaid-accent, var(--text-accent));
+  --pele-critical: var(--mermaid-critical, var(--text-error));
+  --pele-error: var(--mermaid-error, var(--text-error));
+  --pele-font: var(--font-mermaid, var(--font-interface));
+  --pele-font-mono: var(--font-monospace);
+  --pele-radius: var(--mermaid-radius, var(--radius-s));
 }
 
 /* ========== 节点文本弹窗（自绘节点的编辑入口，ui/modal-text.ts） ========== */

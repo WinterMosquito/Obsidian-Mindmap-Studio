@@ -1,24 +1,53 @@
 /**
  * 节点内联内容的**段序列切分**（纯逻辑，2026-10-16 自 `node-inline-content.ts` 拆出）。
  *
- * 覆盖：行内 token → 段序列（轻标记 / 代码块 / 数学 / 链接 / **表格块** / **标签**）、
- * 段缓存（`segmentEntryOf` / `segmentCacheStats`）、接管判定（`resolveSelfDrawSource`，
- * 任务节点剥掉 `[ ]` 前缀后仍接管）、任务状态读取（`taskStateOf`，渲染与交互共用）、
- * 展示截断（`clampSegments`）与显示文本预览（`inlineContentPreview`）。
+ * 覆盖：行内 token → 段序列（轻标记 / 代码块 / 数学 / 链接 / **表格块** / **标签** /
+ * **引用块与标注** / **脚注引用**）、段缓存（`segmentEntryOf` / `segmentCacheStats`）、接管判定
+ * （`resolveSelfDrawSource`，任务节点剥掉 `[ ]` 前缀后仍接管）、任务状态读取
+ * （`taskStateOf`，渲染与交互共用）、展示截断（`clampSegments`）与显示文本预览
+ * （`inlineContentPreview`）。
  * **不触碰 DOM**——DOM 装配见 `node-inline-html`（本模块是它的依赖，反向不成立）。
+ *
+ * ## 块级切分的**顺序即契约**（2026-11-11 加引用块后重排）
+ * 引用块 → 围栏代码块 → 表格 → 行内。三处顺序都不是随手排的：
+ * - **引用块最外层**：围栏块由 `scanFenceBlocks` 用 `MARKUP_RE` 的 fence 分支
+ *   （**非行首锚定**）整体切出，先跑它会把「引用块内的围栏」（`> ```js`）从中间
+ *   抽走 ⇒ 引用块被切成两半、标注只剩首行。引用块整体先行，内层围栏交给 DOM 层
+ *   的递归（正文重进本模块）就自然成立；
+ * - **围栏先于表格**：表格行里的 `|` 与代码内容无关，围栏必须先整段消费；
+ * - **表格先于行内**：`tokenizeInline` 会先把 URL / `[[双链]]` 切走，含管道符的
+ *   行被切碎后 `matchPipeTable` 再也配不上。
+ * 反过来的已知边界（**有意**）：未闭合的围栏不被 `MARKUP_RE` 保护（该分支要求
+ * 成对），其中的 `> ` 行会被当成引用行——未闭合围栏本就是非法输入，既有口径是
+ * 「按字面显示」，此处同族。
  */
 import {
 	isIndentedCodeLine,
 	isRenderableImageTarget,
 	normalizeFenceLanguage,
 } from '../core/constants';
+import { tf, type Language } from '../core/i18n';
 import { readNodeDataString } from '../core/node-data';
-import { COLOR_DIRECTIVE_NONE, normalizeHexColor } from '../domain/color';
+import {
+	isCalloutHeaderLine,
+	parseCalloutHeader,
+	stripQuotePrefix,
+	type CalloutHeader,
+} from '../domain/callout';
+import { colorDirectiveValueOf } from '../domain/color';
 import { matchPipeTable, type PipeTable } from '../domain/pipe-table';
 import { isSchemeUrl, isUrlLikeText } from '../domain/url';
-import { nodeInlineSource } from '../domain/md-meta';
+import { nodeContinuationIndents, nodeInlineSource } from '../domain/md-meta';
 import { stripTaskPrefix } from '../domain/md-task';
-import { fenceMarker } from '../markdown/md-outline-lines';
+import {
+	FOOTNOTE_ID_SOURCE,
+	splitFootnoteDefinitions,
+} from '../markdown/md-footnote';
+import {
+	fenceMarker,
+	isFenceCloseLine,
+	isSelfClosedFenceLine,
+} from '../markdown/md-outline-lines';
 import { tokenDisplay, tokenizeInline, type InlineToken } from '../markdown/md-outline';
 import type { MindMapNode } from '../core/engine-types';
 
@@ -110,11 +139,64 @@ export interface InlineContentOptions {
 	 * `platform/prism-code.getRenderedCodeNodes`（本模块不 import 该层）。
 	 */
 	getCachedCode?: (code: string, lang: string) => readonly Node[] | null;
+	/**
+	 * **mermaid 图渲染**的注入（生产实现 = `platform/mermaid`；本模块不 import 该层）。
+	 *
+	 * 与 `renderCode` 的两点差别（照抄它的纪律前必读）：
+	 * - **同步**：Pele 是纯字符串渲染（不等字体、不挂载），产物直接进 DOM——
+	 *   引擎随后的离屏测量量到的就是图的真实宽高，**不需要**定稿回调与重排会话；
+	 * - **返回 SVG 根元素**（不是字符串）：注入实现负责解析，本模块只 append
+	 *   （跨文档 append 由 DOM 自动 adopt，popout 场景同样成立）；
+	 * - **返回值为空即不接管**：语法错误 / 未注册类型 / 超限一律 null，调用方回落
+	 *   块级代码块（同「未登记语言保留字面」的回退口径）。
+	 */
+	renderMermaid?: (source: string) => Node | null;
+	/**
+	 * **标注图标**的注入（生产实现 = `platform/callout-icon`，内部转调宿主
+	 * `getIcon`；本模块与 `node-inline-html` 都不 import obsidian）。
+	 *
+	 * 入参是图标 **id**（`domain/callout.calloutVisualOf().icon` 给出的官方取值，
+	 * 如 `lucide-info` / `help-circle` / `quote-glyph`——后两个在宿主里本就
+	 * **没有** `lucide-` 前缀）。返回 null = 画不了（id 未登记 / 无宿主 /
+	 * 无头验证环境）⇒ 标注**省略图标、保留标题与色块**，不抛错、不占位。
+	 *
+	 * 与 `renderMermaid` 同一形态（同步、返回已解析好的节点），差别只有一处：
+	 * 图标是**装饰**，缺失不影响可读性，故不像 mermaid 那样回落成另一段内容。
+	 */
+	resolveCalloutIcon?: (iconId: string) => Node | null;
+}
+
+/**
+ * 引用块（含标注）的内容模型（仅 kind = 'quote'）。
+ *
+ * 与 `PipeTable` 同款定位：**纯数据**，来自 `scanQuoteBlocks` 的块切分，DOM 装配
+ * 在 `node-inline-html.buildQuoteElement`。
+ *
+ * **刻意不导出**：它只以 `InlineSegment.quote` 的字段形态对外（消费方按结构读
+ * `header` / `body` 即可），单独导出会让它成为"没有调用方的公开类型"
+ * （`npm run check:dead-code` 判红）。
+ */
+interface QuoteContent {
+	/**
+	 * 标注头部；`null` = **普通引用块**（无 `[!type]` 首行，如 `> 引用一句`）。
+	 *
+	 * 两者共用同一个段型与同一个盒子：官方阅读视图里普通引用块与标注本就是
+	 * 「同一棵 blockquote 树上的两种装饰」，分两个段型只会让扫描与截断各写一遍。
+	 */
+	header: CalloutHeader | null;
+	/**
+	 * 正文原文，**已剥掉 `>` 前缀**（标注另有首行被剥离：那是头部，不是正文）。
+	 *
+	 * 行间以 `\n` 连接、行尾换行不含（块切分把边界换行算进了段 `text`）。
+	 * DOM 层把它重新交给 `buildInlineSegments` 递归 — 内层的围栏块 / 表格 /
+	 * 数学 / 链接因此自动成立，**不另写一套块级解析**（硬规则 5）。
+	 */
+	body: string;
 }
 
 /** 行内段：渲染节点内联内容的最小单元（纯数据，可单测） */
 export interface InlineSegment {
-	kind: 'text' | 'link' | 'table' | 'tag';
+	kind: 'text' | 'link' | 'table' | 'tag' | 'quote' | 'footnote';
 	/**
 	 * 纯文本原样 / 链接段的**剥壳显示名**（`tokenDisplay` 口径，与节点文本一致）
 	 * / 表格段的**原文块文本**（逐字：含外框管道、`\|` 转义与边界换行）。截断上限
@@ -187,6 +269,22 @@ export interface InlineSegment {
 	 * 会退化成空元素（而 `clampSegments` 的就地切短路径会丢字段——它已排除表格段）。
 	 */
 	table?: PipeTable;
+	/**
+	 * **引用块段**的模型（仅 kind = 'quote'）：`header` 非空 = 标注，null = 普通引用。
+	 *
+	 * 同一款纪律：重建或拷贝段对象时必须带上（截断路径已把引用块列为**原子段**，不
+	 * 走就地切短分支）。
+	 */
+	quote?: QuoteContent;
+	/**
+	 * 脚注引用的 id（仅 `kind === 'footnote'`；`text` 是它的显示形态，两者当前相同）。
+	 *
+	 * **只承载 id，不承载定义正文**：段序列按原文寻址缓存（同一段原文 → 同一份段），
+	 * 若把定义正文塞进来，同一行在不同文档里就会产出不同段，缓存与「同一原文 → 同一
+	 * DOM」的不变量同时失效。正文由交互层在**事件发生时**按 id 现查
+	 * （`markdown/md-footnote.collectFootnoteDefinitions`）。
+	 */
+	footnote?: string;
 }
 
 /**
@@ -236,14 +334,19 @@ const MATH_SOURCE =
  * 3. 行内代码 —— 定界符为 1..n 个反引号、**同长度闭合**（CommonMark 语义：
  *    `` ``a`b`` `` 允许内容含更短的反引号串）；内容按字面，内部不解释标记/转义；
  * 4. 转义 `\<可转义字符>` —— 消费反斜杠、按字面显示该字符（字符集见 ESCAPABLE_CLASS）；
- * 5. 数学（`MATH_SOURCE`，**双美元写在单美元之前**——更长定界符优先）：
- *    5a. `$$…$$`（display / 块级，`mathBlock` 组；内容可跨行、可含单个 `$`——
+ * 5. 脚注引用 `[^id]` —— 段型 `kind: 'footnote'`（官方帮助 Footnotes）；
+ *    `(?!:)` 让**定义行** `[^1]: 内容` 留在字面：定义标记是语法基础设施，
+ *    渲染成徽标会让「定义节点」看起来像一条引用（保真侧定义行本就是纯文本）。
+ *    排在数学之前：`$[^1]$` 整体按公式消费，不会被拆出徽标；转义之后：
+ *    `\*` 一类仍先被消费（`[` 不在 ESCAPABLE_CLASS，与链接语法同口径）；
+ * 6. 数学（`MATH_SOURCE`，**双美元写在单美元之前**——更长定界符优先）：
+ *    6a. `$$…$$`（display / 块级，`mathBlock` 组；内容可跨行、可含单个 `$`——
  *    开 `$$` 找最近 `$$` 闭合，对齐 Obsidian 实测口径）；
- *    5b. 行内 `$…$`（`math` 组）。两支同口径：闭 `$` 前
+ *    6b. 行内 `$…$`（`math` 组）。两支同口径：闭 `$` 前
  *    不得是空白、后不得是数字（Obsidian 数学扩展口径，防止 `$5 与 $6` 价签误判）；
  *    排在标记类之前，`$a*b*c$` 内的 `*` 不会被当斜体；
- * 6. `***粗斜***` / `___粗斜___`（组合字形，单独一支）；
- * 7. `**粗**` / `__粗__`、`~~删~~`、`==高亮==`、`*斜*` / `_斜_`。
+ * 7. `***粗斜***` / `___粗斜___`（组合字形，单独一支）；
+ * 8. `**粗**` / `__粗__`、`~~删~~`、`==高亮==`、`*斜*` / `_斜_`。
  *
  * 两条与 CommonMark 对齐的取舍：
  * - 粗/斜/删/高亮要求定界符内首尾**非空白**（flanking 规则的最简形态）：
@@ -273,6 +376,11 @@ const MARKUP_RE = new RegExp(
 		'(?<fence>(?:`{3,}|~{3,}))(?<fenceCode>[\\s\\S]*?)\\k<fence>',
 		'(?<ticks>`+)(?<code>(?:[^`\\n]|`(?!\\k<ticks>))+?)\\k<ticks>',
 		'\\\\(?<escaped>' + ESCAPABLE_CLASS + ')',
+		// 脚注引用 `[^id]`：排在转义之后（`\<可转义字符>` 先消费），数学之前
+		// （`$[^1]$` 按公式整体消费，不会被拆出徽标）。**id 字符类与定义侧
+		// 同源**（`md-footnote.FOOTNOTE_ID_SOURCE`）：两处各写一份时，
+		// 「定义认、引用不认」（如 id 含逗号）就会出现徽标点不到定义。
+		'\\[\\^(?<footnote>' + FOOTNOTE_ID_SOURCE + ')\\](?!:)',
 		MATH_SOURCE,
 		'\\*\\*\\*(?<boldItal>\\S(?:[^*\\n]*\\S)?)\\*\\*\\*',
 		'(?<![\\p{L}\\p{N}])___(?<boldItalU>\\S(?:[^_\\n]*\\S)?)___(?![\\p{L}\\p{N}])',
@@ -285,6 +393,21 @@ const MARKUP_RE = new RegExp(
 	].join('|'),
 	'gu',
 );
+
+/**
+ * `index` 前面是否有**未转义的**反斜杠（CommonMark 的奇偶规则）。
+ *
+ * 只看 `text[index - 1]` 会误判 `\\[^1]`：那两个反斜杠已被转义分支整体消费
+ * （字面一个 `\`），紧随的 `[^1]` 是**真引用**；只有连续反斜杠为奇数时，
+ * 下一个字符才真是被转义的（2026-11-12 审核）。
+ */
+function isEscapedAt(text: string, index: number): boolean {
+	let count = 0;
+	for (let i = index - 1; i >= 0 && text[i] === '\\'; i--) {
+		count += 1;
+	}
+	return count % 2 === 1;
+}
 
 /**
  * 配色指令的扫描器：**同源**于 MARKUP_RE（同一份正则源码，保护区语义因此不会
@@ -300,21 +423,7 @@ interface ColorDirectiveRange {
 	color: string;
 }
 
-/**
- * 注释段内容 → 指令取值：三/六位十六进制，或裸写的 `none` 哨兵；其余 null。
- *
- * 哨兵宽容外壳空白与大小写（`%% None %%`）；**`%%#none%%` 不是指令**（值域只收
- * 十六进制与该裸词），仍按普通注释隐藏。
- */
-function directiveValueOf(body: string): string | null {
-	const color = normalizeHexColor(body);
-	if (color) {
-		return color;
-	}
-	return body.trim().toLowerCase() === COLOR_DIRECTIVE_NONE
-		? COLOR_DIRECTIVE_NONE
-		: null;
-}
+
 
 /**
  * 逐处产出原文里的合法指令——「哪些注释段算指令」的**唯一判定**（读写共用。
@@ -336,7 +445,7 @@ function* colorDirectiveRanges(raw: string): Generator<ColorDirectiveRange> {
 			continue;
 		}
 		// 去掉两侧 `%%` 定界符：`%%#89CFF0%%` → `#89CFF0`
-		const color = directiveValueOf(comment.slice(2, -2));
+		const color = colorDirectiveValueOf(comment.slice(2, -2));
 		if (!color) {
 			continue;
 		}
@@ -388,27 +497,21 @@ function ownLineSpan(
 }
 
 /**
- * 写入 / 清除配色指令（节点行原文的**唯一改写入口**，右键「配色」用）。
+ * 改写原文里的配色指令：`keepFirst === null` = 全部删除；否则第一处替换成它、
+ * 其余删除。
  *
- * - `color` 非空：把**第一处**合法指令替换成新值，多余的一并删掉（`colorDirectiveOf`
- *   只认第一处，留着只会误导作者）；没有指令时追加到末尾。取值是 `#rrggbb` 或哨兵
- *   {@link COLOR_DIRECTIVE_NONE}（写成 `%%none%%`）；
- * - `color === null`：删掉全部指令（每处带走**一个**相邻空白，不留双空格；
- *   **独占一行**的指令连同那一行一起删，否则清除后原文末尾会多出一个空行，
- *   保存时文件凭空多一行、紧列表变松散）——即「默认」；
- * - 保护区与解析一致：围栏代码 / 行内代码 / 数学里的同形态**不动**（那不是指令，
- *   改它等于改用户的代码）；
- * - 只改这一行原文；无指令时的落点见 `appendColorDirective`。
+ * 删除语义只有这一份（写入 / 清除 / 独立行三种路径共用）：每处带走**一个**
+ * 相邻空白；**独占一行**的连同分行换行一起删（`ownLineSpan`）——只吞空白会留下
+ * 空行，保存后文件凭空多一行、紧列表变松散。
  */
-export function setColorDirective(raw: string, color: string | null): string {
+function rewriteColorDirectives(
+	raw: string,
+	keepFirst: string | null,
+): string {
 	const ranges = [...colorDirectiveRanges(raw)];
 	if (ranges.length === 0) {
-		if (!color) {
-			return raw;
-		}
-		return appendColorDirective(raw, color);
+		return raw;
 	}
-	const directive = color ? `%%${color}%%` : '';
 	let out = '';
 	let cursor = 0;
 	for (const [index, range] of ranges.entries()) {
@@ -416,11 +519,7 @@ export function setColorDirective(raw: string, color: string | null): string {
 		// 其余各处（以及清除时的第一处）是「删除」：带走**一个**空白——
 		// 优先前一个（`A %%#f00%% B` → `A B`），行首没有前导空白则改带后一个
 		//（`%%#f00%% 标题` → `标题`，否则会留下一个前导空格）
-		const removing = index > 0 || !color;
-		// 独占一行的指令（`appendColorDirective` 遇到围栏 / 表格时的落点）：整行
-		// 连同分行的换行一起删。只吞相邻空白的话，清除后原文末尾会留下一个空行
-		//（`标题\n```\n%%#f00%%` → `标题\n```\n`），保存时文件凭空多一行、
-		// 紧列表变松散列表。
+		const removing = index > 0 || keepFirst === null;
 		const ownLine = removing ? ownLineSpan(raw, range, cursor) : null;
 		if (ownLine) {
 			out += raw.slice(cursor, ownLine.from);
@@ -431,8 +530,8 @@ export function setColorDirective(raw: string, color: string | null): string {
 			range.start > cursor && /[ \t]/.test(raw[range.start - 1] ?? '');
 		const keepFrom = removing && hasLeadSpace ? range.start - 1 : range.start;
 		out += raw.slice(cursor, keepFrom);
-		if (index === 0) {
-			out += directive;
+		if (index === 0 && keepFirst !== null) {
+			out += keepFirst;
 		}
 		cursor = range.end;
 		if (removing && !hasLeadSpace && /[ \t]/.test(raw[cursor] ?? '')) {
@@ -440,6 +539,40 @@ export function setColorDirective(raw: string, color: string | null): string {
 		}
 	}
 	return out + raw.slice(cursor);
+}
+
+/**
+ * 写入 / 清除配色指令（节点行原文的**唯一改写入口**，右键「配色」用）。
+ *
+ * - `color` 非空：把**第一处**合法指令替换成新值，多余的一并删掉（`colorDirectiveOf`
+ *   只认第一处，留着只会误导作者）；没有指令时追加到末尾。取值是 `#rrggbb` 或哨兵
+ *   `%%none%%`（`domain/color.COLOR_DIRECTIVE_NONE`）；
+ * - `color === null`：删掉全部指令（含独占一行的形态）——即「默认」；
+ * - `options.ownLine`：把指令写在**独立一行**（标题节点专用，K174）。标题行尾插会
+ *   让 Obsidian 的 heading 缓存把注释算进标题文本，`[[#标题]]` 与 `^block-id` 全废；
+ *   已有指令会被迁到独立行（清除时整行删）；
+ * - 保护区与解析一致：围栏代码 / 行内代码 / 数学里的同形态**不动**（那不是指令，
+ *   改它等于改用户的代码）；
+ * - 只改这一行原文；无指令时的落点见 `appendColorDirective`。
+ */
+export function setColorDirective(
+	raw: string,
+	color: string | null,
+	options: { ownLine?: boolean } = {},
+): string {
+	if (!color) {
+		return rewriteColorDirectives(raw, null);
+	}
+	const directive = `%%${color}%%`;
+	if (options.ownLine) {
+		const content = rewriteColorDirectives(raw, null);
+		return content === '' ? directive : `${content}\n${directive}`;
+	}
+	// 没有指令时走「不破坏块语法」的落点（闭合围栏 / 表格行另起一行）
+	if (colorDirectiveRanges(raw).next().done) {
+		return appendColorDirective(raw, color);
+	}
+	return rewriteColorDirectives(raw, directive);
 }
 
 /**
@@ -521,8 +654,17 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 		const text = normalizeSpaces(value);
 		const last = out[out.length - 1];
 		// 转义产物**不参与合并**：`\#` 的显示字符是 `#`，若与后续文字并成一段
-		// （`#` + `标题` → `#标题`），标签判定就分不清它是不是转义来的
-		if (!escaped && last && last.style === undefined && !last.escaped) {
+		// （`#` + `标题` → `#标题`），标签判定就分不清它是不是转义来的。
+		// **非文本段同样不合并**：脚注段没有 style、也没有 escaped，若不显式判 kind，
+		// 紧随其后的正文会被并进徽标（`[^1] 与` → `1 与` 且段型退化成 text，
+		// 徽标整个消失，2026-11-11 用例抓到）
+		if (
+			!escaped &&
+			last &&
+			last.kind === 'text' &&
+			last.style === undefined &&
+			!last.escaped
+		) {
 			out[out.length - 1] = { kind: 'text', text: last.text + text };
 			return;
 		}
@@ -574,6 +716,23 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 		} else if (groups.escaped !== undefined) {
 			// 转义：消费反斜杠，按字面显示该字符（无样式；标记原因见 pushPlain）
 			pushPlain(groups.escaped, true);
+		} else if (groups.footnote !== undefined) {
+			// 反斜杠紧跟的左方括号按字面：本模块的可转义白名单没有 `[` / `]`，
+			// `\[^1\]` 会被正则从**第二个字符**起配出 `[^1\]`（id 带一个反斜杠）。
+			// 命中这一情形就整段退回纯文本，保留改动前的字面行为。
+			// 判据用**反斜杠奇偶**（`isEscapedAt`）：`\\[^1]` 里的 `[^1]` 是真引用。
+			if (isEscapedAt(text, match.index)) {
+				pushPlain(match[0]);
+			} else {
+				// 脚注引用：id 即显示形态。**不做全文编号**——编号取决于文档序，
+				// 会让同一段原文在不同文档里产出不同段序列（缓存按原文寻址，见
+				// InlineSegment.footnote 的说明）；命名 id 在导图里反而更可读
+				out.push({
+					kind: 'footnote',
+					text: groups.footnote,
+					footnote: groups.footnote,
+				});
+			}
 		} else if (groups.mathBlock !== undefined) {
 			// 单行 `$$…$$`（display / 块级）：定界符不进显示文本；display 标记
 			// 决定占位形态（`$$…$$`）与渲染通道（tex2chtml 的 display 选项）
@@ -615,9 +774,14 @@ function splitMarkedText(text: string, depth = 0): InlineSegment[] {
 			// ——那种情形标记体的字面就是显示文本，挂了徒增遍历。
 			const children =
 				depth + 1 < MAX_MARKUP_DEPTH ? splitMarkedText(body, depth + 1) : undefined;
+			// 「有没有可渲染的子段」不能只看 style：脚注 / 链接 / 标签同样要挂
+			// children（`**粗[^1]**` 此前因 footnote 无 style 被判成纯文本，
+			// 徽标退化成字面 `[^1]`；2026-11-12 实机复现）
 			const nested =
 				children !== undefined &&
-				children.some((child) => child.style !== undefined);
+				children.some(
+					(child) => child.style !== undefined || child.kind !== 'text',
+				);
 			out.push({
 				kind: 'text',
 				text: body,
@@ -857,15 +1021,64 @@ function buildInlineSegmentsUncached(raw: string): InlineSegment[] {
 		return [{ kind: 'text', text: indented, style: 'code', block: true }];
 	}
 	const segments: InlineSegment[] = [];
-	// 表格块先切出来（见 scanTableBlocks）：无表时这里只有**一个**文本块 ⇒ 与
-	// 「直接 tokenize 整段」逐字等价（零成本快路径，既有契约不受影响）
-	for (const block of scanTableBlocks(raw)) {
-		const table = block.table;
-		if (table) {
-			segments.push({ kind: 'table', text: block.text, table });
+	/**
+	 * 一段**不含围栏块**的原文 → 段序列：先切表格块（见 scanTableBlocks），
+	 * 再走行内 token 循环。无表时这里只有**一个**文本块 ⇒ 与「直接 tokenize
+	 * 整段」逐字等价（零成本快路径，既有契约不受影响）。
+	 */
+	const pushTextBlock = (text: string): void => {
+		if (!text) {
+			return;
+		}
+		for (const block of scanTableBlocks(text)) {
+			const table = block.table;
+			if (table) {
+				segments.push({ kind: 'table', text: block.text, table });
+				continue;
+			}
+			pushInlineText(block.text, segments);
+		}
+	};
+
+	/**
+	 * 一段**不含引用块**的原文 → 段序列：围栏块先整体切出，再对剩下的文本做
+	 * 链接/标记 token 化（2026-11-09 修）。
+	 *
+	 * 行内 token 化会先把 URL / `[[双链]]` 切走，围栏被切碎后 `MARKUP_RE` 的
+	 * fence 分支再也配不上 ⇒ 含 URL 的代码块退化成字面文本（实机：mermaid 的
+	 * `click A "https://…"` 整张图不渲染）。围栏是**块级**结构，必须先于行内语义
+	 * 消费——与 `protectedRanges` 让表格绕开围栏是同一条纪律。
+	 */
+	const pushFencedText = (text: string): void => {
+		if (!text) {
+			return;
+		}
+		let start = 0;
+		for (const fence of scanFenceBlocks(text)) {
+			pushTextBlock(text.slice(start, fence.start));
+			const { lang, code } = splitFenceInfo(fence.fenceCode);
+			const language = normalizeFenceLanguage(lang);
+			segments.push({
+				kind: 'text',
+				text: code,
+				style: 'code',
+				block: true,
+				...(language ? { lang: language } : {}),
+			});
+			start = fence.end;
+		}
+		pushTextBlock(text.slice(start));
+	};
+
+	// 引用块最外层（顺序即契约，见文件头）：先把它整体切出，剩下的文本才走
+	// 「围栏 → 表格 → 行内」。引用块内的围栏（`> ```js`）因此不会被 `MARKUP_RE`
+	// 的 fence 分支从中间抽走——它在递归进来的下一轮才被看见。
+	for (const block of scanQuoteBlocks(raw)) {
+		if (block.quote) {
+			segments.push({ kind: 'quote', text: block.text, quote: block.quote });
 			continue;
 		}
-		pushInlineText(block.text, segments);
+		pushFencedText(block.text);
 	}
 	return trimEdges(segments);
 }
@@ -888,6 +1101,12 @@ function pushInlineText(raw: string, segments: InlineSegment[]): void {
 		// 分支——预归一化会波及其中的代码块/数学段（缩进被压扁，已修）
 		const local: InlineSegment[] = [];
 		for (const piece of splitMarkedText(text)) {
+			// 脚注段整枚过继：它没有 style，若落进下面的标签切分，id 里的 `#`
+			// 会被当成标签（`[^note#1]`）——脚注 id 是语法内部标识，不做行内解释
+			if (piece.kind === 'footnote') {
+				local.push(piece);
+				continue;
+			}
 			// 顶层 prose 才切标签：轻标记内部（`**#tag**`）、代码 / 数学 / 注释 /
 			// 链接内都不算——那些已由 tokenizer 的保护区整段吃掉，或在
 			// piece.style 上（标签不做递归，见 pushTagSegments 的说明）。
@@ -1045,6 +1264,104 @@ function splitLineSpans(raw: string): LineSpan[] {
  */
 const PROTECTED_SCAN_RE = new RegExp(MARKUP_RE.source, MARKUP_RE.flags);
 
+/**
+ * 围栏代码块的**块级切片**（2026-11-09）：返回每段围栏的原文区间与围栏内容。
+ *
+ * 为什么需要它：`pushInlineText` 先用 `tokenizeInline` 切链接，**链接会先于围栏
+ * 被吃掉**——含 URL / `[[双链]]` 的围栏因此被切成几段、`MARKUP_RE` 的 fence 分支
+ * 再也配不上（实机：mermaid 的 `click A "https://…"` 让整张图退化成字面文本）。
+ * 围栏必须在行内语义之前整段消费，与 `protectedRanges` 让表格绕开围栏同源。
+ *
+ * 扫描器复用 `PROTECTED_SCAN_RE`（`MARKUP_RE` 的同源独立实例，理由见其注释）；
+ * 本函数是叶子（不重入），故每次调用前归零 `lastIndex` 即可。
+ */
+interface FenceBlock {
+	/** 围栏内原文（含信息行，未剥） */
+	fenceCode: string;
+	/** 匹配整体区间（含两侧定界符） */
+	start: number;
+	end: number;
+}
+
+function scanFenceBlocks(raw: string): FenceBlock[] {
+	// 行级状态机（**不**用 MARKUP_RE 的 fence 分支）：后者用 `\k<fence>` 要求
+	// 闭合串与开串逐字同长，开 3 闭 4 时整段围栏退化、后续链接/标记被切碎
+	// （2026-11-11 审查）。闭合判定与解析层共用 `isFenceCloseLine`（相对列 /
+	// 长度 ≥ 开串 / 行尾空白），两处口径不再各自一套。
+	const blocks: FenceBlock[] = [];
+	const lines = raw.split('\n');
+	let offset = 0;
+	let open: {
+		char: string;
+		length: number;
+		column: number;
+		start: number;
+		codeStart: number;
+	} | null = null;
+	for (const line of lines) {
+		if (open) {
+			if (isFenceCloseLine(line, open)) {
+				const closeLine = line.trimStart();
+				const closeIndent = line.length - closeLine.length;
+				const closeMarker = /^(`{3,}|~{3,})/.exec(closeLine);
+				blocks.push({
+					fenceCode: raw.slice(open.codeStart, offset),
+					start: open.start,
+					end: offset + closeIndent + (closeMarker?.[1]?.length ?? 0),
+				});
+				open = null;
+			}
+		} else {
+			// 缩进上限与解析层同一口径（`md-outline-lines.fenceMarker` 的 0–3）：
+			// 4 空格 / Tab 起首是本行代码（缩进代码块），不是围栏定界符
+			const match = /^([ \t]{0,3})(`{3,}|~{3,})/.exec(line);
+			if (match) {
+				const column = match[1]!.length;
+				const marker = match[2]!;
+				const rest = line.slice(column + marker.length);
+				const start = offset + column;
+				// 同行自闭合（```` ```code``` ````）：与解析层共用同一判定
+				const trimmed = rest.replace(/[ \t]+$/, '');
+				let tail = 0;
+				while (
+					tail < trimmed.length &&
+					trimmed[trimmed.length - 1 - tail] === marker[0]
+				) {
+					tail += 1;
+				}
+				if (isSelfClosedFenceLine(rest, marker[0]!, marker.length)) {
+					const code = rest.slice(0, rest.length - tail);
+					blocks.push({
+						fenceCode: code,
+						start,
+						end: offset + column + marker.length + code.length,
+					});
+				} else {
+					open = {
+						char: marker[0]!,
+						length: marker.length,
+						column,
+						start,
+						codeStart: offset + column + marker.length,
+					};
+				}
+			}
+		}
+		offset += line.length + 1;
+	}
+	if (open) {
+		// **未闭合围栏**：按 CommonMark，其后全部内容都是代码（宿主阅读视图同此）。
+		// 不补这一块，围栏里的 `> [!note]` 会被引用扫描提成标注盒、定界符露成字面
+		// 文本（2026-11-12 实机：编辑器里正在输入围栏时最常见）。
+		blocks.push({
+			fenceCode: raw.slice(open.codeStart),
+			start: open.start,
+			end: raw.length,
+		});
+	}
+	return blocks;
+}
+
 function protectedRanges(raw: string): LineSpan[] {
 	const ranges: LineSpan[] = [];
 	const scanner = PROTECTED_SCAN_RE;
@@ -1059,7 +1376,139 @@ function protectedRanges(raw: string): LineSpan[] {
 			ranges.push({ start: match.index, end: match.index + match[0].length });
 		}
 	}
+	// 围栏另走**行级**扫描补一遍：`MARKUP_RE` 的 fence 分支要求闭合串与开串逐字
+	// 同长，开 3 闭 4（或**根本没有闭合**）时它配不上。宿主把未闭合围栏之后全部
+	// 内容当代码，引用 / 表格扫描不能把其中的 `> [!x]` 提成标注盒（2026-11-12 实机）。
+	// 与已有区间重叠无害（消费方只问「这一行是否落在某个区间内」）。
+	for (const fence of scanFenceBlocks(raw)) {
+		ranges.push({ start: fence.start, end: fence.end });
+	}
+	ranges.sort((left, right) => left.start - right.start);
 	return ranges;
+}
+
+/**
+ * 「整段里有没有一行以 `>` 起首」的廉价判据（仅用于快路径，不参与行级判定）。
+ *
+ * 与 `stripQuotePrefix` 同一口径（≤3 空格 + `>`），但**不是**第二份判定：真判定
+ * 仍只由 `stripQuotePrefix` 逐行给出，这里只回答"值不值得往下扫"。前缀形态若要
+ * 放宽，两处须一起改（同一段注释也写在 `QUOTE_PREFIX_RE`）。
+ */
+const QUOTE_LINE_START_RE = /(?:^|\n)[ \t]{0,3}>/;
+
+/** 引用块扫描的产物：文本块（原文切片）或引用块（模型 + 原文切片） */
+interface QuoteScannedBlock {
+	kind: 'text' | 'quote';
+	/** 源码切片（逐字，含 `>` 前缀与标注头部）。换行归属同 ContentBlock */
+	text: string;
+	quote?: QuoteContent;
+}
+
+/**
+ * 原文 → 「文本块 / 引用块」序列（**最外层的块切分**，2026-11-11）。
+ *
+ * 口径（官方帮助 `Editing and formatting/Callouts` + CommonMark 引用块）：
+ * - **连续引用行 = 一个引用块**：`>` 行之后紧跟的 `>` 行属于同一块；空行或非引用行
+ *   即结束——块内要留空行必须写单独的 `>`（官方「Insert callout」产物同此）；
+ * - **首行才是标注头部**：`parseCalloutHeader` 只看块首行，其余行一律是正文；
+ *   首行不是头部 ⇒ 普通引用块（`header: null`），两者共用同一个段型；
+ * - **前缀只剥一层**：`> > [!todo]` 剥一层后是 `> [!todo]`，嵌套由 DOM 层递归
+ *   本模块自然成立（不在这里做多级展开——那会与嵌套深度上限分成两处判定）；
+ * - **保护区不参与**：围栏代码块 / 块级数学 / `%%注释%%` 内的 `> ` 不是引用行
+ *   （保护区复用 `MARKUP_RE`，与表格同一份口径）。**缩进代码块**不需要另判：
+ *   `stripQuotePrefix` 只认 ≤3 空格缩进，4 空格起首已天然落空。
+ *
+ * 换行归属与 `scanTableBlocks` 逐字同款（见 ContentBlock.text）：引用块吃掉相邻的
+ * 边界换行 ⇒ 全部块的 text 拼接仍等于原文，编辑弹窗预览里引用块独占行。
+ *
+ * 无引用行时返回**单个文本块 = 整段原文**：连 `>` 都没有、或一行都不以 `>` 起首
+ * 时**在扫行与保护区之前**就返回（绝大多数节点不付这份成本）。
+ */
+function scanQuoteBlocks(raw: string): QuoteScannedBlock[] {
+	// 两级快路径（纯文本 / 链接 / 标记是绝大多数节点）：
+	// ① 没有 `>` 就不可能有引用行——`String.includes` 比正则便宜，先挡掉这一片；
+	// ② 有 `>` 但**没有一行以 `>` 起首**（`a > b`、`<div>`、箭头符号）同样不可能
+	//    是引用块。这一步的意义在于**省掉 `protectedRanges`**：那是整段跑一遍
+	//    `MARKUP_RE`（围栏 / 数学 / 注释三个分支），比本函数自己的行扫描贵得多。
+	if (!raw.includes('>') || !QUOTE_LINE_START_RE.test(raw)) {
+		return [{ kind: 'text', text: raw }];
+	}
+	const lines = splitLineSpans(raw);
+	const texts = lines.map((span) => raw.slice(span.start, span.end));
+	const protectedSpans = protectedRanges(raw);
+	const blocks: QuoteScannedBlock[] = [];
+	let cursor = 0;
+	let protectedIndex = 0;
+	for (let index = 0; index < lines.length; ) {
+		const line = lines[index];
+		if (line === undefined) {
+			break;
+		}
+		// 保护区按起点升序（matchAll 顺序），游标只前进
+		let guarded = protectedSpans[protectedIndex];
+		while (guarded !== undefined && guarded.end <= line.start) {
+			protectedIndex += 1;
+			guarded = protectedSpans[protectedIndex];
+		}
+		if (guarded !== undefined && guarded.start <= line.start) {
+			index += 1;
+			continue;
+		}
+		const firstInner = stripQuotePrefix(texts[index] ?? '');
+		if (firstInner === null) {
+			index += 1;
+			continue;
+		}
+		const inner: string[] = [firstInner];
+		let last = index;
+		for (let next = index + 1; next < lines.length; next++) {
+			const stripped = stripQuotePrefix(texts[next] ?? '');
+			if (stripped === null) {
+				break;
+			}
+			// **同层的标注头部行 = 新块的开始**（实机 2026-11-11 踩到）：解析层把
+			// 段落之间的空行吃掉（白名单 #2），于是「两个标注之间隔一个空行」到达
+			// 这里时已经是**一整段连续的 `>` 行**——不在这里断开，第二个标注的头部
+			// 会变成第一个标注正文里的一行字面文本（实机：`[!abstract]` / `[!failure]`
+			// / `[!danger]` / `[!faq]-` 四个都渲染成了正文文字）。
+			// 判据只认**本层剥完前缀后**才成立的头部：嵌套 `> > [!todo]` 剥一层后是
+			// `> [!todo]`（以 `>` 开头），不会被误判成块边界，仍进正文递归。
+			// 用**谓词**而不是 `parseCalloutHeader`：这里按行调用，不需要头部对象，
+			// 更不该为每行白做归一 / 查表 / Title Case（见 `isCalloutHeaderLine`）。
+			if (isCalloutHeaderLine(stripped)) {
+				break;
+			}
+			inner.push(stripped);
+			last = next;
+		}
+		const lastLine = lines[last];
+		if (lastLine === undefined) {
+			break;
+		}
+		// 块前的文本（**不含**边界换行——那个换行归引用块段）
+		const textEnd = index > 0 ? line.start - 1 : 0;
+		if (textEnd > cursor) {
+			blocks.push({ kind: 'text', text: raw.slice(cursor, textEnd) });
+		}
+		const blockStart = Math.max(cursor, index > 0 ? line.start - 1 : line.start);
+		const blockEnd = Math.min(lastLine.end + 1, raw.length);
+		// 首行是标注头部时它**不是正文**：标题进 header，其余行进 body（剥过前缀）
+		const header = parseCalloutHeader(inner[0] ?? '');
+		blocks.push({
+			kind: 'quote',
+			text: raw.slice(blockStart, blockEnd),
+			quote: {
+				header,
+				body: (header ? inner.slice(1) : inner).join('\n'),
+			},
+		});
+		cursor = blockEnd;
+		index = last + 1;
+	}
+	if (raw.length > cursor) {
+		blocks.push({ kind: 'text', text: raw.slice(cursor) });
+	}
+	return blocks.length > 0 ? blocks : [{ kind: 'text', text: raw }];
 }
 
 /** 节点内容的块级切片：文本块（原文切片）或表格块（模型 + 原文切片） */
@@ -1270,6 +1719,14 @@ interface SelfDrawSource {
 	segments: readonly InlineSegment[];
 	/** 超过展示上限（必须接管，见 MAX_INLINE_CONTENT_CHARS） */
 	overlong: boolean;
+	/**
+	 * **纯定义节点**的定义 id（渲染成汇总 chip；非空即表示「剥离后没有可见正文」）。
+	 *
+	 * 定义行不再铺在节点里（2026-11-11 裁决）：带正文的节点直接剥掉定义行、照常
+	 * 渲染剩余内容；整节点只有定义时不能「不接管」（引擎会回落显示 `data.text`，
+	 * 定义又原样露出来——隐藏静默失效），故改为接管一个 chip。
+	 */
+	footnoteIds?: string[];
 }
 
 /**
@@ -1299,7 +1756,15 @@ export function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null 
 	// 任务前缀由复选框承担显示，token 不能再作为文字渲染（未编辑时渲染源是
 	// mdRaw，里面仍有 `[ ]`）。只剥首行：续行原样。
 	const task = taskStateOf(data);
-	const renderRaw = task ? stripTaskPrefix(raw) : raw;
+	const withTask = task ? stripTaskPrefix(raw) : raw;
+	// 定义行不渲染（2026-11-11）：只影响显示源，`text` / `mdRaw` 原样保留，序列化
+	// 与编辑都不受影响。剥离后的正文为空 ⇒ 这是「纯定义节点」，改渲染汇总 chip
+	// （否则不接管会回落引擎的 `data.text`，定义又露出来）。
+	const { body: renderRaw, ids: footnoteIds } = splitFootnoteDefinitions(
+		withTask,
+		nodeContinuationIndents(data),
+	);
+	const footnoteOnly = footnoteIds.length > 0 && renderRaw.trim() === '';
 	// 注意：**没有**「超长就不接管」这条——超长必须接管（见 MAX_INLINE_CONTENT_CHARS：
 	// 引擎逐字符换行是二次复杂度，长行交给它正是白屏/卡死的成因）
 	const segments = segmentEntryOf(renderRaw);
@@ -1317,12 +1782,18 @@ export function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null 
 	//    MAX_INLINE_CONTENT_CHARS 的实测。
 	// 两者都不满足 = **渲染后没有任何可见内容**（空文本 / 纯空白 / 整行只有
 	// `%%注释%%`——注释段被整段吞掉、段序列为空）⇒ 交给引擎按字面显示，
-	// 避免渲染出一个空节点。任务节点例外：复选框本身就是可见内容。
-	const takeOver = overlong || segments.length > 0 || task !== null;
+	// 避免渲染出一个空节点。两处例外：任务节点（复选框本身就是可见内容）、
+	// 纯定义节点（渲染汇总 chip；不接管会让定义行原样露出来）。
+	const takeOver =
+		overlong || segments.length > 0 || task !== null || footnoteOnly;
 	if (!takeOver) {
 		return null;
 	}
-	return { segments, overlong };
+	return {
+		segments,
+		overlong,
+		...(footnoteOnly ? { footnoteIds } : {}),
+	};
 }
 
 // 注：曾导出 `shouldSelfDrawNode`（静态判定「将被自绘接管」）供
@@ -1330,6 +1801,29 @@ export function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null 
 // （`engine/mindmap.isCustomNodeContent` = 节点是否真的有自绘内容），该静态判定
 // 不再有生产消费方，已删除。自绘/不接管的判据单一来源仍是
 // `resolveSelfDrawSource`（本文件内部，判定输入只剩节点数据本身）。
+
+/**
+ * mermaid 围栏的语言码（```mermaid）。
+ *
+ * 与 `core/constants.normalizeFenceLanguage` 的产物比对：围栏信息行已归一为
+ * 小写、只取首个词，故 ```` ```Mermaid title="x" ```` 同样命中。
+ */
+const MERMAID_FENCE_LANG = 'mermaid';
+
+/**
+ * 该段是否是 **mermaid 围栏**（块级代码段 + 语言码 mermaid）。
+ *
+ * 两个消费方必须同源：渲染侧（`node-inline-html` 决定是否交给 mermaid 通道）与
+ * 截断侧（`clampSegments` 的预算豁免）——分写两遍会让「图上屏了但源码被截」再次
+ * 出现（图不能被切一半渲染，见 clampSegments）。
+ */
+export function isMermaidFence(segment: InlineSegment): boolean {
+	return (
+		segment.style === 'code' &&
+		segment.block === true &&
+		segment.lang === MERMAID_FENCE_LANG
+	);
+}
 
 /**
  * 展示截断：按段累加到上限即停（超出部分不渲染）。
@@ -1342,6 +1836,10 @@ export function resolveSelfDrawSource(node: MindMapNode): SelfDrawSource | null 
  *   （1999 字显示整表、2000 字什么都不显示，观感突变且用户会以为内容丢了，
  *   2026-10-15 裁决）。判据取「表格自身的长度 > max」而非「放不下剩余预算」：
  *   后者是正常截断点（前面的文本 + `…` 已是可读的产出），预算约束仍要生效；
+ *   **引用块段同款**（2026-11-11）：盒子被切一半比整块不显示更糟，判据与表格
+ *   逐字相同（`isAtomicBlock`）；
+ * - **mermaid 段整套豁免**（不计预算、不截断）：图不能被切一半渲染，体积改由
+ *   `platform/mermaid` 的源码长度门限单独把关（超限是**整张回退成代码块**）；
  * - 命中上限的文本段**就地切短**（文本本身无语法，切一半是安全的）——该分支会
  *   丢嵌套子段、只保留外层样式，故**不适用于表格段**（切短分支已限定
  *   `kind === 'text'`）。
@@ -1357,6 +1855,18 @@ interface ClampedSegments {
 	truncated: boolean;
 }
 
+/**
+ * **原子段**：要么整枚显示、要么整枚不显示（截断时不做就地切短）。
+ *
+ * 表格与引用块都是「盒」——切一半会剩下半个 `<table>` 或一个连标题都可能被切掉的
+ * 标注盒子。判据集中在这里（此前只有 `kind === 'table'` 一条内联分支），新增块级
+ * 段型时只改这一处；`mermaid` 不在此列，它走的是**完全豁免**（不计预算，见
+ * `clampSegments` 的首个分支）。
+ */
+function isAtomicBlock(segment: InlineSegment): boolean {
+	return segment.kind === 'table' || segment.kind === 'quote';
+}
+
 export function clampSegments(
 	segments: readonly InlineSegment[],
 	max: number,
@@ -1364,15 +1874,23 @@ export function clampSegments(
 	const out: InlineSegment[] = [];
 	let used = 0;
 	for (const segment of segments) {
+		// mermaid 图**不参与预算、也不截断**：图被切一半就没有意义（与链接段
+		// 「要么整枚要么不算」同一理由），且图的体积由渲染侧的长度门限
+		// （`platform/mermaid.MERMAID_SOURCE_MAX_CHARS`）单独管——那里超限是
+		// **整张回退成代码块**，而不是画半张
+		if (isMermaidFence(segment)) {
+			out.push(segment);
+			continue;
+		}
 		const length = segment.text.length;
 		if (used + length <= max) {
 			out.push(segment);
 			used += length;
 			continue;
 		}
-		if (segment.kind === 'table' && length > max) {
-			// **表格自身**超预算：整张保留（见函数说明）——此后不再渲染任何段，
-			// 仍算「被截断」（`…` + 悬停提示照挂）。表格自身在预算内、只是被
+		if (isAtomicBlock(segment) && length > max) {
+			// **原子段自身**超预算：整枚保留（见函数说明）——此后不再渲染任何段，
+			// 仍算「被截断」（`…` + 悬停提示照挂）。原子段自身在预算内、只是被
 			// 前面的内容挤掉时**不走本支**：那属正常截断点，保留预算约束
 			out.push(segment);
 			out.push({ kind: 'text', text: '…' });
@@ -1406,11 +1924,20 @@ export function clampSegments(
  * **表格段**贡献的是**整块原文**（`segment.text`）：表格没有能用一行代表的显示
  * 文本，给原文最诚实，也与此前「未识别表格时」的观感一致（`|` 形态即用户所写）。
  */
-export function inlineContentPreview(raw: string): string {
-	const segments = buildInlineSegments(raw);
+export function inlineContentPreview(
+	raw: string,
+	lang: Language = 'zh',
+): string {
+	// 与画布同口径：定义行**不显示**（见 resolveSelfDrawSource 的剥离）；整节点
+	// 只有定义时，画布显示的是汇总 chip，预览报同一句文案
+	const { body, ids } = splitFootnoteDefinitions(raw);
+	if (ids.length > 0 && body.trim() === '') {
+		return tf(lang, 'footnote.summaryLabel', { count: String(ids.length) });
+	}
+	const segments = buildInlineSegments(body);
 	// 与自绘同一口径：`…` 只在真的丢过内容时出现（见 clampSegments）
 	const shown =
-		raw.length > MAX_INLINE_CONTENT_CHARS
+		body.length > MAX_INLINE_CONTENT_CHARS
 			? clampSegments(segments, MAX_INLINE_CONTENT_CHARS).segments
 			: segments;
 	return shown.map((segment) => segment.text).join('');

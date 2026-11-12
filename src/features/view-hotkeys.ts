@@ -37,6 +37,9 @@ export interface ViewHotkeyHost extends ViewNodeEditContext {
 	scope: Scope | null;
 	/** 引擎画布容器（缩放手势取画布尺寸用；`Shift+1/2`） */
 	readonly canvasEl: HTMLElement | null;
+	/** 会话级撤销 / 重做（可选：无会话的桩退回引擎历史，见 `MindMapViewContext`） */
+	undo?(): void;
+	redo?(): void;
 }
 
 /**
@@ -66,17 +69,31 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 	// （Windows/Linux）。属系统级编辑快捷键（非命令默认热键，不违反社区
 	// 规范的 no-default-hotkeys），引擎自身未绑定，此处接管并阻止冒泡。
 	scope.register(['Mod'], 'z', () => {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
+		// 会话是唯一撤销源（Level B）：所有视图共享同一条时间线；
+		// 无会话的桩（测试 / 只读嵌入）退回引擎历史。
+		if (view.undo) {
+			view.undo();
+		} else {
+			view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
+		}
 		return false;
 	});
 	scope.register(['Mod', 'Shift'], 'z', () => {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+		if (view.redo) {
+			view.redo();
+		} else {
+			view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+		}
 		return false;
 	});
 	if (!Platform.isMacOS) {
 		// macOS 官方未提供 Mod+Y 重做（Cmd+Y 是其他语义），不注册以免冲突
 		scope.register(['Mod'], 'y', () => {
-			view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+			if (view.redo) {
+				view.redo();
+			} else {
+				view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+			}
 			return false;
 		});
 	}

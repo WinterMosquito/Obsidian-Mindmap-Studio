@@ -17,6 +17,8 @@
  * 是二者共用的注入原语，返回 boolean。
  */
 
+import { CALLOUT_CSS_VARS } from '../domain/callout';
+
 // ---------------------------------------------------------------------------
 // 共用：克隆 SVG 根收窄 + `<style>` 注入原语
 // ---------------------------------------------------------------------------
@@ -106,6 +108,59 @@ const CSS_VARS_TO_EXPORT: readonly string[] = [
 	'--text-muted',
 	'--text-highlight-bg',
 	'--icon-color',
+	// 引用块 / 标注（2026-11-11）：普通引用读 `--blockquote-*`（宿主把边线指到
+	// `--interactive-accent`），标注读 `--callout-<type>`（宿主在设计令牌层把 13 个
+	// 类型色指到 `--color-*`）；节点内容是 `var()` 链，导出环境没有 app.css ⇒
+	// 不注入就只能落到字面兜底色（暗色主题导出图上会变成亮色配色）。
+	// **只注入 `--callout-*` 即可**：`getComputedStyle` 对自定义属性已完成 `var()`
+	// 替换（取到的就是最终色，见文件头的 K99/K105 说明），被引用的 `--color-*`
+	// 不需要单独列。
+	'--blockquote-color',
+	'--blockquote-border-color',
+	'--interactive-accent',
+	// 变量名按宿主取值（**不是**类型 id），13 个名字由 `domain/callout` 的
+	// `CALLOUT_CSS_VARS` 现算：`note`→`default`、`abstract`→`summary`、
+	// `failure`→`fail`、`danger`→`error`。此前手抄一份，改一处另一处会静默
+	// 回落到兜底色（硬规则 5）。
+	...CALLOUT_CSS_VARS,
+	// 节点内 **mermaid 图**（2026-11-09）：Pele 产物的颜色/字体全部经这一族变量
+	// 取值（`--_fg: var(--pele-fg, #1f1f1f)`）。不注入时导出环境里只有亮色兜底
+	// ⇒ 暗色主题导出图上出现「白底黑字」的图，与屏上不符。宿主在 `body` 上定义
+	// 了整个 `--pele-*`（映射 `--mermaid-*`），取值口径与上面同一处。
+	'--pele-bg',
+	'--pele-fg',
+	'--pele-muted',
+	'--pele-line',
+	'--pele-surface',
+	'--pele-surface-alt',
+	'--pele-border',
+	'--pele-accent',
+	'--pele-critical',
+	'--pele-error',
+	'--pele-font',
+	'--pele-font-mono',
+	'--pele-radius',
+	'--pele-title-weight',
+	'--pele-heading-weight',
+	'--pele-bold-weight',
+	'--pele-series-1',
+	'--pele-series-2',
+	'--pele-series-3',
+	'--pele-series-4',
+	'--pele-series-5',
+	'--pele-series-6',
+	'--pele-series-7',
+	'--pele-series-8',
+	// mermaid 图**主题兜底**（K173）：宿主没有 `--pele-*` 时（老版本 / 无 Pele），
+	// 样式表把 `--pele-*` 映射到这几项通用变量；导出克隆里没有插件样式表，
+	// 故必须把它们也带上，否则图的纸面会退回 Pele 自带的亮色字面量。
+	'--background-primary',
+	'--background-secondary',
+	'--background-secondary-alt',
+	'--background-modifier-border',
+	'--text-faint',
+	'--text-error',
+	'--radius-s',
 ];
 
 /**
@@ -219,18 +274,26 @@ export function injectObsidianCssVarsIntoExportSvg(svgElement: unknown): unknown
  *   **完整可见**而非被裁（保"内容不丢"底线）。
  *
  * 取舍（2026-09-29 实测与推演）：
- * - 加宽后内容右端最大 ≈ 左 padding + 新可用宽 < 节点形状右缘
- *   （形状总宽 = 原 FO 宽，余量在形状内部消耗）→ **不溢出节点形状**；
  * - 不换行时**零视觉差异**（内容够不到新增余量）；
  * - 屏上恰好临界换行的极少数节点，导出可能少一行（罕见，且优于缺字）；
  *   极端节点导出"多一行但完整"（优于"缺半行"）。
+ *
+ * **2026-11-11 修正（用户实拍导出图：节点边框右侧明显窄于左侧）**：原实现的
+ * 余量**只加在右边**（只改 width、不动 x），而内容盒宽度 = FO 宽度 →
+ * 自绘内容的左右内边距仍是 16px，可用宽却多了 12px ⇒ **右内边距被压到 4px**
+ * （实测量化：节点形状宽 176、FO 宽 188、内容盒 [16,172]，右侧只剩 4px）。凡是
+ * 撑满内容盒的子元素（标注 / 引用的色块盒、表格、代码块）右缘就贴到边框上，
+ * 观感即"边框右边比左边窄"。现改为**余量左右各半**（x 减半、width 加满）：
+ * 内容盒变为 [10,166]，左右各 10px，与屏上的一致性与平衡同时保住。
+ * x 缺省按 0 处理——引擎导出的 FO **不写 x 属性**（实测 20/20 如此），
+ * 直接读会得到 NaN 而被跳过。
  */
 
 /**
  * 宽度余量（px）：覆盖实测导出环境文本度量偏差（2026-09-29 实机分布：
  * 轻量节点 ~2px、标点/特殊字符密集的长文本行可达 ~12px——"）"贴右线即其形态）。
- * 安全性：内容右端 ≤ 左 padding + (原可用宽 + 12) < 形状右缘（余量在形状内部
- * 消耗），任何已知节点至少保留 ~4px 视觉右 padding，不溢出形状。
+ * 可用宽度仍是 `原宽 + 12`（余量的**总量**不变，K106 的防裁切能力不受影响），
+ * 只是这 12px 被**左右均分**为各 6px 扩展，不再单侧挤压右内边距。
  */
 const PAD_WIDTH = 12;
 
@@ -272,8 +335,14 @@ export function padForeignObjectsForExport(svgElement: unknown): unknown {
 		if (!Number.isFinite(width) || !Number.isFinite(height)) {
 			continue; // 非法尺寸：跳过该 FO（保持原状）
 		}
-		// 只改尺寸、不动 x/y：可用文本区向右/下扩展，与形状左缘保持对齐
+		// **横向余量左右各半**（2026-11-11）：单侧加宽会把内容盒的右内边距压到 4px
+		// （见 K106 的修正段），x 左移半份即恢复对称。x 缺省 = 0：引擎导出的 FO
+		// **不写 x**（实测 20/20），按 NaN 跳过会让整个修正静默失效。
+		const x = Number.parseFloat(fo.getAttribute('x') ?? '0');
+		fo.setAttribute('x', String((Number.isFinite(x) ? x : 0) - PAD_WIDTH / 2));
 		fo.setAttribute('width', String(width + PAD_WIDTH));
+		// 纵向仍只往下加：内容是**顶对齐**的，向上移会把文字顶出边框；多出来的
+		// 20px 是空白的兜底空间（换行时的第二行不至于被裁）
 		fo.setAttribute('height', String(height + PAD_HEIGHT));
 	}
 	return svgElement;

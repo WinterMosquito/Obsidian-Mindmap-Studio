@@ -32,8 +32,10 @@ import { isUrlLikeText } from '../domain/url';
 import { parseTaskPrefix, stripTaskPrefix } from '../domain/md-task';
 import { isIndentedCodeLine } from '../core/constants';
 import { isDirectiveLine, stripTrailingSegments } from '../domain/directive';
+import { isColorDirectiveLine } from '../domain/color';
 import type { MdTokenSegment } from '../domain/md-meta';
 import type { MdNodeData } from '../core/node-data';
+import { isFootnoteDefinition } from './md-footnote';
 import { classifyLines, leadingSpaces } from './md-outline-lines';
 import {
 	isImageEmbedTarget,
@@ -433,8 +435,12 @@ export function isLinkReferenceDefinition(content: string): boolean {
 		return false;
 	}
 	const label = m[1] ?? '';
-	if (label.startsWith('^')) {
-		return true; // 脚注定义：内容任意
+	if (label.startsWith('^') && isFootnoteDefinition(content)) {
+		// 脚注定义：内容任意。判定与渲染侧的定义索引**同一入口**（`md-footnote`），
+		// 否则「解析豁免的行」与「能被徽标指向的定义」会各认一套。
+		// `[^]:` 这类空 id 形态不在这里返回，继续落进下面的参考式分支：
+		// 有 destination 仍豁免、无 destination 本就没有可提取的链接（无行为差异）。
+		return true;
 	}
 	const rest = (m[2] ?? '').trim();
 	if (!rest) {
@@ -479,10 +485,16 @@ function buildLineInlineData(raw: string): InlineData {
  * 逐字保留原始换行形态（CRLF 不归一：frontmatter 要原样回写）。
  * 遇到 body 开头又有 ---（用户误加第二次 frontmatter）时只取第一个并 console.warn。
  * 生产消费方：parseMdOutline（下方）与 document-service 的外部改动检测（同一入口）。
+ *
+ * **`gap`＝frontmatter 与正文之间的空行原文**（0 行 / 1 行 / 多行，含 CRLF 与仅含
+ * 空格的行）：它是文件头的分隔形态，不属于正文。`body` 从第一个非空行开始；
+ * 写盘时由 `document-service.wrapBase` 按**磁盘当前值**原样拼回——序列化器不重算它，
+ * 否则编辑一个节点就会把这一行空行吃掉（2026-11-09 实机）。
  */
 export function splitFrontmatter(content: string): {
 	body: string;
 	frontmatter: string | null;
+	gap: string;
 } {
 	const bom = content.startsWith(UTF8_BOM) ? UTF8_BOM : '';
 	const rest = bom ? content.slice(bom.length) : content;
@@ -527,17 +539,21 @@ export function splitFrontmatter(content: string): {
 	}
 
 	if (frontmatterEnd === -1) {
-		return { body: rest, frontmatter: bom || null };
+		return { body: rest, frontmatter: bom || null, gap: '' };
 	}
 	const frontmatter = bom + rest.slice(0, frontmatterEnd);
-	const body = rest.slice(frontmatterEnd);
+	const bodyRaw = rest.slice(frontmatterEnd);
+	// 空行**原样**保留（含 CRLF 与仅含空格的行）：0 行 = 紧贴，1 行 = 常规分隔，
+	// 多行也照原样带回。只收空白行，正文首行的缩进不会被误吞。
+	const gap = /^(?:[ \t]*\r?\n)*/.exec(bodyRaw)?.[0] ?? '';
+	const body = bodyRaw.slice(gap.length);
 	// 误加第二次 frontmatter：body 开头又是 ---
 	if (FM_FENCE_RE.test(body.split(/\r?\n/, 1)[0] ?? '')) {
 		console.warn(
 			'[Mindmap-Studio] 检测到重复 YAML frontmatter，仅第一个生效。',
 		);
 	}
-	return { frontmatter, body };
+	return { frontmatter, body, gap };
 }
 
 /**
@@ -570,8 +586,14 @@ export function parseMdOutline(
 	];
 	/** 当前内容挂载点（= 栈顶 heading 节点） */
 	let contentParent: MindMapTreeNode = root;
-	/** list 缩进栈：仅跟踪同一内容区内的列表嵌套 */
-	let listStack: { node: MindMapTreeNode; indent: number }[] = [];
+	/**
+	 * list 缩进栈：仅跟踪同一内容区内的列表嵌套。
+	 *
+	 * `contentColumn` = 该项**内容起始列**（缩进 + 标记 + 标记后空白）：续行相对
+	 * 缩进的基准（见 `MdNodeMeta.mdContinuationIndents`）。
+	 */
+	let listStack: { node: MindMapTreeNode; indent: number; contentColumn: number }[] =
+		[];
 	/**
 	 * 等待合并的相邻 plain 文本行：`raw` 是未 trim 的原文（写进 mdRaw，保逐字回写），
 	 * `text` 是 trim 后的显示文本（进节点文本、参与行内 token 解析）。
@@ -601,6 +623,24 @@ export function parseMdOutline(
 		const prevTail =
 			typeof data.mdDirectiveTail === 'string' ? data.mdDirectiveTail.trim() : '';
 		data.mdDirectiveTail = prevTail ? `${prevTail}\n${line}` : line;
+		return true;
+	};
+
+	/**
+	 * 把**整行只有配色指令**的注释挂到上一个节点（只动 mdRaw，不产出节点）。
+	 *
+	 * 与 `attachDirectiveLine` 分开：配色指令不是 `key: value` 段，不能进
+	 * `mdDirectiveTail`——联系 / 概要写回会整体替换那个块，会把颜色段抹掉。
+	 * 标题节点依赖它与「独立行」写法配合（行尾形态会污染 heading 缓存，K174）。
+	 */
+	const attachColorDirectiveLine = (rawLine: string): boolean => {
+		if (!lastNode) {
+			return false;
+		}
+		const line = rawLine.trim();
+		const data = lastNode.data as MdNodeData;
+		const prevRaw = typeof data.mdRaw === 'string' ? data.mdRaw : '';
+		data.mdRaw = prevRaw === '' ? `\n${line}` : `${prevRaw}\n${line}`;
 		return true;
 	};
 
@@ -660,7 +700,13 @@ export function parseMdOutline(
 		plainBuffer = [];
 	};
 
-	const attachList = (rawText: string, marker: string, indent: number): void => {
+	const attachList = (
+		rawText: string,
+		marker: string,
+		indent: number,
+		orderedNumber?: number,
+		contentColumn = indent,
+	): void => {
 		flushPlain();
 		// 弹出缩进不小于当前的所有栈顶
 		while (
@@ -688,11 +734,14 @@ export function parseMdOutline(
 				...inline,
 				mdType: 'list',
 				mdMarker: marker,
+				...(orderedNumber === undefined
+					? {}
+					: { mdOrderedNumber: orderedNumber }),
 			},
 			children: [],
 		};
 		parent.children.push(node);
-		listStack.push({ node, indent });
+		listStack.push({ node, indent, contentColumn });
 		lastNode = node;
 	};
 
@@ -708,9 +757,17 @@ export function parseMdOutline(
 				headingStack.pop();
 			}
 			const parent = headingStack[headingStack.length - 1]!.node;
+			// 顶层标题的**最小**级别 = 本文件的标题起始级别（mdHeadingStart）：
+			// 只记一次（首次命中即定），供序列化决定「根级新建节点写几个 `#`」。
+			// 取最小：新节点恒追加在末尾，最小级别才能稳定 pop 回根子节点。
+			if (parent === root) {
+				const prev = rootData.mdHeadingStart;
+				rootData.mdHeadingStart =
+					typeof prev === 'number' ? Math.min(prev, level) : level;
+			}
 			const node: MindMapTreeNode = {
 				data: {
-					...buildLineInlineData(line.text),
+					...buildLineInlineData(line.rawContent ?? line.text),
 					mdType: 'heading',
 					mdLevel: level,
 				},
@@ -723,23 +780,41 @@ export function parseMdOutline(
 			continue;
 		}
 		if (line.kind === 'plain') {
-			// **指令行**（整行只有联系指令，`domain/relation.isDirectiveLine`）不产出
-			// 节点，归属上一个节点（2026-10-30）。必须在「列表续行合并」之前拦截：
-			// 列表项的指令行按 restIndent 缩进，否则会被当成续行并进 text。
-			// 段落缓冲非空时交给 flushPlain（指令行在段落内部不算节点内容）。
-			if (isDirectiveLine(line.text)) {
-				if (plainBuffer.length > 0) {
-					plainBuffer.push({
-						raw: line.raw ?? line.text,
-						text: line.text,
-						directive: true,
-					});
-					continue;
+			// 围栏内容行（含定界符）是**代码**：里面的 `%%rel:…%%` / `%%#hex%%`
+			// 同形态不能被当成指令抽走，否则代码块会少一行（`classifyLines` 用
+			// `fenced` 标记这块区域）。
+			if (line.fenced !== true) {
+				// **整行只有配色指令**（`%%#hex%%` / `%%none%%`）归属上一个节点：
+				// 标题节点的指令写成独立行（行尾会污染 heading 缓存，K174），重解析
+				// 时必须挂回该节点，否则会多出一个空节点。与联系指令同一拦截点
+				//（「列表续行合并」之前），列表项里缩进写出的指令行也不会并进 text。
+				if (isColorDirectiveLine(line.text)) {
+					if (plainBuffer.length > 0) {
+						// 颜色行跟在段落后面：先落地段落，指令才挂到它而不是更早的节点
+						flushPlain();
+					}
+					if (attachColorDirectiveLine(line.raw ?? line.text)) {
+						continue;
+					}
 				}
-				if (attachDirectiveLine(line.raw ?? line.text)) {
-					continue;
+				// **指令行**（整行只有联系指令，`domain/relation.isDirectiveLine`）不产出
+				// 节点，归属上一个节点（2026-10-30）。必须在「列表续行合并」之前拦截：
+				// 列表项的指令行按 restIndent 缩进，否则会被当成续行并进 text。
+				// 段落缓冲非空时交给 flushPlain（指令行在段落内部不算节点内容）。
+				if (isDirectiveLine(line.text)) {
+					if (plainBuffer.length > 0) {
+						plainBuffer.push({
+							raw: line.raw ?? line.text,
+							text: line.text,
+							directive: true,
+						});
+						continue;
+					}
+					if (attachDirectiveLine(line.raw ?? line.text)) {
+						continue;
+					}
+					// 文件首部的孤立指令行：没有上一个节点，按普通段落处理（fail-closed）
 				}
-				// 文件首部的孤立指令行：没有上一个节点，按普通段落处理（fail-closed）
 			}
 			// list 项的续行（缩进大于栈顶 list 且当前处于 list 区）→ 并入文本。
 			// **空白续行**（围栏闭合后的分隔空行，classifyLines 仅在围栏相邻时保留）
@@ -774,6 +849,21 @@ export function parseMdOutline(
 				// 续行只保留**行尾**原文（行首缩进由序列化器按树深度补 restIndent，
 				// 两者都留会写出双份缩进）；text 仍用 trim 后的显示文本
 				topData.mdRaw = `${prevRaw}\n${(line.raw ?? line.text).trimStart()}`;
+				// 相对内容起始列的缩进（mdRaw 已 trimStart，绝对缩进就此丢失）：
+				// 渲染层据此区分「上一段的续行」与「同节点里的下一段」（脚注定义
+				// 续行判据，见 `MdNodeMeta.mdContinuationIndents`）。空白续行记 0。
+				const relIndent = isBlankLine
+					? 0
+					: Math.max(
+							0,
+							line.indent -
+								listStack[listStack.length - 1]!.contentColumn,
+						);
+				const indents = Array.isArray(topData.mdContinuationIndents)
+					? topData.mdContinuationIndents
+					: [0];
+				indents.push(relIndent);
+				topData.mdContinuationIndents = indents;
 				if (isBlankLine) {
 					listStack = [];
 				}
@@ -783,8 +873,14 @@ export function parseMdOutline(
 			plainBuffer.push({ raw: line.raw ?? line.text, text: line.text });
 			continue;
 		}
-		// list 行
-		attachList(line.text, line.marker ?? '-', line.indent);
+		// list 行：传 marker 后的原文（含行尾空白），`mdRaw` 才能逐字回写
+		attachList(
+			line.rawContent ?? line.text,
+			line.marker ?? '-',
+			line.indent,
+			line.orderedNumber,
+			line.contentColumn ?? line.indent,
+		);
 	}
 	flushPlain();
 	return { frontmatter, tree: root, body };
@@ -798,7 +894,9 @@ export function parseMdOutline(
  * - 标题 `#`~`######`（不论几个 `#`）→ **无序节点**，层级改由**缩进**表达
  *   （`mdType`/`mdLevel` 一并剥掉：留着会让下一次回写又冒出 `#`）；
  * - 无序标记 `*` / `+`、以及标题/段落（无标记）→ 归一为 `-`；
- * - **有序项 `1.` 保留**——编号由序列化侧按层重排（与文档回写同一规则）。
+ * - **有序项 `1.` 保留**，连同解析期记下的原编号（`mdOrderedNumber`，K170）：
+ *   序列化按它逐字写回，粘进来的 `5.` 不会在落盘后变成 `1.`。新插入的有序项
+ *   才按「前一项 + 1」现算。
  *
  * 解析本身（frontmatter 剥除、行内 token、`mdRaw` 逐字原文）完全复用
  * `parseMdOutline`：层级规则写第二份必然与文档往返漂移（硬规则 5）。

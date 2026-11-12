@@ -135,13 +135,28 @@ describe('parseEmbedLayoutDirective（块体首行布局指令）', () => {
 		).toEqual({ source: '# 主题\n- 叶子', layoutId: 'timeline' });
 	});
 
-	it('宽容写法：键名大小写不敏感，值走同一套归一（连字符 / 空格 / 大小写）', () => {
+	it('宽容写法：键名大小写不敏感，值走同一套归一（空格 / 大小写）', () => {
 		expect(
-			parseEmbedLayoutDirective('%%LAYOUT: logical-structure%%\n# A').layoutId,
+			parseEmbedLayoutDirective('%%LAYOUT: logical%%\n# A').layoutId,
 		).toBe('logicalStructure');
 		expect(
 			parseEmbedLayoutDirective('%% Layout : Fish Bone %%\n# A').layoutId,
 		).toBe('fishbone');
+	});
+
+	it('旧契约值（正文指令无人代迁）：PascalCase / 连字符写法继续认', () => {
+		// 一次性迁移只改 frontmatter，正文里的 `%%layout: …%%` 必须自己兜住
+		expect(
+			parseEmbedLayoutDirective('%%LAYOUT: logical-structure%%\n# A').layoutId,
+		).toBe('logicalStructure');
+		expect(
+			parseEmbedLayoutDirective('%%layout: OrganizationStructure%%\n# A')
+				.layoutId,
+		).toBe('organizationStructure');
+		expect(
+			parseEmbedLayoutDirective('%%layout: CatalogOrganization%%\n# A')
+				.layoutId,
+		).toBe('catalogOrganization');
 	});
 
 	it('允许指令前有空行，且空行原样保留（只删指令行本身）', () => {
@@ -497,5 +512,23 @@ describe('跨文件契约', () => {
 		);
 		expect(source).not.toMatch(/settings\.nodeColorScope/);
 		expect(mainSource).toMatch(/colorLine: !isNodeOnlyColorScope\(/);
+	});
+});
+
+describe('嵌入锚点导航（2026-11-12 修复回归）', () => {
+	const source = readFileSync(
+		new URL('../src/features/mindmap-codeblock.ts', import.meta.url),
+		'utf8',
+	);
+
+	it('click / auxclick 都接管锚点并先 preventDefault（不再导航整个窗口）', () => {
+		expect(source).toContain('this.bindEmbedAnchorNavigation(el);');
+		expect(source).toContain("this.events.onDom(el, 'click'");
+		expect(source).toContain("this.events.onDom(el, 'auxclick'");
+		expect(source).toContain('event.preventDefault();');
+	});
+
+	it('非白名单协议只拦不打开（mermaid 的 javascript: href）', () => {
+		expect(source).toContain('isSafeAnchorHref(link)');
 	});
 });

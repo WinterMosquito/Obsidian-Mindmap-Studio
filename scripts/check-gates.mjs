@@ -17,8 +17,9 @@
  *
  * **豁免表行数对账**（附带静态核对，每次都跑）：
  * - 行数漂移：登记值 vs 实测（口径 = `tests/agents-md-sync.test.ts` 的
- *   `countSourceLines`；`--fix-lines` 把 AGENTS.md 与 `docs/agents/architecture.md`
- *   两表回填为实测值——两表必须同批，历史数次「漏改表格单元」都出在只改一张）；
+ *   `countSourceLines`；`--fix-lines` 回填 `AGENTS.md` 的**唯一**豁免表。
+ *   `docs/agents/architecture.md` 自 2026-11-09 起不再复制该表——两张表并行时只有
+ *   一张受门禁，另一张必然漂移（实测同一文件曾出现 1121 / 1280 两个读数）；
  * - 未登记超限：`src/` 下超 300 行的 .ts 而不在豁免表 → 红灯（硬规则 10「未登记的
  *   超限文件数只允许递减」；agents-md-sync 测试只守漂移阈值、不校验总数，这里补上
  *   机器核对）。
@@ -27,7 +28,7 @@
  *   npm run check:gates                 # 算链并执行（提交前跑）
  *   npm run check:gates -- --dry-run    # 只打印计划与静态核对，不执行
  *   npm run check:gates -- --all        # 附加门禁全跑（拿不准触发条件时用）
- *   npm run check:gates -- --fix-lines  # 只做豁免表行数回填（两表同批），不跑门禁
+ *   npm run check:gates -- --fix-lines  # 只回填豁免表行数（AGENTS.md 唯一那张），不跑门禁
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -36,10 +37,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AGENTS_REL = 'AGENTS.md';
-const ARCHITECTURE_REL = 'docs/agents/architecture.md';
 
 /**
- * 豁免表行（两张表同构）：`| `src/x.ts` | NNN | 理由… |`。
+ * 豁免表行：`| `src/x.ts` | NNN | 理由… |`。
  *
  * 分组固定：1 = 行前缀（到数字前）、2 = 路径、3 = 登记行数、4 = 数字后到竖线。
  * **解析与回填共用这一份**——此前回填另写一条字面正则，改表形态时会只改到一处。
@@ -61,8 +61,12 @@ if (flags.includes('--help') || flags.includes('-h')) {
 	console.log(`用法：
   npm run check:gates                 # 按 git 变更集算门禁并顺序执行
   npm run check:gates -- --dry-run    # 只打印计划与静态核对，不执行
-  npm run check:gates -- --all        # 附加门禁全跑
-  npm run check:gates -- --fix-lines  # 只回填豁免表行数（AGENTS.md + architecture.md）`);
+  npm run check:gates -- --all        # 附加门禁全跑（含 build:vendor）
+  npm run check:gates -- --fix-lines  # 只回填豁免表行数（AGENTS.md 唯一那张）
+
+注意：--all 会连 build:vendor 一起跑，而重打包需要「打包面依赖」已安装
+（@svgdotjs/svg.js 等，见 vendor/BUILD.md；本仓库 package.json 有意不声明）。
+只改了普通源文件时不要加 --all：变更集规则会自动跳过它。`);
 	process.exit(0);
 }
 
@@ -262,31 +266,28 @@ function main() {
 	const all = flags.includes('--all');
 
 	const agentsText = readFileSync(join(ROOT, AGENTS_REL), 'utf8');
-	const archText = readFileSync(join(ROOT, ARCHITECTURE_REL), 'utf8');
 	const agentsRows = parseExemptionRows(agentsText);
-	const archRows = parseExemptionRows(archText);
 
 	// ---- 豁免表行数对账 ----
 	if (fixOnly) {
 		const a = fixExemptionTable(AGENTS_REL);
-		const b = fixExemptionTable(ARCHITECTURE_REL);
-		if (a.updates.length === 0 && b.updates.length === 0) {
-			console.log('✔ 豁免表两表行数与实测一致，无需回填');
+		if (a.updates.length === 0) {
+			console.log('✔ 豁免表行数与实测一致，无需回填');
 		} else {
-			for (const u of [...a.updates, ...b.updates]) {
+			for (const u of a.updates) {
 				console.log(`✔ 回填 ${u}`);
 			}
-			console.log('回填完成——两表已同批对齐实测值，请把改动并入本次提交。');
+			console.log('回填完成——已对齐实测值，请把改动并入本次提交。');
 		}
 		const stale = [...agentsRows].filter(([, row]) => row.stale);
 		for (const [rel] of stale) {
-			console.log(`⚠ 登记的文件已不存在：${rel}（请人工清理两表该行及理由）`);
+			console.log(`⚠ 登记的文件已不存在：${rel}（请人工清理该行及理由）`);
 		}
 		return;
 	}
 
 	// ---- 静态核对 1：未登记超限（硬规则 10 的机器核对） ----
-	const exemptPaths = new Set([...agentsRows.keys(), ...archRows.keys()]);
+	const exemptPaths = new Set(agentsRows.keys());
 	const overLimit = listSrcTsFiles().filter(
 		(rel) => (countSourceLines(join(ROOT, rel)) ?? 0) > 300,
 	);
@@ -329,6 +330,22 @@ function main() {
 		console.error(
 			`✘ line-budget：以下文件超 300 行且未在「文件规模与豁免」表登记` +
 				`（登记并写明理由，或拆分收敛；未登记超限数只允许递减）：\n${unregistered.join('\n')}`,
+		);
+	}
+	// 规模观察（**不是门禁**）：超限总数 / 总行数 / 最大 5 个只打印，不红灯。
+	// 机械拆分不是目标（AGENTS「不做机械拆分」），硬指标只会逼出坏拆分；
+	// 趋势交给发布前人工看这一行 + line-count-log 的批次记录（2026-11-09）。
+	if (overLimit.length > 0) {
+		const measured = overLimit
+			.map((rel) => ({ rel, lines: countSourceLines(join(ROOT, rel)) ?? 0 }))
+			.sort((a, b) => b.lines - a.lines);
+		const totalLines = measured.reduce((sum, item) => sum + item.lines, 0);
+		const top = measured
+			.slice(0, 5)
+			.map((item) => `${item.rel}(${item.lines})`)
+			.join('、');
+		console.log(
+			`ℹ 规模观察：超限 ${measured.length} 个 / 合计 ${totalLines} 行；最大 5：${top}`,
 		);
 	}
 	if (drifted.length === 0) {

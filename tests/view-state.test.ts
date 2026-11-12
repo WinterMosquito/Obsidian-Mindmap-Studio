@@ -13,6 +13,8 @@
  *   （卸载路径靠它持有在途写盘），无未决变更时返回 undefined。
  * - pruneMissingPaths：启动期剔除指向已删文件的键（运行期 `onDelete` 补不到
  *   插件未运行期间的删除），无残留时不写盘（避免每次启动都写一次 data.json）。
+ * - **只写变化**（2026-11-11）：`patch` 与已有条目逐字相同则不排写盘——关视图会
+ *   读一次引擎视口，「没动过就关」是常态（实机 39 条状态里 23 条只是默认视口）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -513,6 +515,78 @@ describe('ViewStateStore 变更与防抖写盘', () => {
 		await vi.advanceTimersByTimeAsync(100);
 		expect(persist).toHaveBeenCalledTimes(1);
 		expect(persist).toHaveBeenCalledWith({ [PATH_B]: { lineStyle: 'curve' } });
+	});
+});
+
+describe('ViewStateStore 只写变化（2026-11-11）', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('写入与已有条目逐字相同的值：不排写盘（对象新建但内容相同）', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 100);
+		store.hydrate({ viewState: { [PATH_A]: { view: VIEW, palette: 'mint' } } });
+
+		// 引擎每次 getTransformData 都新建对象：内容相同即视为没变化
+		store.setView(PATH_A, {
+			transform: { ...VIEW.transform },
+			state: { ...VIEW.state },
+		});
+		store.setPalette(PATH_A, 'mint');
+
+		await vi.advanceTimersByTimeAsync(100);
+		expect(persist).not.toHaveBeenCalled();
+		// 没有留下「待写」的挂起：卸载路径的 flushNow 也无事可做
+		expect(store.flushNow()).toBeUndefined();
+	});
+
+	it('同一视口关两次（纯浏览后关闭）：只有第一次写盘', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 100);
+		store.setView(PATH_A, VIEW);
+
+		await vi.advanceTimersByTimeAsync(100);
+		expect(persist).toHaveBeenCalledTimes(1);
+
+		store.setView(PATH_A, VIEW);
+		await vi.advanceTimersByTimeAsync(100);
+		expect(persist).toHaveBeenCalledTimes(1);
+		expect(persist).toHaveBeenCalledWith({ [PATH_A]: { view: VIEW } });
+	});
+
+	it('值真的变了仍然写盘（含只改一位小数）', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 100);
+		store.setView(PATH_A, VIEW);
+		await vi.advanceTimersByTimeAsync(100);
+
+		const nudged = { ...VIEW, state: { ...VIEW.state, scale: 1.0001 } };
+		store.setView(PATH_A, nudged);
+		await vi.advanceTimersByTimeAsync(100);
+
+		expect(persist).toHaveBeenCalledTimes(2);
+		expect(persist).toHaveBeenLastCalledWith({ [PATH_A]: { view: nudged } });
+		expect(store.getView(PATH_A)).toEqual(nudged);
+	});
+
+	it('同值跳过不影响其它文件同窗口内的待写变更（逐条判据，不整表跳过）', async () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist, 100);
+		store.hydrate({ viewState: { [PATH_A]: { view: VIEW } } });
+
+		store.setView(PATH_A, VIEW); // 同值 → 跳过
+		store.setView(PATH_B, VIEW); // 新条目 → 必须写
+
+		await vi.advanceTimersByTimeAsync(100);
+		expect(persist).toHaveBeenCalledTimes(1);
+		expect(persist).toHaveBeenCalledWith({
+			[PATH_A]: { view: VIEW },
+			[PATH_B]: { view: VIEW },
+		});
 	});
 });
 

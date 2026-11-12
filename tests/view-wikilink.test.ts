@@ -41,6 +41,7 @@ import {
 	ensureOffsetSize,
 	registerWikilinkInteractions,
 } from '../src/features/view-wikilink';
+import { MERMAID_BLOCK_CLASS } from '../src/features/node-inline-content';
 
 /** 节点 group 元素注入点：mock 工厂经 vi.hoisted 暴露，spy 可在每个用例里改返回值 */
 const { getNodeGroupElMock } = vi.hoisted(() => ({
@@ -110,6 +111,20 @@ class FakeAnchorElement extends FakeElement {
 
 	getAttribute(name: string): string | null {
 		return this.attrs.get(name) ?? null;
+	}
+}
+
+/**
+ * 按选择器返回不同结果的元素桩：用于区分「普通锚点」与「图内锚点」两条通道
+ * （真实 `closest` 会各自命中；FakeElement 只有一个 `closestResult`）。
+ */
+class SelectorAwareElement extends FakeElement {
+	constructor(private readonly bySelector: Record<string, unknown>) {
+		super();
+	}
+
+	override closest(selector: string): unknown {
+		return this.bySelector[selector] ?? null;
 	}
 }
 
@@ -497,6 +512,20 @@ describe('node_click（点击分流）', () => {
 		expect(event.stopPropagation).toHaveBeenCalledTimes(1);
 	});
 
+	it('跨 realm 的锚点（popout）：不依赖 instanceof，点击仍跳转', () => {
+		// 结构上的「另一个窗口的元素」：不是 FakeElement 实例、也不是主窗口
+		// HTMLAnchorElement 的实例，只有 closest 能力（hard rule：elementFromTarget）
+		const { view, binder, openHyperlink } = makeView();
+		const anchor = new FakeAnchorElement().setAttr('data-href', 'popout笔记');
+		getNodeGroupElMock.mockReturnValue(new FakeElement());
+		registerWikilinkInteractions(view);
+		const foreignTarget = { closest: () => anchor };
+		const event = fakeMouseEvent(foreignTarget);
+		binder.fire('node_click', fakeNode({}), event);
+		expect(openHyperlink).toHaveBeenCalledWith('[[popout笔记]]');
+		expect(event.preventDefault).toHaveBeenCalledTimes(1);
+	});
+
 	it('普通点击未命中锚点：保持引擎选中语义（不跳转）', () => {
 		const { view, binder, openHyperlink } = makeView();
 		getNodeGroupElMock.mockReturnValue(new FakeElement()); // closest → null
@@ -805,6 +834,23 @@ describe('中键点击链接（画布 auxclick → 新标签）', () => {
 		binder.fireDom('auxclick', event);
 
 		expect(openHyperlink).toHaveBeenCalledWith('[[目标笔记]]', 'tab');
+		expect(event.preventDefault).toHaveBeenCalledTimes(1);
+		expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+	});
+
+	it('中键：mermaid 图内 SVG 锚点同样接管（否则浏览器默认行为会另开窗口）', () => {
+		const { view, binder, openHyperlink } = makeView();
+		registerWikilinkInteractions(view);
+		const anchor = new FakeAnchorElement().setAttr('href', '[[图内目标]]');
+		// 普通锚点通道（`a[href]`）落空，只有图内选择器命中 SVG <a>
+		const target = new SelectorAwareElement({
+			[`.${MERMAID_BLOCK_CLASS} a[href]`]: anchor,
+		});
+
+		const event = fakeMouseEvent(target, { button: 1 });
+		binder.fireDom('auxclick', event);
+
+		expect(openHyperlink).toHaveBeenCalledWith('[[图内目标]]', 'tab');
 		expect(event.preventDefault).toHaveBeenCalledTimes(1);
 		expect(event.stopPropagation).toHaveBeenCalledTimes(1);
 	});

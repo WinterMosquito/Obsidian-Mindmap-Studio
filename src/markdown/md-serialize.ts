@@ -13,8 +13,9 @@
  * - heading → `#×N 文本`；list → 缩进 + 标记 + 文本（ordered 重排编号 1..n）；
  *   plain → 原样多行文本；**新用户节点（无 mdType/mdRaw）按层级回写**——位于
  *   标题上下文且第 1~6 层 → `#×级别 文本`（与解析侧「#~###### ⇄ 第 1~6 层」
- *   严格对称，K98）；列表/段落上下文或 6 级之下 → `-` 输出（显式 mdMarker 的
- *   新节点尊重用户选择、同样走列表）；
+ *   严格对称，K98）；**根级的起始级别取本文件实测值**（`mdHeadingStart`，
+ *   从二级开始的文件新建一级节点写 `##`）；列表/段落上下文或 6 级之下 → `-`
+ *   输出（显式 mdMarker 的新节点尊重用户选择、同样走列表）；
  * - 列表项多行文本（续行）非首行补 2 空格缩进，保证可再解析为续行。
  */
 
@@ -26,10 +27,15 @@ import {
 	isRenderableImageTarget,
 } from '../core/constants';
 import { readNodeDataString } from '../core/node-data';
+import {
+	isColorDirectiveLine,
+	splitTrailingColorDirective,
+} from '../domain/color';
 import { isNodeTextEdited } from '../domain/md-meta';
 import { withTaskPrefix } from '../domain/md-task';
 import { tokenizeInline } from './md-outline';
 import { isValidIndentUnit } from './md-outline-lines';
+import { readHeadingStart } from './md-heading-syntax';
 import {
 	anchorInsertPoint,
 	inLinkSyntax,
@@ -406,17 +412,22 @@ function rawOk(
 		// **文档/附件嵌入**（`![[笔记]]` / `![[报告.pdf|300]]`）与文档双链同属
 		// 链接通道，清除链接后同样要剥离——此前用 `(?<!!)\[\[` 把嵌入一律排除，
 		// 导致「清除链接」对嵌入无效：旧 mdRaw 原样回写、链接在下次保存时复活。
+		// 链接字段只治理**首行**（节点文本的单链接/单图）：续行里的 `[[..]]` /
+		// `[](url)` 是节点原文的一部分（引用块、callout 正文、项内围栏），不能因
+		// 「字段为空」被当成用户清除了链接——否则整段续行会被合成路径按已剥壳的
+		// `text` 重写，双链与 URL 一起消失（2026-11-11 实机）。
+		const firstLine = raw.split('\n')[0] ?? '';
 		const ownImage = [
 			imageVaultPath(data, app),
 			typeof data.image === 'string' ? data.image : null,
 			typeof data.mdImageTarget === 'string' ? data.mdImageTarget : null,
 		].filter((value): value is string => typeof value === 'string' && !!value);
 		if (
-			/(?<!!)\[\[|(?<!!)\[[^\]]*\]\(/.test(raw) ||
-			rawHasForeignEmbed(raw, ownImage)
+			/(?<!!)\[\[|(?<!!)\[[^\]]*\]\(/.test(firstLine) ||
+			rawHasForeignEmbed(firstLine, ownImage)
 		) {
-			// 链接已被清除（hyperlink/文档双链/附件字段全空）但 mdRaw 仍含链接语法：
-			// 需合成剥离为纯文本，否则旧 mdRaw 原样回写会让"清除链接"失效
+			// 链接已被清除（hyperlink/文档双链/附件字段全空）但 mdRaw 首行仍含
+			// 链接语法：需合成剥离为纯文本，否则旧 mdRaw 原样回写会让"清除链接"失效
 			return false;
 		}
 	}
@@ -632,16 +643,46 @@ export function isPureLinkNode(data: MdNodeData): boolean {
  *
  * 三态与序列化输出完全一致（避免「编辑原文」弹窗预填与实际写盘漂移）：
  * 1. 未编辑（rawOk）→ **mdRaw 全文**（含全部 `[[ ]]` 语法与续行原文）；
- * 2. 其余 → 首行合成（composeNodeFirstLine）+ 续行文本。
+ * 2. 编辑过首行、续行未动 → 首行合成 + **mdRaw 的续行原文**（续行是「未编辑
+ *    行」，硬契约要求逐字回写：`text` 是剥壳显示文本，直接拿它会吞掉续行里的
+ *    `[[双链]]` / `![[图]]` / 行尾指令，2026-11-12 审核定位）；
+ * 3. 续行也被改过 → 首行合成 + 续行文本（用户输入优先）。
  * 序列化的 nodeLines 也走本函数（同一实现，勿在别处再抄一遍分派）。
  */
+/**
+ * 续行取哪一份：**未改动的续行用 mdRaw 原文**，改过的用 `text`。
+ *
+ * 判据只看第 2 行起（首行已由 `rawOk` 证明变过）：与解析期快照
+ * `mdDerivedText` 逐行相同 ⇒ 用户没动续行 ⇒ 逐字回写 `mdRaw` 的续行
+ * （行首缩进由序列化器按树深度补，mdRaw 里存的已是 `trimStart` 形态，
+ * 两边同构）。行数不同或任一行不同 ⇒ 以 `text` 为准。
+ *
+ * 为什么必须分这两支：`text` 是**剥壳后的显示文本**（双链只留显示名、
+ * 图片/指令被摘成字段），拿它回写续行等于把未编辑的行重排一遍。
+ */
+function composeContinuationLines(data: MdNodeData): string[] {
+	const rows = readNodeDataString(data, 'text').split('\n');
+	if (rows.length <= 1) {
+		// 单行节点：没有续行可保（`mdRaw` 里可能残留历史续行，但那属「已删除」）
+		return [];
+	}
+	const derivedRows = readNodeDataString(data, 'mdDerivedText').split('\n');
+	const rawRows =
+		typeof data.mdRaw === 'string' && data.mdRaw !== ''
+			? data.mdRaw.split('\n')
+			: [];
+	const unchanged =
+		rawRows.length === rows.length &&
+		derivedRows.length === rows.length &&
+		rows.every((line, index) => index === 0 || line === derivedRows[index]);
+	return unchanged ? rawRows.slice(1) : rows.slice(1);
+}
+
 export function composeNodeContent(data: MdNodeData, app: App | null): string {
 	if (rawOk(data, app)) {
 		return data.mdRaw;
 	}
-	const rest = readNodeDataString(data, 'text')
-		.split('\n')
-		.slice(1);
+	const rest = composeContinuationLines(data);
 	const body = [composeNodeFirstLine(data, app), ...rest].join('\n');
 	// 联系指令行（`domain/relation`）永远贴在节点末行：未编辑时已包含在 mdRaw 里，
 	// 编辑后由这里补回 —— 指令不进 text（否则显示、搜索、引擎编辑框都会被污染，
@@ -703,6 +744,9 @@ export function serializeMdBody(
 		app,
 		false,
 		readIndentUnit(tree.data),
+		// 标题起始级别**随本文件**（`mdHeadingStart`，解析期实测）：从二级开始的
+		// 文件，新建根级节点必须写 `##`，否则重开时它会成为同级 `##` 的子节点
+		readHeadingStart(tree.data),
 	);
 }
 
@@ -737,8 +781,8 @@ export function serializeSubtreesToOutline(
 	trees: readonly MindMapTreeNode[],
 	app: App | null = null,
 ): string {
-	// 剪贴板是**新内容**，没有「原文风格」可继承：恒用默认 2 空格
-	return serializeTrees(trees, app, true, DEFAULT_INDENT_UNIT);
+	// 剪贴板是**新内容**，没有「原文风格」可继承：恒用默认 2 空格 + 一级起
+	return serializeTrees(trees, app, true, DEFAULT_INDENT_UNIT, 1);
 }
 
 /**
@@ -753,6 +797,7 @@ function serializeTrees(
 	app: App | null,
 	headingsAsList: boolean,
 	indentUnit: string,
+	headingStart: number,
 ): string {
 	const out: string[] = [];
 
@@ -778,18 +823,41 @@ function serializeTrees(
 	};
 
 	/**
-	 * 节点输出行（mdRaw 未变 → 原文；否则合成）。prefix=首行前缀，restIndent=续行缩进。
+	 * 标题节点的配色指令必须**独立成行**（K174）：行尾形态会被 Obsidian 的
+	 * heading 缓存算进标题文本，`[[#标题]]` 与 `^block-id` 全废。
+	 *
+	 * 已独立成行的原样返回；行尾形态挪到该节点最后一行之后（标题的续行缩进为
+	 * 空，故落盘即独立行）。这样「新建节点先上色、之后才写成标题」与旧文件里
+	 * 行内写的指令都会被归一，不必依赖调用方是否知道节点类型。
+	 */
+	const hoistColorDirective = (lines: string[]): string[] => {
+		const last = lines[lines.length - 1] ?? '';
+		if (lines.length > 1 && isColorDirectiveLine(last)) {
+			return lines;
+		}
+		const split = splitTrailingColorDirective(last);
+		if (!split) {
+			return lines;
+		}
+		return [...lines.slice(0, -1), split.content, split.directive];
+	};
+
+	/**
+	 * 节点输出行（mdRaw 未变 → 原文；否则合成）。prefix=首行前缀，restIndent=续行缩进，
+	 * `asHeading` = 本节点将写成 Markdown 标题（配色指令要挪出标题行）。
 	 * `app` 直接取外层入参（此前另立同名形参遮蔽之，四处调用全部传同一个值）。
 	 */
 	const nodeLines = (
 		child: MindMapTreeNode,
 		prefix: string,
 		restIndent: string,
+		asHeading = false,
 	): string[] => {
 		const data: MdNodeData = child.data ?? {};
 		// 内容三态（未编辑原文 / 纯 token / 文本+token）统一在 composeNodeContent，
 		// 与「编辑原文」弹窗的预填同一实现——两处各写一份必然漂移
-		const lines = composeNodeContent(data, app).split('\n');
+		const composed = composeNodeContent(data, app).split('\n');
+		const lines = asHeading ? hoistColorDirective(composed) : composed;
 		return [
 			prefix + (lines[0] ?? ''),
 			// 空行**不加** restIndent：缩进空行会写出尾随空格污染文件；空行在
@@ -813,28 +881,36 @@ function serializeTrees(
 		/**
 		 * 该层「存在列表型兄弟」的惰性缓存（`undefined` = 未计算）：同层 k 个未
 		 * 标注节点此前各自扫一遍整层 ⇒ O(k²)；层内 children 在序列化期间不变，
-		 * 按层算一次即可（2026-10-02）。
+		 * 按层算一次即可（2026-10-02）。**只在「本节点是该层第一个」时使用**，
+		 * 其余位置看 {@link listBefore}（位置决定语法，见下）。
 		 */
 		followList?: boolean;
+		/**
+		 * **上一个已输出**的兄弟是列表型：紧随其后的未标注节点据此写列表项。
+		 *
+		 * 为什么不能只看「整层有列表」（`followList`）：混排组（`- 甲` + `# 乙`，
+		 * 合法形态是列表在前、标题在后）里，排在**标题之后**的列表项会被解析成
+		 * 该标题的**子节点**——「跟随列表」在那里会静默改结构（实测
+		 * `- 甲` + `# 乙` + 新建节点写出 `- 新`，重开变成「乙 的子节点」）。
+		 * 判据因此要看**紧邻的前一个兄弟**：它若不是列表，写列表项就会挂错父节点。
+		 */
+		lastWasList?: boolean;
 	}
 
+	/** 列表型兄弟（`mdType:'list'`，或未标注但显式选了列表标记——用户新建的列表项） */
+	const isListSibling = (data: MdNodeData): boolean =>
+		data.mdType === 'list' ||
+		(data.mdType === undefined && data.mdMarker !== undefined);
+
 	/**
-	 * 该层是否存在**列表型兄弟**（`mdType:'list'`，或未标注但显式选了列表标记）——
-	 * 新建节点据此「跟随兄弟风格」（K98 补充）：是则写列表，使**纯列表文档**
-	 * 中新建节点不再冒出 `#` 标题；否则按层级写标题（标题树场景，K98 主规则）。
+	 * 该层是否存在**列表型兄弟**——新建节点据此「跟随兄弟风格」（K98 补充）：
+	 * 是则写列表，使**纯列表文档**中新建节点不再冒出 `#` 标题；否则按层级写标题
+	 * （标题树场景，K98 主规则）。仅用于「层首」位置：那里写标题会让后续列表项
+	 * 变成它的子节点，故只要层内有列表就不能写标题。
 	 */
 	const siblingsFollowList = (
 		children: readonly MindMapTreeNode[],
-	): boolean =>
-		children.some((sib) => {
-			const data: MdNodeData = sib.data ?? {};
-			if (data.mdType === 'list') {
-				return true;
-			}
-			// 未标注但显式选了列表标记的（用户新建的列表项）同样算列表风格；
-			// 当前待写节点自身不命中（它没有 mdMarker），无需排除
-			return data.mdType === undefined && data.mdMarker !== undefined;
-		});
+	): boolean => children.some((sib) => isListSibling(sib.data ?? {}));
 
 	/** 层内「存在列表型兄弟」的惰性取值：结果挂 frame，同层只扫一次（O(k²)→O(k)） */
 	const frameFollowList = (frame: SerializeFrame): boolean => {
@@ -873,10 +949,15 @@ function serializeTrees(
 			frame.index++;
 			const data: MdNodeData = child.data ?? {};
 			const type = data.mdType;
+			// 「**上一个**已输出的兄弟是列表」的快照 + 本层位置（`index === 1` 即层首）。
+			// 快照必须在本节点计入之前取：自己的形态不能反过来决定自己的写法。
+			const lastWasList = frame.lastWasList === true;
+			const atGroupStart = frame.index === 1;
+			frame.lastWasList = isListSibling(data);
 			if (type === 'heading' && !headingsAsList) {
 				frame.orderedCount = 0;
 				const level = Math.min(6, Math.max(1, Number(data.mdLevel) || 1));
-				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', ''));
+				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', '', true));
 				stack.push({
 					children: child.children ?? [],
 					index: 0,
@@ -889,9 +970,26 @@ function serializeTrees(
 			}
 			if (type === 'plain' && !headingsAsList) {
 				frame.orderedCount = 0;
+				// 段落带子节点：段落行不带缩进，按原文输出会让子级掉一层
+				//（K171④）。就地按**列表项**输出——内容与层级都保住，只是这一段
+				// 变成了 `- 段`；比静默丢层或拦三条编辑入口更接近用户意图。
+				if ((child.children?.length ?? 0) > 0) {
+					const indent = indentUnit.repeat(frame.listIndent);
+					pushBlock(
+						nodeLines(child, `${indent}- `, `${indent}${indentUnit}`),
+					);
+					stack.push({
+						children: child.children ?? [],
+						index: 0,
+						listIndent: frame.listIndent + 1,
+						orderedCount: 0,
+						headingLevel: null,
+					});
+					continue;
+				}
 				// 与 list/heading 同一出口：未编辑逐字回写；被编辑/插换图后首行写
 				// 「文本 + token」——段落自本版起承载首行图片字段，插图中/移除图
-				// 必须能写回/剥离（此前只写 text，插进段落的图片会被静默丢弃）
+				// 必须能写回/剥离（此前只写 text，插进段落的图片会被静默丢弃）。
 				pushBlock(nodeLines(child, '', ''));
 				stack.push({
 					children: child.children ?? [],
@@ -906,18 +1004,21 @@ function serializeTrees(
 			// 未标注（新建）节点：**按层级回写为 Markdown 标题**（K98）——第 1~6 层
 			// → `#`×级别，与解析侧「#~###### → 第 1~6 层」严格对称；已到 6 级之下、
 			// 或祖先链上有 list/plain（标题会撕裂列表/段落结构）→ 落入下方列表分支；
-			// 显式选了列表标记（mdMarker）的新节点尊重用户选择；**同层已有列表型
-			// 兄弟时跟随列表**（纯列表文档不冒出标题，K98 补充）。
+			// 显式选了列表标记（mdMarker）的新节点尊重用户选择；**列表风格跟随**——
+			// 层首看整层（层内有列表就不能写标题，否则那些列表项成了它的子节点），
+			// 其余位置只看**紧邻的前一个兄弟**（排在标题之后的列表项会被读成该标题
+			// 的子节点，见 SerializeFrame.lastWasList）。
+			const followList = atGroupStart ? frameFollowList(frame) : lastWasList;
 			if (
 				!headingsAsList &&
 				!type &&
 				data.mdMarker === undefined &&
 				frame.headingLevel !== null &&
-				!frameFollowList(frame)
+				!followList
 			) {
 				const level = frame.headingLevel + 1;
 				frame.orderedCount = 0;
-				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', ''));
+				pushBlock(nodeLines(child, '#'.repeat(level) + ' ', '', true));
 				stack.push({
 					children: child.children ?? [],
 					index: 0,
@@ -928,15 +1029,27 @@ function serializeTrees(
 				continue;
 			}
 			// list 或未标注（新建，位于列表/段落上下文或 6 级之下）节点 → 列表行；
-			// 剪贴板形态（headingsAsList）下 `*`/`+` 归一为 `-`（有序项保留编号）
+			// 剪贴板形态（headingsAsList）下 `*`/`+` 归一为 `-`（有序项保留编号）。
+			// 有序项优先用解析时记下的原编号（`mdOrderedNumber`）：未编辑项不会
+			// 被重排成 1、2、3…；新建项回落到前一项 + 1。
+			// `0` 是合法起始编号（`0. 甲`），故判据是「非负」而不是「大于 0」——
+			// 写成 `> 0` 会把 `0.` 静默改成 `1.`（解析侧同样只收非负安全整数）。
+			const recorded = data.mdOrderedNumber;
+			const orderedNumber =
+				data.mdMarker === 'ordered'
+					? typeof recorded === 'number' &&
+						Number.isSafeInteger(recorded) &&
+						recorded >= 0
+						? recorded
+						: frame.orderedCount + 1
+					: 0;
 			const marker =
 				data.mdMarker === 'ordered'
-					? `${frame.orderedCount + 1}.`
+					? `${orderedNumber}.`
 					: headingsAsList
 						? '-'
 						: data.mdMarker || '-';
-			frame.orderedCount =
-				data.mdMarker === 'ordered' ? frame.orderedCount + 1 : 0;
+			frame.orderedCount = orderedNumber;
 			// 每层一个**文档自己的**缩进单位；续行多给一个单位（与
 			// `\t` / 2 空格 / 4 空格三种原文风格都对齐，见 MdNodeMeta.mdIndentUnit）
 			const indent = indentUnit.repeat(frame.listIndent);
@@ -954,7 +1067,8 @@ function serializeTrees(
 	};
 
 	// 剪贴板形态：起始 headingLevel 传 null ⇒ 未标注节点一律走列表分支
-	// （文档形态传 0 ⇒ 1 级标题可用，见 SerializeFrame.headingLevel 契约）
-	walkChildren(siblings, 0, headingsAsList ? null : 0);
+	// （文档形态传「起始级别 - 1」⇒ 根级新建节点写 `#`×起始级别，见
+	// SerializeFrame.headingLevel 与 MdNodeMeta.mdHeadingStart）
+	walkChildren(siblings, 0, headingsAsList ? null : headingStart - 1);
 	return out.join('\n');
 }

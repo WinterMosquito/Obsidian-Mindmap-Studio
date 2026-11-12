@@ -56,6 +56,91 @@ export function normalizeHexColor(value: string): string | null {
 }
 
 /**
+ * 配色指令的**取值判据**（行内与整行两种形态共用）：`#rgb` / `#rrggbb` / 裸 `none`。
+ * 返回归一值或 null；非法值（`%%备注%%` / `%%#12%%` / 4·8 位 alpha）一律 null。
+ *
+ * 行内解析在 `features/node-inline-tokenize.colorDirectiveRanges`，整行判定在
+ * {@link isColorDirectiveLine}——两处共用本函数，值域不会分叉。
+ */
+export function colorDirectiveValueOf(body: string): string | null {
+	const color = normalizeHexColor(body);
+	if (color) {
+		return color;
+	}
+	return body.trim().toLowerCase() === COLOR_DIRECTIVE_NONE
+		? COLOR_DIRECTIVE_NONE
+		: null;
+}
+
+/**
+ * 该行是否**整行只有一条配色指令**（`%%#89CFF0%%` / `%%none%%`，外壳空白宽容）。
+ *
+ * 标题节点的指令必须独立成行：行尾形态会被 Obsidian 的 heading 缓存算进标题文本，
+ * `[[#标题]]` 与 `^block-id` 全废（与联系指令同一教训，见 K174）。解析层据此把该行
+ * 归属上一个节点，而不是新建一个空节点。
+ */
+export function isColorDirectiveLine(line: string): boolean {
+	const trimmed = line.trim();
+	if (
+		!trimmed.startsWith('%%') ||
+		!trimmed.endsWith('%%') ||
+		trimmed.length < 5
+	) {
+		return false;
+	}
+	const body = trimmed.slice(2, -2);
+	if (body.includes('%%')) {
+		return false;
+	}
+	return colorDirectiveValueOf(body) !== null;
+}
+
+/**
+ * 去掉原文**末尾的独立配色指令行**（逐行从尾部剥，至少保留首行）。
+ *
+ * 与 `directive.splitDirectiveTail` 同语义：指令行是结构数据、不参与「内容
+ * 是否多行」的判定。消费方是层级语法（`md-heading-syntax.contentOf`）——
+ * 标题的配色指令写独立行，少了这一步会把「标题 + 指令」判成多行。
+ */
+export function stripTrailingColorDirectiveLines(source: string): string {
+	const lines = source.split('\n');
+	while (lines.length > 1 && isColorDirectiveLine(lines[lines.length - 1]!)) {
+		lines.pop();
+	}
+	return lines.join('\n');
+}
+
+/**
+ * 取出**行尾**的配色指令（写侧产物形态）：`标题 %%#hex%%` →
+ * `{ content: '标题', directive: '%%#hex%%' }`。
+ *
+ * 只认行尾且值合法——行内代码 / 数学里的同形态不会落在行尾（以反引号 / `$` 收尾），
+ * 故这里不需要保护区扫描。已独立成行的形态由 {@link isColorDirectiveLine} 识别，
+ * 调用方先判它、再调本函数。
+ */
+export function splitTrailingColorDirective(
+	line: string,
+): { content: string; directive: string } | null {
+	const trimmed = line.trimEnd();
+	if (!trimmed.endsWith('%%')) {
+		return null;
+	}
+	const inner = trimmed.slice(0, -2);
+	const start = inner.lastIndexOf('%%');
+	if (start === -1) {
+		return null;
+	}
+	const body = inner.slice(start + 2);
+	if (colorDirectiveValueOf(body) === null) {
+		return null;
+	}
+	return {
+		content: line.slice(0, start).trimEnd(),
+		directive: trimmed.slice(start),
+	};
+}
+
+/**
  * 解析**人类输入**的颜色：十六进制（`#89CFF0` / `89CFF0` / `#0af`）或 RGB
  * （`137, 207, 240` / `137 207 240` / `rgb(137,207,240)`）→ `#rrggbb`。
  *

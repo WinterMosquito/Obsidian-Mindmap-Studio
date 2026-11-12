@@ -13,6 +13,8 @@ import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { EventBinder } from '../core/event-binder';
 import type { Language } from '../core/i18n';
 import type { SaveState, StatusBarService } from '../services/status-bar';
+import type { DocumentSessionRegistry } from '../services/document-session-registry';
+import type { DocumentSyntax } from '../markdown/md-heading-syntax';
 import type { MindMapStudioSettings } from '../settings';
 import type { PreferenceKey, ViewStateStore } from '../services/view-state';
 
@@ -29,6 +31,11 @@ export interface ViewPluginContext {
 	readonly viewState: ViewStateStore;
 	/** 状态栏服务（节点计数展示/清空；DOM 由插件层持有） */
 	readonly statusBar: StatusBarService;
+	/**
+	 * 文档会话注册表（Level B）：同一文件的多个视图共享「一份权威树 + 一条
+	 * 撤销线 + 一条保存管线」。视图只经它 acquire / attach / detach。
+	 */
+	readonly sessions: DocumentSessionRegistry;
 }
 
 /**
@@ -146,6 +153,24 @@ export interface MindMapViewContext
 	/** 调度防抖保存（data 变更后调用） */
 	scheduleSave(): void;
 	/**
+	 * 会话级撤销 / 重做（Level B）：所有视图共享同一条时间线。
+	 *
+	 * 声明为**可选**：测试桩与只读嵌入没有会话，调用方据此退回引擎历史
+	 * （`ENGINE_COMMANDS.BACK` / `FORWARD`）——生产视图恒实现。
+	 */
+	undo?(): void;
+	redo?(): void;
+	/**
+	 * 把**派生归一**后的引擎树同步进会话（**不进历史**）。
+	 *
+	 * 供 `view-syntax` 的守卫使用：它就地改 md 字段（不重渲染、不发
+	 * `data_change`），但会话的保存取自己的权威树——不同步就会「屏上改了、
+	 * 文件没写」（K188）。与 `undo?` 同性质：可选，测试桩 / 只读嵌入没有会话。
+	 */
+	commitDerivedTree?(): void;
+	/** 会话历史可用态（竖栏按钮置灰依据；缺省时调用方读引擎历史） */
+	historyAvailability?(): { canUndo: boolean; canRedo: boolean };
+	/**
 	 * 当前保存状态（状态栏展示用；切换视图后由 `updateStatusBar` 重新推给服务）。
 	 *
 	 * 由视图在「排程 / 一轮成功 / 失败或冲突」三处更新；`idle` 表示尚未发生
@@ -175,6 +200,16 @@ export interface MindMapViewContext
 	applyPalette(palette: string): void;
 	/** 应用指定边框样式（右栏「边框」开关变更时；按文件写入 `data.json` 的 `viewState`） */
 	applyThemeStyle(themeStyle: string): void;
+	/**
+	 * 应用指定**层级语法**（右键「层级语法」级联变更时）。
+	 *
+	 * 整篇重排（列表 ⇄ 标题，双向），**改写正文**并落一条撤销历史——与布局/配色
+	 * 那类"改偏好、不动正文"的动作不同，故单选一项、不进 `PreferenceKey`
+	 * （逐文件语法不存 `data.json`，正文是唯一真相）。
+	 */
+	applyDocumentSyntax(syntax: DocumentSyntax): void;
+	/** 本文件当前的层级语法（右键「层级语法」的勾选态；现算） */
+	resolveDocumentSyntax(): DocumentSyntax;
 	/**
 	 * 当前生效的某项按文件偏好（归一后；连线 / 配色 / 边框三项）。
 	 *

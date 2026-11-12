@@ -30,12 +30,21 @@
 | 改外观预设 / 选项表 / 常量 | `core/constants` 选项表 ＋ `engine/mindmap-theme-presets` 数据表 ＋ i18n 双语 ＋ `AGENTS.md` 决策表 |
 | 改 vendor 源码 / 补丁 | `npm run build:vendor` → `vendor/BUILD.md` 的 sha256 与 `tests/vendor-contract.test.ts` 两处常量（`vendor-contract` 强制） |
 | 改门禁脚本 / 命令 | `AGENTS.md`「常用命令」＋ `scripts/check-gates.mjs` 的映射（有直测）＋ `testing.md` |
-| 新增 / 删除超 300 行文件 | `AGENTS.md` 与 `architecture.md` **两处**豁免表（理由写在 architecture）；行数用 `npm run check:gates -- --fix-lines` 回填 |
+| 新增 / 删除超 300 行文件 | `AGENTS.md` 的「文件规模与豁免」表（**唯一登记处**，理由随行；`architecture.md` 不再复制）；行数用 `npm run check:gates -- --fix-lines` 回填 |
 | 发版 | `manifest.json` / `versions.json` / `package-lock.json` ＋ `docs/release-notes-<tag>.md`（中英双语）＋ 标准文档附录的版本指针（`docs-standard` 硬校验） |
 | 批次收尾 | `docs/agents/line-count-log.md` 追加一条（行数 / 门禁 / 实机读数；**只追加、不改旧条目**） |
 
 > 本表是「结论该落到哪个文件」的映射；硬规则 6（源文件变更同步索引）与硬规则 10（文件规模只允许收敛）
 > 是**结论本身**，两者不是重复。冲突时以 `AGENTS.md` 为准。
+
+## 迁移逻辑的生命周期
+
+一次性数据迁移（旧格式 → 新契约）**必须独立成文件**、集中一处，便于整块删除：
+
+- 文件头写 `【一次性迁移，X.Y.Z 删除】`，版本号即删除点；
+- 只做数据改写，不承载长期判定；迁移后不再命中（幂等），**不存「已迁移」标记**，删除时无残留状态；
+- **默认在下一个大版本删除**：删迁移文件、删 `main.ts` 的调用、删对应测试，并同步 `AGENTS.md` 两处清单；
+- 现存条目：`src/platform/legacy-mindmap-migration.ts`（旧六值 → `Mindmap` + `Mindmap Layout`，**0.4.0 删除**）。**只换写法、不造声明**（K187）：没有启用键、或值是 `Markdown` / 未知值的文件一律不碰。
 
 - **同步义务**：见上表带 ★ 的三行（源文件登记 / 文档登记 / K 编号区间）。**别在本文件与 `AGENTS.md` 各写一份细则**——表的唯一性本身就是「去重」这一条的落地。
 - **编号规则**：K 编号一经分配**永不复用、不重编号**（删除条目时编号留空；新增条目追加到所属组末尾）；交叉引用一律写「见 K n」，勿用「见下条」这类相对指代。

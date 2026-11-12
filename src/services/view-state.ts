@@ -18,6 +18,11 @@
  * （frontmatter 的 `Mindmap` 值，见 `domain/mindmap-property`）。旧版的
  * `viewState[*].layout` 在 hydrate 时被剔除（返回 `true` 让调用方补一次写盘），
  * 此后不再读、也不再写这个键。
+ *
+ * **写盘只写变化（2026-11-11）**：`patch` 先按序列化结果比较，与已有条目逐字
+ * 相同则不落盘（`isSamePathState`）。关掉视图时会读一次引擎视口，而「没动过
+ * 就关」是常态——旧实现每次都整表重写 data.json（实机 26 KB / 39 条，其中
+ * 23 条只是打开时自动设置的默认视口）。
  */
 import { createDebouncer, type Debouncer } from '../core/concurrency';
 import { VIEW_STATE_PERSIST_MS } from '../core/constants';
@@ -64,6 +69,28 @@ export function resolveFilePreferences(input: {
 }
 
 const VIEW_STATE_KEY = 'viewState';
+
+/**
+ * 两个条目是否「序列化后逐字相同」。
+ *
+ * 为什么按序列化比较而不是逐字段：条目里的 `view` 是引擎产出的嵌套对象
+ * （`{ transform, state }`），逐字段比得为每个维度再写一份判据——正是硬规则
+ * 「不造第二份判定」要避免的形态。值域只有字符串 / 有限数字 / 布尔（偏好 id
+ * 与视口读数），JSON 序列化无歧义；键序稳定（`patch` 用展开合并，保持原键序）。
+ *
+ * 首次写入（条目尚不存在）必须落盘；比较本身出错（意外结构）按「有变化」处理，
+ * 宁可多写一次也不静默丢用户视口。
+ */
+function isSamePathState(prev: PathState | undefined, next: PathState): boolean {
+	if (!prev) {
+		return false;
+	}
+	try {
+		return JSON.stringify(prev) === JSON.stringify(next);
+	} catch {
+		return false;
+	}
+}
 
 /**
  * 保存的视口（`view` 字段）是否**可用**：`state` 必须是对象且 scale/x/y 为有限数。
@@ -274,8 +301,20 @@ export class ViewStateStore {
 		return removed;
 	}
 
+	/**
+	 * 合并写入一项状态；**值没变就不排写盘**（只写变化）。
+	 *
+	 * 触发点都是「用户动作的收尾」（关视图读一次视口、切一次外观），不改值却
+	 * 重写整张映射等于给 data.json 制造一次无意义 IO——纯浏览后关闭视图、连续
+	 * 点两次同一个配色都会命中。
+	 */
 	private patch(path: string, partial: PathState): void {
-		this.map.set(path, { ...(this.map.get(path) ?? {}), ...partial });
+		const prev = this.map.get(path);
+		const next = { ...(prev ?? {}), ...partial };
+		if (isSamePathState(prev, next)) {
+			return;
+		}
+		this.map.set(path, next);
 		this.schedulePersist();
 	}
 

@@ -21,8 +21,11 @@
  */
 import { Keymap } from 'obsidian';
 import { HOVER_LINK_EVENT, VIEW_TYPE } from '../core/constants';
+import { elementFromTarget } from '../core/event-binder';
+import { isSafeAnchorHref } from '../domain/url';
 import { formatWikilink, wikilinkLinkpath } from '../domain/wikilink';
 import { getNodeDataString, getNodeGroupEl } from '../engine/mindmap';
+import { MERMAID_BLOCK_CLASS } from './node-inline-content';
 import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { HyperlinkOpenMode, MindMapViewContext } from './view-context';
 
@@ -31,6 +34,25 @@ const HOVER_DEBOUNCE_MS = 400;
 
 /** 锚点选择器（节点内自绘锚点与引擎原生锚点共用；单一字面量） */
 const ANCHOR_SELECTOR = 'a.internal-link, a.external-link, a[href]';
+
+/**
+ * **图内锚点**选择器（P3，2026-11-09）：只认 mermaid 容器里的 `a[href]`。
+ *
+ * 不能并进 `ANCHOR_SELECTOR`：那条通道的 `findAnchorInNode` 用
+ * `instanceof HTMLAnchorElement` 收口，而 Pele 把 mermaid 的 `click A "url"`
+ * 渲染成 **SVG** `<a href>`（`SVGAElement`，不是 HTMLAnchorElement）——并进去
+ * 反而会被静默过滤掉。图内点击因此走本文件的独立分支。
+ */
+const MERMAID_ANCHOR_SELECTOR = `.${MERMAID_BLOCK_CLASS} a[href]`;
+
+/** 图内锚点的 href（null = 本次点击不在图内锚点上） */
+function mermaidAnchorLink(event: MouseEvent): string | null {
+	const element = elementFromTarget(event.target);
+	const anchor = element?.closest(MERMAID_ANCHOR_SELECTOR) ?? null;
+	const href = anchor?.getAttribute('href') ?? '';
+	// 图内链接也必须过安全协议白名单（SVG 消毒是第二道闸，不是唯一一道）
+	return href === '' || !isSafeAnchorHref(href) ? null : href;
+}
 
 /** 悬停预览去重状态（WeakMap 按视图持有：上次预览的目标元素与时间） */
 interface HoverPreviewState {
@@ -48,9 +70,11 @@ const hoverPreviewStates = new WeakMap<MindMapViewContext, HoverPreviewState>();
 function findAnchorInNode(
 	node: MindMapNode,
 	event: MouseEvent,
-): HTMLAnchorElement | null {
-	const target = event.target;
-	if (!(target instanceof Element)) {
+): Element | null {
+	// 跨 realm 安全（硬规则：勿用 `instanceof Element`）：popout 里的元素来自
+	// 另一个 realm，`instanceof` 恒 false ⇒ 独立窗口里的锚点点击会静默失效
+	const target = elementFromTarget(event.target);
+	if (!target) {
 		return null;
 	}
 	const groupEl = getNodeGroupEl(node);
@@ -58,10 +82,7 @@ function findAnchorInNode(
 		return null;
 	}
 	const anchor = target.closest(ANCHOR_SELECTOR);
-	if (
-		!(anchor instanceof HTMLAnchorElement) ||
-		!groupEl.contains(anchor)
-	) {
+	if (!anchor || !groupEl.contains(anchor)) {
 		return null;
 	}
 	return anchor;
@@ -73,12 +94,14 @@ function findAnchorInNode(
  *   形态交给 openHyperlink 的 parseWikilink 分支（getFirstLinkpathDest 解析）；
  * - external-link / 普通外链：href 即完整地址（URL 走 window.open 分支）。
  */
-function resolveAnchorLink(anchor: HTMLAnchorElement): string {
+function resolveAnchorLink(anchor: Element): string {
 	const dataHref = anchor.getAttribute('data-href');
 	if (dataHref) {
 		return formatWikilink(dataHref);
 	}
-	return anchor.getAttribute('href') ?? '';
+	const href = anchor.getAttribute('href') ?? '';
+	// 非白名单协议（`javascript:` / `data:`）不交给 openHyperlink
+	return href === '' || !isSafeAnchorHref(href) ? '' : href;
 }
 
 /** 节点链接（无锚点时用）的通道取值与核心要的 linktext */
@@ -168,7 +191,7 @@ function triggerHoverPreview(
  * **不做解析预检**：目标是否存在交核心判断（插件侧再拦一次会让悬停静默无反应，
  * 见 AGENTS K21 的 2026-09-16 回撤记录）。
  */
-function anchorLinktext(anchor: HTMLAnchorElement): string | null {
+function anchorLinktext(anchor: Element): string | null {
 	return wikilinkLinkpath(resolveAnchorLink(anchor));
 }
 
@@ -229,6 +252,20 @@ function registerNodeClickNavigation(
 			return;
 		}
 		const anchor = findAnchorInNode(node, event);
+		// 图内锚点（mermaid）兜底分流：Pele 产出的是 **SVG** `<a>`，
+		// `findAnchorInNode` 的 `instanceof HTMLAnchorElement` 认不出它（返回 null），
+		// 故只在上面的 HTML 锚点通道落空时才看它——HTML 锚点的 data-href 语义
+		// （`[[linkpath|别名]]`）因此不被覆盖。
+		// **必须**拦默认导航：裸 `<a href>` 在 Electron 里会把整个窗口导航走
+		if (anchor === null) {
+			const graphicLink = mermaidAnchorLink(event);
+			if (graphicLink !== null) {
+				event.preventDefault();
+				event.stopPropagation();
+				view.openHyperlink(graphicLink, hyperlinkOpenMode(event) ?? undefined);
+				return;
+			}
+		}
 		// 修饰键 + 点击：节点任意位置都算（无锚点时退回节点链接，沿用既有行为），
 		// 落点按官方修饰键表分流（新标签 / 新标签组 / 新窗口）
 		const mode = hyperlinkOpenMode(event);
@@ -326,12 +363,10 @@ function registerCanvasAnchorHover(
 			if (event.buttons) {
 				return;
 			}
-			const target = event.target;
-			if (!(target instanceof Element)) {
-				return;
-			}
-			const anchor = target.closest(ANCHOR_SELECTOR);
-			if (!(anchor instanceof HTMLAnchorElement)) {
+			// 跨 realm 安全：popout 里的锚点不是主窗口构造器的实例
+			const target = elementFromTarget(event.target);
+			const anchor = target?.closest(ANCHOR_SELECTOR) ?? null;
+			if (!anchor) {
 				return;
 			}
 			const linktext = anchorLinktext(anchor);
@@ -346,6 +381,11 @@ function registerCanvasAnchorHover(
  * 中键点击链接 → 新标签打开（画布 auxclick）：Obsidian 应用行为（阅读视图里
  * 中键即新标签；官方帮助未单列该键位，行为随应用）。走 auxclick（中键不触发
  * click），仅命中锚点时接管，其余区域交回引擎（避免破坏中键平移）。
+ *
+ * **必须与左键通道覆盖同一批锚点**：HTML 锚点之外还有 mermaid 图里的 SVG
+ * `<a href>`（Pele 产物，`instanceof HTMLAnchorElement` 认不出）。只做 HTML 时
+ * 中键落在图内链上没有任何接管 ⇒ 裸 `<a href>` 在 Electron 里被浏览器默认行为
+ * 处理（新窗口 / 外部浏览器），与左键的新标签语义不一致（2026-11-09 实机核对）。
  */
 function registerCanvasAuxClick(
 	view: MindMapViewContext,
@@ -355,15 +395,13 @@ function registerCanvasAuxClick(
 			if (event.button !== 1) {
 				return;
 			}
-			const target = event.target;
-			if (!(target instanceof Element)) {
-				return;
-			}
-			const anchor = target.closest(ANCHOR_SELECTOR);
-			if (!(anchor instanceof HTMLAnchorElement)) {
-				return;
-			}
-			const link = resolveAnchorLink(anchor);
+			// 跨 realm 安全：popout 里的锚点不是主窗口构造器的实例
+			const target = elementFromTarget(event.target);
+			const anchor = target?.closest(ANCHOR_SELECTOR) ?? null;
+			const link =
+				anchor !== null
+					? resolveAnchorLink(anchor)
+					: (mermaidAnchorLink(event) ?? '');
 			if (!link) {
 				return;
 			}

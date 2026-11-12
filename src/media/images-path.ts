@@ -12,7 +12,7 @@ import {
 	isAppResourceUrl,
 	isExternalImageRef,
 } from '../domain/url';
-import { walkTree } from '../domain/tree';
+import { cloneTree, walkTree } from '../domain/tree';
 import { resolvePathToFile } from '../links/links-resolve';
 import type {
 	MindMapTreeNode,
@@ -470,6 +470,112 @@ export function ensureDefaultImageSizes(tree: MindMapTreeNode): number {
 		filled++;
 	});
 	return filled;
+}
+
+/** 树里是否存在「有 image 但没有 imageSize」的节点（= 直接交给引擎会中断渲染） */
+function needsDefaultImageSizes(tree: MindMapTreeNode): boolean {
+	let missing = false;
+	walkTree(tree, (node) => {
+		const data = node.data as MdNodeData | undefined;
+		if (data?.image && !data.imageSize) {
+			missing = true;
+			return false;
+		}
+		return;
+	});
+	return missing;
+}
+
+/**
+ * **引擎可渲染**形态的树：按需补齐图片默认尺寸。
+ *
+ * 无缺尺寸的图片节点时**原样返回**（零拷贝，跨视图广播是热路径）；
+ * 有则**深拷贝后再补**——`imageSize` 是显示派生字段，不能回灌会话权威树
+ * （会话树要跨视图逐字可比，写盘只读 md 字段）。
+ *
+ * 唯一用途：`DocumentSession.applyToPort` 把会话树交给视图端口前过一道。
+ * 外部分支重载的树来自解析器（不产 `imageSize`），而引擎
+ * `createImgNode → getImgShowSize` 对缺失值直接解构抛错 ⇒ 整图渲染中断
+ * （2026-11-12 实机：含 `![[图]]` 的导图只要有一次外部写入就假死）。
+ */
+export function withDefaultImageSizes(
+	tree: MindMapTreeNode,
+): MindMapTreeNode {
+	if (!needsDefaultImageSizes(tree)) {
+		return tree;
+	}
+	const copy = cloneTree(tree);
+	ensureDefaultImageSizes(copy);
+	return copy;
+}
+
+/** `data.imageSize` 的形态（引擎类型，K97 的 `custom` 为可选位） */
+export type ImageSizeValue = NonNullable<MdNodeData['imageSize']>;
+
+/**
+ * 图片「显示形态」的唯一键：地址 + 官方尺寸参数。
+ *
+ * 必须带参数：`![[a.png]]` 与 `![[a.png|300]]` 的 `image` 是同一个资源地址，
+ * 只按地址索引会把两种写法并成一份尺寸（后者被前者覆盖）。
+ */
+export function imageSizeKey(data: Record<string, unknown>): string {
+	const image = typeof data.image === 'string' ? data.image : '';
+	const width = typeof data.mdImageWidth === 'number' ? data.mdImageWidth : '';
+	const height =
+		typeof data.mdImageHeight === 'number' ? data.mdImageHeight : '';
+	return `${image}|${width}|${height}`;
+}
+
+/**
+ * 把接收视图**当前引擎里已定稿**的精确尺寸（自然尺寸 / `|300` 参数 / 拖宽）
+ * 按显示形态复用进刚解析出来的树。
+ *
+ * 背景（2026-11-12 实机复验）：外部写入重载只会走 `withDefaultImageSizes`，
+ * 加载期那套异步探测回灌不会为快照重跑 ⇒ 图片从「160×160 / 147×147」退回
+ * 「200×120」默认盒（不改文件、重开标签即恢复，但观感会跳一下）。快照应用前
+ * 引擎还在，那份 `custom:true` 的定稿尺寸可直接搬过来，无需二次探测、无异步。
+ *
+ * - 只认 `custom:true`：默认盒不参与，避免把「曾经回落」的态固化；
+ * - 地址 + 参数都相同才复用：外部换图 / 新增图片仍停在默认盒这一安全终态；
+ * - 无命中**原样返回**（零拷贝），命中才深拷贝（派生字段不回灌会话树）。
+ *
+ * 唯一用途：`features/view.MindMapView.applySnapshot` 在 `applySessionSnapshot`
+ * 前过一道；调用方负责从 `getRenderRoot()` 收集 `known`。
+ */
+export function reuseKnownImageSizes(
+	tree: MindMapTreeNode,
+	known: ReadonlyMap<string, ImageSizeValue>,
+): MindMapTreeNode {
+	if (known.size === 0) {
+		return tree;
+	}
+	const isCandidate = (data: MdNodeData | undefined): boolean =>
+		!!data?.image &&
+		!data.imageSize?.custom &&
+		known.has(imageSizeKey(data));
+	let hit = false;
+	walkTree(tree, (node) => {
+		if (isCandidate(node.data)) {
+			hit = true;
+			return false;
+		}
+		return;
+	});
+	if (!hit) {
+		return tree;
+	}
+	const copy = cloneTree(tree);
+	walkTree(copy, (node) => {
+		const data = node.data as MdNodeData | undefined;
+		if (!data || !isCandidate(data)) {
+			return;
+		}
+		const size = known.get(imageSizeKey(data));
+		if (size) {
+			data.imageSize = { ...size };
+		}
+	});
+	return copy;
 }
 
 /**

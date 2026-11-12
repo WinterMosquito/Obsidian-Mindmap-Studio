@@ -20,6 +20,7 @@ import {
 	type SettingsSanitizeReport,
 } from './settings';
 import { MindMapView } from './features/view';
+import { offerColorSentinelCleanup } from './features/view-node-color';
 import { MindmapEmbedRenderChild } from './features/mindmap-codeblock';
 import { createNewMindMap } from './creation';
 import {
@@ -38,6 +39,7 @@ import { VaultSyncService } from './platform/vault-sync';
 import { fileLookupIndex } from './links/file-lookup';
 import { setImageSizeCacheStore } from './media/images-path';
 import { ViewStateStore } from './services/view-state';
+import { DocumentSessionRegistry } from './services/document-session-registry';
 import { notifyError } from './core/errors';
 import { PluginDataWriter } from './core/persistence';
 import { ElementStatusBarService } from './services/status-bar';
@@ -45,6 +47,11 @@ import type { StatusBarService } from './services/status-bar';
 import { updateStatusBar } from './features/view-status';
 import { pruneViewSwitchNoise } from './platform/nav-history';
 import { MindMapAutoOpener } from './platform/mindmap-auto-open';
+// 【0.4.0 删除】一次性迁移：旧属性值 → Mindmap + Mindmap Layout
+import {
+	LEGACY_MIGRATION_DELAY_MS,
+	migrateLegacyMindmapProperties,
+} from './platform/legacy-mindmap-migration';
 
 export default class MindMapStudioPlugin extends Plugin {
 	override settings!: MindMapStudioSettings;
@@ -104,6 +111,13 @@ export default class MindMapStudioPlugin extends Plugin {
 	}, VIEW_STATE_PERSIST_MS);
 	/** Vault 文件事件同步服务（rename/delete/create） */
 	private vaultSync!: VaultSyncService;
+	/**
+	 * 文档会话注册表（Level B）：同一文件的多个导图视图共享**一份权威树 +
+	 * 一条撤销时间线 + 一条保存管线**；视图只经它 acquire / attach / detach。
+	 * 外部写入与重命名都从这里单一入口分发（`vault.on('modify')` /
+	 * `VaultSyncService.onRename`），不再逐视图各跑一遍。
+	 */
+	sessions!: DocumentSessionRegistry;
 
 	override async onload(): Promise<void> {
 		await this.loadSettings();
@@ -127,6 +141,9 @@ export default class MindMapStudioPlugin extends Plugin {
 		setViewSwitchDoneHook((leaf, path, viewType) => {
 			pruneViewSwitchNoise(leaf, path, viewType);
 		});
+
+		// 会话注册表：先于任何视图创建（视图 onLoadFile 第一件事就是 acquire）
+		this.sessions = new DocumentSessionRegistry(this.app);
 
 		this.registerView(VIEW_TYPE, (leaf) => new MindMapView(leaf, this));
 
@@ -221,7 +238,7 @@ export default class MindMapStudioPlugin extends Plugin {
 				if (file instanceof TFolder) {
 					menu.addItem((item) =>
 						item
-							.setTitle(t(this.settings.language, 'command.createMindMap'))
+							.setTitle(t(this.settings.language, 'fileMenu.createMindMap'))
 							.setIcon('dot-network')
 							.onClick(() => {
 								void createNewMindMap(this.app, this.settings, file.path);
@@ -272,6 +289,21 @@ export default class MindMapStudioPlugin extends Plugin {
 			}),
 		);
 
+		// 外部写入：**会话级单点分发**（Level B）。一个文件只有一个会话，
+		// 内部区分「自己的写盘回声」（磁盘正文与 `lastSeenDiskBody` 一致 ⇒ 忽略）
+		// 与「别处改过」（放弃本轮写盘 → 重载 → 新树追加为一条撤销快照）。
+		// `processFrontMatter`（切布局/改属性）同样触发 modify，正文没变时
+		// 会话不会重载。
+		this.registerEvent(
+			this.app.vault.on('modify', (file) => {
+				if (!(file instanceof TFile) || file.extension !== 'md') {
+					return;
+				}
+				this.sessions.onModify(file);
+			}),
+		);
+
+
 		// 启动后恢复「声明为导图」的叶子。onLayoutReady 不可注销（返回 void，
 		// 非 EventRef），故由 `unloaded` 自行判定
 		this.app.workspace.onLayoutReady(() => {
@@ -279,6 +311,21 @@ export default class MindMapStudioPlugin extends Plugin {
 				return;
 			}
 			opener.scheduleStartupRestore();
+			// 【一次性迁移，0.4.0 删除】旧属性值 → `Mindmap: Mindmap` +
+			// `Mindmap Layout: <kebab>`。延迟执行，避开启动恢复的 I/O；失败只留痕
+			// （下次启动重试），不打断启动。迁移后文件不再命中，无「已迁移」标记。
+			window.setTimeout(() => {
+				if (this.unloaded) {
+					return;
+				}
+				void migrateLegacyMindmapProperties(this.app).then((count) => {
+					if (count > 0) {
+						console.debug(
+							`已迁移 ${count} 个旧格式导图属性（0.4.0 将删除迁移逻辑）`,
+						);
+					}
+				});
+			}, LEGACY_MIGRATION_DELAY_MS);
 		});
 	}
 
@@ -292,6 +339,9 @@ export default class MindMapStudioPlugin extends Plugin {
 			onRename: (file, oldPath) => {
 				// 视图状态（布局/视口）按路径键存，改名即迁移；打开方式已不存
 				// data.json，故不再按「是不是导图」分流。
+				// 会话同样按路径键：只迁移键，会话与视图都不重建（官方实测：
+				// 两个 Markdown 视图改名后 file.path 原地更新、历史不变）。
+				this.sessions.rename(oldPath, file.path);
 				if (file instanceof TFile) {
 					this.viewState.renameKey(oldPath, file.path);
 				} else {
@@ -343,6 +393,9 @@ export default class MindMapStudioPlugin extends Plugin {
 		}
 		// 挂起的「设置应用到视图」直接丢弃：此刻视图正在关闭，重建引擎无意义
 		this.settingsApplyDebouncer.cancel();
+		// 会话注册表：视图侧 onClose 已各自 flush；这里只销毁挂起的广播 / 防抖
+		// 定时器，避免它们活过插件生命周期。
+		this.sessions?.dispose();
 		this.statusBarEl = null;
 	}
 
@@ -491,6 +544,19 @@ export default class MindMapStudioPlugin extends Plugin {
 			view.refreshToolbar();
 			view.applySettingsChange(changedKeys);
 		});
+	}
+
+	/**
+	 * 作用范围从「仅本节点」切回「含子节点」后，询问是否清理已打开导图里旧的
+	 * `%%none%%`（K175）。
+	 *
+	 * 只遍历**当前打开**的导图：清理走活引擎的原文通道，关闭的文件没有可写的节点
+	 * 实例（也不该为一次询问去读全库）。
+	 */
+	offerColorSentinelCleanup(): void {
+		const views: MindMapView[] = [];
+		this.forEachMindMapView((view) => views.push(view));
+		void offerColorSentinelCleanup(views);
 	}
 
 	/**

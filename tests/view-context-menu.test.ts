@@ -22,7 +22,12 @@ import { LAYOUT_OPTIONS, PALETTE_OPTIONS } from '../src/core/constants';
 import type { MindMapNode } from '../src/core/engine-types';
 import type { MindMapViewContext } from '../src/features/view-context';
 import { setupContextMenu } from '../src/features/view-context-menu';
-import { applyNodeColor, nodeColorOptions } from '../src/features/view-node-color';
+import {
+	applyColorSentinelCleanup,
+	applyNodeColor,
+	collectColorSentinelSessions,
+	nodeColorOptions,
+} from '../src/features/view-node-color';
 
 /** 记录型菜单项桩（仅编译期形状，运行时由 FakeMenu 构造） */
 interface MenuItemStub {
@@ -468,6 +473,8 @@ function makeView(
 	const applyLineStyle = vi.fn<(value: string) => void>();
 	const applyPalette = vi.fn<(value: string) => void>();
 	const applyThemeStyle = vi.fn<(value: string) => void>();
+	// 层级语法：整篇重排（改写正文）；勾选态由正文实测现算
+	const applyDocumentSyntax = vi.fn<(value: 'list' | 1 | 2) => void>();
 	// 按文件偏好的当前值（菜单勾选态经 resolvePreference 读这一份）
 	const preferences = {
 		layout: 'logicalStructure',
@@ -484,10 +491,13 @@ function makeView(
 		applyLineStyle,
 		applyPalette,
 		applyThemeStyle,
+		applyDocumentSyntax,
 		resolvePreference: (key: keyof typeof preferences): string =>
 			preferences[key],
 		// 布局不在 PreferenceKey 里（它存文件属性），勾选态单独走 resolveLayout
 		resolveLayout: (): string => preferences.layout,
+		// 层级语法同样不存 data.json：勾选态由正文实测现算
+		resolveDocumentSyntax: (): 'list' | 1 | 2 => 'list',
 		// 插件能力的窄化面：节点配色只读 `settings.nodeColorScope`（写入侧作用范围）
 		plugin: {
 			settings: { nodeColorScope: options.nodeColorScope ?? 'subtree' },
@@ -504,6 +514,7 @@ function makeView(
 		applyLineStyle,
 		applyPalette,
 		applyThemeStyle,
+		applyDocumentSyntax,
 	};
 }
 
@@ -1496,9 +1507,11 @@ describe('画布空白右键菜单', () => {
 			zh('menu.resetZoom'),
 			zh('command.fitCanvas'),
 			zh('toolbar.arrange'),
-			// 视图级外观只剩布局 / 配色（连线与边框已升为右缘竖栏的开关按钮）
+			// 视图级外观只剩布局 / 配色（连线与边框已升为右缘竖栏的开关按钮）；
+			// 「层级语法」是整篇正文重排，同组但改写的是文件内容
 			zh('toolbar.layout'),
 			zh('toolbar.palette'),
+			zh('syntax.title'),
 			zh('toolbar.undo'),
 			zh('toolbar.redo'),
 		]);
@@ -1645,6 +1658,22 @@ describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
 			{ afterCommit: false },
 		);
 		expect(minimapMocks.refreshMiniMapAfterRender).toHaveBeenCalledWith(view);
+	});
+
+	it('标题节点：配色指令写独立行（不污染 heading 缓存，K174）', () => {
+		const view = makeColorView();
+		const node = colorNode({
+			text: '标题',
+			mdRaw: '标题',
+			mdDerivedText: '标题',
+			mdType: 'heading',
+		});
+		applyNodeColor(view, [node], '#89cff0');
+		expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+			view,
+			[{ node, raw: '标题\n%%#89cff0%%' }],
+			{ afterCommit: false },
+		);
 	});
 
 	it('多选上色：多个节点合并成**一次**批量落地（渲染 / 存盘 / 历史各一次）', () => {
@@ -1874,6 +1903,75 @@ describe('applyNodeColor（写正文 + 小地图等落地补画）', () => {
 			[{ node, raw: '父 %%#89cff0%%' }],
 			{ afterCommit: false },
 		);
+	});
+
+	describe('清理旧哨兵（K175）', () => {
+		/** 清理读 `view.file` 判「是否还停在同一文件」 */
+		function cleanupView(path = 'a.md'): MindMapViewContext {
+			return { ...makeColorView(), file: { path } } as MindMapViewContext;
+		}
+
+		it('收集：只收自身带 `%%none%%` 的节点；整行只有指令、已有颜色的都不算', () => {
+			const view = cleanupView();
+			const sentinel = treeNode('甲 %%none%%', '甲');
+			const onlySentinel = treeNode('%%none%%', '');
+			const colored = treeNode('乙 %%#ff0000%%', '乙');
+			getRenderRootMock.mockReturnValue({
+				children: [sentinel, onlySentinel, colored],
+			});
+
+			const sessions = collectColorSentinelSessions([view]);
+			expect(sessions).toHaveLength(1);
+			expect(sessions[0]!.count).toBe(1);
+		});
+
+		it('同一文件多视图：按**路径**去重（一个文档只算一次）', () => {
+			// Level B：多视图共享同一棵树，逐个视图扫描会把同一处 `%%none%%`
+			// 算成 N 处、落地时对同一棵树写 N 遍（2026-11-09 实机：4 个视图 → 「4 个导图 4 处」）
+			const sentinel = treeNode('甲 %%none%%', '甲');
+			getRenderRootMock.mockReturnValue({ children: [sentinel] });
+
+			const sessions = collectColorSentinelSessions([
+				cleanupView('same.md'),
+				cleanupView('same.md'),
+				cleanupView('same.md'),
+			]);
+
+			expect(sessions).toHaveLength(1);
+			expect(sessions[0]!.path).toBe('same.md');
+			expect(sessions[0]!.count).toBe(1);
+		});
+
+		it('落地：重新扫描并**一次**批量写回（一条历史、一次存盘）', () => {
+			const view = cleanupView();
+			const sentinel = treeNode('甲 %%none%%', '甲');
+			getRenderRootMock.mockReturnValue({ children: [sentinel] });
+
+			const sessions = collectColorSentinelSessions([view]);
+			expect(applyColorSentinelCleanup(sessions)).toBe(1);
+			expect(applyRawNodeContentsMock).toHaveBeenCalledWith(
+				view,
+				[{ node: sentinel, raw: '甲' }],
+				{ afterCommit: false },
+			);
+		});
+
+		it('视图已切到别的文件：不写（新文件的内容不能当成旧文件的清理结果）', () => {
+			const view = cleanupView('a.md');
+			const sentinel = treeNode('甲 %%none%%', '甲');
+			getRenderRootMock.mockReturnValue({ children: [sentinel] });
+			const sessions = collectColorSentinelSessions([view]);
+			const moved = {
+				...view,
+				file: { path: 'b.md' },
+			} as MindMapViewContext;
+
+			const removed = applyColorSentinelCleanup(
+				sessions.map((session) => ({ ...session, view: moved })),
+			);
+			expect(removed).toBe(0);
+			expect(applyRawNodeContentsMock).not.toHaveBeenCalled();
+		});
 	});
 });
 

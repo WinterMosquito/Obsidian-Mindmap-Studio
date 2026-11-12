@@ -1,4 +1,4 @@
-# 关键约定 K1–K167（详录）
+# 关键约定 K1–K198（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
@@ -79,20 +79,37 @@
   ① **症状**：只是把笔记切到导图看一眼（**不编辑**），文件就被重写——`---` 后的空行、标题与列表之间的空行、列表项之间的空行全部消失（松散列表变紧凑列表，阅读视图行距随之变化），连续空行合并成一个。实测：新建文件 `mtime 13:10:27.577` → 打开后 1.1s 变 `13:10:28.693`，此时**尚未关闭视图**。
   ② **成因**：序列化带规范化（空行归一 / 缩进统一 / 有序列表重排，见 `tests/md-roundtrip.test.ts` 的「规范化」组），与磁盘原文天然不等；而「无差异写盘跳过」比的是**磁盘当前内容**，规范化结果永远「有差异」⇒ 必写。触发源是加载期引擎发出的 `data_change`（`onRootDataChanged` → `scheduleSave`）排出的那一轮自动保存，以及 `onUnloadFile` 的无条件 `save`。
   ③ **修法**：`SavePipeline.markLoaded(file, tree)` 在**加载完成、引擎建好之后**记下该文件的**正文**（`loadedBody`，`buildBody` 与写盘同一个实现）；`save()` 里若本轮正文与它**逐字相同**，说明本次会话没有任何内容级改动 ⇒ **跳过写盘**。判据刻意不是「与磁盘相同」：那正是拦不住规范化的地方；也刻意**不含文件头**——文件头恒取磁盘当前值、管线从不改它，所以「只在属性面板改了 frontmatter / 切了布局」不该连带把正文规范化一遍（自审发现并补测）。
-  ④ **三处不能省**：**只在加载路径记录**（设置刷新引起的引擎重建不得再记——会把尚未落盘的编辑误标成基线，下一轮保存被跳过）；跳过写盘时**仍按磁盘当前内容建立 `lastWritten` 基线**（否则后续真实编辑的自动保存会失去 P1a 外部改动检测，直接覆盖他处改动）；`markLoaded` 的 `tree` 必须与写盘取的**同一来源**（`engine.getDataSnapshot()`），否则两边不可比、判据恒假。
+  ④ **三处不能省**：**只在加载路径记录**（设置刷新引起的引擎重建不得再记——会把尚未落盘的编辑误标成基线，下一轮保存被跳过）；`markLoaded` 同时建立「最近写出的正文」基线 `lastWrittenBody`（**序列化结果**，与 `hasUnsavedChanges` 的比较基准同源；2026-11-07 P1a 删除后它只服务「同文件另一视图能否安全重载」）；`markLoaded` 的 `tree` 必须与写盘取的**同一来源**（`engine.getDataSnapshot()`），否则两边不可比、判据恒假。
   ⑤ **实机**（Obsidian 1.14.4）：`# 根` + 松散列表 + 连续双空行的文件，打开等 3s、再关闭，`mtime` 与内容**逐字不变**；随后在导图里改一个节点 → `- 一改` 正常落盘（规范化随真实编辑发生）；编辑后 120ms 内立即关闭也不丢（`onUnloadFile` 的兜底快照路径未被基线误伤）。
-  ⑥ **回归**：`tests/save-pipeline.test.ts`（加载后未编辑不写盘 / 加载后编辑照常写 / 跳过写盘仍建立外部改动基线：他处修改触发 P1a 跳过而非覆盖 / 重新 markLoaded 按新基线判定 / 未记录基线行为不变）。
+  ⑥ **回归**：`tests/save-pipeline.test.ts`（加载后未编辑不写盘 / 加载后编辑照常写 / 写过盘且没再编辑 ⇒ `hasUnsavedChanges` 为假（另一视图可重载）/ 重新 markLoaded 按新基线判定 / 未记录基线行为不变）。
   ⑦ **后续修正（当日实机复演后追加，见 K160⑤）**：本会话**写过盘之后**「回到加载态」不再算纯浏览——磁盘上此刻是改后内容，跳过写盘会让撤销落空（屏上原样、文件改后、重开跳回）。守卫改由 `wroteSinceLoad` 分辨，写回的是**加载时的原样正文**（`loadedRawBody`），不是序列化结果。
 
 - [K158] **收尾一致性自检：写出的内容必须与活快照一致（2026-11-02 实机审核）**：
   ① **线索**：实机见过一次（**至今未复现**）——勾选任务后 DOM 与节点 data 都是 `[x]`、文件仍是 `[ ]`，而 `lastWritten` 里已有该路径（说明确有一轮 save 完成过），此后 60s 内没有新的保存被排上，直到显式保存才写出。
   ② **根因未定位**：可能的方向有两个（写盘用的是排空循环**开头**的快照；重入路径的 `pendingTree` 可能比本次编辑旧），都属于「快照陈旧」这一类，靠读代码分不出是哪一条。故按**不变式 + 自愈**处理，不赌单一路径。
   ③ **修法**：`SavePipeline.save()` 排空循环收尾调 `reconcileAfterSave`——用与写盘**同一实现**（`serialize`）把活快照再序列化一次，与刚写出的内容比；不同即 `schedule()` 补排（走防抖，不在排空队列里自我嵌套）。每路径最多补 3 次（`MAX_CONSISTENCY_RETRIES`），超限只 `console.warn` 一次后停手（防「每轮都在变」的抖动空转）。
-  ④ **三种收场故意不补排**：P1a 外部冲突跳过、写盘异常（那时「活快照 ≠ 文件」是**预期**，补排只会把一次冲突刷成重试风暴）；以及**非自动保存**（命令 / 卸载）——显式保存的调用方本来就在同一个 tick 抓新鲜快照，没有「陈旧」可言，而卸载路径若在此补排，定时器会活过视图拆卸、落到下一个刚加载的文件上（那时基线还没记录，一次补排就变成「打开即重写」，自审发现）。
+  ④ **两种收场故意不补排**：写盘异常（那时「活快照 ≠ 文件」是**预期**，补排只会把一次失败刷成重试风暴）；以及**非自动保存**（命令 / 卸载）——显式保存的调用方本来就在同一个 tick 抓新鲜快照，没有「陈旧」可言，而卸载路径若在此补排，定时器会活过视图拆卸、落到下一个刚加载的文件上（那时基线还没记录，一次补排就变成「打开即重写」，自审发现）。**收尾自检只对真的写过盘的轮次做**：跳过写盘的轮次磁盘本就等于本轮序列化结果，活快照再变只可能是新编辑，它会自己排下一轮。
   ⑤ **为什么值得每轮多一次 serialize**：写盘取的是排空开头的快照，一次真实差异就等于「用户编辑没落盘」；`serialize` 不产生 IO，代价远低于静默丢编辑。判据与写盘同源，不会误报。
   ⑥ **回归**：`tests/save-pipeline.test.ts` +7 例（陈旧快照→补排一次并追平 / 内容一致→零额外写盘 / 冲突收场→不补排 / 每轮都变→4 次封顶 / 显式保存→不补排 / 纯浏览跳过→不补排 / 只改 frontmatter→不写盘）。
 
 - [K164] **列表缩进单位随文档走（2026-11-06）**：`MdNodeMeta.mdIndentUnit` 只记在**虚拟根**的 data 上（每层一个单位：`'\t'`，或 1–8 个空格的**原样串**，含 `' \t'` 这类混合），解析期由 `markdown/md-outline-lines.ts` 的 `classifyLines` 实测「第一处有缩进的列表行」的前导空白，序列化经 `markdown/md-serialize.ts` 的 `readIndentUnit`（文件内私有）取用（脏值回落 `'  '`；剪贴板大纲恒用默认——那是**新内容**，没有原文风格可继承）。**为什么必须是数据而不是常量**：此前恒写 2 空格，Tab / 4 空格缩进的笔记**改一个节点**就把全文缩进重排（2026-11-06 实机：整篇 diff），与「未编辑行逐字回写」直接冲突。**两把尺子不可互换**：`leadingIndent`（空格与 Tab 各计 1，用于续行 / 围栏块归层，与 `LIST_RE` 的 `(\s*)` 同口径）vs `leadingSpaces`（只数空格，只服务 frontmatter 块标量的 YAML 缩进判定）——把后者用在列表归层上，Tab 缩进文件的项内围栏会被拆成同级节点（2026-11-04 实机：4 个分支整层错位）。**归一**：混用缩进按第一层宽度归一；测不到单位（全文无缩进列表 / 新建文件）回落 2 空格。回归：`tests/md-roundtrip.test.ts`（Tab / 4 空格 / `' \t'` 混合三例 + 第二趟不动点 + 缺省回落）。
+
+- [K176] **frontmatter 与正文之间的空行按磁盘原样保留（2026-11-09 实机）**：
+  ① **缺陷**：`splitFrontmatter` 把空行留在 `body` 里，序列化器按「块首空白」丢弃 ⇒
+  任何一次真实编辑写盘都会把 `---` 与正文之间的空行吃掉（实机：清理一次
+  `%%none%%` 后 `---` 直接接 `# 父`，Git diff 白多一行删除）。
+  ② **改法**：`splitFrontmatter` 多返回 `gap`（frontmatter 后、正文前的**原样空白行**，
+  0/1/多行、CRLF、仅空格行均保留），`body` 从第一个非空行开始；`writeBody` 的
+  `build(current)` 从**磁盘当前值**同时取文件头与 gap，`wrapBase(body, header, gap)`
+  原样拼回。gap 属于文件头区域，不参与 `loadedBody` / `hasUnsavedChanges` 的正文判据
+  （改属性 / 换布局不因它被判脏）。
+  ③ **为什么取磁盘而不是加载快照**：`processFrontMatter` 只改文件头；gap 与文件头同源，
+  外部（属性面板 / 其它窗格 / 同步）改动后仍按最新形态写，不会被旧快照覆盖。
+  ④ **回退路径**：读不到磁盘内容（`cachedRead` 缺失/抛错）时 gap 记空串，保持旧行为
+  （fail-open，不凭空补空行）；撤销回加载态写的是 `loadedRawBody`（**不含** gap），
+  同样由 `writeBody` 按磁盘补回，不会双份。
+  ⑤ **回归**：`tests/md-inline.test.ts`（gap 切分：0/1/多行、空格行、CRLF）、
+  `tests/save-pipeline.test.ts`（保留空行 / 不凭空补 / 多行与 CRLF）。
 
 ### 引擎行为、视口与布局
 
@@ -318,6 +335,227 @@
   ⑥ 连接线落地（`node` 档前后两条线都不染色）：`engine/mindmap-colors.applyColorStyle` 在 `colorLine === false` 时**不写 `lineColor`**（其余三键照旧，尤其 `borderColor` 要留给小地图墨色）。引擎 `styleLine(line, childNode)` 读的是**子节点**的 `lineColor` ⇒ 不写覆盖即让「父 → 本节点」回落整篇配色；「本节点 → 子节点」归子节点 data，哨兵已让它回落。判定唯一在 `core/constants.isNodeOnlyColorScope`，由 `features/view.colorLine()` 传给创建前的 `applyColorDirectivesToTree` 与渲染落地的 `syncNodeColorDirectives`；只读嵌入经 `MindmapEmbedConfig.colorLine` 由组合根注入（跟全局默认，同 `themeStyle`）。**切换即时生效**：`nodeColorScope` 进 `LIVE_REFRESH_SETTING_KEYS` + `IN_PLACE_REFRESH_KEYS`，`applySettingsChange` 只重算一次颜色（有变化才 `render()`）、不销毁重建引擎——5000 节点图不该为一个开关付整树 `structuredClone`。
   ⑦ 回归：`tests/color-directive.test.ts`（`scopeSentinels` 四例 + 落地三例：仅本节点档不写 `lineColor` / 切档只增删覆盖且幂等 / 每次切换各渲染一次）、`tests/view-context-menu.test.ts`（仅本节点补哨兵 / 已有指令不改写 / 父子同选不折叠 / 父节点无变化时只有哨兵那批落地 / 出厂档不写哨兵 / 按分支自动上色同样跟档）、`tests/settings.test.ts`（白名单与脏值留痕 + 切换进差集 + 唯一判定）、`tests/mindmap-codeblock.test.ts`（组合根注入契约）。
 
+- [K168] **层级语法（Markdown 标题 / 无序列表）：同级同语法是往返保真的前提（2026-11-08 用户需求 + 四轮方案裁决）**：
+  ① **需求**：①「新建导图可全局选前几级写 `-` 还是 `#`」；② 标题可选从二级开始（`##`），只影响新建导图；③ 存量文件不动，另给「列表 → 标题」的显式动作；④ 既有继承规则不变（上级 `#` → 下级 `#`，6 级封顶后回列表；上级 `-` → 整支 `-`）。
+  ② **Markdown 事实（实机确认，本条的根因）**：`# 甲` 之后的同级 `- a` 会被解析成**甲的子节点**（`md-outline` 的 `contentParent` 是当前标题），而 `- a` 之后的 `# b` 仍是同级 ⇒ 同一兄弟组的**合法形态是「列表/段落在前、标题在后」**，只有反序才改结构（把列表拖成标题同级，今天表现为「拖了不生效」，格式化之后会表现为结构错乱）。**别把它读成「同组语法必须一致」**——那会把合法的「先列表分支、后标题分支」也判成错误，导致打开文件就改写（见 ⑤）。
+  ③ **回写**：根级新建节点的起始级别取**本文件实测值** `mdHeadingStart`（顶层标题的**最小** `mdLevel`，解析期记在虚拟根，`readHeadingStart` 钳 1..6 缺省 1；取最小是因为新节点恒追加在末尾、最小级别才能稳定 pop 回根子节点）；空文档（正文无节点）用设置里的起点。**设置项 `newMapSyntax`（`list` / `h1` / `h2`，出厂 `list`）只管新建导图种子正文与空文档起点**——存量文件按正文自身回写（「跟随兄弟」保留：纯列表文档新建仍是 `-`，改设置不会回头影响任何已存在文件）。**不引入第二份状态**：不加 frontmatter 键、不存 `data.json` 逐文件语法，正文是唯一真相。
+  ④ **右键「层级语法」级联**（空白右键，与布局/配色同组；无命令、无弹窗）：**整篇重排、双向可逆**（列表 ⇄ 标题、一级 ⇄ 二级；已有标题按深度重定级，于是不需要「有标题就锁起点」的特例）；**组原子**——某层有转不了的节点（多行/围栏、任务项、有序列表、段落）则整层保持列表并点名阻挡者。执行走 `replaceMindMapData`（深拷贝 + 一条撤销历史）。
+  ⑤ **编辑期守卫**（`onDataChanged` 去抖 120ms + `node_dragend` 立即；拖拽中不判——引擎逐落点执行 `MOVE_NODE_TO`）：**只判四种会改结构的排布**，合法混排一律不动——① 列表/段落排在**同组标题之后**（会被读成该标题的子节点）⇒ 升为同级标题，转不了就 `BACK` 撤回；② 同级标题级别**递增**（`#` 后接 `##`）⇒ 重定级到前一个标题的级别；③ 子标题级别**不深于**父级（会逃到外层）⇒ 重定级到「父级+1」；④ **父是列表**却有标题子节点 ⇒ 就地**整支降为列表**（K169，2026-11-08 用户裁决：接受静默丢大纲条目与 `[[#标题]]` 锚点；只改 md 字段、专有提示可撤销）；**父是段落**却有标题子节点 ⇒ 段落承载不了子级，仍报 `downgrade` 让调用方撤回；⑤ 父级已是 **6 级标题**却又挂标题子节点 ⇒ 就地**降为列表**——第 7 级在 Markdown 里没有标题，是另一类「结构上必然」的降级（不是删标题，而是把分支挂到最深层唯一的表达方式），提示「已改为无序列表，Ctrl+Z 可撤销」。早前把它并入 ④ 判成撤回，实测表现为「拖到最深层被拒 + 提示『该层是无序列表』」（与该层是标题层的事实相反）。**「列表在前、标题在后」是合法排布**（`md-outline` 的 `listStack` 为空时挂 `contentParent`，能逐字往返），故不处理——2026-11-08 实机 P0 就出在旧判据「同组语法必须一致」上：打开一篇 `- 组` + `# 标题甲` 的手写文件会被**改写并落盘**，`- 甲 / - 乙 / # 丙` 更会连发 17 条重复提示并反复 `BACK`（`BACK` 自身又发 `data_change`）。现在守卫带 `suppress` 闩锁（撤回后跳过下一轮）且**加载期天然无动作**（解析器的产物不会是那四种排布）。整支升级前必须过 `findHeadingBlocker`（子孙藏围栏/任务项时硬转会撕裂内容）；重定级只动已是标题的节点（`relevelHeadingBranch`，不顺手把列表子节点转标题）。归一**直接改节点 data、不进撤销栈**（`liveNodeTree` 包装渲染节点，`Node.getData()` 是活引用），故 `Ctrl+Z` 一步同时撤掉「拖拽 + 语法换算」。粘贴在**插入前**换算（`adaptSubtreesToGroup`，同样先过 `findHeadingBlocker`），改不了就放弃这次粘贴而不是留脏中间态。
+  ⑥ **可转判据**（唯一实现 `headingBlockReason`）：单行内容（**去掉末尾独立指令行后**——`%%id%%` / `%%rel%%` / `%%sum%%` 让 `mdRaw` 天然多行，但它们可以跟在标题行后面，库里 `连线A-同列.md` 就是 `# 甲` + `%%rel:…%%`）、非任务项、非有序列表、非段落。**只改 `mdType` / `mdLevel` / `mdMarker`**，`text` / `mdRaw` 一字不改 ⇒ 行尾注释、链接、图片、指令行全部随行保留，保存仍走「未编辑逐字回写」。行内色注释**照转**（代价：Obsidian 的 heading 缓存会把 `%%#hex%%` 算进标题文本，`[[#标题]]` 需连注释一起写——实测确认，用户裁决接受）。
+  ⑦ **模块**：`markdown/md-heading-syntax.ts`（起始级别 / 判据 / 整支升降）、`md-heading-normalize.ts`（守卫归一 + 粘贴换算）、`md-heading-format.ts`（整篇重排 + 当前语法）；视图侧 `features/view-syntax.ts`（挂引擎事件、提示、`BACK` 兜底）。三者都 < 300 行（同职责分层，不是按行数切）。
+  ⑧ **回归**：`tests/md-heading-syntax.test.ts`（判据含指令行 / 组原子 / 6 级封顶 / 双向归一 / 粘贴换算 / **性质测试**：随机混排树 → 归一 → 序列化 → 解析，树形恒等）、`tests/view-syntax.test.ts`（级联重排 / 守卫升级与降级 / 空文档种子 / 勾选态）、`tests/md-roundtrip.test.ts`（`mdHeadingStart` 记录与 `##` 文件的新节点 / 三档种子正文）。
+
+- [K169] **拖拽落点决定行语法：标题挂到 `-` 下自动整支降级为列表（2026-11-08 用户裁决）**：
+  ① **需求 / 裁决**：K168 ⑤ 的「只升不降」把「标题拖到列表父下」判成 `downgrade` 并 `BACK` 撤回；实机复现为「七级拖到标题组可以 `- → #`，反过来 `# → -` 做不到」，且提示要求改用整篇右键级联。用户在两个方案里选择**放开守卫**，明确接受「丢掉大纲条目与 `[[#标题]]` 锚点」的代价（插件不补偿、不扫全库）。**2026-11-09 补充**：不再静默——降级时提示「N 个标题失去锚点，`[[#标题]]` 将失效」，见 K178（仍不阻止、不合并）。
+  ② **实现**：`md-heading-normalize.normalizeSiblingSyntax` 把旧 `parentIsListLike` 拆成 `parentIsList`（`mdType === 'list'`）与 `parentIsPlain`。前者对每个 heading 子调用 `convertBranchToList` 整支降级（只改 `mdType` / `mdMarker`、删 `mdLevel`，`text` / `mdRaw` 一字不动、不进撤销栈），并 `continue` **不设 `lastHeadingLevel`** ⇒ 同组后面的列表兄弟不会被规则 1（排在标题之后）误升成标题；降级后的子树仍压栈做幂等复查。后者仍 `blocked 'downgrade'` 让 `view-syntax.runSyntaxGuard` 执行 `BACK`——段落行不承载子级，写成 `-` 也会挂到 `contentParent`，降级救不了父子关系。
+  ③ **反馈**：归一结果新增 `firstDowngraded`；i18n 双语新增 `syntax.guardDowngraded`（中「已按该层语法把「X」改为无序列表（Ctrl+Z 可撤销）」），提示优先级 `firstDowngraded` > `firstDemoted`（6 级封顶）> `firstUpgraded`；`syntax.guardBlockedDowngrade` 文案改为「段落之下无法保留标题…」。Notice 只说结果与可撤销，**不承诺锚点**。
+  ④ **两类降级并存，勿合并文案**：`firstDemoted` 是「父级 6 级标题 ⇒ 第 7 层没有标题语法」的结构性降级（K168 ⑤），本条是「落点本来就是列表」的语法归一；二者共用 `convertBranchToList`，但原因不同，各自有专有提示。
+  ⑤ **边界**：加载期天然无动作（解析器不会产出「列表父 + 标题子」）；**Ctrl+Z（`BACK`）实机把结构与 md 字段一起复原**——`### 另支三级` 回到 `## 另支二级` 下、正文逐字恢复，故提示里的「可撤销」指整次拖拽含语法换算；`suppress` 闩锁仍只服务仍会撤回的 `BACK` 路径（回归改用「升级被阻挡」造撤回）；锚点丢失不可逆（不撤销则已写盘）。
+  ⑥ **回归**：`tests/md-heading-syntax.test.ts`（列表父整支降级 + 同组列表兄弟不误升 + 段落父仍撤回 + 随机树往返保形）、`tests/view-syntax.test.ts`（不 `BACK` / 排保存 / 专有提示 / 段落父撤回 / `suppress` 闩锁）、`tests/view-clipboard.test.ts`（粘贴插入前换算不受影响）。
+
+- [K170] **层级语法切换的数据保真：段落随列表降级、原 marker 与有序编号不被清洗（2026-11-08 漏洞修复）**：
+  ① **三个实机确认的漏洞**：a) `plain` 段落写成无前缀行，整篇转列表（或守卫降级）后重开掉层，紧跟其后的兄弟也被提升到根级（实测：段落第 4 层 → 第 1 层，`乙支` 从 `甲级` 子节点 → 根级）；b) 转标题 `delete mdMarker`，`*` / `+` 往返后退化成 `-`；c) 有序列表编号前缀不在 `mdRaw` 里，序列化按兄弟序号重算 ⇒ 手写 `5.` 被改成 `2.`（实测 `1./5.` → `1./2.`）。
+  ② **修法**：`convertBranchToList` 同时处理 `plain`（`mdType='list'` + 补 `-`，`text` / `mdRaw` 不动）；`planDocumentSyntax('list')` 对 `plain` 也调用它；守卫的 `parentIsList` 分支同样处理 `plain` 子。`convertBranchToHeadings` / `planDocumentSyntax` 转标题时**保留 `mdMarker`**（标题行不写，转回列表恢复）。`MdNodeMeta` 新增 `mdOrderedNumber`（解析 `5.` → 5：`md-outline-lines` 记录、`md-outline.attachList` 落 data），序列化优先用它、新建项回落前一项 + 1。
+  ③ **边界**：`mdMarker` 只在**同一会话**内可恢复——转标题并写盘后文件里没有 marker（标题行不承载），重开再转列表只能补 `-`；`mdOrderedNumber` 是逐节点数据，写盘后重开仍保留。段落转列表项会改变源码形态（无前缀段落 → `- ` 列表项），这是「列表父链下唯一能表达层级的写法」。
+  ④ **回归**：`tests/md-heading-syntax.test.ts`（段落降级 / `*` 往返 / 整篇转列表的段落保形）、`tests/md-roundtrip.test.ts`（有序编号保留 + 往返稳定）、`tests/view-syntax.test.ts`（守卫降级含段落子）。
+
+- [K171] **「层级语法」的可达性边界：不修的防御分支与已接受取舍（2026-11-08 审核沉淀）**：
+  ① **判定标准**（用户能否造出该状态）：同时满足三条才算「做不出」——解析器不产出该树形态、UI 没有产生入口（命令 / 右键 / 拖拽 / 粘贴 / 设置）、守卫或插入前换算会在写盘前拦下。手写 Markdown 也属于用户操作，能手写出来的不算不可达。
+  ② **不修的防御分支（生产不可达）**：a) `planDocumentSyntax('list')` 在 `converted === 0` 时仍删除副本的 `mdHeadingStart`——调用方传深拷贝且提前返回、不回灌；b) `normalizeSiblingSyntax` 的 `parentIsPlain`（段落父下挂标题）——解析器不产出、拖拽会被守卫撤回；c) 「列表父 + 标题子」的树——手写 `#` 会解析到外层，拖拽被 K169 降级；d) 标题节点带 `mdMarker='ordered'`——有序项被 `headingBlockReason` 挡住、永不升标题，转标题保留 marker 只对 `*` / `+` / `-` 生效（K170）；e) `mdOrderedNumber` 出现在非有序项 / 新建节点——字段只在解析 `\d+\.` 时写入；f) `convertBranchToList` 遇到 plain 带 `*` / `+` 的脏 marker——没有第二个来源；g) 被阻挡层的子节点不被遍历——列表层下不存在标题。这些分支保留作非法内存态的 fail-safe，删掉反而让测试 / 未来改动更容易写出坏数据。
+  ③ **已接受、不修的行为**：跨会话 `*` / `+` 退化成 `-`（标题行不承载 marker，语义等价）；跳级标题按深度归一（K168 的既定语义）；`list` 档空文档根级新建写 `#`（需先删光所有节点，极偏）；裸 `-` 按 CommonMark 落段落（不是空列表项）。
+  ④ **已修（2026-11-09，K179）**：给 `plain` 段落手动加子节点后保存，子级会掉一层（plain 行无缩进、子帧 `listIndent` 不 +1）。修法不再要求先裁决「段落是否允许有子级」——序列化见到「段落父 + 子节点」时按列表项输出（`- 段` + 缩进 1 单位），内容与层级都保住，只是该段语法变为列表项。
+  ⑤ **回归**：`tests/md-heading-syntax.test.ts`（段落父 blocked 用例已标注「生产不可达，仅兜底」）、`tests/view-syntax.test.ts`（同）、K169 / K170 的回归套件。
+
+- [K172] **「跟随兄弟风格」按位置判定：列表项只能跟在该层列表之后（2026-11-08 未提交区审核修复）**：
+  ① **缺陷**：`md-serialize` 的「未标注（新建）节点跟随列表」原本只看**整层**是否有列表型兄弟。混排组（`- 甲` + `# 乙`，合法形态是列表在前、标题在后，见 K168）里新建节点因此写出 `- 新`——它排在标题之后，重解析时被读成**乙 的子节点**（实测 `- 甲` + `# 乙` + 新建 → 写出 `- 甲` / `# 乙` / `- 新`，往返只剩 2 个节点），一次保存就静默改结构。② **判据**：看**紧邻的前一个兄弟**——它是列表型则写列表项，否则写标题；**层首仍看整层**（那里写标题会让后续列表项全成它的子节点）。合法组里标题恒在末尾，故该判据与「前面没有标题」等价。③ **守卫同步收窄**（`md-heading-normalize`）：`normalizeSiblingSyntax` 不再换算**空的**新建节点（无 `mdType` / `mdMarker` 且无子节点）——序列化本就按上下文写标题（K98），换算只是把现算结果固化，并在每次在标题上按 Enter 新建同级节点时弹一条「已改为标题」（屏上无任何变化）；**带子节点时不跳过**，否则子标题失去相对层级、重开逃到外层。④ **有序编号边界**：`0.` 是合法起始编号（判据由 `> 0` 改为**非负**，否则静默改成 `1.`）；超出 `Number.MAX_SAFE_INTEGER` 的编号（≥16 位，手写才会出现）**不保真**——写回会变成 `1e+21.`，整行退化成段落，故解析侧只收安全整数、交回序列化按「前一项 + 1」现算。⑤ **回归**：`tests/md-roundtrip.test.ts`（混排组新建 / 纯列表新建 / `0.` / 超长编号）、`tests/md-heading-syntax.test.ts`（空新建节点不动、带子节点照常换算）。⑥ **同类加固**：`domain/mindmap-property` 的三张以用户数据为键的查表改为**无原型**（`Object.create(null)`）——对象字面量命中原型方法会让 `normalizeLayoutId('toString')` 返回函数、`Mindmap Layout: constructor` 读出「合法布局」，与「未知值一律 null（fail-closed）」的契约相反（回归：`tests/md-frontmatter-trigger.test.ts`）。⑦ **迁移不覆盖认不出的布局值**：`legacyMigrationPlanOf`（原 `legacyLayoutValueOf`，见 K187）在「布局键存在但值不是新写法」时只把旧写法（`LogicalStructure`）迁成 kebab，认不出的值原样留着（读侧 fail-closed 回落默认布局）——此前它把这整类文件当成旧契约、拿「思维导图」覆盖，实机表现为 `Mindmap Layout: toString` 在启动 1.5s 后被静默改成 `mindmap`（回归：`tests/legacy-mindmap-migration.test.ts`）。
+
+- [K174] **标题节点的配色指令必须独立成行（2026-11-09 用户裁决「改独立行」）**：
+  ① **缺陷**：`%%#hex%%` 原先一律追加到节点末行行尾；标题节点因此变成
+  `# 支付 %%#89cff0%%`，Obsidian 的 heading 缓存把注释算进标题文本 ⇒ `[[#支付]]`
+  解析失败、`^block-id` 同废。这与联系指令改独立行的理由**逐字相同**（行内注释破坏
+  heading 缓存），只是配色侧当时接受了代价。
+  ② **写侧**：`setColorDirective(raw, color, { ownLine: true })` 把指令放到该节点
+  **最后一行之后**（已有指令一并迁到独立行；清除时整行删）；`features/view-node-color`
+  按 `data.mdType === 'heading'` 传入。列表 / 段落仍行内——那里没有 heading 缓存，
+  多写一行只是 diff 噪音。
+  ③ **解析侧**（必须成对改，否则独立行会变成一个新节点）：`domain/color.isColorDirectiveLine`
+  认整行形态；`md-outline.parseMdOutline` 在「列表续行合并」**之前**把该行归属
+  上一个节点（只写 `mdRaw`，**不进** `mdDirectiveTail`——联系 / 概要写回会整体替换
+  那个块，颜色段会被抹掉）。标题续行缩进为 0、列表续行缩进为 1 单位，两种落点都稳定。
+  ④ **序列化兜底**：`md-serialize` 在**写成标题**时把行尾指令上提为独立行
+  （`hoistColorDirective`）——覆盖「新建节点先上色、之后才写成标题」与存量行内形态；
+  第二次往返即不动点。同批修正：围栏内容行（`classifyLines.fenced`）不再参与指令行
+  归属，代码块里的 `%%rel:…%%` / `%%#hex%%` 不会被抽走。
+  ⑤ **边界**：行内代码 / 数学里的同形态仍不识别（保护区扫描不变）；手动写的行尾形态
+  照读（`colorDirectiveOf` 只看第一处合法指令），下次改色时迁移。
+  回归：`tests/color-directive.test.ts`（整行判定 / 拆分 / ownLine 写入与清除）、
+  `tests/md-roundtrip.test.ts`（标题 / 列表 / 围栏 / 旧行内形态）、
+  `tests/view-context-menu.test.ts`（标题节点写独立行）。
+
+- [K175] **作用范围切回「含子节点」时询问是否清理旧 `%%none%%`（2026-11-09 用户裁决 B）**：
+  ① **问题**：`nodeColorScope` 只决定**下一次上色**怎么写；正文里已有的 `%%none%%`
+  不会随设置回退消失，切回「含子节点」后子节点仍不继承（用户观感「设置没生效」）。
+  ② **为什么不能自动清**：哨兵是**正文内容**（换库 / 换机 / 发给别人都生效），其中既有
+  「仅本节点」上色的产物，也有用户显式点「默认」写下的；自动删会让这些节点重新继承
+  上层颜色。故只在**设置面板从 `node` 切到 `subtree`** 时**问一次**，由用户决定。
+  ③ **范围**：只处理**当前打开**的导图（`main.offerColorSentinelCleanup` 遍历 leaf）——
+  改写要走活引擎的原文通道（`applyRawNodeContents`），关闭的文件没有可写的节点实例。
+  弹窗合并所有视图，报「N 个文件 / M 处」；确认后每个视图**重新扫描**（弹窗期间别的
+  视图可能已改文件），并核对 `view.file.path` 仍是扫描时那个（切走了就跳过）。
+  ④ **落地**：`features/view-node-color` 的 `collectColorSentinelSessions` /
+  `applyColorSentinelCleanup` / `offerColorSentinelCleanup`；判定「哪行是自身哨兵」复用
+  `colorDirectiveOf` + `nodeInlineSource`，删除复用 `setColorDirective(raw, null)`（整行
+  形态连带换行）。整行只剩指令的节点**不清**（会清空内容）；每棵树一次批量写回
+  （`afterCommit:false`，一条撤销）；随后 `scheduleSave`（2s 防抖）。
+  ⑤ **不询**：反方向（切到 `node`）不询——旧哨兵正是该档的机制；同值与脏值不询
+  （`settings.shouldOfferColorScopeCleanup` 是唯一判据）。**关闭的文件不清理**，也不在
+  打开时补问（设置变更只在用户操作的那一刻发生）。
+  ⑥ **回归**：`tests/settings.test.ts`（触发面 2 例）、`tests/view-context-menu.test.ts`
+  （收集 / 一次批量落地 / 切文件守卫 3 例）。
+
+- [K177]【**已被 K180 / K182 取代**】**同文件多视图：覆盖别处修改要提示，但仍不合并（2026-11-09 用户裁决 B）**——同日升级为 Level B：同一文件共享一份文档会话（一棵权威树 + 一条撤销线 + 一条保存管线），外部写入改为「放弃写盘 → 重载 → 草稿留作一条撤销」，不再有「覆盖提示 / 后写者胜」。以下为实现与依据存档。
+  ① **问题**：`onExternalModify` 在「本视图有未保存编辑」时直接 return，关闭时整篇写盘；
+  同文件双开（或外部程序改文件）时，后写者静默覆盖前者的正文，用户关掉标签才知道。
+  ② **做法**：`SavePipeline` 记 `lastSeenDiskBody`（加载时 + 每次写盘成功后更新），写盘时
+  把本次读到的磁盘正文与它比：不同 ⇒ 本轮确会覆盖别处修改 ⇒ 写完回调 `onSaveConflict`
+  （每轮一次），视图弹 Notice「已保存，但覆盖了另一处对本文件的修改」。
+  ③ **不比 `lastWrittenBody`**：那张表在「撤销回加载态」时存序列化结果、磁盘是原样正文
+  （规范化差异），拿它比会恒判冲突；`lastSeenDiskBody` 存的是原始磁盘正文，同源。
+  ④ **只比正文**：只改文件头（属性面板 / 切布局）不算覆盖；没有加载基线（没见过磁盘正文）
+  时不猜，避免误报。
+  ⑤ **不改变写盘语义**：仍然后写者胜，不弹阻塞确认、不做合并、不写冲突副本（这些留作
+  后续可选；关闭路径不能可靠 await UI）。
+  ⑥ **回归**：`tests/save-pipeline.test.ts`（覆盖告警 / 只改文件头不报 / 无基线不误报）。
+
+- [K178] **降级提示要报「失去锚点的标题总数」（2026-11-09）**：
+  ① **问题**：列表父 / 超 6 级的降级会静默丢标题身份，原提示只说「首个节点已改为列表」，
+  用户无法判断有多少 `[[#标题]]` 受影响。
+  ② **做法**：`SyntaxNormalizeResult.demotedHeadings` 在降级**前**数整支标题数；视图在
+  `> 0` 时改用 `syntax.guardDowngradedAnchors`（含 `{count}` 与首个名字），并明确
+  「指向这些标题的 `[[#标题]]` 链接将失效，Ctrl+Z 可撤销」。
+  ③ **边界**：不扫全库引用（异步全库扫描不能放在拖拽热路径）；只报**分支内**标题数，
+  用户据此自行判断。
+  ④ **回归**：`tests/md-heading-syntax.test.ts`（demotedHeadings 计数）、
+  `tests/view-syntax.test.ts`（文案与计数）。
+
+- [K179] **段落父带子节点：序列化按列表项输出（K171④ 修复，2026-11-09）**：
+  ① **问题**：`plain` 行不带缩进，子帧 `listIndent` 不 +1 ⇒ 给段落手动加子节点后保存，
+  子级掉一层（K171④「用户可达，未修」）。
+  ② **做法**：`md-serialize` 的 plain 分支检测 `children.length > 0`，按列表项输出
+  （`- 段` + 子级缩进 1 单位），子帧 `listIndent + 1`。内容与层级都保住，只是这一段
+  的语法从段落变成列表项；正常解析产物里段落仍是叶子。
+  ③ **为什么不在入口拦**：拖拽 / 粘贴 / Enter 三条入口都要拦，且拦截提示更烦；
+  序列化层是唯一出口，改一处即可幂等收敛。
+  ④ **回归**：`tests/md-roundtrip.test.ts`（段落带子节点 → `- 段` + `  - 子`，重解析层级保持）。
+
+- [K195] **视图状态只写变化：同值不落盘 + 打开时的默认视口不落盘（2026-11-11 实机）**：
+  ① **问题**（实机账本：库内 131 篇 md / 96 张导图，`viewState` 39 条、data.json 26 KB）：39 条里
+  23 条 `state.scale === 1`、且无任何按文件偏好——即「打开后没动过视口就关掉」也会整表重写
+  data.json（`persistViewport` → `setView` → `patch` 无条件 `schedulePersist`；写盘器每次都
+  `loadData` + `saveData` 整份文件）。默认视口是当场按容器与内容算出来的，落盘只等于把当时的
+  窗口尺寸固化下来，窗口尺寸一变反而更不准。
+  ② **做法**：`ViewStateStore.patch` 先按序列化结果比较（`isSamePathState`，逐字相同即返回、
+  不排写盘）；`EngineController.persistViewport` 在「未恢复过保存视口（`!restoredSaved`）且
+  当前签名 == 打开时自动设置的 `viewport.defaultSignature`」时直接不写。签名口径复用
+  `viewStateSignature`（与恢复时的幂等短路同源），不另立判据。
+  ③ **边界**：`themeStyle` / `lineStyle` **不**按「等于全局默认」省略——「显式切过」与「从没
+  切过」语义不同（前者保持原值、后者跟随未来的默认变更，见决策表「边框」行）；`view.transform`
+  虽与 `state` 数值重复也**不删**（vendor `setTransformData` 把它直接喂给 `draw.transform`，
+  省 9 KB 要换一处防腐层逻辑并需可见窗口实测）；保存视口被判不可见而回退居中时同样不写，
+  保留用户旧位置（下次打开仍重新判定可见性）。
+  ④ **顺序契约（实机首轮即踩中）**：关闭路径原先在 `invalidateInit()` **之后**才调
+  `persistViewport()`，而 `invalidateInit()` / `destroyInstance()` 都会 `viewport.reset()`
+  清掉 `defaultSignature` / `restoredSaved` ⇒ 跳过判据恒不成立、纯浏览照样写盘（实机：打开
+  `示例/测试/双链目标.md` 不动就关，data.json 立刻长出 1 条 650 B）。修法：`onUnloadFile` /
+  `onClose` 把 `persistViewport()` 提到 `invalidateInit()` **之前**（`backToMarkdown` 本就
+  先落视口），并在 `persistViewport` / `invalidateInit` 两处文件头写明这条时机契约。
+  **单测直接调 `persistViewport()` 抓不到它**——测试必须复现真实关闭顺序。
+  ⑤ **跨视图串视口（实机第二轮抓到，已修）**：`restoreOrFitViewport` 过去每次被
+  「首帧重算窗口」调用都重新读一次 store。于是同一文件两个视图并排时，关掉**平移过的那侧**
+  （它把视口写进 store）会让**另一侧**在紧接着的布局落地里把这份保存视口捡走——实测
+  `engineUnchanged=true` 但 state 被改成对方的值（`restoredSaved` 翻成 true）。修法：store 只在
+  本会话**第一次**应用视口时读一次——`defaultSignature` 非空即表示已进入「默认视口模式」，此后
+  每次布局落地只重算默认视口。回归：`tests/engine-controller.test.ts`「重算窗口不重读 store」
+  （反向验证过：去掉修复该用例即红）。
+  ⑥ **两个裁决（2026-11-11，用户授权最优决策）**：① **不记忆「没动过的默认视口」**——下次打开
+  按当前容器重算（通常更准）；若存的那个视口因窗口变化已出界，仍有既有兜底：`isContentVisibleInCanvas`
+  判不可见 ⇒ 回退居中（实测「存 999999 → 打开回退居中 → 关闭不覆盖」）。
+  ② **历史默认视口条目不清理**——判定「某条等价于默认」必须为每张图重建引擎算一次，成本与风险
+  都不值；误删等于丢用户位置。只停止新增，剩下的条目（实测 39 条 ≈ 19 KB）由「打开时可见性
+  兜底」消化。
+  ⑦ **回归**：`tests/view-state.test.ts`（同值不写 / 关两次只写一次 / 值真变照写 / 逐条判据）、
+  `tests/engine-controller.test.ts`（默认视口不写盘、真实关闭顺序 persist→invalidate、
+  `invalidateInit` 会清空判据、重算窗口不重读 store、用户平移后照写）。
+
+- [K196] **标注（callout）/ 引用块的显示层落地：块级顺序、变量名偏差与「不借官方类」（2026-11-11）**：
+  ① **问题**：`>` 行在解析层是 `plain` 行（整块并进一个多行文本节点），于是 `>`、`[!info]`、`+/-`
+  全部**字面外露**，而标题与正文里的 `**粗体**` / 双链 / 表格 / 代码块又已正常渲染——用户看到的是
+  「渲染坏了一半」而不是「不支持」。官方口径三处取证：帮助页（语法 / 13 类型与别名 / 折叠 / 未登记
+  回落 `note` / 大小写不敏感）、宿主解析正则 `\[!([^\]]+)\]([+\-]?)(?:\s|$)`（`|` 之后是 **metadata**
+  而非别名；类型归一 `trim → 小写 → 空白转 -`；折叠标记后必须紧跟空白或行尾）、宿主 `app.css`
+  （`.callout[data-callout=…]` 只做「`--callout-color` 指到 `--callout-<type>`、`--callout-icon` 指到
+  图标 id」；颜色消费是 `color-mix(in oklch, var(--callout-color) 10%, transparent)`）。
+  ② **块级顺序即契约**：引用 → 围栏 → 表格 → 行内。`scanFenceBlocks` 用的 fence 分支**非行首锚定**，
+  先切围栏会把「引用块内的围栏」（`> ```js`）从中间抽走 ⇒ 引用块被切成两半、标注只剩首行；反过来
+  围栏 / 块级数学 / `%%注释%%` 里的 `> ` 行由 `protectedRanges` 挡住（与表格同一份口径）。已知边界：
+  未闭合围栏不被 `MARKUP_RE` 保护，其中的 `> ` 行会被当引用行（未闭合围栏本就是非法输入）。
+  **同层头部行 = 新块起点（2026-11-11 实机踩到，当日修复）**：解析层把段落之间的空行归一掉
+  （白名单 #2），于是「两个标注之间隔一个空行」到达渲染层时是**一整段连续的 `>` 行**——不在第二个
+  `[!type]` 处断块，它就会变成前一个标注正文里的一行字面文本（实机：`[!abstract]` / `[!failure]` /
+  `[!danger]` / `[!faq]-` 四个全部渲染成正文文字，而单看单测全绿——**单测喂的 raw 保留了空行**，
+  与解析层真实产出的形态不一致，这是本批唯一一个"单测同构但实机不同构"的缺口）。判据只认**本层
+  剥完前缀后**才成立的头部：嵌套 `> > [!todo]` 剥一层后是 `> [!todo]`（以 `>` 开头）⇒ 不进断块分支，
+  仍进正文递归。
+  ③ **变量名与类型 id 不同名（四处，照 id 拼会静默退兜底色）**：`note`→`--callout-default`、
+  `abstract`→`--callout-summary`、`failure`→`--callout-fail`、`danger`→`--callout-error`。id 是用户写在
+  文件里的语义名、变量名是宿主实现细节，**两者本就不是同一件事**，故在 `domain/callout` 的类型元数据里
+  显式列 `cssVar`，而不是改 id 去迁就变量。颜色一律 `var(--callout-<变量>, 兜底色)` 写成链：`var()`
+  不进 `outerHTML`（换主题即时变色、不污染测量缓存键，K114），导出侧由 `CSS_VARS_TO_EXPORT` 注入真值
+  （`getComputedStyle` 对自定义属性已完成 `var()` 替换，故只需注入 13 个 `--callout-*`，不必列 `--color-*`）。
+  ④ **刻意不加官方 `callout` 类**：类名会让主题的 `.callout > *` / `mix-blend-mode` 规则命中节点内容，
+  而导出 SVG 里那段 CSS 并不存在（屏上与导出必须同一份样式来源，K53 ⑤）⇒ 布局全内联、只借**变量**。
+  代价：**自定义类型（CSS 片段定义）按 `note` 取色**，与官方「未登记回落 note」同一兜底。图标同理取宿主
+  `getIcon`（官方帮助自己就警告 Lucide 会更新），缺失即省略图标、保留标题与类型色。
+  ⑤ **折叠只作标记**：折叠态是视图态、不进文件，而导图节点每次重建都会丢 ⇒ 不做交互，`-` 只显示合拢
+  箭头、正文**恒展开**（导图节点是概要面，隐藏正文会看起来像内容丢失）。
+  **能力边界（实机 2026-11-11 逐项核对，与 plain 节点同源、非标注专有）**：正文里的**列表 / 标题**
+  按字面行显示（`li` 数为 0，`- 甲` 就是那两个字符——插件全仓不渲染 `<ul>` / `<h*>`，节点文本本就
+  以行呈现，自绘接管只覆盖行内语义 + 表格 / 代码块 / 数学 / mermaid / 引用）；嵌套至多 2 层；
+  表格单元格里的 `>` 行不成盒（单元格是单行文本）。要"列表成真块"是**另一件事**（plain 节点整体
+  提升为块级渲染），不应按标注缺陷处理。
+  ⑥ **正文递归**：`buildInlineSegments(body)` 再跑一遍同一套段管线（段缓存按内层原文寻址），故标注内的
+  表格 / 代码块 / mermaid / 数学 / 链接自动成立，**不另写块级解析**；嵌套上限 `MAX_QUOTE_DEPTH = 2`，
+  更深的层按字面（原文含 `>` 前缀）铺开、内容不丢。截断走与表格同款的**原子段**（`isAtomicBlock`）：
+  盒子被切一半比整块不显示更糟。
+  ⑦ **回归**：`tests/callout.test.ts`（头部解析 / 别名归一 / 原型键加固 / 变量名偏差 / 前缀剥离）、
+  `tests/node-inline-content.test.ts` 的「引用块 / 标注段」组（切分顺序、围栏与注释的保护、换行归属
+  不变量、**空行分隔的两个标注各自成盒**、嵌套头部不算块边界、DOM 结构、图标注入、折叠标记、嵌套
+  深度、着色节点派生边框、单元格按字面、原子截断）、`npm run verify:visual` 的 `callout` 场景（盒子
+  入 foreignObject × 类型色内联 × 正文递归 × 引用左竖线；无头垫片的 `getIcon` 返回 null ⇒ 同时锁住
+  「图标缺失仍成立」的降级路径）。
+  ⑧ **实机核对（2026-11-11，Obsidian 1.15.0）**：12 个标注全成盒；标题色与宿主
+  `--callout-{tip,summary,default,fail,…}` 的计算值逐一相等（四处命名偏差由此确认）；图标 12/12
+  由宿主 `getIcon` 给出；`+`/`-` 折叠标记分别显示 `▾`/`▸`；嵌套两层的内层落在外层内容区内；普通
+  引用左竖线 `2px` + accent 色；标注内的表格 / 代码块 / 数学 / 链接 / 标签各按同一套管线渲染；
+  打开期间文件未被改写（mtime 不变）。`dev:errors` 干净。
+  ⑨ **重构（2026-11-11，同日）：把「渲染期才知道的事」挪到「解析期只算一次」**——
+  a) **标题定稿**：`CalloutHeader.title` 恒为**展示标题**（显式标题或类型标识 Title Case），
+  解析期算完进段序列缓存；原先渲染期调 `calloutTitleOf` 每次都跑 split/filter/map/join
+  四趟（节点重建是热点路径）。b) **元数据单表**：`calloutVisualOf(type)` 在模块初始化时
+  派生一次（颜色 `var()` 链 + 图标 id），**同一类型返回同一对象**（单测锁这条），取代原
+  先"每次渲染现拼 `var()` 字符串"的 `calloutColorValue` / `calloutIconId` 两个访问器。
+  c) **廉价谓词**：`isCalloutHeaderLine` 与 `parseCalloutHeader` 同一条正则、同一套"类型段
+  非空"规则，但**不产出对象**——块扫描的续行循环按行调用它，原来那里调完整解析（归一 3 次
+  字符串操作 + 查表 + Title Case + 造对象）纯属白付；两处判据必须同口径（单测正反例成对锁）。
+  d) **单趟前缀剥离**：`stripQuotePrefix` 改 `exec` + `slice`（原 `test` + `replace` 把锚定
+  正则跑两遍）。e) **两级扫描快路径**：`scanQuoteBlocks` 先 `includes('>')`、再
+  `QUOTE_LINE_START_RE`（一行以 `>` 起首）——后者省掉 `protectedRanges`（整段跑一遍
+  `MARKUP_RE`），而"含 `>` 但无一行以 `>` 起首"的节点（`a > b`、`<div>`、箭头）很常见。
+  f) **DOM 结构**：`buildQuoteElement` 只做**分派**，外观拆成 `buildCalloutShell` /
+  `buildPlainQuoteShell`（各自一个职责），正文容器按变体取表（`QUOTE_CONTENT_VARIANTS`），
+  标注的取色 / 取图标**一次查表**后传下去——原来同一个 `canonical` 在盒与标题行各查一次、
+  且底色与标题色靠字符串形参传递。
+
 ### 架构边界与单一来源
 
 - [K28] URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；**URL 解码一律走 `domain/url.tryDecodeUri`**（2026-10-11 收口：失败返回 `null`，调用方按场景显式选「回落原样 `?? raw`」或「跳过该候选/该行」——此前这条口径在 `domain/url` ×2、`links/file-lookup` ×1、`links/links-resolve` ×3、`links/links-tree` ×1 各写一份 try/catch，`%` 是真实文件名里的常见字符而非常态外输入）；防抖/节流/串行队列/有界并发映射一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段；批量异步任务勿用无界 Promise.all，用 `mapWithConcurrency`）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
@@ -335,7 +573,112 @@
 - [K50] **模块化设计是硬约束（不是可选项）**：写新逻辑前先回答「它属于哪个已有模块」——答不上来才允许新建文件，且新文件必须只承载一个可命名的关注点。四条强制边界：① **单一职责**——禁止把新职责「顺带」追加进已承担职责的文件，新职责要么进对应模块、要么成独立文件；② **分层单向**——依赖方向恒为 `domain → services → features → 根基础设施`（后者可依赖前者，反向禁止；domain 零依赖由 lint 机械强制，见 K28）；③ **收口唯一**——跨模块能力只允许一份实现（收口点清单见 K25 / K28 / K29），复用优先，严禁造第二份；④ **窄接口**——模块间以最窄契约交互（K31 / K32 的 `ViewDomContext` / `ViewEngineContext` 为示范），不得把整块装配面传给只需要一角的模块。超限文件的拆分判定见「文件规模与豁免」，新增特性落层自检见「新增功能检查清单」第 1 步。
 - [K51] **模块组与依赖矩阵（机械强制）**：src 按模块组组织（组成员见「代码结构」），依赖只能是矩阵许可集的子集——`domain`（L0 零依赖）← `core`（仅 domain）← `links`（core/domain）← `markdown`（core/links/domain）、`media`（core/links/domain）、`engine`（core/domain）、`platform`（core/links/markdown/domain）、`ui`（core/links/media/domain）、`services`（全部 L1 + domain）、`features`（全部下层）。**组合根（`main.ts`/`commands.ts`/`settings.ts`/`creation.ts`）只能被组合根本身引用**——下层引入口即违约；唯一豁免是**类型引用**（视图上下文契约需要 settings 的类型，编译期擦除无运行时耦合）。强制手段：**矩阵唯一定义在 `scripts/module-boundaries.mjs`**（勿在别处再抄一份——两份矩阵必然漂移），由两处共同消费：① `eslint.config.mts` 为每组生成 zone 块（`@typescript-eslint/no-restricted-imports` + `allowTypeImports`），说明符用**任意深度正则**匹配（`^\.\./(?:\.\./)*<组>(?:/|$)`）——`group: ['../x']` 只认字面量，某组新增子目录后 `../../x` 会静默绕过；② `tests/module-boundaries.test.ts` 用 TS AST 抽 import（含动态 `import()`）并按**解析后的真实路径**判层，补上 lint 结构上表达不了的三类：**组内成环**（同组 `./x` 相互引用，lint 只看跨组说明符）、**深层路径**、**`src/` 新增一级目录未登记**（无块覆盖它时 lint 全绿）。组内相对引用（`./x`）不受矩阵限制，但组内不得成环；新增文件先定组再导入。实测拦截力：探针文件分别触发「`core → features`（一层）」「`core/sub → features`（深层）」「`features` 值导入 `../settings`」与「`features` 内两文件互引」四条红灯，而 `import type ... from '../settings'` 按豁免放行。
 
-- [K166] **「内容是否已落盘」只有一个判据：本轮序列化 vs 加载基线（2026-11-06）**：`services/document-service.ts` 的 `SavePipeline.isAtLoadedState` 比较 `buildBody(活快照)` 与 `markLoaded` 记下的 `loadedBody`（**只比正文**：文件头恒取磁盘当前值、管线从不改它），三个消费面共用——① 纯浏览守卫（相同 ⇒ 不写盘）；② `checkDirty`（autoSave **关闭**时同样防抖的**只判定**轮次：不写盘、不动任何基线，结论经 `onDirty(dirty, file)` 交给状态栏）；③ 撤销回加载态时必须落盘（`wroteSinceLoad` 为真时写回 `loadedRawBody`）。**`schedule()` 因此返回 `ScheduleOutcome` 而不是 boolean**：`scheduled`（报「保存中」）/ `suspended`（上次写盘失败 ⇒ 报「未保存」）/ `off`（不猜，由 `onDirty` 定；否则「打开一张没改过的图」会当场误报）/ `noFile`。**状态栏是插件级共享元素**：只由**活动视图**写入（`setSaveState` 取 `getActiveViewOfType`），换文件复位 `idle`，切语言按当前状态重推。回归：`tests/save-pipeline.test.ts`（`onSaved` 6 例 + `onDirty` 5 例 + 去向 1 例）、`tests/view-status.test.ts`。
+- [K166] **「内容是否已落盘」只有一个判据：本轮序列化 vs 加载基线（2026-11-06；2026-11-07 随「照搬 `TextFileView`」收窄）**：`services/document-service.ts` 的 `SavePipeline.isAtLoadedState` 比较 `buildBody(活快照)` 与 `markLoaded` 记下的 `loadedBody`（**只比正文**：文件头恒取磁盘当前值、管线从不改它），两个消费面共用——① 纯浏览守卫（相同且本会话没写过盘 ⇒ 不写盘）；② 撤销回加载态时必须落盘（`wroteSinceLoad` 为真时写回 `loadedRawBody`）。**`schedule()` 因此返回 `ScheduleOutcome` 而不是 boolean**：`scheduled`（报「保存中」）/ `noFile`（加载中 / 已卸载，什么都不报）。曾经的 `off`（autoSave 关闭时的只判定轮次 `checkDirty`）与 `suspended`（连续失败挂起）**已随 P1b 与自动保存开关一起删除**（2026-11-07）：只有自动保存一种节奏，失败由 `onSaveError` 表达（报「未保存」，常驻到下一次成功）。**状态栏是插件级共享元素**：只由**活动视图**写入（`setSaveState` 取 `getActiveViewOfType`），换文件复位 `idle`，切语言按当前状态重推。回归：`tests/save-pipeline.test.ts`（`onSaved` 6 例 + 去向 1 例）、`tests/view-status.test.ts`。
+
+- [K173] **节点内 mermaid 渲染：内嵌 Pele，不走宿主 `loadMermaid()`（2026-11-09，实机取证）**：
+  ① **依据**：Obsidian 1.15 起阅读视图的 mermaid 由 **Pele** 渲染（`Obsidian/Credits.md` 记 1.12.0；`obsidian.asar` 内 `/lib/pele.min.js` 699 KB），`loadMermaid()` 返回的是 Pele 的**mermaid 兼容层**（`{initialize,render,parse,mermaidAPI}`），**不是 mermaid.js**。但兼容层 `render` 是 `async`（源含 `$$` 时还要等 MathJax），`window.pele` 又是**按窗口懒加载**（受控重载后无 mermaid 视图时 `typeof window.pele === 'undefined'`；popout 新窗口里同样 undefined）——而节点内容在 `customCreateNodeContent` 里**同步**构建、引擎随即同步离屏测宽，只有 Pele 本体满足「首帧即最终尺寸」（否则要再养一套占位 → 定稿重排会话）。内嵌版还顺带解决 popout 跨窗口。
+  ② **一致性（实测）**：内嵌 `pele@1.13.0` 与宿主 1.12.0 对 **16 种图类型**（flowchart/sequence/class/state/er/mindmap/timeline/pie/gantt/journey/gitGraph/sankey/xychart/kanban/block…）输出**逐字节相同**；产物纯 SVG（无 `foreignObject`），8 ms 首帧 / 24 节点 4 ms / 800 节点 44 ms。体积：全量入口 +720 KB（gzip 269 KB）→ `main.js` ≈1.4 MB；`pele/core` + 8 类 305 KB（若将来要瘦身，只此一档有意义）。
+  ③ **边界**：`pele` 走 npm 依赖 + 精确锁版本（**不进 `vendor/`**——vendor 只存「打过补丁 + sha256 契约」的 bundle）；升级时核对宿主 `Credits.md` 的 Pele 版本，避免「阅读视图能画、节点画得不一样」。渲染收口在 `platform/mermaid.ts`（唯一 import）：`renderMermaidSvg`（内容寻址缓存，键**只含源码**）+ `renderMermaidNode`（`DOMParser('image/svg+xml')` 取根元素，**不用 innerHTML**——项目 `no-unsanitized` / `@microsoft/sdl` 双规则禁用）。容器 `div.tmm-mermaid` 必须 `pointer-events:none`（否则图吃掉拖拽/双击）。**失败即回退**：语法错误 / 未注册类型 / 源码 > `MERMAID_SOURCE_MAX_CHARS`(20000) → 普通代码块 + `createWarnOnce` 留痕。**截断豁免**：`clampSegments` 对 mermaid 段不计预算、不切段（图不能被切一半）。**颜色**走 `--pele-*`（宿主定义在 `body`）⇒ 同一份 SVG 随主题变色、主题切换不清缓存；导出由 `export-svg-postprocess` 的变量白名单补整套 `--pele-*`（不补则暗色导出回落亮色兜底）。
+  ④ **配色：只跟明暗，不跟节点色（2026-11-09 用户裁决，反转同日 P2 的「节点配色 → 图」）**：图是**内容**（颜色是画图人写的语义），节点色是**装饰**（分支标记）——同一段源码放进红色 / 蓝色 / 无色节点必须长得**完全一样**，否则「刚才改了什么」不可预期、截图与对比也不可复现。故 `buildMermaidElement` 一个 `--pele-*` 都不写，颜色全部交给 CSS 解析（主题切换零成本，产物缓存键仍只含源码）。容器另加**不透明纸面**：内联 `background: var(--pele-bg, var(--background-primary))`——必须内联（类规则不进导出克隆），否则彩色节点上图会直接压在节点填充上；「纸」随主题而非随节点，所以纸墨永远成对，不存在「白底白字」。**老版本 / 无 Pele 的宿主兜底**：`styles.css` 的 `.tmm-mermaid` 段把 `--pele-*` 映射为 `var(--mermaid-*, var(--通用变量))`——新版取值链与宿主自己的映射一致（观感零差异），老版本落到 `--background-primary` / `--text-normal` / `--text-faint` 一族，暗色主题不会得到白底图。导出白名单同步补 `--background-primary` / `--background-secondary(-alt)` / `--background-modifier-border` / `--text-faint` / `--text-error` / `--radius-s`（导出克隆里没有插件样式表，纸面靠这些值解析）。**复制源码按钮**复用代码块的 `.tmm-code-copy` + `data-code` 契约（点击委托、✓ 反馈、导出隐身全部零改动），文案单独 `mermaid.copy`；显隐规则与代码块成对写在 `styles.css`。**图内链接（P3）**：`buildMermaidElement` 只给 `a[href]` 放行命中（`pointer-events:auto` + `cursor:pointer`），点击由 `features/view-wikilink` 在引擎 `node_click` 上识别 `.tmm-mermaid a[href]` 后走 `openHyperlink`——**必须拦默认导航**（裸 `<a href>` 在 Electron 里会把整个窗口导航走），且只在 HTML 锚点通道落空时才走它（SVG `<a>` 不是 `HTMLAnchorElement`，`findAnchorInNode` 认不出）。**缩放未做**：`pele.enableZoom` 依赖独立容器与自身 UI，在 foreignObject 内与引擎手势冲突，收益也不如直接拖宽节点。
+  ⑤ **顺带修的既有缺陷（2026-11-09）**：`pushInlineText` 先用 `tokenizeInline` 切链接，**链接先于围栏被吃掉** ⇒ 围栏内含 URL / `[[双链]]` 时整块被切碎，`MARKUP_RE` 的 fence 分支再也配不上，代码块退化成字面文本（实机：mermaid 的 `click A "https://…"` 让整张图不渲染）。修法：`scanFenceBlocks` 在行内 token 化**之前**把围栏整段切出（与 `protectedRanges` 让表格绕开围栏同一条纪律），围栏内容不再经过链接/标记切分。
+  ⑥ **顺带修的第二个既有缺陷（2026-11-09，写示例导图时暴露）**：`classifyLines` 的围栏闭合判据走 `fenceMarker`（≤3 空格）的**绝对**口径，而列表项内的围栏定界符本就在第 4 列（`  - ```js`）⇒ 闭合行永远认不出、围栏状态不退出，**排在代码块之后的兄弟节点与标题整段被吞进代码内容**（实机：示例导图里代码块之后的分支全部消失；此前的示例能跑只是因为围栏位于文件末尾）。修法：围栏状态记下**定界符所在列**，闭合按「与它相差 0–3 列」判定（CommonMark 的相对口径）。回归 `tests/md-roundtrip.test.ts` 正反两条（同列可闭合 / 多缩进 4 列以上仍按内容保留）。**2026-11-12 修正两条**：① 闭合行**可以比开栏更浅**（CommonMark 只有「不超过 +3」这一个上限），`  ```js` 开在第 2 列、顶格闭合是手写文件的常见排法，此前要求 `closeIndent >= column` 会认不出闭合、后续节点整段被吞（探针：`- 甲 / 2 空格围栏 / 顶格闭合 / - 乙` ⇒ 树塌成 3 个节点）；② 围栏内各行按**定界符所在列**计入缩进（不是本行自己的缩进），否则顶格闭合行会掉出所属列表项、单独变成一个 ` ``` ` 节点。`isSelfClosedFenceLine` 同时提到模块级导出，解析 / 渲染 / 脚注三处共用。
+  ⑦ **回归**：`tests/mermaid-render.test.ts`（同步渲染 / 缓存 / 语法错误回退 / 超限）、`tests/node-inline-content.test.ts`（图容器结构、失败回落代码块、`Mermaid` 大小写归一、超长节点截断豁免、**配色变量纸墨成对**、复制按钮契约、围栏内 URL/双链整块保留）。⚠ 无 DOM 环境的同一张图与实机字节不同（1478 vs 1526）——单测只断言结构，字面金样归 `verify:visual`。
+
+- [K180] **文档会话：同一文件一份权威树 + 单游标撤销线（Level B，2026-11-09）**：
+  ① **旧账（实机，0.3.2）**：两个导图视图各一套引擎 / 历史 / 保存管线。A 改一个字，B 要等 A 自己写盘（≈2.2 s）再由 `vault.modify` 重载并**重建引擎**才可见；两侧都改时后写者覆盖前者（K177 只提示）；B 的 Ctrl+Z 撤不掉 A 的修改；两侧引擎 uid 完全不同（`tmm-qw2y…` vs `tmm-wqj4z…`）——按引用互认节点根本不可能。
+  ② **结构**：`services/document-session.ts` 的 `DocumentSession` 持有 `tree`（唯一可写真相）、`SessionHistory`（单游标）、`SavePipeline`（一条管线）与 `SessionViewPort` 集合；视图引擎树只是**只读投影**。注册表 `DocumentSessionRegistry` 按路径键（重命名只迁移键），组合根持有。视图在加载时 `acquire`（首个读盘一次，后续**不读盘**——磁盘可能落后于未保存改动），提交经 `commit(tree, origin)`，撤销 / 重做由会话执行后广播。
+  ③ **单游标是刻意改进**：官方实机是「改动流复制 + 每视图历史镜像 + 各自游标」（CM6 history 字段两侧对象不同、条数漂移 5 vs 4），会出现「A 撤销掉 B 的撤销」「redo 只在执行过 undo 的那个视图可用」。会话单游标没有这两种怪象，Ctrl+Y 在任意视图都可用——**与官方的有意差异，不得改回镜像**。
+  ④ **编排归属**：保存 / 历史 / 广播 / 外部写入归会话；**只有发起视图**跑 `data_change` 那套编排（状态栏、标题改名、自动拆链、语法守卫、联系几何）——接收视图的应用通道不发 `data_change`（见 K181），同一次编辑天然只编排一次。状态栏仍只由活动视图写（K166），会话经 `setSessionSaveState` 回写各视图字段。
+  ⑤ **uid**：引擎 `handleData` 只给缺失节点补 uid（`createUidForAppointNodes`），会话树因此可跨视图稳定；`ensureUniqueUids` 也只补缺失/重复。
+  ⑥ **回归**：`tests/document-session.test.ts`（并发 acquire 只读一次 / 提交只广播其它视图 / 同一树不入历史 / 撤销重做广播全部 / 外部写入两分支 / 每次解绑 flush / 最后销毁 / 无基线不写盘）、`tests/document-session-history.test.ts`（栈语义 7 例）。
+
+- [K181] **跨视图应用快照只走 `applySessionSnapshot`，禁用 `updateData`（无回声的结构性保证）**：
+  ① **为什么**：vendor `updateData` = `handleData` → `renderer.setData` → `render` → **`command.addHistory()`**。最后一步会往引擎历史塞整树快照，并发出 `data_change`——编辑期该事件的**唯一发源**。接收视图因此会再排一次保存、再跑一遍标题改名 / 语法守卫 / 自动拆链（双写 + 重复编排）。
+  ② **`command.pause()` 不可用**：`addHistory` 被 100 ms **延时节流**包装，同步 `pause → updateData → recovery` 之后那次调用仍会在到期时执行；把暂停窗口拉长又会吞掉窗口内真实编辑的 `data_change`（丢保存）。
+  ③ **通道**：`engine/mindmap-snapshot.ts` 的 `applySessionSnapshot` = `handleData` → `emit before_update_data` → `renderer.setData` → `render()` → `emit update_data`。实测（Obsidian 1.15.0，5000 节点）：历史不增、`data_change` 不发、`node_tree_render_end` 一次、视口 `scale/x/y` 与选中态不变；耗时 **90–141 ms**（单节点局部编辑整树渲染 **79–103 ms**，`getData()` **5.5 ms**，整引擎 `setData` 重建 **5422 ms**）。
+  ④ **选中态**：`renderer.setData` 按 uid 保留选中；被删节点的 uid 消失时引擎自动清空 `activeNodeList`（实机确认，无悬空引用）。
+  ⑤ **降级**：引擎接口缺失（版本差异）时退回 `updateData` 并返回 true——宁多一条历史/一次 `data_change`，不丢内容。
+  ⑥ **回归**：`tests/engine-session-snapshot.test.ts`（不进历史 / 不发 `data_change` / 深拷贝 / null / 回退 / 空树）。负向自检：把实现换回 `updateData`，前两条断言即红灯。
+
+- [K182] **外部写入：放弃写盘 + 重载 + 草稿入撤销线 + 有草稿提示一次（替代 K177）**：
+  ① **官方实机（1.15.0）**：外部改动总是进入每个视图（能合并则 diff-match-patch 合并、不能合并则替换）；**只有该视图有未保存改动时**弹一次 Notice（中「“X” 已被外部修改，正在自动合并更改。」/ 英 `… was modified externally, merging changes automatically.`）；无改动静默；整次外部改动是**一条可撤销步骤**，Ctrl+Z 回到草稿、随后 2 s 自动保存把草稿写回磁盘（实测）。
+  ② **本插件不做树级合并**（会重写未编辑行、违反 `mdRaw` 逐字保真），故恒定走官方那条「不可合并」分支：`SavePipeline.writeBody` 写盘前比对磁盘正文与 `lastSeenDiskBody`，不同 ⇒ **一个字都不写**（返回 `aborted`，回调 `onExternalAbort`）；会话 `reloadFromDisk` 重新解析 → 把新树**追加为一条历史**（于是 Ctrl+Z 正好回到草稿）→ 广播 → `markLoaded` 重置基线 → 有草稿时提示一次、无草稿静默。
+  ③ **与 K177 的关系**：K177 的「后写者胜 + 覆盖后告警」被本条**替换**；`onSaveConflict` 删除，新增 `onExternalAbort`；i18n `save.overwroteExternal` 删除，新增 `save.externalReloaded`（中英成对）。
+  ④ **竞态**：`vault.process` 回调里二次比对（读—写之间又变 ⇒ 返回原值不写）；写成功后 `lastSeenDiskBody` 存**落盘形态**（补齐尾随换行）——存序列化形态会因差一个 `\n` 把正常写盘误判成外部改写。
+  ⑤ **回归**：`tests/save-pipeline.test.ts`（abort 不写 / 只改文件头不 abort / 无基线不误判 / 撤销回加载态不覆盖外部）、`tests/document-session.test.ts`（有草稿提示 + 可撤销 / 无草稿静默）。
+
+- [K183] **关闭视图与保存归属：每次 `detach` 都 flush，最后一个解绑销毁会话**：
+  ① **官方实测**：`TextFileView.onUnloadFile` **每次关闭都 save**（不脏也调 `save()` + `getViewData()`，无差异则 mtime 不变）；脏则立即写盘（不等 2 s 防抖）；换文件时先 save 再 `setViewData(clear=true)`（后者才清历史）。
+  ② **本实现**：`session.detach(port)` 每次都 `flush()`（`SavePipeline` 自带无差异跳过），最后一个视图解绑 → 销毁会话并从注册表移除；`onUnloadFile` / `onClose` 都走它。**会话引用必须留到 `closeInlineEditor` 之后**再置空——先置空会把用户刚输入的内容丢掉。
+  ③ **基线**：`markLoadedFromEngine` 只在**首次引擎就绪**时记一次（`baselineRecorded`），设置刷新重建引擎不重记（K156④）；未记录基线时 `flush` 直接跳过（否则「只打开看一眼」就把规范化结果写盘）。
+  ④ **已知差异**：任务书原话「最后一个视图关闭时保存一次」按官方改为「每次关闭都 flush，至多一次真实写盘」。
+  ⑤ **回归**：`tests/document-session.test.ts`（每次解绑 flush / 最后销毁 / 无基线不写盘）。
+
+- [K184] **多视图的订阅、重命名与性能口径（Level B 收口）**：
+  ① **单点分发**：`vault.on('modify')` 由组合根转 `registry.onModify(file)`（一个文件一次，不再逐视图）；`VaultSyncService.onRename` 里 `registry.rename(oldPath, path)` 只迁移会话键——官方实测改名后两个 Markdown 视图 `file.path` 原地更新、历史条数不变、引擎不重载。
+  ② **提交口唯一**：只有发起视图的 `data_change` / `notifyNodeContentCommitted` 触发 `commit(snapshot, this)`；广播跳过 origin（它已是新内容，再应用只会白付一次整树渲染并可能打断交互）。
+  ③ **应用前收尾**：`beforeApplySnapshot` 关内联编辑器、取消点选与联系锚定（`renderer.setData` 会让节点实例全部换新，旧引用失效；不关就会把旧原文写回新树）。
+  ④ **性能**：广播窗口按图规模分级（≤600 节点 0 ms、更大 60 ms，见 K185）；5000 节点实测每次应用 90–141 ms、不重建引擎。被盖住标签的「跳过渲染」实测更差，已回滚（K186 ④）。
+  ⑤ **已知边界**：不做树级合并 / 跨进程 / 冲突副本；两视图同时编辑不再互相覆盖（会话串行提交），但**外部进程**写入仍按 K182 重载。
+  ⑥ **回归**：`tests/document-session.test.ts`（重命名只迁移键）、实机七步（见 `line-count-log.md` 本批记录）。
+
+- [K185] **同步延迟优化：把「编辑 → 另一侧可见」从 0.5 s 压到一帧级（2026-11-09，向官方靠拢）**：
+  ① **差距定位**：官方 Markdown 双视图是编辑即推送（实测 `setViewData` ≈12 ms）。本插件旧链路里，编辑提交信号 `data_change` 由 `Command.addHistory` 在**100 ms 延时节流**末尾发出（上游 `defaultOptions.addHistoryTime`），再叠 80 ms 广播合并窗口，实测另一侧可见 **≈550–900 ms**。
+  ② **优化一：缩短历史收集节流**（`engine/mindmap.ts` 的 `HISTORY_ADD_THROTTLE_MS = 16`，经 `Object.assign` 注入 `addHistoryTime`）。上游 100 ms 只是「合并同一操作内的多次 addHistory」，16 ms 仍覆盖一帧、不会把一次拖拽拆成多条历史；**不能设 0**（同帧多命令会各记一条）。提交语义不变：一次用户编辑仍只进会话历史一次（`commit` 的 `sameTree` 去重）。
+  ③ **优化二：广播窗口按图规模分级**（`services/document-session.computeBroadcastDelayMs`）：≤**600** 节点直接 0 延迟（下一任务即应用，小图一次应用只有几毫秒）；>600 节点仍用 **60 ms** 合并窗口（5000 节点单次应用实测 90–141 ms，逐键广播会占满主线程）。窗口随树规模动态换 debouncer，旧未决任务丢弃。
+  ④ **优化三：隐藏窗口不渲染**（对齐官方「后台不重绘」）：`broadcastNow` 见 `document.visibilityState === 'hidden'` 只置 `pendingHiddenBroadcast`，`visibilitychange` 恢复可见时由 `handleVisibilityChange()` 补一次；树 / 历史 / 保存照常推进（隐藏期间用户无法编辑，不存在丢提交）。监听随会话销毁移除。
+  ⑤ **顺带省掉两处整树拷贝**：`history.push(..., knownDistinct = true)`——`commit` 已用 `sameTree` 证明新树与当前不同，不再为判等序列化两遍整树；广播不再为每个接收视图 `structuredClone`（`applySessionSnapshot` 的 `handleData` 本来就深拷贝，引擎从不持有会话树）。5000 节点实测 `structuredClone` ≈7 ms、双份 `JSON.stringify` 判等 ≈1.8 ms。
+  ⑥ **实测（Obsidian 1.15.0，双视图，0.3.2 构建）**：`version` 更新 **18–20 ms**（原 ≈100 ms）、B 侧可见 **82–86 ms**（原 ≈550–900 ms）、撤销 / 重做广播 **5–7 ms**、两侧引擎探针未变（不重建）。大图仍走 60 ms 窗口（应用 90–141 ms）。
+  ⑦ **未做**：引擎历史仍由发起视图写入（只作旁路，不供用户可见撤销；省内存需改提交信号，收益小风险大）；被盖住标签的延后应用实测更差，已回滚（K186 ④）。
+  ⑧ **回归**：`tests/document-session.test.ts` 新增「分级阈值（600/601）」「隐藏窗口推迟 + 恢复补一次且不重复」2 例，`tests/document-session-history.test.ts` 新增 `knownDistinct` 1 例；全量 110 文件 / **2985 用例**。
+
+- [K186] **跨视图广播的三个边界修正 + 一次实测回滚（2026-11-09）**：
+  ① **撤销 / 重做 / 外部重载必须 forceAll**：`commit` 会记 `pendingOrigin`（广播时跳过发起视图，省一次重渲染）；若在合并窗口内立刻撤销，`pendingOrigin` 仍指向它 ⇒ 它停在撤销前的旧内容上。实机（700 节点）复现：编辑后 25 ms 撤销，A 显示 `n0X`、B 显示 `n0`、会话树 `n0`。修法：`broadcastNow(forceAll)`，撤销 / 重做 / 重载传 true（先清 `pendingOrigin`，再判隐藏 / 应用）。修复后四视图全部 `n0`。
+  ② **补应用必须先 `beforeApplySnapshot` 再置 `applying`**：应用期间 `commit` 被守卫拒绝；若把「提交内联编辑」放在 `applying = true` 之后，用户最后几个字会丢。
+  ③ **应用结束取消排队广播**：`beforeApplySnapshot` 里的提交会排一次广播；外层随后已应用最新树，那个排队广播是**第二次整树渲染**（大图 ≈120 ms）。应用期间没有新提交 ⇒ 取消安全。
+  ④ **回滚：不要跳过被盖住标签的渲染**。曾按 `HTMLElement.isShown()`（官方 API）判断「同组被盖住」并推迟应用，省一次整树渲染；实测切回该标签时要现场补渲染：700 节点 **428.8 ms**（更脏时 924.6 ms）才可见，而后台渲染本是 8 ms 批量异步、不阻塞输入——推迟反而更差。**结论：所有视图保持同步渲染**。官方 Markdown 能「不可见不重绘」是因为文本 diff 便宜，树模型不成立。
+  ⑤ **回归**：`tests/document-session.test.ts` 新增「合并窗口内撤销，发起视图也收到」「应用前提交不丢且只渲染一次」2 例。
+
+- [K187] **一次性迁移只换写法、不造声明（2026-11-09 实机订正）**：`platform/legacy-mindmap-migration` 的判据从「值能认出旧布局就迁」改为**以启用键为前提**，动作拆成 `{ layout, enable }` 计划（`legacyMigrationPlanOf`）：
+  ① **旧启用值**（`Mindmap: Timeline`）→ `enable: true`：改写成 `Mindmap: Mindmap`，旧值搬进 `Mindmap Layout`。这一支**优先于布局键**——旧契约不看布局键，键里的脏值不构成用户选择（`Mindmap: Timeline` + `Mindmap Layout: toString` 迁成 `timeline`）。
+  ② **已是启用信号** → `enable: false`：只补 / 归一布局键（无键 ⇒ `mindmap`；旧写法 ⇒ kebab；认不出的值**原样留着**，见 K172⑦）。
+  ③ **没有启用键 / 值是 `Markdown` / 未知值** → 返回 null、**不碰文件**。此前无条件 `setMindMapEnabled`，会把「只剩一个布局键」的普通笔记与用户主动「切换为 Markdown」的文件在启动 1.5 s 后静默变成导图（两类都可手写复现）。
+  ④ **同一个旧值读口**：新增 `domain/mindmap-property.readLegacyMindMapLayout`（布局键的旧写法 → 引擎 id），迁移与「以导图打开」升级共用。升级路径此前只接 `readLegacyLayout`，布局键是旧写法时会被种子值覆盖——迁移窗口内先手动打开即丢用户选择。
+  ⑤ **回归**：`tests/legacy-mindmap-migration.test.ts`（计划表 + 两类「不碰」）、`tests/md-frontmatter-trigger.test.ts`（新读口）、`tests/md-open-trigger.test.ts`（升级保留旧写法布局）。
+
+- [K188] **编辑期「就地归一」必须同步会话权威树（2026-11-09 实机，Level B 回归）**：
+  ① **现象**：层级语法守卫把 `# 甲` 后面的 `- 列表乙` 就地升级成 `# 列表乙`，屏上正确、**文件没写**；重开又变回列表项（树形与屏上不一致）。
+  ② **根因**：守卫改的是引擎**活数据**（不重渲染、不发 `data_change`），而 Level B 之后保存取**会话权威树**——`view.scheduleSave()` 只排程、不提交；`commit` 早在守卫之前（`data_change`）就发生过了，会话树停在归一前的写法。
+  ③ **修法**：`DocumentSession.updateCurrent(tree, origin)` + `SessionHistory.replaceCurrent`——更新权威树与版本，**替换当前快照**而不新增历史（Ctrl+Z 仍一步撤掉「拖拽 + 换算」），随后广播给其它视图并排保存；视图侧 `commitDerivedTree()` 供守卫调用。
+  ④ **回归**：`tests/document-session.test.ts`（updateCurrent 后撤销回编辑前）、`tests/document-session-history.test.ts`（replaceCurrent）、`tests/view-syntax.test.ts`（守卫调用 `commitDerivedTree`）。实机：升级 / 降级两条守卫路径都写盘，双视图同步，`dev:errors` 无条目。
+
+- [K189] **会话撤销必须由视图**同名**实现（`undo` / `redo`），否则静默退回引擎历史（2026-11-09 实机）**：`MindMapViewContext.undo?()` 是**可选**方法，视图实现成 `undoSession` / `redoSession` 时结构类型**不报错**（可选成员不要求实现），而 `view-hotkeys` / 右缘竖栏 / 右键菜单都按 `view.undo` 判定 —— 会话撤销**从未被调用**（实机 `typeof view.undo === 'undefined'`），Ctrl+Z 走的是每视图一条引擎历史（正是 Level B 要消灭的形态）。改名即可，无其它调用点。**同类提醒**：给 `MindMapViewContext` 加可选钩子时，视图侧方法名必须逐字对齐。另修一条提示：纯重定级（`##` 拖成 `#`）此前落到 `syntax.guardUpgraded` 且名字为空（`firstUpgraded` 只在「列表 → 标题」赋值）⇒ 新增 `firstReleveled` 与 `syntax.guardReleveled`（中英）。回归：`tests/view-syntax.test.ts`（纯重定级提示）、`tests/md-heading-syntax.test.ts`（`firstReleveled`）。
+
+- [K190] **打开导图不做两件无用功（2026-11-09 实机）**：
+  ① **不空报「保存中」**：首帧前的 `data_change` 是引擎自身规范化（`seedInitialHistory` 播种历史），不是用户编辑；`onRootDataChanged` 原先无条件 `scheduleSave()` ⇒ 每次打开都显示「保存中…」两秒，并空跑一轮「正文与加载基线相同」的保存（读盘 + 序列化、不写盘）。改为**只在 `commitSession()` 真的提交进会话时**才排保存（`commitSession` 返回布尔）。
+  ② **不重放整树**：视图 `attach` 后紧接着用 `cloneTree()` 建引擎，内容与会话树逐字相同；`appliedVersions` 原先没有预置，`onViewReady` 判成「落后」再 `applySessionSnapshot` 一次 ⇒ 大图每次打开白付一次整树渲染（实测 90–141 ms）。改为 `attach` 时预置当前 `version`（期间若有新提交仍会补一次）。
+  ③ **回归**：`tests/view-layout.test.ts`（源码契约：`if (this.commitSession())` 门控）、`tests/document-session.test.ts`（attach 预置后 `onViewReady` 不重放；引擎未就绪时仍补）。实机：打开 `saveState=idle`、状态栏只有节点数；编辑后 `saving → saved`；`dev:errors` 无条目。
+
+- [K191] **图内链接的三条点击通道必须一起覆盖，且一律跨 realm 判定（2026-11-09 实机）**：
+  ① **缺一条通道**：`view-wikilink` 的锚点判定原用 `instanceof HTMLAnchorElement`，Pele 把 mermaid 的 `click A "…"` 渲染成 **SVG** `<a href>`（`SVGAElement`）——左键分支因此新增了 `.tmm-mermaid a[href]` 独立通道（P3），但**中键**的画布 `auxclick` 通道仍只认 HTML 锚点 ⇒ 中键落在图内链上没有接管，裸 `<a href>` 被 Electron 默认行为处理（另开窗口 / 外部浏览器），与左键「新标签」语义分叉。修法：auxclick 在普通锚点落空后走同一个 `mermaidAnchorLink`。
+  ② **跨 realm**：同文件三处 `target instanceof Element` / `instanceof HTMLAnchorElement` 在 popout 里恒 false（元素来自另一个 realm）⇒ 独立窗口里的锚点点击 / 中键 / 悬停全部静默失效。统一改用 `core/event-binder.elementFromTarget`（硬规则 5 的既有实现），`resolveAnchorLink` / `anchorLinktext` 的形参随之放宽为 `Element`（它们只读 `getAttribute`）。
+  ③ **注释同步**：`platform/mermaid` 头注释原写「不含交互 / 图内链接不启用」，与 P2（复制源码）/ P3（图内链接）矛盾——改为如实描述「图不参与命中，只有复制按钮与图内锚点放行；缩放仍不启用」。
+  ④ **回归**：`tests/view-wikilink.test.ts`（图内锚点中键 → 新标签；跨 realm 的 `{ closest }` 目标仍能跳转）。实机：图内 `[[05-空转]]` 左键当前标签、中键新标签（`mindmap-view` 9 → 10、活动 leaf 变更）、明暗切换不重渲染（同一 `<svg>`）、`--pele-bg` 纸面不吃节点红、坏语法回落代码块、文字 + 图同节点正常、`%%{init}%%` 原样进 `data-code`。
+
+- [K192] **「清理旧 `%%none%%`」按文档计一次，不按视图（2026-11-09 实机，Level B 交互）**：`collectColorSentinelSessions` 原先逐个视图扫描；Level B 之后同一文件的多视图**共享一棵树**，于是同一处哨兵被算成 N 处（实机：4 个视图 ⇒ 弹窗「4 个已打开的导图 / 4 处」，实际 1 个文件 1 处），落地时还会对同一棵树重复 `applyRawNodeContents` N 次（N 次整树重渲 + N 条撤销）。修法：按 `view.file.path` 去重，一个文件只留一个代表视图（第一个有引擎的）。回归：`tests/view-context-menu.test.ts`（同一路径三个视图 → 一个会话、计数 1）。实机：4 视图下弹窗报「1 个 / 1 处」、清理后哨兵消失、Notice 报「已清理 1 处」。
+
+- [K193] **豁免表只留一处，门禁的「打包面依赖」必须写明（2026-11-09 实机核对）**：
+  ① **单一登记处**：`docs/agents/architecture.md` 曾与 `AGENTS.md` 并行维护同一张「超 300 行豁免表」，实测同一文件出现两个读数（1121 / 1280）——门禁只读一张，另一张必然漂移。现只保留 `AGENTS.md` 的表（`architecture.md` 改为指向），`check-gates.mjs` 的 `--fix-lines`、「未登记超限」核对与 `agents-md-sync` 的漂移阈值全部只读这一处。
+  ② **`--all` 的前置条件**：`check:gates -- --all` 会跑 `build:vendor`，而重打包的裸包名（`@svgdotjs/svg.js` 等）由 esbuild 从 `node_modules/` 解析、本仓库 `package.json` **有意**不声明（版本由 `vendor/upstream/package.json` 决定，见 `vendor/BUILD.md`「打包面依赖」）。未预装时 `--all` 必然红灯 ⇒ 帮助文案与 `testing.md` 都写明「只改普通源文件不要加 `--all`」。实机：不加 `--all` 的整链 7 步全过（build / test 3003 / lint / lint:css / check:dead-code / verify:visual / check:release），加 `--all` 在 `build:vendor` 解析 `@svgdotjs/svg.js` 处失败（环境缺依赖，非仓库回归）。
+  ③ **lint 豁免清单 = 真实直调面**：撤销 `src/links/file-lookup.ts` 的 `getAbstractFileByPath` 豁免（该文件已无此调用；留着会让「豁免清单 = 真实直调面」失真，审计项 V18），`src/platform/system-open.ts` 的裸 `require` 改为在该文件显式声明 `globals.require`——不再依赖 `isDesktopOnly: true` 顺带带进的 `globals.node`（那次注入挂在 manifest 读取上，cwd 相关，见 K43）。
+  ④ **回归**：`tests/check-gates.test.ts`（计划映射）、`tests/agents-md-sync.test.ts`（索引 / K 区间 / 豁免表漂移）、`tests/docs-standard.test.ts`（标准文档符号与版本指针）。实机：`--dry-run` 报「未登记超限 0、豁免表逐行一致」，`--fix-lines` 回填后复跑「无需回填」。
+
+- [K194] **Level B 的四条实机缺陷：广播窗口失配 / 改名基线失配 / 过期提交覆盖 / 应用期静默排保存（2026-11-09 实机定位并修复）**：
+  ① **广播窗口在装配处失活**：`DocumentSession.scheduleBroadcast` 用 `options.broadcastDelayMs ?? computeBroadcastDelayMs(...)`，但 `DocumentSessionRegistry` 构造参数默认 `SESSION_BROADCAST_DELAY_MS`（60）且 `acquire` 无条件注入 ⇒ `main.ts` 的 `new DocumentSessionRegistry(this.app)` 永远走 60 ms，K185 的「≤600 节点 0 ms」只在单测里成立（实机 63 节点 `delayOpt: 60`）。修法：注册表第二参改为可选 `undefined`，`acquire` 只在显式传值时注入；`main.ts` 不改。
+  ② **改名只搬会话键**：`SavePipeline` 的六张表（`loadedBody` / `lastWrittenBody` / `loadedRawBody` / `lastSeenDiskBody` / `wroteSinceLoad` / `consistencyRetries`）全按 `file.path` 存。`registry.rename` 只搬 Map 键，`markLoadedFromEngine` 又有一次性闩锁 ⇒ 改名后 `isAtLoadedState` 返回 null（纯浏览守卫失效、打开即重排全文）、`diskChangedSinceSeen` 恒 false（外部写入被吞 / abort 判定失效）、`hasUnsavedChanges` 恒 false（草稿提示丢失）。实机内存复现：改名后 `atLoaded:null`、`dirty:false`、连 `"SOMETHING-ELSE"` 都判不出。修法：`SavePipeline.rename(oldPath, newPath)` 迁移六张表，`DocumentSession.rename` → `registry.rename` 调用。
+  ③ **过期提交整树覆盖**：两个视图各自持有完整树；B 在收到 A 的广播前提交，其快照不含 A 的编辑，`commit` 直接替换权威树并广播（只跳过 B）⇒ A 的编辑在会话树与 A 的屏幕上同时消失（实机隔离会话：A 提交 `A-edit`、20 ms 后 B 提交 `B-edit`，会话树只剩 `B-edit`）。本插件不做树级合并（保 `mdRaw` 逐字），故选择**可见地不合并**：`commit` / `updateCurrent` 发现 `appliedVersions.get(origin) < versionValue` 时拒绝、`notifyStaleCommit()` 提示一次（`save.staleCommit` 双语），并由紧随的广播把该视图刷回权威树；接受提交时同步把 origin 的 `appliedVersions` 推到新版本（广播跳过 origin，不会替它更新）。
+  ④ **应用期提交仍排保存**：`notifyNodeContentCommitted` 无条件 `commitSession()` 后 `scheduleSave()`；`applying` 期间 `commit` 返回 false（引擎树正在被替换，接受更危险），但保存照排 ⇒ 写的是旧权威树。修法：与 `onRootDataChanged` 同口径，只有 `commitSession()` 返回 true 才排保存。
+  ⑤ **回归**：`tests/document-session.test.ts`（注册表默认分级 / 改名后纯浏览不写盘 / 改名后外部写入仍重载 / 过期提交被拒且不覆盖已有编辑）、`tests/view-layout.test.ts`（源码契约：插件原文通道同样门控）。实机（修前探针）：`delayOpt:60`、改名后 `atLoaded:null / dirty:false`、A 编辑被 `B-edit` 覆盖、`applying` 内 `commit` 返回 false 且 `C-during-apply` 消失；修后复验见 `docs/agents/line-count-log.md` 本批记录。
 
 ### 交互对齐 Obsidian 官方
 
@@ -511,7 +854,7 @@
   `SettingSliderControl.displayFormat`；1.13.2：`SettingSecretControl.type:'secret'`），
   **不会有任何 lint 或 `tsc` 报警**（该成员确实存在于已安装的 typings 里）。因此
   **升 `minAppVersion`、或给声明式设置新增键时，必须人工核对对应 `@since`**，不能指望工具兜底。
-- [K42] **`isDesktopOnly` 是承重配置，不是发布元数据**：K5 的负向断言 `(?<!!)\[\[` 属**正则后行断言**（lookbehind），而官方规则 `obsidianmd/regex-lookbehind` **仅在 `isDesktopOnly !== true` 时报告**——其实现为 `options.isDesktopOnly ?? getManifest()?.isDesktopOnly`（`eslint-plugin-obsidianmd/dist/lib/rules/regexLookbehind.js`），`true` 时整个 `Literal` 分支直接不报。即：**这行 lint 通过完全依赖 `manifest.json` 的 `isDesktopOnly: true`**，不是因为它本身合规。改 `isDesktopOnly`、或要加移动端支持之前，**必须先把该正则改写为不带 lookbehind 的等价式**（如 `(^|[^!])\[\[`），否则 ① `npm run lint --max-warnings 0` 立刻失败；② iOS < 16.4（Safari 16.4 才支持 lookbehind）会**真实抛异常**，`md-serialize` 整条保存管线随之失效。
+- [K42] **`isDesktopOnly` 是承重配置，不是发布元数据**：K5 的负向断言 `(?<!!)\[\[` 属**正则后行断言**（lookbehind），而官方规则 `obsidianmd/regex-lookbehind` **仅在 `isDesktopOnly !== true` 时报告**——其实现为 `options.isDesktopOnly ?? getManifest()?.isDesktopOnly`（`eslint-plugin-obsidianmd/dist/lib/rules/regexLookbehind.js`），`true` 时整个 `Literal` 分支直接不报。即：**这行 lint 通过完全依赖 `manifest.json` 的 `isDesktopOnly: true`**，不是因为它本身合规。改 `isDesktopOnly`、或要加移动端支持之前，**必须先把这些正则改写为不带 lookbehind 的等价式**（如 `(^|[^!])\[\[`），否则 ① `npm run lint --max-warnings 0` 立刻失败；② iOS < 16.4（Safari 16.4 才支持 lookbehind）会**真实抛异常**，`md-serialize` 整条保存管线随之失效。⚠ **改写面不止一处**（2026-11-09 复核）：`src/markdown/md-serialize.ts` 的链接检测 1 条 + `src/features/node-inline-tokenize.ts` 的轻标记 4 条（`(?<![\p{L}\p{N}])___…` / `__…` / `(?<!\*)\*…` / `_…`）。加移动端支持按「5 条正则 + 全量往返回归」估算，别按一条算。
 - [K43] **lint 依赖 manifest 且是 cwd 相对的**：`eslint-plugin-obsidianmd` 的 `getManifest()`
   用 `fs.readFileSync("manifest.json")`，**相对 `process.cwd()`**——故必须在**插件根**
   跑 `npm run lint`。cwd 不对（如从仓库根/父目录跑）时 manifest 读成 `null`，会让
@@ -1269,14 +1612,14 @@
   ④ **验证**：`tests/url.test.ts` +3 例（安全协议放行含大小写 / `javascript:`·`JavaScript:`·前导空白·`data:`·`vbscript:` 拒绝 / 无 scheme 放行）；`tests/node-inline-content.test.ts` +1 例端到端（`[点我](javascript://alert(1))` 确为 external-link 且无 href）；全量 55 文件 **1716** 用例 + lint + knip 全绿。
   ⑤ **教训**：评审「用户输入 → DOM 属性」链路时，**先看解析分类再判断注入面**——本案 `javascript:` 无 `//` 反而被判库内（初判风险偏高），但**边界形态 `scheme://` 确实可达**，防御纵深仍值得加；用例必须按**实际可达的分类**构造，否则会写出断言错误形态的假用例（本轮首个版本即因此失败）。
 
-- [K102] **同文件多 leaf 互斥（P0 加固，2026-09-28 多轮健壮性审计产出）**
+- [K102]【**已废止 2026-11-07**】**同文件多 leaf 互斥（P0 加固，2026-09-28 多轮健壮性审计产出）**——互斥已删除；2026-11-09 起进一步改为 **Level B**（同一文件共享一份文档会话，见 K180；`AGENTS.md` 决策表「同文件多视图的同步」），中间的「多视图并存 + 后关闭者胜」形态也已作废。以下为废止前的实现与依据，保留备查。
   ① **缺口**：同一 `.mindmap.md` 可被多个 leaf 打开（Obsidian 允许同文件多标签：Ctrl+点击新开、重启后布局恢复），而每个 MindMapView 持有**独立引擎 + 独立 SavePipeline** → 两实例的防抖保存交错时**后写覆盖先写**（丢编辑），且各自的挂起状态（图片回灌、数学重排）互相不知道对方。
   ② **实现**：`view.ts` 的 `onLoadFile` 开头做互斥——扫描 `getLeavesOfType(VIEW_TYPE)` 中同路径既有实例（判定用 `other.loadingFilePath ?? other.file?.path`，覆盖对方仍在装载中的窗口），命中则：`Notice`（新键 `common.mindMapAlreadyOpen`，中英）+ `revealLeaf` 激活既有 leaf + **本 leaf 延迟 `detach()`**（onLoadFile 内同步 detach 会与 Obsidian 装载流程竞争，故 `setTimeout(0)` 且 try/catch 兜底）。
   ③ **空实例安全性**：跳过初始化即被摘除的 leaf，其 `onClose` 各步均有空守卫——`getDataSnapshot()` 返回 `?? null`、`persistViewport()` 双条件（`file && mindMap?.view`）、`destroyInstance()` 幂等、`savePipeline.save()` 对无文件直接返回。
   ④ **验证**：build / lint / 全量 1716 用例 / `verify:visual` 全绿；**多 leaf 场景需实机复验**——双标签打开同一文件应提示并切换到既有标签、DevTools 中不出现第二个引擎实例。
   ⑤ **教训**：文件视图类插件的「全局唯一资源」（此处=文件写权限）必须在**装载入口**做实例互斥，不能依赖用户不这么操作；`FileView` 生命周期里 detach 必须**异步**且带兜底。
 
-- [K103] **保存管线两项 P1 加固（2026-09-28 多轮健壮性方案落地）**
+- [K103]【**已废止 2026-11-07**】**保存管线两项 P1 加固（2026-09-28 多轮健壮性方案落地）**——P1a（外部改动检测）/ P1b（连续失败挂起）已随「保存策略照搬 Obsidian `TextFileView`」整体删除（现行策略见 `AGENTS.md` 决策表「写盘时机」与 K166；`forgetBaseline` / `checkDirty` / `ScheduleOutcome` 的 `off`·`suspended` 同时消失）。以下为废止前的实现与依据，保留备查。
   ① **P1a 外部改动检测**：自动保存写盘前比对「磁盘当前内容（`cachedRead`）」与「上次写盘基线（`lastWritten`，按路径）」——不一致即文件被外部修改（同步盘/其它窗口/手动编辑），自动保存**绝不覆盖他人改动**：跳过本轮写盘（同失败路径复位），每路径**只提示一次**（`externalConflictNotified`，防告警疲劳）；**显式保存（命令/卸载路径）不带检测**——卸载时哪怕外部改过也必须落盘（丢编辑比覆盖更糟），显式成功后基线随之更新、自动保存恢复正常。`schedule()` 是唯一开启检测的入口（`{checkExternal: true}`）。
   ② **P1b 连续失败降级**：写盘失败计数连续累加（成功一次即清零），达 `SAVE_FAILURE_SUSPEND_THRESHOLD=3` 挂起自动保存（`schedule()` 不再排程，防告警疲劳），一次性 Notice（`save.autoSuspended`）；显式保存不受影响，任何一次成功即解除挂起。
   ③ **实现**：`SavePipelineDeps` 增可选回调 `onExternalChange(file)` / `onAutoSaveSuspended()`（view.ts 接 `notifyError`，新 i18n 键 `save.externalChangeSkipped` / `save.autoSuspended` 中英）；`save(file?, treeHint?, opts?)` 增 `checkExternal`。
@@ -1302,9 +1645,10 @@
 - [K106] **修复「导出 PNG 临界节点仍被裁（K105 残余）」：导出侧 foreignObject 几何余量（2026-09-29 CLI 实机全链路定位）**
   ① **症状**：K105 后重载导出仍有个别节点文字被裁（"6.1 块级公式（`$$` 独占行、三行形态）"第二行"态）"只露上沿）；**字体已与屏上一致**；屏上渲染正常。
   ② **定位（CLI `obsidian eval` 实机）**：a) **变体扫描**（同内容 + 同变量注入、`<img>` 解码后数墨迹带）：`--font-monospace` 长栈=2 行，去掉或替换为 `monospace`=1 行，`--font-interface` 无关；b) **环境对照**：同内容在主文档真实 foreignObject 渲染 **1 行**、在 `<img>` 解码路径渲染 **2 行**——**跨环境文本度量偏差 ~2px 实锤**（内容/变量/字体全相同）；c) **排除**：@font-face 注入（`'??'` 是**空壳 @font-face 无 src**、屏上实际命中系统字体 Cascadia Mono）、`text-spacing-trim` 等文档级属性注入、UI 关键字剔除/替换（`"Cascadia Mono"` 单独注入亦 2 行）；d) **修复验证**：FO 宽 +2/+4/+6/+8px 均恢复 1 行。
-  ③ **修复**（新文件 `platform/export-foreign-object-padding.ts`，**2026-10-17 并入 `platform/export-svg-postprocess.ts`**）：`padForeignObjectsForExport`——遍历克隆 SVG 全部 `foreignObject`，**宽 +12px**（覆盖实测偏差分布上界——轻量节点 ~2px、标点密集长文本行可达 ~12px，同日二次实机修订自初版 +4）+ **高 +20px**（≈1 行行高，"换行也不裁"兜底）；只改尺寸不动 x/y；尺寸非法跳过、无 FO/形态不符安全 no-op、原样返回同一对象；接线组合根 `exportSvgTransforms` **链首**。DOM 遍历遵循项目既有纪律（`Array.from` + try/catch，勿用方法引用形态——会命中 DOM lib deprecated 重载、触发 no-deprecated，同 `node-codeblock.ts` 注释）。
-  ④ **取舍**：加宽后内容右端 < 节点形状右缘（余量在形状内部消耗）→ 不溢出形状；不换行时零视觉差异；屏上恰好临界换行的极少数节点导出可能少一行（罕见，优于缺字）；极端节点"多一行但完整"（优于"缺半行"）。
-  ⑤ **验证**：`tests/export-fo-padding.test.ts` +4 例（加量+原样返回 / 非法尺寸跳过且其余照常 / 无 FO no-op / 形态不符矩阵）；**CLI 实机复验**：构建部署到 vault → `obsidian vault="O" plugin:reload` → 重建视图 → 导出目标节点图 → **"6.1"节点恢复完整单行** ✓；全量 56 文件 **1728** 用例 + build + lint(0 警告) + knip 全绿。
+  ③ **修复**（新文件 `platform/export-foreign-object-padding.ts`，**2026-10-17 并入 `platform/export-svg-postprocess.ts`**）：`padForeignObjectsForExport`——遍历克隆 SVG 全部 `foreignObject`，**宽 +12px**（覆盖实测偏差分布上界——轻量节点 ~2px、标点密集长文本行可达 ~12px，同日二次实机修订自初版 +4）+ **高 +20px**（≈1 行行高，"换行也不裁"兜底）；**横向余量左右各半**（2026-11-11 修正，见 ④）；尺寸非法跳过、无 FO/形态不符安全 no-op、原样返回同一对象；接线组合根 `exportSvgTransforms` **链首**。DOM 遍历遵循项目既有纪律（`Array.from` + try/catch，勿用方法引用形态——会命中 DOM lib deprecated 重载、触发 no-deprecated，同 `node-codeblock.ts` 注释）。
+  ④ **取舍**：加宽后内容右端仍在节点形状内（余量在形状内部消耗）→ 不溢出形状；不换行时零视觉差异；屏上恰好临界换行的极少数节点导出可能少一行（罕见，优于缺字）；极端节点"多一行但完整"（优于"缺半行"）。
+  **④-b 横向必须左右各半（2026-11-11 用户实拍 + 导出 SVG 量化）**：初版只加 `width`、不动 `x`，而内容盒宽度 = FO 宽度 ⇒ 自绘内容的 16px 左右内边距不变、可用宽却多 12px，**右内边距被压到 4px**。实测（导出 SVG 属性）：节点形状宽 **176**、FO 宽 **188**、x 缺省（= 0）⇒ 内容盒 [16,172]，凡是撑满内容盒的子元素（标注 / 引用的色块盒、表格、代码块）右缘距边框只剩 4px、左侧仍是 16px，观感即"节点边框右边比左边窄"。修法：`x -= PAD_WIDTH/2`（缺省 x 按 0 算——引擎导出的 FO **不写 x**，实测 20/20，按 NaN 跳过会让修正静默失效）⇒ 内容盒 [10,166]，左右各 10px。**纵向不左移同理**：内容是顶对齐的，`y` 上移会把文字顶出边框，那 20px 只能落在下方。
+  ⑤ **验证**：`tests/export-fo-padding.test.ts` +4 例（加量+原样返回 / 非法尺寸跳过且其余照常 / 无 FO no-op / 形态不符矩阵）；**CLI 实机复验**：构建部署到 vault → `obsidian vault="O" plugin:reload` → 重建视图 → 导出目标节点图 → **"6.1"节点恢复完整单行** ✓；全量 56 文件 **1728** 用例 + build + lint(0 警告) + knip 全绿。**2026-11-11 复验（对称化之后）**：重新导出，20 个 FO 全部 `x="-6"`，形状 176 / FO [-6,182] / 内容 [10,166] 左右各 10px；`tests/export-svg-postprocess.test.ts` 新增「横向余量左右各半」例（断言左右内边距相等）与 x 缺省用例。
   ⑥ **教训**：①「屏上正常、导出异常」的终极定位器是**同内容跨环境对照**（主文档真实 FR vs `<img>` 解码），而非逐属性猜测；②凡"依赖屏上测量固定尺寸 + 导出重建布局"的架构都需评估**几何余量兜底**；③**CLI 命令的目标 vault 默认是"最近聚焦"**——多 vault 环境必须 `vault=<名>` 显式定向（本次曾误发到另一 vault）；④`obsidian eval` 传参用 `code='…'`（PowerShell 单引号）+ JS 双引号，`\"` 组合会静默破坏传参。
 
 - [K107] **修复「导出 PNG 数学节点末行文字压到节点底边框线（K106 残余）」：导出侧数学容器高度钉扎（2026-09-29 CLI 实机像素取证）**
@@ -1863,3 +2207,23 @@
   - **④ `setIcon` 对不存在的图标名静默失败**：换图标时试过 `tilde`（~ 形曲线），Obsidian 内置 Lucide **没有**该图标 → 渲染出**空 `<svg>`**，无报错、无告警（实测 `svg.innerHTML` 长度 0）。**换图标的验收动作**＝实机读 `button.querySelector('svg').innerHTML` 非空；现用 `slash`（一条斜直线）+ `spline`（曲线）表达连线样式。
   - **⑤ 开关类按钮的自我同步**：外观变更**不重建工具栏**，所以开关按钮的图标 / 提示必须在 `toggle()` 之后**自己重算**（`describe()` 现算 + `applyState()`），否则会出现"数据变了、按钮还显示旧值"（2026-10-23 实机踩到）。固定直线布局下连线开关**置灰**（`is-disabled` + `disabled` + 不挂 `onclick`），不给假交互。
   - **⑥ 回归**：`tests/view-toolbar.test.ts`（四组结构 / 图标接线 / 开关互切与图标状态 / 固定布局置灰 / 「外观四项不在屏上」反向断言）、`tests/view-context-menu.test.ts`（空白菜单 9 项、节点菜单 13 项与 `G.tail` 顺序、级联弹出与勾选、**菜单里不得再出现连线/边框**）。
+
+- [K197] **脚注（footnote）的只读渲染：段型、按原文寻址的边界与「不隐藏定义行」（2026-11-11）**：
+  ① **问题**：`[^id]` 在节点里是字面字符（渲染层此前无分支），而定义行 `[^id]: 内容` 早已被解析层按「链接引用定义」整行豁免、落成 `plain` 节点 ⇒ 文件里的脚注是「存在但不可用」：既没有可点的引用，也没有可读定义的入口（官方帮助 Footnotes 段：引用 / 定义 / 命名 / 续行缩进 2 空格 / 行内脚注仅阅读视图）。
+  ② **只做读侧**：定义行仍是节点，`text` / `mdRaw` 一字不动（硬规则 4）。新增的只有段型 `kind: 'footnote'`（`MARKUP_RE` 一支，`(?!:)` 让定义行保持字面）与一次交互期索引（`markdown/md-footnote.collectFootnoteDefinitions` 读 `domain/md-meta.nodeInlineSource` 现算 ⇒ 编辑自动跟随，无第二份快照）。**关键事实**：索引的数据源必须是**引擎渲染树**（`engine.collectRenderNodeData`，`node_tree_render_end` 失效缓存）——`ensureUniqueUids` 只在 `engine-controller.initMindMap` 里补传给引擎的那份克隆，会话权威树与解析树**都没有 uid**；首版按会话树索引 ⇒ 所有 `uid` 为空串、点击恒失败（当日自查发现并改正）。**判定单点**：`md-outline.isLinkReferenceDefinition` 的 `^` 分支委托 `isFootnoteDefinition`，不另写「以 `[^` 开头」。
+  ③ **徽标只承载 id**：段序列按原文寻址缓存（K114 的测量缓存也以 `outerHTML` 为键），把定义正文塞进段会让同一行在不同文档里产出不同段；故正文在**事件发生时**由 `features/view-footnote` 现查（点击 → `revealNodeByUid` 定位定义节点；悬停 → 画布内浮层，`pointer-events: none`）。代价：浮层里的公式 / 代码高亮只走**产物缓存**（异步定稿的尺寸重测在浮层里必然落空——`content-remeasure` 按 holder 反查节点）。
+     **定位回调是异步的**：`goTargetNode` → `expandToNodeUid` 在需要展开祖先时走 `mindMap.render(callback)`，而 `Render.render` 是 `setTimeout(…, 0)` ⇒ 回调在下一宏任务才触发。按同步回调判成功会「已跳转却弹『定义不存在』」；现由**索引持有命中判据**（uid 取自同一棵渲染树），`revealNodeByUid` 只回答「引擎是否接住了这次定位」，两种失败用不同文案（`missingDefinition` / `revealFailed`）。
+  ④ **标签用原 id，不做全文编号**：编号依赖文档序，会让同一行在不同文档产出不同段（破坏 ③ 的纯度）；命名脚注在导图里反而更可读。若要做，唯一可行形态是**渲染后置处理**（构建期只出 id，渲染落地后按文档序改写徽标文本）。
+  ⑤ **不隐藏定义行（v1 裁决，仅探讨过）**：隐藏要么把定义挂进「前一个节点」的 `mdRaw`（位置守恒，但随载体删除 / 拖动丢内容，且 `md-serialize.nodeLines` 的 `restIndent` 会把列 0 的定义缩进成列表续行、**一次保存即损坏**），要么挂文档根做「尾块」（只对连续尾块保真，夹心定义首次保存即搬家）。两条路都要新增编辑面，收益（布局整洁）不足以付这份代价。
+  ⑥ **边界**：围栏 / 缩进代码（≥4 空格或 Tab）内的同形行不算定义；列表续行的缩进写法不进索引（解析层已并进上一项 `text`）；行内脚注 `^[…]` 不支持（Obsidian 亦仅阅读视图支持）；未定义引用**照常出徽标**、点击给提示（不做「按字面」——那要求构建期知道全文有没有该定义，直接破坏 ③）。另：`\[^1\]` 这类反斜杠写法在扫描层按字面退回——本模块的可转义白名单不含方括号，正则否则会从**第二个字符**起配出一枚 id 带反斜杠的假徽标（用例抓到；判据用**反斜杠奇偶**，故 `\\[^1]` 仍是真的引用）。
+     **续行判据（2026-11-12 实机订正）**：续行必须**有缩进**——相对内容起始列 ≥ 1，优先读解析层记的 `MdNodeMeta.mdContinuationIndents`（列表项续行在 `mdRaw` 里已被 `trimStart`，绝对缩进只剩这一份；经 `nodeContinuationIndents` 读，`text` 被编辑后自动失效并回落行首空白），否则按行首空白现算。**同列的非空行是另一段正文**：此前按「定义后的非空行一律算续行」会把它一起隐藏（节点上静默少一段、文件里还在），同列行里的 `[^2]` 也因此应当编号——与阅读视图逐字对照一致。
+  ⑦ **回归**：`tests/footnote.test.ts`（语法单源 / 文档序 / 围栏与缩进代码 / 重复 id 首个生效 / 编辑跟随）、`tests/node-inline-content.test.ts`（段型、受保护区、`(?!:)`、DOM 契约 `sup > a[data-footnote-id]` **无 href / data-href**、表格单元格、`buildInlineTextContent`）。
+  ⑧ **同日实机复现并修复的三个交互缺陷**（`features/view-footnote`，由 `tests/view-footnote.test.ts` 的 DOM / 事件桩直测钉死）：**① 命中面错层**——`data-footnote-id` 只写在内层 `<a>`，鼠标落在 `<sup>` 的行高 / padding 区域时 `closest` 向上找恒落空 ⇒ 悬停与点击静默失效；改为按 `.mindmap-node-footnote-ref` 命中**外层 sup**、id 从内部 a 读（顺带修好「a → sup」被误判为移出）。**② 同 id 多枚徽标**——旧判据 `id === visibleId` 直接 return，`mouseout` 排的 hide 没被撤销 ⇒ 从第一枚 `[^1]` 移到第二枚时浮层消失且停在上一个坐标；改为**元素身份**判重，且 mouseover 一律先 `clearTimers()`（移出又移回同一枚也要撤销未决 hide）。**③ 渲染窗口吞 show**——`node_tree_render_end` 在单节点 reRender / 分片渲染上同样派发，旧实现在回调里无条件 `hide()` 清掉 140ms 未决的 showTimer ⇒ 悬停期间恰好重绘一次就永远不弹；改为只失效索引 + `dismiss()` 收起已显示浮层，**不动定时器**。另补：未定义引用悬停也显示「未找到定义」浮层（原来只有点击给 Notice，看起来像坏了）。三个缺陷都不影响数据 / 写盘，但都属「点了没反应」，正是交互层缺自动化回归时最容易漏掉的一类。
+  ⑨ **用户视角打磨（2026-11-11 第二批，六条按序落地）**：① **浮层可交互**——去掉 `pointer-events:none`，`mouseenter` 撤销待执行的 hide、`mouseleave` 重排，文字可选中复制；内部锚点经宿主注入的 `openLink` 打开（浮层不在节点里，`view-wikilink` 的 `node_click` 委托收不到那里的点击）。② **浮层内滚动**——`overflow-y: auto` + `overscroll-behavior: contain`，并在浮层自身 `wheel` 上 `stopPropagation`；`view-viewport.handleWheelGesture` 对 `FOOTNOTE_PREVIEW_CLASS` **放行**（否则「想滚脚注」会缩放或平移画布）。**高度上限必须按画布收缩**（2026-11-11 实机）：`positionPopover` 用 `maxHeight = clamp(画布高 - 2×8, 120, 420)` 改写——只读嵌入容器可能只有 208px 高，写死 420px 会让浮层溢出容器被 `overflow: hidden` 裁掉，而内部滚动只作用于浮层自身，**超出容器的那截永远看不到**（实测 211px 浮层被裁 11px）。宽度同理：`maxWidth: min(360px, calc(100% - 16px))`。③ **编号后置**——`applyFootnoteLabels` 按**首次引用顺序**改写徽标文本（构建期仍只写 id，保「同一原文 → 同一 DOM」）；扫描必须**递归到表格单元格与引用块正文**，漏一处会让后面所有编号整体前移；**只给有定义的引用编号**（未定义引用必须跳过，否则它后面所有脚注整体前移，实机 18:46 抓到）；测量发生在后置之前，编号比长 id 窄 ⇒ 节点最多偏宽一点。**不写 `title` 与 `aria-label`**（2026-11-11 实机复现：前者给浏览器原生 `[^1]` 白框，后者被 Obsidian 的全局 tooltip 委托读成「跳转到脚注 [^1]」黑框，鼠标停在徽标上两个提示同时冒出来）；语义改用不触发 tooltip 的 `role="doc-noteref"`，屏幕阅读器仍能识别。④ **未定义弱化**——`is-unresolved` + `--link-unresolved-*` 变量色 + 截断 id（>12 码点），全文进 `title`：外露 193px 长 id 会把节点文本撑乱。**浮层必须显式 `user-select: text`**：画布根节点通常 `user-select: none`（拖拽语义），不覆盖则浮层里的文字选不中（实机抓到）。**徽标必须固定宽度**（`inline-block + min-width: 0.9em`，2026-11-11 实机复现）：引擎在**字体就绪前**测宽，数字宽度随字体变化 ⇒ 窄节点上第二枚徽标被挤到第二行（内容盒 31→51、引擎节点框不变 ⇒ 溢出压住下方节点，`脚注-05-嵌入` 的「引用₁ 与 ₂」）；`padding` / 负 `margin` 之类"缩宽度"的做法无效——测量宽会跟着缩、换行点不变，必须让**测量值 = 渲染值**。⑤ **定位既不闪烁也不选中（2026-11-11 晚间两次裁决）**——先撤掉当天的「闪一下」：定义行已折叠成 chip / 被渲染剥离，点击徽标跳过去看不到任何脚注正文，`opacity` 闪动没有信息价值、只剩视觉噪音（用户实测：「点击脚注后不应该有窗口闪烁了，因为看不见了」）；再撤掉选中：`goTargetNode` 内部会 `node.active()`，被高亮圈住的往往只是表格或 chip（用户实测：「还是有节点被高亮圈住」）。现实现按引擎同样三步**自己组合**（`expandToNodeUid` → `findNodeByUid` → `moveNodeToCenter`），只去掉 `active()`；上游三件缺失时才回退 `goTargetNode`。`flashNodeByUid` 与就位回调一并删除，不留无消费方的装饰层。⑥ **定义块折叠**——`markdown/md-footnote.splitFootnoteDefinitions` 与索引**同源判定**（围栏 / 缩进代码 / 续行），`resolveSelfDrawSource` 只剥**显示源**；整节点只有定义时渲染汇总 chip（**`脚注`**——**不报条数**：`脚注 N` 会被读成「第 N 条脚注」，`N 条脚注` 又啰嗦，2026-11-11 用户裁决；点击/悬停展开全部定义）——不接管会让引擎回落渲染 `data.text`，隐藏**静默失效**。**共同前提**：`text` / `mdRaw` / 序列化 / 保存管线零改动，编辑弹窗与内联编辑器仍看得到原文，纯浏览仍零写盘。
+
+- [K198] **会话树进引擎前必须补齐图片默认尺寸（2026-11-12 实机 P0）**：
+  ① **结论**：`DocumentSession.applyToPort` 在把树交给 `port.applySnapshot` 前一律过 `media/images-path.withDefaultImageSizes`；视图侧 `applySnapshot` 保持薄通道。补齐是**显示派生**：只在有「有 `image` 无 `imageSize`」节点时经 `domain/tree.cloneTree` 深拷贝后补，跨视图广播的引擎树零拷贝，派生字段也**不回灌会话权威树**（跨视图逐字可比、写盘只读 md 字段，硬规则 4）。
+  ② **依据**：解析器不产 `imageSize`（见 `ensureDefaultImageSizes` 文件头），vendor `createImgNode → getImgShowSize` 对缺失值直接解构 `let {custom,width,height} = getData('imageSize')` ⇒ TypeError 打断整轮 `createNode`，`renderer.root` 变 null、DOM 停在旧画面、后续命令静默 no-op。初次建引擎的兜底在 `features/view.ts` 的 `ensureDefaultImageSizes(tree)`（K97）；Level B 的 `reloadFromDisk → broadcastNow → applySessionSnapshot` 用的是**重新解析**的树，恰好绕开它。实机：含 `![[图]]` / `![[图|147]]` 的两份样本各做一次外部写入，全新实例 3 次复现；无图片样本同样操作正常（64 节点树完整、外部文本上屏）。
+  ③ **边界**：不改 `text` / `mdRaw` / 序列化 / 保存管线；不改 vendor；不做「引擎缺字段自动兜底」的第二份判定。会话树保持解析原样，`markLoaded` 基线「序列化结果与磁盘逐字一致」不变。
+  ④ **回归**：`tests/images-path.test.ts`（零拷贝 / 副本补齐 / 原树不改）、`tests/document-session.test.ts`（外部重载后 port 收到的树带尺寸、会话树不带）、`scripts/verify-visual.mjs` 的 image 探针（`applySessionSnapshot(withDefaultImageSizes(解析器产物))` 后 root / 2 节点 / `<image>` 齐全）。
+  ⑤ **同日复验补的显示层缺陷（P2）**：只补默认盒虽不崩，但外部写入后图片从「160×160 自然尺寸 / 147×147 `|147` 参数」退回「200×120 默认盒」——加载期的 `collectImageSizeCorrections → node_tree_render_end` 异步回灌只在**建引擎**时跑，快照应用不会重跑。修法不是再跑一遍探测（异步 + uid 匹配 + 每次广播重复探测），而是**复用接收视图当前引擎里已定稿的尺寸**：`features/view.knownImageSizes()` 在 `applySnapshot` **应用之前**从 `getRenderRoot()` 收 `imageSize.custom === true` 的条目，按 `media/images-path.imageSizeKey`（地址 + `mdImageWidth/Height`，同一张图 `![[a.png]]` 与 `![[a.png|300]]` 不能共用一个尺寸）索引；`reuseKnownImageSizes` 把命中项搬进新树（无命中零拷贝、命中才深拷贝、原树不改）。只认 `custom:true` 是为了不把「曾回落到默认」的态固化；外部换图 / 新增图片仍停在默认盒这一安全终态。文件里的尺寸参数一字未改，视觉探针新增三条断言（定稿尺寸 1 份 / 引擎 data 仍 120×40 `custom:true` / `<image>` 宽 120）。实机 A/B：`功能验收.md` 160×160 & 200×200、`思维导图.md` 147×147，外部写入后三者全部原值保持。

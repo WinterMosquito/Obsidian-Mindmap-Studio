@@ -1,5 +1,6 @@
 /**
- * 新建思维导图：创建普通 `命名.md` 文件，正文带布局声明（`Mindmap: <布局>`）。
+ * 新建思维导图：创建普通 `命名.md` 文件，正文带启用信号与布局键
+ * （`Mindmap: Mindmap` + `Mindmap Layout: <kebab>`）。
  *
  * 渲染层定位：新文件是标准 Markdown（属性块 + 提示列表），双击/链接打开落在
  * Obsidian markdown 视图；本模块负责流程（命名、落盘、打开），并在创建后自动
@@ -11,7 +12,6 @@
 import { App, Notice, normalizePath, type TFile, type TFolder } from 'obsidian';
 import { notifyError } from './core/errors';
 import { t } from './core/i18n';
-import { layoutPropertyValue } from './domain/mindmap-property';
 import {
 	buildDefaultMindMapName,
 	createDefaultMarkdownContent,
@@ -23,7 +23,7 @@ import { openNameInputModal } from './ui/modal-name';
 /** `createNewMindMap` 消费的设置子集（窄化契约：命令宿主只需提供这几项） */
 export type NewMindMapSettings = Pick<
 	MindMapStudioSettings,
-	'language' | 'saveLocation' | 'saveFolder' | 'defaultLayout'
+	'language' | 'saveLocation' | 'saveFolder' | 'defaultLayout' | 'newMapSyntax'
 >;
 
 /**
@@ -67,7 +67,8 @@ export async function createNewMindMap(
 	// 自己的属性，改设置不会回头影响它。
 	const content = createDefaultMarkdownContent(
 		language,
-		layoutPropertyValue(settings.defaultLayout),
+		settings.defaultLayout,
+		settings.newMapSyntax,
 	);
 
 	let file: TFile;

@@ -25,11 +25,13 @@ import {
 	nodeColorScale,
 	nodeContentTones,
 	nodeInkColor,
+	isColorDirectiveLine,
 	normalizeHexColor,
 	orphanSentinels,
 	parseColorInput,
 	relativeLuminance,
 	scopeSentinels,
+	splitTrailingColorDirective,
 	walkColorDirectives,
 } from '../src/domain/color';
 import { branchLayerOf, topMostNodes } from '../src/engine/mindmap-nodes';
@@ -301,6 +303,46 @@ describe('写入 / 清除颜色指令', () => {
 		expect(setColorDirective('项目 %%#ff0000%%', null)).toBe('项目');
 		expect(setColorDirective('%%#ff0000%%', null)).toBe('');
 		expect(setColorDirective('项目', null)).toBe('项目');
+	});
+
+	it('标题节点：ownLine 写独立行（替换 / 迁移旧行内形态 / 清除）', () => {
+		expect(setColorDirective('标题', '#89cff0', { ownLine: true })).toBe(
+			'标题\n%%#89cff0%%',
+		);
+		// 重复写同一色：幂等（不叠指令、不留空行）
+		expect(
+			setColorDirective('标题\n%%#89cff0%%', '#89cff0', { ownLine: true }),
+		).toBe('标题\n%%#89cff0%%');
+		// 旧的行内形态在下次改色时迁到独立行
+		expect(
+			setColorDirective('标题 %%#ff0000%%', '#00ff00', { ownLine: true }),
+		).toBe('标题\n%%#00ff00%%');
+		// 清除：连整行一起删
+		expect(
+			setColorDirective('标题\n%%#89cff0%%', null, { ownLine: true }),
+		).toBe('标题');
+		// 不传 ownLine 的既有行为不变（列表 / 段落仍行内）
+		expect(setColorDirective('项目', '#89cff0')).toBe('项目 %%#89cff0%%');
+	});
+
+	it('整行形态的判定与拆分（与行内共用值域）', () => {
+		expect(isColorDirectiveLine('%%#89CFF0%%')).toBe(true);
+		expect(isColorDirectiveLine('  %% none %%  ')).toBe(true);
+		expect(isColorDirectiveLine('%%#89cff0%% 后文')).toBe(false);
+		expect(isColorDirectiveLine('%%备注%%')).toBe(false);
+		expect(isColorDirectiveLine('%%#12%%')).toBe(false);
+		expect(isColorDirectiveLine('标题 %%#89cff0%%')).toBe(false);
+		expect(splitTrailingColorDirective('标题 %%#89CFF0%%')).toEqual({
+			content: '标题',
+			directive: '%%#89CFF0%%',
+		});
+		expect(splitTrailingColorDirective('%%none%%')).toEqual({
+			content: '',
+			directive: '%%none%%',
+		});
+		expect(splitTrailingColorDirective('标题 %%备注%%')).toBeNull();
+		expect(splitTrailingColorDirective('标题 %%#89cff0%% 后文')).toBeNull();
+		expect(splitTrailingColorDirective('`%%#89cff0%%`')).toBeNull();
 	});
 
 	it('清除行首指令：没有前导空白可吞，改吞后一个（不留前导空格）', () => {

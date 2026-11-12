@@ -11,6 +11,20 @@
  */
 
 /**
+ * 深拷贝一棵 JSON 数据树（`structuredClone` 优先，缺失时 JSON 往返）。
+ *
+ * 会话树 / 引擎数据树都是纯 JSON（引擎 `getData()` 自身即深拷贝），两种实现
+ * 语义等价；抽到此处是为了「拷贝语义」只有一份：会话取树、应用快照前补
+ * 显示派生字段（图片默认尺寸）都要用它。
+ */
+export function cloneTree<T>(tree: T): T {
+	if (typeof structuredClone === 'function') {
+		return structuredClone(tree);
+	}
+	return JSON.parse(JSON.stringify(tree)) as T;
+}
+
+/**
  * 先序深度优先遍历树（父节点先于子节点）。
  * @param visit  访问回调；返回 false 时立即终止整棵树的遍历
  */

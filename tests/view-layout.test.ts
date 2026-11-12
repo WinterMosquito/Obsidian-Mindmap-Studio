@@ -31,8 +31,10 @@ describe('布局跟随：竞态守卫（pendingLayoutWrite）', () => {
 		// 置位必须在 `save()` 之前：排空一旦开始，写盘触发的 changed 就可能先到
 		expect(VIEW_SOURCE).toContain('this.pendingLayoutWrite = layoutId;');
 		// 让位：跟随侧见到「在途值」直接返回，交给 applyLayout 收尾统一应用
+		expect(VIEW_SOURCE).toContain('declared === this.pendingLayoutWrite');
+		// 缺失/非法布局回退默认布局（不再早退成「什么都不做」）
 		expect(VIEW_SOURCE).toContain(
-			'declared === null || declared === this.pendingLayoutWrite',
+			'readDeclaredLayout(this.app, file) ?? this.plugin.settings.defaultLayout',
 		);
 		// 清空在 finally 里、且**只清自己那一项**：成功与失败都要清，否则之后的跟随
 		// 永远早退；无条件清则两次切换交叠时前者会放走后者仍在途的窗口
@@ -42,17 +44,19 @@ describe('布局跟随：竞态守卫（pendingLayoutWrite）', () => {
 });
 
 describe('布局入口归一（applyLayout）', () => {
-	it('入参先过 layoutIdOfPropertyValue，非法 id 直接忽略并留痕', () => {
+	it('入参先过 normalizeLayoutId，非法 id 直接忽略并留痕', () => {
 		expect(VIEW_SOURCE).toContain(
-			'const layoutId = layoutIdOfPropertyValue(engineLayoutId);',
+			'const layoutId = normalizeLayoutId(engineLayoutId);',
 		);
 		expect(VIEW_SOURCE).toContain('if (layoutId === null) {');
 		expect(VIEW_SOURCE).toContain('未知的布局 id，已忽略');
 	});
 
 	it('写属性与设引擎都用归一值，不再直接消费入参', () => {
-		expect(VIEW_SOURCE).toContain('layoutPropertyValue(layoutId)');
-		expect(VIEW_SOURCE).not.toContain('layoutPropertyValue(engineLayoutId)');
+		expect(VIEW_SOURCE).toContain('setMindMapLayout(frontmatter, layoutId);');
+		expect(VIEW_SOURCE).not.toContain(
+			'setMindMapLayout(frontmatter, engineLayoutId)',
+		);
 		expect(VIEW_SOURCE).not.toContain('this.engine.setLayout(engineLayoutId)');
 	});
 });
@@ -62,6 +66,25 @@ describe('单一应用点（applyLayoutToEngine）', () => {
 		expect(VIEW_SOURCE.match(/private applyLayoutToEngine\(/g) ?? []).toHaveLength(1);
 		expect(VIEW_SOURCE.match(/this\.applyLayoutToEngine\(/g) ?? []).toHaveLength(2);
 		expect(VIEW_SOURCE.match(/this\.engine\.setLayout\(/g) ?? []).toHaveLength(1);
+	});
+});
+
+describe('首帧前不排保存（打开不空报「保存中…」）', () => {
+	it('`data_change` 只在真的提交进会话后才排保存', () => {
+		// 首帧前的 `data_change` 是引擎自身规范化（`seedInitialHistory` 播种），
+		// 不是用户编辑：无条件排程会让每次打开都空报「保存中…」两秒、并空跑
+		// 一轮无差异写盘（2026-11-09 实机）。K190
+		expect(VIEW_SOURCE).toContain(
+			'if (this.commitSession()) {\n\t\t\t\t\tthis.scheduleSave();',
+		);
+	});
+
+	it('插件侧原文通道同样只在提交成功后排保存', () => {
+		// `applying` 期间或基于旧树被拒时，权威树没变；无条件排保存会把旧
+		// 权威树写出去（K194）。该处缩进比 `data_change` 分支少两层。
+		expect(VIEW_SOURCE).toContain(
+			'if (this.commitSession()) {\n\t\t\tthis.scheduleSave();',
+		);
 	});
 });
 
@@ -76,4 +99,27 @@ describe('加载期复问声明（MetadataCache 追赶）', () => {
 		// 顺序即契约：复问必须在 initMindMap 之前，否则引擎仍按种子值布局
 		expect(reread).toBeLessThan(create);
 	});
+});
+
+describe('关闭/切文件：内联编辑提交先于关闭提交闸（2026-11-11 回归）', () => {
+	const blocks = [
+		VIEW_SOURCE.slice(
+			VIEW_SOURCE.indexOf('override async onUnloadFile'),
+			VIEW_SOURCE.indexOf('override async onClose'),
+		),
+		VIEW_SOURCE.slice(
+			VIEW_SOURCE.indexOf('override async onClose'),
+			VIEW_SOURCE.indexOf('override onResize'),
+		),
+	];
+	for (const [index, block] of blocks.entries()) {
+		it(`两处关闭路径都先提交编辑器、后关闸（第 ${index + 1} 段）`, () => {
+			const commit = block.indexOf('closeInlineEditor(this);');
+			const disarm = block.indexOf('this.commitsArmed = false;');
+			expect(commit, '缺失：closeInlineEditor').toBeGreaterThan(-1);
+			expect(disarm, '缺失：commitsArmed = false').toBeGreaterThan(-1);
+			// 顺序即契约：先关闸会让最后一次输入被 commitSession 静默丢弃
+			expect(disarm).toBeGreaterThan(commit);
+		});
+	}
 });

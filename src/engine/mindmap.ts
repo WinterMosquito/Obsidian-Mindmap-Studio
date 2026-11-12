@@ -122,6 +122,7 @@ export * from './mindmap-export';
 export * from './mindmap-minimap';
 // 节点级配色（`%%#hex%%` 指令）：颜色 → 节点样式键的唯一定义
 export * from './mindmap-colors';
+export { applySessionSnapshot } from './mindmap-snapshot';
 // 「自动整理」族已拆到独立文件，仍由本 barrel 对外转出（调用方 import 路径不变）
 export { arrangeMindMap } from './mindmap-arrange';
 import { buildWikiDocIcon, WIKI_DOC_ICON_SIZE } from './mindmap-icons';
@@ -291,6 +292,20 @@ const PERFORMANCE_CONFIG = {
 } as const;
 
 /**
+ * 引擎「收集历史」的节流窗口（ms）。
+ *
+ * 上游默认 **100 ms**（`vendor/upstream/src/constants/defaultOptions.js:189`）。
+ * `Command.addHistory` 被这个窗口延后执行，而编辑期的 `data_change` 就在它
+ * 末尾发出——100 ms 直接把「另一侧看到这次编辑」拖到 100 ms 之后。缩到 16 ms：
+ * 仍能合并同一帧内的多次 `addHistory`（一次用户操作可能连发多条命令），却把
+ * 提交延迟压到一帧级，向官方 `setViewData` 的「编辑即推送」靠拢（K185 实测）。
+ *
+ * ⚠ 不能设 0：`throttle` 用 `setTimeout(..., 0)` 排队，同帧多命令会各记一条
+ * 历史；16 ms 足够覆盖一帧，又不会像 100 ms 那样让「共享撤销」明显滞后。
+ */
+const HISTORY_ADD_THROTTLE_MS = 16;
+
+/**
  * 解析节点当前生效的字号/颜色/字重（自绘节点内容用）。
  *
  * 引擎对自绘节点跳过默认文本渲染，故内容必须自带样式；`node.style.merge(key)`
@@ -398,6 +413,10 @@ export function createMindMap(
 				// （引擎不读 altKey；同元素 capture 会被引擎按注册顺序抢先）。
 				mousewheelAction: 'move',
 				disableMouseWheelZoom: false,
+				// 历史收集节流（上游 100 ms → 16 ms）：`data_change` 是本插件
+				// 的编辑提交信号，越早到越接近官方的即时同步（K185）。
+				// 字段未入 d.cts，经 Object.assign 注入。
+				addHistoryTime: HISTORY_ADD_THROTTLE_MS,
 				// 关联线（联系）的**默认文字**清空：引擎缺省值是「关联」，任何没写
 				// 标签的线都会顶着这两个字（`AssociativeLine.createText` 的兜底）。
 				// 本插件的语义是「标签可空」，故必须置空串。字段未入 d.cts，

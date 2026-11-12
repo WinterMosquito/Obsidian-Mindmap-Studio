@@ -67,13 +67,19 @@ describe('手动「以思维导图打开」→ 升级声明（键名与语言无
 			const { leaf, setViewState } = leafStub();
 			await declareAndOpenAsMindMap(app, leaf as never, file, lang, 'mindMap');
 			expect(writes).toHaveLength(1);
-			expect(writes[0]).toEqual({ Mindmap: 'Mindmap' });
-			expect(store.frontmatter).toEqual({ Mindmap: 'Mindmap' });
+			expect(writes[0]).toEqual({
+				Mindmap: 'Mindmap',
+				'Mindmap Layout': 'mindmap',
+			});
+			expect(store.frontmatter).toEqual({
+				Mindmap: 'Mindmap',
+				'Mindmap Layout': 'mindmap',
+			});
 			expect(setViewState).toHaveBeenCalledOnce();
 		},
 	);
 
-	it('种子布局：默认布局为逻辑结构图 → 升级写入 `Mindmap: LogicalStructure`', async () => {
+	it('种子布局：默认布局为逻辑结构图 → 布局键写 kebab 值 `logical`', async () => {
 		const { app, store, writes } = makeApp(null);
 		await declareAndOpenAsMindMap(
 			app,
@@ -83,45 +89,76 @@ describe('手动「以思维导图打开」→ 升级声明（键名与语言无
 			'logicalStructure',
 		);
 		expect(writes).toHaveLength(1);
-		expect(writes[0]).toEqual({ Mindmap: 'LogicalStructure' });
-		expect(store.frontmatter).toEqual({ Mindmap: 'LogicalStructure' });
+		expect(writes[0]).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'logical',
+		});
+		expect(store.frontmatter).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'logical',
+		});
 	});
 
-	it('已是声明：不重写 YAML（避免每次打开都重序列化）', async () => {
-		const { app, store, writes } = makeApp({ Mindmap: 'Mindmap' });
-		await declareAndOpenAsMindMap(app, leafStub().leaf as never, file, 'zh', 'mindMap');
-		expect(writes).toHaveLength(0);
-		expect(store.frontmatter).toEqual({ Mindmap: 'Mindmap' });
-	});
-
-	it('有非导图值（如 `Mindmap: 笔记`）：改写为 `Mindmap`（打开方式决定值）', async () => {
-		const { app, writes } = makeApp({ Mindmap: '笔记' });
-		await declareAndOpenAsMindMap(app, leafStub().leaf as never, file, 'zh', 'mindMap');
-		expect(writes[0]).toEqual({ Mindmap: 'Mindmap' });
-	});
-
-	it('同名变体并存且其一已是 Mindmap：已声明，不重写 YAML', async () => {
-		const initial = { Mindmap: 'Mindmap', mindmap: 'Markdown' };
+	it('已是完整声明（开关 + 合法布局）：不重写 YAML', async () => {
+		const initial = { Mindmap: 'Mindmap', 'Mindmap Layout': 'timeline' };
 		const { app, store, writes } = makeApp(initial);
 		await declareAndOpenAsMindMap(app, leafStub().leaf as never, file, 'zh', 'mindMap');
 		expect(writes).toHaveLength(0);
 		expect(store.frontmatter).toEqual(initial);
 	});
 
-	it('缓存滞后 + 变体并存：规范化为声明值，不取同族的 Markdown 值（否则静默降级）', async () => {
+	it('已启用但布局键缺失：补写种子布局，不重写启用值', async () => {
+		const { app, writes } = makeApp({ Mindmap: 'Mindmap' });
+		await declareAndOpenAsMindMap(app, leafStub().leaf as never, file, 'zh', 'mindMap');
+		expect(writes[0]).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'mindmap',
+		});
+	});
+
+	it('有非导图值（如 `Mindmap: 笔记`）：改写为启用值 + 种子布局', async () => {
+		const { app, writes } = makeApp({ Mindmap: '笔记' });
+		await declareAndOpenAsMindMap(app, leafStub().leaf as never, file, 'zh', 'mindMap');
+		expect(writes[0]).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'mindmap',
+		});
+	});
+
+	it('同名变体并存：收敛为标准键 + 种子布局', async () => {
+		const initial = { Mindmap: 'Mindmap', mindmap: 'Markdown' };
+		const { app, store, writes } = makeApp(initial);
+		await declareAndOpenAsMindMap(app, leafStub().leaf as never, file, 'zh', 'mindMap');
+		expect(writes[0]).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'mindmap',
+		});
+		expect(store.frontmatter).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'mindmap',
+		});
+	});
+
+	it('缓存滞后 + 变体并存：启用值收敛到标准键，不取同族的 Markdown 值', async () => {
 		// 磁盘：标准键已是 Markdown、小写变体仍是 Mindmap（缓存仍认为「未声明」）
 		const { app, store, writes } = makeApp(
 			{ Mindmap: 'Markdown', mindmap: 'Mindmap' },
 			null,
 		);
 		await declareAndOpenAsMindMap(app, leafStub().leaf as never, file, 'zh', 'mindMap');
-		expect(writes[0]).toEqual({ Mindmap: 'Mindmap' });
-		expect(store.frontmatter, '仍应是导图').toEqual({ Mindmap: 'Mindmap' });
+		expect(writes[0]).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'mindmap',
+		});
+		expect(store.frontmatter, '仍应是导图').toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'mindmap',
+		});
 	});
 
-	it('缓存滞后 + 变体并存且已声明某种布局：收敛为该布局，不被种子值重置', async () => {
-		// 磁盘：两个变体都写着 Timeline（缓存仍认为「未声明」）。收敛必须写声明值，
-		// 用种子值会把用户已选的布局静默换掉。
+	it('旧布局值（如 `Mindmap: Timeline`）：搬进布局键，不重置成种子值', async () => {
+		// 2026-11-07 起 `Mindmap` 只作开关；旧值写在启用键里的布局==用户已做的选择，
+		// 升级时按 `readLegacyLayout` 接住（种子值只兜「本来就没有布局」）
 		const { app, store, writes } = makeApp(
 			{ Mindmap: 'Timeline', mindmap: 'Timeline' },
 			null,
@@ -133,20 +170,58 @@ describe('手动「以思维导图打开」→ 升级声明（键名与语言无
 			'zh',
 			'logicalStructure',
 		);
-		expect(writes[0]).toEqual({ Mindmap: 'Timeline' });
-		expect(store.frontmatter).toEqual({ Mindmap: 'Timeline' });
+		expect(writes[0]).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'timeline',
+		});
+		expect(store.frontmatter).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'timeline',
+		});
+	});
+
+	it('布局键里是旧写法：归一成 kebab，不重置成种子值', async () => {
+		// 迁移会处理它，但「先手动打开、迁移还没跑到」的窗口里不能拿种子值覆盖
+		const { app, store, writes } = makeApp(
+			{ Mindmap: 'Mindmap', 'Mindmap Layout': 'LogicalStructure' },
+			null,
+		);
+		await declareAndOpenAsMindMap(
+			app,
+			leafStub().leaf as never,
+			file,
+			'zh',
+			'fishbone',
+		);
+		expect(writes[0]).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'logical',
+		});
+		expect(store.frontmatter).toEqual({
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'logical',
+		});
 	});
 
 	it('断代：旧键 Type 即使值为 Mindmap 也不认 → 另写标准键，旧键原样保留', async () => {
 		const { app, writes } = makeApp({ Type: 'Mindmap', title: 'x' });
 		await declareAndOpenAsMindMap(app, leafStub().leaf as never, file, 'zh', 'mindMap');
-		expect(writes[0]).toEqual({ Type: 'Mindmap', title: 'x', Mindmap: 'Mindmap' });
+		expect(writes[0]).toEqual({
+			Type: 'Mindmap',
+			title: 'x',
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'mindmap',
+		});
 	});
 
 	it('断代：旧键 类型 即使值为 Mindmap 也不认 → 另写标准键，旧键原样保留', async () => {
 		const { app, writes } = makeApp({ 类型: 'Mindmap' });
 		await declareAndOpenAsMindMap(app, leafStub().leaf as never, file, 'en', 'mindMap');
-		expect(writes[0]).toEqual({ 类型: 'Mindmap', Mindmap: 'Mindmap' });
+		expect(writes[0]).toEqual({
+			类型: 'Mindmap',
+			Mindmap: 'Mindmap',
+			'Mindmap Layout': 'mindmap',
+		});
 	});
 });
 

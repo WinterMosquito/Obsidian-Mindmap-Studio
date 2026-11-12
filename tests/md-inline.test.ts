@@ -491,18 +491,46 @@ describe('splitFrontmatter', () => {
 		const r = splitFrontmatter('---\r\ntitle: hi\r\n---\r\nbody');
 		expect(r.frontmatter).toBe('---\r\ntitle: hi\r\n---\r\n');
 		expect(r.body).toBe('body');
+		expect(r.gap).toBe('');
+	});
+
+	it('frontmatter 与正文之间的空行单独成 gap（body 不含它）', () => {
+		const one = splitFrontmatter('---\na: 1\n---\n\n# 标题');
+		expect(one.frontmatter).toBe('---\na: 1\n---\n');
+		expect(one.gap).toBe('\n');
+		expect(one.body).toBe('# 标题');
+		// 没有空行：gap 为空，不凭空补
+		expect(splitFrontmatter('---\na: 1\n---\n# 标题').gap).toBe('');
+		// 多行空行原样保留
+		expect(splitFrontmatter('---\na: 1\n---\n\n\n# 标题').gap).toBe('\n\n');
+		// 仅含空格的行也算空行；CRLF 原样保留
+		expect(splitFrontmatter('---\na: 1\n---\n\n   \n# 标题').gap).toBe(
+			'\n   \n',
+		);
+		expect(splitFrontmatter('---\r\na: 1\r\n---\r\n\r\n正文').gap).toBe(
+			'\r\n',
+		);
 	});
 
 	it('仅有 frontmatter → body 为空串', () => {
 		expect(splitFrontmatter('---\na: 1\n---\n')).toEqual({
 			frontmatter: '---\na: 1\n---\n',
 			body: '',
+			gap: '',
 		});
 	});
 
 	it('空内容 → 无 frontmatter、body 为空串', () => {
-		expect(splitFrontmatter('')).toEqual({ frontmatter: null, body: '' });
-		expect(splitFrontmatter('\n\n')).toEqual({ frontmatter: null, body: '\n\n' });
+		expect(splitFrontmatter('')).toEqual({
+			frontmatter: null,
+			body: '',
+			gap: '',
+		});
+		expect(splitFrontmatter('\n\n')).toEqual({
+			frontmatter: null,
+			body: '\n\n',
+			gap: '',
+		});
 	});
 
 	it('重复 frontmatter：只取第一个块，body 保留第二个块并给出告警', () => {

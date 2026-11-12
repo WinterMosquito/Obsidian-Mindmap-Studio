@@ -281,6 +281,18 @@ export const Platform = {
 export function setIcon(_parent: unknown, _iconId: string): void {}
 
 /**
+ * getIcon 桩：官方返回已注册的 `<svg>` 模板，单测环境没有图标注册表 ⇒ 返回 null。
+ *
+ * 这正是生产环境的**降级路径**（图标缺失 ⇒ 标注省略图标、保留标题与类型色），
+ * 故不需要假 SVG；`platform/callout-icon` 对 null 与异常都有分支。
+ * 必须有这个导出：缺它时任何间接 import `platform/callout-icon` 的用例都会在
+ * **模块解析期**整文件失败（ESM 具名导出缺失），而不是断言失败——难定位。
+ */
+export function getIcon(_iconId: string): SVGSVGElement | null {
+	return null;
+}
+
+/**
  * setTooltip 桩：官方行为的最小面——写 `aria-label`（Obsidian 原生 tooltip
  * 由它驱动）。工具栏按钮与丝带提示的无障碍断言依赖这一步写入；
  * 位置/延迟等展示行为不在 mock 范围。

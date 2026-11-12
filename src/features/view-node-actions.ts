@@ -586,7 +586,7 @@ export async function editNodeTextInModal(
 			rawMode: true,
 			// 预览用**渲染器同口径**（URL 显示为地址、轻标记剥壳、超长截断）——
 			// 与节点实际外观一致；引擎侧口径（URL icon-only）在这里会误导用户
-			preview: (value) => inlineContentPreview(value),
+			preview: (value) => inlineContentPreview(value, view.lang),
 		});
 		// 未改动不写盘（避免无意义的保存与重渲染）
 		if (value === null || value === raw) {

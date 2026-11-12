@@ -24,6 +24,7 @@
  * 落点：无指令时追加到末行行尾；末行是块级语法行（围栏定界符 / 表格行）时另起
  * 一行——缘由见 `node-inline-tokenize.appendColorDirective`。
  */
+import { Notice } from 'obsidian';
 import {
 	branchLayerOf,
 	getRenderRoot,
@@ -35,7 +36,7 @@ import {
 	isNodeOnlyColorScope,
 	PALETTE_OPTIONS,
 } from '../core/constants';
-import type { TranslationKey } from '../core/i18n';
+import { t, tf, type TranslationKey } from '../core/i18n';
 import type { MindMapNode } from '../core/engine-types';
 import type { MdNodeData } from '../core/node-data';
 import {
@@ -46,7 +47,9 @@ import {
 } from '../domain/color';
 import { splitDirectiveTail } from '../domain/directive';
 import { nodeInlineSource } from '../domain/md-meta';
+import { walkTree } from '../domain/tree';
 import { composeNodeContent } from '../markdown/md-serialize';
+import { createButton, openFormModal } from '../ui/modal-common';
 import { applyRawNodeContents } from './node-inline-editor';
 import { colorDirectiveOf, setColorDirective } from './node-inline-tokenize';
 import { refreshMiniMapAfterRender } from './view-minimap';
@@ -135,7 +138,11 @@ function rawWithColorDirective(
 	const { content, tail } = splitDirectiveTail(
 		composeNodeContent(data, view.app),
 	);
-	const next = setColorDirective(content, directive);
+	// 标题节点的指令写**独立行**（K174）：行尾会被 heading 缓存算进标题文本，
+	// `[[#标题]]` 失效。其它节点仍行内（避免每次上色都多一行 diff）。
+	const next = setColorDirective(content, directive, {
+		ownLine: data.mdType === 'heading',
+	});
 	if (next === content || next.trim() === '') {
 		return null;
 	}
@@ -311,4 +318,158 @@ export function applyBranchColors(view: MindMapViewContext): void {
 	// 跳过后置编排：只往行尾加注释，不改标题、不产生新链接
 	applyRawNodeContents(view, entries, { afterCommit: false });
 	refreshMiniMapAfterRender(view);
+}
+
+/** 一次「清理旧哨兵」会话：`path` 用于落地前确认视图仍停在同一文件 */
+export interface ColorSentinelSession {
+	readonly view: MindMapViewContext;
+	readonly path: string;
+	readonly count: number;
+}
+
+/**
+ * 扫描一棵渲染树里带**自身** `%%none%%` 的节点（清理判定的唯一实现）。
+ *
+ * 用 `nodeInlineSource`（渲染同源：未编辑读 `mdRaw`、已编辑读 `text`），不做第二份
+ * 「哪行是指令」的判断。整行只剩这条指令的节点**不清**——删完会把节点内容清空
+ * （与 `rawWithColorDirective` 同口径）。
+ */
+function colorSentinelEntries(
+	view: MindMapViewContext,
+): { node: MindMapNode; raw: string }[] {
+	const root = getRenderRoot(view.mindMap);
+	if (!root) {
+		return [];
+	}
+	const entries: { node: MindMapNode; raw: string }[] = [];
+	walkTree(root, (node) => {
+		const data = node.getData?.() as MdNodeData | null | undefined;
+		if (!data) {
+			return;
+		}
+		const source = nodeInlineSource(data);
+		if (colorDirectiveOf(source) !== COLOR_DIRECTIVE_NONE) {
+			return;
+		}
+		const raw = setColorDirective(source, null);
+		if (raw === source || raw.trim() === '') {
+			return;
+		}
+		entries.push({ node, raw });
+	});
+	return entries;
+}
+
+/**
+ * 扫描已打开导图里的旧 `%%none%%`（K175）：返回非空会话，供弹窗文案与落地共用。
+ *
+ * 只收**有文件、引擎已建**的视图——改写必须经活引擎的原文通道
+ * （`applyRawNodeContents`），数据快照换不回节点实例。
+ *
+ * **按路径去重**（2026-11-09 实机，Level B 交互）：同一文件允许多视图，它们共享
+ * 一份会话树 —— 逐个视图扫描会把同一个 `%%none%%` 算成 N 处（文案报「4 个导图
+ * 4 处」而实际只有 1 个文件 1 处），落地时还会对同一棵树重复 `applyRawNodeContents`
+ * N 次（N 次重渲 + N 条历史）。这里一个文件只留一个代表视图。
+ */
+export function collectColorSentinelSessions(
+	views: readonly MindMapViewContext[],
+): ColorSentinelSession[] {
+	const sessions: ColorSentinelSession[] = [];
+	const seen = new Set<string>();
+	for (const view of views) {
+		const path = view.file?.path;
+		if (!path || !view.mindMap || seen.has(path)) {
+			continue;
+		}
+		seen.add(path);
+		const count = colorSentinelEntries(view).length;
+		if (count > 0) {
+			sessions.push({ view, path, count });
+		}
+	}
+	return sessions;
+}
+
+/**
+ * 落地清理：每个会话**重新扫描**（弹窗期间别的视图可能已改文件），并确认视图仍停在
+ * 同一文件（切走了就不能把新文件的内容当成旧文件的清理结果）。
+ *
+ * 每棵树一次 `applyRawNodeContents` —— 一次渲染 / 一次存盘 / 一条撤销。
+ * @returns 实际删除的处数
+ */
+export function applyColorSentinelCleanup(
+	sessions: readonly ColorSentinelSession[],
+): number {
+	let removed = 0;
+	for (const session of sessions) {
+		const { view, path } = session;
+		if (view.file?.path !== path) {
+			continue;
+		}
+		const entries = colorSentinelEntries(view);
+		if (entries.length === 0) {
+			continue;
+		}
+		applyRawNodeContents(view, entries, { afterCommit: false });
+		removed += entries.length;
+	}
+	return removed;
+}
+
+/**
+ * 从「仅本节点」切回「含子节点」后的**一次性询问**（K175）：是否清掉已打开导图里
+ * 旧的 `%%none%%`。
+ *
+ * 为什么问而不是自动清：哨兵是**正文内容**（换库、发给别人同样生效），其中既有上次
+ * 「仅本节点」上色的产物，也有用户显式点「默认」写下的；删掉会让这些节点重新继承
+ * 上层颜色。故必须由用户确认，且只动**当前打开**的文件（没有视图就无法经原文通道
+ * 安全改写）。
+ */
+export async function offerColorSentinelCleanup(
+	views: readonly MindMapViewContext[],
+): Promise<void> {
+	const sessions = collectColorSentinelSessions(views);
+	if (sessions.length === 0) {
+		return;
+	}
+	const lang = sessions[0]!.view.lang;
+	const count = sessions.reduce((sum, session) => sum + session.count, 0);
+	const confirmed = await openFormModal<boolean>({
+		app: sessions[0]!.view.app,
+		title: t(lang, 'modal.colorScopeCleanup.title'),
+		rootCls: 'mindmap-color-scope-cleanup',
+		build: ({ root, submit }) => {
+			// `\n` 分段：弹窗正文默认把换行折叠成空格（设置页那套 `pre-line` 只管设置页）
+			for (const line of tf(lang, 'modal.colorScopeCleanup.body', {
+				files: sessions.length,
+				count,
+			}).split('\n')) {
+				root.createEl('p', { text: line });
+			}
+			const buttons = root.createDiv();
+			buttons.addClass(
+				'mindmap-modal-action-row',
+				'mindmap-modal-action-row--mt',
+			);
+			createButton(
+				buttons,
+				t(lang, 'modal.colorScopeCleanup.keep'),
+				'secondary',
+				() => submit(false),
+			);
+			createButton(
+				buttons,
+				t(lang, 'modal.colorScopeCleanup.confirm'),
+				'primary',
+				() => submit(true),
+			);
+		},
+	});
+	if (confirmed !== true) {
+		return;
+	}
+	const removed = applyColorSentinelCleanup(sessions);
+	if (removed > 0) {
+		new Notice(tf(lang, 'colorScope.cleanupDone', { count: removed }));
+	}
 }

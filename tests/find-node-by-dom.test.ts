@@ -12,7 +12,12 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
-import { findNodeByDom, resolveNodesByDoms } from '../src/engine/mindmap';
+import {
+	collectRenderNodeData,
+	findNodeByDom,
+	resolveNodesByDoms,
+	revealNodeByUid,
+} from '../src/engine/mindmap';
 
 vi.mock('../vendor/simple-mind-map.cjs', () => ({
 	MindMap: class {},
@@ -299,5 +304,87 @@ describe('resolveNodesByDoms：批量反查（逐位置 + 祖先链查表）', (
 		expect(resolveNodesByDoms(asMindMap(tree), [asEl(childEl)])).toEqual([
 			asNode(hitNode),
 		]);
+	});
+});
+
+/**
+ * 脚注索引与定位（K197）：同一个引擎防腐面里的另两个入口。
+ * 之所以一起测：`collectRenderNodeData` 是索引的**唯一数据源**（会话树没有 uid），
+ * `revealNodeByUid` 是点击徽标的落点——两者都只依赖引擎渲染树的最小面。
+ */
+describe('collectRenderNodeData / revealNodeByUid', () => {
+	/** 带 data 的渲染节点桩（walkTree 只认 children；getData 返回活对象） */
+	function dataNode(data: unknown, children: object[] = []): object {
+		return { children, getData: () => data };
+	}
+
+	it('先序展平渲染树 data；引擎未渲染（root 为 null）返回空', () => {
+		const a = { uid: 'a', text: '根' };
+		const b = { uid: 'b', text: '子1' };
+		const c = { uid: 'c', text: '孙' };
+		const d = { uid: 'd', text: '子2' };
+		const root = dataNode(a, [dataNode(b, [dataNode(c)]), dataNode(d)]);
+		expect(collectRenderNodeData(asMindMap(root as FakeNode))).toEqual([
+			a,
+			b,
+			c,
+			d,
+		]);
+		expect(collectRenderNodeData(null)).toEqual([]);
+		expect(collectRenderNodeData(asMindMap(null))).toEqual([]);
+	});
+
+	it('定位是「已发起」语义：只要引擎方法存在且未抛错即 true（回调是异步的）', () => {
+		// vendor 的 expandToNodeUid → mindMap.render(callback) → setTimeout(0)，
+		// 回调在下一宏任务才到；用回调判成功会把「已跳转」误报成「定义不存在」
+		const goTargetNode = vi.fn();
+		const mindMap = {
+			renderer: { root: {}, goTargetNode },
+		} as unknown as MindMap;
+		expect(revealNodeByUid(mindMap, 'x')).toBe(true);
+		// 第二个实参是「已就位」通知回调（闪一下用它触发），不参与成功判定
+		expect(goTargetNode).toHaveBeenCalledWith('x');
+	});
+
+	it('优先「只居中不选中」：三件套齐全时不调 goTargetNode（不会加 active 高亮）', () => {
+		const moveNodeToCenter = vi.fn();
+		const goTargetNode = vi.fn();
+		const target = { uid: 'x' };
+		const mindMap = {
+			renderer: {
+				root: {},
+				expandToNodeUid: (_uid: string, callback?: () => void): void => {
+					callback?.();
+				},
+				findNodeByUid: () => target,
+				moveNodeToCenter,
+				goTargetNode,
+			},
+		} as unknown as MindMap;
+		expect(revealNodeByUid(mindMap, 'x')).toBe(true);
+		expect(moveNodeToCenter).toHaveBeenCalledWith(target);
+		expect(goTargetNode).not.toHaveBeenCalled();
+	});
+
+	it('空 uid / 无引擎 / 方法缺失 / 抛错：一律 false，不抛出', () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			expect(revealNodeByUid(null, 'x')).toBe(false);
+			const empty = { renderer: { root: {} } } as unknown as MindMap;
+			expect(revealNodeByUid(empty, '')).toBe(false);
+			expect(revealNodeByUid(empty, 'x')).toBe(false); // goTargetNode 缺失
+			const broken = {
+				renderer: {
+					root: {},
+					goTargetNode: () => {
+						throw new Error('boom');
+					},
+				},
+			} as unknown as MindMap;
+			expect(revealNodeByUid(broken, 'x')).toBe(false);
+			expect(warn).toHaveBeenCalled();
+		} finally {
+			warn.mockRestore();
+		}
 	});
 });

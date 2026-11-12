@@ -7,18 +7,22 @@ import {
 } from 'obsidian';
 import {
 	DEFAULT_LINE_STYLE,
+	DEFAULT_NEW_MAP_SYNTAX,
 	DEFAULT_NODE_COLOR_SCOPE,
 	DEFAULT_THEME_STYLE,
 	EXPORT_IMAGE_FORMAT_OPTIONS,
 	EXPORT_SCALE_MAX,
 	EXPORT_SCALE_MIN,
+	isNodeOnlyColorScope,
 	LAYOUT_OPTIONS,
 	LINE_STYLE_OPTIONS,
+	NEW_MAP_SYNTAX_OPTIONS,
 	NODE_COLOR_SCOPE_OPTIONS,
 	SAVE_LOCATION_OPTIONS,
 	THEME_OPTIONS,
 	THEME_STYLE_OPTIONS,
 	type ExportImageFormat,
+	type NewMapSyntax,
 	type NodeColorScope,
 	type SaveLocation,
 } from './core/constants';
@@ -34,6 +38,11 @@ interface SettingsHost {
 	settings: MindMapStudioSettings;
 	scheduleSettingsPersist(): void;
 	applySettingsToViews(): void;
+	/**
+	 * 作用范围从「仅本节点」切回「含子节点」后，询问是否清理已打开导图里旧的
+	 * `%%none%%`（K175）。实现只在组合根（要遍历打开的视图）。
+	 */
+	offerColorSentinelCleanup(): void;
 	/** 语言变更后刷新命令面板/丝带/状态栏/搜索栏文案 */
 	refreshLanguageUi(): void;
 }
@@ -77,6 +86,15 @@ export interface MindMapStudioSettings {
 	 */
 	defaultThemeStyle: string;
 	/**
+	 * 新建导图的**层级语法**：前几级写无序列表，还是写 Markdown 标题（`h1` /
+	 * `h2` 只差顶层写 `#` 还是 `##`；6 级之后一律回落列表）。
+	 *
+	 * **种子值**（与 `defaultLayout` 同性质）：只写进新建导图的正文与「空文档」的
+	 * 初始级别；已存在的文件按正文自身实测的起始级别回写，改这里不会回头影响它们
+	 * （`MindMapStudioSettings` 没有逐文件语法字段，正文是唯一真相）。
+	 */
+	newMapSyntax: NewMapSyntax;
+	/**
 	 * 新建导图的默认保存位置（四态，见 `core/constants` 的 `SaveLocation`）。
 	 * 默认 `obsidian`：完整跟随官方「设置 → 文件与链接 → 新建笔记的默认位置」；
 	 * 其余三态为显式覆盖（与 Obsidian Canvas 同口径）。
@@ -84,7 +102,6 @@ export interface MindMapStudioSettings {
 	saveLocation: SaveLocation;
 	/** `saveLocation === 'folder'` 时的目标文件夹（库内路径；不存在时回落库根） */
 	saveFolder: string;
-	autoSave: boolean;
 	/**
 	 * 被编辑节点含「双链 + 描述文字」时自动拆分为子节点（见 links-split）。
 	 *
@@ -110,6 +127,8 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	// 新建导图默认**有边框**（2026-11-05 改回：字号 / 内边距调整后，无边框档
 	// 退化成「大纲 + 一条线」）；单篇由右缘竖栏覆盖，显式切过的文件保持原值
 	defaultThemeStyle: DEFAULT_THEME_STYLE,
+	// 新建导图默认写无序列表（＝本特性引入前的形态，升级观感零变化）
+	newMapSyntax: DEFAULT_NEW_MAP_SYNTAX,
 	// 节点配色出厂**含子节点**：与引入本设置前一致，升级观感零变化
 	nodeColorScope: DEFAULT_NODE_COLOR_SCOPE,
 	// 默认跟随官方「新建笔记的默认位置」（经 getNewFileParent 完整生效）——
@@ -117,7 +136,6 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	saveLocation: 'obsidian',
 	// 可先配后建：创建时解析不到（被删/改名）则回落库根，不在此处校验存在性
 	saveFolder: '',
-	autoSave: true,
 	// 默认关闭（2026-10-09 减法）：改写文件结构须由用户显式开启；开启后仅作用于
 	// 被编辑节点（存量未编辑节点仍不会被改写），批量场景用显式拆分命令
 	autoSplitMixedLinks: false,
@@ -273,6 +291,9 @@ export function sanitizeSettings(
 		nodeColorScope:
 			pickFrom('nodeColorScope', NODE_COLOR_SCOPE_OPTIONS) ??
 			DEFAULT_SETTINGS.nodeColorScope,
+		newMapSyntax:
+			pickFrom('newMapSyntax', NEW_MAP_SYNTAX_OPTIONS) ??
+			DEFAULT_SETTINGS.newMapSyntax,
 
 		saveLocation:
 			pickFrom('saveLocation', SAVE_LOCATION_OPTIONS) ??
@@ -285,7 +306,6 @@ export function sanitizeSettings(
 		saveFolder: normalizePath(
 			pickString('saveFolder') ?? DEFAULT_SETTINGS.saveFolder,
 		),
-		autoSave: pickBool('autoSave') ?? DEFAULT_SETTINGS.autoSave,
 		autoSplitMixedLinks:
 			pickBool('autoSplitMixedLinks') ??
 			DEFAULT_SETTINGS.autoSplitMixedLinks,
@@ -362,6 +382,26 @@ export function diffLiveRefreshKeys(
 	return changed;
 }
 
+/**
+ * 是否需要询问「清理旧的 `%%none%%`」：只在**从「仅本节点」切回「含子节点」**时成立
+ * （K175）。
+ *
+ * 反方向不询：切到「仅本节点」时旧哨兵正是该档的机制，删掉反而更糟。判定复用
+ * `core/constants.isNodeOnlyColorScope`，勿在这里写 `=== 'node'`。
+ */
+export function shouldOfferColorScopeCleanup(
+	previous: unknown,
+	next: unknown,
+): boolean {
+	if (typeof previous !== 'string' || typeof next !== 'string') {
+		return false;
+	}
+	return (
+		isNodeOnlyColorScope(previous as NodeColorScope) &&
+		!isNodeOnlyColorScope(next as NodeColorScope)
+	);
+}
+
 /** 设置面板 */
 export class MindMapStudioSettingTab extends PluginSettingTab {
 	declare plugin: Plugin & SettingsHost;
@@ -411,6 +451,7 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 			NODE_COLOR_SCOPE_OPTIONS,
 		);
 		const saveLocationOptions = this.localizedOptions(SAVE_LOCATION_OPTIONS);
+		const newMapSyntaxOptions = this.localizedOptions(NEW_MAP_SYNTAX_OPTIONS);
 		const exportImageFormatOptions = this.localizedOptions(
 			EXPORT_IMAGE_FORMAT_OPTIONS,
 		);
@@ -490,6 +531,15 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 				heading: t(this.lang, 'settings.groupFile'),
 				items: [
 					{
+						name: t(this.lang, 'settings.newMapSyntax'),
+						desc: t(this.lang, 'settings.newMapSyntaxDesc'),
+						control: {
+							type: 'dropdown',
+							key: 'newMapSyntax',
+							options: newMapSyntaxOptions,
+						},
+					},
+					{
 						name: t(this.lang, 'settings.saveLocation'),
 						desc: t(this.lang, 'settings.saveLocationDesc'),
 						control: {
@@ -510,11 +560,6 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 							key: 'saveFolder',
 							placeholder: t(this.lang, 'settings.saveFolderPlaceholder'),
 						},
-					},
-					{
-						name: t(this.lang, 'settings.autoSave'),
-						desc: t(this.lang, 'settings.autoSaveDesc'),
-						control: { type: 'toggle', key: 'autoSave' },
 					},
 					{
 						name: t(this.lang, 'settings.autoSplitMixedLinks'),
@@ -565,6 +610,10 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 	 * 不裸写内存对象——宿主对 slider 等控件传值的类型变化不会绕过校验。
 	 */
 	override setControlValue(key: string, value: unknown): void {
+		// 清理询问要比较「切换前后」（sanitize 之后旧值就没了）
+		const previous = (this.plugin.settings as unknown as Record<string, unknown>)[
+			key
+		];
 		const report: SettingsSanitizeReport = { dropped: [] };
 		this.plugin.settings = sanitizeSettings(
 			{
@@ -580,6 +629,16 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 		this.plugin.scheduleSettingsPersist();
 		if (isLiveRefreshKey(key)) {
 			this.plugin.applySettingsToViews();
+		}
+		// 「仅本节点」→「含子节点」：旧哨兵仍在正文里挡着继承，问一次是否清理（K175）
+		if (
+			key === 'nodeColorScope' &&
+			shouldOfferColorScopeCleanup(
+				previous,
+				(this.plugin.settings as unknown as Record<string, unknown>)[key],
+			)
+		) {
+			this.plugin.offerColorSentinelCleanup();
 		}
 		// 语言切换后：命令面板/丝带/状态栏/搜索栏文案随语言刷新，
 		// 并重渲染设置面板以刷新语言。

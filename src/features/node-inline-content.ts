@@ -60,6 +60,18 @@
  *   单列表必须写外框管道（`| a |` + `| --- |`；裸 `---` 属 setext H2，绝不当表）；
  *   单元格内**不支持图片嵌入渲染**（`image` 非空的节点整体不接管）与表格嵌表格；
  *   数据行遇空行、或不含未转义 `|` 的行即结束（不吞后续段落）；
+ * - **引用块 / 标注（2026-11-11）**：`> [!type] ± 标题` 渲染为标注盒子（类型色 +
+ *   宿主图标 + 标题），普通 `>` 引用渲染为引用盒子；两者共用段型 `kind: 'quote'`，
+ *   判定在 `domain/callout`（唯一），正文**递归进同一套段管线**（标注内的表格 /
+ *   代码块 / 数学 / 链接自动成立）。`text` / `mdRaw` 一字不动（`>` 前缀只在该层剥）。
+ *   有意边界：折叠只作标记（不实现交互、正文恒展开）；自定义类型（CSS 片段定义）
+ *   按 `note` 取色——节点内容刻意不带官方 `callout` 类，理由见 `node-inline-html`。
+ * - **脚注引用（2026-11-11）**：`[^id]` 渲染为上标徽标
+ *   （`sup.mindmap-node-footnote-ref > a[data-footnote-id]`，无 href ⇒ 不进链接
+ *   三通道）。**只渲染 id，不解析定义正文**：段序列按原文寻址缓存，正文属文档
+ *   上下文，只能在交互时现查（`features/view-footnote`：点击跳转 + 悬停预览）。
+ *   `[^id]: 内容` 这类**定义行**保持字面（`(?!:)`），与「定义行整体按纯文本」的
+ *   解析口径一致；行内脚注 `^[…]` 暂不支持（Obsidian 也只在阅读视图支持）。
  * - 库内锚点的 `data-href` 是**原始 linkpath**（与 Obsidian 产物一致）；目标未解析
  *   时加 `is-unresolved` 类 + 弱化配色（解析器由调用方注入，见 InlineContentOptions
  *   ——本模块必须可在无 Obsidian 运行时打包）；带子路径的显示名口径由 view-wikilink /
@@ -72,9 +84,17 @@
  */
 export {
 	buildInlineNodeContent,
+	buildInlineTextContent,
 	NODE_INLINE_CONTENT_CLASS,
 	CODE_BLOCK_CLASS,
 	CODE_COPY_CLASS,
+	MERMAID_BLOCK_CLASS,
+	CALLOUT_BLOCK_CLASS,
+	QUOTE_BLOCK_CLASS,
+	FOOTNOTE_ID_ATTR,
+	FOOTNOTE_IDS_ATTR,
+	FOOTNOTE_REF_CLASS,
+	FOOTNOTE_SUMMARY_CLASS,
 } from './node-inline-html';
 export {
 	MAX_INLINE_CONTENT_CHARS,

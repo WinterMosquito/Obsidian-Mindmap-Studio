@@ -166,11 +166,19 @@ function buildHistoryGroup(view: MindMapViewContext, rail: HTMLElement): void {
 	const group = rail.createDiv('mindmap-hud-group');
 	// 撤销/重做：竖栏只放图标，tooltip 只报动作名（快捷键由命令面板/热键承载）
 	const undo = createToolButton(group, t(view.lang, 'toolbar.undo'), 'undo', () => {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
+		if (view.undo) {
+			view.undo();
+		} else {
+			view.mindMap?.execCommand(ENGINE_COMMANDS.BACK);
+		}
 		syncHistoryButtons(view);
 	});
 	const redo = createToolButton(group, t(view.lang, 'toolbar.redo'), 'redo', () => {
-		view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+		if (view.redo) {
+			view.redo();
+		} else {
+			view.mindMap?.execCommand(ENGINE_COMMANDS.FORWARD);
+		}
 		syncHistoryButtons(view);
 	});
 	historyButtons.set(view, { undo, redo });
@@ -192,7 +200,9 @@ export function syncHistoryButtons(view: MindMapViewContext): void {
 	if (!buttons) {
 		return;
 	}
-	const { canUndo, canRedo } = readHistoryAvailability(view.mindMap);
+	// 会话是唯一判据（无会话的桩退回引擎历史）
+	const { canUndo, canRedo } =
+		view.historyAvailability?.() ?? readHistoryAvailability(view.mindMap);
 	writeEnabled(buttons.undo, canUndo);
 	writeEnabled(buttons.redo, canRedo);
 }

@@ -11,6 +11,9 @@
  *
  * 契约：
  * - 全部 FO 宽 +12、高 +20，且**原样返回同一对象**（引擎要求）；
+ * - **横向余量左右各半**（2026-11-11）：x 左移 6（缺省 x 按 0 算）、宽 +12 ⇒
+ *   内容盒在节点形状内保持居中。单侧加宽会把右内边距压到 4px（实机：形状
+ *   176 / FO 188 / 内容 [16,172]，用户实拍"边框右边比左边窄"）；
  * - 尺寸属性缺失/非法（null / 非数字）→ 跳过该 FO，其余照常处理；
  * - 无 FO / 形态不符（null / 缺 node / 无 querySelectorAll）→ 安全 no-op。
  */
@@ -34,7 +37,7 @@ function makeFO(attrs: Record<string, string | null>) {
 }
 
 describe('padForeignObjectsForExport（导出 FO 几何余量，K106）', () => {
-	it('全部 foreignObject 宽 +12、高 +20，并原样返回同一对象', () => {
+	it('全部 foreignObject 宽 +12、高 +20、x −6（左右各半），并原样返回同一对象', () => {
 		const foA = makeFO({ width: '259.3125', height: '26.15625' });
 		const foB = makeFO({ width: '100', height: '50' });
 		const svgElement = { node: { querySelectorAll: vi.fn(() => [foA, foB]) } };
@@ -42,8 +45,31 @@ describe('padForeignObjectsForExport（导出 FO 几何余量，K106）', () => 
 		const returned = padForeignObjectsForExport(svgElement);
 
 		expect(returned, '原样返回（引擎要求）').toBe(svgElement);
-		expect(foA.snapshot()).toEqual({ width: '271.3125', height: '46.15625' });
-		expect(foB.snapshot()).toEqual({ width: '112', height: '70' });
+		// x 缺省按 0 算：引擎导出的 FO 不写 x（实测 20/20），按 NaN 跳过会让修正失效
+		expect(foA.snapshot()).toEqual({
+			x: '-6',
+			width: '271.3125',
+			height: '46.15625',
+		});
+		expect(foB.snapshot()).toEqual({ x: '-6', width: '112', height: '70' });
+	});
+
+	it('**横向余量左右各半**：已有 x 的 FO 左移 6、宽度 +12（内容盒保持居中）', () => {
+		// 实机形态（2026-11-11 导出 SVG 实测）：节点形状 176、FO 宽 188、x 缺省。
+		// 原实现只加宽 ⇒ 内容盒 [16,172]：右内边距 4px，观感"边框右边比左边窄"。
+		const fo = makeFO({ x: '40', width: '176', height: '38.79' });
+
+		padForeignObjectsForExport({ node: { querySelectorAll: () => [fo] } });
+
+		expect(fo.snapshot()).toEqual({ x: '34', width: '188', height: '58.79' });
+		// 对称性：形状 [40,216]，内容盒（16px 内边距）= [50,206] ⇒ 左右各 10px
+		const snapshot = fo.snapshot();
+		const shapeLeft = 40;
+		const shapeRight = 40 + 176;
+		const contentLeft = Number(snapshot['x']) + 16;
+		const contentRight = Number(snapshot['x']) + Number(snapshot['width']) - 16;
+		expect(contentLeft - shapeLeft, '左内边距').toBe(10);
+		expect(shapeRight - contentRight, '右内边距（必须与左相等）').toBe(10);
 	});
 
 	it('尺寸缺失或非法（null / 非数字）：跳过该 FO，其余照常处理', () => {
@@ -58,7 +84,7 @@ describe('padForeignObjectsForExport（导出 FO 几何余量，K106）', () => 
 
 		expect(foBadA.setAttribute).not.toHaveBeenCalled();
 		expect(foBadB.setAttribute).not.toHaveBeenCalled();
-		expect(foOk.snapshot()).toEqual({ width: '22', height: '40' });
+		expect(foOk.snapshot()).toEqual({ x: '-6', width: '22', height: '40' });
 	});
 
 	it('无 foreignObject：不做任何写入（安全 no-op）', () => {
@@ -103,7 +129,7 @@ describe('postProcessExportSvg（platform 单入口：几何 → 变量）', () 
 		const returned = postProcessExportSvg(svgElement);
 
 		expect(returned, '原样返回（引擎要求）').toBe(svgElement);
-		expect(fo.snapshot()).toEqual({ width: '112', height: '60' });
+		expect(fo.snapshot()).toEqual({ x: '-6', width: '112', height: '60' });
 		expect(root.appendChild).toHaveBeenCalledTimes(1);
 		expect(styleEl.textContent).toBe('svg { --font-interface: Inter; }');
 	});

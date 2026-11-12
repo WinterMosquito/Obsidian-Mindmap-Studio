@@ -259,9 +259,11 @@ export default defineConfig(
 		// 库内文件解析统一走 links-resolve.resolvePathToFile（形态路由与索引
 		// 兜底只在统一入口维护，散落直调会在新增解析规则时静默掉队）。
 		// 确需直调的场景（存在性检查等）用 eslint-disable 注明理由。
-		// 覆盖全部插件代码；收口点本体 links-resolve / file-lookup 豁免。
+		// 覆盖全部插件代码；**只**豁免收口点本体 links-resolve。
+		// file-lookup 的豁免已于 2026-11-09 撤销：该文件已无 getAbstractFileByPath
+		// 调用，留着会让「豁免清单 = 真实直调面」这个契约失真（V18）。
 		files: ['src/**/*.ts'],
-		ignores: ['src/links/links-resolve.ts', 'src/links/file-lookup.ts'],
+		ignores: ['src/links/links-resolve.ts'],
 		rules: {
 			'no-restricted-syntax': [
 				'error',
@@ -274,13 +276,20 @@ export default defineConfig(
 		},
 	},
 	{
+		// `require` 是 Electron 桌面运行时注入了 `window` 的（不在 browser
+		// globals 里）。此前能通过 lint 只是因为 `isDesktopOnly: true` 让官方规则
+		// 顺带带进了 `globals.node`——那次注入挂在 manifest 读取上（cwd 相对，
+		// 见 K43），属「配置承重」。这里显式声明，与本插件是否桌面限定解耦。
+		files: ['src/platform/system-open.ts'],
+		languageOptions: { globals: { require: 'readonly' } },
+	},
+	{
 		// `no-unsupported-api` 判定基准的**显式化**：规则默认从 cwd 相对读取
 		// `manifest.json`（插件 lib/manifest.ts 用裸相对路径 + 模块级缓存）。
 		// 任何 cwd ≠ 仓库根的调用（IDE/编辑器 ESLint 集成、从上级目录跑 eslint）
 		// 会让读盘失败 → resolvedVersion undefined → 规则 `return {}` **整条静默
 		// 关闭**，同时 manifest 为 null 还会把 `no-nodejs-modules` 由 off 翻成 warn、
-		// 撤掉 globals.node，从而把 src/platform/system-open.ts 的裸 `require`
-		// 报成 no-undef（假阳性）。
+		// 撤掉 globals.node（system-open 的 `require` 已单独声明，不受影响）。
 		// 规则内为 `options.minAppVersion ?? manifest.minAppVersion`，故在此显式传入
 		// 即切断 cwd 依赖（值取自 manifest.json 本身，见文件头的 MIN_APP_VERSION）。
 		files: ['src/**/*.ts'],

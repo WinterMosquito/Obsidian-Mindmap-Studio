@@ -163,6 +163,8 @@ function settingsStub(
 		saveFolder: '',
 		// 与 DEFAULT_SETTINGS.defaultLayout 同口径：它是新建文件的**种子**布局
 		defaultLayout: 'logicalStructure',
+		// 与 DEFAULT_SETTINGS.newMapSyntax 同口径：出厂写无序列表
+		newMapSyntax: 'list',
 		...overrides,
 	};
 }
@@ -181,14 +183,16 @@ describe('新建思维导图的落点判定', () => {
 			expect(stub.created).toHaveLength(1);
 			expect(stub.created[0]?.path).toBe(expectedFileName());
 			expect(stub.created[0]?.path.startsWith('/')).toBe(false);
-			// 导图身份来自正文的属性声明（标准键 `Mindmap`，与语言无关）；
-			// 值是**种子布局**的标准值（默认逻辑结构图 → LogicalStructure）
+			// 导图身份来自正文的属性声明（启用值 + 布局键，与语言无关）；
+			// 布局值是**种子布局**的 kebab 值（默认逻辑结构图 → logical）
 			expect(
-				stub.created[0]?.content.startsWith('---\nMindmap: LogicalStructure\n---\n'),
+				stub.created[0]?.content.startsWith(
+					'---\nMindmap: Mindmap\nMindmap Layout: logical\n---\n',
+				),
 			).toBe(true);
 		});
 
-		it('种子布局取设置 defaultLayout：思维导图 → `Mindmap: Mindmap`', async () => {
+		it('种子布局取设置 defaultLayout：思维导图 → `Mindmap Layout: mindmap`', async () => {
 			const stub = createStubApp();
 			await createNewMindMap(
 				stub.app,
@@ -196,7 +200,9 @@ describe('新建思维导图的落点判定', () => {
 				'',
 			);
 			expect(
-				stub.created[0]?.content.startsWith('---\nMindmap: Mindmap\n---\n'),
+				stub.created[0]?.content.startsWith(
+					'---\nMindmap: Mindmap\nMindmap Layout: mindmap\n---\n',
+				),
 			).toBe(true);
 		});
 

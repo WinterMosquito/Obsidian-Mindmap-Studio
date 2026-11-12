@@ -143,6 +143,14 @@ function wholeTree(): MindMapTreeNode {
 	};
 }
 
+/**
+ * 渲染节点桩：粘贴落点要读它的**兄弟语法**（`liveNodeTree` 走 `getData()` +
+ * `children`），故不能再只给一个 `uid`。
+ */
+function fakeNodeStub(uid: string, text = uid) {
+	return { uid, getData: () => ({ text, children: [] }), children: [] };
+}
+
 /** 取自解析产物的最小子树（mdRaw/mdDerivedText 齐备 ⇒ 逐字回写形态） */
 function subtree(): MindMapTreeNode {
 	return {
@@ -249,7 +257,7 @@ describe('剪切（cutSelectedNodes）', () => {
 
 describe('粘贴：事件入口（pasteFromClipboardEvent）', () => {
 	it('文本 → 解析为子树并插入落点，接管事件', () => {
-		const target = { uid: 'n1' };
+		const target = fakeNodeStub('n1');
 		getActiveNodeMock.mockReturnValue(target);
 		const { host, scheduleSave } = makeHost();
 		const { event, preventDefault } = fakePasteEvent('# 一\n## 二');
@@ -293,7 +301,7 @@ describe('粘贴：事件入口（pasteFromClipboardEvent）', () => {
 	});
 
 	it('未选中节点：挂渲染根；根也没有时提示未就绪', () => {
-		const root = { uid: 'root' };
+		const root = fakeNodeStub('root', '文档');
 		getRenderRootMock.mockReturnValueOnce(root);
 		const { host } = makeHost();
 		pasteFromClipboardEvent(host, fakePasteEvent('- 甲').event);
@@ -309,7 +317,7 @@ describe('粘贴：事件入口（pasteFromClipboardEvent）', () => {
 describe('粘贴：菜单入口（pasteClipboardIntoNode）', () => {
 	it('读取剪贴板文本后插入指定落点', async () => {
 		readClipboardTextMock.mockResolvedValue('- 甲');
-		const target = { uid: 'n1' } as unknown as MindMapNode;
+		const target = fakeNodeStub('n1') as unknown as MindMapNode;
 		const { host } = makeHost();
 
 		pasteClipboardIntoNode(host, target);

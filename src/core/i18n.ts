@@ -19,6 +19,9 @@ export const LANGUAGE_OPTIONS: { value: Language; label: string }[] = [
 
 /** 中文字典（key → 中文） */
 const ZH = {
+	// ===== 文件右键菜单 =====
+	'fileMenu.createMindMap': '新建导图',
+
 	// ===== 命令 =====
 	'command.createMindMap': '新建思维导图',
 	'command.createInCurrentFolder': '在当前文件文件夹新建思维导图',
@@ -41,7 +44,17 @@ const ZH = {
 	'modal.text.preview': '节点将显示为：',
 	'nodeTextTruncated':
 		'节点文本过长，此处仅显示开头部分；完整内容仍保存在文件中，双击节点可查看或编辑',
+	// 点击徽标但全文没有这条定义
+	'footnote.missingDefinition': '未找到脚注定义 [^{id}]',
+	// 定义存在但引擎没能定位（引擎方法缺失 / 渲染树尚未就绪）
+	'footnote.revealFailed': '无法定位到脚注 [^{id}] 的定义节点',
+	// 纯定义节点的汇总 chip（定义正文不铺在节点里，只作「这里有脚注」的入口）。
+	// 不报条数：写「脚注 N」会被读成「第 N 条脚注」，「N 条脚注」又嫌啰嗦
+	// （2026-11-11 用户裁决：只显示「脚注」）
+	'footnote.summaryLabel': '脚注',
 	'codeBlock.copy': '复制代码',
+	// mermaid 图容器的复制按钮（复制的是图的**源码**，不是渲染产物）
+	'mermaid.copy': '复制 Mermaid 源码',
 	// 任务复选框的无障碍标签（点击切换，无右键入口）
 	'node.task.markDone': '标记为完成',
 	'node.task.markUndone': '标记为未完成',
@@ -67,6 +80,31 @@ const ZH = {
 	'toolbar.exportImage': '导出',
 	'toolbar.tipFit': '总览',
 	'toolbar.tipArrange': '整理',
+
+	// ===== 层级语法（标题 / 无序列表）=====
+	'syntax.title': '层级语法',
+	'syntax.list': '无序列表',
+	'syntax.heading1': '标题（一级）',
+	'syntax.heading2': '标题（二级）',
+	'syntax.done': '已改写 {count} 个节点',
+	'syntax.none': '已是该层级语法，无需改动',
+	'syntax.keptList': '「{text}」无法写成标题，本层保持列表',
+	'syntax.pasteBlocked':
+		'粘贴内容含无法写成标题的节点（多行 / 任务项 / 有序列表）；请先选中一个标题节点，再粘贴为其子节点',
+	'syntax.guardUpgraded': '已按该层语法把「{text}」改为标题',
+	'syntax.guardReleveled':
+		'已按该层语法调整「{text}」的标题级别',
+	'syntax.guardDowngraded':
+		'已按该层语法把「{text}」改为无序列表（Ctrl+Z 可撤销）',
+	'syntax.guardDemoted':
+		'第 6 级之下写不了标题，「{text}」已改为无序列表（Ctrl+Z 可撤销）',
+	'syntax.guardDowngradedAnchors':
+		'已把 {count} 个标题改为无序列表（含「{text}」）；指向这些标题的 [[#标题]] 链接将失效，可用 Ctrl+Z 撤销',
+	// 「这次改动」而非「这次拖拽」：同一条分支也可能是粘贴 / 撤销落回触发的
+	'syntax.guardBlockedUpgrade':
+		'该层使用标题语法，「{text}」无法写成标题，已撤回这次改动',
+	'syntax.guardBlockedDowngrade':
+		'段落之下无法保留标题（「{text}」），已撤回这次改动；请用右键「层级语法」显式转换',
 
 	// ===== 右键菜单 =====
 	'menu.editText': '编辑文本',
@@ -98,7 +136,6 @@ const ZH = {
 	// ===== 通用提示/通知 =====
 	'common.mindMap': '思维导图',
 	'common.notLoaded': '思维导图尚未加载',
-	'common.mindMapAlreadyOpen': '该导图已在其他标签页打开，已切换到该标签页',
 	'common.arrangeDone': '已整理思维导图',
 	'common.arrangeFailed': '无法整理思维导图',
 	'common.fitClamped': '节点较多（{count} 个），已按最小可读比例居中（不会一次显示全部节点）',
@@ -187,57 +224,65 @@ const ZH = {
 	'modal.create': '创建',
 	'modal.apply': '应用',
 
+	// ===== 弹窗 - 配色作用范围清理（K175）=====
+	'modal.colorScopeCleanup.title': '清理旧的「不继承」标记？',
+	'modal.colorScopeCleanup.body':
+		'已切换为「含子节点」。在 {files} 个已打开的导图中共有 {count} 处 `%%none%%`（阻断继承）；其中可能包含你手动设过「默认」的节点。\n清理会把这些标记从正文删除，相关节点将重新继承上层颜色；文件会被改写（可用 Ctrl+Z 撤销）。',
+	'modal.colorScopeCleanup.confirm': '清理',
+	'modal.colorScopeCleanup.keep': '保留',
+	'colorScope.cleanupDone': '已清理 {count} 处 `%%none%%`',
+
 	// ===== 设置 =====
-	// 分组标题（面板按「基础 / 外观 / 文件与保存 / 导出」四段排布）
-	'settings.groupGeneral': '基础',
+	// 分组标题（面板按「常规 / 外观 / 文件与保存 / 交互与导出」四段排布）
+	'settings.groupGeneral': '常规',
 	'settings.groupAppearance': '外观',
 	'settings.groupFile': '文件与保存',
 	'settings.groupExport': '交互与导出',
 	'settings.language': '语言',
-	'settings.languageDesc': '界面语言，切换后立即生效',
+	'settings.languageDesc': '插件界面与提示的语言，切换后立即生效',
 	'settings.defaultLayout': '默认布局',
 	'settings.defaultLayoutDesc':
-		'新建导图时使用的布局；已存在的导图各自记录在文件属性里，可在右键菜单的「布局」中随时切换（写入文件属性）',
+		'新建导图使用的布局\n已有导图各自把布局记在文件属性里，可在右键菜单「布局」中切换',
 	'settings.defaultLineStyle': '默认连线样式',
 	'settings.defaultLineStyleDesc':
-		'新建导图时使用的连线样式\n仅逻辑结构图 / 思维导图 / 组织结构图可切换折线与曲线',
+		'新建导图使用的连线样式\n仅逻辑结构图、思维导图、组织结构图支持折线与曲线',
 	'settings.defaultThemeStyle': '默认边框样式',
 	'settings.defaultThemeStyleDesc':
-		'新建导图的边框样式（有边框 / 无边框）\n单篇导图可用右缘竖栏的「边框」按钮随时切换；存量导图各记各的，不受影响',
-	'settings.defaultTheme': '主题',
+		'新建导图使用的边框样式\n单篇导图可在右缘竖栏点「边框」切换；已有导图保留各自设置',
+	'settings.defaultTheme': '明暗主题',
 	'settings.defaultThemeDesc':
-		'导图的明暗配色\n跟随 Obsidian＝随宿主主题自动切换；强制亮/暗色可固定导图观感',
+		'导图的明暗配色\n跟随 Obsidian：随宿主主题自动切换；固定亮色或暗色可保持导图观感不变',
 	'settings.nodeColorScope': '配色作用范围',
 	'settings.nodeColorScopeDesc':
-		'右键给节点「配色」时，颜色是否一并套到它的子节点\n仅本节点＝只有被选中的节点变色（会在子节点行上补 `%%none%%` 挡住继承），前后的连接线也不带节点色\n含子节点＝整支子树同色（连线一起着色，靠继承，不多写任何注释）',
+		'右键节点「配色」时颜色的作用范围\n仅本节点：只给选中节点上色，子节点不继承，连线也不染色\n含子节点：整支子树同色，连线一起染色\n从「仅本节点」切回「含子节点」时，会询问是否清理已打开导图里的旧标记',
 	'settings.nodeColorScope.subtree': '含子节点',
 	'settings.nodeColorScope.node': '仅本节点',
 	'settings.saveLocation': '新建导图的默认位置',
 	'settings.saveLocationDesc':
-		'新建导图保存到哪个文件夹\n「跟随 Obsidian 设置」＝使用官方「文件与链接 → 新建笔记的默认位置」',
+		'新建导图保存到哪个文件夹\n「跟随 Obsidian 设置」：使用官方「文件与链接 → 新建笔记的默认位置」',
 	'settings.saveLocation.obsidian': '跟随 Obsidian 设置',
 	'settings.saveLocation.root': '仓库的根目录',
 	'settings.saveLocation.current': '当前文件所在的文件夹',
 	'settings.saveLocation.folder': '指定的文件夹',
 	'settings.saveFolder': '目标文件夹',
 	'settings.saveFolderDesc':
-		'「指定的文件夹」模式下使用的目录\n文件夹不存在时保存到仓库根目录',
+		'「指定的文件夹」模式使用的目录\n目录不存在时，新建导图保存到仓库根目录',
+	'settings.newMapSyntax': '新建导图的层级语法',
+	'settings.newMapSyntaxDesc':
+		'新建导图的正文语法\n列表：用无序列表表达层级；标题：用 Markdown 标题表达层级（可从一级或二级开始，六级之后回落列表）\n只影响新建与空的导图；已有导图按自身写法回写，可在右键菜单「层级语法」中转换',
 	'settings.saveFolderPlaceholder': '文件夹路径',
-	'settings.autoSave': '自动保存',
-	'settings.autoSaveDesc':
-		'编辑导图时自动保存到当前笔记\n关闭后需手动 Ctrl/Cmd + S',
 	'settings.autoSplitMixedLinks': '自动拆分混排双链',
 	'settings.autoSplitMixedLinksDesc':
-		'被编辑的节点含「双链 + 描述文字」时，自动把双链拆为子节点\n只处理文档与附件双链（图片与外链不动）；会改写文件结构，默认关闭\n整篇处理请用命令「拆分文档内全部混排双链」',
+		'编辑节点时，若正文混有链接与描述文字，自动把链接拆成子节点\n仅处理文档与附件链接（图片和外链不动）；会改写文件结构，默认关闭\n整篇处理可用命令「拆分文档内全部混排双链」',
 	'settings.enableDrag': '启用节点拖拽',
 	'settings.enableDragDesc':
-		'允许拖拽节点改变层级与顺序\n关闭后节点层级只能通过编辑文本调整',
+		'允许拖动节点调整层级与顺序\n关闭后只能通过编辑文本改变层级',
 	'settings.exportScale': '导出图片倍率',
 	'settings.exportScaleDesc':
-		'导出 PNG 的分辨率倍率，越高越清晰、文件越大\nSVG 为矢量，不受此设置影响',
+		'导出 PNG 的分辨率倍率：越高越清晰，文件也越大\nSVG 是矢量格式，不受影响',
 	'settings.exportImageFormat': '导出格式',
 	'settings.exportImageFormatDesc':
-		'导出图片时使用的格式（PNG 位图 / SVG 矢量）\n倍率设置仅作用于 PNG',
+		'导出图片的默认格式（PNG 位图 / SVG 矢量）\n倍率设置只影响 PNG',
 	'settings.exportFormat.png': 'PNG（位图）',
 	'settings.exportFormat.svg': 'SVG（矢量）',
 
@@ -344,11 +389,11 @@ const ZH = {
 
 	// ===== 保存 =====
 	'save.failed': '保存思维导图失败：',
-	'save.externalChangeSkipped':
-		'文件在外部被修改（同步盘/其它窗口），本次自动保存已跳过以避免覆盖；确认以导图内容为准后请手动保存：',
-	'save.autoSuspended':
-		'连续自动保存失败，已暂停自动保存；编辑内容仍在内存中，修复问题后请手动保存',
 	'save.pluginDataFailed': '写入插件配置失败：',
+	'save.externalReloaded':
+		'本文件已被外部修改，已载入最新版本；你的未保存修改可按 Ctrl+Z 找回',
+	'save.staleCommit':
+		'另一视图刚有修改，本次编辑未合并；已载入最新内容',
 
 	// ===== 视图（运行期动作失败） =====
 	'view.layoutWriteFailed': '切换布局失败（文件属性未写入）：',
@@ -382,6 +427,9 @@ const ZH = {
 
 /** 英文字典（key → English） */
 const EN: Record<TranslationKey, string> = {
+	// ===== 文件右键菜单 =====
+	'fileMenu.createMindMap': 'New mind map',
+
 	// ===== 命令 =====
 	'command.createMindMap': 'Create new mind map',
 	'command.createInCurrentFolder': 'Create mind map in current folder',
@@ -404,7 +452,11 @@ const EN: Record<TranslationKey, string> = {
 	'modal.text.preview': 'The node will show:',
 	'nodeTextTruncated':
 		'Node text is too long, so only the beginning is shown here; the full text is kept in the file (double-click the node to view or edit it).',
+	'footnote.missingDefinition': 'Footnote definition [^{id}] not found',
+	'footnote.revealFailed': 'Could not jump to the definition of footnote [^{id}]',
+	'footnote.summaryLabel': 'Footnotes',
 	'codeBlock.copy': 'Copy code',
+	'mermaid.copy': 'Copy Mermaid source',
 	'node.task.markDone': 'Mark as done',
 	'node.task.markUndone': 'Mark as not done',
 	'tag.searchUnavailable': 'Could not open tag search (search plugin not found)',
@@ -427,6 +479,30 @@ const EN: Record<TranslationKey, string> = {
 	'toolbar.exportImage': 'Export',
 	'toolbar.tipFit': 'Fit',
 	'toolbar.tipArrange': 'Tidy',
+
+	// ===== Heading / bullet syntax =====
+	'syntax.title': 'Syntax',
+	'syntax.list': 'Bullet list',
+	'syntax.heading1': 'Headings (level 1)',
+	'syntax.heading2': 'Headings (level 2)',
+	'syntax.done': 'Rewrote {count} node(s)',
+	'syntax.none': 'Already in this syntax; nothing to change',
+	'syntax.keptList': '"{text}" cannot be a heading, so this level stays a list',
+	'syntax.pasteBlocked':
+		'The pasted content contains nodes that cannot become headings (multi-line / task / ordered list); select a heading node first and paste as its children',
+	'syntax.guardUpgraded': '"{text}" became a heading to match this level',
+	'syntax.guardReleveled':
+		'Adjusted the heading level of "{text}" to match this level',
+	'syntax.guardDowngraded':
+		'"{text}" became a bullet item to match this level (Ctrl+Z to undo)',
+	'syntax.guardDemoted':
+		'Nothing sits below level 6 as a heading, so "{text}" became a bullet item (Ctrl+Z to undo)',
+	'syntax.guardDowngradedAnchors':
+		'Converted {count} heading(s) to bullet items (including "{text}"); links such as [[#Heading]] to them will break — Ctrl+Z to undo',
+	'syntax.guardBlockedUpgrade':
+		'This level uses headings and "{text}" cannot be one, so the change was undone',
+	'syntax.guardBlockedDowngrade':
+		'A paragraph cannot host a heading ("{text}"), so the change was undone; use the "Syntax" submenu to convert it explicitly',
 
 	// ===== 右键菜单 =====
 	'menu.editText': 'Edit text',
@@ -456,8 +532,6 @@ const EN: Record<TranslationKey, string> = {
 	// ===== 通用提示/通知 =====
 	'common.mindMap': 'Mind map',
 	'common.notLoaded': 'Mind map not loaded yet',
-	'common.mindMapAlreadyOpen':
-		'This mind map is already open in another tab — switched to it',
 	'common.arrangeDone': 'Mind map arranged',
 	'common.arrangeFailed': 'Could not arrange the mind map',
 	'common.fitClamped': 'Large map ({count} nodes): centered at the minimum readable zoom (not all nodes shown)',
@@ -547,54 +621,63 @@ const EN: Record<TranslationKey, string> = {
 	'modal.create': 'Create',
 	'modal.apply': 'Apply',
 
+	// ===== Modal - color scope cleanup (K175) =====
+	'modal.colorScopeCleanup.title': 'Remove old "do not inherit" markers?',
+	'modal.colorScopeCleanup.body':
+		'Switched to "With children". Across {files} open map(s) there are {count} `%%none%%` marker(s) blocking inheritance; some may be nodes you explicitly set to "Default".\nCleaning removes them from the document, so those nodes inherit the ancestor colour again. The files will be rewritten (Ctrl+Z can undo).',
+	'modal.colorScopeCleanup.confirm': 'Remove',
+	'modal.colorScopeCleanup.keep': 'Keep',
+	'colorScope.cleanupDone': 'Removed {count} `%%none%%` marker(s)',
+
 	// ===== 设置 =====
 	'settings.groupGeneral': 'General',
 	'settings.groupAppearance': 'Appearance',
 	'settings.groupFile': 'Files and saving',
 	'settings.groupExport': 'Interaction and export',
 	'settings.language': 'Language',
-	'settings.languageDesc': 'UI language; applies immediately',
+	'settings.languageDesc':
+		'Language of the plugin UI and notices; applies immediately',
 	'settings.defaultLayout': 'Default layout',
 	'settings.defaultLayoutDesc':
-		'Layout used when creating a mind map; each existing map stores its own layout in the file properties and can be switched at any time from the "Layout" submenu of its right-click menu (written to the file property)',
+		'Layout used for new mind maps\nExisting maps keep their own layout in the file properties; switch it from the right-click "Layout" menu',
 	'settings.defaultLineStyle': 'Default line style',
 	'settings.defaultLineStyleDesc':
-		'Connector style used when creating a mind map\nElbow / Curve can only be switched for Logical structure, Mind map and Organization chart',
+		'Connector style for new mind maps\nElbow/curve can only be switched for Logical structure, Mind map and Organization chart',
 	'settings.defaultThemeStyle': 'Default border style',
 	'settings.defaultThemeStyleDesc':
-		'Border style for new mind maps (bordered / borderless)\nEach map can be switched with the "Border" button in its right-hand rail; existing maps keep their own value',
-	'settings.defaultTheme': 'Theme',
+		'Border style for new mind maps\nEach map can switch it with the "Border" button in the right-hand rail; existing maps keep their own setting',
+	'settings.defaultTheme': 'Light/dark theme',
 	'settings.defaultThemeDesc':
-		'Light/dark palette for mind maps\nFollow Obsidian switches with the app theme; force light/dark keeps the map appearance fixed',
+		'Light/dark palette for mind maps\nFollow Obsidian switches with the app theme; forcing light or dark keeps the map appearance fixed',
 	'settings.nodeColorScope': 'Color scope',
 	'settings.nodeColorScopeDesc':
-		'Whether a node colour picked from the right-click "Color" menu also applies to its children\nNode only: only the selected nodes change (a `%%none%%` marker is added to their children to block inheritance), and the connecting lines keep the document colour\nWith children: the whole subtree takes the colour through inheritance, including its connecting lines, with no extra comments',
+		'How far a node colour from the right-click "Color" menu applies\nNode only: colours just the selected nodes; children do not inherit and connectors stay uncoloured\nWith children: colours the whole subtree, including connectors\nSwitching back to "With children" asks whether to clear old markers from open maps',
 	'settings.saveLocation': 'Default location for new mind maps',
 	'settings.saveLocationDesc':
-		'Which folder new mind maps are saved to\n"Follow Obsidian setting" uses Files and links → Default location for new notes',
+		'Folder where new mind maps are saved\n"Follow Obsidian setting" uses Files and links → Default location for new notes',
 	'settings.saveLocation.obsidian': 'Follow Obsidian setting',
 	'settings.saveLocation.root': 'Vault root',
 	'settings.saveLocation.current': 'Same folder as current file',
 	'settings.saveLocation.folder': 'In the folder specified below',
 	'settings.saveFolder': 'Target folder',
 	'settings.saveFolderDesc':
-		'Folder used in the "In the folder specified below" mode\nIf it does not exist, new mind maps go to the vault root',
+		'Folder used by the "In the folder specified below" mode\nIf it does not exist, new mind maps go to the vault root',
+	'settings.newMapSyntax': 'Syntax for new mind maps',
+	'settings.newMapSyntaxDesc':
+		'How the body of new mind maps is written\nList: hierarchy as bullet lists; Headings: hierarchy as Markdown headings (start at level 1 or 2; falls back to lists after level 6)\nOnly affects new and empty maps; existing maps keep their own syntax and can be converted from the right-click "Syntax" menu',
 	'settings.saveFolderPlaceholder': 'Folder path',
-	'settings.autoSave': 'Auto-save',
-	'settings.autoSaveDesc':
-		'Save the map to its note automatically while editing\nWhen off, use Ctrl/Cmd + S to save',
 	'settings.autoSplitMixedLinks': 'Auto-split mixed links',
 	'settings.autoSplitMixedLinksDesc':
-		'When an edited node mixes links with description text, its links are split into child nodes\nOnly document and attachment links are handled (images and external URLs are untouched); this rewrites the file structure and is off by default\nUse the command "Split all mixed links in document" to process the whole file',
+		'When an edited node mixes links with description text, split the links into child nodes\nOnly document and attachment links are handled (images and external URLs are untouched); this rewrites the file structure and is off by default\nUse the command "Split all mixed links in document" for the whole file',
 	'settings.enableDrag': 'Enable node dragging',
 	'settings.enableDragDesc':
 		'Allow dragging nodes to change hierarchy and order\nWhen off, hierarchy can only be changed by editing text',
 	'settings.exportScale': 'Export image scale',
 	'settings.exportScaleDesc':
-		'Resolution scale for PNG export; higher is sharper and larger\nSVG is vector-based and unaffected',
+		'Resolution scale for PNG export: higher is sharper and larger\nSVG is vector-based and unaffected',
 	'settings.exportImageFormat': 'Export format',
 	'settings.exportImageFormatDesc':
-		'Format used when exporting images (PNG raster / SVG vector)\nThe scale setting only affects PNG',
+		'Default format for image export (PNG raster / SVG vector)\nThe scale setting only affects PNG',
 	'settings.exportFormat.png': 'PNG (raster)',
 	'settings.exportFormat.svg': 'SVG (vector)',
 
@@ -704,11 +787,11 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 保存 =====
 	'save.failed': 'Failed to save mind map: ',
-	'save.externalChangeSkipped':
-		'The file was modified externally (sync drive/another window); auto-save was skipped to avoid overwriting. If the mind map content is the one to keep, save manually: ',
-	'save.autoSuspended':
-		'Auto-save suspended after repeated failures; your edits are still in memory — save manually once the problem is fixed',
 	'save.pluginDataFailed': 'Failed to write plugin config: ',
+	'save.externalReloaded':
+		'This file was modified externally. Loaded the latest version; press Ctrl+Z to restore your unsaved changes.',
+	'save.staleCommit':
+		'Another view just changed this map; this edit was not merged. The latest content has been loaded.',
 
 	// ===== 视图（运行期动作失败） =====
 	'view.layoutWriteFailed':

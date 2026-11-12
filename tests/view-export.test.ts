@@ -371,6 +371,49 @@ describe('injectObsidianCssVarsIntoExportSvg（导出 CSS 变量注入，K99/K10
 		expect(injected[0]!.textContent).toBe('svg { --font-interface: Inter; }');
 	});
 
+	it('mermaid（Pele）变量族在白名单内：`--pele-*` 随主题进导出图', () => {
+		// 节点内 mermaid 图（2026-11-09）：Pele 的 SVG 颜色全走 `--pele-*`，
+		// 不注入则导出环境只剩亮色兜底 ⇒ 暗色主题导出图变成「白底黑字」
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				({
+					'--pele-bg': '#ffffff',
+					'--pele-fg': '#222222',
+					'--pele-series-1': '#086ddd',
+				})[name] ?? '',
+		}));
+		const { svgElement, injected } = makeSvgElementForVars();
+
+		injectObsidianCssVarsIntoExportSvg(svgElement);
+
+		expect(injected[0]!.textContent).toBe(
+			'svg { --pele-bg: #ffffff; --pele-fg: #222222; --pele-series-1: #086ddd; }',
+		);
+	});
+
+	it('mermaid 兜底变量（通用主题变量）也在白名单内：老版本导出纸面不回落亮色', () => {
+		// 老版本 Obsidian 没有 `--pele-*`，样式表把纸面映射到 `--background-primary`；
+		// 导出克隆里没有插件样式表，故这些通用变量必须由这里注入
+		vi.stubGlobal('document', { body: {} });
+		vi.stubGlobal('getComputedStyle', () => ({
+			getPropertyValue: (name: string) =>
+				({
+					'--background-primary': '#1c1c1c',
+					'--text-normal': '#dadada',
+					'--text-faint': '#666666',
+				})[name] ?? '',
+		}));
+		const { svgElement, injected } = makeSvgElementForVars();
+
+		injectObsidianCssVarsIntoExportSvg(svgElement);
+
+		const text = injected[0]!.textContent;
+		expect(text).toContain('--background-primary: #1c1c1c');
+		expect(text).toContain('--text-normal: #dadada');
+		expect(text).toContain('--text-faint: #666666');
+	});
+
 	it('宿主变量全部为空：不注入任何节点（安全 no-op）', () => {
 		vi.stubGlobal('document', { body: {} });
 		vi.stubGlobal('getComputedStyle', () => ({

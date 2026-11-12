@@ -30,6 +30,8 @@ import {
 	insertSubtreesAsChildren,
 } from '../engine/mindmap';
 import { readClipboardText, writeClipboardText } from '../platform/clipboard';
+import { adaptSubtreesToGroup } from '../markdown/md-heading-normalize';
+import { liveNodeTree } from '../markdown/md-heading-syntax';
 import { parseMdOutlineFragment } from '../markdown/md-outline';
 import { serializeSubtreesToOutline } from '../markdown/md-serialize';
 import { t, type Language, type TranslationKey } from '../core/i18n';
@@ -187,6 +189,17 @@ function insertOutline(
 	}
 	// 落点：选中节点 ?? 渲染根（未选中时的降级与图片粘贴同构）
 	const parent = target ?? getRenderRoot(view.mindMap);
+	if (!parent) {
+		new Notice(t(view.lang, 'common.notLoaded'));
+		return;
+	}
+	// **插入前**换算：落点组已是标题语法时，把子树改写成同级标题——标题层里
+	// 塞列表会在重解析时被吞成前一个标题的子节点（md-heading-syntax 文件头）。
+	// 改不了的节点（多行 / 任务项 / 有序）宁可放弃这次粘贴：塞成子节点属擅自改结构。
+	if (adaptSubtreesToGroup(liveNodeTree(parent), subtrees).blocked.length > 0) {
+		new Notice(t(view.lang, 'syntax.pasteBlocked'));
+		return;
+	}
 	if (!insertSubtreesAsChildren(view.mindMap, parent, subtrees)) {
 		new Notice(t(view.lang, 'common.notLoaded'));
 		return;

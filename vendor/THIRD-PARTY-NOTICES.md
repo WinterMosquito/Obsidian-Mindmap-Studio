@@ -49,3 +49,22 @@
   （本插件不注册 RichText 插件，样式由引擎运行时注入；详见 `BUILD.md`），故产物中
   不含 Quill 的 CSS，也无需保留其样式横幅。上表 `quill` 一行仅说明引擎包声明了该
   依赖。
+
+---
+
+## 4. 直接内嵌的 npm 依赖（不在 `vendor/`）
+
+下列依赖由 npm 安装、经 esbuild 打进 `main.js`，**不经过 `vendor/` 的补丁与 sha256
+契约**（版本以 `package.json` + `package-lock.json` 为准）：
+
+| 组件 | 版本 | 许可 | 来源 | 用途 |
+|------|------|------|------|------|
+| `pele` | `1.13.0` | MIT | <https://github.com/obsidianmd/pele>（npm `pele`） | 节点内 Mermaid 图渲染（Obsidian 阅读视图同款渲染器）；唯一 import 点 `src/platform/mermaid.ts` |
+
+说明：
+
+- 该包**零运行时依赖**（无传递依赖），故无二级声明义务；其 `dist/` 为压缩产物，
+  包内自带 `LICENSE`，逐库声明由本文件承担（口径同第 3 节）。
+- 升级时同步核对 Obsidian 客户端 `Credits.md` 里的 Pele 版本，避免节点内图与阅读
+  视图观感不一致（K173）。
+

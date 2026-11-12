@@ -2,9 +2,9 @@
  * 节点内联内容的 **DOM 装配**（2026-10-16 自 `node-inline-content.ts` 拆出）。
  *
  * 覆盖：类名与锚点属性契约、内联样式常量表（导出保真契约，K53 ⑤）、
- * 段序列 → HTML（文本段 / 锚点 / 表格 / 代码块 / 数学 / **标签 pill**）+
- * **任务复选框**与节点内容根（`buildInlineNodeContent`）。段序列与接管判定来自
- * `node-inline-tokenize`。
+ * 段序列 → HTML（文本段 / 锚点 / 表格 / 代码块 / **mermaid 图** / 数学 /
+ * **标签 pill**）+ **任务复选框**与节点内容根（`buildInlineNodeContent`）。
+ * 段序列与接管判定来自 `node-inline-tokenize`。
  *
  * 两条类名是**跨模块契约**：`span.mindmap-node-task` 供 `view-node-task` 在画布
  * capture 阶段命中，`a.tag[data-tag]` 供 `view-tag`（**刻意不写 `href`** ⇒ 不入
@@ -21,6 +21,11 @@
  * 同一套规则（可读性优先，不跟主题）。
  */
 import { isSafeAnchorHref } from '../domain/url';
+import {
+	calloutVisualOf,
+	type CalloutHeader,
+	type CalloutVisual,
+} from '../domain/callout';
 import {
 	normalizeHexColor,
 	nodeContentTones,
@@ -42,6 +47,7 @@ import {
 	MAX_INLINE_CONTENT_CHARS,
 	buildInlineSegments,
 	clampSegments,
+	isMermaidFence,
 	resolveSelfDrawSource,
 	taskStateOf,
 	type InlineContentDocument,
@@ -76,6 +82,38 @@ export const NODE_INLINE_CONTENT_CLASS = 'mindmap-node-inline-content';
  * 阶段命中点击目标；改这里必须同步改那边，两处都不许写字面量）。
  */
 export const NODE_TASK_CLASS = 'mindmap-node-task';
+
+/**
+ * 脚注引用徽标的类名与 id 属性名（**交互契约**：`features/view-footnote` 按
+ * `[data-footnote-id]` 命中点击/悬停目标，两处共用这两个常量）。
+ *
+ * 徽标结构与 Obsidian 阅读视图的 `sup > a.footnote-ref` 同形但**刻意不共用类名**：
+ * 节点内容在画布里，宿主的 `.footnote-ref` 全局样式（阅读视图的脚注样式）会意外
+ * 命中它；`a` 也**不写 href / data-href**——`view-wikilink` 的 `ANCHOR_SELECTOR`
+ * 因此不会把它当链接（链接三通道零改动，与标签 pill 同一条纪律）。
+ */
+export const FOOTNOTE_REF_CLASS = 'mindmap-node-footnote-ref';
+
+/** 徽标上的脚注 id 属性（点击/悬停的唯一命中依据） */
+export const FOOTNOTE_ID_ATTR = 'data-footnote-id';
+
+/**
+ * 「纯定义节点」汇总 chip 的类名与 id 列表属性（**交互契约**：
+ * `features/view-footnote` 按类名命中、按 `data-footnote-ids` 展开全部定义）。
+ *
+ * 定义行不再铺在节点里（2026-11-11）：整节点只有定义时，接管一个 chip 而不是
+ * 空内容——否则引擎会回落渲染 `data.text`，隐藏静默失效。
+ */
+export const FOOTNOTE_SUMMARY_CLASS = 'mindmap-node-footnote-summary';
+
+/**
+ * chip 上的定义 id 列表（**换行分隔**；点击/悬停据此展开全部定义）。
+ *
+ * 分隔符不能是逗号：脚注 id 允许含逗号（`[^a,b]` 是**一个** id，见
+ * `md-footnote.FOOTNOTE_ID_SOURCE` 的字符类），逗号分隔会把一条定义拆成两条
+ * 都判「未定义」（2026-11-12 实机）。换行不在 id 字符类里，天然无歧义。
+ */
+export const FOOTNOTE_IDS_ATTR = 'data-footnote-ids';
 
 /**
  * 自绘内容根元素上的「字体代际」标记属性名（K114）。
@@ -362,6 +400,15 @@ function codeBlockStyle(
 
 /** 块级代码块容器类名（styles.css 的 hover/按钮规则与 verify:visual 断言共用） */
 export const CODE_BLOCK_CLASS = 'tmm-codeblock';
+/**
+ * mermaid 图容器类名（`tmm-*` 前缀：与代码块同属「围栏块」子系统，见
+ * `core/constants` 的前缀纪律）。
+ *
+ * 只在**渲染成功**时出现：图不可用（语法错误 / 未注册类型 / 超限）时该段回落
+ * `.tmm-codeblock`，故「有没有 `.tmm-mermaid`」就是「这节点画的是图还是源码」
+ * 的唯一判据（verify:visual 与调试选择器都用它）。
+ */
+export const MERMAID_BLOCK_CLASS = 'tmm-mermaid';
 /** 代码块复制按钮类名（视图层点击委托的选择器，见 features/node-codeblock.ts） */
 export const CODE_COPY_CLASS = 'tmm-code-copy';
 
@@ -428,6 +475,177 @@ const CODE_COPY_BUTTON_STYLES: Partial<CSSStyleDeclaration> & Record<string, str
 	maskSize: '14px',
 };
 
+/**
+ * mermaid 图容器：外观几乎全部来自 Pele 自己的 SVG（底色/线条/字号都是
+ * `--pele-*` 变量），本表只管「盒」与「手感」：
+ * - `pointerEvents: 'auto'` —— 容器**必须可悬停**：复制按钮靠 `:hover` 显形，
+ *   容器若不可命中就永远悬停不到（2026-11-09 实机踩到）。让位的是图本身
+ *   （`MERMAID_FIGURE_STYLE`：`<svg>` 不参与命中），只有锚点与按钮自行放行；
+ * - `lineHeight: '0'` —— SVG 是行内元素，不清零会在底部留一条基线缝；
+ * - `maxWidth: 100%` + `overflow: hidden` —— 宽图靠 SVG 自带的
+ *   `max-width:100%;height:auto` 等比缩小，容器只负责兜住溢出；
+ * - **不设高度上限**：图的高度就是它的信息量，代码块那套「限高 + 块内滚动」
+ *   会把图裁掉一块（导出克隆里更明显）。
+ */
+const MERMAID_STYLES: Partial<CSSStyleDeclaration> = {
+	position: 'relative',
+	display: 'block',
+	boxSizing: 'border-box',
+	margin: '4px 0',
+	maxWidth: '100%',
+	overflow: 'hidden',
+	lineHeight: '0',
+	pointerEvents: 'auto',
+	// **不透明纸面**：图有自己的底色，不把节点色透上来（2026-11-09 用户裁决）。
+	// 颜色只由主题（明暗）决定：宿主有 `--pele-bg` 时用它，缺失时退回
+	// `--background-primary`（老版本 Obsidian / 无 Pele 的环境）。
+	// 写在**内联样式**里而不是 styles.css：类规则不进导出克隆，透明纸面会让
+	// 彩色节点上的图直接压在节点填充上。
+	backgroundColor: 'var(--pele-bg, var(--background-primary))',
+};
+
+
+
+/**
+ * 引用块盒子类名（`kind: 'quote'` 且 **无**标注头部 = 普通引用）。
+ *
+ * 与 `CALLOUT_BLOCK_CLASS` 分成两个类名而不是「一个类 + 修饰符」：两者的样式
+ * 来源完全不同（引用 = 宿主 blockquote 变量；标注 = `--callout-*` 类型色），
+ * 且 `verify:visual` 的探针按类名区分「这是引用还是标注」（同一节点里可以两者
+ * 都有）。前缀 `mindmap-` 与自绘内容其余段类名同族（前缀纪律见 `core/constants`）。
+ */
+export const QUOTE_BLOCK_CLASS = 'mindmap-node-quote';
+
+/**
+ * 标注盒子类名（`kind: 'quote'` 且首行是 `[!type]` 头部）。
+ *
+ * 类名 + `data-callout="<规范类型>"` 一起是**跨模块契约**：探针按
+ * `.mindmap-node-callout[data-callout="info"]` 定位；**刻意不加** Obsidian 官方的
+ * `callout` 类——那会把节点内容的布局交给主题的 `.callout > *` / `mix-blend-mode`
+ * 规则，而导出 SVG 里那段 CSS 并不存在（屏上与导出必须同一份样式来源）。
+ */
+export const CALLOUT_BLOCK_CLASS = 'mindmap-node-callout';
+
+/**
+ * 引用块的**嵌套渲染深度上限**（层）。
+ *
+ * `> > [!b]` 这种嵌套靠「正文重进 `buildInlineSegments`」自然成立，但每一层都是
+ * 一次递归 + 一层盒子，深度由文件内容决定（不可信输入）。上限之外的层**按字面**
+ * 铺开（原文含 `>` 前缀，内容不丢），与 `MAX_MARKUP_DEPTH` 同一取舍：再往下的
+ * 视觉收益趋零，扫描/测量成本与回归面线性涨。
+ */
+const MAX_QUOTE_DEPTH = 2;
+
+/**
+ * 普通引用块盒子：对齐宿主 `blockquote` 规则（`obsidian.asar` 实测）——
+ * `border-inline-start: 2px solid var(--blockquote-border-color)` +
+ * `padding-inline-start` + `color: var(--blockquote-color)`，官方默认**不斜体**
+ * （`--blockquote-font-style: normal`，故不写 fontStyle）。
+ *
+ * 变量都带字面量兜底（导出 SVG 内没有主题变量上下文，见 CONTENT_STYLES）；
+ * `--blockquote-border-color` / `--interactive-accent` 已进导出白名单。
+ * 内边距取 10px 而非宿主的 `--size-4-6`（24px）：节点内是紧凑排版，24px 会把
+ * 可用宽度吃掉一成（与 CONTENT_STYLES 的 padding 折算同一条取舍）。
+ */
+const QUOTE_BOX_STYLES: Partial<CSSStyleDeclaration> = {
+	display: 'block',
+	boxSizing: 'border-box',
+	margin: '4px 0',
+	padding: '0 0 0 10px',
+	borderInlineStart:
+		'2px solid var(--blockquote-border-color, var(--interactive-accent, #7f6df2))',
+	color: 'var(--blockquote-color, var(--text-normal, inherit))',
+};
+
+/**
+ * 标注盒子：对齐宿主 `.callout` 的**可见形态**——圆角 + `color-mix` 10% 类型色底
+ * （官方默认 `--callout-border-width: 0px`，即无边框）+ 类型色标题。
+ *
+ * 底色/标题色**不在这张表里**：它们随类型变（`calloutVisualOf().color`，模块
+ * 初始化时派生一次），在 `buildCalloutShell` 里写到元素上。字体色不设——正文继承
+ * 节点墨色（着色节点同理）。
+ */
+const CALLOUT_BOX_STYLES: Partial<CSSStyleDeclaration> = {
+	display: 'block',
+	boxSizing: 'border-box',
+	margin: '4px 0',
+	padding: '6px 10px',
+	borderRadius: 'var(--radius-s, 6px)',
+};
+
+/** 标注标题行：图标 + 标题 + 折叠标记的弹性一行（对齐官方 `.callout-title`） */
+const CALLOUT_TITLE_STYLES: Partial<CSSStyleDeclaration> = {
+	display: 'flex',
+	alignItems: 'flex-start',
+	gap: '6px',
+	fontWeight: '600',
+	lineHeight: '1.3',
+};
+
+/**
+ * 图标容器：**不设固定尺寸**——尺寸由 `platform/callout-icon` 写在 `<svg>` 的
+ * 宽高上（图标来源唯一，这里再钳一次会让宽高出现第二处真相）；只负责不压缩、
+ * 与首行文字对齐。
+ */
+const CALLOUT_ICON_STYLES: Partial<CSSStyleDeclaration> = {
+	flex: '0 0 auto',
+	display: 'inline-flex',
+	alignItems: 'center',
+};
+
+/** 标题文字：允许换行、可压缩（长标题不撑爆节点，与 CONTENT_STYLES 同口径） */
+const CALLOUT_TITLE_INNER_STYLES: Partial<CSSStyleDeclaration> = {
+	flex: '1 1 auto',
+	minWidth: '0',
+	overflowWrap: 'anywhere',
+	wordBreak: 'break-word',
+};
+
+/**
+ * 折叠标记（`+` / `-`）：**纯装饰**。
+ *
+ * 折叠态是视图态、不进文件（官方同此），而导图节点每次重建都会丢——故本插件
+ * **不实现折叠交互**，`-` 只是在这里显示一个合拢的箭头，正文照常展开（导图节点
+ * 是概要面，隐藏正文会看起来像内容丢失）。
+ */
+const CALLOUT_FOLD_STYLES: Partial<CSSStyleDeclaration> = {
+	flex: '0 0 auto',
+	fontSize: '0.85em',
+	lineHeight: '1.3',
+	opacity: '0.7',
+};
+
+/** 标注正文容器：与标题之间留一点气口，不加左右内边距（盒子已有） */
+const CALLOUT_CONTENT_STYLES: Partial<CSSStyleDeclaration> = {
+	display: 'block',
+	marginTop: '2px',
+};
+
+/** 引用块正文容器：普通引用不需要标注那点气口（宿主 blockquote 本就没有） */
+const QUOTE_CONTENT_STYLES: Partial<CSSStyleDeclaration> = {
+	display: 'block',
+};
+
+/**
+ * 两种外壳的正文容器（类名 + 样式）：`appendQuoteBody` 按变体取**一份**。
+ *
+ * 摆在这里而不是挪到装配函数旁边：引用 / 标注的**全部样式表**集中在一段（从
+ * `QUOTE_BOX_STYLES` 到本表），查「这个盒子内边距在哪定」时不必跨文件翻两处。
+ */
+const QUOTE_CONTENT_VARIANTS = {
+	callout: {
+		className: `${CALLOUT_BLOCK_CLASS}-content`,
+		style: CALLOUT_CONTENT_STYLES,
+	},
+	quote: {
+		className: `${QUOTE_BLOCK_CLASS}-content`,
+		style: QUOTE_CONTENT_STYLES,
+	},
+} as const;
+
+/** 引用块的两种外观（首行有 `[!type]` 头部 = 标注） */
+type QuoteVariant = keyof typeof QUOTE_CONTENT_VARIANTS;
+
 /** 行内数学段的占位类名（MathJax 替换后保留，供主题/调试定位） */
 const MATH_SEGMENT_CLASS = 'mindmap-node-inline-math';
 
@@ -487,11 +705,42 @@ export function buildInlineNodeContent(
 			tones: readNodeTones(node),
 			// 任务状态：图片节点在 resolveSelfDrawSource 已被挡掉（裁决 4）
 			task: taskStateOf(node.getData?.() as Record<string, unknown> | null),
+			// 纯定义节点：渲染汇总 chip（非纯定义节点为 null，定义行已被剥离）
+			footnoteIds: source.footnoteIds ?? null,
 			options,
 			lang,
 			owner,
 		},
 	);
+}
+
+/**
+ * 任意一段行内原文 → 内容元素（**复用同一套段管线**）。
+ *
+ * 消费方：脚注悬浮预览（`features/view-footnote`）——预览里的粗体 / 链接 / 行内码 /
+ * 表格与节点正文逐字同源，不另写一份「简易渲染」。与 `buildInlineNodeContent` 的
+ * 差别只有输入形态（原文而非节点）与缺省项：不截断、无拖宽、无节点色、无任务框。
+ *
+ * `options` 建议只注入**同步**通道（`getCachedMath` / `getCachedCode`）：浮层不在
+ * 引擎节点内，异步定稿的重测会落空（content-remeasure 按 holder 反查节点）。
+ */
+export function buildInlineTextContent(
+	doc: InlineContentDocument,
+	raw: string,
+	lang: Language = 'zh',
+	options: InlineContentOptions = {},
+): HTMLElement {
+	return buildContentElement(doc, buildInlineSegments(raw), {}, {
+		truncationTitle: null,
+		explicitWidth: null,
+		tones: null,
+		task: null,
+		// 预览喂的是**定义正文**（已剥标记），不可能再有纯定义节点
+		footnoteIds: null,
+		options,
+		lang,
+		owner: null,
+	});
 }
 
 /** `buildContentElement` 的构建参数（一次装配读一次的取值，随段递归下传） */
@@ -528,6 +777,14 @@ interface BuildContentParams {
 	 * 同处一个 `foreignObject`，导出 SVG 时随内容一起序列化。
 	 */
 	task: 'todo' | 'done' | null;
+	/**
+	 * **纯定义节点**的定义 id（非空 ⇒ 本节点没有可见正文，只画一枚汇总 chip）。
+	 *
+	 * 与 `task` 同款定位：它是内容本身，不是段。定义行已在
+	 * `resolveSelfDrawSource` 里被剥离（`splitFootnoteDefinitions`），此处只剩
+	 * 「有几条、分别是哪些 id」这个事实。
+	 */
+	footnoteIds: readonly string[] | null;
 }
 
 /**
@@ -621,6 +878,122 @@ function buildTagElement(
 		el.style.backgroundColor = params.tones.chip;
 	}
 	return el;
+}
+
+/**
+ * 脚注引用徽标的样式（**内联**：导出 SVG 不含 styles.css，理由同 CONTENT_STYLES）。
+ *
+ * 上标由 `<sup>` 承担（HTML 在 foreignObject 里按 UA 样式表渲染），这里只钉住
+ * 字号与基线：不写 `vertical-align` 的话不同主题的行高会把它压进正文行内，
+ * 看起来像「1 贴在字上」。颜色走链接色（阅读视图同款），**着色节点**改用派生
+ * 墨色 + 下划线（与 `anchorStyle` 同一规则：彩色底上不给第五种颜色）。
+ */
+const FOOTNOTE_SUP_STYLES: Partial<CSSStyleDeclaration> = {
+	// **固定宽度**（2026-11-11 实机复现）：引擎在**字体就绪前**测宽，而数字宽度
+	// 随字体变化——窄节点上字体到位后第二枚徽标被挤到第二行（内容盒 31→51、引擎
+	// 节点框仍是 31 ⇒ 溢出压住下方节点）。`inline-block + min-width` 让徽标宽度
+	// 不随字体漂移（测量值 = 渲染值），负边距之类"缩宽度"的手段无效：测量宽会
+	// 跟着缩，换行点不变。
+	display: 'inline-block',
+	minWidth: '0.9em',
+	textAlign: 'center',
+	fontSize: '0.75em',
+	lineHeight: '1',
+	verticalAlign: 'super',
+	whiteSpace: 'nowrap',
+	color: THEME_LINK_COLOR,
+};
+
+/**
+ * 徽标内层 `<a>` 的样式（无 href：只作点击目标与光标提示）。
+ *
+ * ⚠ **不要给内边距**（2026-11-11 实机复现）：`padding: 0 1px` 让每枚徽标多占 2px，
+ * 一行两枚就是 4px——节点内宽恰好卡在临界时，第二个徽标会被挤到**第二行**，内容盒
+ * 高度从 31 变 51，而引擎的节点框仍是测量时的 31 ⇒ 文字溢出节点、压住下方节点
+ * （`脚注-05-嵌入.md` 的「引用₁ 与 ₂」）。宽度预算归零后单行复原。
+ */
+const FOOTNOTE_LINK_STYLES: Partial<CSSStyleDeclaration> = {
+	color: 'inherit',
+	textDecoration: 'none',
+	cursor: 'pointer',
+};
+
+/**
+ * 脚注汇总 chip 的样式（**内联**：导出 SVG 不含 styles.css，理由同 CONTENT_STYLES）。
+ *
+ * `user-select: none` + `cursor: pointer`：它是一个「打开入口」，不是可读内容
+ * （正文在浮层里，那里可选择复制）。
+ */
+const FOOTNOTE_SUMMARY_STYLES: Partial<CSSStyleDeclaration> = {
+	display: 'inline-block',
+	padding: '1px 7px',
+	borderRadius: '10px',
+	fontSize: '0.82em',
+	lineHeight: '1.6',
+	whiteSpace: 'nowrap',
+	backgroundColor: 'var(--background-secondary, rgba(128, 128, 128, 0.12))',
+	color: 'var(--text-muted, #888)',
+	cursor: 'pointer',
+	userSelect: 'none',
+};
+
+/**
+ * 纯定义节点 → 汇总 chip（`span.mindmap-node-footnote-summary[data-footnote-ids]`）。
+ *
+ * 文案只报条数（`脚注 3`），不把定义正文或长 id 铺回节点——那正是要隐藏的东西。
+ * 点击/悬停展开全部定义由 `features/view-footnote` 承接（本模块零监听）。
+ */
+function buildFootnoteSummary(
+	doc: InlineContentDocument,
+	ids: readonly string[],
+	params: BuildContentParams,
+): HTMLElement {
+	// 去重：同一 id 定义两次时索引只有「首次生效」那一条，chip 不能把同一条
+	// 列两遍（实机 2026-11-11 抓到 `dup,dup` 展开后重复显示同一段正文）
+	const unique = [...new Set(ids)];
+	const chip = doc.createElement('span');
+	chip.className = FOOTNOTE_SUMMARY_CLASS;
+	chip.setAttribute(FOOTNOTE_IDS_ATTR, unique.join('\n'));
+	chip.textContent = t(params.lang, 'footnote.summaryLabel');
+	Object.assign(chip.style, FOOTNOTE_SUMMARY_STYLES);
+	if (params.tones) {
+		chip.style.color = params.tones.ink;
+	}
+	return chip;
+}
+
+/**
+ * 脚注引用段 → 徽标（`sup.mindmap-node-footnote-ref > a[data-footnote-id]`）。
+ *
+ * **不在此处解析定义正文**：段序列按原文寻址缓存，正文属于文档上下文，只能在
+ * 交互发生时现查（见 `InlineSegment.footnote`）。悬停预览与点击跳转都在
+ * `features/view-footnote`，本函数只产出可命中的 DOM。
+ */
+function buildFootnoteRef(
+	doc: InlineContentDocument,
+	segment: InlineSegment,
+	params: BuildContentParams,
+): HTMLElement {
+	const sup = doc.createElement('sup');
+	sup.className = FOOTNOTE_REF_CLASS;
+	Object.assign(sup.style, FOOTNOTE_SUP_STYLES);
+	const anchor = doc.createElement('a');
+	const id = segment.footnote ?? segment.text;
+	anchor.setAttribute(FOOTNOTE_ID_ATTR, id);
+	// **刻意不写 `aria-label`、也不写 `title`**（2026-11-11 实机裁决）：Obsidian 的
+	// 全局 tooltip 委托读 `[aria-label]`，鼠标停在徽标上会弹出「跳转到脚注 [^1]」
+	// 黑框；`title` 又会给出浏览器原生 `[^1]` 白框。两个提示都是已知信息（数字与
+	// 浮层正文），纯噪音。语义改用不触发 tooltip 的 `role`，屏幕阅读器仍能识别。
+	anchor.setAttribute('role', 'doc-noteref');
+	anchor.textContent = segment.text;
+	Object.assign(anchor.style, FOOTNOTE_LINK_STYLES);
+	if (params.tones) {
+		// 着色节点：与 anchorStyle 同一规则（墨色 + 下划线形状线索，不加第五种颜色）
+		sup.style.color = params.tones.ink;
+		Object.assign(anchor.style, { textDecoration: 'underline' });
+	}
+	sup.appendChild(anchor);
+	return sup;
 }
 
 /**
@@ -750,7 +1123,54 @@ function buildTaskCheckbox(
 	return box;
 }
 
-/** 段序列 → HTML 元素（复选框 + 文本 / 锚点 / 标签 / 表格） */
+/**
+ * 段序列 → **已有容器的子节点**（文本 / 锚点 / 标签 / 表格 / 引用块）。
+ *
+ * 从 `buildContentElement` 的循环里抽出来（2026-11-11）：标注正文、引用块正文
+ * 都要把**同一套段管线**再跑一遍（`buildInlineSegments(body)` → 本函数），抽出来
+ * 才能复用——否则「标注里的表格 / 代码块 / 链接」就得各写一份。
+ *
+ * `depth` = 当前所处的引用块层级（最外层 0）。超过 `MAX_QUOTE_DEPTH` 的嵌套不再
+ * 建盒子、按字面铺开（见该常量）。
+ */
+function appendSegments(
+	doc: InlineContentDocument,
+	parent: HTMLElement,
+	segments: readonly InlineSegment[],
+	params: BuildContentParams,
+	depth: number,
+): void {
+	for (const segment of segments) {
+		if (segment.kind === 'table') {
+			parent.appendChild(buildTableElement(doc, segment, params));
+			continue;
+		}
+		if (segment.kind === 'text') {
+			parent.appendChild(buildTextElement(doc, segment, params));
+			continue;
+		}
+		if (segment.kind === 'tag') {
+			parent.appendChild(buildTagElement(doc, segment, params));
+			continue;
+		}
+		if (segment.kind === 'footnote') {
+			parent.appendChild(buildFootnoteRef(doc, segment, params));
+			continue;
+		}
+		if (segment.kind === 'quote') {
+			parent.appendChild(
+				depth < MAX_QUOTE_DEPTH
+					? buildQuoteElement(doc, segment, params, depth)
+					: // 超深嵌套：原文（含 `>` 前缀）按字面铺开，内容不丢
+						doc.createTextNode(segment.text),
+			);
+			continue;
+		}
+		parent.appendChild(buildAnchor(doc, segment, params));
+	}
+}
+
+/** 段序列 → HTML 元素（复选框 + 文本 / 锚点 / 标签 / 表格 / 引用块） */
 function buildContentElement(
 	doc: InlineContentDocument,
 	segments: readonly InlineSegment[],
@@ -797,23 +1217,200 @@ function buildContentElement(
 	if (params.task) {
 		box.appendChild(buildTaskCheckbox(doc, params.task, params));
 	}
-	for (const segment of segments) {
-		if (segment.kind === 'table') {
-			box.appendChild(buildTableElement(doc, segment, params));
-			continue;
-		}
-		if (segment.kind === 'text') {
-			box.appendChild(buildTextElement(doc, segment, params));
-			continue;
-		}
-		if (segment.kind === 'tag') {
-			box.appendChild(buildTagElement(doc, segment, params));
-			continue;
-		}
-		box.appendChild(buildAnchor(doc, segment, params));
+	// 纯定义节点：只有 chip，没有段（定义行已在渲染源里剥离）
+	if (params.footnoteIds && params.footnoteIds.length > 0) {
+		box.appendChild(buildFootnoteSummary(doc, params.footnoteIds, params));
+		return box;
 	}
+	appendSegments(doc, box, segments, params, 0);
 	return box;
 }
+
+/**
+ * 引用块段 → 盒子（`kind: 'quote'`）：首行是 `[!type]` 头部时画**标注**，否则画
+ * **普通引用**。两者共用一个段型与一次扫描（`scanQuoteBlocks`），差别只在装饰，
+ * 故这里只做**分派**——外观在两条 shell 里、正文在 `appendQuoteBody` 里。
+ *
+ * 结构（标注）：
+ * ```
+ * div.mindmap-node-callout[data-callout=info][data-callout-type=info][data-callout-fold=-]
+ *   └ div.mindmap-node-callout-title      ← 行内样式，颜色 = 类型色
+ *       ├ span.mindmap-node-callout-icon  ← 注入的宿主图标（缺失则整段省略）
+ *       ├ span.mindmap-node-callout-title-inner
+ *       └ span.mindmap-node-callout-fold  ← 纯装饰，不绑事件
+ *   └ div.mindmap-node-callout-content    ← 正文：递归同一套段管线
+ * ```
+ *
+ * 两条跨函数口径：
+ * - **正文递归**：`buildInlineSegments(body)` 再跑一遍本模块，围栏块 / 表格 /
+ *   数学 / 链接 / 更深的引用块因此自动成立（段序列缓存按内层原文寻址，命中即复用）；
+ * - **空正文不建容器**（title-only 标注）：连元素都不建，不留空盒子。
+ */
+function buildQuoteElement(
+	doc: InlineContentDocument,
+	segment: InlineSegment,
+	params: BuildContentParams,
+	depth: number,
+): HTMLElement {
+	const quote = segment.quote;
+	const header = quote?.header ?? null;
+	const body = quote?.body ?? '';
+	if (header === null) {
+		const box = buildPlainQuoteShell(doc);
+		appendQuoteBody(doc, box, body, params, depth, 'quote');
+		return box;
+	}
+	const box = buildCalloutShell(doc, params, header, depth);
+	appendQuoteBody(doc, box, body, params, depth, 'callout');
+	return box;
+}
+
+/**
+ * 标注外壳：盒 + 标题行（正文由 `appendQuoteBody` 追加）。
+ *
+ * 颜色 / 图标**只查一次表**（`calloutVisualOf`）后往下传：标题行与底色同用一份
+ * `visual.color`，不再各自回查类型表。
+ *
+ * 着色节点（`params.tones`）只加一条**派生边框**：类型色 10% 的底在彩色节点上
+ * 几乎看不出来，而主题灰框在彩色底上对比仅 1.2（与代码块 / 表格同一条修复）。
+ * 标题色仍是类型色——不换成墨色，否则标注的类型语义就丢了；正文继承节点墨色，
+ * 可读性不受影响。
+ */
+function buildCalloutShell(
+	doc: InlineContentDocument,
+	params: BuildContentParams,
+	header: CalloutHeader,
+	depth: number,
+): HTMLElement {
+	const box = doc.createElement('div');
+	box.className = CALLOUT_BLOCK_CLASS;
+	// `data-callout` 是官方 `.callout[data-callout=…]` 的键（探针与调试选择器按它定位，
+	// 值 = 规范类型）；`data-callout-type` 保留**归一后的原文**（`custom-question-type`
+	// 之类）——两个属性合起来才能区分"别名写法"与"自定义类型"，这也是调试时唯一能
+	// 从 DOM 直接读到原文的地方（`text` / `mdRaw` 不在 DOM 里）
+	box.setAttribute('data-callout', header.canonical);
+	box.setAttribute('data-callout-type', header.type);
+	if (header.fold) {
+		box.setAttribute('data-callout-fold', header.fold);
+	}
+	const visual = calloutVisualOf(header.canonical);
+	Object.assign(box.style, withDerivedBorder(CALLOUT_BOX_STYLES, params.tones));
+	// 与宿主 `.callout` 同款：`color-mix(in oklch, 类型色 10%, transparent)`
+	box.style.backgroundColor = `color-mix(in oklch, ${visual.color} 10%, transparent)`;
+	box.appendChild(buildCalloutTitle(doc, params, header, visual, depth));
+	return box;
+}
+
+/**
+ * 普通引用外壳：只有左竖线与弱化文字（宿主 blockquote 的观感，无标题行）。
+ *
+ * 颜色走 `--blockquote-*`（宿主默认 `--blockquote-color: inherit`、
+ * `--blockquote-font-style: normal`，故显式写的这两条只是把宿主的**缺省**固化进
+ * 内联样式，屏上与导出图取到同一份值）。
+ */
+function buildPlainQuoteShell(doc: InlineContentDocument): HTMLElement {
+	const box = doc.createElement('div');
+	box.className = QUOTE_BLOCK_CLASS;
+	Object.assign(box.style, QUOTE_BOX_STYLES);
+	return box;
+}
+
+/**
+ * 正文容器（标注 / 引用共用）：**空正文连元素都不建**，有正文才递归段管线。
+ *
+ * 类名与样式按变体取表（`QUOTE_CONTENT_VARIANTS`）——不在这里按 `header` 写分支：
+ * 两种外观的差异是"数据"，交给表最不容易随改动漂移。
+ */
+function appendQuoteBody(
+	doc: InlineContentDocument,
+	box: HTMLElement,
+	body: string,
+	params: BuildContentParams,
+	depth: number,
+	variant: QuoteVariant,
+): void {
+	if (!body) {
+		return;
+	}
+	const spec = QUOTE_CONTENT_VARIANTS[variant];
+	const content = doc.createElement('div');
+	content.className = spec.className;
+	Object.assign(content.style, spec.style);
+	appendSegments(doc, content, buildInlineSegments(body), params, depth + 1);
+	box.appendChild(content);
+}
+
+/**
+ * 标注标题的段序列：宿主把标题当**行内内容**，`>` / 围栏起首只是字面字符。
+ *
+ * `buildInlineSegments` 是块级管线（先切引用块 / 围栏 / 表格），单行文本里唯一可能
+ * 误判成块的就是**行首**的 `>` 与围栏定界符（表格要表头 + 分隔两行）。命中这两者
+ * 就整段按纯文本（`textContent` 语义），与宿主一致；其余照常走段管线，链接 / 粗体 /
+ * 徽标因此都能渲染（2026-11-12 实机：`> [!info] > 嵌套` 曾在标题里长出一个引用盒子）。
+ */
+function titleSegmentsOf(title: string): readonly InlineSegment[] | null {
+	if (/^[ \t]{0,3}(?:>|`{3,}|~{3,})/.test(title)) {
+		return null;
+	}
+	return buildInlineSegments(title);
+}
+
+/**
+ * 标注标题行（图标 + 标题 + 折叠标记）。
+ *
+ * 标题文字取 `header.title`（解析期已定稿：显式标题或类型标识的 Title Case），
+ * 但**仍走一遍段管线**：宿主在标题里照样渲染 `[[双链]]` / 粗体 / 行内码
+ * （2026-11-12 实机对照：阅读视图是链接 + `<strong>`，节点上曾全是字面字符）。
+ * 递归深度与正文同档（标题里的轻标记只有一层，不会触发引用块递归）。
+ */
+function buildCalloutTitle(
+	doc: InlineContentDocument,
+	params: BuildContentParams,
+	header: CalloutHeader,
+	visual: CalloutVisual,
+	depth: number,
+): HTMLElement {
+	const titleRow = doc.createElement('div');
+	titleRow.className = `${CALLOUT_BLOCK_CLASS}-title`;
+	Object.assign(titleRow.style, CALLOUT_TITLE_STYLES);
+	titleRow.style.color = visual.color;
+	// 图标的注入面可能缺失（无头验证 / 未接线）：`?.` + `?? null` 一步到位，
+	// 缺失即整段省略，不留空 span（否则标题行多出一份 gap 间距）
+	const icon = params.options.resolveCalloutIcon?.(visual.icon) ?? null;
+	if (icon) {
+		const iconBox = doc.createElement('span');
+		iconBox.className = `${CALLOUT_BLOCK_CLASS}-icon`;
+		// 图标与标题同词义（读屏重复朗读一遍没有价值），且装饰性
+		iconBox.setAttribute('aria-hidden', 'true');
+		Object.assign(iconBox.style, CALLOUT_ICON_STYLES);
+		iconBox.appendChild(icon);
+		titleRow.appendChild(iconBox);
+	}
+	const titleText = doc.createElement('span');
+	titleText.className = `${CALLOUT_BLOCK_CLASS}-title-inner`;
+	Object.assign(titleText.style, CALLOUT_TITLE_INNER_STYLES);
+	// 与正文同一套段管线（title 为纯文本时产出一段纯文本，等价于 textContent）
+	const titleSegments = titleSegmentsOf(header.title);
+	if (titleSegments) {
+		appendSegments(doc, titleText, titleSegments, params, depth + 1);
+	} else {
+		titleText.textContent = header.title;
+	}
+	titleRow.appendChild(titleText);
+	if (header.fold) {
+		const fold = doc.createElement('span');
+		fold.className = `${CALLOUT_BLOCK_CLASS}-fold`;
+		fold.setAttribute('aria-hidden', 'true');
+		Object.assign(fold.style, CALLOUT_FOLD_STYLES);
+		// `+` 默认展开 / `-` 默认折叠：正文一律展开渲染，标记只表达"可折叠"
+		fold.textContent = header.fold === '+' ? '▾' : '▸';
+		titleRow.appendChild(fold);
+	}
+	return titleRow;
+}
+
+// 注：引用 / 标注的样式表与正文容器变体表集中在上方常量区（`QUOTE_CONTENT_VARIANTS`），
+// 装配函数区只留构建逻辑。
 
 /**
  * 文本段 → 节点：无样式 = 纯文本；带轻标记时包一层语义元素（视觉增强，
@@ -830,6 +1427,19 @@ function buildTextElement(
 		return buildMathElement(doc, segment, params.options, params.owner);
 	}
 	if (segment.style === 'code' && segment.block === true) {
+		// mermaid 围栏优先走图通道；画不了（语法错误 / 未注册类型 / 超限）时
+		// **静默回落**到下面的代码块——源码仍然完整可见可编辑
+		if (isMermaidFence(segment)) {
+			const mermaid = buildMermaidElement(
+				doc,
+				segment,
+				params.options,
+				params.lang,
+			);
+			if (mermaid) {
+				return mermaid;
+			}
+		}
 		return buildCodeBlockElement(
 			doc,
 			segment,
@@ -844,9 +1454,10 @@ function buildTextElement(
 	const wrapper = doc.createElement(MARKUP_TAGS[segment.style]);
 	Object.assign(wrapper.style, markupStyle(segment.style, params.tones));
 	if (segment.children && segment.children.length > 0) {
-		for (const child of segment.children) {
-			wrapper.appendChild(buildTextElement(doc, child, params));
-		}
+		// 标记体里的子段走**同一套段管线**：脚注徽标（`**粗[^1]**`）、链接、标签
+		// 都要按各自类型装配。此前一律 `buildTextElement` ⇒ 徽标退化成纯文本
+		// `"1"`、点击/悬停/编号全部失效（2026-11-12 实机复现）。
+		appendSegments(doc, wrapper, segment.children, params, 0);
 		return wrapper;
 	}
 	wrapper.appendChild(doc.createTextNode(segment.text));
@@ -941,6 +1552,17 @@ function appendCellContent(
 			cell.appendChild(buildTextElement(doc, segment, params));
 			continue;
 		}
+		if (segment.kind === 'footnote') {
+			// 单元格里同样是可命中徽标（`[data-footnote-id]`），与节点正文同权
+			cell.appendChild(buildFootnoteRef(doc, segment, params));
+			continue;
+		}
+		// 引用块段**可达**（单元格文本以 `>` 起首时）：单元格内不建盒子（单行引用
+		// 没有块结构可言），按**字面**铺开而不是丢弃——丢弃会让那个单元格凭空少字
+		if (segment.kind === 'quote') {
+			cell.appendChild(doc.createTextNode(segment.text));
+			continue;
+		}
 		// 其余段（代码 / 数学 / 表格）在单元格里**不可达**：单元格文本恒单行
 		//（`splitPipeRow` 按行切）且单元格内刻意不做块级内容——此处的 `continue`
 		// 是显式不变式声明（模型若放宽，孤段被跳过而不是渲染出半个单元格）
@@ -1003,6 +1625,111 @@ function buildCodeBlockElement(
 	block.appendChild(button);
 	block.appendChild(pre);
 	return block;
+}
+
+/**
+ * mermaid 图段（块级围栏 + 语言码 `mermaid`）：**同步**取 SVG 字符串并直接落进
+ * 容器；返回 null 表示本段画不了，交调用方回落块级代码块。
+ *
+ * 为什么同步就能定稿：Pele 是纯字符串渲染（不等字体、不挂载），产物在引擎的
+ * **同步离屏测宽**之前就已就位——不存在 math / 代码块那种「先占位、后替换」的
+ * 窗口，也就不需要定稿回调与重排会话（这是相对宿主 `loadMermaid()` 的核心收益，
+ * 后者是 async）。
+ *
+ * 产物形态：注入面给的是**已解析好的 `<svg>` 根元素**（解析在平台层，见
+ * `platform/mermaid.renderMermaidNode`——本模块不碰字符串→DOM，也就不存在
+ * `innerHTML` 注入面）。跨文档 append 由 DOM 自动 adopt，故 popout 的
+ * `doc` 与主窗口解析出的元素可以直接混用。
+ */
+function buildMermaidElement(
+	doc: InlineContentDocument,
+	segment: InlineSegment,
+	options: InlineContentOptions,
+	lang: Language,
+): HTMLElement | null {
+	const svg = options.renderMermaid?.(segment.text) ?? null;
+	if (svg === null) {
+		return null;
+	}
+	enableMermaidLinks(svg);
+	const box = doc.createElement('div');
+	box.className = MERMAID_BLOCK_CLASS;
+	Object.assign(box.style, MERMAID_STYLES);
+	box.appendChild(svg);
+	box.appendChild(buildMermaidCopyButton(doc, segment.text, lang));
+	return box;
+}
+
+/**
+ * 图本身**不参与命中**：容器必须可悬停（复制按钮靠 `:hover` 显形，容器若是
+ * `pointer-events:none` 就永远悬停不到），但图若也命中就会抢走拖拽 / 双击 / 文字
+ * 选择——故让 `<svg>` 让位、点击落在容器上（事件照常冒泡到引擎的节点监听）。
+ */
+const MERMAID_FIGURE_STYLE: Partial<CSSStyleDeclaration> = {
+	pointerEvents: 'none',
+};
+
+/** 图内锚点的内联样式：图让位后，锚点是唯一需要命中能力的子元素 */
+const MERMAID_ANCHOR_STYLE: Partial<CSSStyleDeclaration> = {
+	pointerEvents: 'auto',
+	cursor: 'pointer',
+};
+
+/** 复制按钮的命中回收（与锚点同因：容器不可命中，子元素必须显式放行） */
+const MERMAID_COPY_HIT_STYLE: Partial<CSSStyleDeclaration> = {
+	pointerEvents: 'auto',
+};
+
+/**
+ * 让图内**锚点可点**（P3，2026-11-09）：Pele 把 mermaid 的 `click A "url"` 渲染成
+ * SVG `<a href rel="noopener">`。只给锚点放行命中，图其余部分仍是
+ * `pointer-events:none`（拖拽 / 双击交回引擎）。
+ *
+ * 点击的**接管**不在本模块：`features/view-wikilink` 在引擎 `node_click` 上识别
+ * `.tmm-mermaid a[href]` 并走 `openHyperlink`（阻止默认导航——裸 `<a href>` 在
+ * Electron 里会把整个窗口导航走）。
+ */
+function enableMermaidLinks(svg: Node): void {
+	const figure = svg as unknown as SGElementLike;
+	if (figure.style) {
+		Object.assign(figure.style, MERMAID_FIGURE_STYLE);
+	}
+	const probe = svg as { querySelectorAll?: (selector: string) => ArrayLike<Element> };
+	if (typeof probe.querySelectorAll !== 'function') {
+		return;
+	}
+	for (const anchor of Array.from(probe.querySelectorAll('a[href]'))) {
+		Object.assign(
+			(anchor as unknown as SGElementLike).style,
+			MERMAID_ANCHOR_STYLE,
+		);
+	}
+}
+
+/** 锚点样式的窄操作面（SVG 元素的 `style` 是只读的 `CSSStyleDeclaration`） */
+type SGElementLike = { style: Partial<CSSStyleDeclaration> };
+
+/**
+ * 图容器的**复制源码**按钮（P2，2026-11-09）：复用代码块的按钮类名与
+ * `data-code` 契约——点击委托（`features/node-codeblock`）因此**零改动**即可命中，
+ * 导出隐身（`hideCopyButtonsInExportSvg`）与 ✓ 反馈也一并复用。
+ *
+ * 文案单独一条 i18n（复制的是**源码**，不是渲染产物）。
+ */
+function buildMermaidCopyButton(
+	doc: InlineContentDocument,
+	source: string,
+	lang: Language,
+): HTMLElement {
+	const button = doc.createElement('button');
+	button.className = CODE_COPY_CLASS;
+	button.setAttribute('aria-label', t(lang, 'mermaid.copy'));
+	button.setAttribute('title', t(lang, 'mermaid.copy'));
+	button.setAttribute('data-code', source);
+	Object.assign(button.style, CODE_COPY_BUTTON_STYLES);
+	// 容器是 pointer-events:none：按钮必须自己拿回命中能力（否则点击穿透到画布）
+	Object.assign(button.style, MERMAID_COPY_HIT_STYLE);
+	return button;
 }
 
 /**

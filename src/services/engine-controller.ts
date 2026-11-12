@@ -280,7 +280,7 @@ export class EngineController {
 					this.viewport.recalcBudget,
 					1,
 				);
-				this.restoreOrFitViewport();
+				this.restoreOrFitViewport(false);
 			}, VIEWPORT_RESTORE_DELAY_MS);
 		} catch (error) {
 			// 畸形树/引擎内部异常：记录并保持视图可用，避免异常逃逸出回调
@@ -338,7 +338,13 @@ export class EngineController {
 		this.deps.getCanvasEl()?.empty();
 	}
 
-	/** 作废尚未执行的初始化等待（文件切换/视图关闭时） */
+	/**
+	 * 作废尚未执行的初始化等待（文件切换/视图关闭时）。
+	 *
+	 * 会 `viewport.reset()`（清定时器与「默认视口签名」）：**调用方若还要持久化
+	 * 视口，必须先调 `persistViewport()`**——晚调会让「视口仍是打开时自动设置的
+	 * 那个」判据失效（见 persistViewport 的时机契约）。
+	 */
 	invalidateInit(): void {
 		this.initSeq++;
 		this.disconnectInitObserver();
@@ -426,7 +432,21 @@ export class EngineController {
 		return getRootText(this.mindMap);
 	}
 
-	/** 持久化当前视口（关闭/卸载/切回 Markdown 前调用） */
+	/**
+	 * 持久化当前视口（关闭/卸载/切回 Markdown 前调用）。
+	 *
+	 * **视口仍是打开时自动设置的那个 ⇒ 不写盘**（2026-11-11）：默认视口
+	 * （`centerContentAtFullScale` / `fitMindMap`）是当场按容器与内容算出来的，
+	 * 落盘只等于把当时的窗口尺寸固化进 data.json，下次打开反而更不准（实机
+	 * 39 条里 23 条属此类）。判据复用打开时记下的 `viewport.defaultSignature`
+	 * （用户平移/缩放即失配），签名口径取 `viewStateSignature`，不另立一份。
+	 * 恢复了用户保存视口（`restoredSaved`）时不走这条：那是用户自己的位置。
+	 *
+	 * **调用时机是契约**：必须在 `invalidateInit()` / `destroyInstance()` **之前**
+	 * 调用——两者都会 `viewport.reset()` 清空上述两个判据，晚一步调用这条跳过就
+	 * 恒不成立（2026-11-11 实机：关闭路径原先把它放在 `invalidateInit` 之后，
+	 * 纯浏览照样写盘）。视图的两条关闭路径（`onUnloadFile` / `onClose`）已按此排序。
+	 */
 	persistViewport(): void {
 		const file = this.deps.getFile();
 		if (!file) {
@@ -436,6 +456,14 @@ export class EngineController {
 		// 会在引擎层留痕）
 		const state = readViewportState(this.mindMap);
 		if (!state) {
+			return;
+		}
+		if (
+			!this.viewport.restoredSaved &&
+			this.viewport.defaultSignature !== null &&
+			this.viewport.defaultSignature ===
+				viewStateSignature((state as { state?: unknown }).state)
+		) {
 			return;
 		}
 		try {
@@ -452,14 +480,30 @@ export class EngineController {
 	 *
 	 * 居中/适配的几何换算在 mindmap 侧先同步到实时容器：首帧后工作区布局
 	 * settle、工具栏重建都会让引擎缓存尺寸失真，是「打开即偏移」的根源。
+	 *
+	 * **重算窗口内不再回头读 store**（2026-11-11 实机）：`defaultSignature` 非空
+	 * 表示本会话已建立默认视口，此后每次布局落地只是一次「重算默认视口」——
+	 * 若还去读 `viewState`，会把**同一文件另一视图**刚写入的保存视口捡走，本视图
+	 * 画面无故跳到别处（两个视图并排，关掉平移过的那侧，另一侧跟着跳）。
+	 * 保存视口只在本会话**第一次**应用视口时读取一次。
 	 */
-	private restoreOrFitViewport(): void {
+	private restoreOrFitViewport(readSaved = true): void {
+		// 已恢复保存视口：150 ms 兜底直接收手，不再读 store。savedView 分支会把
+		// `defaultSignature` 置 null（表示「已在保存视口上」），旧逻辑据此误判成
+		// 「可以再读一次」——同文件另一视图刚写入的视口会被本视图捡走
+		//（2026-11-11 静态审查定位；默认视口模式不受影响）。
+		if (!readSaved && this.viewport.restoredSaved) {
+			return;
+		}
 		const file = this.deps.getFile();
 		const mindMap = this.mindMap;
 		if (!file || !mindMap) {
 			return;
 		}
-		const savedView = this.deps.viewState.getView(file.path);
+		const savedView =
+			this.viewport.defaultSignature === null
+				? this.deps.viewState.getView(file.path)
+				: null;
 		try {
 			if (savedView) {
 				// 幂等短路（2026-10-02）：本函数在打开窗口至少被调两次（布局落地

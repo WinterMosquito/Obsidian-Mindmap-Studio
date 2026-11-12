@@ -1,20 +1,18 @@
 /**
  * 声明模式文档：触发判定、声明读写与视图切换。
  *
- * 触发判据 = frontmatter 的 `Mindmap` 键值为**布局枚举**之一（唯一收口在
- * domain/mindmap-property；旧键 `Type` / `类型` 自 2026-10-28 起完全不认）。
- * 文件**名**不再参与判定——`.mindmap.md` 后缀连同
- * 其判定/剥离/拼接三函数已于 2026-10-12 退役（存量文件由迁移命令改为
- * `命名.md` + 属性声明）。
+ * 触发判据 = frontmatter 的 `Mindmap` 键值严格为 `Mindmap`（唯一收口在
+ * domain/mindmap-property）。其它任何值（含默认回写的 `Markdown`）都不启用插件——
+ * 插件不接管、不改文件、不写盘，交给 Obsidian 原生渲染。
  *
- * 布局只存在于文件属性（2026-10-29）：`readDeclaredLayout` 是视图侧取布局的
+ * 布局只存在于 `Mindmap Layout` 键：`readDeclaredLayout` 是视图侧取布局的
  * **唯一入口**，`applyLayout`（view.ts）写属性也是唯一写入口。`data.json` 里
  * 不再有逐文件布局。
  *
  * 渲染承载（B3 显式切换）：命中的文件仍是普通 Markdown（默认用 Obsidian
  * markdown 视图打开）；插件在它出现于 markdown 视图时自动切到本插件的导图视图
  * （时机在 platform/mindmap-auto-open），用户可经「以 Markdown 打开」把它**持久
- * 降级**（改写属性为 `Markdown`）。
+ * 降级**（把 `Mindmap` 改写为默认值 `Markdown`，布局键原样保留）。
  *
  * 打开方式不再存 data.json：文件本身就是声明，没有第二份状态可失配。
  */
@@ -23,11 +21,14 @@ import { CORE_VIEW_TYPE, VIEW_TYPE } from '../core/constants';
 import { notifyError } from '../core/errors';
 import { type Language } from '../core/i18n';
 import {
-	isMindMapPropertyKey,
-	layoutPropertyValue,
-	MINDMAP_MARKDOWN_VALUE,
-	readMindMapDeclaration,
-	setMindMapProperty,
+	isMindMapDisabled,
+	isMindMapEnabled,
+	readLegacyLayout,
+	readLegacyMindMapLayout,
+	readMindMapLayout,
+	setMindMapDisabled,
+	setMindMapEnabled,
+	setMindMapLayout,
 } from '../domain/mindmap-property';
 
 /**
@@ -83,17 +84,16 @@ export function isMindMapFile(
 	if (!file || file.extension !== 'md') {
 		return false;
 	}
-	return readMindMapDeclaration(app.metadataCache.getFileCache(file)?.frontmatter)
-		?.kind === 'layout';
+	return isMindMapEnabled(app.metadataCache.getFileCache(file)?.frontmatter);
 }
 
 /**
- * 读本文件声明的布局（引擎 layout id）；未声明 / 终止值 `Markdown` / 未知值
- * 一律 `null`。
+ * 读本文件的布局声明（`Mindmap Layout` → 引擎 layout id）；无键 / 空值 / 未知值
+ * 一律 `null`（由调用方回退设置项「默认布局」）。
  *
  * 同步读 MetadataCache——视图加载需要在**同步路径**上知道布局（手动升级不读它：
  * 那是「无声明」的入口，写的是种子值）。
- * 缓存滞后（刚写完属性）时返回 `null`，由调用方按种子值兜底；随后的
+ * 缓存滞后（刚写完属性）时返回 `null`，由调用方按默认布局兜底；随后的
  * `metadataCache.changed` 会把已打开的视图纠正过来（`view.syncDeclaredLayout`）。
  */
 export function readDeclaredLayout(
@@ -103,48 +103,40 @@ export function readDeclaredLayout(
 	if (!file || file.extension !== 'md') {
 		return null;
 	}
-	const declaration = readMindMapDeclaration(
+	return readMindMapLayout(
 		app.metadataCache.getFileCache(file)?.frontmatter,
 	);
-	return declaration?.kind === 'layout' ? declaration.layoutId : null;
 }
 
 /**
- * 把文件的导图声明改写为 `Markdown`（**持久降级**）。
+ * 把文件切到「不启用」：`Mindmap` 改写为默认回写值 `Markdown`（**持久降级**）。
  *
  * 三个入口同语义：文件右键「以 Markdown 打开」、工具栏「切换回 Markdown」、
  * 命令 `mindmap-back-to-markdown`——同名动作不允许两种行为。
  *
- * 走官方 `FileManager.processFrontMatter`（YAML 解析/序列化归官方）；只改
- * 声明键 `Mindmap`，其它属性与正文一律不动——正文由其后的保存管线按 K45 取
- * **磁盘现值**回贴，故两者先后顺序无需额外协调。
+ * 走官方 `FileManager.processFrontMatter`（YAML 解析/序列化归官方）；只改启用键，
+ * **布局键与正文一律不动**——这正是「切回 Markdown 再切回来，布局还在」的原因。
  *
- * 短路条件只有「值**已经就是** `Markdown`」：其余（含旧语义下的 `Mindmap`、
- * 用户手写的未知值）一律改写——`Mindmap: Mindmap` 现在是「思维导图布局」，
- * 不认识它的旧版本会把它当导图打开，只有 `Markdown` 才是明确的终止值。
- *
- * 键名恒为标准键 `Mindmap`（`setMindMapProperty` 顺带收敛同名大小写变体），
- * 与界面语言无关。
+ * 短路条件只有「值已经就是 `Markdown`」：属幂等优化，避免每次切换都重序列化 YAML。
+ * 键名恒为标准键 `Mindmap`（`setMindMapDisabled` 顺带收敛同名变体）。
  */
 async function downgradeMindMapProperty(
 	app: App,
 	file: TFile,
 	lang: Language,
 ): Promise<void> {
-	const isTerminated = (frontmatter: unknown): boolean =>
-		readMindMapDeclaration(frontmatter)?.kind === 'markdown';
-	if (isTerminated(app.metadataCache.getFileCache(file)?.frontmatter)) {
+	if (isMindMapDisabled(app.metadataCache.getFileCache(file)?.frontmatter)) {
 		return;
 	}
 	try {
 		await app.fileManager.processFrontMatter(
 			file,
 			(fm: Record<string, unknown>) => {
-				// 权威判据（缓存可能滞后）：已经是终止值时不覆盖
-				if (isTerminated(fm)) {
+				// 权威判据（缓存可能滞后）：已经是默认回写值时不覆盖
+				if (isMindMapDisabled(fm)) {
 					return;
 				}
-				setMindMapProperty(fm, MINDMAP_MARKDOWN_VALUE);
+				setMindMapDisabled(fm);
 			},
 		);
 	} catch (error) {
@@ -156,18 +148,17 @@ async function downgradeMindMapProperty(
 }
 
 /**
- * 把文件提升为「声明为思维导图」（**持久升级**）：手动把任一篇普通笔记开为
- * 导图后的副作用——让它在 frontmatter 里正式成为导图，下次自动打开。
+ * 把文件提升为「启用插件」（**持久升级**）：手动把任一篇普通笔记开为导图后的
+ * 副作用——让它在 frontmatter 里正式成为导图，下次自动打开。
  *
- * 写入的是**种子值**：设置「默认布局」对应的属性标准值（不是恒写 `Mindmap`）
- * ——升级出来的文件与「新建导图」得到同一个初始布局。`md-open` 不引 settings
- * （组合根禁令），故种子由调用方以引擎 id 传入。
+ * 写 `Mindmap: Mindmap`；**布局键缺失或非法时**才补布局，取值顺序：① 旧契约写在
+ * 启用键里的布局值（`Mindmap: Timeline`，见 `readLegacyLayout`）；② 布局键里的
+ * 旧写法（`Mindmap Layout: LogicalStructure`，见 `readLegacyMindMapLayout`）；
+ * ③ 种子值（设置「默认布局」对应的引擎 id，由调用方传入——`md-open` 不引
+ * settings）。已有合法布局原样保留：升级动作不能把用户已选的布局重置成默认值。
  *
- * 走官方 `processFrontMatter`，经 `setMindMapProperty` 把声明写到标准键
- * `Mindmap`（键名与语言无关）。**已声明为导图时不改写**（免每次打开重序列化
- * YAML）；外层 `isMindMapFile` 用 MetadataCache 做「免写」优化，回调内再做一次
- * 权威判据兜住缓存滞后——即便优化失效也绝不新增第二把键，且收敛同名变体时
- * **保留文件已声明的布局**（种子值只用于「本来就不是导图」的文件）。
+ * 走官方 `processFrontMatter`，键名与语言无关。**已启用且布局合法时不改写**
+ * （免每次打开重序列化 YAML）；回调内再做一次权威判据兜住缓存滞后。
  */
 async function upgradeMindMapProperty(
 	app: App,
@@ -175,32 +166,29 @@ async function upgradeMindMapProperty(
 	lang: Language,
 	seedLayout: string,
 ): Promise<void> {
-	if (isMindMapFile(app, file)) {
-		// 已是导图声明：免磁盘写入（布局已正确，不必动 YAML）
+	const cached = app.metadataCache.getFileCache(file)?.frontmatter;
+	if (isMindMapEnabled(cached) && readMindMapLayout(cached) !== null) {
+		// 已启用且布局合法：免磁盘写入
 		return;
 	}
-	const seedValue = layoutPropertyValue(seedLayout);
 	try {
 		await app.fileManager.processFrontMatter(
 			file,
 			(frontmatter: Record<string, unknown>) => {
-				const keys = Object.keys(frontmatter).filter(isMindMapPropertyKey);
-				const declared = readMindMapDeclaration(frontmatter);
-				if (declared?.kind === 'layout') {
-					// 缓存误判「未声明」：文件其实已声明——仅在存在同名变体时收敛，
-					// 否则原样保留（不因打开而重写键）。收敛写的是**声明值**：
-					// ① 不能写种子值——那是「新建/升级时的初始布局」，用它收敛等于
-					//    把用户已选的布局静默重置（`Mindmap: Timeline` + `mindmap: …`
-					//    这种同名变体并存即可踩到）；
-					// ② 写的是**标准值**（`declared.value` 已归一为 PascalCase）——
-					//    不带值的 `setMindMapProperty(frontmatter)` 会原样留下用户拼写
-					//    （`mind map` / `mindmap`），收敛就白做了。
-					if (keys.length > 1) {
-						setMindMapProperty(frontmatter, declared.value);
-					}
-					return;
+				// 旧布局值有两个落点，都必须在写之前读：
+				// ① 旧契约把布局写在启用键里（`Mindmap: Timeline`）——启动迁移会搬走它，
+				//    但迁移尚未跑到时（刚同步进来的文件）不能把用户的布局选择换成种子值，
+				//    且 `setMindMapEnabled` 会覆盖这一格；
+				// ② 手改成布局键却还是旧写法（`Mindmap Layout: LogicalStructure`）——
+				//    `readMindMapLayout` 只认 kebab，不接住同样会被种子值覆盖。
+				const legacy =
+					readLegacyLayout(frontmatter) ??
+					readLegacyMindMapLayout(frontmatter);
+				setMindMapEnabled(frontmatter);
+				// 保留文件已声明的布局；缺失/非法才落旧值/种子值
+				if (readMindMapLayout(frontmatter) === null) {
+					setMindMapLayout(frontmatter, legacy ?? seedLayout);
 				}
-				setMindMapProperty(frontmatter, seedValue);
 			},
 		);
 	} catch (error) {

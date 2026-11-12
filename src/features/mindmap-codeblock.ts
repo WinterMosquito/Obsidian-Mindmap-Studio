@@ -58,10 +58,12 @@
  * 回归面（可能「切回来仍空白」）大于收益。若将来出现内存问题再按该方案重开，
  * 判据 `containerEl.isShown()` 已具备。
  */
-import { App, MarkdownRenderChild } from 'obsidian';
+import { App, Keymap, MarkdownRenderChild } from 'obsidian';
 import { CODE_BLOCK_MAX_NODES, DEFAULT_PALETTE } from '../core/constants';
 import { createThrottler } from '../core/concurrency';
-import { EventBinder } from '../core/event-binder';
+import { EventBinder, elementFromTarget } from '../core/event-binder';
+import { isSafeAnchorHref } from '../domain/url';
+import { formatWikilink } from '../domain/wikilink';
 import { t, tf, type Language } from '../core/i18n';
 import {
 	applyColorDirectivesToTree,
@@ -76,7 +78,7 @@ import {
 	measureContentFitToWidth,
 	resizeMindMap,
 } from '../engine/mindmap';
-import { layoutIdOfPropertyValue } from '../domain/mindmap-property';
+import { legacyLayoutIdOfPropertyValue } from '../domain/mindmap-property';
 import { parseMdOutline } from '../markdown/md-outline';
 import { ensureUniqueUids } from '../markdown/markdown';
 import {
@@ -94,7 +96,8 @@ import {
 import { colorDirectiveOf } from './node-inline-tokenize';
 import { isResolvedWikiLinkpath, openHyperlink } from './view-link-navigator';
 import { registerTagClicks } from './view-tag';
-import type { MindMapLinkHost } from './view-context';
+import { setupFootnoteInteractions } from './view-footnote';
+import type { HyperlinkOpenMode, MindMapLinkHost } from './view-context';
 import type { MindMap, MindMapTreeNode } from '../core/engine-types';
 
 /** 外层容器类名（styles.css 的尺寸规则与 verify:visual 断言共用） */
@@ -214,7 +217,9 @@ export function parseEmbedLayoutDirective(source: string): {
 	if (raw === '') {
 		return { source, layoutId: null };
 	}
-	const layoutId = layoutIdOfPropertyValue(raw);
+	// 旧值兼容：正文里的 `%%layout: LogicalStructure%%` 无人代迁（迁移只改 frontmatter），
+	// 旧 PascalCase / 连字符写法继续认，免得存量嵌入块静默回落到默认布局。
+	const layoutId = legacyLayoutIdOfPropertyValue(raw);
 	// 只删指令行本身：其前的空行是用户排版，保留
 	const rest = [...lines.slice(0, index), ...lines.slice(index + 1)];
 	const stripped = rest.join('\n');
@@ -519,6 +524,18 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		});
 		// 标签 pill 与链接同权：只读嵌入里也可点（同一份交互实现）
 		registerTagClicks(this.events, el, this.app, this.getConfig().lang);
+		// 节点内锚点（含 mermaid 的 SVG `<a href>`）：嵌入没有文件视图的
+		// `node_click` 通道，裸 `<a>` 会把整个 Obsidian 窗口导航走
+		this.bindEmbedAnchorNavigation(el);
+		// 脚注徽标同权：定位作用域就是本块的引擎（跨块不跳），预览复用同一份实现
+		setupFootnoteInteractions({
+			events: this.events,
+			canvasEl: el,
+			lang: this.getConfig().lang,
+			getMindMap: () => this.mindMap,
+			contentOptions: this.inlineContentOptions,
+			openLink: (link) => openHyperlink(this.linkHost(), link),
+		});
 		this.events.onEngine(mindMap, 'node_tree_render_end', () => {
 			this.remeasure.retryDeferred();
 			this.applyEmbedFit();
@@ -541,6 +558,49 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 				refreshPrismTokenColors(el);
 			}),
 		);
+	}
+
+	/**
+	 * 嵌入内的锚点导航（只读嵌入没有文件视图的 `node_click` 通道）。
+	 *
+	 * 左键 / Ctrl/Cmd / 中键与视图同一套修饰键语义；**所有命中锚点的点击都
+	 * preventDefault**——裸 `<a href>` 在 Electron 里会把整个窗口导航走。
+	 * 非白名单协议（`javascript:` / `data:`）只拦不打开。
+	 */
+	private bindEmbedAnchorNavigation(el: HTMLElement): void {
+		const open = (event: MouseEvent): void => {
+			const target = elementFromTarget(event.target);
+			const anchor =
+				target?.closest('a.internal-link, a.external-link, a[href]') ?? null;
+			if (!anchor || !el.contains(anchor)) {
+				return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+			const dataHref = anchor.getAttribute('data-href');
+			const link = dataHref
+				? formatWikilink(dataHref)
+				: (anchor.getAttribute('href') ?? '');
+			if (!link || (!dataHref && !isSafeAnchorHref(link))) {
+				return;
+			}
+			const mode = Keymap.isModEvent(event);
+			const openMode: HyperlinkOpenMode =
+				typeof mode === 'string' ? mode : 'current';
+			openHyperlink(this.linkHost(), link, openMode);
+		};
+		this.events.onDom(el, 'click', (event) => {
+			if (event.button !== 0) {
+				return;
+			}
+			open(event);
+		});
+		this.events.onDom(el, 'auxclick', (event) => {
+			if (event.button !== 1) {
+				return;
+			}
+			open(event);
+		});
 	}
 
 	/**
