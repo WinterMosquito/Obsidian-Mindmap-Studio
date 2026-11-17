@@ -42,7 +42,7 @@ import {
 import { composeNodeContent } from '../markdown/md-serialize';
 import { showExclusiveMenu } from '../ui/menu-submenu';
 import { openSummaryTextModal } from '../ui/modal-summary-text';
-import { applyRawNodeContents } from './node-inline-editor';
+import { applyRawNodeContents } from './node-content-write';
 import { startNodePick } from './node-pick';
 import type { ViewNodeEditContext } from './view-context';
 

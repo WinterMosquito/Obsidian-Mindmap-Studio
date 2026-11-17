@@ -182,8 +182,8 @@ vi.mock('../src/engine/mindmap', () => ({
 		})[id] ?? '#4a90d9',
 }));
 
-// 原文提交通道（真实实现在 node-inline-editor）：只验证写进去的原文
-vi.mock('../src/features/node-inline-editor', () => ({
+// 原文提交通道（真实实现在 node-content-write）：只验证写进去的原文
+vi.mock('../src/features/node-content-write', () => ({
 	// 联系只走批量通道；单项版是 view-node-color 的依赖面，同样要给出来
 	applyRawNodeContent: vi.fn(),
 	applyRawNodeContents: mocks.applyRawNodeContents,

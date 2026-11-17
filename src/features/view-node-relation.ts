@@ -71,7 +71,7 @@ import {
 } from '../engine/mindmap';
 import { composeNodeContent } from '../markdown/md-serialize';
 import { applyRawToNode } from '../markdown/md-line-write';
-import { applyRawNodeContents } from './node-inline-editor';
+import { applyRawNodeContents } from './node-content-write';
 import { cancelNodePick, startNodePick } from './node-pick';
 import type { MindMapViewContext, ViewNodeEditContext } from './view-context';
 import {

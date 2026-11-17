@@ -51,10 +51,8 @@ import {
 } from '../domain/wikilink';
 import { prefersMarkdownLinks } from '../platform/vault-prefs';
 import { inlineContentPreview } from './node-inline-content';
-import {
-	applyRawNodeContent,
-	openNodeInlineEditor,
-} from './node-inline-editor';
+import { openNodeInlineEditor } from './node-inline-editor';
+import { applyRawNodeContent } from './node-content-write';
 import { requireActiveNode, insertChildNodeWithData, applyInlineRawMeta } from './view-common';
 import { readNodeDataString, type MdNodeData } from '../core/node-data';
 import type { MindMapNode } from '../core/engine-types';

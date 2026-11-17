@@ -164,6 +164,9 @@ vi.mock('../src/features/node-inline-editor', () => ({
 	resolveInlineEditKey: vi.fn(() => 'none'),
 	openNodeInlineEditor: vi.fn(),
 	closeInlineEditor: vi.fn(),
+}));
+
+vi.mock('../src/features/node-content-write', () => ({
 	applyRawNodeContent: (...args: unknown[]): void => applyRawMock(...args),
 }));
 

@@ -24,7 +24,7 @@ import { composeNodeContent } from '../markdown/md-serialize';
 import { setTaskTokenInRaw, toggleTaskToken } from '../domain/md-task';
 import { elementFromTarget } from '../core/event-binder';
 import type { MdNodeData } from '../core/node-data';
-import { applyRawNodeContent } from './node-inline-editor';
+import { applyRawNodeContent } from './node-content-write';
 import { NODE_TASK_CLASS } from './node-inline-html';
 import { taskStateOf } from './node-inline-tokenize';
 import type { MindMapViewContext } from './view-context';

@@ -50,7 +50,7 @@ import { nodeInlineSource } from '../domain/md-meta';
 import { walkTree } from '../domain/tree';
 import { composeNodeContent } from '../markdown/md-serialize';
 import { createButton, openFormModal } from '../ui/modal-common';
-import { applyRawNodeContents } from './node-inline-editor';
+import { applyRawNodeContents } from './node-content-write';
 import { colorDirectiveOf, setColorDirective } from './node-inline-tokenize';
 import { refreshMiniMapAfterRender } from './view-minimap';
 import type { MindMapViewContext } from './view-context';

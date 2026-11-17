@@ -1,4 +1,4 @@
-# 关键约定 K1–K207（详录）
+# 关键约定 K1–K208（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
@@ -2243,3 +2243,6 @@
 
 
 - [K207] **UI 组件第一批（2026-11-18）**：工具栏与搜索栏采用原生 TypeScript 组件，骨架/局部交互/样式分别内聚于 `ui/toolbar/` 与 `ui/search/`。组件只接收按钮状态与回调，不持有视图/引擎/Vault/保存服务；`features/view-toolbar` 与 `features/view-search` 继续作为业务适配，保留原调用入口和搜索元素兼容字段。工具栏四组十按钮、左侧 tooltip、固定布局禁用连线与历史会话判据保持原语义；历史刷新不换 DOM/图标，重建与关闭先 `dispose` 清理回调。搜索防抖 180 ms 仍在业务层；50 ms 焦点等待经现有 `createDebouncer` 管理，关闭/重建/销毁取消焦点与搜索任务，组件 `EventBinder` 自行解绑输入监听。视图在异步会话 detach 前清理 UI，内联编辑提交/关闭闸门/flush 顺序不变。CSS 独立入口 `src/ui/styles/index.css` 用现有 esbuild 汇总，生产/dev 均输出根目录 `styles.css`，dev 监听所有导入；不从 TS import CSS、不产 `main.css`、不留运行时 `@import`、不引入运行时依赖或改 vendor。发布 CSS 仍入库以便安装和审查，但不得手改。纯逻辑与生命周期直测，真实 Chrome 探针比较 HEAD CSS 与当前 CSS 在明暗/480 与 1200 px 宽度下的计算值，并验证实际 DOM/键盘/焦点清理。
+
+
+- [K208] **UI 组件第二批（2026-11-18）**：`features/node-inline-editor` 只负责节点编辑会话、引擎跟随、暂藏/恢复节点与提交守卫。文本框骨架、键盘/点击、焦点与尺寸测量内聚于 `ui/node-editor/node-editor.ts`；样式表旁置 `node-editor.styles.ts`，仍全内联应用，保留 class 与缩放/亚像素/maxWidth/手动宽度/scrollHeight 自适应语义，不迁移到外部 CSS。组件只接收原文/标签/屏幕矩形/内容盒计算样式/外观与回调，不持有节点/引擎/完整视图。纯按键语义唯一源为 `domain/node-edit-key`，IME 在 UI 中短路；Esc 仍提交、Shift+Enter 换行。DOM 监听由组件的 `EventBinder` 持有；三条引擎监听由单次编辑会话持有，提交时立即解绑，不再一直留到引擎销毁。收尾仍先摘会话/恢复节点，再移除输入并归还所属文档焦点，确认同一引擎且原文有变化后写回；视图关闭/切文件与文档会话闸门顺序不变。共享原文提交管线唯一实现移至 `features/node-content-write`，语义与顺序不变：解析 + 图片校正 + 标记重排 → 一次渲染/保存/历史 → 逐节点后续通知（afterCommit:false 跳通知）。内联编辑、弹窗、任务、颜色、概要、联系都直接消费它；原编辑模块保留仍有调用的单项原文提交与按键函数出口；批量提交和选项类型由职责模块导出，不保留无人消费的中转出口。回归分别直测纯键、UI 组件与真实解析的批量提交；适配回归验证监听解绑、DOM 换代与独立引擎，真实 Chrome 保留四档缩放下自适应与原生空节点高亮探针。

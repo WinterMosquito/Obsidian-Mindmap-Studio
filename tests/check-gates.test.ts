@@ -169,7 +169,7 @@ describe('组件 CSS 与构建门禁', () => {
 			expect(labels).toContain('npm run verify:visual -- --require-chrome');
 		},
 	);
-	it.each(['src/ui/toolbar/toolbar.ts', 'src/ui/search/search-bar.ts', 'src/features/view-toolbar.ts', 'src/features/view-search.ts', 'scripts/visual-ui.mjs'])(
+	it.each(['src/ui/toolbar/toolbar.ts', 'src/ui/search/search-bar.ts', 'src/features/view-toolbar.ts', 'src/features/view-search.ts', 'scripts/visual-ui.mjs', 'src/ui/node-editor/node-editor.ts', 'src/ui/node-editor/node-editor.styles.ts', 'src/domain/node-edit-key.ts'])(
 		'%s 触发组件 DOM 验证', (file) => {
 			expect(labelsOf(buildPlan([file]))).toContain('npm run verify:visual -- --require-chrome');
 		},

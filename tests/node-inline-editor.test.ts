@@ -81,123 +81,21 @@ import {
 	resolveInlineEditKey,
 } from '../src/features/node-inline-editor';
 
-/* —— 最小 DOM 桩 —— */
+import { makeDocStub, lastEl, type DocStub } from './helpers/node-editor-dom';
 
-interface ElStub {
-	style: Record<string, string>;
-	value: string;
-	scrollHeight: number;
-	scrollTop: number;
-	/** 所属文档（提交时焦点归还 body、元素移除后解绑 document 监听用） */
-	ownerDocument: unknown;
-	remove: ReturnType<typeof vi.fn>;
-	focus: ReturnType<typeof vi.fn>;
-	setSelectionRange: ReturnType<typeof vi.fn>;
-	contains: (node: unknown) => boolean;
-	addEventListener: (type: string, handler: (event: unknown) => void) => void;
-	/** 测试辅助：触发指定类型的已登记处理器 */
-	fire: (type: string, event: unknown) => void;
-}
-
-interface DocStub {
-	body: {
-		createEl: (tag: string, options?: unknown) => ElStub;
-		focus: ReturnType<typeof vi.fn>;
-	};
-	addEventListener: (
-		type: string,
-		handler: (event: unknown) => void,
-		capture?: boolean,
-	) => void;
-	removeEventListener: (type: string, handler: (event: unknown) => void) => void;
-	/** 测试辅助：触发 document 级监听（如 capture mousedown） */
-	fireDoc: (type: string, event: unknown) => void;
-	/** 创建记录（tag/options/元素本体） */
-	created: { tag: string; options: unknown; el: ElStub }[];
-}
-
-function makeElStub(): ElStub {
-	const handlers = new Map<string, ((event: unknown) => void)[]>();
-	const el: ElStub = {
-		style: {},
-		value: '',
-		scrollHeight: 0,
-		scrollTop: 0,
-		ownerDocument: undefined,
-		remove: vi.fn(),
-		focus: vi.fn(),
-		setSelectionRange: vi.fn(),
-		contains: (node) => node === el,
-		addEventListener: (type, handler) => {
-			const list = handlers.get(type) ?? [];
-			list.push(handler);
-			handlers.set(type, list);
-		},
-		fire: (type, event) => {
-			for (const handler of handlers.get(type) ?? []) {
-				handler(event);
-			}
-		},
-	};
-	return el;
-}
-
-function makeDocStub(): DocStub {
-	const handlers = new Map<string, ((event: unknown) => void)[]>();
-	const created: DocStub['created'] = [];
-	const doc = {
-		body: {
-			createEl: (tag: string, options?: unknown): ElStub => {
-				const el = makeElStub();
-				// 回填所属文档（提交时焦点归还 body 用；运行时由 createEl 自然建立）
-				el.ownerDocument = doc;
-				created.push({ tag, options, el });
-				return el;
-			},
-			focus: vi.fn(),
-		},
-		addEventListener: (type: string, handler: (event: unknown) => void) => {
-			const list = handlers.get(type) ?? [];
-			list.push(handler);
-			handlers.set(type, list);
-		},
-		removeEventListener: (type: string, handler: (event: unknown) => void) => {
-			const list = handlers.get(type) ?? [];
-			handlers.set(
-				type,
-				list.filter((item) => item !== handler),
-			);
-		},
-		fireDoc: (type: string, event: unknown) => {
-			for (const handler of handlers.get(type) ?? []) {
-				handler(event);
-			}
-		},
-		created,
-	};
-	return doc;
-}
-
-/** 会话创建的最新 textarea（本模块每会话只建一个） */
-function lastEl(doc: DocStub): ElStub {
-	const entry = doc.created[doc.created.length - 1];
-	if (!entry) {
-		throw new Error('文档桩未创建任何元素');
-	}
-	return entry.el;
-}
-
-/** 引擎事件桩：记录 onEngine 注册并可按下标触发 */
+/** 引擎公开 on/off 事件桩：会话结束后的监听必须真的解绑。 */
 function makeEngineEventsStub() {
 	const handlers = new Map<string, ((...args: unknown[]) => void)[]>();
 	return {
-		onEngine: vi.fn(
-			(_mindMap: unknown, event: string, handler: (...args: unknown[]) => void) => {
-				const list = handlers.get(event) ?? [];
-				list.push(handler);
-				handlers.set(event, list);
-			},
-		),
+		on: (event: string, handler: (...args: unknown[]) => void): void => {
+			const list = handlers.get(event) ?? [];
+			list.push(handler);
+			handlers.set(event, list);
+		},
+		off: (event: string, handler: (...args: unknown[]) => void): void => {
+			handlers.set(event, (handlers.get(event) ?? []).filter((item) => item !== handler));
+		},
+		listenerCount: (): number => [...handlers.values()].reduce((count, items) => count + items.length, 0),
 		fire: (event: string) => {
 			for (const handler of handlers.get(event) ?? []) {
 				handler();
@@ -209,6 +107,7 @@ function makeEngineEventsStub() {
 
 function makeView(mindMap: MindMap | null) {
 	const engineEvents = makeEngineEventsStub();
+	if (mindMap) Object.assign(mindMap, { on: engineEvents.on, off: engineEvents.off });
 	const notifyNodeContentCommitted = vi.fn();
 	const view = {
 		mindMap,
@@ -619,5 +518,57 @@ describe('applyRawNodeContent（原文写回 + 图片尺寸探测降级）', () 
 		expect(view.scheduleSave, '写回不受探测失败影响').toHaveBeenCalledTimes(1);
 		expect(notifyNodeContentCommitted, 'K108 通知不受影响').toHaveBeenCalledWith(node);
 		warnSpy.mockRestore();
+	});
+});
+
+
+describe('编辑会话资源清理', () => {
+	it('关闭解绑 DOM 和三条引擎监听，重复打开不会累积监听或旧节点闭包', () => {
+		const h = openSession();
+		const oldInput = h.el;
+		expect(h.engineEvents.listenerCount()).toBe(3);
+		expect(oldInput.listenerCount()).toBe(5);
+		closeInlineEditor(h.view);
+		expect(h.engineEvents.listenerCount()).toBe(0);
+		expect(oldInput.listenerCount()).toBe(0);
+		for (let index = 0; index < 5; index++) {
+			openNodeInlineEditor(h.view, h.node);
+			expect(h.engineEvents.listenerCount()).toBe(3);
+			closeInlineEditor(h.view);
+			expect(h.engineEvents.listenerCount()).toBe(0);
+		}
+		oldInput.value = '陈旧输入';
+		oldInput.fire('keydown', keyEvent('Enter'));
+		h.doc.fireDoc('mousedown', { target: {} });
+		expect(h.data.text).toBe('旧');
+		expect(h.view.scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('节点 DOM 换代先恢复旧 group，关闭后恢复新 group 的原 visibility', () => {
+		const h = openSession();
+		const original = getNodeGroupElMock.mock.results[0]!.value as ReturnType<typeof makeGroupStub>;
+		const next = makeGroupStub(h.doc);
+		next.setAttribute('visibility', 'visible');
+		getNodeGroupElMock.mockReturnValue(next);
+		h.engineEvents.fire('node_tree_render_end');
+		expect(original.getAttribute('visibility')).toBeNull();
+		expect(next.getAttribute('visibility')).toBe('hidden');
+		closeInlineEditor(h.view);
+		expect(next.getAttribute('visibility')).toBe('visible');
+		expect(h.view.scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('两个视图引擎的编辑会话独立，关闭一侧不移除另一侧的监听和输入', () => {
+		const first = openSession();
+		const second = openSession();
+		first.el.value = '第一视图';
+		closeInlineEditor(first.view);
+		expect(isInlineNodeEditing(first.mindMap)).toBe(false);
+		expect(isInlineNodeEditing(second.mindMap)).toBe(true);
+		expect(second.engineEvents.listenerCount()).toBe(3);
+		second.el.value = '第二视图';
+		closeInlineEditor(second.view);
+		expect(first.data.text).toBe('第一视图');
+		expect(second.data.text).toBe('第二视图');
 	});
 });

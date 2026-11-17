@@ -54,6 +54,8 @@ const VISUAL_MATCHERS = [
 	'esbuild.config.mjs',
 	'src/ui/toolbar/',
 	'src/ui/search/',
+	'src/ui/node-editor/',
+	'src/domain/node-edit-key.ts',
 	'src/features/view-toolbar.ts',
 	'src/features/view-search.ts',
 	'src/features/node-',

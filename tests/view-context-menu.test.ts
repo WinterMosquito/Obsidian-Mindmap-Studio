@@ -304,8 +304,8 @@ vi.mock('../src/engine/mindmap', () => ({
 	siblingMoveBlocker: siblingMoveBlockerMock,
 }));
 
-// 节点配色落盘走「原文提交」通道（node-inline-editor）：本文件只验证「写了什么原文」
-vi.mock('../src/features/node-inline-editor', () => ({
+// 节点配色落盘走「原文提交」通道（node-content-write）：本文件只验证「写了什么原文」
+vi.mock('../src/features/node-content-write', () => ({
 	applyRawNodeContent: applyRawNodeContentMock,
 	applyRawNodeContents: applyRawNodeContentsMock,
 }));

@@ -256,3 +256,6 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 
 
 **UI 组件与 CSS 汇总（K207）**：`view-toolbar.test.ts` / `view-search.test.ts` 保留动作与搜索行为回归，增加重建/销毁解绑、任务取消、就地历史刷新；`css-build.test.ts` 在隔离目录执行真实 esbuild 配置，校验发布文件名、import 展开、级联顺序及 dev CSS 监听，未修改仓库产物。`check-gates.test.ts` 覆盖新触发路径。`verify:visual` 复用 Chrome 驱动运行独立 UI 页（探针在 `scripts/visual-ui.mjs`），检验真实 DOM、disabled、键盘、焦点与解绑，并将当前生成 CSS 与 `HEAD:styles.css` 在两档宽度 × 两种底色变量下逐项比较计算值。Obsidian 图标/tooltip 用最小宿主替身；本项不能证明真实 Obsidian 插件已加载或主题手感正常，实机仍需人工验收。
+
+
+**节点编辑第二批（K208）**：`node-edit-key.test.ts` 直接覆盖 16 种 Enter 修饰键组合；`node-editor.test.ts` 不加载导图，验证尺寸、按键/IME、事件隔离、焦点和销毁。DOM 夹具共用 `tests/helpers/node-editor-dom.ts`，输入监听真实记录/移除。`node-inline-editor.test.ts` 保留提交/图片兼容回归，并验证单次会话引擎监听解绑、重复打开不累积、DOM 换代恢复与两个引擎独立。`node-content-write.test.ts` 用真实解析/序列化验证批量写回顺序、行内空白和结构字段、一次历史/保存以及 afterCommit:false。原 `verify:visual` 的内联编辑/原生空节点探针继续覆盖四档缩放、自适应无滚动、原节点暂藏/恢复与保存次数；`src/ui/node-editor/` 与按键语义文件均进入视觉门禁触发面。真实 Obsidian IME/主题/多视图编辑手感仍需实机验收。
