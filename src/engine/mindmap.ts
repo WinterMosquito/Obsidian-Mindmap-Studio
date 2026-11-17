@@ -13,7 +13,7 @@
  * - `mindmap-viewport`  画布几何 / 视口（适配、居中、缩放、平移、视口状态）
  * - `mindmap-viewport-canvas` 引擎几何与实时容器的唯一同步点
  * - `mindmap-nodes`     节点查询与工具 + 节点文本编辑
- * - `mindmap-editor`    节点编辑框的底色与外观适配
+ * - `mindmap-editor`    两条节点编辑通道的外观与临时显示管理
  * - `mindmap-clipboard` 选中子树的复制/剪切/粘贴
  * - `mindmap-search`    搜索子系统防腐收口
  * - `mindmap-export`    导出（PNG/SVG）
@@ -54,7 +54,7 @@ import {
 import { applyHistoryLimitOnCreate, seedInitialHistory } from './mindmap-history';
 import { countTreeNodes, getRenderRoot } from './mindmap-nodes';
 import { installNodeEditorAppearance } from './mindmap-editor';
-export { readNodeEditorAppearance } from './mindmap-editor';
+export { hideNodeForEditing, readNodeEditorAppearance } from './mindmap-editor';
 import {
 	applyLiveColorDirectives,
 	type ColorDirectiveReader,

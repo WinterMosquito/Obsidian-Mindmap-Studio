@@ -1729,9 +1729,39 @@ window.setTimeout(() => {
 							lineDelta: parseFloat(inputStyle.lineHeight) - parseFloat(contentStyle.lineHeight) * scale,
 							widthDelta: inputBox.width - contentBox.width,
 							heightDelta: inputBox.height - contentBox.height,
+							scrollHeight: input.scrollHeight, clientHeight: input.clientHeight, scrollTop: input.scrollTop,
+							originalHidden: node.group.node.getAttribute('visibility') === 'hidden',
 							background: inputStyle.backgroundColor,
 						});
 						closeInlineEditor(alignmentView);
+					}
+				}
+				const sizing = [];
+				const editorMetrics = (input) => {
+					const box = input.getBoundingClientRect();
+					return { width: box.width, height: box.height, scrollHeight: input.scrollHeight, clientHeight: input.clientHeight, scrollTop: input.scrollTop };
+				};
+				for (const scale of [0.5, 1, 1.5, 2.35]) {
+					inlineMap.view.setScale(scale);
+					for (const node of [inlineMap.renderer.root, inlineNode]) {
+						node.active();
+						const originalText = node.getData('text');
+						openNodeInlineEditor(alignmentView, node);
+						const input = document.querySelector('.mindmap-node-inline-editor');
+						const original = input.value;
+						input.value = '思维导图';
+						input.dispatchEvent(new Event('input'));
+						const short = editorMetrics(input);
+						input.value = '思维导图'.repeat(50);
+						input.dispatchEvent(new Event('input'));
+						const long = editorMetrics(input);
+						input.value = '思维导图';
+						input.dispatchEvent(new Event('input'));
+						const shrink = editorMetrics(input);
+						input.value = original;
+						closeInlineEditor(alignmentView);
+						sizing.push({ scale, isRoot: node.isRoot, short, long, shrink, unchanged: node.getData('text') === originalText,
+							restored: node.group.node.getAttribute('visibility') !== 'hidden' });
 					}
 				}
 				inlineMap.view.setScale(1);
@@ -1741,19 +1771,48 @@ window.setTimeout(() => {
 				const canvas = emptyMap.opt.el;
 				const initialBackground = canvas.style.backgroundColor;
 				const initialFill = emptyNode.getData('fillColor');
-				for (const sample of [
-					{ fill: 'transparent', canvas: '#252837', expected: 'rgb(37, 40, 55)' },
-					{ fill: 'transparent', canvas: '#f0ece5', expected: 'rgb(240, 236, 229)' },
-					{ fill: '#89cff0', canvas: '#252837', expected: 'rgb(137, 207, 240)' },
-				]) {
-					canvas.style.backgroundColor = sample.canvas;
-					emptyNode.setData({ fillColor: sample.fill });
-					emptyMap.emit('node_dblclick', emptyNode, null, true);
-					const input = emptyMap.renderer.textEdit.textEditNode;
-					const style = getComputedStyle(input);
-					engineSurfaces.push({ background: style.backgroundColor, expected: sample.expected, shadow: style.boxShadow });
-					emptyMap.renderer.textEdit.hideEditTextBox();
+				for (const scale of [0.5, 1, 1.5, 2.35]) {
+					emptyMap.view.setScale(scale);
+					for (const sample of [
+						{ fill: 'transparent', canvas: '#252837', expected: 'rgb(37, 40, 55)' },
+						{ fill: 'transparent', canvas: '#f0ece5', expected: 'rgb(240, 236, 229)' },
+						{ fill: '#89cff0', canvas: '#252837', expected: 'rgb(137, 207, 240)' },
+					]) {
+						canvas.style.backgroundColor = sample.canvas;
+						emptyNode.setData({ fillColor: sample.fill });
+						emptyNode.active();
+						emptyMap.emit('node_dblclick', emptyNode, null, true);
+						const input = emptyMap.renderer.textEdit.textEditNode;
+						const style = getComputedStyle(input);
+						const originalText = emptyNode.getData('text');
+						const initialWidth = input.getBoundingClientRect().width;
+						input.textContent = '内容边长的时候';
+						input.dispatchEvent(new Event('input'));
+						const short = editorMetrics(input);
+						input.textContent = '内容边长的时候'.repeat(40);
+						input.dispatchEvent(new Event('input'));
+						const long = editorMetrics(input);
+						input.textContent = '内容边长的时候';
+						input.dispatchEvent(new Event('input'));
+						const shrink = editorMetrics(input);
+						const highlight = emptyNode.group.node.querySelector('.smm-hover-node');
+						const groupStyle = getComputedStyle(emptyNode.group.node);
+						const metrics = editorMetrics(input);
+						const result = { scale, background: style.backgroundColor, expected: sample.expected, shadow: style.boxShadow,
+							grown: input.getBoundingClientRect().width > initialWidth,
+							originalHidden: groupStyle.visibility === 'hidden' || groupStyle.opacity === '0',
+							highlightShown: getComputedStyle(highlight).display !== 'none',
+							highlightHidden: getComputedStyle(highlight).visibility === 'hidden',
+							unchanged: emptyNode.getData('text') === originalText,
+							fits: [metrics, long].every((state) => state.scrollHeight <= state.clientHeight && state.scrollTop === 0),
+							resized: long.height > short.height && Math.abs(shrink.width - short.width) < 0.5 && Math.abs(shrink.height - short.height) < 0.5 };
+						input.textContent = originalText;
+						emptyMap.renderer.textEdit.hideEditTextBox();
+						result.restored = emptyNode.group.node.getAttribute('visibility') !== 'hidden';
+						engineSurfaces.push(result);
+					}
 				}
+				emptyMap.view.setScale(1);
 				emptyNode.setData({ fillColor: initialFill });
 				canvas.style.backgroundColor = initialBackground;
 				openNodeInlineEditor(
@@ -1775,28 +1834,32 @@ window.setTimeout(() => {
 				let removed = false;
 				let inputWidthDelta = null;
 				let inputHeightDelta = null;
+				let inputFits = false;
+				let originalRestored = false;
 				if (editor) {
-					editor.value = '内联改过的 [[笔记A]] 与 https://example.com';
+					editor.value = '内联改过的 [[笔记A]] 与 https://example.com\\n' + '较长的中文内容'.repeat(35);
 					editor.dispatchEvent(new Event('input', { bubbles: true }));
 					const afterInputBox = editor.getBoundingClientRect();
 					inputWidthDelta = afterInputBox.width - box.width;
 					inputHeightDelta = afterInputBox.height - box.height;
+					inputFits = editor.scrollHeight <= editor.clientHeight && editor.scrollTop === 0;
 					editor.dispatchEvent(
 						new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
 					);
 					afterText = inlineNode.getData('text');
 					removed = !document.querySelector('.mindmap-node-inline-editor');
+					originalRestored = inlineNode.group.node.getAttribute('visibility') !== 'hidden';
 				}
 				inlineEditProbe.textContent = JSON.stringify({
 					opened: !!editor,
 					positioned,
-					alignment,
+					alignment, sizing,
 					engineSurfaces,
 					prefilled,
 					afterText,
 					removed,
 					inputWidthDelta,
-					inputHeightDelta,
+					inputHeightDelta, inputFits, originalRestored,
 					saves: saves.length,
 				});
 			} catch (error) {
@@ -4131,9 +4194,9 @@ function buildPageSource({
 		     ① document.win.createSvg（Obsidian 的 Document 扩展，appendSvgStyle 依赖）；
 		     ② :root CSS 变量（值 = 自绘内容兜底值，几何零扰动，供 export-svg-postprocess 注入）；
 		     ③ #MJX-CHTML-styles 假样式表（供 math-jax 的 readMathJaxCss 读取）。 -->
-		<style id="verify-export-css-vars">:root{--font-interface:sans-serif;--font-monospace:monospace;}</style>
+		<style id="verify-export-css-vars">:root{--font-interface:sans-serif;--font-monospace:monospace;--interactive-accent:#5ec8f8;}</style>
 		<style id="MJX-CHTML-styles">.mjx-c.mjx-c1D438::before{content:"E";padding:0.68em 0.764em 0 0;}</style>
-		<script>document.win={createSvg:function(t){return document.createElementNS("http://www.w3.org/2000/svg",t);}};</script>
+		<script>document.win={createSvg:function(t){return document.createElementNS("http://www.w3.org/2000/svg",t);},createEl:function(t){return document.createElement(t);}};</script>
 	</head>
 	<body>
 ${benchScript}\t\t<script src="${bundleFile}"></script>
@@ -5775,20 +5838,43 @@ function checkInlineEdit(dom) {
 		failures.push('缺少中心/分支在 50%、100%、150% 缩放下的编辑文字对齐数据');
 	} else {
 		for (const sample of probe.alignment) {
-			for (const key of ['dx', 'dy', 'fontDelta', 'lineDelta', 'widthDelta', 'heightDelta']) {
+			if (sample.scrollHeight > sample.clientHeight || sample.scrollTop !== 0 || !sample.originalHidden) {
+				failures.push(`编辑器 ${sample.scale} 倍出现内部滚动或原节点外框仍可见`);
+			}
+			for (const key of ['dx', 'dy', 'fontDelta', 'lineDelta']) {
 				if (!Number.isFinite(sample[key]) || Math.abs(sample[key]) > 0.5) {
 					failures.push(`编辑文字 ${sample.scale} 倍 ${key} 偏差 ${sample[key]} 超过 0.5px`);
 				}
 			}
 		}
 	}
-	if (probe.inputWidthDelta !== 0 || probe.inputHeightDelta !== 0) {
-		failures.push('输入过程中编辑框独立扩张，未与节点边界保持一致');
+	if (!Array.isArray(probe.sizing) || probe.sizing.length !== 8) {
+		failures.push('缺少中心/普通节点在四档缩放下的长短文本自适应数据');
+	} else {
+		for (const row of probe.sizing) {
+			if (!(row.long.height > row.short.height) || row.long.width < row.short.width ||
+				(row.isRoot && !(row.long.width > row.short.width)) ||
+				Math.abs(row.shrink.height - row.short.height) > 0.5 ||
+				Math.abs(row.shrink.width - row.short.width) > 0.5 || !row.unchanged || !row.restored) {
+				failures.push(`编辑器 ${row.scale} 倍未随长短文本增减尺寸或预览污染了节点`);
+			}
+			for (const state of [row.short, row.long, row.shrink]) {
+				if (state.scrollHeight > state.clientHeight || state.scrollTop !== 0) {
+					failures.push(`编辑器 ${row.scale} 倍内容被内部滚动裁切`);
+				}
+			}
+		}
 	}
-	if (!Array.isArray(probe.engineSurfaces) || probe.engineSurfaces.length !== 3) {
+	if (!(probe.inputHeightDelta > 0) || !probe.inputFits || !probe.originalRestored) {
+		failures.push('长文本编辑未自适应高度、发生内部滚动或关闭后原节点未恢复');
+	}
+	if (!Array.isArray(probe.engineSurfaces) || probe.engineSurfaces.length !== 12) {
 		failures.push('缺少引擎编辑框的亮/暗画布与节点配色探针');
-	} else if (probe.engineSurfaces.some((sample) => sample.background !== sample.expected || sample.shadow !== 'none')) {
+	} else if (probe.engineSurfaces.some((sample) => sample.background !== sample.expected || sample.shadow === 'none' || sample.shadow.includes('20px'))) {
 		failures.push('引擎编辑框未跟随节点/画布底色，或仍有厚重阴影');
+	}
+	if (probe.engineSurfaces?.some((sample) => !sample.grown || !sample.originalHidden || !sample.highlightShown || !sample.highlightHidden || !sample.unchanged || !sample.fits || !sample.resized || !sample.restored)) {
+		failures.push('选中的空节点输入增长时原高亮框仍可见，或预览修改了节点数据');
 	}
 	if (!String(probe.prefilled || '').includes('[[笔记A]]')) {
 		failures.push(
