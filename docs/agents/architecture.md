@@ -153,6 +153,7 @@ src/
                     #   getViewportSignature/viewStateSignature/getDrawTransform）；
                     #   measureNodesCanvasBox（2026-11-04：选区包围盒改布局几何，
                     #   性能模式摘 DOM 后仍完整；与 projectViewportBox 同一变换口径）
+    mindmap-editor.ts    # 编辑框底色适配；生效节点外观读口；不改变编辑事件与提交
     mindmap-nodes.ts     # 节点/DOM 反查、节点文本与图片尺寸、自绘内容重建、兄弟上/下移、
                     #   renderer.textEdit / node_dblclick 收口
     mindmap-clipboard.ts # 选中子树的复制/剪切/粘贴（顶层去重 + 文档序 + 过滤根节点；返回**引擎树上的
@@ -452,6 +453,7 @@ tests/
   event-binder.test.ts # EventBinder（注册即记录/销毁即清理：参数透传、监听器身份、幂等、单点抛错不阻断）
   persistence.test.ts  # PluginDataWriter（写前重读合并不丢键、串行队列、内部吞错）
   feature-helpers.test.ts # 特性纯函数（image-resize 等比缩放钳制）
+  engine-editor.test.ts # 透明节点取画布底色、着色节点跟随填充、显示方法保留上下文与次数、缺 API 回退
   mindmap-theme.test.ts # 主题与配色（两态偏好解析与旧词汇归一、supportsLineStyleSwitch、无边框填充/描边归零、根节点保留锚点、不得越权改字体度量、配色六套×亮暗九键、文字色不随配色变、配色与主题正交、两个维度各自脏值回退）
   mindmap-wiki-icon.test.ts # 文档页图标 tooltip 与别名同口径（`docWikiLinkDisplay`，含负向自检）
   engine-history-limit.test.ts # 命令历史上限按 30MB 预算反推（500 节点⇒163 条 / 2000 节点⇒40 条、单调不增、地板 30、上限引擎默认 500）
@@ -526,6 +528,7 @@ tests/
                        #   单节点抛错不中断其它节点（见 K86）
   pasted-name.test.ts  # 剪贴板图片命名（Pasted image YYYYMMDDHHMMSS）
   vendor-contract.test.ts # 引擎 vendor 契约（导出面/命令名/事件名令牌）
+  view-canvas-interaction.test.ts # 真实视图特性装配后的空白连续点击/双击不新建；节点编辑与显式新建保留
   view-node-actions.test.ts # 节点操作编排（链接通道分流/删除兜底/剪贴板/自兜错误）
   view-minimap.test.ts # 小地图**会话级**回归（fake DOM + fake window，引擎侧整体 vi.mock）：装配即画首帧 / 画布过窄不启用 /
                       #   判据失效的清场（尺寸与框坐标一并清）/ 30s 淡出与动图唤醒 / 样式类立即画 vs 布局类等渲染落地 /

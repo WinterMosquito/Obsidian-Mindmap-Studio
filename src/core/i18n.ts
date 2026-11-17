@@ -173,7 +173,7 @@ const ZH = {
 	// 不同源，故独立成键（见 platform/system-open.surfaceOpenResult）
 	'common.systemOpenFailed': '无法用系统默认应用打开该文件',
 	'common.refreshFailed': '应用设置后重绘导图失败，已保留当前视图：',
-	// 官方 Canvas：双击画布空白新建卡片 / 空白右键「新建节点」
+	// 空白右键菜单：显式新建节点（空白双击不新建，见 K200）
 	'menu.newNode': '新建节点',
 
 	// ===== 拖拽/导入 =====
@@ -567,7 +567,7 @@ const EN: Record<TranslationKey, string> = {
 	'common.systemOpenFailed': 'Could not open the file with the system default app',
 	'common.refreshFailed':
 		'Failed to redraw the mind map after applying settings — the current view was kept: ',
-	// Official Canvas: double-click blank canvas / blank context menu to create a node
+	// Blank context menu: explicitly create a node (blank double-click does not create one)
 	'menu.newNode': 'New node',
 
 	// ===== 拖拽/导入 =====

@@ -22,6 +22,8 @@ import type { ViewNodeEditContext } from '../src/features/view-context';
 
 const {
 	getNodeGroupElMock,
+	getDrawTransformMock,
+	readNodeEditorAppearanceMock,
 	isEditingTextMock,
 	markNodeNeedLayoutMock,
 	applyRawToNodeMock,
@@ -30,6 +32,8 @@ const {
 	ensureDefaultImageSizesMock,
 } = vi.hoisted(() => ({
 	getNodeGroupElMock: vi.fn(),
+	getDrawTransformMock: vi.fn(() => ({ scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 })),
+	readNodeEditorAppearanceMock: vi.fn(() => ({ background: '#e7e8ea', color: '#111827', borderRadius: 6 })),
 	isEditingTextMock: vi.fn(() => false),
 	markNodeNeedLayoutMock: vi.fn(),
 	applyRawToNodeMock: vi.fn(
@@ -45,6 +49,8 @@ const {
 
 vi.mock('../src/engine/mindmap', () => ({
 	getNodeGroupEl: getNodeGroupElMock,
+	getDrawTransform: getDrawTransformMock,
+	readNodeEditorAppearance: readNodeEditorAppearanceMock,
 	isEditingText: isEditingTextMock,
 	markNodeNeedLayout: markNodeNeedLayoutMock,
 	// 原文写回收尾会记一条撤销快照（见 engine/mindmap-history.recordHistory）
@@ -268,6 +274,7 @@ function openSession() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	getDrawTransformMock.mockReturnValue({ scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 });
 	isEditingTextMock.mockReturnValue(false);
 	applyRawToNodeMock.mockImplementation((data: Record<string, unknown>, raw: string) => {
 		data.text = raw;
@@ -305,6 +312,54 @@ describe('resolveInlineEditKey（按键 → 动作判定表）', () => {
 });
 
 describe('内联编辑会话（打开 / 提交 / 关闭）', () => {
+	it.each([0.5, 1, 1.5])('文字内容盒在 %s 倍缩放下保持起点、字号、行高和内边距', (scale) => {
+		const h = openSession();
+		const content = {
+			ownerDocument: {
+				defaultView: {
+					getComputedStyle: () => ({
+						fontSize: '24px', fontFamily: 'sans-serif', fontWeight: '700', fontStyle: 'normal',
+						lineHeight: '28.8px', color: 'rgb(255, 255, 255)',
+						paddingTop: '5px', paddingRight: '16px', paddingBottom: '5px', paddingLeft: '16px',
+					}),
+				},
+			},
+			getBoundingClientRect: () => ({ left: 43.25, top: 71.75, width: 110 * scale, height: 39 * scale }),
+		};
+		getNodeGroupElMock.mockReturnValue({ ...makeGroupStub(h.doc), querySelector: () => content });
+		getDrawTransformMock.mockReturnValue({ scaleX: scale, scaleY: scale, translateX: 0, translateY: 0 });
+		h.engineEvents.fire('scale');
+		expect(h.el.style).toMatchObject({
+			left: '43.25px', top: '71.75px', fontSize: `${24 * scale}px`,
+			lineHeight: `${28.8 * scale}px`, paddingLeft: `${16 * scale}px`, paddingTop: `${5 * scale}px`,
+			fontWeight: '700', background: '#e7e8ea', color: 'rgb(255, 255, 255)', border: 'none',
+		});
+		expect(h.el.style.width).toBe(`${110 * scale}px`);
+		expect(h.el.style.height).toBe(`${39 * scale}px`);
+		expect(h.el.style).toMatchObject({ minWidth: '0', minHeight: '0', maxWidth: 'none', maxHeight: 'none' });
+		expect(h.view.scheduleSave).not.toHaveBeenCalled();
+		closeInlineEditor(h.view);
+	});
+
+	it('内容盒不可得时仍能编辑，使用节点矩形并保留原有提交行为', () => {
+		const h = openSession();
+		expect(h.el.style).toMatchObject({ left: '10px', top: '20px', width: '100px', height: '30px', background: '#e7e8ea' });
+		closeInlineEditor(h.view);
+		expect(h.view.scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('输入更长或多行原文时不扩张编辑框，提交时才更新节点', () => {
+		const h = openSession();
+		const before = { ...h.el.style };
+		h.el.value = '很长的原文\n第二行\n第三行';
+		h.el.fire('input', {});
+		expect(h.el.style).toEqual(before);
+		expect(h.render).not.toHaveBeenCalled();
+		expect(h.view.scheduleSave).not.toHaveBeenCalled();
+		h.el.fire('keydown', keyEvent('Enter'));
+		expect(applyRawToNodeMock).toHaveBeenCalledWith(h.data, '很长的原文\n第二行\n第三行');
+	});
+
 	it('打开：登记会话、创建 textarea（挂 body）、聚焦并置光标末尾', () => {
 		const { mindMap, doc, el } = openSession();
 		expect(isInlineNodeEditing(mindMap), '打开后为 true').toBe(true);

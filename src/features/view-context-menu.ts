@@ -561,7 +561,7 @@ function showBlankMenu(view: MindMapViewContext, event: MouseEvent): void {
 
 /** 空白菜单的条目（合并菜单复用它，避免两份口径漂移） */
 function addBlankMenuItems(menu: Menu, view: MindMapViewContext): void {
-	// 新建节点（官方 Canvas 空白双击/右键语义）：挂根节点下，占位名可改
+	// 显式新建节点：挂根节点下，空文本并立即编辑（空白双击不新建，见 K200）
 	menu.addItem((item) =>
 		item
 			.setTitle(t(view.lang, 'menu.newNode'))

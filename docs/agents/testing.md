@@ -5,6 +5,10 @@
 
 ## 测试与 CI
 
+编辑态外观（K199）：`engine-editor.test.ts` 验证节点/画布取色与原显示方法只调用一次；`node-inline-editor.test.ts` 验证缩放后的内容盒起点、字体与宽高，以及输入时不扩张。`verify:visual` 的 `inline-edit` 探针在真实 Chrome 中覆盖中心/分支的三档缩放与亮暗画布、节点配色，不替代 Obsidian 实机的 IME、主题 CSS 与操作手感验收。
+
+画布交互（K200）：`view-canvas-interaction.test.ts` 捕获真实 `MindMapView` 构造器交给控制器的特性装配回调，保留真实节点动作与事件绑定后派发空白连续点击 / 双击，断言不插入节点；同时验证节点双击仍编辑、显式新建仍立即编辑。其它特性使用局部桩，右键菜单行为由 `view-context-menu.test.ts` 另测；Obsidian 实机仍需验证空白点击结束编辑、取消选中与 Tab / Enter / 加号手感。
+
 ```bash
 npm test            # vitest run（CI 在 build 后、lint 前执行）
 npm run test:coverage  # vitest run --coverage（v8 provider，报告出 coverage/；CI 主矩阵版本执行并归档产物）

@@ -14,6 +14,9 @@ import type { TranslationKey } from './i18n';
 /** 自定义视图类型标识 */
 export const VIEW_TYPE = 'mindmap-view';
 
+/** 自绘内容盒的类名：显示与编辑定位共用，不为取一个选择器加载渲染模块。 */
+export const NODE_INLINE_CONTENT_CLASS = 'mindmap-node-inline-content';
+
 /**
  * Markdown 代码块的**语言标识**（```` ```mindmap ````）：普通笔记中把块体
  * 大纲**只读渲染**为导图（`features/mindmap-codeblock`）。

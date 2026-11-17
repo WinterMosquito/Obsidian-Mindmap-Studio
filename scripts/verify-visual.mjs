@@ -604,7 +604,7 @@ import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
 import { buildInlineNodeContent, segmentCacheStats } from ${JSON.stringify(inlineContentModule)};
 import { gateNodeWidthHandles } from ${JSON.stringify(nodeWidthModule)};
 import { hideCopyButtonsInExportSvg, registerCodeBlockInteractions } from ${JSON.stringify(codeblockModule)};
-import { openNodeInlineEditor } from ${JSON.stringify(inlineEditorModule)};
+import { openNodeInlineEditor, closeInlineEditor } from ${JSON.stringify(inlineEditorModule)};
 import { postProcessExportSvg } from ${JSON.stringify(exportPostprocessModule)};
 import { injectMathStylesIntoExportSvg, pinMathContainerHeightsInExportSvg } from ${JSON.stringify(mathJaxModule)};
 import { EMBED_CANVAS_CLASS, EMBED_NOTICE_CLASS, EMBED_OUTLINE_CLASS, EMBED_READONLY_CLASS, MindmapEmbedRenderChild } from ${JSON.stringify(mindmapCodeblockModule)};
@@ -1706,6 +1706,56 @@ window.setTimeout(() => {
 					inlineData.mdType = 'plain';
 				}
 				const saves = [];
+				const alignment = [];
+				const alignmentView = {
+					mindMap: inlineMap, app: null, lang: 'zh', scheduleSave: () => saves.push(1),
+					engineEvents: { onEngine: (m, name, fn) => m.on(name, fn) },
+				};
+				for (const scale of [0.5, 1, 1.5]) {
+					inlineMap.view.setScale(scale);
+					for (const node of [inlineMap.renderer.root, inlineNode]) {
+						openNodeInlineEditor(alignmentView, node);
+						const input = document.querySelector('.mindmap-node-inline-editor');
+						const content = node.group.node.querySelector('.mindmap-node-inline-content');
+						const inputBox = input.getBoundingClientRect();
+						const contentBox = content.getBoundingClientRect();
+						const inputStyle = getComputedStyle(input);
+						const contentStyle = getComputedStyle(content);
+						alignment.push({
+							scale,
+							dx: inputBox.left + parseFloat(inputStyle.paddingLeft) - contentBox.left - parseFloat(contentStyle.paddingLeft) * scale,
+							dy: inputBox.top + parseFloat(inputStyle.paddingTop) - contentBox.top - parseFloat(contentStyle.paddingTop) * scale,
+							fontDelta: parseFloat(inputStyle.fontSize) - parseFloat(contentStyle.fontSize) * scale,
+							lineDelta: parseFloat(inputStyle.lineHeight) - parseFloat(contentStyle.lineHeight) * scale,
+							widthDelta: inputBox.width - contentBox.width,
+							heightDelta: inputBox.height - contentBox.height,
+							background: inputStyle.backgroundColor,
+						});
+						closeInlineEditor(alignmentView);
+					}
+				}
+				inlineMap.view.setScale(1);
+				const engineSurfaces = [];
+				const emptyMap = scenarioMaps.empty;
+				const emptyNode = emptyMap.renderer.root.children[0];
+				const canvas = emptyMap.opt.el;
+				const initialBackground = canvas.style.backgroundColor;
+				const initialFill = emptyNode.getData('fillColor');
+				for (const sample of [
+					{ fill: 'transparent', canvas: '#252837', expected: 'rgb(37, 40, 55)' },
+					{ fill: 'transparent', canvas: '#f0ece5', expected: 'rgb(240, 236, 229)' },
+					{ fill: '#89cff0', canvas: '#252837', expected: 'rgb(137, 207, 240)' },
+				]) {
+					canvas.style.backgroundColor = sample.canvas;
+					emptyNode.setData({ fillColor: sample.fill });
+					emptyMap.emit('node_dblclick', emptyNode, null, true);
+					const input = emptyMap.renderer.textEdit.textEditNode;
+					const style = getComputedStyle(input);
+					engineSurfaces.push({ background: style.backgroundColor, expected: sample.expected, shadow: style.boxShadow });
+					emptyMap.renderer.textEdit.hideEditTextBox();
+				}
+				emptyNode.setData({ fillColor: initialFill });
+				canvas.style.backgroundColor = initialBackground;
 				openNodeInlineEditor(
 					{
 						mindMap: inlineMap,
@@ -1723,8 +1773,14 @@ window.setTimeout(() => {
 				const prefilled = editor ? editor.value : null;
 				let afterText = null;
 				let removed = false;
+				let inputWidthDelta = null;
+				let inputHeightDelta = null;
 				if (editor) {
 					editor.value = '内联改过的 [[笔记A]] 与 https://example.com';
+					editor.dispatchEvent(new Event('input', { bubbles: true }));
+					const afterInputBox = editor.getBoundingClientRect();
+					inputWidthDelta = afterInputBox.width - box.width;
+					inputHeightDelta = afterInputBox.height - box.height;
 					editor.dispatchEvent(
 						new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
 					);
@@ -1734,9 +1790,13 @@ window.setTimeout(() => {
 				inlineEditProbe.textContent = JSON.stringify({
 					opened: !!editor,
 					positioned,
+					alignment,
+					engineSurfaces,
 					prefilled,
 					afterText,
 					removed,
+					inputWidthDelta,
+					inputHeightDelta,
 					saves: saves.length,
 				});
 			} catch (error) {
@@ -5710,6 +5770,25 @@ function checkInlineEdit(dom) {
 	}
 	if (!probe.positioned) {
 		failures.push('内联编辑器无实际几何（节点 group 矩形 → textarea 定位失败）');
+	}
+	if (!Array.isArray(probe.alignment) || probe.alignment.length !== 6) {
+		failures.push('缺少中心/分支在 50%、100%、150% 缩放下的编辑文字对齐数据');
+	} else {
+		for (const sample of probe.alignment) {
+			for (const key of ['dx', 'dy', 'fontDelta', 'lineDelta', 'widthDelta', 'heightDelta']) {
+				if (!Number.isFinite(sample[key]) || Math.abs(sample[key]) > 0.5) {
+					failures.push(`编辑文字 ${sample.scale} 倍 ${key} 偏差 ${sample[key]} 超过 0.5px`);
+				}
+			}
+		}
+	}
+	if (probe.inputWidthDelta !== 0 || probe.inputHeightDelta !== 0) {
+		failures.push('输入过程中编辑框独立扩张，未与节点边界保持一致');
+	}
+	if (!Array.isArray(probe.engineSurfaces) || probe.engineSurfaces.length !== 3) {
+		failures.push('缺少引擎编辑框的亮/暗画布与节点配色探针');
+	} else if (probe.engineSurfaces.some((sample) => sample.background !== sample.expected || sample.shadow !== 'none')) {
+		failures.push('引擎编辑框未跟随节点/画布底色，或仍有厚重阴影');
 	}
 	if (!String(probe.prefilled || '').includes('[[笔记A]]')) {
 		failures.push(

@@ -103,10 +103,7 @@ import {
 } from './node-inline-content';
 import { colorDirectiveOf } from './node-inline-tokenize';
 import { createInlineContentOptions } from './node-content-factory';
-import {
-	setupCanvasQuickCreate,
-	setupNodeTextEditFallback,
-} from './view-node-actions';
+import { setupNodeTextEditFallback } from './view-node-actions';
 import type {
 	HyperlinkOpenMode,
 	MindMapViewContext,
@@ -614,8 +611,6 @@ export class MindMapView
 				registerCodeBlockInteractions(this);
 				// 画布视口手势（Ctrl+滚轮缩放 / 滚轮平移 / 中键拖）：对齐官方 Canvas
 				setupViewportGestures(this);
-				// 双击画布空白 → 在根节点下新建（官方 Canvas「双击画布新建卡片」）
-				setupCanvasQuickCreate(this);
 				// 自绘（富）节点的双击编辑兜底（引擎编辑框对自绘节点静默 no-op）
 				setupNodeTextEditFallback(this);
 				setupImageResize(this);
