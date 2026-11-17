@@ -1,7 +1,7 @@
 # 流程与合规（详录）
 
-> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
-> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
+> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
+> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
 
 ## 新增功能检查清单
 
@@ -10,7 +10,7 @@
 1. **落层与模块粒度**：纯逻辑（无 obsidian / 引擎依赖）→ `domain/`；通用机制与共享词汇（常量/文案/错误/并发/事件/持久化/黏合类型）→ `core/`；链接与文件解析 → `links/`；Markdown 解析/序列化/打开/拆分 → `markdown/`；图片与附件 → `media/`；引擎封装与主题 → `engine/`；Obsidian 平台集成 → `platform/`；弹窗 → `ui/`；视图服务 → `services/`；UI 特性与视图控制器 → `features/`；入口与装配 → 组合根（`main.ts`/`commands.ts`/`settings.ts`/`creation.ts`）。新逻辑优先并入最贴近的已有模块；跨组复用先查许可集与已有收口点，勿造第二份；确需新建文件时按模块化四边界自检（单一职责 / 分层单向 / 收口唯一 / 窄接口，见 K50），依赖矩阵由 eslint zone + 静态依赖图测试双向强制——矩阵唯一定义在 `scripts/module-boundaries.mjs`，`src/` 下新增一级目录（新模块组）必须先在其中定层，否则 `tests/module-boundaries.test.ts` 红灯（见 K51）。
 2. **收口**：是否触碰引擎内部形态？只允许经 `mindmap.ts` / `services/engine-controller.ts` 具名函数；库内文件解析走 `links-resolve.resolvePathToFile`；并发原语走 `concurrency.ts`；DOM/事件监听走 `this.register*` / `EventBinder`；URL 形态判断走 `domain/url.ts`（背景见 K25 / K28 / K29）。
 3. **官方优先**：面向 Obsidian 的能力先对照官方 `obsidian.d.ts` 与帮助文档；官方缺口才允许私有触点，且必须防御式实现并在本文件登记（见 K39）。
-4. **测试**：新增 `tests/*.test.ts`（纯逻辑直测；引擎运行时 DOM 装配类行为交 `verify:visual`）；同步 `AGENTS.md` 的「代码结构」两份清单——`agents-md-sync` 测试会强制。
+4. **测试**：新增 `tests/*.test.ts`（纯逻辑直测；引擎运行时 DOM 装配类行为交 `verify:visual`）；同步 `docs/agents/index.md` 的「代码结构」两份清单——`agents-md-sync` 测试会强制。
 5. **校验链**（顺序执行，全绿才允许提交；**提交动作本身需用户明确授权**——AI 助手不得自行 `git commit`，改动留在工作区待用户裁决）：`npm run build`（tsc 检查 src+tests）→ `npm test` → `npm run lint`（须在插件根 cwd，见 K43）→ `npm run lint:css`（改过 `styles.css` 必跑，见「测试与 CI」的 CSS 检查段）→ `npm run check:release`（改过 `manifest.json` / `versions.json` / README / `LICENSE*` 时必跑；含 License 缺失=error、非 OSI=warn，见 K109）→ 新增/删除导出或文件时加 `npm run check:dead-code`（见 K57）→ 涉及渲染/DOM 装配时加 `npm run verify:visual` → **改过 `vendor/upstream/` 或 `vendor/patches/` 时加 `npm run build:vendor` 重打包，并同步 `vendor/BUILD.md` 与 `tests/vendor-contract.test.ts` 两处 sha256 常量（见 K73）**。本链的可执行形态＝`npm run check:gates`（按 git 变更集自动算出附加门禁并顺序执行；映射同步于 `scripts/check-gates.mjs`，其映射有直测 `tests/check-gates.test.ts`，速查见 AGENTS.md 常用命令）。
 6. **超限登记**：新增文件超 300 行 → 在「文件规模与豁免」表登记理由。
 7. **声明式设置/版本**：改 `minAppVersion` 或给声明式设置新增键 → 人工核对对应 `@since`（lint 盲区，见 K41）。
@@ -21,16 +21,17 @@
 
 | 变更类型 | 落到哪份文档 |
 |---|---|
-| ★ 新增 / 删除 / 重命名 `src/**/*.ts`、`tests/**/*.ts` | `AGENTS.md`「代码结构」两份清单（文件名须以**独立 token**出现） |
-| ★ 新增 / 删除 `docs/` 下的文档 | `AGENTS.md` 的 `docs/` 清单（登记了就必须真实存在）+ 本目录 `README.md` 的规模表 |
-| ★ 新增 / 删除 K 条目 | `conventions.md` 标题与 `AGENTS.md` docs 清单里的 `K1–K<n>`（＝实际最大编号）；引用一律写「见 K n」，悬空引用红灯 |
-| 改硬规则 / 跨文件决策 | `AGENTS.md` 决策表加或改一行（结论）＋ `conventions.md` 所属组末尾加 K 条目（依据 / 边界 / 回归） |
-| 改单文件内的实现细节 | 只写该**源文件头契约**，不进 AGENTS.md / conventions（决策表给指针即可） |
-| 改 Markdown 往返格式 | `docs/markdown-mindmap-standard.md`（权威）＋ `AGENTS.md` 决策表；历史修订记 `markdown-mindmap-history.md` |
-| 改外观预设 / 选项表 / 常量 | `core/constants` 选项表 ＋ `engine/mindmap-theme-presets` 数据表 ＋ i18n 双语 ＋ `AGENTS.md` 决策表 |
+| ★ 新增 / 删除 / 重命名 `src/**/*.ts`、`tests/**/*.ts` | `docs/agents/index.md`「代码结构」两份清单（文件名须以**独立 token**出现） |
+| ★ 新增 / 删除 `docs/` 下的文档 | `docs/agents/index.md` 的 `docs/` 清单（登记了就必须真实存在）+ 本目录 `README.md` 的规模表 |
+| ★ 新增 / 删除 K 条目 | `conventions.md` 标题与 `index.md` docs 清单里的 `K1–K<n>`（＝实际最大编号）；引用一律写「见 K n」，悬空引用红灯 |
+| 改固定开发规则 | `AGENTS.md` 对应硬规则 ＋ `conventions.md` 的依据记录 |
+| 改跨文件实现决策 | `decisions.md` 决策表对应行（结论）＋ `conventions.md` 所属组末尾 K 条目（依据 / 边界 / 回归）；不修改入口 `AGENTS.md` |
+| 改单文件内的实现细节 | 只写该**源文件头契约**，不进 AGENTS.md / conventions（decisions.md 决策表给指针即可） |
+| 改 Markdown 往返格式 | `docs/markdown-mindmap-standard.md`（权威）＋ `decisions.md` 决策表；历史修订记 `markdown-mindmap-history.md` |
+| 改外观预设 / 选项表 / 常量 | `core/constants` 选项表 ＋ `engine/mindmap-theme-presets` 数据表 ＋ i18n 双语 ＋ `decisions.md` 决策表 |
 | 改 vendor 源码 / 补丁 | `npm run build:vendor` → `vendor/BUILD.md` 的 sha256 与 `tests/vendor-contract.test.ts` 两处常量（`vendor-contract` 强制） |
 | 改门禁脚本 / 命令 | `AGENTS.md`「常用命令」＋ `scripts/check-gates.mjs` 的映射（有直测）＋ `testing.md` |
-| 新增 / 删除超 300 行文件 | `AGENTS.md` 的「文件规模与豁免」表（**唯一登记处**，理由随行；`architecture.md` 不再复制）；行数用 `npm run check:gates -- --fix-lines` 回填 |
+| 新增 / 删除超 300 行文件 | `docs/agents/index.md` 的「文件规模与豁免」表（**唯一登记处**，理由随行；`architecture.md` 不再复制）；行数用 `npm run check:gates -- --fix-lines` 回填 |
 | 发版 | `manifest.json` / `versions.json` / `package-lock.json` ＋ `docs/release-notes-<tag>.md`（中英双语）＋ 标准文档附录的版本指针（`docs-standard` 硬校验） |
 | 批次收尾 | `docs/agents/line-count-log.md` 追加一条（行数 / 门禁 / 实机读数；**只追加、不改旧条目**） |
 
@@ -43,7 +44,7 @@
 
 - 文件头写 `【一次性迁移，X.Y.Z 删除】`，版本号即删除点；
 - 只做数据改写，不承载长期判定；迁移后不再命中（幂等），**不存「已迁移」标记**，删除时无残留状态；
-- **默认在下一个大版本删除**：删迁移文件、删 `main.ts` 的调用、删对应测试，并同步 `AGENTS.md` 两处清单；
+- **默认在下一个大版本删除**：删迁移文件、删 `main.ts` 的调用、删对应测试，并同步 `index.md` 两处清单；
 - 现存条目：`src/platform/legacy-mindmap-migration.ts`（旧六值 → `Mindmap` + `Mindmap Layout`，**0.4.0 删除**）。**只换写法、不造声明**（K187）：没有启用键、或值是 `Markdown` / 未知值的文件一律不碰。
 
 - **同步义务**：见上表带 ★ 的三行（源文件登记 / 文档登记 / K 编号区间）。**别在本文件与 `AGENTS.md` 各写一份细则**——表的唯一性本身就是「去重」这一条的落地。

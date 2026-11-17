@@ -1,7 +1,7 @@
-# 关键约定 K1–K200（详录）
+# 关键约定 K1–K202（详录）
 
-> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
-> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
+> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
+> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
 
 ## 关键约定
 
@@ -338,12 +338,12 @@
 - [K168] **层级语法（Markdown 标题 / 无序列表）：同级同语法是往返保真的前提（2026-11-08 用户需求 + 四轮方案裁决）**：
   ① **需求**：①「新建导图可全局选前几级写 `-` 还是 `#`」；② 标题可选从二级开始（`##`），只影响新建导图；③ 存量文件不动，另给「列表 → 标题」的显式动作；④ 既有继承规则不变（上级 `#` → 下级 `#`，6 级封顶后回列表；上级 `-` → 整支 `-`）。
   ② **Markdown 事实（实机确认，本条的根因）**：`# 甲` 之后的同级 `- a` 会被解析成**甲的子节点**（`md-outline` 的 `contentParent` 是当前标题），而 `- a` 之后的 `# b` 仍是同级 ⇒ 同一兄弟组的**合法形态是「列表/段落在前、标题在后」**，只有反序才改结构（把列表拖成标题同级，今天表现为「拖了不生效」，格式化之后会表现为结构错乱）。**别把它读成「同组语法必须一致」**——那会把合法的「先列表分支、后标题分支」也判成错误，导致打开文件就改写（见 ⑤）。
-  ③ **回写**：根级新建节点的起始级别取**本文件实测值** `mdHeadingStart`（顶层标题的**最小** `mdLevel`，解析期记在虚拟根，`readHeadingStart` 钳 1..6 缺省 1；取最小是因为新节点恒追加在末尾、最小级别才能稳定 pop 回根子节点）；空文档（正文无节点）用设置里的起点。**设置项 `newMapSyntax`（`list` / `h1` / `h2`，出厂 `list`）只管新建导图种子正文与空文档起点**——存量文件按正文自身回写（「跟随兄弟」保留：纯列表文档新建仍是 `-`，改设置不会回头影响任何已存在文件）。**不引入第二份状态**：不加 frontmatter 键、不存 `data.json` 逐文件语法，正文是唯一真相。
+  ③ **回写**：根级新建节点的起始级别取**本文件实测值** `mdHeadingStart`（顶层标题的**最小** `mdLevel`，解析期记在虚拟根，`readHeadingStart` 钳 1..6 缺省 1；取最小是因为新节点恒追加在末尾、最小级别才能稳定 pop 回根子节点）；空文档（正文无节点）用设置里的起点。**设置项 `newMapSyntax`（`list` / `h1` / `h2`，出厂 `list`）只管空文档首节点的语法与标题起点（新建正文为空，见 K201）**——存量文件按正文自身回写（「跟随兄弟」保留：纯列表文档新建仍是 `-`，改设置不会回头影响任何已存在文件）。**不引入第二份状态**：不加 frontmatter 键、不存 `data.json` 逐文件语法，正文是唯一真相。
   ④ **右键「层级语法」级联**（空白右键，与布局/配色同组；无命令、无弹窗）：**整篇重排、双向可逆**（列表 ⇄ 标题、一级 ⇄ 二级；已有标题按深度重定级，于是不需要「有标题就锁起点」的特例）；**组原子**——某层有转不了的节点（多行/围栏、任务项、有序列表、段落）则整层保持列表并点名阻挡者。执行走 `replaceMindMapData`（深拷贝 + 一条撤销历史）。
   ⑤ **编辑期守卫**（`onDataChanged` 去抖 120ms + `node_dragend` 立即；拖拽中不判——引擎逐落点执行 `MOVE_NODE_TO`）：**只判四种会改结构的排布**，合法混排一律不动——① 列表/段落排在**同组标题之后**（会被读成该标题的子节点）⇒ 升为同级标题，转不了就 `BACK` 撤回；② 同级标题级别**递增**（`#` 后接 `##`）⇒ 重定级到前一个标题的级别；③ 子标题级别**不深于**父级（会逃到外层）⇒ 重定级到「父级+1」；④ **父是列表**却有标题子节点 ⇒ 就地**整支降为列表**（K169，2026-11-08 用户裁决：接受静默丢大纲条目与 `[[#标题]]` 锚点；只改 md 字段、专有提示可撤销）；**父是段落**却有标题子节点 ⇒ 段落承载不了子级，仍报 `downgrade` 让调用方撤回；⑤ 父级已是 **6 级标题**却又挂标题子节点 ⇒ 就地**降为列表**——第 7 级在 Markdown 里没有标题，是另一类「结构上必然」的降级（不是删标题，而是把分支挂到最深层唯一的表达方式），提示「已改为无序列表，Ctrl+Z 可撤销」。早前把它并入 ④ 判成撤回，实测表现为「拖到最深层被拒 + 提示『该层是无序列表』」（与该层是标题层的事实相反）。**「列表在前、标题在后」是合法排布**（`md-outline` 的 `listStack` 为空时挂 `contentParent`，能逐字往返），故不处理——2026-11-08 实机 P0 就出在旧判据「同组语法必须一致」上：打开一篇 `- 组` + `# 标题甲` 的手写文件会被**改写并落盘**，`- 甲 / - 乙 / # 丙` 更会连发 17 条重复提示并反复 `BACK`（`BACK` 自身又发 `data_change`）。现在守卫带 `suppress` 闩锁（撤回后跳过下一轮）且**加载期天然无动作**（解析器的产物不会是那四种排布）。整支升级前必须过 `findHeadingBlocker`（子孙藏围栏/任务项时硬转会撕裂内容）；重定级只动已是标题的节点（`relevelHeadingBranch`，不顺手把列表子节点转标题）。归一**直接改节点 data、不进撤销栈**（`liveNodeTree` 包装渲染节点，`Node.getData()` 是活引用），故 `Ctrl+Z` 一步同时撤掉「拖拽 + 语法换算」。粘贴在**插入前**换算（`adaptSubtreesToGroup`，同样先过 `findHeadingBlocker`），改不了就放弃这次粘贴而不是留脏中间态。
   ⑥ **可转判据**（唯一实现 `headingBlockReason`）：单行内容（**去掉末尾独立指令行后**——`%%id%%` / `%%rel%%` / `%%sum%%` 让 `mdRaw` 天然多行，但它们可以跟在标题行后面，库里 `连线A-同列.md` 就是 `# 甲` + `%%rel:…%%`）、非任务项、非有序列表、非段落。**只改 `mdType` / `mdLevel` / `mdMarker`**，`text` / `mdRaw` 一字不改 ⇒ 行尾注释、链接、图片、指令行全部随行保留，保存仍走「未编辑逐字回写」。行内色注释**照转**（代价：Obsidian 的 heading 缓存会把 `%%#hex%%` 算进标题文本，`[[#标题]]` 需连注释一起写——实测确认，用户裁决接受）。
   ⑦ **模块**：`markdown/md-heading-syntax.ts`（起始级别 / 判据 / 整支升降）、`md-heading-normalize.ts`（守卫归一 + 粘贴换算）、`md-heading-format.ts`（整篇重排 + 当前语法）；视图侧 `features/view-syntax.ts`（挂引擎事件、提示、`BACK` 兜底）。三者都 < 300 行（同职责分层，不是按行数切）。
-  ⑧ **回归**：`tests/md-heading-syntax.test.ts`（判据含指令行 / 组原子 / 6 级封顶 / 双向归一 / 粘贴换算 / **性质测试**：随机混排树 → 归一 → 序列化 → 解析，树形恒等）、`tests/view-syntax.test.ts`（级联重排 / 守卫升级与降级 / 空文档种子 / 勾选态）、`tests/md-roundtrip.test.ts`（`mdHeadingStart` 记录与 `##` 文件的新节点 / 三档种子正文）。
+  ⑧ **回归**：`tests/md-heading-syntax.test.ts`（判据含指令行 / 组原子 / 6 级封顶 / 双向归一 / 粘贴换算 / **性质测试**：随机混排树 → 归一 → 序列化 → 解析，树形恒等）、`tests/view-syntax.test.ts`（级联重排 / 守卫升级与降级 / 空文档种子 / 勾选态）、`tests/md-roundtrip.test.ts`（`mdHeadingStart` 记录与 `##` 文件的新节点 / 空正文往返）。
 
 - [K169] **拖拽落点决定行语法：标题挂到 `-` 下自动整支降级为列表（2026-11-08 用户裁决）**：
   ① **需求 / 裁决**：K168 ⑤ 的「只升不降」把「标题拖到列表父下」判成 `downgrade` 并 `BACK` 撤回；实机复现为「七级拖到标题组可以 `- → #`，反过来 `# → -` 做不到」，且提示要求改用整篇右键级联。用户在两个方案里选择**放开守卫**，明确接受「丢掉大纲条目与 `[[#标题]]` 锚点」的代价（插件不补偿、不扫全库）。**2026-11-09 补充**：不再静默——降级时提示「N 个标题失去锚点，`[[#标题]]` 将失效」，见 K178（仍不阻止、不合并）。
@@ -558,6 +558,8 @@
 
 - [K199] **编辑态的文字与底色跟随节点**（2026-11-17，Issue #3）：插件内联原文编辑器按自绘内容盒的屏幕矩形定位，字体、行高、内边距按实时画布缩放，保留亚像素坐标。编辑框与节点共用内容盒宽高，显式覆盖宿主输入框的 min/max 尺寸；不再使用独立的 160px / 40px 最小尺寸，也不在 input 时按 scrollHeight 自行扩张，较长原文在盒内换行/滚动。普通态与编辑态沿用同一节点底色和墨色，透明节点取画布当前底色，避免进入编辑后退成白块。引擎的 `TextEdit.showEditTextBox` 在显示时覆写内联底色与阴影，现有 `beforeTextEdit` 仅能拦截显示、不能覆盖后续赋值；`engine/mindmap-editor` 防御式包装显示方法，在原方法结束后同步适配样式（无延时、无全局 CSS）。方法或 DOM 缺失时保留原行为，安装幂等，包装随引擎实例回收；`features` 不直接访问 `node.style` 或 `renderer.textEdit`。不改变输入原文、提交、撤销、保存及快捷键。回归 `tests/node-inline-editor.test.ts` / `tests/engine-editor.test.ts`；`verify:visual` 覆盖中心与分支在 50% / 100% / 150% 下的文字起点、字号、行高、宽高与输入过程中外框稳定，以及亮暗画布和节点着色下的引擎编辑框底色。
 - [K200] **空白画布连续点击与双击不新建节点**（2026-11-17，用户实机反馈）：空白点击频繁被浏览器识别为双击，原 `view-node-actions.setupCanvasQuickCreate` 会在中心主题下插入空文本节点并立即编辑，结束编辑又保留空节点，形成误操作。现删除该绑定与 `view.setupFeatures` 的注册；沿用既有空白点击结束编辑、取消选中行为。Tab / Enter、节点旁加号、右键菜单仍显式新建空节点并立即编辑；节点双击编辑保持不变。不加设置项、不修改引擎、解析器或空列表项语义。回归 `tests/view-canvas-interaction.test.ts` 执行真实视图构造器的特性装配回调后派发连续点击 / 双击，并验证节点双击编辑与显式新建；右键菜单由 `tests/view-context-menu.test.ts` 验证。
+- [K201] **新建导图只有中心节点，不预置示例分支**（2026-11-17，用户反馈）：`createDefaultMarkdownContent` 只产出启用/布局属性与分隔空行，正文为空；命名、落点、布局种子保持原流程。移除三条提示文本及中英死词条，现有文件中的提示不自动删除。**首节点语法**：去掉模板后，列表模式失去列表兄弟供序列化跟随，原空文档默认会写 `#`；复用虚拟根 `mdHeadingStart`，空图在列表设置下显式记 null（1–6 仍代表标题起点，缺失仍保历史默认 1），序列化起始 headingLevel 为 null 时按列表写。此标记只在树中，不新增 frontmatter/data.json 字段。撤销或外部修改回到空图时，`view.applySnapshot` 在空根副本上用同一 `seedHeadingStart` 重新初始化，保留已有起点、不修改会话/历史输入；有正文时不播种。纯浏览的序列化正文仍为空，由既有加载基线阻止写盘。回归 `tests/creation-folder.test.ts`（中英真实创建内容、三档首次分支及层级往返）、`tests/md-roundtrip.test.ts`、`tests/md-heading-syntax.test.ts`、`tests/view-canvas-interaction.test.ts`（空快照播种与输入隔离）、`tests/save-pipeline.test.ts`（空图关闭不写盘）。
+
 
 
 ### 架构边界与单一来源
@@ -672,10 +674,12 @@
 - [K192] **「清理旧 `%%none%%`」按文档计一次，不按视图（2026-11-09 实机，Level B 交互）**：`collectColorSentinelSessions` 原先逐个视图扫描；Level B 之后同一文件的多视图**共享一棵树**，于是同一处哨兵被算成 N 处（实机：4 个视图 ⇒ 弹窗「4 个已打开的导图 / 4 处」，实际 1 个文件 1 处），落地时还会对同一棵树重复 `applyRawNodeContents` N 次（N 次整树重渲 + N 条撤销）。修法：按 `view.file.path` 去重，一个文件只留一个代表视图（第一个有引擎的）。回归：`tests/view-context-menu.test.ts`（同一路径三个视图 → 一个会话、计数 1）。实机：4 视图下弹窗报「1 个 / 1 处」、清理后哨兵消失、Notice 报「已清理 1 处」。
 
 - [K193] **豁免表只留一处，门禁的「打包面依赖」必须写明（2026-11-09 实机核对）**：
-  ① **单一登记处**：`docs/agents/architecture.md` 曾与 `AGENTS.md` 并行维护同一张「超 300 行豁免表」，实测同一文件出现两个读数（1121 / 1280）——门禁只读一张，另一张必然漂移。现只保留 `AGENTS.md` 的表（`architecture.md` 改为指向），`check-gates.mjs` 的 `--fix-lines`、「未登记超限」核对与 `agents-md-sync` 的漂移阈值全部只读这一处。
+  ① **单一登记处**：`docs/agents/architecture.md` 曾与 `AGENTS.md` 并行维护同一张「超 300 行豁免表」，实测同一文件出现两个读数（1121 / 1280）——门禁只读一张，另一张必然漂移。当时收归 `AGENTS.md` 的表（2026-11-17 按 K202 迁到 `docs/agents/index.md`，`architecture.md` 继续只给指向），`check-gates.mjs` 的 `--fix-lines`、「未登记超限」核对与 `agents-md-sync` 的漂移阈值全部只读这一处。
   ② **`--all` 的前置条件**：`check:gates -- --all` 会跑 `build:vendor`，而重打包的裸包名（`@svgdotjs/svg.js` 等）由 esbuild 从 `node_modules/` 解析、本仓库 `package.json` **有意**不声明（版本由 `vendor/upstream/package.json` 决定，见 `vendor/BUILD.md`「打包面依赖」）。未预装时 `--all` 必然红灯 ⇒ 帮助文案与 `testing.md` 都写明「只改普通源文件不要加 `--all`」。实机：不加 `--all` 的整链 7 步全过（build / test 3003 / lint / lint:css / check:dead-code / verify:visual / check:release），加 `--all` 在 `build:vendor` 解析 `@svgdotjs/svg.js` 处失败（环境缺依赖，非仓库回归）。
   ③ **lint 豁免清单 = 真实直调面**：撤销 `src/links/file-lookup.ts` 的 `getAbstractFileByPath` 豁免（该文件已无此调用；留着会让「豁免清单 = 真实直调面」失真，审计项 V18），`src/platform/system-open.ts` 的裸 `require` 改为在该文件显式声明 `globals.require`——不再依赖 `isDesktopOnly: true` 顺带带进的 `globals.node`（那次注入挂在 manifest 读取上，cwd 相关，见 K43）。
   ④ **回归**：`tests/check-gates.test.ts`（计划映射）、`tests/agents-md-sync.test.ts`（索引 / K 区间 / 豁免表漂移）、`tests/docs-standard.test.ts`（标准文档符号与版本指针）。实机：`--dry-run` 报「未登记超限 0、豁免表逐行一致」，`--fix-lines` 回填后复跑「无需回填」。
+
+- [K202] **开发入口与可变维护记录分离**（2026-11-17，用户要求）：根目录 `AGENTS.md` 保留固定硬规则、常用命令与按需读取方式；源码/测试文件清单、文件规模与豁免、文档入口及 K 区间统一迁到 `docs/agents/index.md`；原详细决策表逐字迁到 `docs/agents/decisions.md`。新增/删除文件、回填行数、追加实现记录时不再修改入口。具体行为约定按 `decisions.md` 维护，依据与历史仍在本文件；固定开发规则改变才更新入口。`agents-md-sync.test.ts` 与 `check:gates --fix-lines` 改读索引，保持原有文件登记、漂移、K 引用与表格检查；新增临时目录真实脚本回归，确保回填不触碰 `AGENTS.md`。所有资料按模块或 K 编号定位读取，不要求通读索引/决策/历史。
 
 - [K194] **Level B 的四条实机缺陷：广播窗口失配 / 改名基线失配 / 过期提交覆盖 / 应用期静默排保存（2026-11-09 实机定位并修复）**：
   ① **广播窗口在装配处失活**：`DocumentSession.scheduleBroadcast` 用 `options.broadcastDelayMs ?? computeBroadcastDelayMs(...)`，但 `DocumentSessionRegistry` 构造参数默认 `SESSION_BROADCAST_DELAY_MS`（60）且 `acquire` 无条件注入 ⇒ `main.ts` 的 `new DocumentSessionRegistry(this.app)` 永远走 60 ms，K185 的「≤600 节点 0 ms」只在单测里成立（实机 63 节点 `delayOpt: 60`）。修法：注册表第二参改为可选 `undefined`，`acquire` 只在显式传值时注入；`main.ts` 不改。

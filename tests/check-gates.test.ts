@@ -8,11 +8,45 @@
  * （脚本是给 `node` 直接跑的 `.mjs`，不迁 TS）。
  */
 import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildPlan, parseExemptionRows } from '../scripts/check-gates.mjs';
 import type { ExemptionRow, GatesPlan } from '../scripts/check-gates.mjs';
 
 const labelsOf = (plan: GatesPlan): string[] =>
 	plan.gates.map((gate) => gate.label);
+
+describe('check:gates --fix-lines（真实脚本的索引写入位置）', () => {
+	it('只回填 docs/agents/index.md，AGENTS.md 的内容保持逐字不变', () => {
+		const fixture = mkdtempSync(join(tmpdir(), 'mindmap-index-gates-'));
+		try {
+			mkdirSync(join(fixture, 'scripts'));
+			mkdirSync(join(fixture, 'src'));
+			mkdirSync(join(fixture, 'docs/agents'), { recursive: true });
+			writeFileSync(join(fixture, 'scripts/check-gates.mjs'), readFileSync(
+				new URL('../scripts/check-gates.mjs', import.meta.url), 'utf8',
+			));
+			writeFileSync(join(fixture, 'src/example.ts'), 'line one\nline two\n');
+			const table = '| `src/example.ts` | 301 | 原有豁免理由 |\n';
+			// 入口也放一张旧表：恢复旧路径时脚本会误改入口，本断言必须抓住它。
+			const agents = '# AGENTS.md\n' + table;
+			writeFileSync(join(fixture, 'AGENTS.md'), agents);
+			writeFileSync(join(fixture, 'docs/agents/index.md'), '# 索引\n' + table);
+			const result = spawnSync(process.execPath, [
+				join(fixture, 'scripts/check-gates.mjs'), '--fix-lines',
+			], { cwd: fixture, encoding: 'utf8' });
+			expect(result.status, result.stdout + result.stderr).toBe(0);
+			expect(readFileSync(join(fixture, 'docs/agents/index.md'), 'utf8')).toBe(
+				'# 索引\n| `src/example.ts` | 2 | 原有豁免理由 |\n',
+			);
+			expect(readFileSync(join(fixture, 'AGENTS.md'), 'utf8')).toBe(agents);
+		} finally {
+			rmSync(fixture, { recursive: true, force: true });
+		}
+	});
+});
 
 describe('buildPlan（变更集 → 门禁清单）', () => {
 	it('baseline 恒跑且顺序固定（build → test → lint）', () => {

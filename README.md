@@ -107,7 +107,7 @@ MindMap Studio is a **rendering layer**, not a file-format converter. It reads a
 ## 📖 Usage
 
 ### 1) Create & open a mind map
-- Run **Create new mind map** (command palette or ribbon) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-10-13.md` file is created and opens in the mind-map view. The folder follows the **Default location for new mind maps** setting — by default Obsidian's own "Default location for new notes". You can also **right-click any folder → Create new mind map** to create it right there.
+- Run **Create new mind map** (command palette or ribbon) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-10-13.md` file is created and opens in the mind-map view. **New maps contain only the central node named after the file, with no example branches**; select it and press `Tab` to add your first branch. The folder follows the **Default location for new mind maps** setting — by default Obsidian's own "Default location for new notes". You can also **right-click any folder → Create new mind map** to create it right there.
 - **Turn any note into a mind map**: add `Mindmap: Mindmap` to its frontmatter (the key is case-insensitive) and the note opens as a mind map as soon as it is opened. **The layout is a second key**, `Mindmap Layout`:
 
   | `Mindmap` value | Meaning |
@@ -266,7 +266,7 @@ Everything lives in **Settings → MindMap Studio** (stored locally in the plugi
 | Color scope | With children | Whether a node colour picked from the right-click **Palette** menu also applies to the children: *With children* colours the whole subtree (connectors included); *Node only* colours just the selected nodes (writing `%%none%%` on their direct children to block inheritance) and keeps the connectors untinted. The colour itself always comes from the note's `%%#hex%%` |
 | Default location for new mind maps | Follow Obsidian setting | Where **Create new mind map** puts the file: Follow Obsidian setting / Vault folder / Same folder as current file / In the folder specified below |
 | Target folder | (empty) | Used by the "specified folder" mode above only (**only visible for that mode**); an unresolvable folder falls back to the vault root (no folders are auto-created) |
-| Syntax for new mind maps | Bullet list | Body syntax for new maps: bullet list / headings (level 1) / headings (level 2). A **seed only** — existing maps keep their own spelling and can be converted any time from the blank-canvas **Syntax** menu |
+| Syntax for new mind maps | Bullet list | Syntax for the first nodes added to an empty map: bullet list / headings (level 1) / headings (level 2). A **seed only** — existing maps keep their own spelling and can be converted any time from the blank-canvas **Syntax** menu |
 | Auto-split mixed links | Off | When enabled, an edited node that mixes links with description text moves document/attachment links into child nodes (images and external URLs stay) — it rewrites the file structure, so it only happens once you opt in; use the command "Split all mixed links in document" for a whole file |
 | Enable node dragging | On | Drag nodes to change hierarchy and order |
 | Export image scale | 2 | PNG export resolution multiplier (slider 1–4; SVG export is vector and unaffected by it) |

@@ -93,7 +93,7 @@ export function readCharRuleIndex(): CharRuleIndex {
 		// 读取失败不是无害降级：索引不可用会让 v4 就绪判据退回宽度兜底（本次修复
 		// 失效）且 K113 零宽豁免整体失效 → 含 \sin/\log 的公式永久判未就绪 →
 		// 退字面。而用户看到的唯一告警是下游泛化的「字体/样式未就绪」，指错根因，
-		// 故此处必须留痕（AGENTS.md决策表：静默跳过会让问题无痕退化）。
+		// 故此处必须留痕（docs/agents/decisions.md 决策表：静默跳过会让问题无痕退化）。
 		warnCharRuleUnreadableOnce(CHAR_RULE_UNREADABLE_MSG, error);
 		return UNUSABLE_CHAR_RULE_INDEX;
 	}

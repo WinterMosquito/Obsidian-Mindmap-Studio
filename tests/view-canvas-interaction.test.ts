@@ -9,6 +9,7 @@ import type { WorkspaceLeaf } from 'obsidian';
 import { EventBinder } from '../src/core/event-binder';
 import type { ViewPluginContext } from '../src/features/view-context';
 import type { MindMapNode } from '../src/core/engine-types';
+import type { NewMapSyntax } from '../src/core/constants';
 import type { EngineControllerDeps } from '../src/services/engine-controller';
 import { MindMapView } from '../src/features/view';
 import { createChildNodeBelow } from '../src/features/view-node-actions';
@@ -18,11 +19,13 @@ const harness = vi.hoisted<{
 	engine: unknown;
 	events: EventBinder | null;
 	openEditor: ReturnType<typeof vi.fn>;
+	applySnapshot: ReturnType<typeof vi.fn>;
 }>(() => ({
 	deps: null,
 	engine: null,
 	events: null,
 	openEditor: vi.fn(),
+	applySnapshot: vi.fn(() => true),
 }));
 
 vi.mock('obsidian', async (importOriginal) => {
@@ -47,6 +50,7 @@ vi.mock('../src/engine/mindmap', () => ({
 	getRenderRoot: (engine: { renderer: { root: unknown } } | null) => engine?.renderer.root,
 	isCustomNodeContent: () => true,
 	isSummaryNode: () => false,
+	applySessionSnapshot: harness.applySnapshot,
 }));
 vi.mock('../src/features/node-inline-editor', () => ({
 	openNodeInlineEditor: harness.openEditor,
@@ -74,12 +78,12 @@ class CanvasTarget extends EventTarget {
 	closest(): null { return null; }
 }
 
-function setupView() {
+function setupView(newMapSyntax: NewMapSyntax = 'list') {
 	vi.stubGlobal('Element', CanvasTarget);
 	const canvas = new CanvasTarget();
 	const events = new EventBinder();
 	const listeners = new Map<string, (...args: unknown[]) => void>();
-	const root = { children: [] as unknown[] };
+	const root = { children: [] as unknown[], getData: () => ({}) };
 	const execCommand = vi.fn((command: string, _openEdit: boolean, _parents: unknown, data: unknown) => {
 		if (command === 'INSERT_CHILD_NODE') root.children.push(data);
 	});
@@ -91,7 +95,7 @@ function setupView() {
 		off: (name: string) => listeners.delete(name),
 	};
 	const view = new MindMapView({} as WorkspaceLeaf, {
-		settings: { defaultLayout: 'logicalStructure', language: 'zh' },
+		settings: { defaultLayout: 'logicalStructure', language: 'zh', newMapSyntax },
 	} as ViewPluginContext);
 	view.canvasEl = canvas as unknown as HTMLElement;
 	expect(harness.deps).not.toBeNull();
@@ -103,7 +107,34 @@ afterEach(() => {
 	harness.events?.destroy();
 	harness.deps = null;
 	harness.openEditor.mockClear();
+	harness.applySnapshot.mockClear();
 	vi.unstubAllGlobals();
+});
+
+describe('空图快照重新初始化（K201）', () => {
+	it.each<[NewMapSyntax, number | null]>([['list', null], ['h1', 1], ['h2', 2]])(
+		'撤销或外部修改回到空图：%s 模式重新播种，且不修改会话输入',
+		(syntax, start) => {
+			const { view } = setupView(syntax);
+			const snapshot = { data: { text: '中心' }, children: [] };
+			expect(view.applySnapshot(snapshot)).toBe(true);
+			expect(harness.applySnapshot).toHaveBeenCalledExactlyOnceWith(
+				view.mindMap, { data: { text: '中心', mdHeadingStart: start }, children: [] },
+			);
+			expect(snapshot).toEqual({ data: { text: '中心' }, children: [] });
+		},
+	);
+
+	it('已有正文的快照维持其自身语法，不受新建设置覆盖', () => {
+		const { view } = setupView('h2');
+		const snapshot = {
+			data: { text: '中心', mdHeadingStart: 1 },
+			children: [{ data: { text: '第一分支', mdType: 'heading', mdLevel: 1 }, children: [] }],
+		};
+		view.applySnapshot(snapshot);
+		expect(harness.applySnapshot.mock.calls[0]![1]).toBe(snapshot);
+		expect(snapshot.data.mdHeadingStart).toBe(1);
+	});
 });
 
 describe('视图画布交互（K200）', () => {

@@ -1610,6 +1610,12 @@ export class MindMapView
 	 * 不会为快照重跑，不复用会让外部写入后图片突然缩回默认盒（K198 ⑤）。
 	 */
 	applySnapshot(tree: MindMapTreeNode): boolean {
+		// 撤销到空图或外部清空正文后，首个分支仍须跟随新建语法设置。
+		// 广播参数可能是会话权威树：只拷贝空根后播种，不改会话/历史（见 K201）。
+		if ((tree.children ?? []).length === 0) {
+			tree = { ...tree, data: { ...tree.data } };
+			seedHeadingStart(tree, headingStartOfSyntax(this.plugin.settings.newMapSyntax));
+		}
 		return applySessionSnapshot(
 			this.mindMap,
 			reuseKnownImageSizes(tree, this.knownImageSizes()),

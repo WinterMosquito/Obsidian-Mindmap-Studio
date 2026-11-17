@@ -17,7 +17,7 @@
  *
  * **豁免表行数对账**（附带静态核对，每次都跑）：
  * - 行数漂移：登记值 vs 实测（口径 = `tests/agents-md-sync.test.ts` 的
- *   `countSourceLines`；`--fix-lines` 回填 `AGENTS.md` 的**唯一**豁免表。
+ *   `countSourceLines`；`--fix-lines` 回填 `docs/agents/index.md` 的**唯一**豁免表。
  *   `docs/agents/architecture.md` 自 2026-11-09 起不再复制该表——两张表并行时只有
  *   一张受门禁，另一张必然漂移（实测同一文件曾出现 1121 / 1280 两个读数）；
  * - 未登记超限：`src/` 下超 300 行的 .ts 而不在豁免表 → 红灯（硬规则 10「未登记的
@@ -28,7 +28,7 @@
  *   npm run check:gates                 # 算链并执行（提交前跑）
  *   npm run check:gates -- --dry-run    # 只打印计划与静态核对，不执行
  *   npm run check:gates -- --all        # 附加门禁全跑（拿不准触发条件时用）
- *   npm run check:gates -- --fix-lines  # 只回填豁免表行数（AGENTS.md 唯一那张），不跑门禁
+ *   npm run check:gates -- --fix-lines  # 只回填豁免表行数（docs/agents/index.md 唯一那张），不跑门禁
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
@@ -37,6 +37,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AGENTS_REL = 'AGENTS.md';
+const INDEX_REL = 'docs/agents/index.md';
 
 /**
  * 豁免表行：`| `src/x.ts` | NNN | 理由… |`。
@@ -62,7 +63,7 @@ if (flags.includes('--help') || flags.includes('-h')) {
   npm run check:gates                 # 按 git 变更集算门禁并顺序执行
   npm run check:gates -- --dry-run    # 只打印计划与静态核对，不执行
   npm run check:gates -- --all        # 附加门禁全跑（含 build:vendor）
-  npm run check:gates -- --fix-lines  # 只回填豁免表行数（AGENTS.md 唯一那张）
+  npm run check:gates -- --fix-lines  # 只回填豁免表行数（docs/agents/index.md 唯一那张）
 
 注意：--all 会连 build:vendor 一起跑，而重打包需要「打包面依赖」已安装
 （@svgdotjs/svg.js 等，见 vendor/BUILD.md；本仓库 package.json 有意不声明）。
@@ -265,12 +266,12 @@ function main() {
 	const dryRun = flags.includes('--dry-run');
 	const all = flags.includes('--all');
 
-	const agentsText = readFileSync(join(ROOT, AGENTS_REL), 'utf8');
-	const agentsRows = parseExemptionRows(agentsText);
+	const indexText = readFileSync(join(ROOT, INDEX_REL), 'utf8');
+	const indexRows = parseExemptionRows(indexText);
 
 	// ---- 豁免表行数对账 ----
 	if (fixOnly) {
-		const a = fixExemptionTable(AGENTS_REL);
+		const a = fixExemptionTable(INDEX_REL);
 		if (a.updates.length === 0) {
 			console.log('✔ 豁免表行数与实测一致，无需回填');
 		} else {
@@ -279,7 +280,7 @@ function main() {
 			}
 			console.log('回填完成——已对齐实测值，请把改动并入本次提交。');
 		}
-		const stale = [...agentsRows].filter(([, row]) => row.stale);
+		const stale = [...indexRows].filter(([, row]) => row.stale);
 		for (const [rel] of stale) {
 			console.log(`⚠ 登记的文件已不存在：${rel}（请人工清理该行及理由）`);
 		}
@@ -287,7 +288,7 @@ function main() {
 	}
 
 	// ---- 静态核对 1：未登记超限（硬规则 10 的机器核对） ----
-	const exemptPaths = new Set(agentsRows.keys());
+	const exemptPaths = new Set(indexRows.keys());
 	const overLimit = listSrcTsFiles().filter(
 		(rel) => (countSourceLines(join(ROOT, rel)) ?? 0) > 300,
 	);
@@ -295,7 +296,7 @@ function main() {
 
 	// ---- 静态核对 2：行数漂移报告（精确差；超阈漂移由 npm test 红灯兜底） ----
 	const drifted = [];
-	for (const [rel, row] of agentsRows) {
+	for (const [rel, row] of indexRows) {
 		const actual = countSourceLines(join(ROOT, rel));
 		if (actual !== null && actual !== row.declared) {
 			drifted.push(`${rel}：登记 ${row.declared}，实测 ${actual}`);
@@ -357,8 +358,8 @@ function main() {
 		);
 	}
 	if (changed !== null) {
-		if (changed.includes(AGENTS_REL)) {
-			console.log('ℹ AGENTS.md 在变更集：agents-md-sync 契约在 npm test 内，已覆盖');
+		if (changed.includes(AGENTS_REL) || changed.includes(INDEX_REL)) {
+			console.log('ℹ 开发入口/索引在变更集：agents-md-sync 契约在 npm test 内，已覆盖');
 		}
 		if (changed.includes('docs/markdown-mindmap-standard.md')) {
 			console.log('ℹ 权威标准在变更集：docs-standard 契约在 npm test 内，已覆盖');

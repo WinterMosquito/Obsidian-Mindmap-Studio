@@ -18,7 +18,9 @@ import {
 	type SavePipelineDeps,
 } from '../src/services/document-service';
 import { AUTO_SAVE_DEBOUNCE_MS } from '../src/core/constants';
-import { UTF8_BOM } from '../src/markdown/md-outline';
+import { UTF8_BOM, parseMdOutline } from '../src/markdown/md-outline';
+import { createDefaultMarkdownContent } from '../src/markdown/markdown';
+import { seedHeadingStart } from '../src/markdown/md-heading-syntax';
 import type { MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 
 const FILE_PATH = 'notes/a.mindmap.md';
@@ -764,6 +766,18 @@ describe('SavePipeline.save（无差异写盘跳过）', () => {
 
 
 describe('SavePipeline（纯浏览不写盘：加载基线 markLoaded）', () => {
+	it('新建空图的语法播种不产生内容改动，打开后关闭不补写正文', async () => {
+		const content = createDefaultMarkdownContent('logicalStructure');
+		const h = makeHarness({}, { cachedRead: vi.fn(async () => content) });
+		const parsed = parseMdOutline(content, h.file.basename);
+		seedHeadingStart(parsed.tree, null);
+		h.setTree(parsed.tree);
+		h.pipeline.markLoaded(h.file, parsed.tree, parsed.body);
+		await h.pipeline.save();
+		expect(h.modify).not.toHaveBeenCalled();
+		expect(h.pipeline.hasUnsavedChanges(h.file)).toBe(false);
+	});
+
 	// 磁盘原文带多余空行（序列化会归一），故「无差异跳过」拦不住——
 	// 只有加载基线能区分「用户没编辑」与「序列化规范化了」。
 	const RAW_WITH_BLANK = '# A\n\n\n';

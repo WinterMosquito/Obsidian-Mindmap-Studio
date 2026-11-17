@@ -84,10 +84,13 @@ export function isHeadingNode(data: MdNodeData): boolean {
 /**
  * 读本文档的标题起始级别（`MdNodeMeta.mdHeadingStart` 的**唯一读取面**）。
  *
- * 缺失 / 非数值 / 越界一律回落 1（＝ K98 的历史口径「第 1 层写 `#`」）。
+ * 显式 null 表示列表；缺失 / 非数值仍回落 1（K98），数值钳到 1..6。
  */
-export function readHeadingStart(data: unknown): number {
+export function readHeadingStart(data: unknown): number | null {
 	const value = (data as { mdHeadingStart?: unknown } | null)?.mdHeadingStart;
+	if (value === null) {
+		return null;
+	}
 	return clampLevel(Number(value));
 }
 
@@ -111,21 +114,20 @@ export function levelOf(data: MdNodeData): number {
  * 解析期实测），改设置不会回头影响它们。**必须在引擎创建前**写进 data 树——
  * 引擎会克隆数据，建好后再改这棵树不再生效（与配色 / 联系 / 概要同一时机）。
  *
- * @param headingStart 设置里的起点（`list` 档为 null ⇒ 不播种；空文档 + `list`
- *   首次根级新建会按缺省 1 级写 `#`，K171 已知边界）
+ * @param headingStart 设置里的起点（`list` 档为 null ⇒ 显式播种列表，见 K201）
  */
 export function seedHeadingStart(
 	tree: MindMapTreeNode,
 	headingStart: number | null,
 ): void {
-	if (headingStart === null || (tree.children ?? []).length > 0) {
+	if ((tree.children ?? []).length > 0) {
 		return;
 	}
 	const data = dataOf(tree);
-	if (typeof data.mdHeadingStart === 'number') {
+	if (typeof data.mdHeadingStart === 'number' || data.mdHeadingStart === null) {
 		return;
 	}
-	data.mdHeadingStart = clampLevel(headingStart);
+	data.mdHeadingStart = headingStart === null ? null : clampLevel(headingStart);
 }
 
 /** 提示文案里的节点名（首行、截断；`text` 为空时回落原文——图片独占节点即如此，空引号「」等于没说清） */

@@ -269,7 +269,7 @@ const ZH = {
 		'「指定的文件夹」模式使用的目录\n目录不存在时，新建导图保存到仓库根目录',
 	'settings.newMapSyntax': '新建导图的层级语法',
 	'settings.newMapSyntaxDesc':
-		'新建导图的正文语法\n列表：用无序列表表达层级；标题：用 Markdown 标题表达层级（可从一级或二级开始，六级之后回落列表）\n只影响新建与空的导图；已有导图按自身写法回写，可在右键菜单「层级语法」中转换',
+		'空导图首次新增节点的语法\n列表：用无序列表表达层级；标题：用 Markdown 标题表达层级（可从一级或二级开始，六级之后回落列表）\n只影响新建与空的导图；已有导图按自身写法回写，可在右键菜单「层级语法」中转换',
 	'settings.saveFolderPlaceholder': '文件夹路径',
 	'settings.autoSplitMixedLinks': '自动拆分混排双链',
 	'settings.autoSplitMixedLinksDesc':
@@ -419,9 +419,6 @@ const ZH = {
 		'此处忽略布局指令「{value}」（不是六种布局之一），已改用默认布局',
 
 	// ===== 默认内容（新建思维导图） =====
-	'default.shortcutHint': '示例：把想法拆成子节点',
-	'default.tabHint': 'Tab：添加子节点',
-	'default.enterHint': 'Enter：添加同级节点',
 	'default.fileNamePrefix': '思维导图',
 } as const;
 
@@ -664,7 +661,7 @@ const EN: Record<TranslationKey, string> = {
 		'Folder used by the "In the folder specified below" mode\nIf it does not exist, new mind maps go to the vault root',
 	'settings.newMapSyntax': 'Syntax for new mind maps',
 	'settings.newMapSyntaxDesc':
-		'How the body of new mind maps is written\nList: hierarchy as bullet lists; Headings: hierarchy as Markdown headings (start at level 1 or 2; falls back to lists after level 6)\nOnly affects new and empty maps; existing maps keep their own syntax and can be converted from the right-click "Syntax" menu',
+		'Syntax for the first nodes added to an empty mind map\nList: hierarchy as bullet lists; Headings: hierarchy as Markdown headings (start at level 1 or 2; falls back to lists after level 6)\nOnly affects new and empty maps; existing maps keep their own syntax and can be converted from the right-click "Syntax" menu',
 	'settings.saveFolderPlaceholder': 'Folder path',
 	'settings.autoSplitMixedLinks': 'Auto-split mixed links',
 	'settings.autoSplitMixedLinksDesc':
@@ -817,9 +814,6 @@ const EN: Record<TranslationKey, string> = {
 		'Layout directive "{value}" is ignored here (not one of the six layouts); the default layout is used instead',
 
 	// ===== 默认内容（新建思维导图） =====
-	'default.shortcutHint': 'Example: break an idea into child nodes',
-	'default.tabHint': 'Tab: add a child node',
-	'default.enterHint': 'Enter: add a sibling node',
 	'default.fileNamePrefix': 'MindMap',
 };
 
