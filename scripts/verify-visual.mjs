@@ -75,6 +75,7 @@
  * 退出码：0 = 通过或（未要求时）缺浏览器跳过；1 = 断言失败或缺浏览器但要求了。
  */
 import { buildUiEntrySource, UI_SHIM_SOURCE } from './visual-ui.mjs';
+import { buildNodeContentCompareSource } from './visual-node-content.mjs';
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -7333,7 +7334,23 @@ async function main() {
 		diag.log('  ' + (uiFailures.length ? '✗' : '✓') + ' ui-components 真实 DOM、生命周期及亮暗 × 窄宽 CSS 计算值对比');
 		for (const failure of uiFailures) diag.log('      - ' + failure);
 
-		failed = uiFailures.length + await runChecks(dom, diag);
+		// 从 HEAD 提取完整 src 快照，避免基线导入当前修改后的组件而使比较空转。
+		const baselineDir = join(workDir, 'baseline');
+		await mkdir(baselineDir);
+		const baselineArchive = join(workDir, 'baseline.tar');
+		execFileSync('git', ['archive', '--output', baselineArchive, 'HEAD', 'src'], { cwd: ROOT });
+		execFileSync('tar', ['-xf', baselineArchive, '-C', baselineDir]);
+		await writeFile(join(workDir, 'content-entry.mjs'), buildNodeContentCompareSource(ROOT, baselineDir));
+		await writeFile(join(workDir, 'content.html'), '<!doctype html><html><body><script src="content-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'content-entry.mjs')], outfile: join(workDir, 'content-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
+		const contentDom = await dumpDom(chromePath, join(workDir, 'content.html'), join(workDir, 'content-profile'), diag, { marker: 'id="node-content-compare-probe"' });
+		await diag.file('12-node-content-compare.html', contentDom);
+		const contentRead = readProbe(contentDom, 'node-content-compare-probe', '节点内容对比');
+		const contentFailures = contentRead.failures ?? (contentRead.probe?.ok ? [] : ['节点内容对比未完成']);
+		diag.log('  ' + (contentFailures.length ? '✗' : '✓') + ' node-content-compare HEAD 与当前 DOM、尺寸、导出及注入调用对比（' + (contentRead.probe?.compared ?? 0) + ' 组）');
+		for (const failure of contentFailures) diag.log('      - ' + failure);
+
+		failed = uiFailures.length + contentFailures.length + await runChecks(dom, diag);
 
 		// 真实墙钟基线（opt-in：默认不跑，避免给常规校验加一次重页面渲染）
 		if (ARGS.has('--perf')) {

@@ -259,3 +259,6 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 
 
 **节点编辑第二批（K208）**：`node-edit-key.test.ts` 直接覆盖 16 种 Enter 修饰键组合；`node-editor.test.ts` 不加载导图，验证尺寸、按键/IME、事件隔离、焦点和销毁。DOM 夹具共用 `tests/helpers/node-editor-dom.ts`，输入监听真实记录/移除。`node-inline-editor.test.ts` 保留提交/图片兼容回归，并验证单次会话引擎监听解绑、重复打开不累积、DOM 换代恢复与两个引擎独立。`node-content-write.test.ts` 用真实解析/序列化验证批量写回顺序、行内空白和结构字段、一次历史/保存以及 afterCommit:false。原 `verify:visual` 的内联编辑/原生空节点探针继续覆盖四档缩放、自适应无滚动、原节点暂藏/恢复与保存次数；`src/ui/node-editor/` 与按键语义文件均进入视觉门禁触发面。真实 Obsidian IME/主题/多视图编辑手感仍需实机验收。
+
+
+**节点内容第三批（K209）**：`node-content-components.test.ts` 直测组件的递归回调、缓存同步、占位归属、任务基线/勾色、脚注 id 与锚点契约；它与 `node-inline-content.test.ts` 共用 `tests/helpers/node-content-dom.ts`，装配回归仍从既有入口运行。`math-placeholder.test.ts` 的构建消费方改指 `content-math.ts`，占位模板仍只有一份。`verify:visual` 复用 Chrome 驱动执行 `scripts/visual-node-content.mjs` 的独立比较页：用 Git/tar 从 HEAD 提取完整 src 快照后分别打包（避免基线读取当前已改组件），将 HEAD 与当前的 DOM/内联样式/测量键、XML 导出序列化、尺寸和注入调用逐项比较，并检查输入树未修改。图像/公式/代码的实际异步平台路径仍由原探针覆盖；实机 Obsidian 的主题、IME、悬停与编辑手感仍留人工验收。

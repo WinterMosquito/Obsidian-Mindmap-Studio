@@ -80,7 +80,7 @@
  * ## 模块结构（2026-10-16 拆分）
  * 本文件是**对外 barrel**（调用方 `import ... from './node-inline-content'` 不变）：
  * - `node-inline-tokenize`：段序列切分 / 缓存 / 接管判定 / 截断 / 预览（纯逻辑，无 DOM）
- * - `node-inline-html`    ：段序列 → HTML + 内联样式常量 + 锚点契约（DOM 装配）
+ * - `node-inline-html`    ：接管/截断/段分派适配，DOM/内联样式在 ui/node-content（K209）
  */
 export {
 	buildInlineNodeContent,

@@ -1,4 +1,4 @@
-# 关键约定 K1–K208（详录）
+# 关键约定 K1–K209（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
@@ -2246,3 +2246,6 @@
 
 
 - [K208] **UI 组件第二批（2026-11-18）**：`features/node-inline-editor` 只负责节点编辑会话、引擎跟随、暂藏/恢复节点与提交守卫。文本框骨架、键盘/点击、焦点与尺寸测量内聚于 `ui/node-editor/node-editor.ts`；样式表旁置 `node-editor.styles.ts`，仍全内联应用，保留 class 与缩放/亚像素/maxWidth/手动宽度/scrollHeight 自适应语义，不迁移到外部 CSS。组件只接收原文/标签/屏幕矩形/内容盒计算样式/外观与回调，不持有节点/引擎/完整视图。纯按键语义唯一源为 `domain/node-edit-key`，IME 在 UI 中短路；Esc 仍提交、Shift+Enter 换行。DOM 监听由组件的 `EventBinder` 持有；三条引擎监听由单次编辑会话持有，提交时立即解绑，不再一直留到引擎销毁。收尾仍先摘会话/恢复节点，再移除输入并归还所属文档焦点，确认同一引擎且原文有变化后写回；视图关闭/切文件与文档会话闸门顺序不变。共享原文提交管线唯一实现移至 `features/node-content-write`，语义与顺序不变：解析 + 图片校正 + 标记重排 → 一次渲染/保存/历史 → 逐节点后续通知（afterCommit:false 跳通知）。内联编辑、弹窗、任务、颜色、概要、联系都直接消费它；原编辑模块保留仍有调用的单项原文提交与按键函数出口；批量提交和选项类型由职责模块导出，不保留无人消费的中转出口。回归分别直测纯键、UI 组件与真实解析的批量提交；适配回归验证监听解绑、DOM 换代与独立引擎，真实 Chrome 保留四档缩放下自适应与原生空节点高亮探针。
+
+
+- [K209] **UI 组件第三批（2026-11-18）**：`features/node-inline-html` 收敛为自绘接管/截断、节点宽度与内容色读取、唯一段分派的适配层；`node-inline-content` 的既有函数/类名 barrel 保持。文本/链接/标签/任务/脚注/表格/代码块/mermaid/数学/引用与 callout 的 DOM 及样式旁置于 `ui/node-content/content-*.ts` / `content-*.styles.ts`，所有内联样式、属性及子节点顺序保持。共用链接基色与派生外框仍各一份，复制按钮样式共用；不迁移为外部 CSS，不引入逐元素监听或框架。共享 `InlineSegment` / `InlineTextStyle` / `InlineContentDocument` / `InlineContentOptions` 类型唯一源迁至 `core/node-content-types`，既有 node-inline-content 的类型出口保持；无人消费的 tokenizer 内部类型中转出口不保留。tokenizer 只移出类型，不更改解析/缓存/截断算法。引用/表格/轻标记递归经 `InlineContentRenderer` 窄回调回到同一解析与装配管线，UI 不 import features/engine/platform；公式与代码的缓存/异步注入保持，mermaid 判定仍与截断共用原函数。分派顺序、引用深度上限、手动宽度、字体代际属性、任务基线、脚注 id 和链接命中契约不变。新增组件直测；Chrome 对比取 `git archive HEAD src` 独立快照（不能让基线 import 当前 UI 后空转），比较当前与 HEAD 的 DOM outerHTML、XML 序列化、尺寸/计算样式、回调调用顺序与数据不变，涵盖内容类型/三档节点底色/中英/缓存命中与未命中/节点与预览两入口；原实际引擎/编辑/导出探针继续验证。

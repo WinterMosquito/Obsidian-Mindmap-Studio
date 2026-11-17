@@ -40,8 +40,8 @@ describe('formatMathPlaceholder（占位形态单一来源）', () => {
 	it('构建与撤回两处都经本模块（源码级：不得重新内联字面模板）', () => {
 		const consumers = [
 			// 2026-10-16：构建侧（buildMathElement）随 DOM 装配外置到
-			// node-inline-html——契约随之指向新文件（仍是同一份「必须经本模块」）。
-			'src/features/node-inline-html.ts',
+			// content-math——契约随之指向新文件（仍是同一份「必须经本模块」）。
+			'src/ui/node-content/content-math.ts',
 			'src/platform/math-jax.ts',
 		];
 		for (const rel of consumers) {

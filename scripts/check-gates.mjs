@@ -51,10 +51,13 @@ const EXEMPTION_ROW_RE = /^(\|\s*`(src\/[^`]+\.ts)`\s*\|\s*)(\d+)(\s*\|)/;
 const VISUAL_MATCHERS = [
 	'scripts/verify-visual.mjs',
 	'scripts/visual-ui.mjs',
+	'scripts/visual-node-content.mjs',
 	'esbuild.config.mjs',
 	'src/ui/toolbar/',
 	'src/ui/search/',
 	'src/ui/node-editor/',
+	'src/ui/node-content/',
+	'src/core/node-content-types.ts',
 	'src/domain/node-edit-key.ts',
 	'src/features/view-toolbar.ts',
 	'src/features/view-search.ts',
