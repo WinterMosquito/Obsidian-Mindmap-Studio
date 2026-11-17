@@ -4,7 +4,7 @@
  * 2026-10-22 第三版排布（对齐 Obsidian Canvas 右栏）：屏上只剩**纯动作**，四组自上而下
  * - 组 1 文档：返回 Markdown / 导出图片
  * - 组 2 外观：边框 / 连线（状态开关）
- * - 组 3 视图：放大 / 重置缩放 / 总览全局 / 整理 / 缩小
+ * - 组 3 视图：放大 / 重置缩放 / 总览全局 / 缩小
  * - 组 4 历史：撤销 / 重做
  *
  * 覆盖：
@@ -354,7 +354,7 @@ describe('buildToolbar（右缘四组结构）', () => {
 		]);
 	});
 
-	it('组 3 视图：放大 → 重置缩放 → 总览全局 → 整理 → 缩小（对齐 Canvas 右栏）', () => {
+	it('组 3 视图：放大 → 重置缩放 → 总览全局 → 缩小，整理不占常驻按钮', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		const group = groupOf(railOf(h.toolbarEl), 2);
@@ -363,18 +363,15 @@ describe('buildToolbar（右缘四组结构）', () => {
 			t('zh', 'toolbar.zoomIn'),
 			t('zh', 'toolbar.resetZoom'),
 			t('zh', 'toolbar.tipFit'),
-			t('zh', 'toolbar.tipArrange'),
 			t('zh', 'toolbar.zoomOut'),
 		]);
-		// 整理夹在「总览」与「缩小」之间（用户 2026-10-23 指定），图标与右键菜单的
-		// 「自动整理」同枚 `sparkles`——同一动作不换图标
-		expect(setIconMock.mock.calls.slice(4, 9).map((call) => call[1])).toEqual([
+		expect(setIconMock.mock.calls.slice(4, 8).map((call) => call[1])).toEqual([
 			'zoom-in',
 			'rotate-ccw',
 			'maximize',
-			'sparkles',
 			'zoom-out',
 		]);
+		expect(setIconMock.mock.calls.map(call => call[1])).not.toContain('sparkles');
 	});
 
 	it('组 4 历史：撤销 → 重做', () => {
@@ -386,20 +383,20 @@ describe('buildToolbar（右缘四组结构）', () => {
 			t('zh', 'toolbar.undo'),
 			t('zh', 'toolbar.redo'),
 		]);
-		expect(setIconMock.mock.calls.slice(9).map((call) => call[1])).toEqual([
+		expect(setIconMock.mock.calls.slice(8).map((call) => call[1])).toEqual([
 			'undo',
 			'redo',
 		]);
 	});
 
-	it('屏上只有 11 个按钮；外观下拉与节点级动作**都不在屏上**', () => {
+	it('屏上只有 10 个按钮；外观下拉与节点级动作**都不在屏上**', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		const labels = railOf(h.toolbarEl).children.flatMap((group) =>
 			buttonsOf(group).map((button) => button.attr['aria-label']),
 		);
 
-		expect(labels).toHaveLength(11);
+		expect(labels).toHaveLength(10);
 		// 布局 / 配色只在右键菜单（view-context-menu）；连线 / 边框是屏上开关
 		expect(labels).not.toContain(t('zh', 'toolbar.layout'));
 		expect(labels).not.toContain(t('zh', 'toolbar.palette'));
@@ -420,7 +417,7 @@ describe('buildToolbar（右缘四组结构）', () => {
 			buttonsOf(group),
 		);
 
-		expect(buttons).toHaveLength(11);
+		expect(buttons).toHaveLength(10);
 		expect(
 			buttons.every(
 				(button) => button.attr['data-tooltip-position'] === 'left',
@@ -455,7 +452,7 @@ describe('buildToolbar（按钮动作接线）', () => {
 		expect(siblingMocks.exportImage).toHaveBeenCalledWith(h.view);
 	});
 
-	it('视图组：放大/重置/总览/整理/缩小 各走自己的收口函数', () => {
+	it('视图组：放大/重置/总览/缩小 各走自己的收口函数', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		const group = groupOf(railOf(h.toolbarEl), 2);
@@ -463,16 +460,12 @@ describe('buildToolbar（按钮动作接线）', () => {
 		clickButton(buttonByTooltip(group, t('zh', 'toolbar.zoomIn')));
 		clickButton(buttonByTooltip(group, t('zh', 'toolbar.resetZoom')));
 		clickButton(buttonByTooltip(group, t('zh', 'toolbar.tipFit')));
-		// 整理复用右键菜单那条 `arrangeMindMap`（同一动作只有一个实现）：受理 ⇒ 提示 done
-		engineMocks.arrangeMindMap.mockReturnValueOnce(true);
-		clickButton(buttonByTooltip(group, t('zh', 'toolbar.tipArrange')));
 		clickButton(buttonByTooltip(group, t('zh', 'toolbar.zoomOut')));
 
 		expect(engineMocks.zoomInMindMap).toHaveBeenCalledWith(h.mindMap);
 		expect(engineMocks.resetZoom).toHaveBeenCalledWith(h.mindMap);
 		expect(engineMocks.fitMindMap).toHaveBeenCalledWith(h.mindMap);
-		expect(engineMocks.arrangeMindMap).toHaveBeenCalledWith(h.mindMap);
-		expect(noticeMock).toHaveBeenCalledWith(t('zh', 'common.arrangeDone'));
+		expect(engineMocks.arrangeMindMap).not.toHaveBeenCalled();
 		expect(engineMocks.zoomOutMindMap).toHaveBeenCalledWith(h.mindMap);
 	});
 
@@ -652,7 +645,7 @@ describe('连线开关的可用态同步时机（2026-10-23 修复）', () => {
 });
 
 describe('refreshToolbar（设置变更后重建）', () => {
-	it('清空后重建：仍是四组、11 个按钮', () => {
+	it('清空后重建：仍是四组、10 个按钮', () => {
 		const h = makeView();
 		buildToolbar(h.view);
 		refreshToolbar(h.view);
@@ -663,7 +656,7 @@ describe('refreshToolbar（设置变更后重建）', () => {
 		expect(rail.children).toHaveLength(4);
 		expect(
 			rail.children.flatMap((group) => buttonsOf(group)),
-		).toHaveLength(11);
+		).toHaveLength(10);
 	});
 
 	it('语言变更后重建：按钮 tooltip 用新语言（构建期 t(lang) 决定）', () => {
@@ -686,7 +679,7 @@ describe('工具栏按钮的图标接线', () => {
 			buttonsOf(group),
 		);
 
-		expect(buttons).toHaveLength(11);
+		expect(buttons).toHaveLength(10);
 		expect(setIconMock).toHaveBeenCalledTimes(buttons.length);
 		const parents = new Set(setIconMock.mock.calls.map((call) => call[0]));
 		expect(parents.size).toBe(buttons.length);

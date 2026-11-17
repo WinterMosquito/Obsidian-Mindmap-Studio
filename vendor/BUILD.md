@@ -45,8 +45,8 @@
   （svg.js 横幅，`main.js` 同步保留）——逐库声明义务由 `vendor/THIRD-PARTY-NOTICES.md`
   承担（主载体），内联注释仅为补充佐证；其 §3 已按实测口径更新。
 
-**产物字节级身份**（2026-11-07 补丁 16/17 代码与注释整理后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
-`2d5c69e330dcdc95c56e14092d5de8f63c584957f88621da8d72badff3e70433`（415,727 B），
+**产物字节级身份**（2026-11-17 补丁 18 结构拖动后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
+`3c9449a2545e23dd027c7acba18c8ef903a36243c1930fb5b0ee70919603ab00`（418,554 B），
 由 `tests/vendor-contract.test.ts` 断言。**重新打包后必须同步更新此处与该测试里的常量**——
 它是最外层护栏：其余契约断言（导出类 / 原型方法 / 命令名 / 事件名令牌）都只钉在
 **API 面**上，对字节改动无感。（缺口来源：本文件第 22 行要求「不可手工编辑」，
@@ -654,3 +654,7 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
 | 2026-11-04 | 0.14.0-fix.3 + 补丁 ×17 | 补丁 17（**时间轴 / 鱼骨图 top 轴延迟物化**）：两布局的 `updateBrothersTop` 递归同样逐次平移兄弟子树——10000 节点 **84,856 次调用 / 9962 万节点次 / 单次编辑 6.8s**（两布局计数逐位相同，同一递归形状）。难点是镜像收尾在同一 task 内读绝对 `top`，故新增 `Base.matTop`（祖先链求和，O(层数)）代替「前移 `applyOffsets`」（那会退化成 O(n·k)）；left 轴保持立即应用（root 一次 O(n)，`getNodeBoundaries('h')` 只读横向）。实机：timeline/fishbone 单次重排 **7.3s/7.0s → 37ms/36ms**、单次编辑 **6841ms → 123ms**；几何 A/B（8 组场景：普通/自定义位置/概要/折叠 × 两布局，1000–1202 节点）**0 差异**。sha256/字节数同步（`e45b9fec…` / 415,674 B） |
 | 2026-11-04 | 0.14.0-fix.3 + 补丁 ×16 | 补丁 16（**布局平移延迟物化推广**）：补丁 9 只覆盖逻辑结构图，其余布局仍逐次立即平移。计数探针（10000 节点 Mindmap）：`updateChildren` **88,103 次 / 1.322 亿节点次**，逻辑结构同树 **0 次**；CDP 采样显示它占打开 ~99%。实现抽到 `Base`（单/双轴记账 + 一次物化），MindMap / OrganizationStructure / CatalogOrganization 接入，LogicalStructure 改复用（不留第二份）。实机：打开 10000 **8.89s → 0.32s**（最长长任务 8.65s → 170ms）、单次编辑 10000 **1.5–9.5s → 131ms**、布局重排 5000 三布局 **2.1–2.6s → 0.12–0.23s**、自动整理最长长任务 **2220ms → 88ms**；几何 A/B（6 布局 × 800 + 4 布局 × 5000，逐节点 `_top`/`_left`）**0 差异**。Timeline / VerticalTimeline / Fishbone 因读绝对坐标的累计式暂不纳入。sha256/字节数同步（`9ce643a0…` / 415,476 B） |
 | 2026-11-07 | 0.14.0-fix.3 + 补丁 ×17 | 补丁 16/17 代码与注释整理（**无行为变更**）：`Base` 账本字段在构造函数定形；`applyOffsets` 内层 `forEach` 改显式下标循环（少一层闭包分配）、`matTop` 自身位移单次取值；各布局接入处把未重新赋值的局部变量改 `const`，`fishboneUtils` 的 `_top` / `_left` 改语义化命名（`topOffset` / `prevLeft`）；压缩与本文档重复的注释，并补注「0 位移不写」这一已知差异。sha256/字节数同步（`2d5c69e3…` / 415,727 B） |
+
+
+**补丁 18｜`patches/structural-drag.js` · 结构拖动的坐标、邻近容差与最终确认**
+复用 Drag 原生布局分区/连线预览/松手命令，统一导图坐标计算（原分区把未缩放 originHeight/Width 的四分之一用在屏幕坐标上，密集节点 50% 缩放时子节点命中区消失）。检测取所属窗口 rAF 合帧（32ms 兜底，先到者取消另一条），结束时取消并同步确认最新指针及变换，reset/解绑取消未决帧。精确命中优先，最近可见目标 12px 屏幕容差、退出 16px，兄弟轴仍由原生前后插入分区判断；过滤折叠后代、未挂载与被拖分支。无目标由插件关闭 enableFreeDrag 保持原位；不逐帧执行结构命令、不全图整理、不改变 Markdown 格式。新增副作用 import 由 build-vendor.mjs 固化。基线重建已确认逐字一致，补丁增量由该模块引入；维护策略与回归见 K205 / tests/engine-drag-target.test.ts / verify:visual。

@@ -11,9 +11,9 @@
  *   撤掉「拖拽 + 语法换算」（否则要按两次，且第一次看起来"没反应"）。
  *
  * ## 为什么守卫要认拖拽
- * 引擎在**拖拽过程中**就持续执行 `MOVE_NODE_TO`（每次 hover 落点都是一次命令），
- * 期间多次 `data_change`。若不屏蔽，去抖后的守卫会对着半途的树做判断、甚至
- * 用 `BACK` 撤回一个还在进行的手势。故 `node_dragging` 置位、`node_dragend`
+ * 拖拽期间只绘制预览，松手才提交结构命令（K205）；期间其它编辑可能触发
+ * `data_change`，守卫应让位于当前手势，避免在拖拽中重排或撤销。
+ * 故 `node_dragging` 置位、`node_dragend`
  * 清位并立即跑一次；`data_change` 那条路只在非拖拽时跑（兜住粘贴 / 撤销 / 重做）。
  */
 import { Notice } from 'obsidian';
@@ -41,7 +41,7 @@ const GUARD_DEBOUNCE_MS = 120;
 
 interface SyntaxGuardState {
 	/**
-	 * 拖拽进行中（引擎逐落点执行 `MOVE_NODE_TO`，此刻不做判断）。
+	 * 拖拽进行中（此刻只有落点预览，不运行结构守卫）。
 	 *
 	 * 置位靠 `node_dragging`、清位靠 `node_dragend`。极端情况（在窗口外松开鼠标）
 	 * 可能收不到 `node_dragend`：此时**落点也没有落地**（两者同在引擎的 mouseup

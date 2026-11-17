@@ -79,7 +79,6 @@ const ZH = {
 	'toolbar.resetZoom': '重置',
 	'toolbar.exportImage': '导出',
 	'toolbar.tipFit': '总览',
-	'toolbar.tipArrange': '整理',
 
 	// ===== 层级语法（标题 / 无序列表）=====
 	'syntax.title': '层级语法',
@@ -475,7 +474,6 @@ const EN: Record<TranslationKey, string> = {
 	'toolbar.resetZoom': 'Reset',
 	'toolbar.exportImage': 'Export',
 	'toolbar.tipFit': 'Fit',
-	'toolbar.tipArrange': 'Tidy',
 
 	// ===== Heading / bullet syntax =====
 	'syntax.title': 'Syntax',

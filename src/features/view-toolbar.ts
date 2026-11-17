@@ -5,7 +5,7 @@
  * **四组**从右上方自上而下（组间 8px 间距，组内 32×32 图标）：
  * 1. 文档：返回 Markdown / 导出图片
  * 2. 外观：边框 / 连线（**状态开关**，点一下切到另一个值）
- * 3. 视图：放大 / 重置缩放 / 总览全局 / 整理 / 缩小
+ * 3. 视图：放大 / 重置缩放 / 总览全局 / 缩小
  * 4. 历史：撤销 / 重做
  *
  * ## 为什么这么排
@@ -132,7 +132,7 @@ function buildDocumentGroup(view: MindMapViewContext, rail: HTMLElement): void {
 	});
 }
 
-/** 组 3：视图 —— 放大 / 重置缩放 / 总览全局 / 整理 / 缩小（对齐 Canvas 右栏顺序） */
+/** 组 3：视图 —— 放大 / 重置缩放 / 总览全局 / 缩小（整理保留在右键与命令面板） */
 function buildViewportGroup(view: MindMapViewContext, rail: HTMLElement): void {
 	const group = rail.createDiv('mindmap-hud-group');
 	createToolButton(group, t(view.lang, 'toolbar.zoomIn'), 'zoom-in', () =>
@@ -143,12 +143,6 @@ function buildViewportGroup(view: MindMapViewContext, rail: HTMLElement): void {
 	);
 	createToolButton(group, t(view.lang, 'toolbar.tipFit'), 'maximize', () =>
 		fitToScreen(view),
-	);
-	// 整理：与右键菜单「自动整理」同一动作 —— 同下游 `arrangeMindMap`、同图标 `sparkles`
-	// （换图标会被当成两个功能）。夹在「总览」与「缩小」之间：整理只重排、**保留视口**
-	// （2026-10-24 起不再 fit），紧邻「总览」正好对应「想看全图」的去处。
-	createToolButton(group, t(view.lang, 'toolbar.tipArrange'), 'sparkles', () =>
-		arrangeMindMap(view),
 	);
 	createToolButton(group, t(view.lang, 'toolbar.zoomOut'), 'zoom-out', () =>
 		zoomOutMindMap(view.mindMap),

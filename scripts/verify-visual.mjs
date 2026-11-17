@@ -2904,6 +2904,110 @@ window.setTimeout(() => {
 	imageProbe.textContent = JSON.stringify(report);
 }, 200);
 
+// —— 结构拖动：真实 DOM 手势、邻近落点、自动布局与撤销（K205） ——
+const structuralDragProbe = document.createElement('pre');
+structuralDragProbe.id = 'structural-drag-probe';
+document.body.appendChild(structuralDragProbe);
+window.setTimeout(async () => {
+	const report = { cases: [] };
+	const pause = (ms) => new Promise(resolve => window.setTimeout(resolve, ms));
+	const find = (root, uid) => {
+		if (root.getData('uid') === uid) return root;
+		for (const child of root.children) { const found = find(child, uid); if (found) return found; }
+		return null;
+	};
+	try {
+		let index = 0;
+		for (const layout of ['logicalStructure', 'mindMap', 'organizationStructure', 'catalogOrganization', 'timeline', 'fishbone']) {
+			for (const scale of [0.5, 1, 1.5, 2.35]) {
+				const holder = document.createElement('div');
+				holder.id = 'map-structural-' + index++;
+				holder.className = 'mindmap-canvas-container';
+				holder.style.width = '1200px'; holder.style.height = '400px';
+				document.body.appendChild(holder);
+				const map = createMindMap(holder, {
+					data: { text: '检索增强 RAG', uid: 'drag-root' },
+					children: [
+						{ data: { text: '怎样形成可信回答（23、25-27）', uid: 'drag-target' }, children: [
+							{ data: { text: '证据引用、追问与拒答', uid: 'drag-leaf' }, children: [] },
+						] },
+						{ data: { text: '量化指标', uid: 'drag-source' }, children: [] },
+					],
+				}, { ...options, layout });
+				await new Promise(resolve => whenMapReady(map, holder, resolve, 10, 1200, true));
+				map.view.setScale(scale);
+				map.renderer.moveNodeToCenter(map.renderer.root);
+				// 隔离边缘自动平移；本探针测落点与结构，不测边缘导航。
+				map.opt.selectTranslateStep = 0;
+				let lastDrop = null;
+				map.on('node_dragend', state => { lastDrop = state; });
+				const point = (x, y) => {
+					const transform = map.draw.transform();
+					return { clientX: map.elRect.left + x * transform.scaleX + transform.translateX,
+						clientY: map.elRect.top + y * transform.scaleY + transform.translateY };
+				};
+				const begin = () => {
+					const source = find(map.renderer.root, 'drag-source');
+					const pos = point(source.left + source.width / 2, source.top + source.height / 2);
+					source.group.node.dispatchEvent(new MouseEvent('mousedown', { ...pos, bubbles: true, button: 0, buttons: 1 }));
+				};
+				const move = (pos) => window.dispatchEvent(new MouseEvent('mousemove', { ...pos, bubbles: true, button: 0, buttons: 1 }));
+				const end = (pos) => window.dispatchEvent(new MouseEvent('mouseup', { ...pos, bubbles: true, button: 0, buttons: 0 }));
+				const before = JSON.stringify(map.getData());
+				const viewport = JSON.stringify(map.view.getTransformData());
+				const history = map.command.history.length;
+				begin(); const blank = point(-1000, -1000); move(blank); end(blank); await pause(35);
+				const row = { layout, scale, freeDragDisabled: map.opt.enableFreeDrag === false,
+					blankUnchanged: JSON.stringify(map.getData()) === before && map.command.history.length === history };
+				const target = find(map.renderer.root, 'drag-target');
+				const horizontal = layout === 'organizationStructure' ||
+					(['catalogOrganization', 'timeline', 'fishbone'].includes(layout) && target.layerIndex === 1);
+				const near = horizontal
+					? point(target.left + target.width / 2, target.top + target.height + 10 / scale)
+					: point(target.left + target.width + 10 / scale, target.top + target.height / 2);
+				begin(); move(near); await pause(40);
+				row.previewTarget = map.drag.overlapNode?.getData('uid');
+				row.previewState = { dragging: map.drag.isDragging, down: map.drag.isMousedown,
+					prev: map.drag.prevNode?.getData('uid'), next: map.drag.nextNode?.getData('uid') };
+				const selected = map.drag.overlapNode || map.drag.prevNode || map.drag.nextNode;
+				row.previewParent = (map.drag.overlapNode || selected?.parent)?.getData('uid');
+				row.previewUnchanged = JSON.stringify(map.getData()) === before && map.command.history.length === history;
+				row.previewVisible = map.drag.overlapNode
+					? selected.group.node.classList.contains('active') && getComputedStyle(selected.group.node.querySelector('.smm-hover-node')).display !== 'none'
+					: Number(map.drag.placeholder?.attr('width')) > 0 && map.drag.placeHolderLine?.attr('d')?.length > 0;
+				end(near); await pause(60);
+				row.previewMatchesDrop = lastDrop?.overlapNodeUid === (row.previewTarget || '') &&
+					lastDrop?.prevNodeUid === (row.previewState.prev || '') && lastDrop?.nextNodeUid === (row.previewState.next || '');
+				const moved = find(map.renderer.root, 'drag-source');
+				row.parent = moved.parent.getData('uid');
+				row.noFreePosition = moved.getData('customLeft') === undefined && moved.getData('customTop') === undefined;
+				row.historyDelta = map.command.history.length - history;
+				row.viewportUnchanged = JSON.stringify(map.view.getTransformData()) === viewport;
+				if (layout === 'logicalStructure') {
+					// 对齐用户截图：已有子节点在空白处松手后仍保持自动布局。
+					const organized = JSON.stringify(map.getData());
+					const position = { left: moved.left, top: moved.top };
+					begin(); move(blank); end(blank); await pause(35);
+					const unchanged = find(map.renderer.root, 'drag-source');
+					row.childBlankUnchanged = JSON.stringify(map.getData()) === organized &&
+						unchanged.left === position.left && unchanged.top === position.top;
+					map.execCommand('BACK'); await pause(60);
+					row.undoRestored = JSON.stringify(map.getData()) === before;
+					// 同级后插同样走真实手势；恢复后重新取节点实例。
+					const sibling = find(map.renderer.root, 'drag-target');
+					const after = point(sibling.left + sibling.width / 2, sibling.top + sibling.height + 3);
+					begin(); move(after); end(after); await pause(60);
+					row.siblingOrder = map.renderer.root.children.map(node => node.getData('uid')).join(',');
+					row.siblingParent = find(map.renderer.root, 'drag-source').parent.getData('uid');
+				}
+				report.cases.push(row); map.destroy(); holder.remove();
+			}
+		}
+	} catch (error) { report.error = String(error); }
+	structuralDragProbe.textContent = JSON.stringify(report);
+// 等其它鼠标探针收尾后再开始，避免它们的合成 mouseup 结束本手势。
+}, 2000);
+
 // —— 节点计数探针：性能模式下渲染树结构必须完整（状态栏计数不得漏计） ——
 // 术语澄清（vendor 0.14.0-fix.3 实测）：removeNodeWhenOutCanvas 走 node.removeSelf()
 // = this.group.remove()（只摘 DOM 绘制）+ removeGeneralization()；**节点实例仍留在
@@ -6101,6 +6205,21 @@ function checkLayouts(dom) {
  * 任何断言函数抛异常都转成一条失败项（而不是让整个脚本静默退出）——
  * CI 上曾出现「场景全过后脚本无输出地退出」，此处保证异常可见且计入失败数。
  */
+function checkStructuralDrag(dom) {
+	const { probe, failures } = readProbe(dom, 'structural-drag-probe', '结构拖动');
+	if (failures) return failures;
+	if (probe.error) return ['结构拖动探针异常：' + probe.error];
+	if (probe.cases?.length !== 24) return ['结构拖动未完成六布局 × 四档缩放（已完成 ' + (probe.cases?.length ?? 0) + '）'];
+	return probe.cases.flatMap(row => {
+		const failed = [];
+		if (!row.freeDragDisabled || !row.blankUnchanged) failed.push('无目标拖动改变了数据或历史');
+		if (row.previewParent !== 'drag-target' || !row.previewUnchanged || !row.previewVisible || !row.previewMatchesDrop) failed.push('邻近预览未命中目标、改变了结构或与松手结果不符');
+		if (row.parent !== 'drag-target' || !row.noFreePosition || row.historyDelta !== 1 || !row.viewportUnchanged) failed.push('落点、自由坐标、撤销步数或缩放不正确');
+		if (row.layout === 'logicalStructure' && (!row.childBlankUnchanged || !row.undoRestored || row.siblingParent !== 'drag-root' || row.siblingOrder !== 'drag-target,drag-source')) failed.push('已有子节点拖空白未归位、撤销未复原或同级插入异常');
+		return failed.map(message => row.layout + ' / ' + row.scale + '：' + message);
+	});
+}
+
 async function runChecks(dom, diag) {
 	let failed = 0;
 	const safe = (label, fn) => {
@@ -6117,6 +6236,10 @@ async function runChecks(dom, diag) {
 		failed += metricsRead.failures.length;
 	}
 	const metrics = metricsRead.probe ?? null;
+	const dragFailures = safe('结构拖动', () => checkStructuralDrag(dom));
+	diag.log('  ' + (dragFailures.length ? '✗' : '✓') + ' structural-drag 六布局 × 四档缩放的真实 DOM 拖动、布局与撤销');
+	for (const failure of dragFailures) diag.log('      - ' + failure);
+	failed += dragFailures.length;
 	for (const scenario of SCENARIOS) {
 		const fragment = containerOf(dom, scenario.name);
 		const failures = safe(`场景 ${scenario.name}`, () =>
