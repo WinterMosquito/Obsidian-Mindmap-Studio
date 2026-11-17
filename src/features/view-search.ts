@@ -1,12 +1,5 @@
-/**
- * 搜索栏子系统：构建搜索栏 DOM 与搜索/上下跳转/计数逻辑。
- * 从 view.ts 抽取，逻辑以接收 SearchViewContext（最窄访问面，见下方定义）
- * 的模块函数组织；view.ts 中的同名方法保留为外观（委托到这里的实现），
- * 调用方无需改动。
- * 引擎 Search 插件的访问（search/jump/matchNodeList 等）经 mindmap.ts
- * 防腐收口函数进行，本模块不触碰引擎内部状态。
- */
-import { setIcon, setTooltip } from 'obsidian';
+/** 搜索业务适配：防抖、引擎查询、结果跳转与计数；DOM/键盘/焦点由 UI 组件持有。 */
+import { SearchBar, type SearchBarLabels } from '../ui/search/search-bar';
 import { createDebouncer, type Debouncer } from '../core/concurrency';
 import { t } from '../core/i18n';
 import {
@@ -28,109 +21,57 @@ type SearchViewContext = ViewDomContext &
 	ViewEngineContext &
 	Pick<MindMapViewContext, 'lang'>;
 
-/** 搜索栏展开后延迟聚焦的间隔（等待隐藏 class 移除与布局生效后再聚焦） */
-const SEARCH_FOCUS_DELAY_MS = 50;
+const searchBars = new WeakMap<SearchViewContext, SearchBar>();
 
-/** 搜索栏按钮（按视图持有）：语言变更时就地更新 tooltip */
-const searchButtons = new WeakMap<
-	SearchViewContext,
-	{ prev: HTMLElement; next: HTMLElement; close: HTMLElement }
->();
+function labels(view: SearchViewContext): SearchBarLabels {
+	return {
+		placeholder: t(view.lang, 'toolbar.searchPlaceholder'),
+		prev: t(view.lang, 'search.prev'),
+		next: t(view.lang, 'search.next'),
+		close: t(view.lang, 'search.close'),
+	};
+}
 
-/** 构建搜索栏（DOM 与事件监听） */
+/** 装配业务回调；兼容字段引用组件持有的元素。 */
 export function buildSearchBar(view: SearchViewContext): void {
-	const searchBar = view.searchBarEl;
-	if (!searchBar) {
-		return;
-	}
-	searchBar.addClass('mindmap-search-bar-hidden');
-	view.searchInput = searchBar.createEl('input', {
-		cls: 'mindmap-search-input',
-		attr: {
-			type: 'text',
-			placeholder: t(view.lang, 'toolbar.searchPlaceholder'),
-			spellcheck: 'false',
-		},
+	if (!view.searchBarEl) return;
+	disposeSearchBar(view);
+	const bar = new SearchBar(view.searchBarEl, labels(view), {
+		input: () => doSearch(view),
+		prev: () => searchPrev(view),
+		next: () => searchNext(view),
+		close: () => closeSearchBar(view),
 	});
-	view.searchCountEl = searchBar.createSpan('mindmap-search-count');
-	const prevButton = searchBar.createEl('button', { cls: 'mindmap-search-btn' });
-	setIcon(prevButton, 'chevron-up');
-	// 官方 tooltip（原生样式/定位；aria-label 由核心写入，不再手写 title）
-	setTooltip(prevButton, t(view.lang, 'search.prev'));
-	prevButton.onclick = () => searchPrev(view);
-	const nextButton = searchBar.createEl('button', { cls: 'mindmap-search-btn' });
-	setIcon(nextButton, 'chevron-down');
-	setTooltip(nextButton, t(view.lang, 'search.next'));
-	nextButton.onclick = () => searchNext(view);
-	const closeButton = searchBar.createEl('button', { cls: 'mindmap-search-btn' });
-	setIcon(closeButton, 'x');
-	setTooltip(closeButton, t(view.lang, 'search.close'));
-	closeButton.onclick = () => closeSearchBar(view);
-	// 语言变更时就地更新 tooltip（不重建 DOM、不重复注册监听）
-	searchButtons.set(view, {
-		prev: prevButton,
-		next: nextButton,
-		close: closeButton,
-	});
-	view.viewEvents.onDom(view.searchInput, 'input', () => doSearch(view));
-	view.viewEvents.onDom(view.searchInput, 'keydown', (event) => {
-		if (event.key === 'Enter') {
-			event.preventDefault();
-			if (event.shiftKey) {
-				searchPrev(view);
-			} else {
-				searchNext(view);
-			}
-		} else if (event.key === 'Escape') {
-			closeSearchBar(view);
-		}
-	});
+	searchBars.set(view, bar);
+	view.searchInput = bar.input;
+	view.searchCountEl = bar.count;
 }
 
-/** 打开搜索栏并聚焦输入框 */
 export function openSearchBar(view: SearchViewContext): void {
-	if (!view.searchBarEl || !view.mindMap) {
-		return;
-	}
-	view.searchBarEl.removeClass('mindmap-search-bar-hidden');
-	window.setTimeout(() => view.searchInput?.focus(), SEARCH_FOCUS_DELAY_MS);
+	if (view.mindMap) searchBars.get(view)?.open();
 }
 
-/**
- * 语言变更后刷新搜索栏文案（占位符与三个按钮 tooltip）：
- * 就地更新，不重建 DOM、不重复注册监听。
- */
 export function refreshSearchBarLabels(view: SearchViewContext): void {
-	if (view.searchInput) {
-		view.searchInput.setAttribute(
-			'placeholder',
-			t(view.lang, 'toolbar.searchPlaceholder'),
-		);
-	}
-	const buttons = searchButtons.get(view);
-	if (!buttons) {
-		return;
-	}
-	setTooltip(buttons.prev, t(view.lang, 'search.prev'));
-	setTooltip(buttons.next, t(view.lang, 'search.next'));
-	setTooltip(buttons.close, t(view.lang, 'search.close'));
+	searchBars.get(view)?.updateLabels(labels(view));
 }
 
-/** 关闭搜索栏并结束引擎搜索 */
 export function closeSearchBar(view: SearchViewContext): void {
-	if (!view.searchBarEl) {
-		return;
-	}
-	// 取消未决的防抖搜索，避免关闭后在空结果上继续触发
+	if (!view.searchBarEl) return;
 	searchDebouncers.get(view)?.cancel();
 	searchDebouncers.delete(view);
-	view.searchBarEl.addClass('mindmap-search-bar-hidden');
+	searchBars.get(view)?.close();
 	endMindMapSearch(view.mindMap);
-	if (view.searchInput) {
-		view.searchInput.value = '';
-	}
-	view.searchCountEl?.setText('');
 	view.canvasEl?.focus();
+}
+
+/** 关闭/重建前取消搜索与焦点任务，解绑组件自己的监听。 */
+export function disposeSearchBar(view: SearchViewContext): void {
+	searchDebouncers.get(view)?.cancel();
+	searchDebouncers.delete(view);
+	searchBars.get(view)?.dispose();
+	searchBars.delete(view);
+	view.searchInput = null;
+	view.searchCountEl = null;
 }
 
 /** 防抖器（按视图），避免每键全量重搜 */
@@ -157,7 +98,7 @@ function runSearch(view: SearchViewContext): void {
 	const keyword = view.searchInput.value.trim();
 	if (!keyword) {
 		endMindMapSearch(view.mindMap);
-		view.searchCountEl?.setText('');
+		searchBars.get(view)?.setCount('', false);
 		return;
 	}
 	searchMindMap(view.mindMap, keyword, () => updateSearchCount(view));
@@ -210,18 +151,11 @@ export function searchPrev(view: SearchViewContext): void {
 	jumpToSearchIndex(view.mindMap, index, () => updateSearchCount(view));
 }
 
-/** 更新匹配计数显示 */
+/** 引擎计数由业务层读取，组件只接收显示状态。 */
 export function updateSearchCount(view: SearchViewContext): void {
-	if (!view.searchCountEl) {
-		return;
-	}
+	const bar = searchBars.get(view);
+	if (!bar) return;
 	const matches = getSearchMatchCount(view.mindMap);
 	const current = getSearchCurrentIndex(view.mindMap);
-	if (matches === 0) {
-		view.searchCountEl.setText(t(view.lang, 'common.noMatch'));
-		view.searchCountEl.addClass('mindmap-search-no-result');
-		return;
-	}
-	view.searchCountEl.removeClass('mindmap-search-no-result');
-	view.searchCountEl.setText(`${current + 1}/${matches}`);
+	bar.setCount(matches === 0 ? t(view.lang, 'common.noMatch') : `${current + 1}/${matches}`, matches === 0);
 }

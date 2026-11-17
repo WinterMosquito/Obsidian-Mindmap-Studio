@@ -11,7 +11,7 @@
 2. **收口**：是否触碰引擎内部形态？只允许经 `mindmap.ts` / `services/engine-controller.ts` 具名函数；库内文件解析走 `links-resolve.resolvePathToFile`；并发原语走 `concurrency.ts`；DOM/事件监听走 `this.register*` / `EventBinder`；URL 形态判断走 `domain/url.ts`（背景见 K25 / K28 / K29）。
 3. **官方优先**：面向 Obsidian 的能力先对照官方 `obsidian.d.ts` 与帮助文档；官方缺口才允许私有触点，且必须防御式实现并在本文件登记（见 K39）。
 4. **测试**：新增 `tests/*.test.ts`（纯逻辑直测；引擎运行时 DOM 装配类行为交 `verify:visual`）；同步 `docs/agents/index.md` 的「代码结构」两份清单——`agents-md-sync` 测试会强制。
-5. **校验链**（顺序执行，全绿才允许提交；**提交动作本身需用户明确授权**——AI 助手不得自行 `git commit`，改动留在工作区待用户裁决）：`npm run build`（tsc 检查 src+tests）→ `npm test` → `npm run lint`（须在插件根 cwd，见 K43）→ `npm run lint:css`（改过 `styles.css` 必跑，见「测试与 CI」的 CSS 检查段）→ `npm run check:release`（改过 `manifest.json` / `versions.json` / README / `LICENSE*` 时必跑；含 License 缺失=error、非 OSI=warn，见 K109）→ 新增/删除导出或文件时加 `npm run check:dead-code`（见 K57）→ 涉及渲染/DOM 装配时加 `npm run verify:visual` → **改过 `vendor/upstream/` 或 `vendor/patches/` 时加 `npm run build:vendor` 重打包，并同步 `vendor/BUILD.md` 与 `tests/vendor-contract.test.ts` 两处 sha256 常量（见 K73）**。本链的可执行形态＝`npm run check:gates`（按 git 变更集自动算出附加门禁并顺序执行；映射同步于 `scripts/check-gates.mjs`，其映射有直测 `tests/check-gates.test.ts`，速查见 AGENTS.md 常用命令）。
+5. **校验链**（顺序执行，全绿才允许提交；**提交动作本身需用户明确授权**——AI 助手不得自行 `git commit`，改动留在工作区待用户裁决）：`npm run build`（tsc 检查 src+tests）→ `npm test` → `npm run lint`（须在插件根 cwd，见 K43）→ `npm run lint:css`（改过 CSS 源/产物或 `esbuild.config.mjs` 必跑，见「测试与 CI」的 CSS 检查段）→ `npm run check:release`（改过 `manifest.json` / `versions.json` / README / `LICENSE*` 时必跑；含 License 缺失=error、非 OSI=warn，见 K109）→ 新增/删除导出或文件时加 `npm run check:dead-code`（见 K57）→ 涉及渲染/DOM 装配时加 `npm run verify:visual` → **改过 `vendor/upstream/` 或 `vendor/patches/` 时加 `npm run build:vendor` 重打包，并同步 `vendor/BUILD.md` 与 `tests/vendor-contract.test.ts` 两处 sha256 常量（见 K73）**。本链的可执行形态＝`npm run check:gates`（按 git 变更集自动算出附加门禁并顺序执行；映射同步于 `scripts/check-gates.mjs`，其映射有直测 `tests/check-gates.test.ts`，速查见 AGENTS.md 常用命令）。
 6. **超限登记**：新增文件超 300 行 → 在「文件规模与豁免」表登记理由。
 7. **声明式设置/版本**：改 `minAppVersion` 或给声明式设置新增键 → 人工核对对应 `@since`（lint 盲区，见 K41）。
 
@@ -81,3 +81,6 @@ GitHub 的提交列表与 Actions 列表**只显示提交标题 / run 名称**�
 - 遵循 Obsidian 开发者政策与插件指南（`isDesktopOnly: true`，minAppVersion 1.13.0）。
   **该 `true` 是承重的**（豁免了 `md-serialize.ts` 的 lookbehind 正则，见 K42）——改动前必读该条目。
 - 分发（release 资产 / BRAT 更新）必须携带 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`——vendored 代码（约 72%）的许可声明载体，内联注释不可替代（见 K84）。
+
+
+**组件样式（K207）**：工具栏/搜索栏的局部样式放在对应 `src/ui/` 目录，剩余样式在 `src/ui/styles/`。新增样式必须被 `src/ui/styles/index.css` 导入；构建后连同生成的根目录 `styles.css` 一并交付。DOM/骨架/局部交互变更触发 `verify:visual`，CSS 源与构建配置同时触发 CSS lint 和视觉验证；单纯维护索引、行数与 K 范围仍只改 `docs/agents/`。

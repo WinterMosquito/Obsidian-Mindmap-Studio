@@ -50,6 +50,12 @@ const EXEMPTION_ROW_RE = /^(\|\s*`(src\/[^`]+\.ts)`\s*\|\s*)(\d+)(\s*\|)/;
 /** verify:visual 的触发面 = 自绘判据 / 节点渲染 / 探针脚本（AGENTS.md 校验链措辞的路径化） */
 const VISUAL_MATCHERS = [
 	'scripts/verify-visual.mjs',
+	'scripts/visual-ui.mjs',
+	'esbuild.config.mjs',
+	'src/ui/toolbar/',
+	'src/ui/search/',
+	'src/features/view-toolbar.ts',
+	'src/features/view-search.ts',
 	'src/features/node-',
 	'src/features/mindmap-codeblock.ts',
 	'src/domain/pipe-table.ts',
@@ -201,9 +207,9 @@ export function buildPlan(changed, { all } = { all: false }) {
 		{
 			args: ['run', 'lint:css'],
 			label: 'npm run lint:css',
-			match: (f) => f === 'styles.css',
-			why: () => 'styles.css 在变更集',
-			skipNote: 'styles.css 未变更',
+			match: (f) => f.endsWith('.css') || f === 'esbuild.config.mjs',
+			why: () => 'CSS 源/产物或 CSS 构建配置在变更集',
+			skipNote: 'CSS 源/产物及构建配置未变更',
 		},
 		{
 			args: ['run', 'check:dead-code'],
@@ -222,7 +228,7 @@ export function buildPlan(changed, { all } = { all: false }) {
 		{
 			args: ['run', 'verify:visual', '--', '--require-chrome'],
 			label: 'npm run verify:visual -- --require-chrome',
-			match: (f) => VISUAL_MATCHERS.some((m) => f.startsWith(m)),
+			match: (f) => f.endsWith('.css') || VISUAL_MATCHERS.some((m) => f.startsWith(m)),
 			why: (hit) => `自绘判据 / 节点渲染 / 探针在变更集：${hit.join('、')}`,
 			skipNote: '自绘判据 / 节点渲染 / 探针未变更',
 		},

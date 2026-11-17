@@ -53,11 +53,22 @@ const options = {
 	charset: 'utf8',
 };
 
+// CSS 独立入口：不从 TS import，避免生成 main.css 或改变宿主加载方式。
+// 保持可读且不降级语法；发布资产只叫 styles.css，无运行时 @import。
+const cssOptions = {
+	entryPoints: ['src/ui/styles/index.css'],
+	bundle: true,
+	outfile: 'styles.css',
+	banner: { css: '/* Generated from src/ui/styles/index.css. Do not edit directly. */' },
+	charset: 'utf8',
+	logLevel: 'info',
+};
+
 if (prod) {
 	// 一次性构建：用 build() 而不是 context().rebuild() + process.exit(0)
 	// ——后者靠强制退出收尾（Windows 上偶发截断日志），也跳过了 dispose
-	await esbuild.build(options);
+	await Promise.all([esbuild.build(options), esbuild.build(cssOptions)]);
 } else {
-	const context = await esbuild.context(options);
-	await context.watch();
+	const contexts = await Promise.all([esbuild.context(options), esbuild.context(cssOptions)]);
+	await Promise.all(contexts.map((context) => context.watch()));
 }

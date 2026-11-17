@@ -1,4 +1,4 @@
-# 关键约定 K1–K206（详录）
+# 关键约定 K1–K207（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
@@ -2240,3 +2240,6 @@
   ③ **边界**：不改 `text` / `mdRaw` / 序列化 / 保存管线；不改 vendor；不做「引擎缺字段自动兜底」的第二份判定。会话树保持解析原样，`markLoaded` 基线「序列化结果与磁盘逐字一致」不变。
   ④ **回归**：`tests/images-path.test.ts`（零拷贝 / 副本补齐 / 原树不改）、`tests/document-session.test.ts`（外部重载后 port 收到的树带尺寸、会话树不带）、`scripts/verify-visual.mjs` 的 image 探针（`applySessionSnapshot(withDefaultImageSizes(解析器产物))` 后 root / 2 节点 / `<image>` 齐全）。
   ⑤ **同日复验补的显示层缺陷（P2）**：只补默认盒虽不崩，但外部写入后图片从「160×160 自然尺寸 / 147×147 `|147` 参数」退回「200×120 默认盒」——加载期的 `collectImageSizeCorrections → node_tree_render_end` 异步回灌只在**建引擎**时跑，快照应用不会重跑。修法不是再跑一遍探测（异步 + uid 匹配 + 每次广播重复探测），而是**复用接收视图当前引擎里已定稿的尺寸**：`features/view.knownImageSizes()` 在 `applySnapshot` **应用之前**从 `getRenderRoot()` 收 `imageSize.custom === true` 的条目，按 `media/images-path.imageSizeKey`（地址 + `mdImageWidth/Height`，同一张图 `![[a.png]]` 与 `![[a.png|300]]` 不能共用一个尺寸）索引；`reuseKnownImageSizes` 把命中项搬进新树（无命中零拷贝、命中才深拷贝、原树不改）。只认 `custom:true` 是为了不把「曾回落到默认」的态固化；外部换图 / 新增图片仍停在默认盒这一安全终态。文件里的尺寸参数一字未改，视觉探针新增三条断言（定稿尺寸 1 份 / 引擎 data 仍 120×40 `custom:true` / `<image>` 宽 120）。实机 A/B：`功能验收.md` 160×160 & 200×200、`思维导图.md` 147×147，外部写入后三者全部原值保持。
+
+
+- [K207] **UI 组件第一批（2026-11-18）**：工具栏与搜索栏采用原生 TypeScript 组件，骨架/局部交互/样式分别内聚于 `ui/toolbar/` 与 `ui/search/`。组件只接收按钮状态与回调，不持有视图/引擎/Vault/保存服务；`features/view-toolbar` 与 `features/view-search` 继续作为业务适配，保留原调用入口和搜索元素兼容字段。工具栏四组十按钮、左侧 tooltip、固定布局禁用连线与历史会话判据保持原语义；历史刷新不换 DOM/图标，重建与关闭先 `dispose` 清理回调。搜索防抖 180 ms 仍在业务层；50 ms 焦点等待经现有 `createDebouncer` 管理，关闭/重建/销毁取消焦点与搜索任务，组件 `EventBinder` 自行解绑输入监听。视图在异步会话 detach 前清理 UI，内联编辑提交/关闭闸门/flush 顺序不变。CSS 独立入口 `src/ui/styles/index.css` 用现有 esbuild 汇总，生产/dev 均输出根目录 `styles.css`，dev 监听所有导入；不从 TS import CSS、不产 `main.css`、不留运行时 `@import`、不引入运行时依赖或改 vendor。发布 CSS 仍入库以便安装和审查，但不得手改。纯逻辑与生命周期直测，真实 Chrome 探针比较 HEAD CSS 与当前 CSS 在明暗/480 与 1200 px 宽度下的计算值，并验证实际 DOM/键盘/焦点清理。

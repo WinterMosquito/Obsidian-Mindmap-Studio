@@ -118,6 +118,7 @@ import type { SaveState } from '../services/status-bar';
 import { EngineController } from '../services/engine-controller';
 import {
 	buildSearchBar,
+	disposeSearchBar,
 	openSearchBar,
 	refreshSearchBarLabels,
 } from './view-search';
@@ -125,6 +126,7 @@ import { exportImage } from './view-export';
 import {
 	arrangeMindMap,
 	buildToolbar,
+	disposeToolbar,
 	refreshToolbar,
 	syncHistoryButtons,
 } from './view-toolbar';
@@ -318,8 +320,8 @@ export class MindMapView
 
 	/**
 	 * 视图生命周期作用域的事件绑定器：
-	 * onOpen 时注册的搜索输入框等事件挂在这里，onClose 时清理。
-	 * 跨文件（view-search）共享，故公开。
+	 * 通用视图事件在 onClose 时清理；跨文件上下文共享，故公开。
+	 * 搜索输入等局部 DOM 事件由 UI 组件自己的 EventBinder 持有。
 	 */
 	viewEvents = new EventBinder();
 	private boundHandleCssChange: (() => void) | null = null;
@@ -1884,6 +1886,8 @@ export class MindMapView
 		this.cancelDeferredResize();
 		this.titleRenamer.cancel();
 		cancelStatusBarUpdate(this);
+		disposeSearchBar(this);
+		disposeToolbar(this);
 		// 交互会话收尾（图片调宽）：会话期间的临时 window 监听
 		// 不经事件绑定器记录，中途关闭视图收不到 mouseup，须显式清理。
 		// 必须在 savePipeline.save() 之前——调宽会话收尾会调度一次保存。
@@ -1924,7 +1928,7 @@ export class MindMapView
 		// 作用域置空：下次 onOpen 经 ensureViewScope 重建干净的 Scope，
 		// 避免 9 个视图热键处理器在同一 Scope 上重复注册。
 		this.scope = null;
-		// 清理视图生命周期作用域的事件（搜索输入框 input/keydown 等）
+		// 清理视图生命周期作用域的事件（组件已在关闭开头自行清理）
 		this.viewEvents.destroy();
 		// 数学重测节点随引擎销毁丢弃：视图关闭后不再有任何重测目标，
 		// 留着会一直持有已销毁的节点对象（同 onUnloadFile / onEngineReady）。

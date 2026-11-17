@@ -253,3 +253,6 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 结构拖动（K205）：`engine-drag-target.test.ts` 调用实际 vendor 方法，替换的只是 SVG 绘制面；覆盖密集节点缩放分区、固定屏幕容差/退出滞后、精确命中优先、同级前后插入、折叠/被拖分支过滤、所属窗口 rAF 与 32ms 兜底、实时视口变换、松手刷新/取消帧、无目标回原位及多选一次命令。`verify:visual` 的 structural-drag 探针覆盖六布局 × 四档缩放的真实 DOM 鼠标手势，验证预览不改数据/历史、落点预览与 node_dragend 一致、无自由坐标、一次历史及默认逻辑布局下的撤销/同级插入；子节点高亮与同级插入槽均按各布局原生显示验证。探针在其它合成鼠标用例收尾后启动，避免它们的 mouseup 抢先结束本手势。Obsidian 人工补验：实际长节点/密集导图的拖动手感、折叠目标、松手后保存重开、多视图及撤销/重做。
 
 常驻工具栏（K206）：四组共 10 个按钮，视图组不含整理/sparkles；整理的三种结果仍由原用例覆盖，右键与命令入口保留。
+
+
+**UI 组件与 CSS 汇总（K207）**：`view-toolbar.test.ts` / `view-search.test.ts` 保留动作与搜索行为回归，增加重建/销毁解绑、任务取消、就地历史刷新；`css-build.test.ts` 在隔离目录执行真实 esbuild 配置，校验发布文件名、import 展开、级联顺序及 dev CSS 监听，未修改仓库产物。`check-gates.test.ts` 覆盖新触发路径。`verify:visual` 复用 Chrome 驱动运行独立 UI 页（探针在 `scripts/visual-ui.mjs`），检验真实 DOM、disabled、键盘、焦点与解绑，并将当前生成 CSS 与 `HEAD:styles.css` 在两档宽度 × 两种底色变量下逐项比较计算值。Obsidian 图标/tooltip 用最小宿主替身；本项不能证明真实 Obsidian 插件已加载或主题手感正常，实机仍需人工验收。

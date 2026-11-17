@@ -74,9 +74,10 @@
  *
  * 退出码：0 = 通过或（未要求时）缺浏览器跳过；1 = 断言失败或缺浏览器但要求了。
  */
-import { execFile } from 'node:child_process';
+import { buildUiEntrySource, UI_SHIM_SOURCE } from './visual-ui.mjs';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -4383,7 +4384,7 @@ function chromeArgs(profileDir, { memoryProbe = false, budgetMs = 8000 } = {}) {
  * 每个模式再重试一次——无头渲染在 CI 上有偶发空白输出的历史。
  * 每次尝试的退出码与 stderr 尾部都会进诊断日志。
  */
-async function dumpDom(chromePath, pagePath, profileDir, diag, { memoryProbe = false, budgetMs = 8000 } = {}) {
+async function dumpDom(chromePath, pagePath, profileDir, diag, { memoryProbe = false, budgetMs = 8000, marker = 'id="map-' } = {}) {
 	const args = chromeArgs(profileDir, { memoryProbe, budgetMs });
 	const attempts = [];
 	let lastError = null;
@@ -4397,7 +4398,7 @@ async function dumpDom(chromePath, pagePath, profileDir, diag, { memoryProbe = f
 					[mode, ...args, '--dump-dom', pagePath],
 					{ maxBuffer: 96 * 1024 * 1024, windowsHide: true },
 				);
-				if (stdout.includes('id="map-')) {
+				if (stdout.includes(marker)) {
 					attempts.push(`${label}: ok（DOM ${stdout.length} 字节）`);
 					diag.log(`    · Chrome ${label} 成功（DOM ${stdout.length} 字节）`);
 					diag.file('05-chrome-stderr.txt', String(stderr ?? ''));
@@ -7318,7 +7319,21 @@ async function main() {
 		// 完整 dump-dom 归档：失败时这是唯一能离线复现 DOM 现场的东西
 		await diag.file('10-dom.html', dom);
 
-		failed = await runChecks(dom, diag);
+		// UI 页独立运行，避免它的焦点/样式对引擎和拖动探针产生影响。
+		const baselineCss = execFileSync('git', ['show', 'HEAD:styles.css'], { cwd: ROOT, encoding: 'utf8' });
+		const currentCss = await readFile(join(ROOT, 'styles.css'), 'utf8');
+		await writeFile(join(workDir, 'ui-entry.mjs'), buildUiEntrySource(ROOT, baselineCss, currentCss));
+		await writeFile(join(workDir, 'ui-shim.mjs'), UI_SHIM_SOURCE);
+		await writeFile(join(workDir, 'ui.html'), '<!doctype html><html><body><script src="ui-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'ui-entry.mjs')], outfile: join(workDir, 'ui-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'ui-shim.mjs') } });
+		const uiDom = await dumpDom(chromePath, join(workDir, 'ui.html'), join(workDir, 'ui-profile'), diag, { marker: 'id="ui-components-probe"' });
+		await diag.file('11-ui-dom.html', uiDom);
+		const uiRead = readProbe(uiDom, 'ui-components-probe', 'UI 组件');
+		const uiFailures = uiRead.failures ?? (uiRead.probe?.ok ? [] : ['UI 组件验证未完成']);
+		diag.log('  ' + (uiFailures.length ? '✗' : '✓') + ' ui-components 真实 DOM、生命周期及亮暗 × 窄宽 CSS 计算值对比');
+		for (const failure of uiFailures) diag.log('      - ' + failure);
+
+		failed = uiFailures.length + await runChecks(dom, diag);
 
 		// 真实墙钟基线（opt-in：默认不跑，避免给常规校验加一次重页面渲染）
 		if (ARGS.has('--perf')) {

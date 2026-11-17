@@ -24,6 +24,8 @@ import { t } from '../src/core/i18n';
 import {
 	arrangeMindMap,
 	buildToolbar,
+	disposeToolbar,
+	syncHistoryButtons,
 	refreshToolbar,
 } from '../src/features/view-toolbar';
 import type { MindMapViewContext } from '../src/features/view-context';
@@ -471,6 +473,7 @@ describe('buildToolbar（按钮动作接线）', () => {
 
 	it('历史组：撤销/重做接 BACK / FORWARD 命令', () => {
 		const h = makeView();
+		h.view.historyAvailability = () => ({ canUndo: true, canRedo: true });
 		buildToolbar(h.view);
 		const group = groupOf(railOf(h.toolbarEl), 3);
 
@@ -683,5 +686,37 @@ describe('工具栏按钮的图标接线', () => {
 		expect(setIconMock).toHaveBeenCalledTimes(buttons.length);
 		const parents = new Set(setIconMock.mock.calls.map((call) => call[0]));
 		expect(parents.size).toBe(buttons.length);
+	});
+});
+
+
+describe('工具栏组件生命周期与局部刷新', () => {
+	it('刷新历史可用性不重建图标或 DOM，状态始终来自会话', () => {
+		const h = makeView();
+		let canUndo = false;
+		h.view.historyAvailability = () => ({ canUndo, canRedo: false });
+		buildToolbar(h.view);
+		const rail = railOf(h.toolbarEl);
+		const undo = buttonsOf(groupOf(rail, 3))[0];
+		const iconCalls = setIconMock.mock.calls.length;
+		canUndo = true;
+		syncHistoryButtons(h.view);
+		expect(railOf(h.toolbarEl)).toBe(rail);
+		expect(setIconMock).toHaveBeenCalledTimes(iconCalls);
+		expect(undo?.attr['aria-disabled']).toBe('false');
+	});
+
+	it('重建和销毁解绑旧按钮，不遗留重复动作', () => {
+		const h = makeView();
+		buildToolbar(h.view);
+		const old = railOf(h.toolbarEl).children.flatMap(buttonsOf);
+		refreshToolbar(h.view);
+		expect(old.every((button) => button.onclick === null)).toBe(true);
+		const current = railOf(h.toolbarEl).children.flatMap(buttonsOf);
+		disposeToolbar(h.view);
+		disposeToolbar(h.view);
+		expect(current.every((button) => button.onclick === null)).toBe(true);
+		expect(h.toolbarEl.children).toHaveLength(0);
+		expect(h.backToMarkdown).not.toHaveBeenCalled();
 	});
 });

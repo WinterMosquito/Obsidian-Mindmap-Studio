@@ -1,44 +1,38 @@
-/* ===== Obsidian plugin styles ===== */
-/* 引擎样式不在此文件：simple-mind-map 的 dist CSS 全为 Quill 富文本规则（本插件未启用
-   RichText 插件），引擎本体样式由 bundle 运行时注入 document.head（见 vendor/BUILD.md）。 */
-/* ========== MindMap Studio Plugin Styles ========== */
-
-/* 自动打开：切换期间的源视图遮罩。
-   Obsidian 打开文件**先**建 markdown 视图并渲染，之后插件才 setViewState 换视图；
-   启动恢复时叶子逐批恢复，中间能隔数百毫秒 ⇒ 用户看到「先闪一屏 Markdown 原文」。
-   只藏内容区（保留布局，不给标签栏/滚动条造成跳动），最坏是空一帧。
-   类由 markdown/md-open.ts 的 openAsMindMap 加/摘（成败都会摘）。
-
-   两条选择器**并列**（命中其一即生效）：`.workspace-leaf-content` 是当前
-   Obsidian 的叶子内容容器，`.view-content` 是官方视图内容容器的长期类名——
-   上游若调整层级，只靠前者会静默失效（退化成旧观感，不报错、也测不出来）。 */
+/* Generated from src/ui/styles/index.css. Do not edit directly. */
+/* src/ui/styles/view.css */
 .workspace-leaf.mindmap-view-switching .workspace-leaf-content,
 .workspace-leaf.mindmap-view-switching .view-content {
   visibility: hidden;
 }
-
-/* 视图容器 */
 .mindmap-view-container {
   display: flex;
   flex-direction: column;
   height: 100%;
   width: 100%;
   overflow: hidden;
-  /* 浮层（.mindmap-toolbar 的右缘竖栏、.mindmap-minimap 等绝对定位元素）以本容器为参照系 */
   position: relative;
 }
+.mindmap-canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--background-primary);
+}
+.smm-container {
+  width: 100%;
+  height: 100%;
+}
+.smm-expand-btn {
+  cursor: pointer;
+}
 
-/* 工具栏：只剩右缘竖排一组（2026-10-22 第三版；顶部居中 / 底栏左下两版已移除），
-   见 view-toolbar.ts 文件头。本元素只是**穿透层**：不占布局高度、不拦截画布事件；
-   子容器 `.mindmap-hud` 自己 pointer-events:auto。 */
+/* src/ui/toolbar/toolbar.css */
 .mindmap-toolbar {
   position: absolute;
   inset: 0;
   z-index: 20;
   pointer-events: none;
 }
-
-/* 右缘图标栈：对齐官方 `.canvas-controls`——absolute / top 8 / 右 8 / 纵向 flex / 组间 8px */
 .mindmap-hud {
   position: absolute;
   top: 8px;
@@ -48,11 +42,6 @@
   gap: 8px;
   pointer-events: auto;
 }
-
-/* 栈内每组：逐条照抄官方 `.canvas-control-group`（Obsidian 1.14.4 实机取证）：
-   padding:0 / overflow:hidden / radius var(--radius-s) / 背景 interactive-normal /
-   阴影 input-shadow；组内**没有 gap**，分隔线是条目自身除末项外的 1px border-bottom
-   （4 项组高 131 = 32×4 + 1×3）。 */
 .mindmap-hud-group {
   display: flex;
   flex-direction: column;
@@ -64,11 +53,6 @@
   box-shadow: var(--input-shadow);
   overflow: hidden;
 }
-
-/* 组内按钮：官方的 `.canvas-control-item` 同款盒模型——width 32 / height auto /
-   padding 8（内容区恰为 16px 图标）/ 除末项外 border-bottom 1px。
-   dpr 1.5 下 1px 边框 computed 0.6667（= 1 物理 px）：条目总高 32.67、末项 32；
-   用固定 height 32 + border-box 会把线吃进盒内（组矮 0.67px），故用 auto + padding。 */
 .mindmap-hud-group .mindmap-tool-btn {
   box-sizing: border-box;
   width: 32px;
@@ -81,36 +65,22 @@
   box-shadow: none;
   cursor: var(--cursor, default);
   --icon-size: 16px;
-  /* 官方条目同款：图标描边走 --icon-s-stroke-width（本机 2px） */
   --icon-stroke: var(--icon-s-stroke-width, 2px);
 }
-
-/* 末项去掉底边：否则会与组容器的下边框叠成 2px 粗线（官方 :last-child 同款） */
 .mindmap-hud-group .mindmap-tool-btn:last-child {
   border-bottom: none;
 }
-
-/* 悬停：官方 `@media (hover:hover)` 同款取色（底色 interactive-hover、字色 normal，
-   不是 accent） */
 .mindmap-hud-group .mindmap-tool-btn:hover {
   color: var(--text-normal);
   background: var(--interactive-hover);
 }
-
-/* 置灰（固定直线布局的「连线」）：官方只淡化**图标**（text-faint），
-   不整块降透明度、外框与分隔线保持原样。
-   `opacity: 1` 必须显式写：宿主对 `button:disabled` 默认 0.7，会整块变淡，
-   与官方 `div.canvas-control-item` 的呈现不同（2026-10-26 实机 0.7 vs 1）。 */
 .mindmap-hud-group .mindmap-tool-btn.is-disabled {
   cursor: default;
   opacity: 1;
 }
-
 .mindmap-hud-group .mindmap-tool-btn.is-disabled svg {
   color: var(--text-faint);
 }
-
-/* 工具按钮 */
 .mindmap-tool-btn {
   display: inline-flex;
   align-items: center;
@@ -126,86 +96,24 @@
   transition: background 0.15s, color 0.15s;
   --icon-size: 16px;
 }
-
-/*
- * 图标尺寸自包含兜底（K112）：`.mindmap-tool-btn` 上那行 `--icon-size` 需由官方
- * 全局规则 `svg.svg-icon { height/width: var(--icon-size) }`（obsidian app.css）消费
- * 才生效，即依赖官方内部类名。实机实测（1.13.7）：两种写法渲染**逐项等效**（16px、
- * stroke 1.75px 一致），故自身再写一遍尺寸——官方若改名该内部类，图标不会静默
- * 跳回主题默认 18px。选择器特异性 (0,2,1) 高于官方规则的 (0,1,1)——**留一级余量**：
- * 官方需把该规则提到 (0,3,1) 以上才会压过本规则，故不依赖样式加载顺序。
- *
- * 取值必须走 `var(--icon-size, 16px)` 而**不是**裸 `16px`：本规则特异性高于官方，
- * 若写死值就会连官方的变量通道一起压掉——`--icon-size` 将彻底失效，K112 保留
- * 变量的理由（跟随官方尺寸体系 / 允许用户或主题覆盖）随之失效。走 `var()` 则两种
- * 失效路径都兜住：变量在位 → 跟随变量；官方改名致其不再消费而变量又被移除/置为
- * 无效值 → 回落到本行的 16px（实测把 `--icon-size` 强制置 `initial` 即走此支）。
- *
- * 子选择器用 `> svg`：既匹配「按钮内唯一元素即该 svg」（实测为按钮直接子），又
- * 避免将来按钮内加带 svg 的附属元素时被误伤。**代价**：若官方 `setIcon` 改为包一层
- * `<span>`，本规则会与变量通道同时失效（退到主题默认 18px）——这与「改名内部类名」
- * 同属 DOM/类名契约变更，届时按同一路径重新实测登记即可。
- */
 .mindmap-toolbar .mindmap-tool-btn > svg {
   width: var(--icon-size, 16px);
   height: var(--icon-size, 16px);
 }
-
 .mindmap-tool-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-accent);
 }
-
 .mindmap-tool-btn svg {
   display: block;
 }
-
-/* 画布容器 */
-.mindmap-canvas-container {
-  flex: 1;
-  position: relative;
-  overflow: hidden;
-  background: var(--background-primary);
-}
-
-/* 注意：不要给 .mindmap-canvas-container 的直接子 div 设 width/height:100%。
-   历史：曾据此写过 `> div:not(.mindmap-img-resize-handle)` 满宽规则，并认为它是
-   「节点等宽 500px」的成因——已证伪（无头实测：加上该规则节点测宽不变）。引擎的
-   测宽元素是 position:fixed 的 shrink-to-fit 临时 div、文本编辑框也挂在 body
-   （customInnerElsAppendTo 默认 body），都不受容器子 div 宽度影响；
-   容器内本插件唯一的子 div 是 .mindmap-img-resize-handle（绝对定位、自带尺寸）。
-   真正的成因是「URL 文本顶满换行上限 + 会话旧构建」（依据：已移除的
-   docs/visual-improvement-plan.md §2，需要时用
-   `git log --diff-filter=D -- docs/visual-improvement-plan.md` 从历史取回）。 */
-
-/* ========== simple-mind-map 样式覆盖 ========== */
-
-.smm-container {
-  width: 100%;
-  height: 100%;
-}
-
-.smm-expand-btn {
-  cursor: pointer;
-}
-
-/* ========== 移动端适配 ========== */
-
 @media (max-width: 600px) {
   .mindmap-hud {
     gap: 6px;
   }
-
-  /* 按钮尺寸**不在这里缩**：组内条目的盒模型由 `.mindmap-hud-group .mindmap-tool-btn`
-     （特异性 0,2,0）决定，此处写 `.mindmap-tool-btn { width/height: 28px }` 从来
-     没生效过（2026-10-26 清理按死规则删除）。真要缩须改上面那条组内规则，并同步
-     `.mindmap-hud-group` 的内边距与图标尺寸——属观感变更，留待实机验证。 */
 }
 
-/* ========== 搜索栏 ========== */
-
-/* 搜索栏：底部居中的临时浮条（2026-10-22 从流内一条改为浮层）。
-   打开时不再挤占画布高度；层级高于右缘竖栏（`z-index: 20`），避免被其遮挡。 */
+/* src/ui/search/search-bar.css */
 .mindmap-search-bar {
   position: absolute;
   bottom: 12px;
@@ -222,11 +130,9 @@
   border-radius: 6px;
   box-shadow: var(--shadow-s);
 }
-
 .mindmap-search-bar-hidden {
   display: none;
 }
-
 .mindmap-search-input {
   flex: 1;
   max-width: 300px;
@@ -238,23 +144,19 @@
   font-size: 13px;
   outline: none;
 }
-
 .mindmap-search-input:focus {
   border-color: var(--text-accent);
   box-shadow: 0 0 0 2px var(--text-accent-hover);
 }
-
 .mindmap-search-count {
   font-size: 12px;
   color: var(--text-muted);
   min-width: 50px;
   text-align: center;
 }
-
 .mindmap-search-count.mindmap-search-no-result {
   color: var(--text-error);
 }
-
 .mindmap-search-btn {
   display: inline-flex;
   align-items: center;
@@ -269,18 +171,12 @@
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-
 .mindmap-search-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-accent);
 }
 
-/* ========== 大图首帧渲染提示 ==========
-   引擎首帧是**一个同步长任务**（实测 5000 节点 ≈2.2 s），期间画布空白、界面无
-   响应。提示由 JS 在加载的 rAF 回调里创建（引擎的 render 排在 setTimeout(0)，
-   本次帧末即可绘制），首帧渲染结束即摘除。
-   z-index 必须低于竖栏（20）与右键菜单：它只覆盖画布，不盖控件；
-   pointer-events: none 保证渲染期间误触不会落在提示上。 */
+/* src/ui/styles/global.css */
 .mindmap-render-hint {
   position: absolute;
   inset: 0;
@@ -289,16 +185,10 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  /* 盖住空白画布：不盖的话用户看到的是「一半空白 + 一半网格」的怪异中间态 */
   background: var(--background-primary);
   color: var(--text-muted);
   font-size: var(--font-ui-small);
 }
-
-/* ========== 小地图（左下角自动浮层，F12-M） ==========
-   口径：宽度随内容比例收在 160–220、高度随内容比例（上限 = 画布高 × 0.6）；
-   **底边钉住**（bottom 固定，高度变化只向上长）。
-   可见性由 JS 切 .is-visible（自动出现 → 动图后 30s 淡出），本文件不设任何常显状态。 */
 .mindmap-minimap {
   position: absolute;
   bottom: 16px;
@@ -306,39 +196,30 @@
   z-index: 20;
   box-sizing: border-box;
   overflow: hidden;
-  /* 圆角必须与视口框同值（`.mindmap-minimap-view` 的 2px）：面板的
-     `overflow: hidden` 会把**子元素**也裁进圆角，半径大于框的半径时，
-     贴到角的框角就落在弧外的弓形区里被切掉（实机症状：四角各缺 3–4px，
-     总览态「框缺四个角」）。半径 2px 时弓形深度只有 0.59px，小于 2px 边框，
-     视觉上角是闭合的。改大这里 = 重新引入缺角（2026-10-25 取证）。 */
   border-radius: 2px;
   background: var(--background-primary);
-  /* 描边走**内阴影**而不是 border：面板的 padding box 必须与几何尺寸严格一致
-     （视口框的 left/top 是相对它的像素坐标，1px 边框会让框整体偏 1px） */
   box-shadow: inset 0 0 0 1px var(--background-modifier-border), var(--shadow-s);
-  /* 淡出后不可见亦不可点：隐藏期间不抢画布事件 */
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  /* 宽高过渡是**刻意保留的动画**（2026-10-24 用户裁决）。面板是视口框的坐标系，
-     框的 left/top/width/height 因此写**百分比**而不是像素（见 view-minimap.updateBox），
-     两者同比例缩放，过渡期间也不会错位。 */
-  transition: opacity 150ms ease, height 150ms ease, width 150ms ease,
+  transition:
+    opacity 150ms ease,
+    height 150ms ease,
+    width 150ms ease,
     visibility 0s linear 150ms;
 }
-
 .mindmap-minimap.is-visible {
   opacity: 0.92;
   visibility: visible;
   pointer-events: auto;
-  transition: opacity 150ms ease, height 150ms ease, width 150ms ease;
+  transition:
+    opacity 150ms ease,
+    height 150ms ease,
+    width 150ms ease;
 }
-
-/* 半透明是常态（会盖住节点边缘），指上去转实心——与 HUD 卡片同款取舍 */
 .mindmap-minimap.is-visible:hover {
   opacity: 1;
 }
-
 .mindmap-minimap-img {
   display: block;
   width: 100%;
@@ -346,11 +227,6 @@
   user-select: none;
   pointer-events: none;
 }
-
-/* 当前视口方框：位置与尺寸由 JS **每帧**写入（当前变换的本地投影）。
-   ⚠ 这里**不能**给 left/top/width/height 挂 transition——过渡会拦截每一帧写入，
-   实测「写完立即读 rect 仍是旧值」，平移/缩放时框比主图慢约 200ms，与
-   view-minimap 文件头「图可以慢，框不能迟」的口径直接冲突（2026-10-24 实机）。 */
 .mindmap-minimap-view {
   position: absolute;
   box-sizing: border-box;
@@ -359,67 +235,48 @@
   background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
   cursor: grab;
 }
-
 .mindmap-minimap.is-dragging .mindmap-minimap-view {
   cursor: grabbing;
 }
-
-/* 几何未就绪 / 面板不可见：框收起（避免停在上一位置误导） */
 .mindmap-minimap-view.is-hidden {
   display: none;
 }
-
-/* ========== 滚动条样式 ========== */
-
 .mindmap-canvas-container::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-
 .mindmap-canvas-container::-webkit-scrollbar-track {
   background: transparent;
 }
-
 .mindmap-canvas-container::-webkit-scrollbar-thumb {
   background: var(--background-modifier-border);
   border-radius: 4px;
 }
-
 .mindmap-canvas-container::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
-
-/* ========== 文件拖拽高亮 ========== */
 .mindmap-canvas-container.mindmap-drag-over {
   outline: 3px dashed var(--text-accent);
   outline-offset: -6px;
   background: color-mix(in srgb, var(--text-accent) 8%, var(--background-primary));
   transition: outline 0.15s, background 0.15s;
 }
-
-/* ========== 官方笔记联想浮层（AbstractInputSuggest）========== */
 .suggestion-item .note-path {
   font-size: 11px;
   color: var(--text-muted);
-  /* 同上：逻辑方向，随宿主 RTL 翻转 */
   margin-inline-start: auto;
 }
-
-/* ========== 节点编辑弹窗（name/link/note/image/style）========== */
 .mindmap-modal-muted-hint {
   font-size: 11px;
   color: var(--text-muted);
   margin-bottom: 6px;
 }
-
-/* 自定义颜色弹窗：色块预览（仅尺寸与外形；底色是运行时输入值，由脚本写内联样式） */
 .mindmap-color-preview {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
 }
-
 .mindmap-color-preview-swatch {
   display: inline-block;
   width: 18px;
@@ -427,48 +284,37 @@
   border-radius: 3px;
   border: 1px solid var(--background-modifier-border);
 }
-
-/* 非法输入的说明文案：元素平时 hidden，只在解析失败时显示，故不必再叠状态类 */
 .mindmap-color-invalid {
   color: var(--text-error);
 }
-
 .mindmap-modal-label {
   font-size: 12px;
   color: var(--text-muted);
   margin-bottom: 6px;
 }
-
 .mindmap-modal-action-row {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
 }
-
 .mindmap-modal-action-row--mt {
   margin-top: 12px;
 }
-
 .mindmap-modal-action-row--inline {
   margin-bottom: 10px;
   align-items: center;
 }
-
 .mindmap-modal-hidden {
   display: none;
 }
-
 .mindmap-modal-file-status {
   font-size: 11px;
   color: var(--text-muted);
   align-self: center;
 }
-
-/* 官方 ButtonComponent 弱化操作（createButton 'muted' 变体） */
 .mindmap-modal-action-row button.is-muted {
   color: var(--text-muted);
 }
-
 .mindmap-modal-image-preview {
   max-height: 150px;
   overflow: hidden;
@@ -480,24 +326,19 @@
   margin-bottom: 10px;
   min-height: 60px;
 }
-
 .mindmap-modal-image-preview img {
   max-width: 100%;
   max-height: 150px;
   object-fit: contain;
 }
-
 .mindmap-modal-image-preview.is-error {
   color: var(--text-error);
   font-size: 12px;
 }
-
 .mindmap-modal-image-preview.is-empty {
-	color: var(--text-muted);
-	font-size: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
-
-/* ===== 节点图片全屏查看（灯箱） ===== */
 .mindmap-image-lightbox.modal {
   position: fixed;
   top: 0;
@@ -515,7 +356,6 @@
   overflow: hidden;
   background: transparent;
 }
-
 .mindmap-image-lightbox-content {
   width: 100%;
   height: 100%;
@@ -524,7 +364,6 @@
   justify-content: center;
   cursor: zoom-out;
 }
-
 .mindmap-image-lightbox-content img {
   max-width: 95vw;
   max-height: 95vh;
@@ -533,14 +372,11 @@
   user-select: none;
   box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
 }
-
 .mindmap-image-lightbox .modal-content {
   padding: 0;
   height: 100%;
   overflow: hidden;
 }
-
-/* 弹窗统一输入框（对齐 Obsidian 主题；原内联样式移入类） */
 .mindmap-modal-input {
   width: 100%;
   padding: 8px 10px;
@@ -552,20 +388,13 @@
   outline: none;
   margin-bottom: 10px;
 }
-
 .mindmap-modal-input:focus {
   border-color: var(--interactive-accent);
   box-shadow: 0 0 0 1px var(--interactive-accent);
 }
-
 .mindmap-modal-file-status.is-error {
   color: var(--text-error);
 }
-
-/* ========== 图片拖拽调宽（image-resize.ts） ========== */
-
-/* hover 图片时的右下角手柄：拖动等比缩放，尺寸持久化到 data.json。
-   容器铺满规则已用 :not(.mindmap-img-resize-handle) 排除本手柄，故此处无需强制优先级 */
 .mindmap-img-resize-handle {
   position: absolute;
   width: 12px;
@@ -580,70 +409,22 @@
   pointer-events: none;
   transition: opacity 0.12s ease-in-out;
 }
-
 .mindmap-img-resize-handle.is-visible {
   opacity: 1;
   pointer-events: auto;
 }
-
-/* ========== 节点内联内容（方案 B：features/node-inline-content.ts 自绘） ==========
-   布局 / 排版 / 配色 / 轻标记样式**全部内联在元素上**（该模块 CONTENT_STYLES 一族
-   常量，唯一来源）：引擎导出 PNG/SVG 只注入自身 CSS 与 header/footer 的 cssText，
-   插件 styles.css 不在导出图里生效——属性一旦只写在类规则里，导出图就会掉样式
-   （而 foreignObject 尺寸仍按屏上测宽固定 → 溢出/错位）。
-   此处只保留**纯屏幕装饰**（不含任何影响尺寸的属性，丢失不影响导出）。
-   另注：引擎的离屏测宽元素是挂在画布容器下的 position:fixed 子 div——**勿**给
-   `.mindmap-canvas-container > div` 加 width/height 规则（见上方同名警示注释）。 */
 .mindmap-node-inline-content a.internal-link:hover,
 .mindmap-node-inline-content a.external-link:hover {
   text-decoration: underline;
 }
-
-/* 代码块复制按钮（块级代码段）：**外观 100% 内联**于
-   node-inline-content 的 CODE_COPY_BUTTON_STYLES（形状 mask / currentColor
-   填充 / --icon-color 三级兜底基色 / 圆角——用户实机 styles.css 曾长期滞留
-   旧版，类规则口径不可靠）。
-
-   悬停显隐（2026-10-06 K114b）：按钮绝对定位在代码盒右上角，**常态会压住首行
-   约 2 个字符**（实测重叠 14×16px）。改为**悬停才显形**，对齐 Obsidian 原生
-   （app.css:11854 `.markdown-rendered pre:not(:hover) > button.copy-code-button
-   { display: none }`）——原生同样**不为按钮预留 padding**，靠 hover 避免常态遮挡。
-
-   为什么用 `@media (hover: hover)` 包裹（而不是「默认 display:none + hover 块
-   + @media(hover:none) 块」三段式）：
-   - 桌面（hover:hover）：`:not(:hover)` 隐藏 → 悬停显示；
-   - 触屏/移动（hover:none）：整条规则不生效 → **按钮常显**，无需另写降级块；
-   - 默认态仍留在内联 ⇒ 样式表未加载时**退化回改动前的遮挡**（而非「功能消失」），
-     降级方向安全。导出图不含 styles.css，按钮仍靠 hideCopyButtonsInExportSvg 隐身。
-
-   选择器宿主与原生不同：原生是 `pre > button`（按钮在 pre 内），本插件按钮是
-   `.tmm-codeblock` 的**兄弟**子元素（pre 之后追加），故 hover 目标是 block。
-
-   ⚠ **为何「外观内联」却在此加类规则，二者不矛盾**（K115，防误删）：
-   上面「类规则口径不可靠」的理由针对的是**外观**（形状/底色/圆角）——它必须 100%
-   内联，因为导出 SVG 只序列化元素自身、不含插件 styles.css，类规则在导出图里整体
-   失效。而本条规则管的是**显隐**：(a) 导出时按钮本就要被
-   `hideCopyButtonsInExportSvg` 显式隐身，不需要它；(b) 悬停是纯交互态，无导出语义。
-   换言之：**外观 = 必须内联（导出保真），显隐 = 必须走类表（屏上交互）**。 */
 @media (hover: hover) {
   .tmm-codeblock:not(:hover) > .tmm-code-copy {
     display: none;
   }
-
-  /* mermaid 图容器复用同一个复制按钮（`tmm-code-copy` + `data-code`），故显隐
-     规则与代码块成对：外观仍全内联，这里只加一条「不悬停就藏」。 */
   .tmm-mermaid:not(:hover) > .tmm-code-copy {
     display: none;
   }
 }
-
-/* ========== mermaid 图的主题变量兜底（K173） ========== */
-/* Pele 产物里的颜色全是 `var(--pele-*)`。**新版 Obsidian** 自己在 `body` 上定义了
-   整套 `--pele-*`（映射 `--mermaid-*`），本段因此只是「同义复述 + 追加兜底」：
-   取值链与宿主一致，所以 1.15 上观感零差异；**老版本 / 无 Pele 的宿主**没有这套
-   变量，就落到最后的 Obsidian 通用变量（`--background-primary` / `--text-normal` …），
-   于是「暗色主题给白底图」不会发生。
-   ⚠ 只跟**明暗**走，不跟节点色：图是「贴纸」，不是节点的一部分（2026-11-09 裁决）。 */
 .tmm-mermaid {
   --pele-bg: var(--mermaid-background, var(--background-primary));
   --pele-fg: var(--mermaid-text-color, var(--text-normal));
@@ -659,47 +440,25 @@
   --pele-font-mono: var(--font-monospace);
   --pele-radius: var(--mermaid-radius, var(--radius-s));
 }
-
-/* ========== 节点文本弹窗（自绘节点的编辑入口，ui/modal-text.ts） ========== */
-/* 编辑的是**写回文件的那份文本**（可含 [[双链]] 等语法），等宽更易读 */
 .mindmap-modal-textarea {
   min-height: 90px;
   resize: vertical;
   font-family: var(--font-monospace, monospace);
   line-height: 1.4;
 }
-
-/* ========== mindmap 代码块嵌入（features/mindmap-codeblock.ts） ==========
-   普通笔记里的**只读**导图：外层容器 + 引擎挂载点（canvas）+ 提示/大纲两态。
-
-   高度口径（2026-10-13，对齐 Obsidian 里 Mermaid 的缺省行为）：**随内容**。
-   `.tmm-embed-canvas` 的 `height` 只是**首帧前的临时值**——引擎必须有非零
-   尺寸才能首次布局，量出内容尺寸后由嵌入的 `applyEmbedFit` 改写内联高度
-   （= 按容器宽度缩放后的内容高），故渲染完成后不应再看到大块空白。
-   **不提供 resize 手柄、不提供平移/缩放**：嵌入没有「调节」语义（Mermaid 同款）。
-
-   ⚠ 与 `.mindmap-canvas-container` 同款警示：**勿**给 canvas 的直接子 div 加
-   `width/height: 100%`——引擎的测宽元素是 position:fixed 的临时 div、文本编辑
-   框挂在 body，都不受容器子 div 尺寸影响（历史曾据此误判「节点等宽 500px」
-   的成因，见上方同名注释）。 */
 .tmm-embed {
   position: relative;
   margin: 1em 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   background: var(--background-primary);
-  /* 首帧前的临时高度（渲染完成后被内联高度覆盖；用户可用 CSS 片段调整它） */
   --tmm-embed-height: 360px;
 }
-
 .tmm-embed-canvas {
   width: 100%;
   height: var(--tmm-embed-height);
-  /* 高度已按内容算准，overflow 只兜住亚像素误差 */
   overflow: hidden;
 }
-
-/* 只读角标（嵌入形态没有编辑入口）：纯装饰，绝对定位不占布局、不吃指针 */
 .tmm-embed-readonly {
   position: absolute;
   top: 6px;
@@ -715,40 +474,26 @@
   pointer-events: none;
   user-select: none;
 }
-
-/* 空态 / 超限降级 / 渲染失败提示行：单行弱化，不抢正文注意力 */
 .tmm-embed-notice {
   padding: 6px 10px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller, 12px);
 }
-
-/* 超限降级的只读大纲：层级与文本全保留、零引擎成本 */
 .tmm-embed-outline {
   max-height: var(--tmm-embed-height);
   padding: 6px 10px;
   overflow: auto;
 }
-
 .tmm-embed-outline ul {
   margin: 0;
   padding-inline-start: 1.2em;
 }
-
-/* ========== 双链文档图标（mindmap.ts createNodePrefixContent 自绘） ========== */
-/* 图标为 <svg> 根元素，被引擎放进 foreignObject（HTML 上下文）：display:block
-   去除行内基线间隙，手型光标提示可点（点击 = 打开目标）。 */
 .mindmap-wiki-doc-icon {
   display: block;
   cursor: pointer;
 }
-
-/* ========== 插件设置面板 ========== */
-/* 说明文字里的换行按字面保留：官方设置项的描述是**单个文本节点**且
-   `white-space: normal`（实测 2026-10-22），`\n` 会被折叠成空格；
-   改成 pre-line 后「一句话做什么 / 一句话代价」才能分行显示。
-   作用域限定在插件自己的设置页（settings.ts 在渲染时给容器加了类）。 */
 .mindmap-settings-tab .setting-item-description {
   white-space: pre-line;
 }
 
+/* src/ui/styles/index.css */

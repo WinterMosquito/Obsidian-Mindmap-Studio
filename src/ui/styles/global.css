@@ -1,0 +1,477 @@
+/* ========== 大图首帧渲染提示 ==========
+   引擎首帧是**一个同步长任务**（实测 5000 节点 ≈2.2 s），期间画布空白、界面无
+   响应。提示由 JS 在加载的 rAF 回调里创建（引擎的 render 排在 setTimeout(0)，
+   本次帧末即可绘制），首帧渲染结束即摘除。
+   z-index 必须低于竖栏（20）与右键菜单：它只覆盖画布，不盖控件；
+   pointer-events: none 保证渲染期间误触不会落在提示上。 */
+.mindmap-render-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  /* 盖住空白画布：不盖的话用户看到的是「一半空白 + 一半网格」的怪异中间态 */
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+/* ========== 小地图（左下角自动浮层，F12-M） ==========
+   口径：宽度随内容比例收在 160–220、高度随内容比例（上限 = 画布高 × 0.6）；
+   **底边钉住**（bottom 固定，高度变化只向上长）。
+   可见性由 JS 切 .is-visible（自动出现 → 动图后 30s 淡出），本文件不设任何常显状态。 */
+.mindmap-minimap {
+  position: absolute;
+  bottom: 16px;
+  inset-inline-start: 16px;
+  z-index: 20;
+  box-sizing: border-box;
+  overflow: hidden;
+  /* 圆角必须与视口框同值（`.mindmap-minimap-view` 的 2px）：面板的
+     `overflow: hidden` 会把**子元素**也裁进圆角，半径大于框的半径时，
+     贴到角的框角就落在弧外的弓形区里被切掉（实机症状：四角各缺 3–4px，
+     总览态「框缺四个角」）。半径 2px 时弓形深度只有 0.59px，小于 2px 边框，
+     视觉上角是闭合的。改大这里 = 重新引入缺角（2026-10-25 取证）。 */
+  border-radius: 2px;
+  background: var(--background-primary);
+  /* 描边走**内阴影**而不是 border：面板的 padding box 必须与几何尺寸严格一致
+     （视口框的 left/top 是相对它的像素坐标，1px 边框会让框整体偏 1px） */
+  box-shadow: inset 0 0 0 1px var(--background-modifier-border), var(--shadow-s);
+  /* 淡出后不可见亦不可点：隐藏期间不抢画布事件 */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  /* 宽高过渡是**刻意保留的动画**（2026-10-24 用户裁决）。面板是视口框的坐标系，
+     框的 left/top/width/height 因此写**百分比**而不是像素（见 view-minimap.updateBox），
+     两者同比例缩放，过渡期间也不会错位。 */
+  transition: opacity 150ms ease, height 150ms ease, width 150ms ease,
+    visibility 0s linear 150ms;
+}
+
+.mindmap-minimap.is-visible {
+  opacity: 0.92;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 150ms ease, height 150ms ease, width 150ms ease;
+}
+
+/* 半透明是常态（会盖住节点边缘），指上去转实心——与 HUD 卡片同款取舍 */
+.mindmap-minimap.is-visible:hover {
+  opacity: 1;
+}
+
+.mindmap-minimap-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* 当前视口方框：位置与尺寸由 JS **每帧**写入（当前变换的本地投影）。
+   ⚠ 这里**不能**给 left/top/width/height 挂 transition——过渡会拦截每一帧写入，
+   实测「写完立即读 rect 仍是旧值」，平移/缩放时框比主图慢约 200ms，与
+   view-minimap 文件头「图可以慢，框不能迟」的口径直接冲突（2026-10-24 实机）。 */
+.mindmap-minimap-view {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--interactive-accent);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  cursor: grab;
+}
+
+.mindmap-minimap.is-dragging .mindmap-minimap-view {
+  cursor: grabbing;
+}
+
+/* 几何未就绪 / 面板不可见：框收起（避免停在上一位置误导） */
+.mindmap-minimap-view.is-hidden {
+  display: none;
+}
+
+/* ========== 滚动条样式 ========== */
+
+.mindmap-canvas-container::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.mindmap-canvas-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mindmap-canvas-container::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 4px;
+}
+
+.mindmap-canvas-container::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* ========== 文件拖拽高亮 ========== */
+.mindmap-canvas-container.mindmap-drag-over {
+  outline: 3px dashed var(--text-accent);
+  outline-offset: -6px;
+  background: color-mix(in srgb, var(--text-accent) 8%, var(--background-primary));
+  transition: outline 0.15s, background 0.15s;
+}
+
+/* ========== 官方笔记联想浮层（AbstractInputSuggest）========== */
+.suggestion-item .note-path {
+  font-size: 11px;
+  color: var(--text-muted);
+  /* 同上：逻辑方向，随宿主 RTL 翻转 */
+  margin-inline-start: auto;
+}
+
+/* ========== 节点编辑弹窗（name/link/note/image/style）========== */
+.mindmap-modal-muted-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+/* 自定义颜色弹窗：色块预览（仅尺寸与外形；底色是运行时输入值，由脚本写内联样式） */
+.mindmap-color-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mindmap-color-preview-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* 非法输入的说明文案：元素平时 hidden，只在解析失败时显示，故不必再叠状态类 */
+.mindmap-color-invalid {
+  color: var(--text-error);
+}
+
+.mindmap-modal-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.mindmap-modal-action-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.mindmap-modal-action-row--mt {
+  margin-top: 12px;
+}
+
+.mindmap-modal-action-row--inline {
+  margin-bottom: 10px;
+  align-items: center;
+}
+
+.mindmap-modal-hidden {
+  display: none;
+}
+
+.mindmap-modal-file-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  align-self: center;
+}
+
+/* 官方 ButtonComponent 弱化操作（createButton 'muted' 变体） */
+.mindmap-modal-action-row button.is-muted {
+  color: var(--text-muted);
+}
+
+.mindmap-modal-image-preview {
+  max-height: 150px;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+  min-height: 60px;
+}
+
+.mindmap-modal-image-preview img {
+  max-width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+}
+
+.mindmap-modal-image-preview.is-error {
+  color: var(--text-error);
+  font-size: 12px;
+}
+
+.mindmap-modal-image-preview.is-empty {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+/* ===== 节点图片全屏查看（灯箱） ===== */
+.mindmap-image-lightbox.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+  background: transparent;
+}
+
+.mindmap-image-lightbox-content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+
+.mindmap-image-lightbox-content img {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+  transform-origin: center center;
+  user-select: none;
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+}
+
+.mindmap-image-lightbox .modal-content {
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 弹窗统一输入框（对齐 Obsidian 主题；原内联样式移入类） */
+.mindmap-modal-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 13px;
+  outline: none;
+  margin-bottom: 10px;
+}
+
+.mindmap-modal-input:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.mindmap-modal-file-status.is-error {
+  color: var(--text-error);
+}
+
+/* ========== 图片拖拽调宽（image-resize.ts） ========== */
+
+/* hover 图片时的右下角手柄：拖动等比缩放，尺寸持久化到 data.json。
+   容器铺满规则已用 :not(.mindmap-img-resize-handle) 排除本手柄，故此处无需强制优先级 */
+.mindmap-img-resize-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--interactive-accent);
+  border: 1px solid var(--background-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: nwse-resize;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease-in-out;
+}
+
+.mindmap-img-resize-handle.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ========== 节点内联内容（方案 B：features/node-inline-content.ts 自绘） ==========
+   布局 / 排版 / 配色 / 轻标记样式**全部内联在元素上**（该模块 CONTENT_STYLES 一族
+   常量，唯一来源）：引擎导出 PNG/SVG 只注入自身 CSS 与 header/footer 的 cssText，
+   插件 styles.css 不在导出图里生效——属性一旦只写在类规则里，导出图就会掉样式
+   （而 foreignObject 尺寸仍按屏上测宽固定 → 溢出/错位）。
+   此处只保留**纯屏幕装饰**（不含任何影响尺寸的属性，丢失不影响导出）。
+   另注：引擎的离屏测宽元素是挂在画布容器下的 position:fixed 子 div——**勿**给
+   `.mindmap-canvas-container > div` 加 width/height 规则（见上方同名警示注释）。 */
+.mindmap-node-inline-content a.internal-link:hover,
+.mindmap-node-inline-content a.external-link:hover {
+  text-decoration: underline;
+}
+
+/* 代码块复制按钮（块级代码段）：**外观 100% 内联**于
+   node-inline-content 的 CODE_COPY_BUTTON_STYLES（形状 mask / currentColor
+   填充 / --icon-color 三级兜底基色 / 圆角——用户实机 styles.css 曾长期滞留
+   旧版，类规则口径不可靠）。
+
+   悬停显隐（2026-10-06 K114b）：按钮绝对定位在代码盒右上角，**常态会压住首行
+   约 2 个字符**（实测重叠 14×16px）。改为**悬停才显形**，对齐 Obsidian 原生
+   （app.css:11854 `.markdown-rendered pre:not(:hover) > button.copy-code-button
+   { display: none }`）——原生同样**不为按钮预留 padding**，靠 hover 避免常态遮挡。
+
+   为什么用 `@media (hover: hover)` 包裹（而不是「默认 display:none + hover 块
+   + @media(hover:none) 块」三段式）：
+   - 桌面（hover:hover）：`:not(:hover)` 隐藏 → 悬停显示；
+   - 触屏/移动（hover:none）：整条规则不生效 → **按钮常显**，无需另写降级块；
+   - 默认态仍留在内联 ⇒ 样式表未加载时**退化回改动前的遮挡**（而非「功能消失」），
+     降级方向安全。导出图不含 styles.css，按钮仍靠 hideCopyButtonsInExportSvg 隐身。
+
+   选择器宿主与原生不同：原生是 `pre > button`（按钮在 pre 内），本插件按钮是
+   `.tmm-codeblock` 的**兄弟**子元素（pre 之后追加），故 hover 目标是 block。
+
+   ⚠ **为何「外观内联」却在此加类规则，二者不矛盾**（K115，防误删）：
+   上面「类规则口径不可靠」的理由针对的是**外观**（形状/底色/圆角）——它必须 100%
+   内联，因为导出 SVG 只序列化元素自身、不含插件 styles.css，类规则在导出图里整体
+   失效。而本条规则管的是**显隐**：(a) 导出时按钮本就要被
+   `hideCopyButtonsInExportSvg` 显式隐身，不需要它；(b) 悬停是纯交互态，无导出语义。
+   换言之：**外观 = 必须内联（导出保真），显隐 = 必须走类表（屏上交互）**。 */
+@media (hover: hover) {
+  .tmm-codeblock:not(:hover) > .tmm-code-copy {
+    display: none;
+  }
+
+  /* mermaid 图容器复用同一个复制按钮（`tmm-code-copy` + `data-code`），故显隐
+     规则与代码块成对：外观仍全内联，这里只加一条「不悬停就藏」。 */
+  .tmm-mermaid:not(:hover) > .tmm-code-copy {
+    display: none;
+  }
+}
+
+/* ========== mermaid 图的主题变量兜底（K173） ========== */
+/* Pele 产物里的颜色全是 `var(--pele-*)`。**新版 Obsidian** 自己在 `body` 上定义了
+   整套 `--pele-*`（映射 `--mermaid-*`），本段因此只是「同义复述 + 追加兜底」：
+   取值链与宿主一致，所以 1.15 上观感零差异；**老版本 / 无 Pele 的宿主**没有这套
+   变量，就落到最后的 Obsidian 通用变量（`--background-primary` / `--text-normal` …），
+   于是「暗色主题给白底图」不会发生。
+   ⚠ 只跟**明暗**走，不跟节点色：图是「贴纸」，不是节点的一部分（2026-11-09 裁决）。 */
+.tmm-mermaid {
+  --pele-bg: var(--mermaid-background, var(--background-primary));
+  --pele-fg: var(--mermaid-text-color, var(--text-normal));
+  --pele-muted: var(--mermaid-muted-color, var(--text-muted));
+  --pele-line: var(--mermaid-line-color, var(--text-faint));
+  --pele-surface: var(--mermaid-surface, var(--background-secondary));
+  --pele-surface-alt: var(--mermaid-surface-alt, var(--background-secondary-alt));
+  --pele-border: var(--mermaid-border-color, var(--background-modifier-border));
+  --pele-accent: var(--mermaid-accent, var(--text-accent));
+  --pele-critical: var(--mermaid-critical, var(--text-error));
+  --pele-error: var(--mermaid-error, var(--text-error));
+  --pele-font: var(--font-mermaid, var(--font-interface));
+  --pele-font-mono: var(--font-monospace);
+  --pele-radius: var(--mermaid-radius, var(--radius-s));
+}
+
+/* ========== 节点文本弹窗（自绘节点的编辑入口，ui/modal-text.ts） ========== */
+/* 编辑的是**写回文件的那份文本**（可含 [[双链]] 等语法），等宽更易读 */
+.mindmap-modal-textarea {
+  min-height: 90px;
+  resize: vertical;
+  font-family: var(--font-monospace, monospace);
+  line-height: 1.4;
+}
+
+/* ========== mindmap 代码块嵌入（features/mindmap-codeblock.ts） ==========
+   普通笔记里的**只读**导图：外层容器 + 引擎挂载点（canvas）+ 提示/大纲两态。
+
+   高度口径（2026-10-13，对齐 Obsidian 里 Mermaid 的缺省行为）：**随内容**。
+   `.tmm-embed-canvas` 的 `height` 只是**首帧前的临时值**——引擎必须有非零
+   尺寸才能首次布局，量出内容尺寸后由嵌入的 `applyEmbedFit` 改写内联高度
+   （= 按容器宽度缩放后的内容高），故渲染完成后不应再看到大块空白。
+   **不提供 resize 手柄、不提供平移/缩放**：嵌入没有「调节」语义（Mermaid 同款）。
+
+   ⚠ 与 `.mindmap-canvas-container` 同款警示：**勿**给 canvas 的直接子 div 加
+   `width/height: 100%`——引擎的测宽元素是 position:fixed 的临时 div、文本编辑
+   框挂在 body，都不受容器子 div 尺寸影响（历史曾据此误判「节点等宽 500px」
+   的成因，见上方同名注释）。 */
+.tmm-embed {
+  position: relative;
+  margin: 1em 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  /* 首帧前的临时高度（渲染完成后被内联高度覆盖；用户可用 CSS 片段调整它） */
+  --tmm-embed-height: 360px;
+}
+
+.tmm-embed-canvas {
+  width: 100%;
+  height: var(--tmm-embed-height);
+  /* 高度已按内容算准，overflow 只兜住亚像素误差 */
+  overflow: hidden;
+}
+
+/* 只读角标（嵌入形态没有编辑入口）：纯装饰，绝对定位不占布局、不吃指针 */
+.tmm-embed-readonly {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.4;
+  opacity: 0.85;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 空态 / 超限降级 / 渲染失败提示行：单行弱化，不抢正文注意力 */
+.tmm-embed-notice {
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 12px);
+}
+
+/* 超限降级的只读大纲：层级与文本全保留、零引擎成本 */
+.tmm-embed-outline {
+  max-height: var(--tmm-embed-height);
+  padding: 6px 10px;
+  overflow: auto;
+}
+
+.tmm-embed-outline ul {
+  margin: 0;
+  padding-inline-start: 1.2em;
+}
+
+/* ========== 双链文档图标（mindmap.ts createNodePrefixContent 自绘） ========== */
+/* 图标为 <svg> 根元素，被引擎放进 foreignObject（HTML 上下文）：display:block
+   去除行内基线间隙，手型光标提示可点（点击 = 打开目标）。 */
+.mindmap-wiki-doc-icon {
+  display: block;
+  cursor: pointer;
+}
+
+/* ========== 插件设置面板 ========== */
+/* 说明文字里的换行按字面保留：官方设置项的描述是**单个文本节点**且
+   `white-space: normal`（实测 2026-10-22），`\n` 会被折叠成空格；
+   改成 pre-line 后「一句话做什么 / 一句话代价」才能分行显示。
+   作用域限定在插件自己的设置页（settings.ts 在渲染时给容器加了类）。 */
+.mindmap-settings-tab .setting-item-description {
+  white-space: pre-line;
+}
+

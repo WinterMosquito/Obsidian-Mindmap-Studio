@@ -159,3 +159,19 @@ describe('parseExemptionRows（豁免表行形态）', () => {
 		expect(rows.size).toBe(2);
 	});
 });
+
+
+describe('组件 CSS 与构建门禁', () => {
+	it.each(['styles.css', 'src/styles/index.css', 'src/ui/toolbar/toolbar.css', 'src/ui/search/search-bar.css', 'esbuild.config.mjs'])(
+		'%s 同时触发 CSS lint 与真实视觉验证', (file) => {
+			const labels = labelsOf(buildPlan([file]));
+			expect(labels).toContain('npm run lint:css');
+			expect(labels).toContain('npm run verify:visual -- --require-chrome');
+		},
+	);
+	it.each(['src/ui/toolbar/toolbar.ts', 'src/ui/search/search-bar.ts', 'src/features/view-toolbar.ts', 'src/features/view-search.ts', 'scripts/visual-ui.mjs'])(
+		'%s 触发组件 DOM 验证', (file) => {
+			expect(labelsOf(buildPlan([file]))).toContain('npm run verify:visual -- --require-chrome');
+		},
+	);
+});

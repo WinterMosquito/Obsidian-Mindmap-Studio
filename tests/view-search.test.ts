@@ -17,6 +17,7 @@ import { t, type Language } from '../src/core/i18n';
 import {
 	buildSearchBar,
 	closeSearchBar,
+	disposeSearchBar,
 	doSearch,
 	openSearchBar,
 	refreshSearchBarLabels,
@@ -105,8 +106,25 @@ class FakeEl {
 	value = '';
 	onclick: (() => void) | null = null;
 	focusCount = 0;
+	readonly listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+	readonly domRecords: DomRecord[];
 
-	constructor(tag: string, init: FakeElInit = {}) {
+	addEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+		let set = this.listeners.get(type);
+		if (!set) this.listeners.set(type, set = new Set());
+		set.add(listener);
+		this.domRecords.push({ target: this, type, listener: listener as unknown as (event: FakeKeyEvent) => void });
+	}
+
+	removeEventListener(type: string, listener: EventListenerOrEventListenerObject): void {
+		this.listeners.get(type)?.delete(listener);
+	}
+
+	empty(): void { this.children.length = 0; }
+
+
+	constructor(tag: string, init: FakeElInit = {}, domRecords: DomRecord[] = []) {
+		this.domRecords = domRecords;
 		this.tag = tag;
 		this.cls = init.cls ?? '';
 		this.attr = { ...(init.attr ?? {}) };
@@ -118,14 +136,14 @@ class FakeEl {
 	}
 
 	createEl(tag: string, init: FakeElInit = {}): FakeEl {
-		const child = new FakeEl(tag, init);
+		const child = new FakeEl(tag, init, this.domRecords);
 		this.children.push(child);
 		return child;
 	}
 
 	/** 模块按 Obsidian 真实签名调用 createSpan('mindmap-search-count') */
 	createSpan(cls?: string): FakeEl {
-		const child = new FakeEl('span', cls === undefined ? {} : { cls });
+		const child = new FakeEl('span', cls === undefined ? {} : { cls }, this.domRecords);
 		this.children.push(child);
 		return child;
 	}
@@ -173,10 +191,10 @@ function nth<T>(items: readonly T[], index: number): T {
 function makeView(
 	options: { withBar?: boolean; withMindMap?: boolean } = {},
 ): Harness {
-	const bar = new FakeEl('div', { cls: 'mindmap-search-bar' });
+	const domRecords: DomRecord[] = [];
+	const bar = new FakeEl('div', { cls: 'mindmap-search-bar' }, domRecords);
 	const canvas = new FakeEl('div', { cls: 'mindmap-canvas-container' });
 	const mindMap = { engine: 'fake' } as unknown as MindMap;
-	const domRecords: DomRecord[] = [];
 	const binder = {
 		onDom(target: unknown, type: string, listener: unknown): void {
 			domRecords.push({
@@ -810,5 +828,52 @@ describe('refreshSearchBarLabels（语言变更就地刷新）', () => {
 	it('未构建搜索栏时静默返回（不抛异常）', () => {
 		const bare = makeView();
 		expect(() => refreshSearchBarLabels(bare.view)).not.toThrow();
+	});
+});
+
+
+describe('搜索组件生命周期', () => {
+	it('快速打开再关闭不会被延迟聚焦抢回焦点', () => {
+		const h = makeView();
+		const { input } = buildBar(h);
+		openSearchBar(h.view);
+		closeSearchBar(h.view);
+		vi.advanceTimersByTime(180);
+		expect(input.focusCount).toBe(0);
+		expect(h.canvas.focusCount).toBe(1);
+	});
+
+	it('重建清理旧输入监听、按钮、焦点和未决搜索', () => {
+		const h = makeView();
+		const old = buildBar(h);
+		old.input.value = 'old';
+		doSearch(h.view);
+		openSearchBar(h.view);
+		const next = buildBar(h);
+		vi.advanceTimersByTime(180);
+		expect(old.input.focusCount).toBe(0);
+		expect(searchMocks.searchMindMap).not.toHaveBeenCalled();
+		expect([...old.input.listeners.values()].every((set) => set.size === 0)).toBe(true);
+		expect(old.buttons.every((button) => button.onclick === null)).toBe(true);
+		expect(h.bar.children).toHaveLength(5);
+		expect(h.view.searchInput).toBe(next.input);
+	});
+
+	it('销毁幂等，取消任务并释放兼容字段，不调引擎或聚焦画布', () => {
+		const h = makeView();
+		const { input, buttons } = buildBar(h);
+		input.value = 'old';
+		doSearch(h.view);
+		openSearchBar(h.view);
+		disposeSearchBar(h.view);
+		disposeSearchBar(h.view);
+		vi.advanceTimersByTime(180);
+		expect(input.focusCount).toBe(0);
+		expect(searchMocks.searchMindMap).not.toHaveBeenCalled();
+		expect(searchMocks.endMindMapSearch).not.toHaveBeenCalled();
+		expect(h.canvas.focusCount).toBe(0);
+		expect(h.view.searchInput).toBeNull();
+		expect(h.view.searchCountEl).toBeNull();
+		expect(buttons.every((button) => button.onclick === null)).toBe(true);
 	});
 });

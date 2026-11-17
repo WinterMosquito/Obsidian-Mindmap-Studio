@@ -1,0 +1,59 @@
+/* ===== Obsidian plugin styles ===== */
+/* 引擎样式不在此文件：simple-mind-map 的 dist CSS 全为 Quill 富文本规则（本插件未启用
+   RichText 插件），引擎本体样式由 bundle 运行时注入 document.head（见 vendor/BUILD.md）。 */
+/* ========== MindMap Studio Plugin Styles ========== */
+
+/* 自动打开：切换期间的源视图遮罩。
+   Obsidian 打开文件**先**建 markdown 视图并渲染，之后插件才 setViewState 换视图；
+   启动恢复时叶子逐批恢复，中间能隔数百毫秒 ⇒ 用户看到「先闪一屏 Markdown 原文」。
+   只藏内容区（保留布局，不给标签栏/滚动条造成跳动），最坏是空一帧。
+   类由 markdown/md-open.ts 的 openAsMindMap 加/摘（成败都会摘）。
+
+   两条选择器**并列**（命中其一即生效）：`.workspace-leaf-content` 是当前
+   Obsidian 的叶子内容容器，`.view-content` 是官方视图内容容器的长期类名——
+   上游若调整层级，只靠前者会静默失效（退化成旧观感，不报错、也测不出来）。 */
+.workspace-leaf.mindmap-view-switching .workspace-leaf-content,
+.workspace-leaf.mindmap-view-switching .view-content {
+  visibility: hidden;
+}
+
+/* 视图容器 */
+.mindmap-view-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  /* 浮层（.mindmap-toolbar 的右缘竖栏、.mindmap-minimap 等绝对定位元素）以本容器为参照系 */
+  position: relative;
+}
+
+/* 画布容器 */
+.mindmap-canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--background-primary);
+}
+
+/* 注意：不要给 .mindmap-canvas-container 的直接子 div 设 width/height:100%。
+   历史：曾据此写过 `> div:not(.mindmap-img-resize-handle)` 满宽规则，并认为它是
+   「节点等宽 500px」的成因——已证伪（无头实测：加上该规则节点测宽不变）。引擎的
+   测宽元素是 position:fixed 的 shrink-to-fit 临时 div、文本编辑框也挂在 body
+   （customInnerElsAppendTo 默认 body），都不受容器子 div 宽度影响；
+   容器内本插件唯一的子 div 是 .mindmap-img-resize-handle（绝对定位、自带尺寸）。
+   真正的成因是「URL 文本顶满换行上限 + 会话旧构建」（依据：已移除的
+   docs/visual-improvement-plan.md §2，需要时用
+   `git log --diff-filter=D -- docs/visual-improvement-plan.md` 从历史取回）。 */
+
+/* ========== simple-mind-map 样式覆盖 ========== */
+
+.smm-container {
+  width: 100%;
+  height: 100%;
+}
+
+.smm-expand-btn {
+  cursor: pointer;
+}
+

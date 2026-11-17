@@ -1,0 +1,145 @@
+/* 工具栏：只剩右缘竖排一组（2026-10-22 第三版；顶部居中 / 底栏左下两版已移除），
+   见 ui/toolbar/toolbar.ts 与 features/view-toolbar.ts。本元素只是**穿透层**：不占布局高度、不拦截画布事件；
+   子容器 `.mindmap-hud` 自己 pointer-events:auto。 */
+.mindmap-toolbar {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
+/* 右缘图标栈：对齐官方 `.canvas-controls`——absolute / top 8 / 右 8 / 纵向 flex / 组间 8px */
+.mindmap-hud {
+  position: absolute;
+  top: 8px;
+  inset-inline-end: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+/* 栈内每组：逐条照抄官方 `.canvas-control-group`（Obsidian 1.14.4 实机取证）：
+   padding:0 / overflow:hidden / radius var(--radius-s) / 背景 interactive-normal /
+   阴影 input-shadow；组内**没有 gap**，分隔线是条目自身除末项外的 1px border-bottom
+   （4 项组高 131 = 32×4 + 1×3）。 */
+.mindmap-hud-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  background: var(--interactive-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  box-shadow: var(--input-shadow);
+  overflow: hidden;
+}
+
+/* 组内按钮：官方的 `.canvas-control-item` 同款盒模型——width 32 / height auto /
+   padding 8（内容区恰为 16px 图标）/ 除末项外 border-bottom 1px。
+   dpr 1.5 下 1px 边框 computed 0.6667（= 1 物理 px）：条目总高 32.67、末项 32；
+   用固定 height 32 + border-box 会把线吃进盒内（组矮 0.67px），故用 auto + padding。 */
+.mindmap-hud-group .mindmap-tool-btn {
+  box-sizing: border-box;
+  width: 32px;
+  height: auto;
+  padding: 8px;
+  border-radius: 0;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--background-modifier-border);
+  box-shadow: none;
+  cursor: var(--cursor, default);
+  --icon-size: 16px;
+  /* 官方条目同款：图标描边走 --icon-s-stroke-width（本机 2px） */
+  --icon-stroke: var(--icon-s-stroke-width, 2px);
+}
+
+/* 末项去掉底边：否则会与组容器的下边框叠成 2px 粗线（官方 :last-child 同款） */
+.mindmap-hud-group .mindmap-tool-btn:last-child {
+  border-bottom: none;
+}
+
+/* 悬停：官方 `@media (hover:hover)` 同款取色（底色 interactive-hover、字色 normal，
+   不是 accent） */
+.mindmap-hud-group .mindmap-tool-btn:hover {
+  color: var(--text-normal);
+  background: var(--interactive-hover);
+}
+
+/* 置灰（固定直线布局的「连线」）：官方只淡化**图标**（text-faint），
+   不整块降透明度、外框与分隔线保持原样。
+   `opacity: 1` 必须显式写：宿主对 `button:disabled` 默认 0.7，会整块变淡，
+   与官方 `div.canvas-control-item` 的呈现不同（2026-10-26 实机 0.7 vs 1）。 */
+.mindmap-hud-group .mindmap-tool-btn.is-disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.mindmap-hud-group .mindmap-tool-btn.is-disabled svg {
+  color: var(--text-faint);
+}
+
+/* 工具按钮 */
+.mindmap-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  --icon-size: 16px;
+}
+
+/*
+ * 图标尺寸自包含兜底（K112）：`.mindmap-tool-btn` 上那行 `--icon-size` 需由官方
+ * 全局规则 `svg.svg-icon { height/width: var(--icon-size) }`（obsidian app.css）消费
+ * 才生效，即依赖官方内部类名。实机实测（1.13.7）：两种写法渲染**逐项等效**（16px、
+ * stroke 1.75px 一致），故自身再写一遍尺寸——官方若改名该内部类，图标不会静默
+ * 跳回主题默认 18px。选择器特异性 (0,2,1) 高于官方规则的 (0,1,1)——**留一级余量**：
+ * 官方需把该规则提到 (0,3,1) 以上才会压过本规则，故不依赖样式加载顺序。
+ *
+ * 取值必须走 `var(--icon-size, 16px)` 而**不是**裸 `16px`：本规则特异性高于官方，
+ * 若写死值就会连官方的变量通道一起压掉——`--icon-size` 将彻底失效，K112 保留
+ * 变量的理由（跟随官方尺寸体系 / 允许用户或主题覆盖）随之失效。走 `var()` 则两种
+ * 失效路径都兜住：变量在位 → 跟随变量；官方改名致其不再消费而变量又被移除/置为
+ * 无效值 → 回落到本行的 16px（实测把 `--icon-size` 强制置 `initial` 即走此支）。
+ *
+ * 子选择器用 `> svg`：既匹配「按钮内唯一元素即该 svg」（实测为按钮直接子），又
+ * 避免将来按钮内加带 svg 的附属元素时被误伤。**代价**：若官方 `setIcon` 改为包一层
+ * `<span>`，本规则会与变量通道同时失效（退到主题默认 18px）——这与「改名内部类名」
+ * 同属 DOM/类名契约变更，届时按同一路径重新实测登记即可。
+ */
+.mindmap-toolbar .mindmap-tool-btn > svg {
+  width: var(--icon-size, 16px);
+  height: var(--icon-size, 16px);
+}
+
+.mindmap-tool-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+
+.mindmap-tool-btn svg {
+  display: block;
+}
+
+/* ========== 移动端适配 ========== */
+
+@media (max-width: 600px) {
+  .mindmap-hud {
+    gap: 6px;
+  }
+
+  /* 按钮尺寸**不在这里缩**：组内条目的盒模型由 `.mindmap-hud-group .mindmap-tool-btn`
+     （特异性 0,2,0）决定，此处写 `.mindmap-tool-btn { width/height: 28px }` 从来
+     没生效过（2026-10-26 清理按死规则删除）。真要缩须改上面那条组内规则，并同步
+     `.mindmap-hud-group` 的内边距与图标尺寸——属观感变更，留待实机验证。 */
+}
+
