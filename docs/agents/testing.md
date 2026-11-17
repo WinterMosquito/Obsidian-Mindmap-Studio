@@ -1,9 +1,15 @@
 # 测试与 CI（详录）
 
-> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
-> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
+> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
+> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
 
 ## 测试与 CI
+
+编辑态外观（K199）：`engine-editor.test.ts` 验证节点/画布取色与原显示方法只调用一次；`node-inline-editor.test.ts` 验证缩放后的内容盒起点、字体与宽高，以及输入时不扩张。`verify:visual` 的 `inline-edit` 探针在真实 Chrome 中覆盖中心/分支的三档缩放与亮暗画布、节点配色，不替代 Obsidian 实机的 IME、主题 CSS 与操作手感验收。
+
+画布交互（K200）：`view-canvas-interaction.test.ts` 捕获真实 `MindMapView` 构造器交给控制器的特性装配回调，保留真实节点动作与事件绑定后派发空白连续点击 / 双击，断言不插入节点；同时验证节点双击仍编辑、显式新建仍立即编辑。其它特性使用局部桩，右键菜单行为由 `view-context-menu.test.ts` 另测；Obsidian 实机仍需验证空白点击结束编辑、取消选中与 Tab / Enter / 加号手感。
+
+新建空图（K201）：`creation-folder.test.ts` 验证中英文创建内容均为空正文，并复用空文档播种入口验证列表/一级标题/二级标题的首个分支与子分支往返；`view-canvas-interaction.test.ts` 验证应用空会话快照后重新播种且不修改输入；`save-pipeline.test.ts` 验证仅打开空图再关闭不写盘。Obsidian 实机的创建弹窗、首个 Tab 节点与撤销手感仍需人工确认。
 
 ```bash
 npm test            # vitest run（CI 在 build 后、lint 前执行）
@@ -16,7 +22,7 @@ npm run check:gates  # 上链的可执行形态：按 git 变更集算附加门�
 ```
 
 `check:gates` 的边界：豁免表行数对账（精确差）与「未登记超限」核对**每次都跑**，前者可用
-`--fix-lines` 回填（`AGENTS.md` 唯一那张）；`--all` 会连 `build:vendor` 一起跑——重打包依赖须先
+`--fix-lines` 回填（`docs/agents/index.md` 唯一那张）；`--all` 会连 `build:vendor` 一起跑——重打包依赖须先
 安装（`@svgdotjs/svg.js` 等，见 `vendor/BUILD.md`「打包面依赖」，本仓库 `package.json` **有意**不
 声明），只改普通源文件时**不要**加 `--all`（变更集规则会自动跳过它）。
 
@@ -218,10 +224,10 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 `tests/agents-md-sync.test.ts`：
 
 1. **源文件登记**：`src/**` 与 `tests/**` 每个 `.ts` 的 basename 都要以**独立 token** 出现在
-   `AGENTS.md` 的代码结构清单里（按 `[^\w.-]+` 切词——`tree.ts` 不会被 `links-tree.ts` 误命中）。
-2. **文档登记**：`AGENTS.md` 的 `docs/` 清单里列出的每个具体文档必须真实存在
+   `docs/agents/index.md` 的代码结构清单里（按 `[^\w.-]+` 切词——`tree.ts` 不会被 `links-tree.ts` 误命中）。
+2. **文档登记**：`docs/agents/index.md` 的 `docs/` 清单里列出的每个具体文档必须真实存在
    （`release-notes-<tag>.md` 是模式行，跳过）。
-3. **K 区间**：`AGENTS.md` docs 清单与 `conventions.md` 标题里的 `K1–K<n>` 必须等于
+3. **K 区间**：`index.md` docs 清单与 `conventions.md` 标题里的 `K1–K<n>` 必须等于
    `conventions.md` 的**实际最大编号**（2026-11-06 加；此前靠人工追，日志里连改过三次）。
 4. **K 交叉引用**：全仓（`src` / `tests` / `docs` / `AGENTS.md` / `README.md` / `vendor/BUILD.md`）
    引用的 `K<n>` 都要有 `- [K<n>]` 条目，悬空引用红灯。**扫面刻意排除** `vendor/upstream/` 与
@@ -229,11 +235,13 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 5. **表格列数**：每张 Markdown 表的每个数据行都要与表头**同列数**——行内代码（代码示例、
    正则、wikilink 尺寸）里的 `|` 必须写成 `\|`。GFM 把它当列分隔符，不转义就多出几列、内容被
    截断，而源码里几乎看不出来（2026-11-06 审计一次抓出 6 行 / 13 个）。围栏代码块内的行不参与。
-6. **豁免表行数**：`AGENTS.md` 登记的行数与实测偏差不得超过 `min(登记值 +15%, 登记值 +50 行)`
-   ——文件改大/缩小后忘回填会红灯。精确回填跑 `npm run check:gates -- --fix-lines`（`AGENTS.md` 唯一那张表；`architecture.md` 自 2026-11-09 起不再复制）。
+6. **豁免表行数**：`index.md` 登记的行数与实测偏差不得超过 `min(登记值 +15%, 登记值 +50 行)`
+   ——文件改大/缩小后忘回填会红灯。精确回填跑 `npm run check:gates -- --fix-lines`（`docs/agents/index.md` 唯一那张表；`architecture.md` 自 2026-11-09 起不再复制）。
 
 另两条独立契约：`tests/docs-standard.test.ts`（标准文档引用的符号真实存在 ＋ 附录版本指针
 == `manifest.version`）、`tests/module-boundaries.test.ts`（依赖图 / 组内成环 / 新组未登记）。
 
 **改这些判据时**：口径写进**测试文件头注释**（为什么这样写、换一种写法会误伤什么），别只写进
 提交信息——那段注释才是下一个人（或 agent）的上下文。
+
+索引迁移（K202）：`agents-md-sync.test.ts` 从 `index.md` 校验源码/测试清单、文档入口、K 区间及规模表，并验证入口链接可定位索引。`check-gates.test.ts` 在隔离临时目录执行真实 `--fix-lines` 脚本，断言只回填索引、入口逐字不变。

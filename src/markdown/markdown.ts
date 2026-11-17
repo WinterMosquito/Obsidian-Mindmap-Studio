@@ -4,47 +4,27 @@
  * 解析（正文 → 导图树）与序列化（树 → md）见 md-outline.ts / md-serialize.ts；
  * 行内 wikilink 交互见 view-wikilink.ts。本文件不含任何专有格式逻辑。
  */
-import {
-	DEFAULT_NEW_MAP_SYNTAX,
-	generateUid,
-	type NewMapSyntax,
-} from '../core/constants';
+import { generateUid } from '../core/constants';
 import { t, type Language } from '../core/i18n';
 import { buildMindMapFrontmatter } from '../domain/mindmap-property';
 import { walkTree } from '../domain/tree';
 import type { MindMapTreeNode } from '../core/engine-types';
 
 /**
- * 新建思维导图的默认正文：**属性声明块 + 标准 Markdown 大纲**。
+ * 新建思维导图的默认内容：**属性声明块 + 空正文**，只显示文件名对应的中心节点。
  *
  * 属性块（启用信号 `Mindmap: Mindmap` + 布局键 kebab 值，与界面语言无关）是文件
  * 「是导图、用哪种布局」的唯一凭据——触发判定不认文件名（见
  * domain/mindmap-property）；块后空行分隔正文，与 md-outline.splitFrontmatter 的
- * 边界口径一致（K46）。无标题时中心主题 = 文件名，列表项即第 1 级子主题。
+ * 边界口径一致（K46）。不预置示例、快捷键提示或空白子节点。
  *
- * **层级语法**（`NewMapSyntax`）只决定这三行提示的写法：无序列表（出厂，等于
- * 本特性引入前）或标题（`#` / `##`）。写标题时三行是三个**同级顶层标题**，
- * 与列表形态的「三个顶层分支」结构一致；块间空行与序列化器的块分隔同口径。
- * 此后该文件的风格由正文自身决定（解析侧记 `mdHeadingStart`），改设置不会再
- * 回头影响它。
+ * 首个节点的层级语法由视图加载空文档时的 `seedHeadingStart` 初始化（见 K201）；
+ * 有内容后仍按正文自身写法回写，不把设置或提示节点写进文件。
  *
  * @param layoutId 种子布局（引擎 layout id，如 `logicalStructure`）。缺省 = 思维导图布局。
- * @param syntax   层级语法（设置项 `newMapSyntax`）。
  */
-export function createDefaultMarkdownContent(
-	lang: Language = 'zh',
-	layoutId?: string,
-	syntax: NewMapSyntax = DEFAULT_NEW_MAP_SYNTAX,
-): string {
-	const hints = [
-		t(lang, 'default.shortcutHint'),
-		t(lang, 'default.tabHint'),
-		t(lang, 'default.enterHint'),
-	];
-	const prefix = syntax === 'h1' ? '# ' : syntax === 'h2' ? '## ' : '- ';
-	const separator = prefix === '- ' ? '\n' : '\n\n';
-	const body = `${hints.map((hint) => `${prefix}${hint}`).join(separator)}\n`;
-	return `${buildMindMapFrontmatter(layoutId)}\n${body}`;
+export function createDefaultMarkdownContent(layoutId?: string): string {
+	return `${buildMindMapFrontmatter(layoutId)}\n`;
 }
 
 /**

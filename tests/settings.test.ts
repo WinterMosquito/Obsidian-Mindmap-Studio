@@ -475,7 +475,7 @@ describe('shouldOfferColorScopeCleanup（清理旧哨兵的询问时机）', () 
  * 非法设置的回退**必须可见**（2026-10-11）。
  *
  * 背景：坏值此前静默回退默认，用户看到的现象是「设置没生效」——属无痕退化
- * （AGENTS.md 决策表）。现在 `sanitizeSettings` 支持可选出参登记被回退/钳制的键，
+ * （docs/agents/decisions.md 决策表）。现在 `sanitizeSettings` 支持可选出参登记被回退/钳制的键，
  * 由 `reportDroppedSettings` 汇总留痕一次。
  */
 describe('sanitizeSettings：非法值诊断报告', () => {

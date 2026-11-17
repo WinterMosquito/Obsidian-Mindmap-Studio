@@ -1,7 +1,7 @@
 # 代码结构与文件规模（详录）
 
-> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
-> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
+> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
+> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
 
 ## 代码结构
 
@@ -27,7 +27,7 @@ src/
   settings.ts       # 设置接口与设置面板（Obsidian 1.13+ 声明式）+ sanitizeSettings
                     #   （data.json 加载与设置面板写回共用同一校验）；写回经
                     #   main.scheduleSettingsPersist 防抖（滑块突发合并，内存即时生效）
-  creation.ts       # 新建文件默认内容/文件名与命名弹窗衔接（创建流程编排）
+  creation.ts       # 新建空正文/文件名与命名弹窗衔接（只显示中心节点，创建流程编排）
   domain/           # L0 纯领域逻辑（零依赖：lint no-restricted-imports 强制禁 obsidian/上层/vendor）
     wikilink.ts     #   双链解析/构造唯一权威（parse/format/display）
     wiki-display.ts #   链接「生效显示名」纯判定（editedWikilinkAlias/effectiveDocWikiLink/docWikiLinkDisplay）
@@ -82,7 +82,7 @@ src/
   markdown/         # L1 Markdown 语义（解析/序列化/打开路由/拆分）
     md-outline.ts   #   Markdown 大纲 → 导图树（frontmatter 跳过、标题/列表、行内 token；mdRaw 保真）
     md-serialize.ts #   导图树 → Markdown（未编辑逐字回写/编辑合成；链接/图片新增检测）
-    markdown.ts     #   新建文件默认内容/文件名、uid 修复（ensureUniqueUids）
+    markdown.ts     #   新建空正文属性块/文件名、uid 修复（ensureUniqueUids）
     md-open.ts      #   声明判据（经 MetadataCache 同步读）、视图切换、以导图打开 / 切回
                     #   Markdown 的属性写入（processFrontMatter + setMindMapEnabled /
                     #   setMindMapLayout / setMindMapDisabled，三入口同语义；键名恒为
@@ -153,6 +153,7 @@ src/
                     #   getViewportSignature/viewStateSignature/getDrawTransform）；
                     #   measureNodesCanvasBox（2026-11-04：选区包围盒改布局几何，
                     #   性能模式摘 DOM 后仍完整；与 projectViewportBox 同一变换口径）
+    mindmap-editor.ts    # 编辑框底色适配；生效节点外观读口；不改变编辑事件与提交
     mindmap-nodes.ts     # 节点/DOM 反查、节点文本与图片尺寸、自绘内容重建、兄弟上/下移、
                     #   renderer.textEdit / node_dblclick 收口
     mindmap-clipboard.ts # 选中子树的复制/剪切/粘贴（顶层去重 + 文档序 + 过滤根节点；返回**引擎树上的
@@ -452,6 +453,7 @@ tests/
   event-binder.test.ts # EventBinder（注册即记录/销毁即清理：参数透传、监听器身份、幂等、单点抛错不阻断）
   persistence.test.ts  # PluginDataWriter（写前重读合并不丢键、串行队列、内部吞错）
   feature-helpers.test.ts # 特性纯函数（image-resize 等比缩放钳制）
+  engine-editor.test.ts # 透明节点取画布底色、着色节点跟随填充、显示方法保留上下文与次数、缺 API 回退
   mindmap-theme.test.ts # 主题与配色（两态偏好解析与旧词汇归一、supportsLineStyleSwitch、无边框填充/描边归零、根节点保留锚点、不得越权改字体度量、配色六套×亮暗九键、文字色不随配色变、配色与主题正交、两个维度各自脏值回退）
   mindmap-wiki-icon.test.ts # 文档页图标 tooltip 与别名同口径（`docWikiLinkDisplay`，含负向自检）
   engine-history-limit.test.ts # 命令历史上限按 30MB 预算反推（500 节点⇒163 条 / 2000 节点⇒40 条、单调不增、地板 30、上限引擎默认 500）
@@ -526,6 +528,7 @@ tests/
                        #   单节点抛错不中断其它节点（见 K86）
   pasted-name.test.ts  # 剪贴板图片命名（Pasted image YYYYMMDDHHMMSS）
   vendor-contract.test.ts # 引擎 vendor 契约（导出面/命令名/事件名令牌）
+  view-canvas-interaction.test.ts # 真实视图特性装配后的空白连续点击/双击不新建；节点编辑与显式新建保留
   view-node-actions.test.ts # 节点操作编排（链接通道分流/删除兜底/剪贴板/自兜错误）
   view-minimap.test.ts # 小地图**会话级**回归（fake DOM + fake window，引擎侧整体 vi.mock）：装配即画首帧 / 画布过窄不启用 /
                       #   判据失效的清场（尺寸与框坐标一并清）/ 30s 淡出与动图唤醒 / 样式类立即画 vs 布局类等渲染落地 /
@@ -564,7 +567,7 @@ tests/
   modal-common.test.ts # 弹窗共享件（settle 守卫/按钮变体/库内文件联想）
   modal-input.test.ts  # 命名/链接弹窗（预填与焦点、空白确认、settle 幂等、联想接线）
   plain-text-parser.test.ts # LICENSE parser（LF/CRLF 行 token、剥离 \r 的有意差异、防回退护栏）
-  agents-md-sync.test.ts # 文档同步契约：src/** 与 tests/** 每个文件都必须登记在 AGENTS.md（漏登记即红灯）
+  agents-md-sync.test.ts # 文档同步契约：src/** 与 tests/** 每个文件都必须登记在 docs/agents/index.md（漏登记即红灯）
   check-gates.test.ts  # 变更驱动门禁的**映射**直测（`scripts/check-gates.mjs` 的 buildPlan：baseline 顺序 /
                        #   各 conditionals 的触发面与跳过理由 / 变更集不可读时保守全跑；parseExemptionRows 的行
                        #   形态与 stale 判定）。脚本主体有 import 守卫，import 本测试不会真跑 npm 链
@@ -585,15 +588,15 @@ docs/
 
 官方社区模板建议单文件控制在 200–300 行。本项目**不做机械拆分**——按「拆分会不会把已有收口职责摊开」判定，而不是按行数判定：行数是症状，收口点被拆散才是病。故引入一条硬规则：
 
-> **超过 300 行的源文件必须在 `AGENTS.md`「文件规模与豁免」表登记豁免理由；未登记者一律视为待偿还债务。**
+> **超过 300 行的源文件必须在 `docs/agents/index.md`「文件规模与豁免」表登记豁免理由；未登记者一律视为待偿还债务。**
 
 （豁免是「已知并接受」，不是「没看见」。债务指标：**未登记的超限文件数，只允许递减**。）
 
-> **登记表只在 `AGENTS.md`「文件规模与豁免」一处维护**（2026-11-09 起）：逐文件行数、
+> **登记表只在 `docs/agents/index.md`「文件规模与豁免」一处维护**（2026-11-17 由入口迁到索引，见 K202）：逐文件行数、
 > 豁免理由、行数回填（`npm run check:gates -- --fix-lines`）与两道机械门禁
 > （`agents-md-sync` 的漂移阈值、`check:gates` 的「未登记超限」核对）都读那一张表。
 > 本文件**不再复制**——两张表并行时只有一张受门禁，另一张必然漂移（实测同一文件曾
-> 同时出现 1121 / 1280 两个读数，而另一处已涨到 1532）。读行数请直接看 `AGENTS.md`
+> 同时出现 1121 / 1280 两个读数，而另一处已涨到 1532）。读行数请直接看 `docs/agents/index.md`
 > 或跑 `npm run check:gates -- --dry-run`。
 
 行数快照与历次回填流水见 `docs/agents/line-count-log.md`（只追加、不改旧条目）；
@@ -604,7 +607,7 @@ docs/
    的 line-budget 静态核对会红灯。
 2. **登记值与实测的漂移**（机械层）—— `tests/agents-md-sync.test.ts` 的「豁免表登记
    行数与实测无超阈值漂移」用例守门，阈值 `±min(+15%, +50 行)`（**双向**）。
-   改动任一豁免文件后若该用例转红，必须回填 `AGENTS.md` 的行数列
+   改动任一豁免文件后若该用例转红，必须回填 `docs/agents/index.md` 的行数列
    （`npm run check:gates -- --fix-lines`）。
 
 **函数内拆分口径（2026-09-28「批次 2」逐行评估裁决）**：超长函数（>90 行）能否拆，判据同文件级——「拆会不会把契约摊开」，而非行数。① **不拆**（判定/优先级链形态：分支**顺序即契约**、注释与状态流集中可见；拆分需 `continue`→`return` 转换或引入 ctx/闭包状态，属机械改写而非提取）——`md-outline.buildInlineData`（220 行）/ `md-outline.classifyLines`（174）/ `node-inline-content.splitMarkedText`（111）。② **拆**（纯移动：块间独立、签名统一、零共享可变状态）——2026-09-28 已完成：`view-wikilink.registerWikilinkInteractions`（137 → 编排壳 + 点击/悬停/画布锚点悬停/中键四个注册函数）、`view-toolbar.buildToolbar`（114 → 编排壳 + 右缘四组构建；2026-10-22 重排为浮层后仍是编排壳形态）、`commands.registerCommands`（145 → 编排壳 + 创建/视图/导出与文档三组）。**重跑函数级评估前先读本节**，避免重复论证。

@@ -310,7 +310,7 @@ export class EngineController {
 			this.initMindMap(this.mindMap.getData());
 		} catch (error) {
 			// 用户可感：设置已改但界面停在旧布局，无任何提示会被当成「设置没生效」
-			//（AGENTS.md 决策表：静默跳过会让问题无痕退化）。
+			//（docs/agents/decisions.md 决策表：静默跳过会让问题无痕退化）。
 			console.error('重建引擎失败，保留当前实例', error);
 			notifyError(this.deps.getLang(), 'common.refreshFailed', error);
 		}

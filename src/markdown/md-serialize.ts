@@ -797,7 +797,7 @@ function serializeTrees(
 	app: App | null,
 	headingsAsList: boolean,
 	indentUnit: string,
-	headingStart: number,
+	headingStart: number | null,
 ): string {
 	const out: string[] = [];
 
@@ -1066,9 +1066,9 @@ function serializeTrees(
 		}
 	};
 
-	// 剪贴板形态：起始 headingLevel 传 null ⇒ 未标注节点一律走列表分支
+	// 剪贴板或空文档显式列表形态：起始 headingLevel 传 null ⇒ 新节点走列表分支
 	// （文档形态传「起始级别 - 1」⇒ 根级新建节点写 `#`×起始级别，见
 	// SerializeFrame.headingLevel 与 MdNodeMeta.mdHeadingStart）
-	walkChildren(siblings, 0, headingsAsList ? null : headingStart - 1);
+	walkChildren(siblings, 0, headingsAsList || headingStart === null ? null : headingStart - 1);
 	return out.join('\n');
 }

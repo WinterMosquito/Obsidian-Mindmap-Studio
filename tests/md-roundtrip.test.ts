@@ -13,7 +13,7 @@
  * 覆盖：解析结构 / 层级深度（含 5 万级显式栈）/ 往返不动点 / 编辑合成 /
  * 纯双链节点「编辑=改别名」/ rawOk 分支矩阵 / 图片独占节点 / 嵌入尺寸参数 /
  * URL icon-only 与附件双链 / 图文 token 不丢 / uid 修复 / 视图状态 /
- * 新建正文（属性声明块 + 标准大纲）。
+ * 新建正文（属性声明块 + 空正文）。
  * 源码依据：src/markdown/md-outline.ts、src/markdown/md-serialize.ts、src/markdown/markdown.ts、
  * src/services/view-state.ts、src/domain/{md-meta,wikilink,mindmap-property}.ts、src/core/constants.ts。
  */
@@ -2518,45 +2518,27 @@ describe('视图状态（ViewStateStore）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 十二、新建正文（属性声明块 + 标准 Markdown 大纲；声明判据见 mindmap-property）
+// 十二、新建正文（属性声明块 + 空正文；声明判据见 mindmap-property）
 // ---------------------------------------------------------------------------
 describe('新建导图正文', () => {
-	it('属性声明块恒为双键（与语言无关），块后空行分隔正文', () => {
-		const header = '---\nMindmap: Mindmap\nMindmap Layout: mindmap\n---\n\n';
-		expect(createDefaultMarkdownContent('zh').startsWith(header)).toBe(true);
-		expect(createDefaultMarkdownContent('en').startsWith(header)).toBe(true);
+	it('仅写导图属性与分隔空行，正文为空', () => {
+		expect(createDefaultMarkdownContent()).toBe(
+			'---\nMindmap: Mindmap\nMindmap Layout: mindmap\n---\n\n',
+		);
 	});
 
-	it('新建默认正文是标准 Markdown：文件头被识别、解析为 3 个列表子主题且往返稳定', () => {
-		const content = createDefaultMarkdownContent('zh');
-		const body = [
-			'- 示例：把想法拆成子节点',
-			'- Tab：添加子节点',
-			'- Enter：添加同级节点',
-			'',
-		].join('\n');
-		expect(content).toBe(
-			`---\nMindmap: Mindmap\nMindmap Layout: mindmap\n---\n\n${body}`,
+	it('新建内容解析后仅有文件名对应的中心节点，空正文往返稳定', () => {
+		const content = createDefaultMarkdownContent('logicalStructure');
+		const parsed = parseMdOutline(content, '我的导图');
+		expect(parsed.frontmatter).toBe(
+			'---\nMindmap: Mindmap\nMindmap Layout: logical\n---\n',
 		);
-		const r = parseMdOutline(content, '根');
-		expect(r.frontmatter, '属性块逐字保留为文件头').toBe(
-			'---\nMindmap: Mindmap\nMindmap Layout: mindmap\n---\n',
-		);
-		expect(r.tree.children).toHaveLength(3);
-		expect(r.tree.children.map((c) => (c.data as MdData).mdMarker)).toEqual([
-			'-',
-			'-',
-			'-',
-		]);
-		// 文本行不带前导 '- '（标记由 mdMarker 承载）
-		expect(r.tree.children.map((c) => c.data.text)).toEqual([
-			'示例：把想法拆成子节点',
-			'Tab：添加子节点',
-			'Enter：添加同级节点',
-		]);
-		const out = serializeMdBody(r.tree, null);
-		expect(out, '正文逐字回写（仅丢掉文件末尾的空行）').toBe(body.trimEnd());
-		expect(serializeMdBody(parseMdOutline(out, '根').tree, null)).toBe(out);
+		expect(parsed.body).toBe('');
+		expect(parsed.tree.data.text).toBe('我的导图');
+		expect(parsed.tree.children).toEqual([]);
+		const out = serializeMdBody(parsed.tree);
+		expect(out).toBe('');
+		expect(serializeMdBody(parseMdOutline(out, '我的导图').tree)).toBe(out);
 	});
 
 	it('默认文件名：思维导图YYYY-MM-DD（不再携带 .mindmap 后缀）', () => {

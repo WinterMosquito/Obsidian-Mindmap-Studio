@@ -30,7 +30,8 @@
  * ## 生命周期与会话守卫
  * - 会话按**引擎实例**登记（WeakMap）：多视图（多标签）可各自编辑且互不干扰；
  *   同一引擎重复打开前先提交既有会话（对齐引擎 `show()` 的「先结束当前编辑」）；
- * - 定位取节点 group 的 `getBoundingClientRect()`（屏幕坐标，含缩放/平移）；
+ * - 定位取自绘内容盒的屏幕矩形；字体和内边距取该盒的实际样式并按画布缩放。
+ *   无内容盒时才回退节点 group。底色沿用节点（透明节点取画布），不固定白底。
  *   引擎 `scale` 与 `node_tree_render_end` 时重定位（节点已不在树 → 提交关闭）；
  * - 视图 `onClose` 与**引擎重建前**（view.ts）主动提交关闭——输入不丢（设置变更
  *   /换文件重建引擎会让节点对象失效，重建前必须落数据）；提交时校验「会话所属
@@ -45,7 +46,9 @@
 import { t } from '../core/i18n';
 import {
 	getNodeGroupEl,
+	getDrawTransform,
 	isEditingText,
+	readNodeEditorAppearance,
 	markNodeNeedLayout,
 	recordHistory,
 } from '../engine/mindmap';
@@ -59,12 +62,7 @@ import { composeNodeContent } from '../markdown/md-serialize';
 import type { MdNodeData } from '../core/node-data';
 import type { MindMap, MindMapNode } from '../core/engine-types';
 import type { ViewNodeEditContext } from './view-context';
-
-/** 编辑器最小/最大高度（像素）：节点矮也不小于 40；内容多不超 240（内部滚动） */
-const MIN_EDITOR_HEIGHT = 40;
-const MAX_EDITOR_HEIGHT = 240;
-/** 编辑器最小宽度（像素）：短文本节点也保证可输入 */
-const MIN_EDITOR_WIDTH = 160;
+import { NODE_INLINE_CONTENT_CLASS } from '../core/constants';
 
 /** 编辑器类名（探针断言与用户自定义 CSS 的钩子；外观本身全内联） */
 const EDITOR_CLASS = 'mindmap-node-inline-editor';
@@ -79,9 +77,13 @@ const EDITOR_STYLES: Partial<CSSStyleDeclaration> = {
 	position: 'fixed',
 	zIndex: '3000',
 	boxSizing: 'border-box',
+	minWidth: '0',
+	minHeight: '0',
+	maxWidth: 'none',
+	maxHeight: 'none',
 	margin: '0',
 	padding: '4px 6px',
-	border: '1px solid var(--interactive-accent)',
+	border: 'none',
 	borderRadius: '6px',
 	background: 'var(--background-primary)',
 	color: 'var(--text-normal)',
@@ -91,7 +93,7 @@ const EDITOR_STYLES: Partial<CSSStyleDeclaration> = {
 	resize: 'none',
 	overflowY: 'auto',
 	outline: 'none',
-	boxShadow: 'var(--shadow-s)',
+	boxShadow: '0 0 0 1px var(--interactive-accent)',
 	whiteSpace: 'pre-wrap',
 	wordBreak: 'break-word',
 };
@@ -251,7 +253,11 @@ function createEditorEl(
 }
 
 /**
- * 把编辑器摆到节点 group 的位置与尺寸上（首次显示 / 缩放 / 整树重建后都调它）。
+ * 对齐自绘内容盒，保留文字起点（不包含节点边框、图标与折叠按钮）。
+ * getComputedStyle 给的是未缩放尺寸；屏幕矩形已缩放，字体与 padding 必须同倍数。
+ * 编辑器与节点共用内容盒的宽高，不设置独立最小尺寸，也不随输入扩张底色。
+ * 原文较长时在盒内换行/滚动；尺寸变化只随节点的真实渲染矩形更新。
+ * 保留亚像素定位，避免缩放时 Math.floor 引入的文字偏移。
  *
  * 节点 group 已随引擎重建或删除时**提交关闭**——没有定位依据就不该继续编辑。
  */
@@ -268,23 +274,40 @@ function placeEditor(
 		commitSession(view, session);
 		return;
 	}
-	const rect = target.getBoundingClientRect();
-	el.style.left = `${Math.floor(rect.left)}px`;
-	el.style.top = `${Math.floor(rect.top)}px`;
-	el.style.width = `${Math.max(Math.floor(rect.width), MIN_EDITOR_WIDTH)}px`;
-	el.style.minHeight = `${MIN_EDITOR_HEIGHT}px`;
-	el.style.maxHeight = `${MAX_EDITOR_HEIGHT}px`;
-	const height = Math.min(
-		Math.max(Math.floor(rect.height), MIN_EDITOR_HEIGHT),
-		MAX_EDITOR_HEIGHT,
-	);
-	el.style.height = `${height}px`;
+	const content = target.querySelector?.(`.${NODE_INLINE_CONTENT_CLASS}`);
+	const rect = (content ?? target).getBoundingClientRect();
+	const scale = getDrawTransform(session.mindMap).scaleX;
+	const computed = content?.ownerDocument.defaultView?.getComputedStyle(content);
+	const appearance = readNodeEditorAppearance(session.mindMap, session.node);
+	Object.assign(el.style, {
+		background: appearance.background,
+		color: computed?.color || appearance.color,
+		borderRadius: `${appearance.borderRadius * scale}px`,
+	});
+	if (computed) {
+		const pixels = (value: string): string => `${(Number.parseFloat(value) || 0) * scale}px`;
+		Object.assign(el.style, {
+			fontFamily: computed.fontFamily,
+			fontSize: pixels(computed.fontSize),
+			fontWeight: computed.fontWeight,
+			fontStyle: computed.fontStyle,
+			lineHeight: computed.lineHeight === 'normal' ? 'normal' : pixels(computed.lineHeight),
+			paddingTop: pixels(computed.paddingTop),
+			paddingRight: pixels(computed.paddingRight),
+			paddingBottom: pixels(computed.paddingBottom),
+			paddingLeft: pixels(computed.paddingLeft),
+		});
+	}
+	el.style.left = `${rect.left}px`;
+	el.style.top = `${rect.top}px`;
+	el.style.width = `${rect.width}px`;
+	el.style.height = `${rect.height}px`;
 }
 
 /**
  * 编辑器输入面：键盘（IME 组合态短路，语义见 `resolveInlineEditKey`；事件不外泄
  * ——引擎快捷键与 Obsidian scope 快捷键都不应在编辑器内生效）、点击不冒泡
- * （引擎 `body_click` / `svg_mousedown` 语义不受影响）、多行自适应（上限内滚动）。
+ * （引擎 `body_click` / `svg_mousedown` 语义不受影响）；多行原文在节点盒内滚动。
  */
 function bindEditorInput(
 	el: HTMLTextAreaElement,
@@ -311,13 +334,6 @@ function bindEditorInput(
 	});
 	el.addEventListener('click', (event) => {
 		event.stopPropagation();
-	});
-	el.addEventListener('input', () => {
-		Object.assign(el.style, { height: 'auto' });
-		el.style.height = `${Math.min(
-			Math.max(el.scrollHeight, MIN_EDITOR_HEIGHT),
-			MAX_EDITOR_HEIGHT,
-		)}px`;
 	});
 }
 

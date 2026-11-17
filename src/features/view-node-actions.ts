@@ -15,7 +15,6 @@ import {
 	ENGINE_COMMANDS,
 	forceRemoveNodeData,
 	getNodeDataString,
-	getRenderRoot,
 	isCustomNodeContent,
 	isSummaryNode,
 	moveNodeInSiblings,
@@ -467,9 +466,8 @@ export function removeNodeText(view: MindMapViewContext, node: MindMapNode): voi
 /**
  * 在指定父节点下新建一个节点（**空文本**，立即进入编辑；双击/F2 可再编辑）。
  *
- * 双击画布空白（官方 Canvas「双击画布新建卡片」，`en/Plugins/Canvas.md`）与
- * 空白处右键「新建节点」的共用实现；父节点由调用方给出（双击空白/空白右键
- * 统一挂根节点下——层级语义下「空白处」没有更近的挂靠点）。
+ * 空白处右键「新建节点」使用此入口；父节点由调用方给出，菜单统一挂在
+ * 根节点下。空白双击不新建节点（见 K200），避免连续点击误插入空节点。
  *
  * 2026-09-28（方案 B / K93）：新建节点不再带占位文字（此前为 `menu.newNode`
  * 的「新建节点」），并以 `openEdit` 立即进入引擎编辑框——新建即可直接输入。
@@ -479,34 +477,6 @@ export function createChildNodeBelow(
 	parent: MindMapNode,
 ): void {
 	insertChildNodeWithData(view, parent, { text: '' }, { openEdit: true });
-}
-
-/**
- * 双击画布**空白** → 新建节点（官方 Canvas「Add text cards by double-clicking
- * on the canvas」）。命中节点/链接/输入元素时不接管（节点双击 = 编辑，引擎语义）。
- */
-export function setupCanvasQuickCreate(view: MindMapViewContext): void {
-	const canvas = view.canvasEl;
-	if (!canvas) {
-		return;
-	}
-	view.engineEvents.onDom(canvas, 'dblclick', (event) => {
-		const target = event.target;
-		if (!(target instanceof Element)) {
-			return;
-		}
-		// 节点区域（引擎双击编辑）、链接与表单元素不接管
-		if (target.closest('.smm-node, a, button, input, textarea, [contenteditable]')) {
-			return;
-		}
-		const root = getRenderRoot(view.mindMap);
-		if (!root) {
-			return;
-		}
-		event.preventDefault();
-		event.stopPropagation();
-		createChildNodeBelow(view, root);
-	});
 }
 
 /**

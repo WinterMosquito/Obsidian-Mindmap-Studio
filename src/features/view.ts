@@ -103,10 +103,7 @@ import {
 } from './node-inline-content';
 import { colorDirectiveOf } from './node-inline-tokenize';
 import { createInlineContentOptions } from './node-content-factory';
-import {
-	setupCanvasQuickCreate,
-	setupNodeTextEditFallback,
-} from './view-node-actions';
+import { setupNodeTextEditFallback } from './view-node-actions';
 import type {
 	HyperlinkOpenMode,
 	MindMapViewContext,
@@ -614,8 +611,6 @@ export class MindMapView
 				registerCodeBlockInteractions(this);
 				// 画布视口手势（Ctrl+滚轮缩放 / 滚轮平移 / 中键拖）：对齐官方 Canvas
 				setupViewportGestures(this);
-				// 双击画布空白 → 在根节点下新建（官方 Canvas「双击画布新建卡片」）
-				setupCanvasQuickCreate(this);
 				// 自绘（富）节点的双击编辑兜底（引擎编辑框对自绘节点静默 no-op）
 				setupNodeTextEditFallback(this);
 				setupImageResize(this);
@@ -1615,6 +1610,12 @@ export class MindMapView
 	 * 不会为快照重跑，不复用会让外部写入后图片突然缩回默认盒（K198 ⑤）。
 	 */
 	applySnapshot(tree: MindMapTreeNode): boolean {
+		// 撤销到空图或外部清空正文后，首个分支仍须跟随新建语法设置。
+		// 广播参数可能是会话权威树：只拷贝空根后播种，不改会话/历史（见 K201）。
+		if ((tree.children ?? []).length === 0) {
+			tree = { ...tree, data: { ...tree.data } };
+			seedHeadingStart(tree, headingStartOfSyntax(this.plugin.settings.newMapSyntax));
+		}
 		return applySessionSnapshot(
 			this.mindMap,
 			reuseKnownImageSizes(tree, this.knownImageSizes()),

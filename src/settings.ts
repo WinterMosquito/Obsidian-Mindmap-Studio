@@ -159,7 +159,7 @@ export interface SettingsSanitizeReport {
  * 「非法设置被回退/钳制」的汇总留痕（进程内一次）。
  *
  * 为什么必须留痕：data.json 可被手工编辑或来自旧版本，坏值**静默**换掉之后，
- * 用户看到的现象是「设置没生效」——属无痕退化（AGENTS.md 决策表：
+ * 用户看到的现象是「设置没生效」——属无痕退化（docs/agents/decisions.md 决策表：
  * 静默跳过会让问题无痕退化）。汇总一次而不是逐键刷屏。
  */
 const warnDroppedSettings = createWarnOnce();

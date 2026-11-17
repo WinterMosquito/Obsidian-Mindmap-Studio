@@ -13,6 +13,7 @@
  * - `mindmap-viewport`  画布几何 / 视口（适配、居中、缩放、平移、视口状态）
  * - `mindmap-viewport-canvas` 引擎几何与实时容器的唯一同步点
  * - `mindmap-nodes`     节点查询与工具 + 节点文本编辑
+ * - `mindmap-editor`    节点编辑框的底色与外观适配
  * - `mindmap-clipboard` 选中子树的复制/剪切/粘贴
  * - `mindmap-search`    搜索子系统防腐收口
  * - `mindmap-export`    导出（PNG/SVG）
@@ -52,6 +53,8 @@ import {
 } from './mindmap-commands';
 import { applyHistoryLimitOnCreate, seedInitialHistory } from './mindmap-history';
 import { countTreeNodes, getRenderRoot } from './mindmap-nodes';
+import { installNodeEditorAppearance } from './mindmap-editor';
+export { readNodeEditorAppearance } from './mindmap-editor';
 import {
 	applyLiveColorDirectives,
 	type ColorDirectiveReader,
@@ -518,6 +521,7 @@ export function createMindMap(
 		}
 	};
 
+	if (!isReadonly) installNodeEditorAppearance(mindMap);
 	// 只读嵌入（```mindmap 代码块）不注册任何交互插件：Search / KeyboardNavigation
 	// 经 KeyCommand 在 window 上抢宿主笔记的 Ctrl+F 与方向键，TouchEvent 抢触屏手势，
 	// DoExport 没有入口，Select / Drag 在 readonly 下恒早退（逐条理由见

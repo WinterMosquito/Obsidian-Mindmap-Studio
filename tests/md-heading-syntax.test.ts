@@ -63,6 +63,7 @@ describe('readHeadingStart（起始级别读取）', () => {
 	it('缺失 / 脏值 / 越界一律回落到 1', () => {
 		expect(readHeadingStart({})).toBe(1);
 		expect(readHeadingStart(null)).toBe(1);
+		expect(readHeadingStart({ mdHeadingStart: null })).toBeNull();
 		expect(readHeadingStart({ mdHeadingStart: 'abc' })).toBe(1);
 		expect(readHeadingStart({ mdHeadingStart: 0 })).toBe(1);
 		expect(readHeadingStart({ mdHeadingStart: 99 })).toBe(6);
@@ -77,10 +78,12 @@ describe('seedHeadingStart（空文档跟随设置）', () => {
 		expect(tree.data.mdHeadingStart).toBe(2);
 	});
 
-	it('列表档（null）/ 已有内容 / 已记过级别：一律不动', () => {
+	it('列表档明确记 null；重复初始化与已有内容不覆盖', () => {
 		const listMode = root([]);
 		seedHeadingStart(listMode, null);
-		expect(listMode.data.mdHeadingStart).toBeUndefined();
+		expect(listMode.data.mdHeadingStart).toBeNull();
+		seedHeadingStart(listMode, 2);
+		expect(listMode.data.mdHeadingStart).toBeNull();
 
 		const withContent = root([listItem('甲')]);
 		seedHeadingStart(withContent, 2);

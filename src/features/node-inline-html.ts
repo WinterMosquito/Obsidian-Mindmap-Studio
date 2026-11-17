@@ -37,6 +37,7 @@ import {
 	CODE_BLOCK_MAX_HEIGHT_PX,
 	CODE_RENDERED_CLASS,
 	MATH_RENDERED_HOLDER_CLASS,
+	NODE_INLINE_CONTENT_CLASS,
 } from '../core/constants';
 import type { PipeTableAlign } from '../domain/pipe-table';
 import type { NodeContentStyle } from '../engine/mindmap';
@@ -75,7 +76,7 @@ const MARKUP_TAGS: Record<InlineTextStyle, string> = {
 };
 
 /** 自绘节点内容的根类名（样式见 styles.css，测宽/断言按它定位） */
-export const NODE_INLINE_CONTENT_CLASS = 'mindmap-node-inline-content';
+export { NODE_INLINE_CONTENT_CLASS } from '../core/constants';
 
 /**
  * 任务复选框的类名（**交互契约**：`features/view-node-task` 用它在画布 capture
