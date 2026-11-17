@@ -33,7 +33,7 @@ const {
 } = vi.hoisted(() => ({
 	getNodeGroupElMock: vi.fn(),
 	getDrawTransformMock: vi.fn(() => ({ scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 })),
-	readNodeEditorAppearanceMock: vi.fn(() => ({ background: '#e7e8ea', color: '#111827', borderRadius: 6 })),
+	readNodeEditorAppearanceMock: vi.fn(() => ({ background: '#e7e8ea', color: '#111827', borderRadius: 6, focusShadow: '0 0 0 1px var(--interactive-accent)' })),
 	isEditingTextMock: vi.fn(() => false),
 	markNodeNeedLayoutMock: vi.fn(),
 	applyRawToNodeMock: vi.fn(
@@ -47,7 +47,8 @@ const {
 	ensureDefaultImageSizesMock: vi.fn(),
 }));
 
-vi.mock('../src/engine/mindmap', () => ({
+vi.mock('../src/engine/mindmap', async () => ({
+	hideNodeForEditing: (await import('../src/engine/mindmap-editor')).hideNodeForEditing,
 	getNodeGroupEl: getNodeGroupElMock,
 	getDrawTransform: getDrawTransformMock,
 	readNodeEditorAppearance: readNodeEditorAppearanceMock,
@@ -85,6 +86,8 @@ import {
 interface ElStub {
 	style: Record<string, string>;
 	value: string;
+	scrollHeight: number;
+	scrollTop: number;
 	/** 所属文档（提交时焦点归还 body、元素移除后解绑 document 监听用） */
 	ownerDocument: unknown;
 	remove: ReturnType<typeof vi.fn>;
@@ -118,6 +121,8 @@ function makeElStub(): ElStub {
 	const el: ElStub = {
 		style: {},
 		value: '',
+		scrollHeight: 0,
+		scrollTop: 0,
 		ownerDocument: undefined,
 		remove: vi.fn(),
 		focus: vi.fn(),
@@ -225,8 +230,12 @@ function makeNode(data: Record<string, unknown> = { text: '旧' }): MindMapNode 
 
 /** 节点 group 桩：ownerDocument + 矩形（含缩放平移后的屏幕坐标口径） */
 function makeGroupStub(doc: DocStub) {
+	const attributes = new Map<string, string>();
 	return {
 		ownerDocument: doc,
+		getAttribute: (name: string) => attributes.get(name) ?? null,
+		setAttribute: (name: string, value: string) => attributes.set(name, value),
+		removeAttribute: (name: string) => attributes.delete(name),
 		getBoundingClientRect: () => ({ left: 10, top: 20, width: 100, height: 30 }),
 	};
 }
@@ -348,16 +357,30 @@ describe('内联编辑会话（打开 / 提交 / 关闭）', () => {
 		expect(h.view.scheduleSave).not.toHaveBeenCalled();
 	});
 
-	it('输入更长或多行原文时不扩张编辑框，提交时才更新节点', () => {
+	it('输入更长或多行原文时随内容增高，没有滚动条，提交时才更新节点', () => {
 		const h = openSession();
-		const before = { ...h.el.style };
 		h.el.value = '很长的原文\n第二行\n第三行';
+		h.el.scrollHeight = 90;
+		h.el.scrollTop = 60;
 		h.el.fire('input', {});
-		expect(h.el.style).toEqual(before);
+		expect(h.el.style.height).toBe('91px');
+		expect(h.el.style.overflow).toBe('hidden');
+		expect(h.el.scrollTop).toBe(0);
+		expect(h.data.text).toBe('旧');
 		expect(h.render).not.toHaveBeenCalled();
 		expect(h.view.scheduleSave).not.toHaveBeenCalled();
 		h.el.fire('keydown', keyEvent('Enter'));
 		expect(applyRawToNodeMock).toHaveBeenCalledWith(h.data, '很长的原文\n第二行\n第三行');
+	});
+
+	it('编辑期间隐藏原框，关闭未修改的编辑器后恢复原显示属性', () => {
+		const h = openSession();
+		const group = getNodeGroupElMock.mock.results[0]!.value as ReturnType<typeof makeGroupStub>;
+		expect(group.getAttribute('visibility')).toBe('hidden');
+		closeInlineEditor(h.view);
+		expect(group.getAttribute('visibility')).toBeNull();
+		expect(h.render).not.toHaveBeenCalled();
+		expect(h.view.scheduleSave).not.toHaveBeenCalled();
 	});
 
 	it('打开：登记会话、创建 textarea（挂 body）、聚焦并置光标末尾', () => {

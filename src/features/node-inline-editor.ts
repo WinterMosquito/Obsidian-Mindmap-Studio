@@ -49,6 +49,7 @@ import {
 	getDrawTransform,
 	isEditingText,
 	readNodeEditorAppearance,
+	hideNodeForEditing,
 	markNodeNeedLayout,
 	recordHistory,
 } from '../engine/mindmap';
@@ -91,9 +92,8 @@ const EDITOR_STYLES: Partial<CSSStyleDeclaration> = {
 	fontSize: '14px',
 	lineHeight: '1.4',
 	resize: 'none',
-	overflowY: 'auto',
+	overflow: 'hidden',
 	outline: 'none',
-	boxShadow: '0 0 0 1px var(--interactive-accent)',
 	whiteSpace: 'pre-wrap',
 	wordBreak: 'break-word',
 };
@@ -138,6 +138,10 @@ interface InlineEditorSession {
 	initialValue: string;
 	/** 会话是否活跃（引擎事件监听会话级失效标记；引擎销毁时 EventBinder 统一清理） */
 	active: boolean;
+	/** 原始节点在编辑期间隐藏，由自适应编辑框统一承担文字与外框。 */
+	hiddenGroup: Element | null;
+	restoreGroup: (() => void) | null;
+	measureContext: CanvasRenderingContext2D | null;
 	/** 会话级解绑（document 监听；引擎监听随引擎 EventBinder 生命周期统一清理） */
 	detach: () => void;
 }
@@ -194,12 +198,17 @@ export function openNodeInlineEditor(
 		commitSession(view, session);
 	};
 
+	// Obsidian 的全局 createEl 在所属窗口上；d.ts 只声明全局函数，补窄类型访问。
+	const domWindow = doc.win as (Window & { createEl?: typeof createEl }) | undefined;
 	const session: InlineEditorSession = {
 		mindMap,
 		node,
 		el,
 		initialValue,
 		active: true,
+		hiddenGroup: null,
+		restoreGroup: null,
+		measureContext: domWindow?.createEl?.('canvas').getContext('2d') ?? null,
 		detach: () => {
 			doc.removeEventListener('mousedown', onDocMouseDown, true);
 		},
@@ -229,6 +238,7 @@ export function openNodeInlineEditor(
 	el.focus();
 	// 光标置末尾（对齐弹窗原文模式的「追加式编辑最常见，避免误输入覆盖整段」）
 	el.setSelectionRange(initialValue.length, initialValue.length);
+	el.scrollTop = 0;
 }
 
 /**
@@ -255,8 +265,9 @@ function createEditorEl(
 /**
  * 对齐自绘内容盒，保留文字起点（不包含节点边框、图标与折叠按钮）。
  * getComputedStyle 给的是未缩放尺寸；屏幕矩形已缩放，字体与 padding 必须同倍数。
- * 编辑器与节点共用内容盒的宽高，不设置独立最小尺寸，也不随输入扩张底色。
- * 原文较长时在盒内换行/滚动；尺寸变化只随节点的真实渲染矩形更新。
+ * 编辑态按原文自适应宽高（宽度遵循内容盒 maxWidth，手动固定宽度保留）。
+ * 原始节点临时隐藏，编辑器独自承担外框，避免原外框与扩大的编辑框叠在一起。
+ * 输入期间只调整编辑 DOM；提交后才回写数据、重排导图与排保存。
  * 保留亚像素定位，避免缩放时 Math.floor 引入的文字偏移。
  *
  * 节点 group 已随引擎重建或删除时**提交关闭**——没有定位依据就不该继续编辑。
@@ -283,6 +294,7 @@ function placeEditor(
 		background: appearance.background,
 		color: computed?.color || appearance.color,
 		borderRadius: `${appearance.borderRadius * scale}px`,
+		boxShadow: appearance.focusShadow,
 	});
 	if (computed) {
 		const pixels = (value: string): string => `${(Number.parseFloat(value) || 0) * scale}px`;
@@ -291,6 +303,7 @@ function placeEditor(
 			fontSize: pixels(computed.fontSize),
 			fontWeight: computed.fontWeight,
 			fontStyle: computed.fontStyle,
+			letterSpacing: computed.letterSpacing === 'normal' ? 'normal' : pixels(computed.letterSpacing),
 			lineHeight: computed.lineHeight === 'normal' ? 'normal' : pixels(computed.lineHeight),
 			paddingTop: pixels(computed.paddingTop),
 			paddingRight: pixels(computed.paddingRight),
@@ -300,20 +313,48 @@ function placeEditor(
 	}
 	el.style.left = `${rect.left}px`;
 	el.style.top = `${rect.top}px`;
-	el.style.width = `${rect.width}px`;
-	el.style.height = `${rect.height}px`;
+	let width = rect.width;
+	const context = session.measureContext;
+	if (computed && context) {
+		context.font = `${computed.fontStyle} ${computed.fontWeight} ${el.style.fontSize} ${computed.fontFamily}`;
+		context.letterSpacing = el.style.letterSpacing;
+		let textWidth = 0;
+		for (const line of el.value.split('\n')) textWidth = Math.max(textWidth, context.measureText(line).width);
+		const padding = Number.parseFloat(el.style.paddingLeft) + Number.parseFloat(el.style.paddingRight);
+		const maxWidth = Number.parseFloat(computed.maxWidth) * scale;
+		const naturalWidth = textWidth + padding + 2 * scale; // 给行末光标留空间，避免临界宽度换行。
+		const fixedWidth = Number.parseFloat((content as HTMLElement).style?.width ?? '') * scale;
+		width = fixedWidth > 0 ? fixedWidth : Math.max(rect.width, Math.min(naturalWidth, maxWidth || naturalWidth));
+	}
+	el.style.width = `${width}px`;
+	Object.assign(el.style, { height: '0' });
+	el.style.height = `${Math.max(rect.height, el.scrollHeight ? el.scrollHeight + 1 : 0)}px`;
+	el.scrollTop = 0;
+	if (session.hiddenGroup !== target && typeof target.setAttribute === 'function') {
+		restoreNodeGroup(session);
+		session.hiddenGroup = target;
+		session.restoreGroup = hideNodeForEditing(target);
+	}
+}
+
+/** 提交、关闭或节点 DOM 换代时恢复原显示属性，视图与会话树均不留预览改动。 */
+function restoreNodeGroup(session: InlineEditorSession): void {
+	session.restoreGroup?.();
+	session.restoreGroup = null;
+	session.hiddenGroup = null;
 }
 
 /**
  * 编辑器输入面：键盘（IME 组合态短路，语义见 `resolveInlineEditKey`；事件不外泄
  * ——引擎快捷键与 Obsidian scope 快捷键都不应在编辑器内生效）、点击不冒泡
- * （引擎 `body_click` / `svg_mousedown` 语义不受影响）；多行原文在节点盒内滚动。
+ * （引擎 `body_click` / `svg_mousedown` 语义不受影响）；输入仅更新编辑器尺寸。
  */
 function bindEditorInput(
 	el: HTMLTextAreaElement,
 	view: ViewNodeEditContext,
 	session: InlineEditorSession,
 ): void {
+	el.addEventListener('input', () => placeEditor(el, session, view));
 	el.addEventListener('keydown', (event) => {
 		event.stopPropagation();
 		if (event.isComposing || event.key === 'Process') {
@@ -364,6 +405,8 @@ function commitSession(
 	session.active = false;
 	sessions.delete(mindMap);
 	session.detach();
+	restoreNodeGroup(session);
+	session.measureContext = null;
 	const value = el.value;
 	el.remove();
 	// 焦点归还 body：引擎快捷键（Delete/Tab/F2 等）要求事件目标为 document.body

@@ -86,7 +86,7 @@
 | `src/links/links-tree.ts` | 455 | 树内引用更新**单一遍历实现**：rename / clear 两模式共享待匹配形态派生（资源地址 + [[链接]] 双载体、回收站退化、跨文件夹移动取新位置、非 .md 文档带扩展名）与写回规则；拆开会让「重命名改写」与「删除清理」两条路径的匹配口径漂移。`renamedMdLinkDest` 把 md 目标绕回 `parseWikilink` 是**安全**的（上游 `mdTargetRenamed` 已排除空串与含 `\|`/`#` 的目标），勿误改为「直接构造 parts」 |
 | `src/links/file-lookup.ts` | 376 | 全库文件索引（键形态 / 缓存新鲜度 / 增量补建）与**「新建引用路径形态」的唯一组合判定**（官方 `New link format` 三档 + basename 同名消歧 + `domain/wikilink.formatLinkPath` 拼接）。后者 2026-10-20 从 `features/view-node-actions` 上收：文档链接与图片引用共用同一份——拆开会让「读设置 / 判同名 / 拼路径」在两处各写一遍（图片侧此前正是直接写 `file.path`，无视设置）。 |
 | `src/links/links-resolve.ts` | 353 | 「任意地址形态 → TFile」的**统一解析入口**：远程拒绝 → `obsidian://` → 资源地址 → 路径直查 → `file://` 剥离 → 官方 `getFirstLinkpathDest` → 索引兜底——形态路由的**分支顺序本身即契约**（新增规则只改这一处）；拆开会重新引入本文件当初拆出要收敛的「双轨并存、覆盖形态互有盲区」问题 |
-| `src/features/node-inline-editor.ts` | 489 | 节点内联编辑的**单一会话收口**（K92）：覆盖层定位与跟随（`scale` / `node_tree_render_end` 重定位）、键盘语义表、点击外部与 `mousewheel` 提交、会话所属引擎守卫、提交写回（`applyRawNodeContent`）共享同一套「会话 → 值 → 落数据」不变式；拆开会让定位跟随与提交守卫跨文件失配 |
+| `src/features/node-inline-editor.ts` | 532 | 节点内联编辑的**单一会话收口**（K92）：覆盖层定位与跟随（`scale` / `node_tree_render_end` 重定位）、键盘语义表、点击外部与 `mousewheel` 提交、会话所属引擎守卫、提交写回（`applyRawNodeContent`）共享同一套「会话 → 值 → 落数据」不变式；拆开会让定位跟随与提交守卫跨文件失配 |
 | `src/markdown/md-open.ts` | 352 | 声明模式文档的**唯一读写面**：启用判据读取（`isMindMapFile` / `readDeclaredLayout`）与以导图打开 / 以 Markdown 打开的属性写入（`processFrontMatter` + `setMindMapEnabled/Layout/Disabled`）——两者共享 domain 的同一份「谁启用 / 布局是什么」判据；拆开会让「读判据 / 写值」两处口径漂移（2026-10-28 单键化：全库键名迁移删除后 303 → 243）。**2026-10-29 增至 280**：布局进属性——新增 `readDeclaredLayout`（视图的同步布局来源），升级写**种子布局**（`declareAndOpenAsMindMap` 增 `seedLayout` 参数），降级的短路条件收窄为「值已经是 `Markdown`」。**2026-11-07 双键化**：启用值恒写 `Mindmap`、布局独立写 kebab 键；升级时布局取值顺序为「启用键里的旧值（`readLegacyLayout`）→ 布局键里的旧写法（`readLegacyMindMapLayout`）→ 种子值」，已有合法布局原样保留。**2026-11-03 增至 340 → 364**：`openAsMindMap` 加「切换期间遮罩」（在 `.workspace-leaf` 上加减 `mindmap-view-switching`，成败都摘；样式两条选择器并列覆 `.workspace-leaf-content` 与 `.view-content`，上游改层级不至于静默失效）与同 leaf 并发去重（`WeakMap` 存 in-flight Promise，**带 3s 兜底超时**：`setViewState` 真挂起时摘掉登记允许重试，否则该 leaf 永远进不去导图）——Obsidian 打开文件**先**渲染 markdown、之后才切视图，启动恢复时能隔数百毫秒（用户看到「先闪一屏原文再变导图」） |
 | `src/services/document-service.ts` | 862 | md 文档读写数据面：**读**（`DocumentService.load` → `parseMdOutline` + `walkResolveImagePaths`）与**写**（`SavePipeline` → 2 秒防抖调度 + 串行排空 + 卸载快照兜底 + 无差异跳过 + `Vault.process` 原子写盘）成对。**2026-11-07 重写（691 → 583）**：保存策略照搬 Obsidian `TextFileView`——删掉「自动保存开关 / P1a 外部改动检测 / P1b 连续失败挂起 / `forgetBaseline`」，写入改为 `Vault.process`（运行时缺失时回退 `cachedRead` + `modify`），文件头恒取磁盘现值、正文取本视图序列化结果。 |
 | `src/services/document-session.ts` | 805 | **Level B 的会话本体**（2026-11-09）：一个文件的权威树、单游标历史、唯一保存管线、跨视图广播、外部写入重载是**同一条不可分割的状态链**——`commit` 必须同时改树 / 入历史 / 排广播 / 排保存（少一处就双写或丢历史）；由它持有的 `SavePipeline` 与 `SessionViewPort` 端口又必须共享同一份 `applying`/`loading` 闩锁（回声守卫）。拆开会让「提交一次编辑到底发生了什么」跨文件漂移，与 `document-service` 的拆分理由同性质；纯逻辑的栈已外置为 `document-session-history.ts`、注册表外置为 `document-session-registry.ts`，本文件只剩状态机与编排。 |
@@ -105,7 +105,7 @@ docs/
   agents/README.md               # 读取补充：各文件规模 / 权威边界 / conventions 五组 / 常见误读
   agents/architecture.md         # 模块职责、数据流、依赖矩阵、豁免理由详录
   agents/baseline-metrics.md     # 可复现基线（门禁/打开性能/体积归因/静态指标/核销台账）
-  agents/conventions.md          # 关键约定 K1–K202 全文（含实测账本与踩坑记录；区间由测试校验，勿手改窄）
+  agents/conventions.md          # 关键约定 K1–K204 全文（含实测账本与踩坑记录；区间由测试校验，勿手改窄）
   agents/line-count-log.md       # 豁免表行数与批次流水（历次实测读数与回填记录；新批次追加于此，index.md 只留终值）
   agents/testing.md              # 测试分层、CI 矩阵、CSS 检查、发布元数据护栏
   agents/process.md              # 新增功能检查清单、发布流程、安全合规

@@ -1,4 +1,4 @@
-# 关键约定 K1–K202（详录）
+# 关键约定 K1–K204（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
@@ -556,8 +556,11 @@
   标注的取色 / 取图标**一次查表**后传下去——原来同一个 `canonical` 在盒与标题行各查一次、
   且底色与标题色靠字符串形参传递。
 
-- [K199] **编辑态的文字与底色跟随节点**（2026-11-17，Issue #3）：插件内联原文编辑器按自绘内容盒的屏幕矩形定位，字体、行高、内边距按实时画布缩放，保留亚像素坐标。编辑框与节点共用内容盒宽高，显式覆盖宿主输入框的 min/max 尺寸；不再使用独立的 160px / 40px 最小尺寸，也不在 input 时按 scrollHeight 自行扩张，较长原文在盒内换行/滚动。普通态与编辑态沿用同一节点底色和墨色，透明节点取画布当前底色，避免进入编辑后退成白块。引擎的 `TextEdit.showEditTextBox` 在显示时覆写内联底色与阴影，现有 `beforeTextEdit` 仅能拦截显示、不能覆盖后续赋值；`engine/mindmap-editor` 防御式包装显示方法，在原方法结束后同步适配样式（无延时、无全局 CSS）。方法或 DOM 缺失时保留原行为，安装幂等，包装随引擎实例回收；`features` 不直接访问 `node.style` 或 `renderer.textEdit`。不改变输入原文、提交、撤销、保存及快捷键。回归 `tests/node-inline-editor.test.ts` / `tests/engine-editor.test.ts`；`verify:visual` 覆盖中心与分支在 50% / 100% / 150% 下的文字起点、字号、行高、宽高与输入过程中外框稳定，以及亮暗画布和节点着色下的引擎编辑框底色。
+- [K199] **编辑态的文字与底色跟随节点**（固定尺寸/内部滚动策略已由 K203 替代；此处保留当时的原因记录）（2026-11-17，Issue #3）：插件内联原文编辑器按自绘内容盒的屏幕矩形定位，字体、行高、内边距按实时画布缩放，保留亚像素坐标。编辑框与节点共用内容盒宽高，显式覆盖宿主输入框的 min/max 尺寸；不再使用独立的 160px / 40px 最小尺寸，也不在 input 时按 scrollHeight 自行扩张，较长原文在盒内换行/滚动。普通态与编辑态沿用同一节点底色和墨色，透明节点取画布当前底色，避免进入编辑后退成白块。引擎的 `TextEdit.showEditTextBox` 在显示时覆写内联底色与阴影，现有 `beforeTextEdit` 仅能拦截显示、不能覆盖后续赋值；`engine/mindmap-editor` 防御式包装显示方法，在原方法结束后同步适配样式（无延时、无全局 CSS）。方法或 DOM 缺失时保留原行为，安装幂等，包装随引擎实例回收；`features` 不直接访问 `node.style` 或 `renderer.textEdit`。不改变输入原文、提交、撤销、保存及快捷键。回归 `tests/node-inline-editor.test.ts` / `tests/engine-editor.test.ts`；`verify:visual` 覆盖中心与分支在 50% / 100% / 150% 下的文字起点、字号、行高、宽高与输入过程中外框稳定，以及亮暗画布和节点着色下的引擎编辑框底色。
 - [K200] **空白画布连续点击与双击不新建节点**（2026-11-17，用户实机反馈）：空白点击频繁被浏览器识别为双击，原 `view-node-actions.setupCanvasQuickCreate` 会在中心主题下插入空文本节点并立即编辑，结束编辑又保留空节点，形成误操作。现删除该绑定与 `view.setupFeatures` 的注册；沿用既有空白点击结束编辑、取消选中行为。Tab / Enter、节点旁加号、右键菜单仍显式新建空节点并立即编辑；节点双击编辑保持不变。不加设置项、不修改引擎、解析器或空列表项语义。回归 `tests/view-canvas-interaction.test.ts` 执行真实视图构造器的特性装配回调后派发连续点击 / 双击，并验证节点双击编辑与显式新建；右键菜单由 `tests/view-context-menu.test.ts` 验证。
+- [K203] **节点原文编辑自适应宽高，不显示内部滚动条**（2026-11-17，用户截图及补充）：K199 为消除外框错位而固定编辑尺寸，导致原文变长后出现滚动条、光标自动滚到末尾并裁切上部文字。现在按实际字号测原文每行宽度，增长至内容盒 maxWidth 后换行，手动指定宽度沿用；原生 textarea 的 scrollHeight 决定完整高度，并给行末光标与像素舍入留空间。原节点 group 的 visibility 在编辑期临时隐藏，编辑器独自承担文字与外框；关闭/换 DOM/引擎失效时恢复原属性，测量上下文随会话释放。输入只调整编辑 DOM、不写树、不记历史、不保存；提交仍走既有原文写回通道，随后布局更新。回归 `tests/node-inline-editor.test.ts`（增高、预览不污染数据、原显示恢复）、`verify:visual`（根与普通节点在 50%/100%/150%/235% 下的短中文→长中文→短中文尺寸变化、全内容可见、无内部滚动、关闭恢复与一次保存）。
+- [K204] **原生空节点编辑与插件原文编辑共用外框职责**（2026-11-17，用户高亮框截图）：新建空节点走引擎 `TextEdit`，K203 只覆盖自绘节点的插件 textarea；原生 contenteditable 增长时，SVG 的 `.smm-hover-node` 仍按提交前节点尺寸绘制。`engine/mindmap-editor.hideNodeForEditing` 统一暂藏整个节点但保留测量几何，恢复函数幂等且精确保留原 visibility；两条编辑面共用 `NODE_EDITOR_FOCUS_SHADOW`，高亮由编辑面自身 box-shadow 绘制、天然随宽高变化。原生显示/关闭方法防御式包装，关闭前、缩放重开、移除编辑 DOM 或引擎销毁时恢复；缺少关闭方法时不隐藏节点。原文预览不写数据、不加历史、不排保存，提交仍走各自原有通道。无 vendor / CSS / Markdown 格式改动。定向回归 `engine-editor.test.ts` / `node-inline-editor.test.ts`；真实 Chrome 覆盖选中空节点的四档缩放与三种底色、短→长→短输入、旧高亮隐藏、无滚动裁切、未提交数据稳定及关闭恢复。新增选中空节点断言在修复前真实浏览器失败，证明前轮盲区。
+
 - [K201] **新建导图只有中心节点，不预置示例分支**（2026-11-17，用户反馈）：`createDefaultMarkdownContent` 只产出启用/布局属性与分隔空行，正文为空；命名、落点、布局种子保持原流程。移除三条提示文本及中英死词条，现有文件中的提示不自动删除。**首节点语法**：去掉模板后，列表模式失去列表兄弟供序列化跟随，原空文档默认会写 `#`；复用虚拟根 `mdHeadingStart`，空图在列表设置下显式记 null（1–6 仍代表标题起点，缺失仍保历史默认 1），序列化起始 headingLevel 为 null 时按列表写。此标记只在树中，不新增 frontmatter/data.json 字段。撤销或外部修改回到空图时，`view.applySnapshot` 在空根副本上用同一 `seedHeadingStart` 重新初始化，保留已有起点、不修改会话/历史输入；有正文时不播种。纯浏览的序列化正文仍为空，由既有加载基线阻止写盘。回归 `tests/creation-folder.test.ts`（中英真实创建内容、三档首次分支及层级往返）、`tests/md-roundtrip.test.ts`、`tests/md-heading-syntax.test.ts`、`tests/view-canvas-interaction.test.ts`（空快照播种与输入隔离）、`tests/save-pipeline.test.ts`（空图关闭不写盘）。
 
 

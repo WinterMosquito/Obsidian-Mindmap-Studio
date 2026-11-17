@@ -5,7 +5,7 @@
 
 ## 测试与 CI
 
-编辑态外观（K199）：`engine-editor.test.ts` 验证节点/画布取色与原显示方法只调用一次；`node-inline-editor.test.ts` 验证缩放后的内容盒起点、字体与宽高，以及输入时不扩张。`verify:visual` 的 `inline-edit` 探针在真实 Chrome 中覆盖中心/分支的三档缩放与亮暗画布、节点配色，不替代 Obsidian 实机的 IME、主题 CSS 与操作手感验收。
+编辑态外观（K199）：`engine-editor.test.ts` 验证节点/画布取色与原显示方法只调用一次；`node-inline-editor.test.ts` 验证缩放后的内容盒起点、字体与自适应宽高（现行策略见 K203）。`verify:visual` 的 `inline-edit` 探针在真实 Chrome 中覆盖中心/分支的三档缩放与亮暗画布、节点配色，不替代 Obsidian 实机的 IME、主题 CSS 与操作手感验收。
 
 画布交互（K200）：`view-canvas-interaction.test.ts` 捕获真实 `MindMapView` 构造器交给控制器的特性装配回调，保留真实节点动作与事件绑定后派发空白连续点击 / 双击，断言不插入节点；同时验证节点双击仍编辑、显式新建仍立即编辑。其它特性使用局部桩，右键菜单行为由 `view-context-menu.test.ts` 另测；Obsidian 实机仍需验证空白点击结束编辑、取消选中与 Tab / Enter / 加号手感。
 
@@ -245,3 +245,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 提交信息——那段注释才是下一个人（或 agent）的上下文。
 
 索引迁移（K202）：`agents-md-sync.test.ts` 从 `index.md` 校验源码/测试清单、文档入口、K 区间及规模表，并验证入口链接可定位索引。`check-gates.test.ts` 在隔离临时目录执行真实 `--fix-lines` 脚本，断言只回填索引、入口逐字不变。
+
+编辑框自适应（K203）：`node-inline-editor.test.ts` 验证增长与无滚动、预览不写树/排保存，以及关闭时恢复原节点显示。浏览器探针覆盖根/普通节点在四档缩放下的短中文→长中文→短中文，断言尺寸增长/收回、内容无滚动裁切、预览不改变节点与关闭恢复。IME 和实际主题下的操作手感仍需 Obsidian 人工确认。
+
+编辑态高亮（K204）：原生空节点与插件原文编辑共用暂藏/恢复和细高亮。`engine-editor.test.ts` 直测显示/关闭一次、精确且幂等恢复原属性、缩放重开、移除/销毁及私有关闭方法缺失；`verify:visual` 先选中再编辑，四档缩放 × 亮/暗/节点底色验证原生空节点短→长→短的自适应、旧 SVG 高亮隐藏、编辑面细高亮存在、输入不改节点及关闭恢复。人工补验：新建节点即时输入、已有节点双击/F2、中文 IME、Enter 提交/撤销与保存重开。
