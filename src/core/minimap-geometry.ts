@@ -36,6 +36,13 @@ export interface MiniMapSize {
 	height: number;
 }
 
+/** 图、视口框与拖动共用的绘图区边距；画布尺寸本身没有边距。 */
+export interface MiniMapPanelSize extends MiniMapSize {
+	inset?: number;
+}
+
+const SIDEBAR_INSET_PX = 12;
+
 /**
  * 面板尺寸：按内容比例「等比装入」宽 220 的框，再把宽高压回各自区间。
  *
@@ -49,16 +56,29 @@ export interface MiniMapSize {
  * 再窄就放不下「根 + 两级」的横向层级（极端比例仍会留白，属已知边界）。
  *
  * `maxHeight` 的缺省 `MINIMAP_MAX_HEIGHT_PX`（280）只服务裸调用（测试 / 兜底）；
- * 生产路径恒传「画布高 × `MINIMAP_MAX_HEIGHT_RATIO`」。
+ * 浮层路径传「画布高 × `MINIMAP_MAX_HEIGHT_RATIO`」；侧栏传 available，
+ * 整个承载区作为坐标系，inset 留 12px 绘图区空白；既有 miniMapScale 为图、
+ * 框与导航统一等比居中（K215），小面板的边距退让以保留可用绘图区。
  *
  * 内容几何不可得（零/负数）返回 null——调用方保持上一帧，不画半张图。
  */
 export function computeMiniMapSize(
 	content: MiniMapSize,
 	maxHeight: number = MINIMAP_MAX_HEIGHT_PX,
-): MiniMapSize | null {
+	available?: MiniMapSize,
+): MiniMapPanelSize | null {
 	if (!(content.width > 0) || !(content.height > 0)) {
 		return null;
+	}
+	// 侧栏以整个承载区为坐标系；既有 SVG/投影/导航共用 miniMapScale 等比居中。
+	if (available) {
+		return Number.isFinite(available.width) && Number.isFinite(available.height)
+			&& available.width >= 1 && available.height >= 1
+			? {
+				width: Math.floor(available.width), height: Math.floor(available.height),
+				inset: Math.min(SIDEBAR_INSET_PX, Math.max(0, (Math.min(available.width, available.height) - 4) / 2)),
+			}
+			: null;
 	}
 	// 上限先夹到最小高度，避免调用方传入退化值（画布极矮）时算出 0
 	const heightCap = Math.max(MINIMAP_MIN_HEIGHT_PX, maxHeight);
@@ -75,13 +95,13 @@ export function computeMiniMapSize(
 }
 
 /**
- * 内容盒 → 面板的等比缩放（面板内留白由调用方各自居中）。
+ * 内容盒 → 面板的等比缩放（inset 是图/框/拖动共享的像素边距，余量仍居中）。
  *
  * 投影视口框、拼缩略图 SVG、拖拽换算**三处共用这一份**：它们必须是同一个
  * 比例，否则框会偏离图上的节点（此前三处各写一遍 `Math.min(...)`，改一处必漂移）。
  * 内容或面板退化（宽高 ≤ 0）返回 0，调用方按「不可映射」处理。
  */
-export function miniMapScale(content: MiniMapSize, panel: MiniMapSize): number {
+export function miniMapScale(content: MiniMapSize, panel: MiniMapPanelSize): number {
 	if (
 		!(content.width > 0) ||
 		!(content.height > 0) ||
@@ -91,8 +111,8 @@ export function miniMapScale(content: MiniMapSize, panel: MiniMapSize): number {
 		return 0;
 	}
 	return Math.min(
-		panel.width / content.width,
-		panel.height / content.height,
+		(panel.width - 2 * (panel.inset ?? 0)) / content.width,
+		(panel.height - 2 * (panel.inset ?? 0)) / content.height,
 	);
 }
 
@@ -119,7 +139,7 @@ export interface MiniMapProjectionInput {
 	/** 内容盒（布局坐标） */
 	content: MiniMapBox;
 	/** 面板尺寸（像素） */
-	panel: MiniMapSize;
+	panel: MiniMapPanelSize;
 	/** 画布尺寸（像素） */
 	canvas: MiniMapSize;
 	/** 当前画布变换（内容 → 画布） */
@@ -230,7 +250,7 @@ function fitSpan(
 /** 一帧缩略图的**映射几何**（内容盒 + 面板尺寸 + 标记指纹；判定「换没换图」只看这三项） */
 export interface MiniMapFrameGeometry {
 	content: MiniMapBox;
-	panel: MiniMapSize;
+	panel: MiniMapPanelSize;
 	/** 标记指纹（`buildMiniMapMarks` 的 `signature`） */
 	signature: number;
 }
@@ -263,6 +283,7 @@ export function sameMiniMapFrame(
 		sameBox(a.content, b.content) &&
 		a.panel.width === b.panel.width &&
 		a.panel.height === b.panel.height &&
+		(a.panel.inset ?? 0) === (b.panel.inset ?? 0) &&
 		a.signature === b.signature
 	);
 }
@@ -827,6 +848,47 @@ export interface MiniMapLink {
 	tier: 1 | 2;
 }
 
+/** 绘图与包围盒使用同一份可见连线，深度过滤只有这一处。 */
+export function buildMiniMapFrameLinks(
+	marks: readonly MiniMapMark[],
+	connectors: MiniMapConnectorMode,
+	linkMode: MiniMapLinkMode,
+): MiniMapLink[] {
+	return buildMiniMapLinks(linkMode === 'shallow' ? marksWithinDepth(marks, MINIMAP_LINK_MAX_DEPTH) : marks, connectors);
+}
+
+/**
+ * 侧栏映射必须包含实际绘制的节点与连线顶点/曲线控制范围。
+ * 复用 buildMiniMapLinks 的结果，不另造连线几何；保留全树 bounds，抽样不缩小比例尺。
+ */
+export function miniMapDrawingBounds(
+	bounds: MiniMapBox,
+	marks: readonly MiniMapMark[],
+	links: readonly MiniMapLink[],
+): MiniMapBox {
+	let left = bounds.x;
+	let top = bounds.y;
+	let right = bounds.x + bounds.width;
+	let bottom = bounds.y + bounds.height;
+	const include = ({ x, y }: MiniMapPoint): void => {
+		left = Math.min(left, x); top = Math.min(top, y);
+		right = Math.max(right, x); bottom = Math.max(bottom, y);
+	};
+	for (const mark of marks) {
+		include(mark); include({ x: mark.x + mark.width, y: mark.y + mark.height });
+	}
+	for (const link of links) {
+		include(link.from); include(link.to);
+		for (const point of link.polyline ?? []) { include(point); }
+		if (link.elbow) {
+			include(link.elbow.axis === 'h'
+				? { x: link.elbow.at, y: link.from.y }
+				: { x: link.from.x, y: link.elbow.at });
+		}
+	}
+	return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
 /**
  * 未知深度的哨兵（标记未带 `depth` 时用）：比任何真实深度都深——`shallow` 档会把它
  * 剪掉，方块归入最淡一档。三处判定（过滤 / 分档 / tier）共用，勿各写一个字面量。
@@ -1292,11 +1354,12 @@ export const MINIMAP_FALLBACK_COLORS: MiniMapColors = {
 export function buildMiniMapSvg(
 	content: MiniMapBox,
 	marks: readonly MiniMapMark[],
-	panel: MiniMapSize,
+	panel: MiniMapPanelSize,
 	colors: MiniMapColors,
 	lineStyle: MiniMapLineStyle = 'straight',
 	connectors: MiniMapConnectorMode = 'branchH',
 	linkMode: MiniMapLinkMode = 'all',
+	preparedLinks?: readonly MiniMapLink[],
 ): string {
 	const miniScale = miniMapScale(content, panel);
 	const offsetX = (panel.width - content.width * miniScale) / 2;
@@ -1350,11 +1413,7 @@ export function buildMiniMapSvg(
 	// 连线：按布局分派的五种形态（branchH / busV / railLeft / chainRail / fishbone）。
 	// 一级用较深的描边、更深的用较浅的，保住「主枝更实」的观感。
 	// `shallow` 档先按深度收窄标记集（只影响连线，下面的方块仍用全量 marks）。
-	const linkedMarks =
-		linkMode === 'shallow'
-			? marksWithinDepth(marks, MINIMAP_LINK_MAX_DEPTH)
-			: marks;
-	for (const link of buildMiniMapLinks(linkedMarks, connectors)) {
+	for (const link of preparedLinks ?? buildMiniMapFrameLinks(marks, connectors, linkMode)) {
 		const path = `<path d="${linkPath(link)}" />`;
 		if (link.tier === 1) {
 			link1.push(path);

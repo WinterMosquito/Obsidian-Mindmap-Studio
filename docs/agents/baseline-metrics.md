@@ -33,7 +33,7 @@
 
 1. **§5 夹具已被就地改动**：上一版登记的 `real-5000.mindmap.md`（239,438 B / 5,001 行 / sha `7eb5ec78…`）**已不是生成器输出**——库内副本比生成器输出多 1 个空节点，且有 1 个节点被拖动换父（`diff` 生成器输出与库内副本可见）。本轮用生成器**重建为标准形态**（见 §5 的复现命令），夹具指纹随之更新。**夹具指纹必须与本表同步**，否则 §5 读数不可复核。
 2. **§5 测量环境降级（必须与读数一起读）**：本轮测量时 Obsidian 窗口处于**隐藏/最小化**（实测 `document.hidden === true`），浏览器**暂停 rAF** ⇒ 视图初始化（`loadMindMapFromFile` 的 `pendingInitRaf`）与渐进渲染都停在半途（实测数分钟不动）。故临时以 `window.requestAnimationFrame = cb => setTimeout(() => cb(performance.now()), 16)` 垫片替代 rAF，读数才得以完成。垫片只改**调度方式**（不改变节点数/视口/剪枝判据），但 **R-04 的耗时含 UI 线程空闲差异**，且端点 B 需等渐进渲染跑完（约 2 分钟）。上一版是窗口可见时测的，故 R-04 **不可跨轮相减**。
-3. **§6 真实缺口 1 处（上一版漏计）**：`src/features/view-link-navigator.ts:87` 的 `void view.app.workspace.openLinkText(...)` 是**官方 Promise 且全调用链无 `.catch`**。上一版登记「0 处」是按 7+31=38 配平命中数的结果，未逐点核到这一条。本表按实测改为 **1 处、待处置**（见 §6）。
+3. **§6 真实缺口 1 处（上一版漏计）**：`src/features/navigation/view-link-navigator.ts:87` 的 `void view.app.workspace.openLinkText(...)` 是**官方 Promise 且全调用链无 `.catch`**。上一版登记「0 处」是按 7+31=38 配平命中数的结果，未逐点核到这一条。本表按实测改为 **1 处、待处置**（见 §6）。
 4. **§4.1 检测器必须先去注释（方法论修正）**：`view-context.ts` 的头注释里写着 ``import type { MindMapView } from './view'``，**未去注释**的检测器会据此造出一条**假类型边** `view-context.ts → view.ts`，并把 24 个 `view-*` 模块连成一个假环。本轮检测器加「去注释（保留字符串字面量）」后，编译期与运行时**均为 0 环**——结论与上一版一致，但上一版「0 环」是在「无该边」的前提下得出的，口径需写明。
 5. **§3.1 的 915 B 已定位（口径补全）**：归因构建的 `outputs[].bytes` 与其 `inputs[].bytesInOutput` 求和**恒差 915 B**（esbuild 运行时/CJS 包装，未归属到任何输入）。上一版把「归因构建产物 604,714 B」与「合计 603,799 B」并列而未说明这 915 B；本轮两者都写明口径（598,694 / 597,779）。
 6. **K117 减法批次的读数变化**（属正常演进，非遗漏）：`src/` 77 → **76 文件**（删 `features/file-creator.ts`）、i18n 键 176/176 → **166/166**、设置项 12 → **8**、`main.js` 604,847 → **598,827 B**、单测 1906 → **1911** 用例。§3/§4 相应读数整体下移。
@@ -111,15 +111,15 @@ npx esbuild src/main.ts --bundle --format=cjs --target=es2021 --tree-shaking=tru
 | 字节 | 文件 | 备注 |
 | --- | --- | --- |
 | **26,363** | `src/core/i18n.ts` | 自有第一大项（占总包 4.2%），192 键 × ZH/EN 双语纯词表 |
-| 10,305 | `src/features/view.ts` | 编排壳 |
+| 10,305 | `src/features/view/view.ts` | 编排壳 |
 | 9,252 | `src/markdown/md-serialize.ts` | 往返双向实现之一 |
 | 9,215 | `src/markdown/md-outline.ts` | 往返双向实现之二 |
 | 6,761 | `src/services/engine-controller.ts` | 引擎防腐收口（services 侧） |
 | 6,473 | `src/engine/mindmap-viewport.ts` | 画布几何与视口防腐面 |
-| 6,250 | `src/features/node-inline-html.ts` | 段序列 → HTML 装配 |
-| 5,861 | `src/features/node-inline-tokenize.ts` | 段序列切分（纯逻辑） |
-| 5,588 | `src/platform/math-jax.ts` | 数学渲染通道 |
-| 5,400 | `src/features/view-node-actions.ts` | 节点操作共用入口 |
+| 6,250 | `src/features/content/node-inline-html.ts` | 段序列 → HTML 装配 |
+| 5,861 | `src/features/content/node-inline-tokenize.ts` | 段序列切分（纯逻辑） |
+| 5,588 | `src/platform/rendering/math/math-jax.ts` | 数学渲染通道 |
+| 5,400 | `src/features/editing/view-node-actions.ts` | 节点操作共用入口 |
 
 **口径说明（两条都要读）**：归因构建产物 **625,514 B** 与发布产物 **625,647 B** 相差 **133 B**，等于 `esbuild.config.mjs:5-9` 的 banner 长度，归因因此有效；而 `bytesInOutput` 合计 **624,599 B** 与产物文件 625,514 B 相差 **915 B**，是 **esbuild 运行时/CJS 包装**未归属到任何输入的固定开销（两轮读数下该差值不变）。两者不可混用为同一口径。
 
@@ -164,11 +164,11 @@ npx esbuild src/main.ts --bundle --format=cjs --target=es2021 --tree-shaking=tru
 | S-02 | `as unknown as` | **34**（`engine/` 层占 23，其中 `mindmap-viewport.ts` 9、`mindmap-nodes.ts` 8） | `grep -rho "as unknown as" src --include=*.ts \| wc -l` |
 | S-03 | 分支密度 Top5 | `mindmap-viewport.ts` 151、`md-serialize.ts` 149、`md-outline.ts` 101、`math-jax.ts` 90、`node-inline-tokenize.ts` 73 | `grep -oE "if\|for\|while\|catch" <file> \| wc -l`（**逐文件**统计、按计数降序取 5；该正则含标识符内出现，如 `verify` 里的 `if`，故只作横向排序口径） |
 | S-04 | features 横向 import | **58**（总 86 边，`view-context` 21 + `view-common` 7 除外），`view-node-actions` 被 6 处依赖 | `grep -rhoP "from './[a-z-]+'" src/features` |
-| S-05 | `view.ts` 规模 | **1955** 行（2026-11-12 复测，与豁免表终值一致；+390 行＝Level B 会话接线（`commitSession` / `updateCurrent` / 广播应用 / 过期提交）与层级语法守卫挂载；方法 / 字段 / import 三项未随本次复测重算）。以下为 11-02 记录：**1565** 行（2026-11-02 复测，与豁免表终值一致；+298 行＝撤销链播种、大图首帧提示、加载基线补记、导出提示装配）/ 19 自有方法 / **15** 私有字段 / **45** import（方法/字段/import 三项未随本次复测重算，仍为 2026-10-27 复核；较 2026-10-26 的 1254 行 +13＝节点配色批：创建前 `applyColorDirectivesToTree`、`node_tree_render_end` 里的 `syncNodeColorDirectives`、`applyPalette` 归一改 `normalizePalettePreference`；import +1 为 `colorDirectiveOf`） | `awk 'END{print NR}' src/features/view.ts`；`grep -cP "^\t[a-zA-Z]+\(" …`；`grep -cP "^\tprivate [a-zA-Z]+[?!]?\s*[:=]" …`；`grep -c "^import" …` |
-| S-06 | 超过 300 行的文件 | **50**（2026-11-12 复测，与 `AGENTS.md` 豁免表 50 条一一对应、未登记超限 0；0.3.3 新增的会话 / 脚注 / 标注 / 层级语法等模块使超限文件从 33 增至 50，逐条理由见该表）。以下为 10-27 记录：**33**（2026-10-27 复核：**条目数不变**，本批 5 个新文件均未越线——`domain/color.ts` 258 / `engine/mindmap-colors.ts` 147 / `engine/mindmap-palette.ts` 144 / `features/view-node-color.ts` 134（优化批 −46：父链遍历上移 `domain/color.inheritedColorOf`，`effectiveNodeColorOf` 收成一行）/ `ui/modal-color.ts` 103；4 个既有文件随注释与改动回填：`core/minimap-geometry.ts` 1490、`features/node-inline-tokenize.ts` 1253（优化批 −23：注释收紧、末行判定改单行入参 `isClosingFenceLine`）/ `features/node-inline-html.ts` 882、`engine/mindmap.ts` 676。与 AGENTS.md 豁免表、`docs/agents/architecture.md` 同表**逐行一致**（`npm run check:gates -- --fix-lines` 回填）。计数须逐文件 `countSourceLines` 复算——`agents-md-sync.test.ts` 只守登记值漂移阈值，不改总数） | 逐文件 `countSourceLines`（`readFileSync(…,'utf8').split('\n')`，末尾换行不计）；或 `npx vitest run tests/agents-md-sync.test.ts`（仅漂移） |
+| S-05 | `view.ts` 规模 | **1955** 行（2026-11-12 复测，与豁免表终值一致；+390 行＝Level B 会话接线（`commitSession` / `updateCurrent` / 广播应用 / 过期提交）与层级语法守卫挂载；方法 / 字段 / import 三项未随本次复测重算）。以下为 11-02 记录：**1565** 行（2026-11-02 复测，与豁免表终值一致；+298 行＝撤销链播种、大图首帧提示、加载基线补记、导出提示装配）/ 19 自有方法 / **15** 私有字段 / **45** import（方法/字段/import 三项未随本次复测重算，仍为 2026-10-27 复核；较 2026-10-26 的 1254 行 +13＝节点配色批：创建前 `applyColorDirectivesToTree`、`node_tree_render_end` 里的 `syncNodeColorDirectives`、`applyPalette` 归一改 `normalizePalettePreference`；import +1 为 `colorDirectiveOf`） | `awk 'END{print NR}' src/features/view/view.ts`；`grep -cP "^\t[a-zA-Z]+\(" …`；`grep -cP "^\tprivate [a-zA-Z]+[?!]?\s*[:=]" …`；`grep -c "^import" …` |
+| S-06 | 超过 300 行的文件 | **50**（2026-11-12 复测，与 `AGENTS.md` 豁免表 50 条一一对应、未登记超限 0；0.3.3 新增的会话 / 脚注 / 标注 / 层级语法等模块使超限文件从 33 增至 50，逐条理由见该表）。以下为 10-27 记录：**33**（2026-10-27 复核：**条目数不变**，本批 5 个新文件均未越线——`domain/color.ts` 258 / `engine/mindmap-colors.ts` 147 / `engine/mindmap-palette.ts` 144 / `features/editing/view-node-color.ts` 134（优化批 −46：父链遍历上移 `domain/color.inheritedColorOf`，`effectiveNodeColorOf` 收成一行）/ `ui/modal-color.ts` 103；4 个既有文件随注释与改动回填：`core/minimap-geometry.ts` 1490、`features/content/node-inline-tokenize.ts` 1253（优化批 −23：注释收紧、末行判定改单行入参 `isClosingFenceLine`）/ `features/content/node-inline-html.ts` 882、`engine/mindmap.ts` 676。与 AGENTS.md 豁免表、`docs/agents/architecture.md` 同表**逐行一致**（`npm run check:gates -- --fix-lines` 回填）。计数须逐文件 `countSourceLines` 复算——`agents-md-sync.test.ts` 只守登记值漂移阈值，不改总数） | 逐文件 `countSourceLines`（`readFileSync(…,'utf8').split('\n')`，末尾换行不计）；或 `npx vitest run tests/agents-md-sync.test.ts`（仅漂移） |
 | S-07 | `addEventListener` 出现 | **33** 处（2026-10-27 复核；+2＝`ui/modal-color` 的输入与按键两个元素级监听——随弹窗销毁，不属常驻监听面） | `grep -rno "addEventListener" src --include=*.ts \| wc -l` |
 | S-08 | `console.` 调用 | **89** 处（2026-10-27 复核；+1＝`view-context-menu.createNativeSubmenu` 的「原生级联不可用，回退点击弹出」告警——私有触点的降级路径必须留痕，K33） | `grep -rno "console\." src --include=*.ts \| wc -l` |
-| S-09 | src / tests 规模 | **149 文件 50,187 行 / 115 文件 57,929 行**（2026-11-12 复测：0.3.3 收尾，较 10-27 的 118 / 34,483 与 90 / 45,840 为 src **+31 文件 / +15,704 行**、tests **+25 文件 / +12,089 行**＝Level B 会话三件套、脚注 / 标注 / 层级语法 / mermaid / 迁移模块及其用例；tests 含 `tests/mocks/obsidian.ts` 与 `tests/setup.ts`）。以下为 10-27 记录：**118 文件 34,483 行 / 90 文件 45,840 行**（2026-10-27 复核 + 审后复修批 src **+41 行**〔`ownLineSpan` + 落点/清除注释〕、tests **+31 行**〔两条往返用例〕；优化批 src **−57 行**〔注释收紧、父链遍历上移 domain，`domain/color` 275→**298**（仍在 300 行内，无需登记豁免）〕、tests **+34 行**〔`inheritedColorOf` 直测〕；默认合并批 src **+11 行**〔`inheritedColorOf` 与按节点分流〕、tests **+14 行**；哨兵批 src **+82 行**〔哨兵解析 / 遍历折 null / 菜单项 / i18n〕、tests **+126 行**；审后修复批 src **+87 行**〔指令落点与生效色判定〕、tests **+45 行**；较批 7 的 113 / 32,837 与 89 / 44,588 为 src **+5 文件 / +1,482 行**、tests **+1 文件 / +1,002 行**＝节点配色批（`domain/color`、`engine/mindmap-colors`、`engine/mindmap-palette`、`features/view-node-color`、`ui/modal-color` 五个新文件 + `tests/color-directive.test.ts`）。以下为批 7 记录：较第四清理批 src +108 / tests +150＝批 1–6 的注释与结构收敛（`minimap-geometry` 抽出 `extentOf` / `pushVerticalRail`、`view-viewport` 合并 `stepOf`、`check-gates` 去第二份清单）+ `tests/check-gates.test.ts` 新文件 127 行。以下为第四清理批：src +302 / tests +515＝同日后半批（视口框实时画布、鱼骨骨架、无选中复制全图、HUD 卡片、滚轮平滑）与本次死代码/注释订正（`view-minimap` −1、`view-viewport` −4、`minimap-geometry` +5、`mindmap-clipboard` 净 −1）。以下为上轮：本批 src +31 行＝`view-minimap` 唤醒分流与注释（+26）+ `onUnloadFile` 拆卸（+5），tests +29 行＝两条回归。以下为 2026-10-25 第三清理批：src +8 行＝删 `firstLevel`（`minimap-geometry` −6）与同文件注释订正（+7）＋ `drag-session` +3 / `viewport` +3 / `constants` +1，tests −5 行＝三处 fixture 去掉 `firstLevel`。以下为前几轮：小地图分档批复测；同日三批累计 src +179 / tests +183＝视口框落位（`projectViewportBox` 改走 `fitSpan`）+ 墨色（`readInk` 回落链、预设只归零宽度）+ 分档（`marksWithinDepth` 取代 `spineMarks`、新增 `MINIMAP_LINK_MAX_DEPTH`）。以下为前几轮：第二清理批〔死代码/注释订正〕src 再 +12＝`minimap-geometry` 删恒真根特判并订正两条注释、`constants` 小地图族级说明改段头注释。小地图七轮〔B1/B2 修复〕**当日整体回撤**（源码 / 样式 / 测试 / 验收断言一并退回，D42），比六轮多出的是同级兄弟横链那几行；上一轮 src +95 行、tests +140 行＝小地图五轮；上一轮 tests +1 文件＝`engine-minimap-capture.test.ts` 271 行；+3 src＝`core/minimap-geometry.ts`、`engine/mindmap-minimap.ts`、`features/view-minimap.ts`，+1 tests＝`view-minimap.test.ts`（`tests/*.ts` 含 `setup.ts`）；清理批 src 净 −35 行（重复的全树遍历与三处比例换算各收一份）、tests +19 行（+2 用例）。行数按 `countSourceLines`——直接 `wc -l` 会少 1～4 行，来自末尾无换行的文件） | `find src -name "*.ts" \| wc -l`（文件数）；行数用 `countSourceLines` 口径 |
+| S-09 | src / tests 规模 | **149 文件 50,187 行 / 115 文件 57,929 行**（2026-11-12 复测：0.3.3 收尾，较 10-27 的 118 / 34,483 与 90 / 45,840 为 src **+31 文件 / +15,704 行**、tests **+25 文件 / +12,089 行**＝Level B 会话三件套、脚注 / 标注 / 层级语法 / mermaid / 迁移模块及其用例；tests 含 `tests/mocks/obsidian.ts` 与 `tests/setup.ts`）。以下为 10-27 记录：**118 文件 34,483 行 / 90 文件 45,840 行**（2026-10-27 复核 + 审后复修批 src **+41 行**〔`ownLineSpan` + 落点/清除注释〕、tests **+31 行**〔两条往返用例〕；优化批 src **−57 行**〔注释收紧、父链遍历上移 domain，`domain/color` 275→**298**（仍在 300 行内，无需登记豁免）〕、tests **+34 行**〔`inheritedColorOf` 直测〕；默认合并批 src **+11 行**〔`inheritedColorOf` 与按节点分流〕、tests **+14 行**；哨兵批 src **+82 行**〔哨兵解析 / 遍历折 null / 菜单项 / i18n〕、tests **+126 行**；审后修复批 src **+87 行**〔指令落点与生效色判定〕、tests **+45 行**；较批 7 的 113 / 32,837 与 89 / 44,588 为 src **+5 文件 / +1,482 行**、tests **+1 文件 / +1,002 行**＝节点配色批（`domain/color`、`engine/mindmap-colors`、`engine/mindmap-palette`、`features/editing/view-node-color`、`ui/modal-color` 五个新文件 + `tests/color-directive.test.ts`）。以下为批 7 记录：较第四清理批 src +108 / tests +150＝批 1–6 的注释与结构收敛（`minimap-geometry` 抽出 `extentOf` / `pushVerticalRail`、`view-viewport` 合并 `stepOf`、`check-gates` 去第二份清单）+ `tests/check-gates.test.ts` 新文件 127 行。以下为第四清理批：src +302 / tests +515＝同日后半批（视口框实时画布、鱼骨骨架、无选中复制全图、HUD 卡片、滚轮平滑）与本次死代码/注释订正（`view-minimap` −1、`view-viewport` −4、`minimap-geometry` +5、`mindmap-clipboard` 净 −1）。以下为上轮：本批 src +31 行＝`view-minimap` 唤醒分流与注释（+26）+ `onUnloadFile` 拆卸（+5），tests +29 行＝两条回归。以下为 2026-10-25 第三清理批：src +8 行＝删 `firstLevel`（`minimap-geometry` −6）与同文件注释订正（+7）＋ `drag-session` +3 / `viewport` +3 / `constants` +1，tests −5 行＝三处 fixture 去掉 `firstLevel`。以下为前几轮：小地图分档批复测；同日三批累计 src +179 / tests +183＝视口框落位（`projectViewportBox` 改走 `fitSpan`）+ 墨色（`readInk` 回落链、预设只归零宽度）+ 分档（`marksWithinDepth` 取代 `spineMarks`、新增 `MINIMAP_LINK_MAX_DEPTH`）。以下为前几轮：第二清理批〔死代码/注释订正〕src 再 +12＝`minimap-geometry` 删恒真根特判并订正两条注释、`constants` 小地图族级说明改段头注释。小地图七轮〔B1/B2 修复〕**当日整体回撤**（源码 / 样式 / 测试 / 验收断言一并退回，D42），比六轮多出的是同级兄弟横链那几行；上一轮 src +95 行、tests +140 行＝小地图五轮；上一轮 tests +1 文件＝`engine-minimap-capture.test.ts` 271 行；+3 src＝`core/minimap-geometry.ts`、`engine/mindmap-minimap.ts`、`features/view/view-minimap.ts`，+1 tests＝`view-minimap.test.ts`（`tests/*.ts` 含 `setup.ts`）；清理批 src 净 −35 行（重复的全树遍历与三处比例换算各收一份）、tests +19 行（+2 用例）。行数按 `countSourceLines`——直接 `wc -l` 会少 1～4 行，来自末尾无换行的文件） | `find src -name "*.ts" \| wc -l`（文件数）；行数用 `countSourceLines` 口径 |
 | S-10 | i18n 键 | ZH **290** / EN **290**（对齐；2026-11-12 复测，较 10-27 的 217/217 各 **+73**＝层级语法 / mermaid / 标注 / 脚注 / 会话提示 / 新设置项六批）。以下为 10-27 记录：ZH **217** / EN **217**（对齐；2026-10-27 复核：「默认」合并批撤掉 `menu.color.none`（哨兵改为「默认」的落地形态，不再单列菜单项）。较 2026-10-26 的 206/206 各 **+11**＝节点配色批：`menu.color.follow` 1 + `palette.custom` 1 + `nodeColor.*` 5 + `modal.color.*` 4；两段同步是编译期强制，`EN: Record<TranslationKey, string>` 漏写即失败） | 统计 `src/core/i18n.ts` 两段字面量键（`^\t'` 行；ZH 段以 `} as const;` 收尾、EN 段以 `};` 收尾，**按段切分**，勿用单一结束标记） |
 | S-11 | 设置 | 接口 **13** 项声明 / `DEFAULT_SETTINGS` **13** 键 / 面板走 `getSettingDefinitions()`（2026-11-12 复测：新增 `newMapSyntax`（新建导图的层级语法）、删除 `autoSave`；边框与配色已改为按文件记，`defaultThemeStyle` 只提供新建时的初始值） | 取 `export interface MindMapStudioSettings` 与 `DEFAULT_SETTINGS` 两段内的字段行（文件为 CRLF，行尾 `\r` 需先剥离） |
 | S-12 | **循环依赖**（§4.1） | **编译期与运行时均为 0 个环**；**94** 文件 / **450** 条 src 内部依赖边（其中仅类型边 **93** 条；2026-10-21 复测，口径同 §4.1） | 自建 Tarjan 检测脚本（见 §4.1 口径与盲区） |
@@ -219,7 +219,7 @@ Top 5：
 | 37 | `src/markdown/md-outline.ts:390` | `buildInlineData` |
 | 36 | `src/links/links-resolve.ts:176` | `resolveDroppedFile` |
 | 35 | `src/markdown/md-serialize.ts:71` | `renderHyperlink` |
-| 33 | `src/features/node-inline-tokenize.ts:285` | `splitMarkedText` |
+| 33 | `src/features/content/node-inline-tokenize.ts:285` | `splitMarkedText` |
 | 31 | `src/markdown/md-serialize.ts:546` | `rawOk` |
 
 按文件聚合 Top3：`md-serialize.ts` 12 个（max 35）、`engine/mindmap-viewport.ts` 7 个（max 16）、`md-outline.ts` 6 个（max 37）。
@@ -282,19 +282,19 @@ node scripts/gen-perf-fixture.mjs --out "<vault>/fixtures/bench/realistic-5000.m
 ## §6 未 await（`void`）调用台账
 
 命令：`grep -rnP "\bvoid [a-zA-Z_(]" src --include=*.ts`
-命中 **43 行**（2026-10-20），其中 **4 行为注释**（`core/persistence.ts:13`、`features/view-image-actions.ts:51`、`features/view-node-actions.ts:516`、`markdown/md-open.ts:52`，后三处是显式声明「调用方以 `void …` 调用」的约定注释），**真实调用点 39 处**。
+命中 **43 行**（2026-10-20），其中 **4 行为注释**（`core/persistence.ts:13`、`features/media/view-image-actions.ts:51`、`features/editing/view-node-actions.ts:516`、`markdown/md-open.ts:52`，后三处是显式声明「调用方以 `void …` 调用」的约定注释），**真实调用点 39 处**。
 
 | 类别 | 数量 | 依据 |
 | --- | --- | --- |
-| 链尾显式 `.catch` | **6** | `node-inline-editor.ts:365`、`view-dnd.ts:81`、`view.ts:593`、`main.ts:493`、`platform/mindmap-auto-open.ts:142`、`platform/system-open.ts:21` |
+| 链尾显式 `.catch` | **6** | `node-inline-editor.ts:365`、`view-dnd.ts:81`、`view.ts:593`、`main.ts:493`、`platform/workspace/mindmap-auto-open.ts:142`、`platform/system/system-open.ts:21` |
 | 被调方内部 try/catch 兜底 | **32** | 主群：`commands.ts:106/122/190/208/249`（`createNewMindMap` / `exportImage` / `declareAndOpenAsMindMap` 内部 try）、`main.ts:227/326/330/376/393/445`（同上 + `flushNow` / `saveSettings` 经注入 writer 吞错）、`view.ts:716/968`、`view-context-menu.ts:199/226/250` 与 `view-toolbar.ts:83/86/165`（`addLinkToActiveNode` / `addImageToActiveNode` 自兜）、`view-paste.ts:27/52`、`view-title-renamer.ts:43`、`view-clipboard.ts:80/191`、`node-codeblock.ts:194`（`copyText` 返回布尔）、`measure-cache.ts:140`、`math-jax.ts:589/926`、`prism-code.ts:395`、`document-service.ts:152`、`view-state.ts:195`、`ui/modal-image.ts:101` |
-| **真实缺口（官方 Promise 无兜底）** | **1** | `features/view-link-navigator.ts:91`（2026-10-09 发现，至今未处置），见下 |
+| **真实缺口（官方 Promise 无兜底）** | **1** | `features/navigation/view-link-navigator.ts:91`（2026-10-09 发现，至今未处置），见下 |
 
 **真实缺口 1 处（2026-10-09 复测发现，待处置）**
 
 | 位置 | 表达式 | 分析 |
 | --- | --- | --- |
-| `src/features/view-link-navigator.ts:91` | `void host.app.workspace.openLinkText(...)` | 官方契约 `openLinkText(linktext, sourcePath, newLeaf?, openViewState?): Promise<void>`（`obsidian.d.ts:7914`，`@since 0.16.0`）。`openResolvedTarget()` 内**无 try**，其上游 `openHyperlink()` 同步返回 `void`，**接不住这个 Promise** ⇒ 未处理拒绝。 |
+| `src/features/navigation/view-link-navigator.ts:91` | `void host.app.workspace.openLinkText(...)` | 官方契约 `openLinkText(linktext, sourcePath, newLeaf?, openViewState?): Promise<void>`（`obsidian.d.ts:7914`，`@since 0.16.0`）。`openResolvedTarget()` 内**无 try**，其上游 `openHyperlink()` 同步返回 `void`，**接不住这个 Promise** ⇒ 未处理拒绝。 |
 
 **处置建议（本轮未改代码）**：链尾挂 `.catch` → `console.warn`（与 `view.ts:708` 同策：官方失败时核心自身有反馈路径，插件侧只留痕、不二次弹 Notice）；若实机确认失败时用户毫无反馈，再升级为 `notifyError`。**本轮刻意不改**——改源代码会同时作废本表 §3（体积/归因）与 §4（行数/复杂度/边数）的全部读数，须作为独立改动连同测试一起提交。
 
@@ -357,7 +357,7 @@ node scripts/gen-perf-fixture.mjs --out "<vault>/fixtures/bench/realistic-5000.m
 四簇行跨度合计 = **347 行**（占 1252 行的 28%）；上一版（1250 行基准）为 337 行——差额全部来自 C 簇（引用更新组合在本轮工作树中 +10 行）。
 
 > **2026-10-15 订正，行号已失效（勿据上表直接定位）**：A 簇（内容重测调度器）已于
-> 2026-10-11 **外置**为 `features/content-remeasure.ts`——`scheduleContentRemeasure` /
+> 2026-10-11 **外置**为 `features/content/content-remeasure.ts`——`scheduleContentRemeasure` /
 > `flushContentRemeasure` / `retryDeferredContentRemeasure` / `remeasureSettledContentNodes` /
 > `installMathFontsHook` 在 `view.ts` 中**已不存在**（同名能力见 `content-remeasure.ts`），
 > 故上表 A 簇行号与「346→479」跨度只反映 2026-10-09 那一份 `view.ts`；B/C/D 三簇行号亦

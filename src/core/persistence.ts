@@ -8,7 +8,7 @@
  * - 错误回调优先、console.error 兜底：传入 onError 时**完全由它接管**（调用方
  *   决定是否弹 Notice），此时不再打 console 冗余噪音；**未传入 onError 时打
  *   `console.error`** 留痕（⚠ 此前本注释写「静默吞错」与实现不符，已修正；
- *   契约由 tests/persistence.test.ts 两条用例锁定：缺省仅 console.error /
+ *   契约由 tests/core/persistence.test.ts 两条用例锁定：缺省仅 console.error /
  *   注入 onError 后 console.error 不介入）。两条路径下 write 自身都**不拒绝**，
  *   以保持调用方普遍使用的 `void writer.write(...)` 不产生未处理拒绝。
  */

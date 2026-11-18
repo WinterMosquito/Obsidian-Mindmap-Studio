@@ -1,5 +1,5 @@
 /**
- * `scripts/check-gates.mjs` 的最小类型声明（仅供 `tests/check-gates.test.ts` 直测）。
+ * `scripts/check-gates.mjs` 的最小类型声明（仅供 `tests/contracts/check-gates.test.ts` 直测）。
  *
  * 脚本是给 `node` 直接跑的 `.mjs`（不参与打包），因此不迁 TS；声明只覆盖测试
  * 依赖的两个纯函数，避免把脚本内部形态阔进公共类型面。新增导出时同步这里。

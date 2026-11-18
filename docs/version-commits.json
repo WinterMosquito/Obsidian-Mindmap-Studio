@@ -1,0 +1,4121 @@
+{
+  "schema_version": 1,
+  "source_head": "fe08a2aa3e50a2538199860a3f9958d86ef1ae16",
+  "mapping_method": "release notes + commit diffs; tag points to final requirement snapshot; base points to previous version feature snapshot",
+  "historical_execution_tested": false,
+  "versions": [
+    {
+      "version": "0.0.1",
+      "tag": "v0.0.1",
+      "base_commit": null,
+      "feature_commit": "6cfe6c6a106f2014a0505b9d45e1b9b4bf180dd4",
+      "feature_subject": "refactor: sync vendor css script and release notes for 0.0.1, harden paste naming",
+      "version_marker_commit": "5b1a70699d7e4e7b7d7463a6b273a5992165a422",
+      "version_marker_subject": "The Mind Map 0.0.1",
+      "first_version_marker_commit": "5b1a70699d7e4e7b7d7463a6b273a5992165a422",
+      "source_document": "docs/release-notes-0.0.1.md",
+      "document_sha256": "fc04695cdfacfda4874b4ee91a2052ec9d055efc499b3c75e56d2c2d18035bbb",
+      "document_first_commit": "6cfe6c6a106f2014a0505b9d45e1b9b4bf180dd4",
+      "feature_headlines": [
+        "Markdown 渲染层",
+        "Obsidian 原生集成",
+        "视图与编辑",
+        "节点操作",
+        "链接与附件",
+        "布局与外观",
+        "搜索与导出",
+        "```mindmap 代码块",
+        "性能模式",
+        "状态栏",
+        "工程底座",
+        "测试与 CI",
+        "引擎 vendor",
+        "需要 Obsidian 1.13.0+",
+        "仅桌面端"
+      ],
+      "summary": "作为 mindmap-studio 的首个公开发布版本，本版本交付完整的核心能力闭环",
+      "evidence_note": "首个公开版本文档在此提交建立，75 项测试与核心能力快照对应。根提交已含插件代码；开发前基线不可恢复。",
+      "implementation_commits": [
+        {
+          "commit": "5b1a70699d7e4e7b7d7463a6b273a5992165a422",
+          "subject": "The Mind Map 0.0.1",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            ".github/workflows/release.yml",
+            "esbuild.config.mjs",
+            "eslint.config.mts",
+            "src/codeblock.ts",
+            "src/commands.ts",
+            "src/constants.ts",
+            "src/creation.ts",
+            "src/event-binder.ts",
+            "src/i18n.ts",
+            "src/images-path.ts",
+            "src/images-save.ts",
+            "src/images.ts",
+            "src/links-resolve.ts",
+            "src/links-tree.ts",
+            "src/links.ts",
+            "src/main.ts",
+            "src/markdown.ts",
+            "src/md-open.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/mindmap-theme.ts",
+            "src/mindmap.ts",
+            "src/modal-common.ts",
+            "src/modal-image.ts",
+            "src/modal-link.ts",
+            "src/modal-name.ts",
+            "src/modals.ts",
+            "src/settings.ts",
+            "src/vault-sync.ts",
+            "src/view-attachments.ts",
+            "src/view-context-menu.ts",
+            "src/view-dnd.ts",
+            "src/view-export.ts",
+            "src/view-image-fullscreen.ts",
+            "src/view-node-actions.ts",
+            "src/view-paste.ts",
+            "src/view-search.ts",
+            "src/view-state.ts",
+            "src/view-status.ts",
+            "src/view-toolbar.ts",
+            "src/view-wikilink.ts",
+            "src/view.ts",
+            "styles.css",
+            "vendor/simple-mind-map.cjs",
+            "vendor/simple-mind-map.d.cts"
+          ]
+        },
+        {
+          "commit": "3d8108e35bc92dc4fae09599f65ea1561a3a7f0f",
+          "subject": "fix: wrap URL link destinations in angle brackets on serialize",
+          "changed_paths": [
+            "src/md-outline.ts",
+            "src/md-serialize.ts"
+          ]
+        },
+        {
+          "commit": "f4d889836cb80c6aac9c86543d08c0baaf474474",
+          "subject": "fix: serialize URL links as autolink <url> and parse <url> back",
+          "changed_paths": [
+            "src/md-outline.ts",
+            "src/md-serialize.ts"
+          ]
+        },
+        {
+          "commit": "ad3d273a90818a22a4881a39ee5e1290dfb26f43",
+          "subject": "feat: render URL links as icon-only (autolink not shown as node text)",
+          "changed_paths": [
+            "src/md-outline.ts",
+            "src/view-node-actions.ts"
+          ]
+        },
+        {
+          "commit": "4c86409e6b28d4c09c5532e485e5c5c5a920663e",
+          "subject": "feat: write-back heuristics (link destination escaping/normalization + url display sync)",
+          "changed_paths": [
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/view-node-actions.ts"
+          ]
+        },
+        {
+          "commit": "e49b170e0104d3af13ac48456e155f79bee72ab8",
+          "subject": "refactor: rename plugin to MindMap Studio (id mindmap-studio)",
+          "changed_paths": [
+            "src/main.ts",
+            "styles.css"
+          ]
+        },
+        {
+          "commit": "1559ffab29595fb657cbce6bbe55d0c65b7a41ac",
+          "subject": "fix: restore openAs=mindmap leaves after workspace reload (startup auto-switch)",
+          "changed_paths": [
+            "src/main.ts"
+          ]
+        },
+        {
+          "commit": "47d5e27bb1e80a381d31818b9fdfa3f0019b5e7b",
+          "subject": "fix: robustly restore openAs=mindmap views (layout-ready + delay + file-open)",
+          "changed_paths": [
+            "src/main.ts"
+          ]
+        },
+        {
+          "commit": "47526d78b7185b08dd2a6b67ac377747eba57c5c",
+          "subject": "fix: multi-delay openAs restore after workspace reload",
+          "changed_paths": [
+            "src/main.ts"
+          ]
+        },
+        {
+          "commit": "72d336c4e45e8683a6082f4d60e079e637b0c167",
+          "subject": "fix: broaden openAs restore scans + startup diagnostic",
+          "changed_paths": [
+            "src/main.ts"
+          ]
+        },
+        {
+          "commit": "d3f96c203ec58443d6756f4f92e63dfa12770556",
+          "subject": "fix: hydrate viewState from the whole data.json (root cause of view/layout loss on restart)",
+          "changed_paths": [
+            "src/main.ts"
+          ]
+        },
+        {
+          "commit": "e13a8fc0e3f8ac5afde66c1ee945dc1fc85ec2fc",
+          "subject": "refactor: remove dead code and un-export internal-only helpers",
+          "changed_paths": [
+            "src/constants.ts",
+            "src/mindmap.ts",
+            "src/view-node-actions.ts"
+          ]
+        },
+        {
+          "commit": "96bf21ae3da5d575e26bb46360a110d51f50bc1e",
+          "subject": "refactor: serialize data.json writes and centralize openAs error handling (remove race/unhandled-rejection debt)",
+          "changed_paths": [
+            "src/main.ts",
+            "src/md-open.ts"
+          ]
+        },
+        {
+          "commit": "1f83c69bd14343d05e5de0769f42ff4dc4202308",
+          "subject": "refactor: harden malformed-tree render, image size walk, file:// path, search debounce, view-state validation, export/finally, refresh clone",
+          "changed_paths": [
+            "src/codeblock.ts",
+            "src/images-path.ts",
+            "src/links-resolve.ts",
+            "src/view-export.ts",
+            "src/view-search.ts",
+            "src/view-state.ts",
+            "src/view.ts"
+          ]
+        },
+        {
+          "commit": "ca64c8917c97b07357e219ad2b8ae05fae3dc068",
+          "subject": "refactor: restructure into domain/services/features layers, promote roundtrip tests to vitest, enforce strict lint",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            "eslint.config.mts",
+            "src/codeblock.ts",
+            "src/commands.ts",
+            "src/creation.ts",
+            "src/domain/md-meta.ts",
+            "src/domain/tree.ts",
+            "src/domain/wikilink.ts",
+            "src/features/view-attachments.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-export.ts",
+            "src/features/view-image-fullscreen.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-paste.ts",
+            "src/features/view-search.ts",
+            "src/features/view-status.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/i18n.ts",
+            "src/images-path.ts",
+            "src/images-save.ts",
+            "src/images.ts",
+            "src/links-tree.ts",
+            "src/links.ts",
+            "src/main.ts",
+            "src/markdown.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/mindmap.ts",
+            "src/modal-link.ts",
+            "src/modal-name.ts",
+            "src/modals.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/settings.ts",
+            "src/vault-sync.ts",
+            "src/view-attachments.ts",
+            "src/view-context-menu.ts",
+            "src/view-dnd.ts",
+            "src/view-export.ts",
+            "src/view-image-fullscreen.ts",
+            "src/view-node-actions.ts",
+            "src/view-paste.ts",
+            "src/view-search.ts",
+            "src/view-status.ts",
+            "src/view-toolbar.ts",
+            "src/view-wikilink.ts",
+            "src/view.ts",
+            "styles.css",
+            "tests/domain.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mocks/obsidian.ts",
+            "vitest.config.ts"
+          ]
+        },
+        {
+          "commit": "1641e2b3b166c9ac1e70f4021a60d6c8a60c3bf8",
+          "subject": "refactor: consolidate single sources of truth, contain engine internals, extract plugin infra",
+          "changed_paths": [
+            "eslint.config.mts",
+            "src/concurrency.ts",
+            "src/constants.ts",
+            "src/creation.ts",
+            "src/domain/url.ts",
+            "src/errors.ts",
+            "src/features/file-creator.ts",
+            "src/features/view-attachments.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-export.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-paste.ts",
+            "src/features/view-search.ts",
+            "src/features/view-status.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/i18n.ts",
+            "src/images-path.ts",
+            "src/images-save.ts",
+            "src/links-tree.ts",
+            "src/main.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/mindmap-theme.ts",
+            "src/mindmap.ts",
+            "src/modal-image.ts",
+            "src/open-as-restore.ts",
+            "src/persistence.ts",
+            "src/services/document-service.ts",
+            "src/settings.ts",
+            "src/system-open.ts",
+            "src/view-state.ts",
+            "tests/concurrency.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/settings.test.ts",
+            "tests/setup.ts",
+            "tests/url.test.ts",
+            "tests/view-state.test.ts",
+            "vitest.config.ts"
+          ]
+        },
+        {
+          "commit": "1b8158ce9b154e9a7cf88e72c59191b9b7aed02e",
+          "subject": "refactor: unify resolution entry, enforce domain purity, shift status bar ownership",
+          "changed_paths": [
+            "eslint.config.mts",
+            "src/domain/md-meta.ts",
+            "src/features/view-context.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-status.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/file-lookup.ts",
+            "src/images-path.ts",
+            "src/images-save.ts",
+            "src/links-resolve.ts",
+            "src/links-tree.ts",
+            "src/main.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/node-data.ts",
+            "src/status-bar.ts",
+            "src/vault-sync.ts"
+          ]
+        },
+        {
+          "commit": "6cfe6c6a106f2014a0505b9d45e1b9b4bf180dd4",
+          "subject": "refactor: sync vendor css script and release notes for 0.0.1, harden paste naming",
+          "changed_paths": [
+            "eslint.config.mts",
+            "scripts/sync-vendor-css.mjs",
+            "src/codeblock.ts",
+            "src/commands.ts",
+            "src/concurrency.ts",
+            "src/constants.ts",
+            "src/creation.ts",
+            "src/errors.ts",
+            "src/features/file-creator.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-export.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-paste.ts",
+            "src/features/view-search.ts",
+            "src/features/view-status.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view.ts",
+            "src/i18n.ts",
+            "src/images-path.ts",
+            "src/images-save.ts",
+            "src/links-resolve.ts",
+            "src/main.ts",
+            "src/md-open.ts",
+            "src/mindmap.ts",
+            "src/modal-common.ts",
+            "src/modal-image.ts",
+            "src/modal-link.ts",
+            "src/modal-name.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/settings.ts",
+            "src/vault-sync.ts",
+            "styles.css",
+            "tests/concurrency.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/pasted-name.test.ts",
+            "vendor/simple-mind-map.d.cts"
+          ]
+        }
+      ],
+      "earliest_available_commit": "5b1a70699d7e4e7b7d7463a6b273a5992165a422"
+    },
+    {
+      "version": "0.0.2",
+      "tag": "v0.0.2",
+      "base_commit": "6cfe6c6a106f2014a0505b9d45e1b9b4bf180dd4",
+      "feature_commit": "3391a9bfd96b09574f7f6374cc1639a5d193201f",
+      "feature_subject": "ci: drop EOL Node 20.x from test matrix (keep 22.x, 24.x)",
+      "version_marker_commit": "54496d49f4d118c799d41f17174bf806e65ea14d",
+      "version_marker_subject": "chore(release): bump version to 0.0.2",
+      "first_version_marker_commit": "54496d49f4d118c799d41f17174bf806e65ea14d",
+      "source_document": "docs/release-notes-0.0.2.md",
+      "document_sha256": "9180d84183b882ff49b00c285b66ae98203d55e4cb02ef31b20ebc7913889113",
+      "document_first_commit": "721565a2382dbb1f88b7363503fca26acbe44ad2",
+      "feature_headlines": [
+        "拖拽换父辅助",
+        "节点图片拖宽",
+        "图片独占节点",
+        "性能",
+        "性能",
+        "写盘",
+        "测试与 CI",
+        "Lint",
+        "文档"
+      ],
+      "summary": "作为 mindmap-studio 的第二个发布版本，0.0.2 汇总自 0.0.1 以来的主要用户与开发者相关变更",
+      "evidence_note": "b68ea32 实现节点交互，ad35a95 完成 lint；a432084/3391a9b 补齐版本说明中的 CI 要求。",
+      "implementation_commits": [
+        {
+          "commit": "5e9dd41a71c116f24b677971b1a17236c575ba3f",
+          "subject": "refactor: close code-quality audit findings - unified resolution, no polling, slim view context, vendor contract guard",
+          "changed_paths": [
+            "eslint.config.mts",
+            "src/features/view-context.ts",
+            "src/features/view-export.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-search.ts",
+            "src/features/view-status.ts",
+            "src/features/view.ts",
+            "src/mindmap.ts",
+            "src/modal-image.ts",
+            "tests/file-lookup.test.ts",
+            "tests/find-node-by-dom.test.ts",
+            "tests/images-path.test.ts",
+            "tests/links-resolve.test.ts",
+            "tests/links-tree.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/open-as-restore.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-node-actions.test.ts",
+            "vendor/simple-mind-map.d.cts"
+          ]
+        },
+        {
+          "commit": "b68ea32bc24b1ccc7156cb7f2e488b5f1f86b9b5",
+          "subject": "feat: drag-target assisted reparenting, image drag resize, settings persist debounce; expand test matrix (engine-controller, event-binder, persistence, feature-helpers)",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            "eslint.config.mts",
+            "src/concurrency.ts",
+            "src/creation.ts",
+            "src/domain/md-meta.ts",
+            "src/features/drag-target.ts",
+            "src/features/image-resize.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view.ts",
+            "src/file-lookup.ts",
+            "src/i18n.ts",
+            "src/images-path.ts",
+            "src/images-save.ts",
+            "src/main.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/mindmap.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/settings.ts",
+            "src/view-state.ts",
+            "styles.css",
+            "tests/concurrency.test.ts",
+            "tests/engine-controller.test.ts",
+            "tests/event-binder.test.ts",
+            "tests/feature-helpers.test.ts",
+            "tests/file-lookup.test.ts",
+            "tests/images-path.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/persistence.test.ts",
+            "tests/settings-persist.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-state.test.ts",
+            "vitest.config.ts"
+          ]
+        },
+        {
+          "commit": "ad35a952f7927b9810021dff789eb9e2417f27bc",
+          "subject": "chore(lint): wire manifest.json/LICENSE into eslint, fix manifest description",
+          "changed_paths": [
+            "eslint.config.mts",
+            "scripts/plain-text-parser.mjs"
+          ]
+        },
+        {
+          "commit": "a4320849cb45a011d64b551c5ef3417c844b1ba4",
+          "subject": "ci: bump actions/upload-artifact v4 to v7 (node24 runtime)",
+          "changed_paths": [
+            ".github/workflows/lint.yml"
+          ]
+        },
+        {
+          "commit": "3391a9bfd96b09574f7f6374cc1639a5d193201f",
+          "subject": "ci: drop EOL Node 20.x from test matrix (keep 22.x, 24.x)",
+          "changed_paths": [
+            ".github/workflows/lint.yml"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.0.3",
+      "tag": "v0.0.3",
+      "base_commit": "3391a9bfd96b09574f7f6374cc1639a5d193201f",
+      "feature_commit": "762cefbe5f40e8d3ceec5b09e30d1bc2eee4f705",
+      "feature_subject": "docs: drop superseded code-quality/eslint audit reports and audit guide",
+      "version_marker_commit": "d7fb0fc3f55e57a21302222012978fc36072fee4",
+      "version_marker_subject": "chore(release): bump version to 0.0.3",
+      "first_version_marker_commit": "d7fb0fc3f55e57a21302222012978fc36072fee4",
+      "source_document": "docs/release-notes-0.0.3.md",
+      "document_sha256": "ac3ff5ff8f657f36a002ecc5e1fd2aaecd35da7423276da08a8158fd41644165",
+      "document_first_commit": "3fb7784b9ea78982750b94420e5fa140021fac9c",
+      "feature_headlines": [
+        "移除 ```mindmap 代码块渲染",
+        "文档清理",
+        "测试",
+        "版本",
+        "新增"
+      ],
+      "summary": "作为 mindmap-studio 的第三个发布版本，0.0.3 合并了 0.0.2 以来的一处主动精简",
+      "evidence_note": "b029925 删除代码块功能，762cefb 完成同版本说明要求的审计文档清理。说明文件在后续 3fb7784 才补写。",
+      "implementation_commits": [
+        {
+          "commit": "b02992531942803ba3a06f456ea0516863ce08fe",
+          "subject": "refactor: remove Markdown code-block rendering; unify on .mindmap.md views",
+          "changed_paths": [
+            "src/codeblock.ts",
+            "src/constants.ts",
+            "src/i18n.ts",
+            "src/images-path.ts",
+            "src/main.ts",
+            "src/md-serialize.ts",
+            "src/mindmap-theme.ts",
+            "src/mindmap.ts",
+            "src/services/document-service.ts",
+            "src/settings.ts",
+            "styles.css",
+            "tests/images-path.test.ts",
+            "tests/settings.test.ts"
+          ]
+        },
+        {
+          "commit": "762cefbe5f40e8d3ceec5b09e30d1bc2eee4f705",
+          "subject": "docs: drop superseded code-quality/eslint audit reports and audit guide",
+          "changed_paths": [
+            "AGENTS.md",
+            "docs/code-quality-audit-guide.md",
+            "docs/code-quality-report.html",
+            "docs/eslint-audit-report.html"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.0.4",
+      "tag": "v0.0.4",
+      "base_commit": "762cefbe5f40e8d3ceec5b09e30d1bc2eee4f705",
+      "feature_commit": "3fb7784b9ea78982750b94420e5fa140021fac9c",
+      "feature_subject": "fix: harden API usage, round-trip fidelity, interactions and copy",
+      "version_marker_commit": "785db6c3b699f97732b56e417e07e6f1990a64ae",
+      "version_marker_subject": "chore(release): bump version to 0.0.4",
+      "first_version_marker_commit": "785db6c3b699f97732b56e417e07e6f1990a64ae",
+      "source_document": "docs/release-notes-0.0.4.md",
+      "document_sha256": "b9df75036e1e74677744d534032e52c36ccb77c826de651402462814767cf31b",
+      "document_first_commit": "3fb7784b9ea78982750b94420e5fa140021fac9c",
+      "feature_headlines": [
+        "Markdown 回写保真度",
+        "多图拖入不再丢图",
+        "搜索修复",
+        "弹窗修复",
+        "语言切换即时生效",
+        "API 合规（对照官方 1.13.2 类型定义）",
+        "交互与错误处理",
+        "文案规范（对照官方 style guide）",
+        "工程",
+        "测试",
+        "版本",
+        "有意偏离（本版明确文档化）"
+      ],
+      "summary": "0.0.4 是一次以「外部权威源严格检测」驱动的质量版本",
+      "evidence_note": "3fb7784 同时实现 API/回写/交互修复并建立版本说明；785db6c 仅补版本号。",
+      "implementation_commits": [
+        {
+          "commit": "3fb7784b9ea78982750b94420e5fa140021fac9c",
+          "subject": "fix: harden API usage, round-trip fidelity, interactions and copy",
+          "changed_paths": [
+            ".github/workflows/release.yml",
+            "eslint.config.mts",
+            "scripts/verify-visual.mjs",
+            "src/commands.ts",
+            "src/constants.ts",
+            "src/creation.ts",
+            "src/domain/md-meta.ts",
+            "src/domain/url.ts",
+            "src/domain/wikilink.ts",
+            "src/features/drag-target.ts",
+            "src/features/file-creator.ts",
+            "src/features/image-resize.ts",
+            "src/features/view-common.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-image-actions.ts",
+            "src/features/view-image-fullscreen.ts",
+            "src/features/view-link-navigator.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-search.ts",
+            "src/features/view-title-renamer.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/file-lookup.ts",
+            "src/i18n.ts",
+            "src/images-path.ts",
+            "src/images-save.ts",
+            "src/links-resolve.ts",
+            "src/links-tree.ts",
+            "src/main.ts",
+            "src/md-open.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/mindmap-theme.ts",
+            "src/mindmap.ts",
+            "src/modal-common.ts",
+            "src/modal-image.ts",
+            "src/modal-link.ts",
+            "src/modal-name.ts",
+            "src/node-data.ts",
+            "src/open-as-restore.ts",
+            "src/persistence.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/settings.ts",
+            "src/status-bar.ts",
+            "src/view-state.ts",
+            "styles.css",
+            "tests/engine-controller.test.ts",
+            "tests/feature-helpers.test.ts",
+            "tests/feature-teardown.test.ts",
+            "tests/file-lookup.test.ts",
+            "tests/images-path.test.ts",
+            "tests/language-refresh.test.ts",
+            "tests/links-resolve.test.ts",
+            "tests/md-inline.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/modal-common.test.ts",
+            "tests/modal-input.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/settings.test.ts",
+            "tests/url.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-search.test.ts",
+            "tests/view-status.test.ts",
+            "tests/view-wikilink.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.0.5",
+      "tag": "v0.0.5",
+      "base_commit": "3fb7784b9ea78982750b94420e5fa140021fac9c",
+      "feature_commit": "ef49078fb31208785601340b4966d812d128dbce",
+      "feature_subject": "fix(hotkeys): 创建视图作用域——F2 等视图内快捷键此前全部失效",
+      "version_marker_commit": "c9e21b24bfcadd813aa54fc7dcf12171d5864b71",
+      "version_marker_subject": "chore(release): 0.0.5",
+      "first_version_marker_commit": "c9e21b24bfcadd813aa54fc7dcf12171d5864b71",
+      "source_document": "docs/release-notes-0.0.5.md",
+      "document_sha256": "888d2ace4cd25f8e2856e3d76c2284afa0ff169748ae8c77b8f60edc72cddea9",
+      "document_first_commit": "c9e21b24bfcadd813aa54fc7dcf12171d5864b71",
+      "feature_headlines": [
+        "`F2` 编辑当前节点",
+        "「重置缩放（100%）」按钮",
+        "打开时的默认视口",
+        "Markdown 往返不再丢内容（实测复现后修复，新增 8 例回归用例）",
+        "悬停预览弹窗现在会翻转到节点下方",
+        "编辑中心节点改名不再断链",
+        "多窗口（popout）兼容",
+        "生命周期与竞态",
+        "文件名清理对齐 Obsidian 约束",
+        "文档纠错",
+        "删除无用代码 −28.8 KB",
+        "测试 430 → 472",
+        "CI 增加 `verify:visual --require-chrome`",
+        "收敛重复实现"
+      ],
+      "summary": "0.0.5 是一次以「代码检查 + 实测复现」驱动的修复版本",
+      "evidence_note": "版本号提交 c9e21b2 后，ef49078 修正作用域，使说明中的 F2 等视图快捷键实际生效。",
+      "implementation_commits": [
+        {
+          "commit": "183dc26f2f8b3820b27a91f258fe3daaa23cda00",
+          "subject": "fix: open at 100% centred on the central node; repair hover preview and node text edit",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/features/view-context.ts",
+            "src/features/view-wikilink.ts",
+            "src/mindmap.ts",
+            "src/services/engine-controller.ts",
+            "tests/engine-controller.test.ts",
+            "tests/node-text-edit.test.ts",
+            "tests/view-wikilink.test.ts",
+            "vendor/simple-mind-map.d.cts"
+          ]
+        },
+        {
+          "commit": "96fc88824f32b311790fb16b053edbd3d10f1e1a",
+          "subject": "feat: add a reset-zoom toolbar button; auto-arrange resets zoom instead of fitting",
+          "changed_paths": [
+            "src/constants.ts",
+            "src/features/view-toolbar.ts",
+            "src/i18n.ts",
+            "src/mindmap.ts",
+            "tests/viewport.test.ts"
+          ]
+        },
+        {
+          "commit": "150a04d74d9f85fd16d40972fc707c9e008a535b",
+          "subject": "fix: reset zoom only restores 100%, keeping the current pan",
+          "changed_paths": [
+            "src/mindmap.ts",
+            "tests/viewport.test.ts"
+          ]
+        },
+        {
+          "commit": "e9516da86ed7fb7d7bf0f0bc84e27b7c0181eff9",
+          "subject": "fix: reset zoom anchors at the canvas centre so the visible content does not drift",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/mindmap.ts",
+            "tests/viewport.test.ts",
+            "vendor/simple-mind-map.d.cts"
+          ]
+        },
+        {
+          "commit": "a0752cee9204243def390c331265cc998b4db033",
+          "subject": "feat: open mind maps centred on the whole content at 100%",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/mindmap.ts",
+            "src/services/engine-controller.ts",
+            "tests/engine-controller.test.ts",
+            "vendor/simple-mind-map.d.cts"
+          ]
+        },
+        {
+          "commit": "6d382dc4b5415edd4de139f8ba5c62e47f42f859",
+          "subject": "feat: move the reset-zoom button to the left of fit-to-canvas",
+          "changed_paths": [
+            "src/features/view-toolbar.ts",
+            "tests/view-toolbar.test.ts"
+          ]
+        },
+        {
+          "commit": "ab9cf9c51267106b2f302ad6f1425636815d5509",
+          "subject": "feat(view): F2 编辑当前节点",
+          "changed_paths": [
+            "src/features/view-hotkeys.ts",
+            "src/features/view.ts",
+            "tests/view-hotkeys.test.ts"
+          ]
+        },
+        {
+          "commit": "15e6b2f254a71befd0c5b952a641a9dd99cb35bd",
+          "subject": "fix(view): 悬停预览弹窗可翻转到节点下方",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/features/view-wikilink.ts",
+            "tests/view-wikilink.test.ts"
+          ]
+        },
+        {
+          "commit": "8c903f4f4c4971d8b09e371ea15c3a3111f780c8",
+          "subject": "fix(md): 图文/链接合成不再丢 token，移除图片不再复活",
+          "changed_paths": [
+            "src/features/view-image-actions.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "tests/md-roundtrip.test.ts"
+          ]
+        },
+        {
+          "commit": "f1d60fdcd608a0f681bf0116968ee0f740187275",
+          "subject": "fix(view): 中心主题改名改用 FileManager.renameFile（更新库内链接/反链）",
+          "changed_paths": [
+            "src/constants.ts",
+            "src/features/view-title-renamer.ts"
+          ]
+        },
+        {
+          "commit": "7da1f4b7066e1af029d0f3929fd5855daae0b3fc",
+          "subject": "fix(view): 交互会话/初始化定时器挂到画布所属窗口并补齐代际与陈旧引用守卫",
+          "changed_paths": [
+            "src/features/drag-target.ts",
+            "src/features/image-resize.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-paste.ts",
+            "src/features/view.ts",
+            "src/services/engine-controller.ts",
+            "tests/feature-teardown.test.ts"
+          ]
+        },
+        {
+          "commit": "c6c6ddb5ca8617483c05db5c315428c561186815",
+          "subject": "fix: 文件名清理对齐 Obsidian 约束、测试闸门补几何用例并进 CI",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            ".github/workflows/release.yml",
+            "scripts/verify-visual.mjs",
+            "src/constants.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-hotkeys.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/images-save.ts",
+            "src/main.ts",
+            "src/node-data.ts",
+            "src/services/engine-controller.ts",
+            "tests/engine-controller.test.ts",
+            "tests/pasted-name.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-hotkeys.test.ts",
+            "tests/view-wikilink.test.ts",
+            "tests/viewport.test.ts"
+          ]
+        },
+        {
+          "commit": "1e333d5957e4040c1534b745fe7bde2afc7c9813",
+          "subject": "refactor(view): 插入承载节点收敛到 insertChildNodeWithData 单一入口",
+          "changed_paths": [
+            "src/features/view-common.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-node-actions.ts",
+            "tests/view-node-actions.test.ts"
+          ]
+        },
+        {
+          "commit": "ce36a63acaf9170d26ed826da0bca8738017a18f",
+          "subject": "test(save): 覆盖卸载兜底快照（排空时快照为 null 用 pendingTree 补写）",
+          "changed_paths": [
+            "tests/save-pipeline.test.ts"
+          ]
+        },
+        {
+          "commit": "c118c105cc1dfc4db583eee3101836a4d95008bf",
+          "subject": "chore(css): 删除无用的 vendor CSS 段（-28.8KB）",
+          "changed_paths": [
+            "scripts/sync-vendor-css.mjs",
+            "styles.css"
+          ]
+        },
+        {
+          "commit": "c22534269113a6479b95aeb72f91c90af5979690",
+          "subject": "chore(vendor): 删除手写类型声明中未使用的 5 个成员",
+          "changed_paths": [
+            "vendor/simple-mind-map.d.cts"
+          ]
+        },
+        {
+          "commit": "ef49078fb31208785601340b4966d812d128dbce",
+          "subject": "fix(hotkeys): 创建视图作用域——F2 等视图内快捷键此前全部失效",
+          "changed_paths": [
+            "src/features/view-hotkeys.ts",
+            "src/features/view.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/view-hotkeys.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.0",
+      "tag": "v0.1.0",
+      "base_commit": "ef49078fb31208785601340b4966d812d128dbce",
+      "feature_commit": "065b3566a2b1f2cae6e2fa083de22d6c73205985",
+      "feature_subject": "fix(md): `---` 分两种身份——setext H2 下划线不再被当分隔线丢弃（R2）",
+      "version_marker_commit": "62c3d0ea1f94d5da7d164ae0bea548dabdb61215",
+      "version_marker_subject": "chore(release): 0.1.0",
+      "first_version_marker_commit": "62c3d0ea1f94d5da7d164ae0bea548dabdb61215",
+      "source_document": "docs/release-notes-0.1.0.md",
+      "document_sha256": "18ef04fe481968c64c20b442e9b8d1f235620dbfc519c7888842db6b96b50423",
+      "document_first_commit": "62c3d0ea1f94d5da7d164ae0bea548dabdb61215",
+      "feature_headlines": [
+        "Canvas / Bases 归为文档类",
+        "非图片嵌入的管道位原文保留",
+        "换文件时的保存排空可能写错文件（最严重）",
+        "「清除链接」对嵌入无效、链接会复活",
+        "外链 md 图片被改写成非法 wikilink",
+        "未编辑也会改动原文的两类字符",
+        "跨文件夹移动后链接悬空",
+        "`---` 分两种身份",
+        "测试 1174 → 1200",
+        "每处修复都做负向对照"
+      ],
+      "summary": "0.1.0 是一次「先审计、后修复」的版本",
+      "evidence_note": "065b356 完成 setext H2 区分；此前同批双链/嵌入与数据损坏修复一并包含。",
+      "implementation_commits": [
+        {
+          "commit": "f3047ca683a41332602abcef3d2b0685a89a08ad",
+          "subject": "ci: verify:visual 失败时输出转 check annotation（便于定位 Linux 侧失败）",
+          "changed_paths": [
+            ".github/workflows/lint.yml"
+          ]
+        },
+        {
+          "commit": "a8cb36ca1e27398f7b346b8df30c38b0afb70a36",
+          "subject": "ci(verify:visual): 断言异常转为可见失败项，顶层异常带栈输出",
+          "changed_paths": [
+            "scripts/verify-visual.mjs"
+          ]
+        },
+        {
+          "commit": "b5d89571a1435e16b6b38d3501aab5e4284a4788",
+          "subject": "ci(verify:visual): 探针前后加进度标记 + Chrome 加 --disable-dev-shm-usage",
+          "changed_paths": [
+            "scripts/verify-visual.mjs"
+          ]
+        },
+        {
+          "commit": "7d033eb1771b0be312d08943788b8088f62ea0a9",
+          "subject": "ci(verify:visual): 输出重定向到文件并带退出码（避免管道缓冲丢日志）",
+          "changed_paths": [
+            ".github/workflows/lint.yml"
+          ]
+        },
+        {
+          "commit": "2b45e63ed86b9207f834e984b074850db239d42c",
+          "subject": "ci: verify:visual 失败重试一次（无头渲染在 CI 上偶发失败）",
+          "changed_paths": [
+            ".github/workflows/lint.yml"
+          ]
+        },
+        {
+          "commit": "e9b53ed3703031c35fb9857fbd11cbf87e9879ed",
+          "subject": "ci(verify:visual): 加逐阶段 trace（定位 CI 无输出退出）",
+          "changed_paths": [
+            "scripts/verify-visual.mjs"
+          ]
+        },
+        {
+          "commit": "a75acf1e86a9936dc06e9ace9415cc650cb67748",
+          "subject": "ci: 注解只取日志尾部 12 行（注解数量有上限）",
+          "changed_paths": [
+            ".github/workflows/lint.yml"
+          ]
+        },
+        {
+          "commit": "7930d62249f6aabbbb5923a797d6274dff773ad2",
+          "subject": "ci: 回退 verify:visual CI 步骤（Linux 侧不稳定，且无日志权限无法定位）",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            "scripts/verify-visual.mjs"
+          ]
+        },
+        {
+          "commit": "4a5d6d185a287532347d219b3d3034893ff114cb",
+          "subject": "chore(license): 自备行级 parser 并补防回退测试，版权行改为精确匹配格式",
+          "changed_paths": [
+            "scripts/plain-text-parser.mjs",
+            "tests/plain-text-parser.test.ts"
+          ]
+        },
+        {
+          "commit": "8b832d901af23c433fa7be4eefb36a3cebf05f42",
+          "subject": "feat(md): 纯双链节点编辑改为改别名（节点内只显示别名）",
+          "changed_paths": [
+            "src/domain/wikilink.ts",
+            "src/md-serialize.ts"
+          ]
+        },
+        {
+          "commit": "b1ea190636ad16fd00441628b2b68dd63d70c1de",
+          "subject": "ci: verify:visual 以非阻断方式重新接入并归档诊断日志；action 升 v7",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            ".github/workflows/release.yml",
+            "scripts/verify-visual.mjs"
+          ]
+        },
+        {
+          "commit": "e14477ab52914e12ae481bf2c8d2c7508bd61cda",
+          "subject": "docs: AGENTS.md 补文件规模豁免与 isDesktopOnly 承重性；清理计划文档",
+          "changed_paths": [
+            "styles.css"
+          ]
+        },
+        {
+          "commit": "e1871a90ed77b9d18da122e8bfa5524d32a21f65",
+          "subject": "test: 回归套件扩充至 1126 用例（36 文件）",
+          "changed_paths": [
+            "tests/concurrency.test.ts",
+            "tests/domain.test.ts",
+            "tests/engine-controller.test.ts",
+            "tests/event-binder.test.ts",
+            "tests/feature-helpers.test.ts",
+            "tests/feature-teardown.test.ts",
+            "tests/file-lookup.test.ts",
+            "tests/find-node-by-dom.test.ts",
+            "tests/images-path.test.ts",
+            "tests/language-refresh.test.ts",
+            "tests/links-resolve.test.ts",
+            "tests/links-tree.test.ts",
+            "tests/md-inline.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/modal-common.test.ts",
+            "tests/modal-input.test.ts",
+            "tests/node-text-edit.test.ts",
+            "tests/open-as-restore.test.ts",
+            "tests/pasted-name.test.ts",
+            "tests/persistence.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/settings-persist.test.ts",
+            "tests/settings.test.ts",
+            "tests/setup.ts",
+            "tests/url.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-hotkeys.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-search.test.ts",
+            "tests/view-state.test.ts",
+            "tests/view-status.test.ts",
+            "tests/view-toolbar.test.ts",
+            "tests/view-wikilink.test.ts",
+            "tests/viewport.test.ts"
+          ]
+        },
+        {
+          "commit": "95d4aabdbeb3a4e0869a076ba5e7b29a47137860",
+          "subject": "fix(mindmap): 文档页图标改用画布 document 创建（popout 兼容）",
+          "changed_paths": [
+            "src/mindmap.ts",
+            "tests/mindmap-wiki-icon.test.ts"
+          ]
+        },
+        {
+          "commit": "668de5a7a7c234c207fcbf6543d107180472bfe9",
+          "subject": "chore(lint): 收窄 vendor 忽略，把手写类型声明纳入 lint",
+          "changed_paths": [
+            "eslint.config.mts",
+            "vendor/simple-mind-map.d.cts"
+          ]
+        },
+        {
+          "commit": "6710d786aa4b8813459aa11ae444edefe582cea7",
+          "subject": "docs(agents): 补 lint 的 cwd/manifest 依赖、API 版本基线与声明式键盲区",
+          "changed_paths": [
+            "src/settings.ts"
+          ]
+        },
+        {
+          "commit": "ab10a55d7a9b60c58bfbe90d562b2aa6d13a75de",
+          "subject": "fix(mindmap): 文档页图标 tooltip 跟随实时别名（抽取 domain/wiki-display）",
+          "changed_paths": [
+            "src/domain/wiki-display.ts",
+            "src/md-serialize.ts",
+            "src/mindmap.ts",
+            "tests/mindmap-wiki-icon.test.ts"
+          ]
+        },
+        {
+          "commit": "906edcf7f3c92a70343f61097f14b1b600675fe2",
+          "subject": "feat(md): 文档嵌入改走文档双链通道（同图标 / 别名管道位 / 回写补 !）",
+          "changed_paths": [
+            "src/domain/md-meta.ts",
+            "src/domain/wiki-display.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "tests/md-inline.test.ts",
+            "tests/md-roundtrip.test.ts"
+          ]
+        },
+        {
+          "commit": "50ba05b028c97738f3fbe109ba7675f07721ae0f",
+          "subject": "feat(md): Canvas/Bases 归为文档类，保留非图片嵌入的管道位",
+          "changed_paths": [
+            "src/constants.ts",
+            "src/domain/md-meta.ts",
+            "src/domain/wikilink.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-node-actions.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/modal-link.ts",
+            "tests/constants.test.ts",
+            "tests/domain.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/view-dnd.test.ts"
+          ]
+        },
+        {
+          "commit": "2acd53d2f89c1053b2e96f2fb725ea03c762dbb2",
+          "subject": "fix: 修复 5 处数据损坏级缺陷（写盘归属 / 链接清除 / 外链图片 / 缩进与硬换行 / 跨文件夹引用）",
+          "changed_paths": [
+            "src/features/view.ts",
+            "src/links-tree.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/services/document-service.ts",
+            "tests/links-tree.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/save-pipeline.test.ts"
+          ]
+        },
+        {
+          "commit": "065b3566a2b1f2cae6e2fa083de22d6c73205985",
+          "subject": "fix(md): `---` 分两种身份——setext H2 下划线不再被当分隔线丢弃（R2）",
+          "changed_paths": [
+            "src/md-outline.ts",
+            "tests/md-roundtrip.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.1",
+      "tag": "v0.1.1",
+      "base_commit": "065b3566a2b1f2cae6e2fa083de22d6c73205985",
+      "feature_commit": "e4f980287438e1a180c2b0bfcb55c1d199d3031a",
+      "feature_subject": "chore(release): 0.1.1",
+      "version_marker_commit": "e4f980287438e1a180c2b0bfcb55c1d199d3031a",
+      "version_marker_subject": "chore(release): 0.1.1",
+      "first_version_marker_commit": "e4f980287438e1a180c2b0bfcb55c1d199d3031a",
+      "source_document": "docs/release-notes-0.1.1.md",
+      "document_sha256": "70fd53602afda5042d4350f32ff1fd85802e20781f5c6eeada7e88e8195804dd",
+      "document_first_commit": "431cd02f1704ea3282e62f71eb79fbca85db609d",
+      "feature_headlines": [
+        "连线样式切换（工具栏 + 设置）",
+        "右键菜单「重置缩放」",
+        "维基链接悬停预览扩展到三类节点",
+        "根节点连线起点改在节点右缘",
+        "维基链接悬停预览链路修正",
+        "「纯双链化」",
+        "移除引擎自带 Ctrl+L 快捷键",
+        "新增 `scripts/verify-visual.mjs` 可视化校验脚本",
+        "测试补强",
+        "对齐官方校验",
+        "文档同步"
+      ],
+      "summary": "0.1.1 是一次「体验增强 + 链路修正」的版本",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "e4f980287438e1a180c2b0bfcb55c1d199d3031a",
+          "subject": "chore(release): 0.1.1",
+          "changed_paths": [
+            "eslint.config.mts",
+            "scripts/verify-visual.mjs",
+            "src/constants.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/i18n.ts",
+            "src/mindmap-theme.ts",
+            "src/mindmap.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/settings.ts",
+            "src/view-state.ts",
+            "styles.css",
+            "tests/engine-controller.test.ts",
+            "tests/language-refresh.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/mindmap-wiki-icon.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/settings.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-state.test.ts",
+            "tests/view-toolbar.test.ts",
+            "tests/view-wikilink.test.ts",
+            "tests/viewport.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.2",
+      "tag": "v0.1.2",
+      "base_commit": "e4f980287438e1a180c2b0bfcb55c1d199d3031a",
+      "feature_commit": "c70a9182e1202f3f2393fc241321a15e3ee21211",
+      "feature_subject": "fix(test): vendor 哈希断言按 LF 归一，修 autocrlf 造成的 CI 假失败",
+      "version_marker_commit": "43b186e9334b46e2e6ac12cc1c6d2922525e5b4c",
+      "version_marker_subject": "chore(release): 0.1.2",
+      "first_version_marker_commit": "43b186e9334b46e2e6ac12cc1c6d2922525e5b4c",
+      "source_document": "docs/release-notes-0.1.2.md",
+      "document_sha256": "b841c6060a08bbfacbde071d6bd90969f36a595397e742b291498ceacd9cef75",
+      "document_first_commit": "acc573b3f9b06f5db15f4172de5afe5a40157109",
+      "feature_headlines": [
+        "混排双链拆分",
+        "段落节点首行图片",
+        "节点内富文本（方案 B）",
+        "超长节点截断展示",
+        "节点编辑弹窗：原文模式",
+        "多 token 编辑后「原位」保真",
+        "交互对齐 Obsidian 官方口径",
+        "回写保真：一行多张库内图片",
+        "回写保真：一行多链接 / 多 URL / 多图",
+        "回写保真：链接引用定义行",
+        "frontmatter 写盘取磁盘现值",
+        "frontmatter 解析边界对齐 Obsidian",
+        "图片：加载期自动尺寸不再回写",
+        "图片：右键「移除图片」后不再复活",
+        "拆分：运行期资源地址不再污染笔记",
+        "删除笔记导致链接被静默降级为纯文本",
+        "超长节点导致白屏 / 卡死后关闭",
+        "轻标记在无链接节点不生效",
+        "导出 PNG 掉样式",
+        "富节点双击无响应",
+        "打开导图首次渲染就偏移",
+        "保存视口可能把内容推出画布",
+        "打开时先亮「根节点居中」再跳成「整体居中」",
+        "含图笔记的居中在图片尺寸落定后才准",
+        "图片调宽写入合并",
+        "图片尺寸缓存真 LRU",
+        "跨会话尺寸缓存",
+        "图片弹窗",
+        "节点渲染成本封顶",
+        "设置面板调整「即时生效、不重建引擎」",
+        "渲染经济：一次动作至多一次布局落地",
+        "大图撤销深度的内存预算",
+        "链接写入语义再修订",
+        "节点内链接现在是可点文本",
+        "编辑弹窗分两种模式",
+        "节点宽度（拖左右边框）：只有自绘节点能拖",
+        "超过 2000 字的节点只显示开头",
+        "含图节点不受这些渲染变化影响",
+        "`F2` 对齐官方",
+        "新增设置「自动更新链接」",
+        "链接语法跟随官方 Wikilink 设置",
+        "拖入类型白名单取消",
+        "不可渲染的库内文件点击改为交系统默认应用",
+        "大图上的撤销步数减少",
+        "测试",
+        "文档",
+        "校验",
+        "测试（本轮新增）",
+        "单一台账",
+        "修复（撤销失效）",
+        "测试（对齐轮）",
+        "修复（拖边框改宽后节点高度不跟随）",
+        "修复（图片拖动调宽：保存好几次 + 卡顿）",
+        "修复（纯文本节点上的「死手柄」）",
+        "修复（复制链接给裸路径）",
+        "修复（拖入文件夹两处边界）",
+        "修复（手势重复实现）",
+        "性能与简化（2026-09-17 量化优化轮，承接上一条）",
+        "性能与简化（2026-09-16 优化轮）",
+        "清理",
+        "测试（手势、撤销与性能三轮）",
+        "测试（视口与设置分流轮）",
+        "真实墙钟通道（opt-in）",
+        "长会话内存基线（`--perf` 的内存轮，opt-in）",
+        "测试（历史内存预算轮）",
+        "合规审计（2026-09-17，对照官方指南与 API 逐项核查）",
+        "CI 与发布门禁加固",
+        "测试（合规审计轮）",
+        "每个 release 现另附 `LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md`",
+        "设置面板调整不再重建视图"
+      ],
+      "summary": "0.1.2 是一次「节点内富文本 + 结构整理 + 图片增强 + 回写保真 + **逐条对齐 Obsidian 官方交互口径**」的版本",
+      "evidence_note": "43b186e 只是早期里程碑；现有说明覆盖后续 acc573b/3ad2d9d 工作。c70a918 完成随后 vendor 哈希跨换行验证修复。",
+      "implementation_commits": [
+        {
+          "commit": "43b186e9334b46e2e6ac12cc1c6d2922525e5b4c",
+          "subject": "chore(release): 0.1.2",
+          "changed_paths": [
+            "src/commands.ts",
+            "src/constants.ts",
+            "src/domain/md-meta.ts",
+            "src/features/image-resize.ts",
+            "src/features/view-image-actions.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view.ts",
+            "src/i18n.ts",
+            "src/images-path.ts",
+            "src/links-split.ts",
+            "src/main.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/modal-image.ts",
+            "src/services/engine-controller.ts",
+            "src/settings.ts",
+            "tests/engine-controller.test.ts",
+            "tests/feature-teardown.test.ts",
+            "tests/images-path.test.ts",
+            "tests/language-refresh.test.ts",
+            "tests/links-split.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/modal-input.test.ts",
+            "tests/settings.test.ts",
+            "tests/view-node-actions.test.ts"
+          ]
+        },
+        {
+          "commit": "acc573b3f9b06f5db15f4172de5afe5a40157109",
+          "subject": "fix: 多链接内联需求前的累积修复（保真/拆分/移除图片/ABCE）",
+          "changed_paths": [
+            "src/constants.ts",
+            "src/domain/md-meta.ts",
+            "src/features/drag-target.ts",
+            "src/features/view-image-actions.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view.ts",
+            "src/links-split.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "tests/agents-md-sync.test.ts",
+            "tests/engine-controller.test.ts",
+            "tests/links-split.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-split-links.test.ts"
+          ]
+        },
+        {
+          "commit": "97ebd6a04d01ee3e045538d02aca9ab93311b974",
+          "subject": "refactor: 插件目录严格模块化重组（11 模块组 + 依赖矩阵机械强制）",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            "eslint.config.mts",
+            "scripts/verify-visual.mjs",
+            "src/commands.ts",
+            "src/concurrency.ts",
+            "src/constants.ts",
+            "src/core/concurrency.ts",
+            "src/core/constants.ts",
+            "src/core/errors.ts",
+            "src/core/event-binder.ts",
+            "src/core/i18n.ts",
+            "src/core/node-data.ts",
+            "src/core/persistence.ts",
+            "src/creation.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap.ts",
+            "src/errors.ts",
+            "src/event-binder.ts",
+            "src/features/drag-target.ts",
+            "src/features/file-creator.ts",
+            "src/features/image-resize.ts",
+            "src/features/view-common.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-export.ts",
+            "src/features/view-hotkeys.ts",
+            "src/features/view-image-actions.ts",
+            "src/features/view-image-fullscreen.ts",
+            "src/features/view-link-navigator.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-paste.ts",
+            "src/features/view-search.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view-status.ts",
+            "src/features/view-title-renamer.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/file-lookup.ts",
+            "src/i18n.ts",
+            "src/images-path.ts",
+            "src/images-save.ts",
+            "src/links-resolve.ts",
+            "src/links-split.ts",
+            "src/links-tree.ts",
+            "src/links/file-lookup.ts",
+            "src/links/links-resolve.ts",
+            "src/links/links-tree.ts",
+            "src/main.ts",
+            "src/markdown.ts",
+            "src/markdown/links-split.ts",
+            "src/markdown/markdown.ts",
+            "src/markdown/md-open.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/md-open.ts",
+            "src/md-outline.ts",
+            "src/md-serialize.ts",
+            "src/media/images-path.ts",
+            "src/media/images-save.ts",
+            "src/mindmap-theme.ts",
+            "src/mindmap.ts",
+            "src/modal-common.ts",
+            "src/modal-image.ts",
+            "src/modal-link.ts",
+            "src/modal-name.ts",
+            "src/node-data.ts",
+            "src/open-as-restore.ts",
+            "src/persistence.ts",
+            "src/platform/open-as-restore.ts",
+            "src/platform/system-open.ts",
+            "src/platform/vault-sync.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/services/status-bar.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "src/status-bar.ts",
+            "src/system-open.ts",
+            "src/ui/modal-common.ts",
+            "src/ui/modal-image.ts",
+            "src/ui/modal-link.ts",
+            "src/ui/modal-name.ts",
+            "src/vault-sync.ts",
+            "src/view-state.ts",
+            "tests/concurrency.test.ts",
+            "tests/constants.test.ts",
+            "tests/engine-controller.test.ts",
+            "tests/event-binder.test.ts",
+            "tests/feature-helpers.test.ts",
+            "tests/feature-teardown.test.ts",
+            "tests/file-lookup.test.ts",
+            "tests/find-node-by-dom.test.ts",
+            "tests/images-path.test.ts",
+            "tests/language-refresh.test.ts",
+            "tests/links-resolve.test.ts",
+            "tests/links-split.test.ts",
+            "tests/links-tree.test.ts",
+            "tests/md-inline.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/mindmap-wiki-icon.test.ts",
+            "tests/modal-common.test.ts",
+            "tests/modal-input.test.ts",
+            "tests/node-text-edit.test.ts",
+            "tests/open-as-restore.test.ts",
+            "tests/pasted-name.test.ts",
+            "tests/persistence.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/settings-persist.test.ts",
+            "tests/settings.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-hotkeys.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-search.test.ts",
+            "tests/view-split-links.test.ts",
+            "tests/view-state.test.ts",
+            "tests/view-status.test.ts",
+            "tests/view-toolbar.test.ts",
+            "tests/view-wikilink.test.ts",
+            "tests/viewport.test.ts",
+            "vitest.config.ts"
+          ]
+        },
+        {
+          "commit": "88a913e202e7cdc1e7c4750e01b80cd0bb1e1bda",
+          "subject": "refactor: 移除单节点拆分双链命令（仅保留批量），同步文档/测试/i18n/eslint 配置",
+          "changed_paths": [
+            "eslint.config.mts",
+            "src/commands.ts",
+            "src/core/i18n.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view.ts",
+            "tests/concurrency.test.ts",
+            "tests/event-binder.test.ts",
+            "tests/feature-helpers.test.ts",
+            "tests/language-refresh.test.ts",
+            "tests/links-split.test.ts",
+            "tests/links-tree.test.ts",
+            "tests/md-inline.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/modal-common.test.ts",
+            "tests/persistence.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-split-links.test.ts",
+            "tests/view-state.test.ts",
+            "tests/view-status.test.ts",
+            "tests/view-toolbar.test.ts",
+            "tests/viewport.test.ts"
+          ]
+        },
+        {
+          "commit": "3ad2d9d9e2e8cd1ac2284ff12f766f11df330ec3",
+          "subject": "chore: 合规审计 P0/P1/P2 修复 + 既有开发工作快照",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            ".github/workflows/release.yml",
+            "eslint.config.mts",
+            "knip.json",
+            "scripts/check-release-metadata.mjs",
+            "scripts/plain-text-parser.mjs",
+            "scripts/verify-visual.mjs",
+            "src/commands.ts",
+            "src/core/constants.ts",
+            "src/core/errors.ts",
+            "src/core/i18n.ts",
+            "src/core/node-data.ts",
+            "src/domain/md-meta.ts",
+            "src/domain/tree.ts",
+            "src/domain/url.ts",
+            "src/domain/wikilink.ts",
+            "src/engine/mindmap.ts",
+            "src/features/drag-target.ts",
+            "src/features/image-resize.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/view-common.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-drag-duplicate.ts",
+            "src/features/view-hotkeys.ts",
+            "src/features/view-image-actions.ts",
+            "src/features/view-link-navigator.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-node-width.ts",
+            "src/features/view-search.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view-status.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view-viewport.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/links/links-resolve.ts",
+            "src/links/links-tree.ts",
+            "src/main.ts",
+            "src/markdown/links-split.ts",
+            "src/markdown/md-line-write.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/media/images-path.ts",
+            "src/media/images-save.ts",
+            "src/platform/math-jax.ts",
+            "src/platform/open-as-restore.ts",
+            "src/platform/system-open.ts",
+            "src/platform/vault-prefs.ts",
+            "src/services/engine-controller.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "src/ui/modal-image.ts",
+            "src/ui/modal-link.ts",
+            "src/ui/modal-text.ts",
+            "stylelint.config.mjs",
+            "styles.css",
+            "tests/constants.test.ts",
+            "tests/engine-controller.test.ts",
+            "tests/engine-history-limit.test.ts",
+            "tests/engine-image-size.test.ts",
+            "tests/feature-teardown.test.ts",
+            "tests/images-path.test.ts",
+            "tests/links-resolve.test.ts",
+            "tests/links-split.test.ts",
+            "tests/links-tree.test.ts",
+            "tests/md-inline.test.ts",
+            "tests/md-line-write.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/modal-input.test.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/open-as-restore.test.ts",
+            "tests/settings-persist.test.ts",
+            "tests/settings.test.ts",
+            "tests/url.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-hotkeys.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-node-width.test.ts",
+            "tests/view-search.test.ts",
+            "tests/view-split-links.test.ts",
+            "tests/view-toolbar.test.ts",
+            "tests/view-viewport.test.ts",
+            "tests/view-wikilink.test.ts",
+            "tests/viewport.test.ts"
+          ]
+        },
+        {
+          "commit": "c70a9182e1202f3f2393fc241321a15e3ee21211",
+          "subject": "fix(test): vendor 哈希断言按 LF 归一，修 autocrlf 造成的 CI 假失败",
+          "changed_paths": [
+            "tests/vendor-contract.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.3",
+      "tag": "v0.1.3",
+      "base_commit": "c70a9182e1202f3f2393fc241321a15e3ee21211",
+      "feature_commit": "deaab6190dfb646414e128d497ae3a6bf2519bbd",
+      "feature_subject": "perf: 打开大图不再装配全量 DOM；资源地址直解与索引增量收敛；verify:visual 探针加固",
+      "version_marker_commit": "342e883e8440f8091a817dbf5f9128a53ef59bb3",
+      "version_marker_subject": "chore(release): 0.1.3",
+      "first_version_marker_commit": "342e883e8440f8091a817dbf5f9128a53ef59bb3",
+      "source_document": "docs/release-notes-0.1.3.md",
+      "document_sha256": "99b7680c047a6626f411069a39fe31ba0835e5182a8d06dba4a607c8e23dda64",
+      "document_first_commit": "deaab6190dfb646414e128d497ae3a6bf2519bbd",
+      "feature_headlines": [
+        "打开大图不再为「整体居中」把整棵树临时装配进 DOM",
+        "解析一个图片地址不再构建全库索引",
+        "库事件与高频查询的成本收敛",
+        "测试",
+        "验证基建加固"
+      ],
+      "summary": "0.1.3 是一次**性能与验证基建**版本",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "deaab6190dfb646414e128d497ae3a6bf2519bbd",
+          "subject": "perf: 打开大图不再装配全量 DOM；资源地址直解与索引增量收敛；verify:visual 探针加固",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/core/node-data.ts",
+            "src/domain/url.ts",
+            "src/engine/mindmap.ts",
+            "src/features/drag-target.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/view-node-actions.ts",
+            "src/links/file-lookup.ts",
+            "src/links/links-resolve.ts",
+            "src/markdown/md-outline.ts",
+            "src/platform/vault-sync.ts",
+            "src/services/engine-controller.ts",
+            "tests/engine-controller.test.ts",
+            "tests/feature-helpers.test.ts",
+            "tests/file-lookup.test.ts",
+            "tests/links-resolve.test.ts",
+            "tests/url.test.ts",
+            "tests/viewport.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.4",
+      "tag": "v0.1.4",
+      "base_commit": "deaab6190dfb646414e128d497ae3a6bf2519bbd",
+      "feature_commit": "e75dec27f5192f872de22b1d36728041960fd1ed",
+      "feature_subject": "0.1.4",
+      "version_marker_commit": "e75dec27f5192f872de22b1d36728041960fd1ed",
+      "version_marker_subject": "0.1.4",
+      "first_version_marker_commit": "cb8579118036a0f73b6b13d70cf51f3d74610a62",
+      "source_document": "docs/release-notes-0.1.4.md",
+      "document_sha256": "912cd3075f95b9873811a7cbe8a6a55546876c566b6fcc9f815680b8dfea293b",
+      "document_first_commit": "57dbe35b8c35190cf1d893b1927187e41b24ad71",
+      "feature_headlines": [
+        "所有含文字的节点改用自绘渲染（新设置「文本节点快速渲染」，默认开启）",
+        "打开大图时界面不再冻结",
+        "打开成本的三处继续收敛（5000 节点实测）",
+        "编辑与渲染帧成本（500 节点实测）",
+        "引擎自有补丁体系",
+        "测试",
+        "社区目录校验对照"
+      ],
+      "summary": "0.1.4 是一次**性能**版本",
+      "evidence_note": "cb85791 是首次版本号提交；后续 scanner 修复到 e75dec2 才完成。",
+      "implementation_commits": [
+        {
+          "commit": "91b27aaf14f5370ce5e28e165e5fb38c968ed76c",
+          "subject": "perf: 引擎性能轮（9 处自有补丁：分片渲染/监听器惰性注册/布局延迟物化）+ 社区目录三线对照 + 既有开发工作快照",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            ".github/workflows/release.yml",
+            "eslint.config.mts",
+            "scripts/build-vendor.mjs",
+            "scripts/scanner-lint.mjs",
+            "scripts/verify-visual.mjs",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/engine/mindmap.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/view-node-width.ts",
+            "src/features/view.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/settings.ts",
+            "tests/fixtures/roundtrip/01-comprehensive.md",
+            "tests/fixtures/roundtrip/02-tables-quotes-html.md",
+            "tests/fixtures/roundtrip/03-links-heavy.md",
+            "tests/fixtures/roundtrip/04-headings-multiroot.md",
+            "tests/fixtures/roundtrip/05-deep-lists.md",
+            "tests/fixtures/roundtrip/06-inline-syntax.md",
+            "tests/fixtures/roundtrip/07-ordered-lists.md",
+            "tests/fixtures/roundtrip/08-blank-lines.md",
+            "tests/md-roundtrip-property.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/settings.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-node-width.test.ts",
+            "vendor/patches/svg-attr-shortcircuit.js",
+            "vendor/simple-mind-map.cjs",
+            "vendor/simple-mind-map.d.cts",
+            "vendor/upstream/full.js",
+            "vendor/upstream/index.js",
+            "vendor/upstream/package.json",
+            "vendor/upstream/src/constants/constant.js",
+            "vendor/upstream/src/constants/defaultOptions.js",
+            "vendor/upstream/src/core/command/Command.js",
+            "vendor/upstream/src/core/command/KeyCommand.js",
+            "vendor/upstream/src/core/command/keyMap.js",
+            "vendor/upstream/src/core/event/Event.js",
+            "vendor/upstream/src/core/render/Render.js",
+            "vendor/upstream/src/core/render/TextEdit.js",
+            "vendor/upstream/src/core/render/node/MindMapNode.js",
+            "vendor/upstream/src/core/render/node/Shape.js",
+            "vendor/upstream/src/core/render/node/Style.js",
+            "vendor/upstream/src/core/render/node/nodeCommandWraps.js",
+            "vendor/upstream/src/core/render/node/nodeCooperate.js",
+            "vendor/upstream/src/core/render/node/nodeCreateContents.js",
+            "vendor/upstream/src/core/render/node/nodeExpandBtn.js",
+            "vendor/upstream/src/core/render/node/nodeExpandBtnPlaceholderRect.js",
+            "vendor/upstream/src/core/render/node/nodeGeneralization.js",
+            "vendor/upstream/src/core/render/node/nodeLayout.js",
+            "vendor/upstream/src/core/render/node/nodeModifyWidth.js",
+            "vendor/upstream/src/core/render/node/quickCreateChildBtn.js",
+            "vendor/upstream/src/core/render/preMeasure.js",
+            "vendor/upstream/src/core/view/View.js",
+            "vendor/upstream/src/layouts/Base.js",
+            "vendor/upstream/src/layouts/CatalogOrganization.js",
+            "vendor/upstream/src/layouts/Fishbone.js",
+            "vendor/upstream/src/layouts/LogicalStructure.js",
+            "vendor/upstream/src/layouts/MindMap.js",
+            "vendor/upstream/src/layouts/OrganizationStructure.js",
+            "vendor/upstream/src/layouts/Timeline.js",
+            "vendor/upstream/src/layouts/VerticalTimeline.js",
+            "vendor/upstream/src/layouts/fishboneUtils.js",
+            "vendor/upstream/src/parse/markdown.js",
+            "vendor/upstream/src/parse/markdownTo.js",
+            "vendor/upstream/src/parse/toMarkdown.js",
+            "vendor/upstream/src/parse/toTxt.js",
+            "vendor/upstream/src/parse/xmind.js",
+            "vendor/upstream/src/plugins/AssociativeLine.js",
+            "vendor/upstream/src/plugins/Cooperate.js",
+            "vendor/upstream/src/plugins/Demonstrate.js",
+            "vendor/upstream/src/plugins/Drag.js",
+            "vendor/upstream/src/plugins/Export.js",
+            "vendor/upstream/src/plugins/ExportPDF.js",
+            "vendor/upstream/src/plugins/ExportXMind.js",
+            "vendor/upstream/src/plugins/Formula.js",
+            "vendor/upstream/src/plugins/FormulaStyle.js",
+            "vendor/upstream/src/plugins/KeyboardNavigation.js",
+            "vendor/upstream/src/plugins/MindMapLayoutPro.js",
+            "vendor/upstream/src/plugins/MiniMap.js",
+            "vendor/upstream/src/plugins/NodeBase64ImageStorage.js",
+            "vendor/upstream/src/plugins/NodeImgAdjust.js",
+            "vendor/upstream/src/plugins/OuterFrame.js",
+            "vendor/upstream/src/plugins/Painter.js",
+            "vendor/upstream/src/plugins/RainbowLines.js",
+            "vendor/upstream/src/plugins/RichText.js",
+            "vendor/upstream/src/plugins/Scrollbar.js",
+            "vendor/upstream/src/plugins/Search.js",
+            "vendor/upstream/src/plugins/Select.js",
+            "vendor/upstream/src/plugins/TouchEvent.js",
+            "vendor/upstream/src/plugins/Watermark.js",
+            "vendor/upstream/src/plugins/associativeLine/associativeLineControls.js",
+            "vendor/upstream/src/plugins/associativeLine/associativeLineText.js",
+            "vendor/upstream/src/plugins/associativeLine/associativeLineUtils.js",
+            "vendor/upstream/src/plugins/outerFrame/outerFrameText.js",
+            "vendor/upstream/src/plugins/outerFrame/outerFrameUtils.js",
+            "vendor/upstream/src/svg/btns.js",
+            "vendor/upstream/src/svg/icons.js",
+            "vendor/upstream/src/theme/default.js",
+            "vendor/upstream/src/theme/index.js",
+            "vendor/upstream/src/utils/AutoMove.js",
+            "vendor/upstream/src/utils/BatchExecution.js",
+            "vendor/upstream/src/utils/Lru.js",
+            "vendor/upstream/src/utils/index.js",
+            "vendor/upstream/src/utils/mersenneTwister.js",
+            "vendor/upstream/src/utils/simulateCSSBackgroundInCanvas.js",
+            "vendor/upstream/src/utils/xmind.js"
+          ]
+        },
+        {
+          "commit": "7e791d2f844c637d0bfe486c6e03591bcebda463",
+          "subject": "fix(ci): scanner-lint 加固——依赖安装重试 ×3（网络抖动自愈）、Linux npm-cli 路径候选（hostedtoolcache lib 布局）、eslint 由 npx 改为直连 CLI 入口（消除「项目 node_modules 优先」的解析歧义）",
+          "changed_paths": [
+            "scripts/scanner-lint.mjs"
+          ]
+        },
+        {
+          "commit": "e75dec27f5192f872de22b1d36728041960fd1ed",
+          "subject": "0.1.4",
+          "changed_paths": [
+            "scripts/scanner-lint.mjs"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.5",
+      "tag": "v0.1.5",
+      "base_commit": "e75dec27f5192f872de22b1d36728041960fd1ed",
+      "feature_commit": "4c8db75873fd0f4a3d926d6706ba208ce566617b",
+      "feature_subject": "K109",
+      "version_marker_commit": "bf639e2b92cdf1e2d724c151cc5a482f777439b6",
+      "version_marker_subject": "0.1.5",
+      "first_version_marker_commit": "bf639e2b92cdf1e2d724c151cc5a482f777439b6",
+      "source_document": "docs/release-notes-0.1.5.md",
+      "document_sha256": "e5e1da7068a076104b901107aeb7d04e28b31f1b33d75a4d096ecc86f0b26ef2",
+      "document_first_commit": "aea6c6712a1786825c0f7ab1c9e85996385debca",
+      "feature_headlines": [
+        "节点内代码块渲染",
+        "自绘节点内联编辑器",
+        "空节点保留",
+        "链接呈现口径统一",
+        "图片按自身原始大小展示",
+        "新建节点按层级回写标题",
+        "图片尺寸校正从未生效",
+        "数学通道",
+        "首次渲染时公式节点的尺寸",
+        "导出 PNG 与屏上渲染不一致（多轮修复，最终收敛）",
+        "中心主题改名不重命名文件",
+        "编辑混排节点不自动拆分双链",
+        "同一导图重复打开",
+        "外部修改保护",
+        "外链安全"
+      ],
+      "summary": "0.1.5 聚焦**内容渲染、编辑体验与结构保真**",
+      "evidence_note": "095d857 实现 K90-K91，aea6c67 以后实现 K92-K109；4c8db75 是说明最后一次实现更新。bf639e2 并未包含全部需求。",
+      "implementation_commits": [
+        {
+          "commit": "54d18aa9e2e7a87b52c969cf0eaac6e38a73f411",
+          "subject": "docs: 许可声明口径修正——内联注释实测仅存 1 段，THIRD-PARTY-NOTICES 为主载体（K84）",
+          "changed_paths": [
+            ".github/workflows/release.yml",
+            "stylelint.config.mjs"
+          ]
+        },
+        {
+          "commit": "095d857637f2c3197af6bd45f53bbfd3c939f96e",
+          "subject": "K90-K91",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/engine/mindmap.ts",
+            "src/features/node-codeblock.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/view.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/platform/math-jax.ts",
+            "src/services/engine-controller.ts",
+            "styles.css",
+            "tests/engine-refresh-nodes.test.ts",
+            "tests/math-jax.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/node-codeblock.test.ts",
+            "tests/node-inline-content.test.ts"
+          ]
+        },
+        {
+          "commit": "aea6c6712a1786825c0f7ab1c9e85996385debca",
+          "subject": "K92-K98",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/commands.ts",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap.ts",
+            "src/features/image-resize.ts",
+            "src/features/node-codeblock.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/node-inline-editor.ts",
+            "src/features/view-common.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-hotkeys.ts",
+            "src/features/view-image-actions.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/markdown/links-split.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/media/images-path.ts",
+            "src/platform/math-jax.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/ui/modal-text.ts",
+            "styles.css",
+            "tests/engine-image-size.test.ts",
+            "tests/images-path.test.ts",
+            "tests/links-tree.test.ts",
+            "tests/md-roundtrip-property.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/node-codeblock.test.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/node-inline-editor.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-export.test.ts",
+            "tests/view-hotkeys.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-paste.test.ts"
+          ]
+        },
+        {
+          "commit": "9d8167b3e8c2c293169b5d47caeec18a1313e9f3",
+          "subject": "K99",
+          "changed_paths": [
+            "src/features/view.ts",
+            "src/platform/export-css-vars.ts",
+            "tests/view-export.test.ts"
+          ]
+        },
+        {
+          "commit": "e8c8a3ac8e827419183e6b80c432557f9e1da1dc",
+          "subject": "K101",
+          "changed_paths": [
+            "src/domain/url.ts",
+            "src/features/node-inline-content.ts",
+            "src/platform/export-css-vars.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/url.test.ts",
+            "tests/view-export.test.ts"
+          ]
+        },
+        {
+          "commit": "a97b13bb8b99880f36fb7a1f75177c60421c6754",
+          "subject": "K100",
+          "changed_paths": [
+            "src/engine/mindmap.ts",
+            "src/media/images-path.ts",
+            "src/services/engine-controller.ts",
+            "tests/engine-image-size.test.ts",
+            "tests/images-path.test.ts"
+          ]
+        },
+        {
+          "commit": "09e0d7d5539a87622d254f0560c10e66d4719fde",
+          "subject": "K102",
+          "changed_paths": [
+            "src/core/i18n.ts",
+            "src/features/view.ts"
+          ]
+        },
+        {
+          "commit": "660870f1b2f6f246056f947429aea4c197a08dd7",
+          "subject": "K103",
+          "changed_paths": [
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/features/view.ts",
+            "src/services/document-service.ts",
+            "tests/save-pipeline.test.ts"
+          ]
+        },
+        {
+          "commit": "155de9c35d2866303383b06158a56ba3dd2f2095",
+          "subject": "K105-K108",
+          "changed_paths": [
+            "src/engine/mindmap.ts",
+            "src/features/node-inline-editor.ts",
+            "src/features/view-context.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view.ts",
+            "src/platform/export-css-vars.ts",
+            "src/platform/export-foreign-object-padding.ts",
+            "src/platform/math-jax.ts",
+            "tests/engine-image-size.test.ts",
+            "tests/export-fo-padding.test.ts",
+            "tests/math-jax-export-pin.test.ts",
+            "tests/node-inline-editor.test.ts",
+            "tests/view-export.test.ts",
+            "tests/view-split-links.test.ts"
+          ]
+        },
+        {
+          "commit": "4c8db75873fd0f4a3d926d6706ba208ce566617b",
+          "subject": "K109",
+          "changed_paths": [
+            "scripts/check-release-metadata.mjs",
+            "scripts/scanner-lint.mjs"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.6",
+      "tag": "v0.1.6",
+      "base_commit": "4c8db75873fd0f4a3d926d6706ba208ce566617b",
+      "feature_commit": "675346b6775d365b2d175ac7d761de5825bf0dd8",
+      "feature_subject": "错误修正+性能优化",
+      "version_marker_commit": "ed50e70cfe0c96632e963f8de03badda153a4494",
+      "version_marker_subject": "0.1.6",
+      "first_version_marker_commit": "ed50e70cfe0c96632e963f8de03badda153a4494",
+      "source_document": "docs/release-notes-0.1.6.md",
+      "document_sha256": "c90da6a19175da84e2540b10d29c88b19527ccf911f80f9d96ef0167cabe081a",
+      "document_first_commit": "902501f2182d8f04435e5375ba2c45ab870b1455",
+      "feature_headlines": [
+        "拖入文件后节点不显示为链接",
+        "文件重命名后节点仍指向旧目标",
+        "附件嵌入节点编辑后保存出现重复文本",
+        "「移除引用」后的残留字段",
+        "md 链接 / 图片的尖括号目标（含空格路径）",
+        "图片引用的等价形态",
+        "图片拖宽不再卡顿（大图尤为明显）",
+        "病态长行解析提速",
+        "「适应画布」不再阻塞一段",
+        "保存视口幂等短路",
+        "长行节点内存封顶",
+        "其它"
+      ],
+      "summary": "0.1.6 是一次**保真与性能**版本",
+      "evidence_note": "675346b 完成当前说明的修复/性能范围；ed50e70 改版本，902501f 补版本元数据和说明。",
+      "implementation_commits": [
+        {
+          "commit": "f8ff7f965c99adbef61640263367e59ada71bab7",
+          "subject": "chore 命名约定",
+          "changed_paths": [
+            ".github/workflows/lint.yml",
+            ".github/workflows/release.yml"
+          ]
+        },
+        {
+          "commit": "b23c34f5ee40ff787c8075930453bf81924c1c70",
+          "subject": "修复拖入渲染失败",
+          "changed_paths": [
+            "src/features/view-common.ts",
+            "src/features/view-node-actions.ts",
+            "src/links/links-tree.ts",
+            "src/markdown/links-rename.ts",
+            "src/services/engine-controller.ts",
+            "tests/engine-controller.test.ts",
+            "tests/links-rename.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-node-actions.test.ts"
+          ]
+        },
+        {
+          "commit": "675346b6775d365b2d175ac7d761de5825bf0dd8",
+          "subject": "错误修正+性能优化",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/core/node-data.ts",
+            "src/engine/mindmap.ts",
+            "src/features/image-resize.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/services/engine-controller.ts",
+            "tests/engine-controller.test.ts",
+            "tests/engine-history-limit.test.ts",
+            "tests/feature-teardown.test.ts",
+            "tests/md-inline.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-node-actions.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.7",
+      "tag": "v0.1.7",
+      "base_commit": "675346b6775d365b2d175ac7d761de5825bf0dd8",
+      "feature_commit": "d89512eca017dd9de8a1ece3118325d0eb51b0eb",
+      "feature_subject": "0.1.7",
+      "version_marker_commit": "d89512eca017dd9de8a1ece3118325d0eb51b0eb",
+      "version_marker_subject": "0.1.7",
+      "first_version_marker_commit": "d89512eca017dd9de8a1ece3118325d0eb51b0eb",
+      "source_document": "docs/release-notes-0.1.7.md",
+      "document_sha256": "16c3bb44e9773530b08160c47047db1eac45132b17b73bc0fcd1acc5e98be4af",
+      "document_first_commit": "d89512eca017dd9de8a1ece3118325d0eb51b0eb",
+      "feature_headlines": [
+        "节点文本编辑失败不再毫无反馈",
+        "工具栏图标尺寸兜底不再压掉主题变量通道",
+        "依赖矩阵的一处类型逃逸",
+        "LICENSE 校验器的 8 处类型违规",
+        "数学公式重排的节点反查从平方级降为线性",
+        "段落文本不再重复拼接",
+        "三个发布相关配置纳入类型门禁",
+        "模块解析切到 `bundler`",
+        "文档清单校验覆盖子目录",
+        "依赖与配置的显式声明",
+        "`AGENTS.md` 重构为索引 + 详录",
+        "行数统计口径统一"
+      ],
+      "summary": "0.1.7 是一次**可靠性与工程门禁**版本",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "18c976e3c2debce18fb8e1ca4b054636edbcd3b9",
+          "subject": "优化",
+          "changed_paths": [
+            "src/settings.ts",
+            "tests/agents-md-sync.test.ts"
+          ]
+        },
+        {
+          "commit": "5320609b62ee83d6265c8ad22f4ebb2ce6534a4b",
+          "subject": "更新音频/视频扩展基表注释，删除过时清单信息",
+          "changed_paths": [
+            "src/core/constants.ts"
+          ]
+        },
+        {
+          "commit": "18732a9cf4bb1884f461172346bb74492f090f79",
+          "subject": "修复思维导图视图下“后退”功能",
+          "changed_paths": [
+            "src/main.ts",
+            "src/markdown/md-open.ts",
+            "src/platform/nav-history.ts",
+            "tests/nav-history.test.ts"
+          ]
+        },
+        {
+          "commit": "d89512eca017dd9de8a1ece3118325d0eb51b0eb",
+          "subject": "0.1.7",
+          "changed_paths": [
+            "eslint.config.mts",
+            "knip.json",
+            "scripts/plain-text-parser.mjs",
+            "src/core/i18n.ts",
+            "src/core/persistence.ts",
+            "src/engine/mindmap.ts",
+            "src/features/node-inline-editor.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view.ts",
+            "src/markdown/md-outline.ts",
+            "styles.css",
+            "tests/agents-md-sync.test.ts",
+            "tests/find-node-by-dom.test.ts",
+            "tests/node-inline-editor.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/wiki-display.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.8",
+      "tag": "v0.1.8",
+      "base_commit": "d89512eca017dd9de8a1ece3118325d0eb51b0eb",
+      "feature_commit": "bba29292109f6f4dc67df23d47903ccbee2d7d9c",
+      "feature_subject": "0.1.8",
+      "version_marker_commit": "bba29292109f6f4dc67df23d47903ccbee2d7d9c",
+      "version_marker_subject": "0.1.8",
+      "first_version_marker_commit": "bba29292109f6f4dc67df23d47903ccbee2d7d9c",
+      "source_document": "docs/release-notes-0.1.8.md",
+      "document_sha256": "525bf19188455d122c33096eace1f49a3ce8beea2bdc5d2fb416ab99fcb10b0f",
+      "document_first_commit": "bba29292109f6f4dc67df23d47903ccbee2d7d9c",
+      "feature_headlines": [
+        "子树剪枝不再漏渲染自由拖拽后的可见节点",
+        "出视口节点不再残留",
+        "平移 / 缩放 / 居中重绘短路",
+        "子树剪枝（见上「修复」）",
+        "渲染契约可视化验证脚本新增剪枝覆盖率判据",
+        "新增 `scripts/gen-perf-fixture.mjs`",
+        "`vendor/BUILD.md` 补丁 11 记录"
+      ],
+      "summary": "0.1.8 是一次**性能模式可靠性与性能**版本",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "bba29292109f6f4dc67df23d47903ccbee2d7d9c",
+          "subject": "0.1.8",
+          "changed_paths": [
+            "scripts/gen-perf-fixture.mjs",
+            "scripts/verify-visual.mjs",
+            "tests/vendor-contract.test.ts",
+            "vendor/simple-mind-map.cjs",
+            "vendor/upstream/src/core/render/Render.js",
+            "vendor/upstream/src/core/render/node/MindMapNode.js"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.1.9",
+      "tag": "v0.1.9",
+      "base_commit": "bba29292109f6f4dc67df23d47903ccbee2d7d9c",
+      "feature_commit": "0f2169710dd67effc30811387c1f99d6189853b2",
+      "feature_subject": "0.1.9",
+      "version_marker_commit": "0f2169710dd67effc30811387c1f99d6189853b2",
+      "version_marker_subject": "0.1.9",
+      "first_version_marker_commit": "0f2169710dd67effc30811387c1f99d6189853b2",
+      "source_document": "docs/release-notes-0.1.9.md",
+      "document_sha256": "8f2c47831ae2b8b9eb88edc7fa11a7ab5855b6ed686914f8a4d7d86db2bcfc6e",
+      "document_first_commit": "0f2169710dd67effc30811387c1f99d6189853b2",
+      "feature_headlines": [
+        "代码块语法高亮（接官方 Prism）",
+        "代码块渲染补齐三处缺口",
+        "Obsidian 1.14 下行内数学不再全量退回字面 `$…$`",
+        "节点内容不再被裁掉底部",
+        "在库根目录「新建思维导图」不再建到别的目录",
+        "失败不再静默",
+        "拖入多个文件失败时不再弹两条提示",
+        "图片尺寸参数不再回写成双管道",
+        "RTL 语言下工具栏右侧分组与候选列表不再错位",
+        "弹窗骨架收口",
+        "窗口级拖拽会话收口",
+        "新增 `core/measure-cache.ts`",
+        "导航历史清理的降级留痕提级",
+        "渲染契约新增可判定不变式",
+        "新增可复现基线文档 `docs/agents/baseline-metrics.md`",
+        "已知取舍"
+      ],
+      "summary": "0.1.9 是一次**代码块原生化 + Obsidian 1.14 兼容**版本",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "f05e9882f4d2632245514ad93c592f6f6308ea74",
+          "subject": "优化",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/core/measure-cache.ts",
+            "src/features/node-inline-content.ts",
+            "src/platform/math-jax.ts",
+            "styles.css",
+            "tests/math-jax.test.ts",
+            "tests/measure-cache.test.ts",
+            "tests/node-codeblock.test.ts",
+            "tests/node-inline-content.test.ts"
+          ]
+        },
+        {
+          "commit": "1257715b5a4727dc1d52d18f91379d4d709d903b",
+          "subject": "代码高亮",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/core/constants.ts",
+            "src/engine/mindmap.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/view.ts",
+            "src/platform/prism-code.ts",
+            "tests/engine-image-size.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/prism-code.test.ts"
+          ]
+        },
+        {
+          "commit": "0f2169710dd67effc30811387c1f99d6189853b2",
+          "subject": "0.1.9",
+          "changed_paths": [
+            "src/core/i18n.ts",
+            "src/core/measure-cache.ts",
+            "src/creation.ts",
+            "src/features/drag-session.ts",
+            "src/features/drag-target.ts",
+            "src/features/image-resize.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-drag-duplicate.ts",
+            "src/features/view-export.ts",
+            "src/features/view-node-width.ts",
+            "src/features/view.ts",
+            "src/links/links-tree.ts",
+            "src/markdown/md-serialize.ts",
+            "src/media/images-path.ts",
+            "src/platform/math-jax.ts",
+            "src/platform/nav-history.ts",
+            "src/platform/system-open.ts",
+            "src/services/engine-controller.ts",
+            "src/ui/modal-common.ts",
+            "src/ui/modal-image.ts",
+            "src/ui/modal-link.ts",
+            "src/ui/modal-name.ts",
+            "src/ui/modal-text.ts",
+            "tests/creation-folder.test.ts",
+            "tests/drag-session.test.ts",
+            "tests/feature-teardown.test.ts",
+            "tests/modal-common.test.ts",
+            "tests/modal-input.test.ts",
+            "tests/nav-history.test.ts",
+            "tests/system-open.test.ts",
+            "tests/view-dnd.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.0",
+      "tag": "v0.2.0",
+      "base_commit": "0f2169710dd67effc30811387c1f99d6189853b2",
+      "feature_commit": "80ab40197939eae6049481e3f686127d0cb235d9",
+      "feature_subject": "chore 恢复 package-lock.json",
+      "version_marker_commit": "fd561d86fe2ab53d0d4ae1d14e2fc32eb17733aa",
+      "version_marker_subject": "0.2.0",
+      "first_version_marker_commit": "fd561d86fe2ab53d0d4ae1d14e2fc32eb17733aa",
+      "source_document": "docs/release-notes-0.2.0.md",
+      "document_sha256": "15a0cdaf773acef0b743aaf7757ebc8c60cb530c9f7485d4e6bb79275016335b",
+      "document_first_commit": "964908a2c3c183c9eab3c73f03d1c5d4bf799d80",
+      "feature_headlines": [
+        "`.mindmap.md` 后缀退役，零兼容",
+        "四项设置项被移除",
+        "「拖拽换父辅助」移除",
+        "「以 Markdown 打开」有持久副作用",
+        "切换界面语言会改写全库导图属性键",
+        "由 frontmatter 声明触发",
+        "任意笔记秒变导图",
+        "状态只剩一份",
+        "SVG 导出",
+        "新建导图不再有专用扩展名",
+        "编辑含图节点不再把图片挪到行尾",
+        "星号粗体/斜体可以嵌套了",
+        "文档修正：自绘节点不产生引擎图标",
+        "数学校准会话外置为 `features/content-remeasure.ts`",
+        "三处收口",
+        "门禁修正",
+        "⚠ `styles.css` 有变化",
+        "已知取舍"
+      ],
+      "summary": "0.2.0 是**导图身份与设置面的一轮收敛**",
+      "evidence_note": "功能源码完成于 fd561d8；该提交误删锁文件，80ab401 恢复。因此标签指向补齐构建依赖文件的完成快照。",
+      "implementation_commits": [
+        {
+          "commit": "7d358597af4c8a500c1ce74f61ff700956391405",
+          "subject": "优化拖拽",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/engine/mindmap.ts",
+            "src/features/drag-session.ts",
+            "src/features/drag-target.ts",
+            "src/features/file-creator.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/view-drag-duplicate.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view.ts",
+            "src/main.ts",
+            "src/platform/nav-history.ts",
+            "src/platform/vault-prefs.ts",
+            "src/services/engine-controller.ts",
+            "src/settings.ts",
+            "styles.css",
+            "tests/constants.test.ts",
+            "tests/drag-session.test.ts",
+            "tests/engine-controller.test.ts",
+            "tests/feature-helpers.test.ts",
+            "tests/feature-teardown.test.ts",
+            "tests/mindmap-wiki-icon.test.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/settings-persist.test.ts",
+            "tests/settings.test.ts",
+            "tests/vault-prefs.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-node-width.test.ts"
+          ]
+        },
+        {
+          "commit": "fd561d86fe2ab53d0d4ae1d14e2fc32eb17733aa",
+          "subject": "0.2.0",
+          "changed_paths": [
+            "scripts/gen-perf-fixture.mjs",
+            "scripts/verify-visual.mjs",
+            "src/commands.ts",
+            "src/core/constants.ts",
+            "src/core/errors.ts",
+            "src/core/i18n.ts",
+            "src/core/measure-cache.ts",
+            "src/creation.ts",
+            "src/domain/md-meta.ts",
+            "src/domain/mindmap-property.ts",
+            "src/domain/url.ts",
+            "src/engine/mindmap.ts",
+            "src/features/content-remeasure.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/view-context.ts",
+            "src/features/view-export.ts",
+            "src/features/view-link-navigator.ts",
+            "src/features/view-node-width.ts",
+            "src/features/view-title-renamer.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view.ts",
+            "src/links/file-lookup.ts",
+            "src/links/links-resolve.ts",
+            "src/links/links-tree.ts",
+            "src/main.ts",
+            "src/markdown/markdown.ts",
+            "src/markdown/md-open.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/platform/export-css-vars.ts",
+            "src/platform/export-svg-style.ts",
+            "src/platform/math-jax.ts",
+            "src/platform/mindmap-auto-open.ts",
+            "src/platform/open-as-restore.ts",
+            "src/platform/prism-code.ts",
+            "src/platform/vault-sync.ts",
+            "src/services/document-service.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "tests/content-remeasure.test.ts",
+            "tests/creation-folder.test.ts",
+            "tests/errors.test.ts",
+            "tests/math-jax.test.ts",
+            "tests/md-frontmatter-trigger.test.ts",
+            "tests/md-inline.test.ts",
+            "tests/md-open-trigger.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/measure-cache.test.ts",
+            "tests/mindmap-auto-open.test.ts",
+            "tests/mindmap-wiki-icon.test.ts",
+            "tests/nav-history.test.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/open-as-restore.test.ts",
+            "tests/settings-persist.test.ts",
+            "tests/settings.test.ts",
+            "tests/url.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-export.test.ts",
+            "tests/view-hotkeys.test.ts",
+            "tests/view-state.test.ts",
+            "tests/view-toolbar.test.ts"
+          ]
+        },
+        {
+          "commit": "80ab40197939eae6049481e3f686127d0cb235d9",
+          "subject": "chore 恢复 package-lock.json",
+          "changed_paths": [
+            "package-lock.json"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.1",
+      "tag": "v0.2.1",
+      "base_commit": "80ab40197939eae6049481e3f686127d0cb235d9",
+      "feature_commit": "8285523879e5e81427174ed451c730b74798114f",
+      "feature_subject": "0.2.1",
+      "version_marker_commit": "8285523879e5e81427174ed451c730b74798114f",
+      "version_marker_subject": "0.2.1",
+      "first_version_marker_commit": "8285523879e5e81427174ed451c730b74798114f",
+      "source_document": "docs/release-notes-0.2.1.md",
+      "document_sha256": "ca75aca4ce90a26faa61075a015122de4593c622c1fbe330348f546d5f7f8a61",
+      "document_first_commit": "8285523879e5e81427174ed451c730b74798114f",
+      "feature_headlines": [
+        "笔记内嵌入只读导图（```` ```mindmap ```` 代码块）",
+        "形态对齐内置 Mermaid",
+        "超限降级为只读大纲",
+        "嵌入不产生任何副作用",
+        "图片未选中节点也能贴入导图",
+        "无扩展名文件的附件重名后缀不再产生非法名",
+        "按中心节点重命名失败时提示带根因",
+        "「复制链接」失败不再静默",
+        "区块链接（`[[笔记#区块]]`）的改写口径统一",
+        "文档修正：`#` 标题不是中心节点",
+        "自绘内容装配收口 `features/node-content-factory.ts`",
+        "链接导航收窄为最窄宿主面",
+        "引擎防腐层新增四个具名入口",
+        "两处地址 / 交互收口",
+        "性能",
+        "冗余与文档清理",
+        "门禁与回归",
+        "发版前实机复核（专用测试库，含 0.0.1 时代的存量嵌入笔记与 500 / 5000 节点夹具）",
+        "设置项无变更",
+        "嵌入是纯预览",
+        "本版起可在社区插件目录直接安装"
+      ],
+      "summary": "0.2.1 把**导图嵌入笔记**带回来",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "8285523879e5e81427174ed451c730b74798114f",
+          "subject": "0.2.1",
+          "changed_paths": [
+            ".github/workflows/release.yml",
+            "scripts/verify-visual.mjs",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/domain/mindmap-property.ts",
+            "src/domain/url.ts",
+            "src/engine/mindmap.ts",
+            "src/features/content-remeasure.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/node-codeblock.ts",
+            "src/features/node-content-factory.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-image-actions.ts",
+            "src/features/view-link-navigator.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-paste.ts",
+            "src/features/view-title-renamer.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/links/file-lookup.ts",
+            "src/links/links-resolve.ts",
+            "src/links/links-tree.ts",
+            "src/main.ts",
+            "src/markdown/md-serialize.ts",
+            "src/media/images-path.ts",
+            "src/media/images-save.ts",
+            "src/platform/math-jax.ts",
+            "src/platform/mindmap-auto-open.ts",
+            "src/services/engine-controller.ts",
+            "styles.css",
+            "tests/engine-controller.test.ts",
+            "tests/mindmap-codeblock.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/url.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-paste.test.ts",
+            "vendor/simple-mind-map.d.cts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.2",
+      "tag": "v0.2.2",
+      "base_commit": "8285523879e5e81427174ed451c730b74798114f",
+      "feature_commit": "136efbd07aadbffa6b0063af0df9c1aeffc3044b",
+      "feature_subject": "0.2.2",
+      "version_marker_commit": "136efbd07aadbffa6b0063af0df9c1aeffc3044b",
+      "version_marker_subject": "0.2.2",
+      "first_version_marker_commit": "136efbd07aadbffa6b0063af0df9c1aeffc3044b",
+      "source_document": "docs/release-notes-0.2.2.md",
+      "document_sha256": "2a058fad68e7af8c3555510c187571f06c91aeb5bbbb027f2b68c23e8e8a1b45",
+      "document_first_commit": "136efbd07aadbffa6b0063af0df9c1aeffc3044b",
+      "feature_headlines": [
+        "节点剪贴板：复制 / 剪切 / 粘贴走系统剪贴板",
+        "节点上移 / 下移",
+        "新建导图的默认位置（四档）",
+        "GFM 管道表在节点内渲染为真表格",
+        "MathJax 4 下公式退为「回退字体 + 无 TeX 间距」（本版最重要的显示修复）",
+        "大图「适应画布 → 重置缩放」视图偏右（用户报告）",
+        "公式不再「永久字面」",
+        "数学 / 代码内容节点在隐藏后不再永久塌陷",
+        "焦点在编辑区时画布不再抢粘贴",
+        "阅读视图进入导图后，「以 Markdown 打开」/「切换回 Markdown」恒落编辑视图",
+        "自动保存的两条数据安全缺陷",
+        "切换 UI 语言后命令面板残留旧语言命令",
+        "删除节点偶尔删错",
+        "节点内点击代码块复制按钮 / 外链后，画布快捷键失效",
+        "超大表格整张不显示",
+        "「指定文件夹」档的反斜杠路径不生效",
+        "大图（性能模式 ≥500 节点）视口恢复更可靠",
+        "剪贴板收口",
+        "保存位置落点解析收口",
+        "数学就绪判据换锚",
+        "GFM 表格纯逻辑落 `domain/pipe-table.ts`",
+        "视口几何修复的机制",
+        "移动节点走防腐层",
+        "进入前模式的读入/写回收口",
+        "门禁与回归",
+        "发版前实机复核",
+        "多处判定与读写面收口",
+        "`styles.css` 无变化",
+        "设置新增两个键",
+        "复制中心节点不再把整篇导图嵌进自己",
+        "启动恢复的后台标签首次切回时，公式 / 代码块的自绘尺寸自愈不再落空",
+        "永远不就绪的数学段不再烧 CPU"
+      ],
+      "summary": "0.2.2 让**节点成为可搬运的编辑对象**，并把大图与公式的几处显示退化修到位",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "136efbd07aadbffa6b0063af0df9c1aeffc3044b",
+          "subject": "0.2.2",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/commands.ts",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/core/math-placeholder.ts",
+            "src/core/node-data.ts",
+            "src/creation.ts",
+            "src/domain/md-meta.ts",
+            "src/domain/pipe-table.ts",
+            "src/domain/url.ts",
+            "src/domain/wiki-display.ts",
+            "src/engine/mindmap.ts",
+            "src/features/content-remeasure.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/node-codeblock.ts",
+            "src/features/node-content-factory.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/view-clipboard.ts",
+            "src/features/view-common.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-hotkeys.ts",
+            "src/features/view-image-actions.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-paste.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view-title-renamer.ts",
+            "src/features/view.ts",
+            "src/links/file-lookup.ts",
+            "src/links/links-tree.ts",
+            "src/main.ts",
+            "src/markdown/links-rename.ts",
+            "src/markdown/links-split.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/platform/clipboard.ts",
+            "src/platform/math-jax.ts",
+            "src/platform/mindmap-auto-open.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "src/ui/modal-image.ts",
+            "tests/clipboard-outline.test.ts",
+            "tests/clipboard.test.ts",
+            "tests/content-remeasure.test.ts",
+            "tests/creation-folder.test.ts",
+            "tests/engine-controller.test.ts",
+            "tests/engine-node-move.test.ts",
+            "tests/engine-subtree-clipboard.test.ts",
+            "tests/file-menu-back-to-md.test.ts",
+            "tests/math-jax.test.ts",
+            "tests/math-placeholder.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mindmap-auto-open.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/pipe-table.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/settings.test.ts",
+            "tests/url.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-clipboard.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-md-back-mode.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-paste.test.ts",
+            "tests/view-state.test.ts",
+            "tests/viewport.test.ts",
+            "vendor/simple-mind-map.cjs",
+            "vendor/upstream/src/core/render/node/nodeCreateContents.js"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.3",
+      "tag": "v0.2.3",
+      "base_commit": "136efbd07aadbffa6b0063af0df9c1aeffc3044b",
+      "feature_commit": "e73957c61f2e5098167b850c08f70d4f63050ed8",
+      "feature_subject": "四维偏好收敛",
+      "version_marker_commit": "e653fc83aef0b65afc516a5456a651c366266231",
+      "version_marker_subject": "0.2.3",
+      "first_version_marker_commit": "e653fc83aef0b65afc516a5456a651c366266231",
+      "source_document": "docs/release-notes-0.2.3.md",
+      "document_sha256": "19863c27bd682b5ae8a6124858e22939cdac5f1259018e83cedf3fe6cb2dd111",
+      "document_first_commit": "e653fc83aef0b65afc516a5456a651c366266231",
+      "feature_headlines": [
+        "配色（六套，按文件记）",
+        "边框（有边框 / 无边框，按文件记）",
+        "连线样式收敛为两态：折线 / 曲线",
+        "设置项文案与命名整理",
+        "大图「适应画布」改为可读下限 + 一句提示",
+        "调宽保存不再把图片引用扩写",
+        "新建图片的路径形态跟随官方 `New link format`",
+        "新窗口（popout）里图片调宽手柄不出现",
+        "同一段里多枚粗体被吞、下划线粗体嵌套外露",
+        "「文件已创建但打开失败」不再报「创建失败」",
+        "引擎防腐层拆分",
+        "节点自绘内容拆为三段",
+        "导出后处理合并",
+        "「按文件偏好」四维收成三处唯一实现",
+        "模块依赖矩阵单一来源",
+        "文档结构",
+        "门禁",
+        "`styles.css` 有变化",
+        "设置新增一个键",
+        "`data.json` 的 `viewState` 新增两个可选按键"
+      ],
+      "summary": "0.2.3 把「这篇导图长什么样」交还给每一篇导图",
+      "evidence_note": "最后的四维偏好收口 e73957c 已包含配色/边框/连线及模块收口；e653fc8 主要补版本、说明和截图。",
+      "implementation_commits": [
+        {
+          "commit": "a13f90521c3ab74d2bef466f49e23f00c3e00208",
+          "subject": "模块化编程改进",
+          "changed_paths": [
+            "src/engine/mindmap-clipboard.ts",
+            "src/engine/mindmap-commands.ts",
+            "src/engine/mindmap-export.ts",
+            "src/engine/mindmap-history.ts",
+            "src/engine/mindmap-nodes.ts",
+            "src/engine/mindmap-search.ts",
+            "src/engine/mindmap-timers.ts",
+            "src/engine/mindmap-viewport.ts",
+            "src/engine/mindmap.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/node-inline-html.ts",
+            "src/features/node-inline-tokenize.ts",
+            "src/platform/math-jax-export.ts",
+            "src/platform/math-jax.ts",
+            "tests/agents-md-sync.test.ts",
+            "tests/math-placeholder.test.ts"
+          ]
+        },
+        {
+          "commit": "040f30a8edf306c666c56f82e86977a21551276f",
+          "subject": "修复 knip 报出的无用类型再导出（CI check:dead-code）",
+          "changed_paths": [
+            "src/features/node-inline-content.ts"
+          ]
+        },
+        {
+          "commit": "b61ec1bd31f2da19cec3a0ae0de1a8e177ef876b",
+          "subject": "模块优化",
+          "changed_paths": [
+            "eslint.config.mts",
+            "scripts/module-boundaries.mjs",
+            "scripts/verify-visual.mjs",
+            "src/commands.ts",
+            "src/core/constants.ts",
+            "src/core/engine-types.ts",
+            "src/core/i18n.ts",
+            "src/core/node-data.ts",
+            "src/creation.ts",
+            "src/engine/mindmap-nodes.ts",
+            "src/engine/mindmap-viewport.ts",
+            "src/engine/mindmap.ts",
+            "src/features/content-remeasure.ts",
+            "src/features/image-resize.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/node-codeblock.ts",
+            "src/features/node-inline-editor.ts",
+            "src/features/node-inline-html.ts",
+            "src/features/node-inline-tokenize.ts",
+            "src/features/view-clipboard.ts",
+            "src/features/view-common.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-image-actions.ts",
+            "src/features/view-image-fullscreen.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-node-width.ts",
+            "src/features/view-split-links.ts",
+            "src/features/view-status.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view-viewport.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/links/links-tree.ts",
+            "src/main.ts",
+            "src/markdown/links-rename.ts",
+            "src/markdown/links-split.ts",
+            "src/markdown/markdown.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/media/images-path.ts",
+            "src/platform/export-css-vars.ts",
+            "src/platform/export-foreign-object-padding.ts",
+            "src/platform/export-svg-postprocess.ts",
+            "src/platform/export-svg-style.ts",
+            "src/platform/math-jax-export.ts",
+            "src/platform/math-jax.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "tests/creation-folder.test.ts",
+            "tests/export-fo-padding.test.ts",
+            "tests/export-svg-postprocess.test.ts",
+            "tests/math-jax.test.ts",
+            "tests/module-boundaries.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-export.test.ts",
+            "tests/view-hotkeys.test.ts",
+            "tests/view-state.test.ts",
+            "tests/view-status.test.ts",
+            "tests/view-toolbar.test.ts",
+            "tests/view-viewport.test.ts",
+            "tests/viewport.test.ts",
+            "vendor/simple-mind-map.cjs",
+            "vendor/upstream/src/core/render/Render.js",
+            "vendor/upstream/src/core/render/node/MindMapNode.js"
+          ]
+        },
+        {
+          "commit": "c56507d9529d989bfd9c0b3b40b9e77c2a0bc0ec",
+          "subject": "修复同段多枚粗体被吞、下划线粗体嵌套外露",
+          "changed_paths": [
+            "src/features/node-inline-tokenize.ts",
+            "tests/node-inline-content.test.ts"
+          ]
+        },
+        {
+          "commit": "ee069eaddca7da94e1f03d8739bd7006cbc29810",
+          "subject": "整理图片调宽模块，修复新窗口里手柄不出现",
+          "changed_paths": [
+            "src/engine/mindmap-nodes.ts",
+            "src/features/image-resize.ts",
+            "tests/feature-teardown.test.ts"
+          ]
+        },
+        {
+          "commit": "fce26c1cde4b53f35317376f73357f763b2e4944",
+          "subject": "修复调宽保存把图片引用改写成完整路径",
+          "changed_paths": [
+            "src/markdown/md-serialize.ts",
+            "tests/md-roundtrip.test.ts"
+          ]
+        },
+        {
+          "commit": "7cb115d752f290fd57e73adb6c8fa21de193ed2e",
+          "subject": "图片新建引用改跟官方 New link format，同步文档",
+          "changed_paths": [
+            "src/features/view-image-actions.ts",
+            "src/features/view-node-actions.ts",
+            "src/links/file-lookup.ts",
+            "tests/file-lookup.test.ts",
+            "tests/view-node-actions.test.ts"
+          ]
+        },
+        {
+          "commit": "68691bf101d43665d0c738f77d6052342ad440ea",
+          "subject": "docs(standard): 修复指针与结构，外迁修复史，新增文档一致性门禁",
+          "changed_paths": [
+            "tests/docs-standard.test.ts"
+          ]
+        },
+        {
+          "commit": "01348b9779255f436b4cad8eee21cfa6c0fee728",
+          "subject": "feat(toolbar): 连线样式收敛为折线/曲线两态，固定直线布局显示「直线」",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap.ts",
+            "src/features/view-context.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view.ts",
+            "src/services/engine-controller.ts",
+            "src/settings.ts",
+            "tests/engine-controller.test.ts",
+            "tests/language-refresh.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/settings.test.ts",
+            "tests/view-toolbar.test.ts"
+          ]
+        },
+        {
+          "commit": "07b9e01ec1b08ec4104677d483a0c20052d88c21",
+          "subject": "test(toolbar): 锁定连线样式顺序与旧值归一；applyLineStyle 写入侧归一",
+          "changed_paths": [
+            "src/features/view.ts",
+            "tests/constants.test.ts",
+            "tests/view-toolbar.test.ts"
+          ]
+        },
+        {
+          "commit": "d036023a7e19a25ab01c55bd20e7da8c96e2d019",
+          "subject": "K127 节点外观主题",
+          "changed_paths": [
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/engine/mindmap-theme-presets.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/view.ts",
+            "src/main.ts",
+            "src/services/engine-controller.ts",
+            "src/settings.ts",
+            "tests/engine-controller.test.ts",
+            "tests/mindmap-codeblock.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/mindmap-wiki-icon.test.ts",
+            "tests/settings.test.ts"
+          ]
+        },
+        {
+          "commit": "aaa2bd84008c3db5ba8c464dc4aecaf5949d327b",
+          "subject": "K128 配色与边框",
+          "changed_paths": [
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/engine/mindmap-theme-presets.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/view-context.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view.ts",
+            "src/main.ts",
+            "src/services/engine-controller.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "styles.css",
+            "tests/engine-controller.test.ts",
+            "tests/mindmap-codeblock.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/mindmap-wiki-icon.test.ts",
+            "tests/settings.test.ts",
+            "tests/view-state.test.ts",
+            "tests/view-toolbar.test.ts"
+          ]
+        },
+        {
+          "commit": "7169f10ec879539ef3516edd6522091a64fd3241",
+          "subject": "围栏块跟随默认边框",
+          "changed_paths": [
+            "src/features/mindmap-codeblock.ts",
+            "src/main.ts",
+            "tests/mindmap-codeblock.test.ts"
+          ]
+        },
+        {
+          "commit": "e73957c61f2e5098167b850c08f70d4f63050ed8",
+          "subject": "四维偏好收敛",
+          "changed_paths": [
+            "src/core/constants.ts",
+            "src/features/view.ts",
+            "src/services/view-state.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.4",
+      "tag": "v0.2.4",
+      "base_commit": "e73957c61f2e5098167b850c08f70d4f63050ed8",
+      "feature_commit": "00453daa793b5d8f3027ac6696a44dd68951ff81",
+      "feature_subject": "0.2.4",
+      "version_marker_commit": "00453daa793b5d8f3027ac6696a44dd68951ff81",
+      "version_marker_subject": "0.2.4",
+      "first_version_marker_commit": "00453daa793b5d8f3027ac6696a44dd68951ff81",
+      "source_document": "docs/release-notes-0.2.4.md",
+      "document_sha256": "8b16c21a55750d82ae6231f22517f472bde2bc097237237515f27aab183abefc",
+      "document_first_commit": "00453daa793b5d8f3027ac6696a44dd68951ff81",
+      "feature_headlines": [
+        "控件搬到画布右缘（四组竖排图标）",
+        "新增「整理」按钮",
+        "连线 / 边框改为一点即切的开关",
+        "布局 / 配色收进右键级联菜单",
+        "设置面板分四段",
+        "导出图里的数学结构不再消失",
+        "切换界面语言不再改写你的同名属性",
+        "导出 PNG / SVG 里公式的下半被裁掉",
+        "26 个纯重构提交（行为零变化）",
+        "热路径去分配",
+        "偏好读写对称",
+        "新增两个单文件收口",
+        "`styles.css` 有变化",
+        "无新增设置键"
+      ],
+      "summary": "0.2.4 把导图控件从「一条顶栏」搬到**画布右缘的竖排图标栈**，并按「开关」与「选值」把外观入口拆成两处",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "a1217020a2b32a70af4ac2b22bd5e5ec13b58b4c",
+          "subject": "refactor(domain): 预编译 url 谓词正则，消除逐 token RegExp 分配",
+          "changed_paths": [
+            "src/domain/url.ts"
+          ]
+        },
+        {
+          "commit": "5f7b75288a5e850076dd6d48df7f1febce71f524",
+          "subject": "refactor(domain): wikilink 去 [[..]] 往返，linkDisplayText 去数组/正则",
+          "changed_paths": [
+            "src/domain/wikilink.ts",
+            "tests/domain.test.ts"
+          ]
+        },
+        {
+          "commit": "843f5cbe01ce6a7f6a037ca4885d756510c3f790",
+          "subject": "refactor(domain): 显示名只解析一次，删除无消费方的 withWikilinkAlias",
+          "changed_paths": [
+            "src/domain/wiki-display.ts",
+            "src/domain/wikilink.ts"
+          ]
+        },
+        {
+          "commit": "96fce9eaaf487d87e1d441ec1deaa5b7bbf16f38",
+          "subject": "refactor(domain): pipe-table 行切分改游标切片，去掉逐字符拼接",
+          "changed_paths": [
+            "src/domain/pipe-table.ts"
+          ]
+        },
+        {
+          "commit": "8a799c1e18e37ab68de6ba07d1392352a051f9f5",
+          "subject": "refactor(core): mapWithConcurrency 收尾判定只留一处",
+          "changed_paths": [
+            "src/core/concurrency.ts"
+          ]
+        },
+        {
+          "commit": "3c728918decd16bf161da503a2667e23099d5927",
+          "subject": "refactor(links): file-lookup 后缀回退改逐级拼接，去掉临时数组",
+          "changed_paths": [
+            "src/links/file-lookup.ts"
+          ]
+        },
+        {
+          "commit": "8fe93fec738b99a413874c57b2a66e282203665e",
+          "subject": "refactor(links): encodedNameForm 提到形态循环外，stripMd 正则预编译",
+          "changed_paths": [
+            "src/links/links-tree.ts"
+          ]
+        },
+        {
+          "commit": "8c454c2a2f324635cae8b2c499532fb54845e1d1",
+          "subject": "refactor(markdown): 抽出 md-outline-lines（逐行分类），md-outline 1159→941",
+          "changed_paths": [
+            "src/markdown/md-outline-lines.ts",
+            "src/markdown/md-outline.ts"
+          ]
+        },
+        {
+          "commit": "0c3c8f32f9477b5e6c6e5cb2622d72d0d63b69f4",
+          "subject": "refactor(markdown): 抽出 md-serialize-anchors（锚点三件套），md-serialize 1248→1143",
+          "changed_paths": [
+            "src/markdown/md-serialize-anchors.ts",
+            "src/markdown/md-serialize.ts"
+          ]
+        },
+        {
+          "commit": "03d44effa0a41a1fb6f4eca3745f38a05aed0b27",
+          "subject": "refactor(markdown): md-serialize 按图片族/链接族纯排布（101 行换位）",
+          "changed_paths": [
+            "src/markdown/md-serialize.ts"
+          ]
+        },
+        {
+          "commit": "1013775dc5cd385d1adb2cc45aeb501275fa0475",
+          "subject": "refactor(markdown): 图片族整族抽出 md-serialize-inline，md-serialize 1157→915",
+          "changed_paths": [
+            "src/markdown/md-serialize-inline.ts",
+            "src/markdown/md-serialize.ts"
+          ]
+        },
+        {
+          "commit": "64a609518186924e48e4743977b7615a4959dbee",
+          "subject": "refactor(markdown): 行内 token 族抽出 md-outline-inline，md-outline 941→702",
+          "changed_paths": [
+            "src/markdown/md-outline-inline.ts",
+            "src/markdown/md-outline.ts"
+          ]
+        },
+        {
+          "commit": "2155df4531db4523ab0ee9bc62f6d01670574e07",
+          "subject": "refactor(engine): 抽出 mindmap-icons 与 mindmap-arrange，mindmap 759→623",
+          "changed_paths": [
+            "src/engine/mindmap-arrange.ts",
+            "src/engine/mindmap-icons.ts",
+            "src/engine/mindmap.ts"
+          ]
+        },
+        {
+          "commit": "1035c967d305232f02a0063fdd1e5f7ba43ceba7",
+          "subject": "refactor(engine): 抽出 mindmap-viewport-canvas（画布几何族），viewport 1058→890",
+          "changed_paths": [
+            "src/engine/mindmap-viewport-canvas.ts",
+            "src/engine/mindmap-viewport.ts"
+          ]
+        },
+        {
+          "commit": "2b9a11425a5dbd300ca29ada9d7d46315d16e207",
+          "subject": "refactor(platform): 抽出 math-jax-char-rules（字符规则族），math-jax 1090→868",
+          "changed_paths": [
+            "src/platform/math-jax-char-rules.ts",
+            "src/platform/math-jax.ts"
+          ]
+        },
+        {
+          "commit": "0c5750a3e4bd275b677ac7d89de655bbc9cf720e",
+          "subject": "refactor(platform): 抽出 prism-code-color-probe，prism-code 444→393",
+          "changed_paths": [
+            "src/platform/prism-code-color-probe.ts",
+            "src/platform/prism-code.ts"
+          ]
+        },
+        {
+          "commit": "58bab94ed14cc042395918f29eedbbe9029d0f2f",
+          "subject": "perf(features): protectedRanges 复用模块级扫描器（bench 无差异，仅去分配）",
+          "changed_paths": [
+            "src/features/node-inline-tokenize.ts"
+          ]
+        },
+        {
+          "commit": "3b8a723b8fcff5f4fdee3a08c36025bbee5a7e3b",
+          "subject": "refactor(services): 抽出 engine-controller-deps（依赖契约），engine-controller 822→722",
+          "changed_paths": [
+            "src/services/engine-controller-deps.ts",
+            "src/services/engine-controller.ts"
+          ]
+        },
+        {
+          "commit": "465d96b236c4b68dd49d3aafd87e7735c0a6bbee",
+          "subject": "refactor(services): 视口状态收进 ViewportSession，engine-controller 722→672",
+          "changed_paths": [
+            "src/services/engine-controller-viewport.ts",
+            "src/services/engine-controller.ts"
+          ]
+        },
+        {
+          "commit": "ebb68ed84198d50e16d89d63e1c4061e2d08cbb2",
+          "subject": "refactor(services): options 构造外移为 buildCreateOptions，engine-controller 672→631",
+          "changed_paths": [
+            "src/services/engine-controller-options.ts",
+            "src/services/engine-controller.ts"
+          ]
+        },
+        {
+          "commit": "a31e5932ceb0b5ba7c506f2298deecae2741c29f",
+          "subject": "refactor(features): 加载会话收进 LoadSession，view 1255→1235",
+          "changed_paths": [
+            "src/features/view-load-session.ts",
+            "src/features/view.ts"
+          ]
+        },
+        {
+          "commit": "babf2573a99d7f0c7c23b22d4579f00eafff41ad",
+          "subject": "refactor(features): 抽出 view-node-link-plan（链接规划族），view-node-actions 862→719",
+          "changed_paths": [
+            "src/features/view-node-actions.ts",
+            "src/features/view-node-link-plan.ts"
+          ]
+        },
+        {
+          "commit": "204aa3b85ec3700e5fd70873daf5ee2edfa1e9e8",
+          "subject": "refactor(features): view-dnd 提取 resolveDropHost 与 importDroppedIntoVault",
+          "changed_paths": [
+            "src/features/view-dnd.ts"
+          ]
+        },
+        {
+          "commit": "0b65b4973e0f6a093c5e3e10ac7be03e5c3a10f3",
+          "subject": "refactor(features): mindmap-codeblock 的 mount 拆为建引擎/绑事件/兜底帧三步",
+          "changed_paths": [
+            "src/features/mindmap-codeblock.ts"
+          ]
+        },
+        {
+          "commit": "d67ab004f23fdcd769d85942dd0f7ebf2a07a4eb",
+          "subject": "refactor(features): content-remeasure 的 flush 拆为挂起/反查/产物回退三步",
+          "changed_paths": [
+            "src/features/content-remeasure.ts"
+          ]
+        },
+        {
+          "commit": "0fdfe5676c0ec62d6bd935b8282629b9f76393ac",
+          "subject": "refactor(features): openNodeInlineEditor 拆为建元素/落位/绑输入三步",
+          "changed_paths": [
+            "src/features/node-inline-editor.ts"
+          ]
+        },
+        {
+          "commit": "00453daa793b5d8f3027ac6696a44dd68951ff81",
+          "subject": "0.2.4",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/domain/mindmap-property.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-export.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view.ts",
+            "src/markdown/md-open.ts",
+            "src/platform/math-jax-export-clip.ts",
+            "src/platform/math-jax-export.ts",
+            "src/platform/math-jax-fonts.ts",
+            "src/platform/math-jax.ts",
+            "src/services/engine-controller-deps.ts",
+            "src/services/engine-controller.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "styles.css",
+            "tests/engine-controller.test.ts",
+            "tests/language-refresh.test.ts",
+            "tests/math-jax-fonts.test.ts",
+            "tests/math-jax.test.ts",
+            "tests/md-open-trigger.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-export.test.ts",
+            "tests/view-search.test.ts",
+            "tests/view-toolbar.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.5",
+      "tag": "v0.2.5",
+      "base_commit": "00453daa793b5d8f3027ac6696a44dd68951ff81",
+      "feature_commit": "843849ef676c984679f534ed99cea4b1db4eb0cb",
+      "feature_subject": "0.2.5",
+      "version_marker_commit": "843849ef676c984679f534ed99cea4b1db4eb0cb",
+      "version_marker_subject": "0.2.5",
+      "first_version_marker_commit": "843849ef676c984679f534ed99cea4b1db4eb0cb",
+      "source_document": "docs/release-notes-0.2.5.md",
+      "document_sha256": "c20bda0490befd22da445dd41e4f5cdaba741837fc7c95c4b8a136629b24f9fb",
+      "document_first_commit": "843849ef676c984679f534ed99cea4b1db4eb0cb",
+      "feature_headlines": [
+        "小地图（左下角自动浮层）",
+        "滚轮平移平滑化",
+        "`Alt` + 滚轮横轴平移",
+        "无选中时复制整张图",
+        "右缘竖栏的卡片与提示",
+        "自动整理保留视口",
+        "新建导图默认无边框",
+        "提示落位修正",
+        "新增 `npm run check:gates`",
+        "AGENTS.md 瘦身",
+        "小地图的两块收口",
+        "`styles.css` 有变化",
+        "无新增设置键，也没有新命令"
+      ],
+      "summary": "0.2.5 的四个新能力都落在「看全图」与「走视口」上",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "d0d38b0da93bb0152feb8fdb359469336d4bc2f9",
+          "subject": "「自动整理」功能保留视口",
+          "changed_paths": [
+            "src/engine/mindmap-arrange.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view.ts",
+            "src/services/engine-controller.ts",
+            "tests/engine-controller.test.ts",
+            "tests/viewport.test.ts"
+          ]
+        },
+        {
+          "commit": "d90734a0ae01c8d4a4aac564d9b05594bddf332f",
+          "subject": "默认无边框",
+          "changed_paths": [
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/engine/mindmap-theme-presets.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/settings.test.ts"
+          ]
+        },
+        {
+          "commit": "4a2e10c6dd53eba1a3f7d235d1a4f4294fe47a2a",
+          "subject": "「小地图」新增功能",
+          "changed_paths": [
+            "src/core/minimap-geometry.ts",
+            "src/engine/mindmap-minimap.ts",
+            "src/engine/mindmap-nodes.ts",
+            "src/engine/mindmap-viewport.ts",
+            "src/features/drag-session.ts",
+            "src/features/view-minimap.ts",
+            "src/features/view.ts",
+            "styles.css",
+            "tests/engine-minimap-capture.test.ts",
+            "tests/minimap-geometry.test.ts",
+            "tests/view-minimap.test.ts",
+            "tests/viewport.test.ts"
+          ]
+        },
+        {
+          "commit": "ac11b6b2d42f78732eccc656d28881be75d1a92f",
+          "subject": "滚轮手势",
+          "changed_paths": [
+            "src/features/view-viewport.ts",
+            "tests/view-viewport.test.ts"
+          ]
+        },
+        {
+          "commit": "8a97f75b80118be324d6ddde9bea129271db328c",
+          "subject": "「剪贴板」全局复制",
+          "changed_paths": [
+            "src/engine/mindmap-clipboard.ts",
+            "src/features/view-clipboard.ts",
+            "tests/engine-subtree-clipboard.test.ts",
+            "tests/view-clipboard.test.ts"
+          ]
+        },
+        {
+          "commit": "f59248ddf2fdfeebe8d4c8df954744ac9c028fe6",
+          "subject": "UI优化",
+          "changed_paths": [
+            "src/features/view-toolbar.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/view-toolbar.test.ts"
+          ]
+        },
+        {
+          "commit": "843849ef676c984679f534ed99cea4b1db4eb0cb",
+          "subject": "0.2.5",
+          "changed_paths": [
+            "scripts/check-gates.d.mts",
+            "scripts/check-gates.mjs",
+            "tests/check-gates.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.6",
+      "tag": "v0.2.6",
+      "base_commit": "843849ef676c984679f534ed99cea4b1db4eb0cb",
+      "feature_commit": "5e28888aea6a2c81cd6e5298dd9d015fc592017a",
+      "feature_subject": "0.2.6",
+      "version_marker_commit": "5e28888aea6a2c81cd6e5298dd9d015fc592017a",
+      "version_marker_subject": "0.2.6",
+      "first_version_marker_commit": "5e28888aea6a2c81cd6e5298dd9d015fc592017a",
+      "source_document": "docs/release-notes-0.2.6.md",
+      "document_sha256": "12e036c5a754a22555d2edbd0b4419cc5afa45c95c50fcbc407494a5d820daf8",
+      "document_first_commit": "5e28888aea6a2c81cd6e5298dd9d015fc592017a",
+      "feature_headlines": [
+        "节点配色（右键节点 → 配色）",
+        "自定义颜色弹窗",
+        "整篇配色支持自定义",
+        "重新打开导图自动重试失败图片",
+        "右键「配色」按落点分两义",
+        "二级菜单改用宿主原生级联",
+        "自动整理后小地图立即跟进",
+        "新模块",
+        "指令的读 / 写只此一份",
+        "应用时机",
+        "死代码 / 注释清理",
+        "`styles.css` 有变化",
+        "无新增设置键，也没有新命令"
+      ],
+      "summary": "0.2.6 是「给节点上色」的一版",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "5e28888aea6a2c81cd6e5298dd9d015fc592017a",
+          "subject": "0.2.6",
+          "changed_paths": [
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/core/minimap-geometry.ts",
+            "src/domain/color.ts",
+            "src/domain/md-meta.ts",
+            "src/engine/mindmap-clipboard.ts",
+            "src/engine/mindmap-colors.ts",
+            "src/engine/mindmap-minimap.ts",
+            "src/engine/mindmap-nodes.ts",
+            "src/engine/mindmap-palette.ts",
+            "src/engine/mindmap-theme-presets.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/node-inline-html.ts",
+            "src/features/node-inline-tokenize.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-node-color.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view.ts",
+            "src/markdown/md-outline-lines.ts",
+            "src/media/images-path.ts",
+            "src/services/document-service.ts",
+            "src/services/view-state.ts",
+            "src/ui/modal-color.ts",
+            "styles.css",
+            "tests/color-directive.test.ts",
+            "tests/images-path.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/minimap-geometry.test.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-toolbar.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.7",
+      "tag": "v0.2.7",
+      "base_commit": "5e28888aea6a2c81cd6e5298dd9d015fc592017a",
+      "feature_commit": "e810c2c4a4526f6f6081519498e3fd942c0a8712",
+      "feature_subject": "0.2.7",
+      "version_marker_commit": "e810c2c4a4526f6f6081519498e3fd942c0a8712",
+      "version_marker_subject": "0.2.7",
+      "first_version_marker_commit": "e810c2c4a4526f6f6081519498e3fd942c0a8712",
+      "source_document": "docs/release-notes-0.2.7.md",
+      "document_sha256": "df043fabd54ee41d61c36f19fe0ac074819ca762bcfc75e596ad459a388db612",
+      "document_first_commit": "e810c2c4a4526f6f6081519498e3fd942c0a8712",
+      "feature_headlines": [
+        "布局写进文件属性",
+        "右键「布局」改写文件属性",
+        "属性被外部改写时跟随",
+        "`mindmap` 代码块按块指定布局",
+        "破坏性：声明键单键化",
+        "切换界面语言不再触碰任何文件",
+        "`data.json` 不再保存逐文件布局",
+        "「默认布局」语义收窄为种子值",
+        "升级写种子布局",
+        "降级的短路条件收窄",
+        "判据仍只有一份",
+        "布局的读 / 写各有唯一入口",
+        "绕过保存管线的写入要作废基线",
+        "竞态守卫",
+        "单一应用点",
+        "破坏性：旧键不再识别",
+        "回滚到 0.2.6 及更早",
+        "新值语义"
+      ],
+      "summary": "0.2.7 把**布局**从插件数据搬进了文件属性",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "e810c2c4a4526f6f6081519498e3fd942c0a8712",
+          "subject": "0.2.7",
+          "changed_paths": [
+            "scripts/gen-perf-fixture.mjs",
+            "src/commands.ts",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/creation.ts",
+            "src/domain/mindmap-property.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view.ts",
+            "src/main.ts",
+            "src/markdown/markdown.ts",
+            "src/markdown/md-open.ts",
+            "src/platform/mindmap-auto-open.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller-deps.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "tests/clipboard-outline.test.ts",
+            "tests/creation-folder.test.ts",
+            "tests/file-menu-back-to-md.test.ts",
+            "tests/md-frontmatter-trigger.test.ts",
+            "tests/md-open-trigger.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mindmap-auto-open.test.ts",
+            "tests/mindmap-codeblock.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/settings-persist.test.ts",
+            "tests/settings.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-layout.test.ts",
+            "tests/view-state.test.ts",
+            "tests/view-toolbar.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.8",
+      "tag": "v0.2.8",
+      "base_commit": "e810c2c4a4526f6f6081519498e3fd942c0a8712",
+      "feature_commit": "4284adbc79df4e0cd909ac336749fa00b7a09876",
+      "feature_subject": "0.2.8",
+      "version_marker_commit": "4284adbc79df4e0cd909ac336749fa00b7a09876",
+      "version_marker_subject": "0.2.8",
+      "first_version_marker_commit": "4284adbc79df4e0cd909ac336749fa00b7a09876",
+      "source_document": "docs/release-notes-0.2.8.md",
+      "document_sha256": "28a1f521ba9b077368910ef7d42b2a60872facfa19109c582478000974bab74c",
+      "document_first_commit": "4284adbc79df4e0cd909ac336749fa00b7a09876",
+      "feature_headlines": [
+        "任务复选框",
+        "标签",
+        "撤销覆盖「原文写回」通道",
+        "勾选后节点「下沉」",
+        "任务判定只有一份",
+        "三条合成路径统一重新剥离",
+        "标签链路各一层",
+        "撤销收口",
+        "文件格式不变",
+        "回滚到 0.2.7 及更早",
+        "没有新增命令、没有新增设置键"
+      ],
+      "summary": "0.2.8 把两种最常见的 Markdown 行内写法变成了画布上的**可交互元素**",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "4284adbc79df4e0cd909ac336749fa00b7a09876",
+          "subject": "0.2.8",
+          "changed_paths": [
+            "src/core/event-binder.ts",
+            "src/core/i18n.ts",
+            "src/domain/md-meta.ts",
+            "src/domain/md-task.ts",
+            "src/engine/mindmap-history.ts",
+            "src/engine/mindmap.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/node-inline-editor.ts",
+            "src/features/node-inline-html.ts",
+            "src/features/node-inline-tokenize.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-node-color.ts",
+            "src/features/view-node-task.ts",
+            "src/features/view-tag.ts",
+            "src/features/view.ts",
+            "src/markdown/links-split.ts",
+            "src/markdown/md-line-write.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/platform/tag-search.ts",
+            "tests/event-binder.test.ts",
+            "tests/md-task.test.ts",
+            "tests/node-inline-editor.test.ts",
+            "tests/node-inline-tag.test.ts",
+            "tests/tag-search.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-node-task.test.ts",
+            "tests/view-tag.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.2.9",
+      "tag": "v0.2.9",
+      "base_commit": "4284adbc79df4e0cd909ac336749fa00b7a09876",
+      "feature_commit": "d4ed6122f29c5ea43fb771e0a96cebde9b7e8dbb",
+      "feature_subject": "主题：标签 pill 与任务复选框跟链接色同源（K151）",
+      "version_marker_commit": "f8df38e1c62f558274ce425f03b3094b025d99aa",
+      "version_marker_subject": "0.2.9",
+      "first_version_marker_commit": "f8df38e1c62f558274ce425f03b3094b025d99aa",
+      "source_document": "docs/release-notes-0.2.9.md",
+      "document_sha256": "7b27a50d51b6a8082b839a7e88dd0e2bd0765b794a69b35576a47fc02d996410",
+      "document_first_commit": "f8df38e1c62f558274ce425f03b3094b025d99aa",
+      "feature_headlines": [
+        "「玫瑰」配色",
+        "节点级配色改为「主色 → 三档」",
+        "标签 pill 与任务复选框跟随主题链接色",
+        "指令语义",
+        "「森林」预设换色相",
+        "着色节点的行内码 / 表头阶差判据换了",
+        "引擎离屏测量容器的残渣",
+        "派生唯一点",
+        "链接色收口",
+        "测量残渣收口",
+        "测试",
+        "文件格式不变",
+        "观感会变（仅节点级配色）",
+        "观感会变（标签与复选框）",
+        "回滚到 0.2.8 及更早",
+        "没有新增命令、没有新增设置键"
+      ],
+      "summary": "0.2.9 重做「节点级配色」的落地方式",
+      "evidence_note": "e8aa947/c56417d/d4ed612 完成离屏残渣、节点配色和链接色收口；f8df38e 只整理说明与版本元数据。",
+      "implementation_commits": [
+        {
+          "commit": "e8aa94761655ec7614862e799fd1a030d90ba5dc",
+          "subject": "修复：引擎离屏测量容器残渣（K152）",
+          "changed_paths": [
+            "src/engine/mindmap.ts",
+            "tests/engine-measure-residue.test.ts",
+            "tests/mindmap-codeblock.test.ts",
+            "tests/mindmap-wiki-icon.test.ts"
+          ]
+        },
+        {
+          "commit": "c56417d94e42109c9e3d45d336358bdf8d84fbfe",
+          "subject": "配色：节点级配色改主色派生",
+          "changed_paths": [
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/domain/color.ts",
+            "src/engine/mindmap-colors.ts",
+            "src/engine/mindmap-palette.ts",
+            "src/engine/mindmap-theme-presets.ts",
+            "src/features/view-node-color.ts",
+            "tests/color-directive.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/view-context-menu.test.ts"
+          ]
+        },
+        {
+          "commit": "d4ed6122f29c5ea43fb771e0a96cebde9b7e8dbb",
+          "subject": "主题：标签 pill 与任务复选框跟链接色同源（K151）",
+          "changed_paths": [
+            "src/features/node-inline-html.ts",
+            "src/platform/export-svg-postprocess.ts",
+            "tests/export-svg-postprocess.test.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/node-inline-tag.test.ts",
+            "tests/view-node-task.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.3.0",
+      "tag": "v0.3.0",
+      "base_commit": "d4ed6122f29c5ea43fb771e0a96cebde9b7e8dbb",
+      "feature_commit": "ef5a566632c65e158fc4ec88e699972ffe4e3cdc",
+      "feature_subject": "0.3.0",
+      "version_marker_commit": "ef5a566632c65e158fc4ec88e699972ffe4e3cdc",
+      "version_marker_subject": "0.3.0",
+      "first_version_marker_commit": "ef5a566632c65e158fc4ec88e699972ffe4e3cdc",
+      "source_document": "docs/release-notes-0.3.0.md",
+      "document_sha256": "86589900f0796476d97b4f740305f6c4b8a91c4f6ef371cb53fc519411e8fb2c",
+      "document_first_commit": "ef5a566632c65e158fc4ec88e699972ffe4e3cdc",
+      "feature_headlines": [
+        "联系（关系连线）",
+        "拖动即保存",
+        "线色",
+        "标签",
+        "删线两个入口",
+        "只读嵌入照常画线",
+        "连线沉到节点下方",
+        "观感压轻",
+        "标签不叠字",
+        "没有 `geo=` 的边",
+        "菜单结构",
+        "边数上限 500",
+        "拖完的几何不会被自动值盖掉",
+        "正文里刚删掉的边不会在下一轮同步里复活",
+        "几何按目标认领",
+        "稳态不再每帧重画线条",
+        "空内容节点",
+        "中途关视图",
+        "没有联系指令的文件完全不受影响",
+        "没有新增命令、没有新增设置键",
+        "已知边界",
+        "回滚到 0.2.9 及更早"
+      ],
+      "summary": "0.3.0 增加「联系」",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "ef5a566632c65e158fc4ec88e699972ffe4e3cdc",
+          "subject": "0.3.0",
+          "changed_paths": [
+            "esbuild.config.mjs",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/domain/md-meta.ts",
+            "src/domain/relation-anchor.ts",
+            "src/domain/relation.ts",
+            "src/engine/mindmap-relations.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/node-inline-editor.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-hotkeys.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-node-color.ts",
+            "src/features/view-node-relation.ts",
+            "src/features/view-relation-anchor.ts",
+            "src/features/view.ts",
+            "src/markdown/md-line-write.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/ui/menu-submenu.ts",
+            "src/ui/modal-relation-label.ts",
+            "tests/engine-relations.test.ts",
+            "tests/mindmap-codeblock.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/relation-anchor.test.ts",
+            "tests/relation-directive.test.ts",
+            "tests/vendor-contract.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-hotkeys.test.ts",
+            "tests/view-node-relation.test.ts",
+            "vendor/simple-mind-map.cjs",
+            "vendor/upstream/src/plugins/AssociativeLine.js",
+            "vendor/upstream/src/plugins/associativeLine/associativeLineText.js",
+            "vendor/upstream/src/plugins/associativeLine/associativeLineUtils.js"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.3.1",
+      "tag": "v0.3.1",
+      "base_commit": "ef5a566632c65e158fc4ec88e699972ffe4e3cdc",
+      "feature_commit": "9123c29e5ea18213c48b6afab9eb19175de1614c",
+      "feature_subject": "0.3.1",
+      "version_marker_commit": "9123c29e5ea18213c48b6afab9eb19175de1614c",
+      "version_marker_subject": "0.3.1",
+      "first_version_marker_commit": "9123c29e5ea18213c48b6afab9eb19175de1614c",
+      "source_document": "docs/release-notes-0.3.1.md",
+      "document_sha256": "d6b3ccebc503de1c25b29cd2bc791c8436dc96df9dbc962d72a561f0904a6e12",
+      "document_first_commit": "9123c29e5ea18213c48b6afab9eb19175de1614c",
+      "feature_headlines": [
+        "概要（Summary）",
+        "右键框选 → 选区菜单",
+        "大图首帧提示",
+        "导出进度提示",
+        "指令块一段一行",
+        "指令行判定只认形状与已登记的 key",
+        "联系与概要共用一套点选会话",
+        "固定直线布局的连线开关置灰",
+        "撤销 / 重做按钮按历史可用性置灰",
+        "首次打开宽图自动适应画布",
+        "选区菜单的「复制」报数量",
+        "概要弹窗区分创建与编辑",
+        "只是打开看一眼，文件不再被重写",
+        "撤销：第一次编辑撤得掉，撤到原样也真的落盘",
+        "写完自检",
+        "概要不会因文件被手改而静默失效",
+        "竖栏两态开关补 `aria-pressed`",
+        "打开导图不再先闪一屏 Markdown 原文",
+        "同一个标签不会被切两次",
+        "导出成功后给出提示",
+        "状态栏节点数不再停在 0",
+        "无效的编辑项一律置灰（中心主题 + 首 / 末个兄弟）",
+        "概要括号线不再从「＋」展开按钮上穿过",
+        "「返回 Markdown」说清它改了什么",
+        "没有概要指令的文件完全不受影响",
+        "没有新增命令、没有新增设置键",
+        "文件格式只有一个新增元素",
+        "回滚到 0.3.0",
+        "已知边界"
+      ],
+      "summary": "0.3.1 加入「概要」",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "9123c29e5ea18213c48b6afab9eb19175de1614c",
+          "subject": "0.3.1",
+          "changed_paths": [
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/core/measure-cache.ts",
+            "src/domain/directive.ts",
+            "src/domain/relation.ts",
+            "src/domain/summary.ts",
+            "src/domain/wikilink.ts",
+            "src/engine/mindmap-history.ts",
+            "src/engine/mindmap-nodes.ts",
+            "src/engine/mindmap-summaries.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/node-codeblock.ts",
+            "src/features/node-inline-editor.ts",
+            "src/features/node-inline-tokenize.ts",
+            "src/features/node-pick.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-export.ts",
+            "src/features/view-hotkeys.ts",
+            "src/features/view-link-navigator.ts",
+            "src/features/view-load-session.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-node-color.ts",
+            "src/features/view-node-relation.ts",
+            "src/features/view-node-summary.ts",
+            "src/features/view-paste.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view-viewport.ts",
+            "src/features/view.ts",
+            "src/links/links-tree.ts",
+            "src/markdown/md-line-write.ts",
+            "src/markdown/md-open.ts",
+            "src/markdown/md-outline.ts",
+            "src/platform/math-jax.ts",
+            "src/platform/mindmap-auto-open.ts",
+            "src/platform/prism-code.ts",
+            "src/services/document-service.ts",
+            "src/services/engine-controller.ts",
+            "src/ui/modal-summary-text.ts",
+            "styles.css",
+            "tests/domain.test.ts",
+            "tests/engine-controller.test.ts",
+            "tests/engine-history-limit.test.ts",
+            "tests/engine-node-move.test.ts",
+            "tests/engine-summaries.test.ts",
+            "tests/language-refresh.test.ts",
+            "tests/md-open-trigger.test.ts",
+            "tests/mindmap-auto-open.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/node-pick.test.ts",
+            "tests/relation-directive.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/summary-directive.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-export.test.ts",
+            "tests/view-hotkeys.test.ts",
+            "tests/view-node-actions.test.ts",
+            "tests/view-node-relation.test.ts",
+            "tests/view-paste.test.ts",
+            "tests/view-toolbar.test.ts",
+            "vendor/simple-mind-map.d.cts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.3.2",
+      "tag": "v0.3.2",
+      "base_commit": "9123c29e5ea18213c48b6afab9eb19175de1614c",
+      "feature_commit": "399f917c77cd7f3c562cdd97372a0b14bb9aab57",
+      "feature_subject": "0.3.2",
+      "version_marker_commit": "399f917c77cd7f3c562cdd97372a0b14bb9aab57",
+      "version_marker_subject": "0.3.2",
+      "first_version_marker_commit": "399f917c77cd7f3c562cdd97372a0b14bb9aab57",
+      "source_document": "docs/release-notes-0.3.2.md",
+      "document_sha256": "c2040a03a53457ff27db49904fc5feab578a53c8c00898eff98a5d8ad614b372",
+      "document_first_commit": "399f917c77cd7f3c562cdd97372a0b14bb9aab57",
+      "feature_headlines": [
+        "按分支自动上色",
+        "配色作用范围",
+        "状态栏保存状态",
+        "只读角标",
+        "配色重做：10 套，命名统一为颜色词",
+        "自定义整篇配色改按 HSL 派生",
+        "节点颜色＝填充色",
+        "整体排版重调",
+        "出厂默认边框回到「有边框」",
+        "图片自然尺寸上限 480 → 320",
+        "撤色顺手清掉无主哨兵",
+        "Tab 缩进的笔记不再被拆平",
+        "缩进单位随文档走，改一个节点不再重排全文缩进",
+        "大图拖动窗口不再每秒冻结数次",
+        "「缩放到选区」改用布局几何",
+        "小地图视口框不再每帧强制布局",
+        "拖入文件时不再每次事件建数组",
+        "vendor 补丁 16",
+        "vendor 补丁 17",
+        "`data.json` 不需要手改",
+        "新增设置项「配色作用范围」，默认「含子节点」",
+        "文件格式零新增元素",
+        "外观会变，这是本版主诉求",
+        "回滚到 0.3.1",
+        "已知边界"
+      ],
+      "summary": "0.3.2 是一版**外观与手感**的整理",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "888e11a0573a051b99712bbcfe990a13489a4954",
+          "subject": "docs: 文档契约与代码结构索引同步（K1-K167）",
+          "changed_paths": [
+            "tests/agents-md-sync.test.ts"
+          ]
+        },
+        {
+          "commit": "302564c5d6df7cd1672a1071f7a68e9e49215c2c",
+          "subject": "perf(engine): 布局偏移记账 + 一次物化（补丁 16/17）",
+          "changed_paths": [
+            "tests/vendor-contract.test.ts",
+            "vendor/simple-mind-map.cjs",
+            "vendor/upstream/src/layouts/Base.js",
+            "vendor/upstream/src/layouts/CatalogOrganization.js",
+            "vendor/upstream/src/layouts/Fishbone.js",
+            "vendor/upstream/src/layouts/LogicalStructure.js",
+            "vendor/upstream/src/layouts/MindMap.js",
+            "vendor/upstream/src/layouts/OrganizationStructure.js",
+            "vendor/upstream/src/layouts/Timeline.js",
+            "vendor/upstream/src/layouts/fishboneUtils.js"
+          ]
+        },
+        {
+          "commit": "9d6f8cc1c84b33c5b6d55b67d262a171c5072e8e",
+          "subject": "refactor(markdown): 缩进单位判据收口与注释整理",
+          "changed_paths": [
+            "src/domain/md-meta.ts",
+            "src/markdown/md-outline-lines.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/prism-code.test.ts"
+          ]
+        },
+        {
+          "commit": "399f917c77cd7f3c562cdd97372a0b14bb9aab57",
+          "subject": "0.3.2",
+          "changed_paths": [
+            "scripts/verify-visual.mjs",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/core/minimap-geometry.ts",
+            "src/domain/color.ts",
+            "src/engine/mindmap-colors.ts",
+            "src/engine/mindmap-nodes.ts",
+            "src/engine/mindmap-palette.ts",
+            "src/engine/mindmap-theme-presets.ts",
+            "src/engine/mindmap-theme.ts",
+            "src/engine/mindmap-viewport.ts",
+            "src/engine/mindmap.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-dnd.ts",
+            "src/features/view-minimap.ts",
+            "src/features/view-node-color.ts",
+            "src/features/view-status.ts",
+            "src/features/view-viewport.ts",
+            "src/features/view.ts",
+            "src/main.ts",
+            "src/services/document-service.ts",
+            "src/services/status-bar.ts",
+            "src/settings.ts",
+            "src/ui/menu-submenu.ts",
+            "styles.css",
+            "tests/color-directive.test.ts",
+            "tests/images-path.test.ts",
+            "tests/mindmap-codeblock.test.ts",
+            "tests/mindmap-theme.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/settings.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-dnd.test.ts",
+            "tests/view-minimap.test.ts",
+            "tests/view-node-relation.test.ts",
+            "tests/view-resize.test.ts",
+            "tests/view-status.test.ts",
+            "tests/view-viewport.test.ts",
+            "tests/viewport.test.ts",
+            "vitest.config.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    },
+    {
+      "version": "0.3.3",
+      "tag": "v0.3.3",
+      "base_commit": "399f917c77cd7f3c562cdd97372a0b14bb9aab57",
+      "feature_commit": "a71469200b936dff88d1c32a7c88ecfd99030f4e",
+      "feature_subject": "0.3.3",
+      "version_marker_commit": "a71469200b936dff88d1c32a7c88ecfd99030f4e",
+      "version_marker_subject": "0.3.3",
+      "first_version_marker_commit": "a71469200b936dff88d1c32a7c88ecfd99030f4e",
+      "source_document": "docs/release-notes-0.3.3.md",
+      "document_sha256": "3974f0784fe7c05fed6cc1d8127905a4dd2ef7c275d56ebbeb8a54d626d8afe1",
+      "document_first_commit": "a71469200b936dff88d1c32a7c88ecfd99030f4e",
+      "feature_headlines": [
+        "层级语法：标题与无序列表双向可逆",
+        "编辑期一致性守卫",
+        "节点内 mermaid",
+        "脚注（footnote）",
+        "标注（callout）与引用块",
+        "同文件多视图（Level B）",
+        "首次打开导图不再「保存中…」",
+        "清理旧的不继承标记",
+        "属性契约拆成双键",
+        "自动保存照搬官方 `TextFileView`",
+        "视图状态只写变化",
+        "移除「连续保存失败挂起自动保存」",
+        "不再提示「该导图已在其他标签页打开」",
+        "标题节点的配色指令写独立行",
+        "清理旧 `%%none%%` 按文档计一次",
+        "配色作用范围切换会多一步确认",
+        "迁移不再「造声明」",
+        "升级不丢用户布局",
+        "语法守卫的结果会落盘",
+        "会话撤销真正生效",
+        "打开导图不再做无用功",
+        "mermaid 图内链接",
+        "配色清理在多视图下不再重复计数",
+        "列表项里缩进的代码围栏不再吞掉后续节点",
+        "含链接 / URL 的代码围栏不再被拆散",
+        "围栏里的指令行不再被抽走",
+        "空行分隔的两个标注仍是两个盒子",
+        "导出图不再压窄右内边距",
+        "属性读侧 fail-closed",
+        "关闭 / 切文件不再丢最后一次内联编辑",
+        "CRLF 文件编辑后不再整篇变 LF，行尾两空格也逐字回写",
+        "多行节点续行里的链接不再被吞",
+        "给标题上色后仍能参与层级语法互转",
+        "视口 / 会话收尾",
+        "只读嵌入里的链接可点，也不再导航整个窗口",
+        "脚注在轻标记里也能正确编号",
+        "脚注定义的范围按「相对缩进」判定",
+        "标注标题里的轻标记照常渲染",
+        "脚注 id 允许含逗号",
+        "徽标固定宽度",
+        "未闭合围栏之后的内容按代码处理",
+        "转义的反斜杠按奇偶判定",
+        "围栏闭合按 CommonMark 相对口径",
+        "CRLF 文件的「纯浏览不写盘」守卫恢复生效",
+        "只改首行时，未编辑的续行逐字回写",
+        "导出图的标注类型色名单只有一份",
+        "mermaid 的失败留痕按原因各一条",
+        "文件会被迁移",
+        "新增设置项「新建导图的层级语法」",
+        "正文语法会变的地方只有一处",
+        "脚注是纯渲染能力",
+        "标注 / 引用块同样是纯渲染能力",
+        "回滚到 0.3.2",
+        "已知边界"
+      ],
+      "summary": "0.3.2 是外观版，0.3.3 是**写法与协作**版",
+      "evidence_note": "版本提交同时包含功能代码/引擎补丁/工程实现，已按文件差异核对。",
+      "implementation_commits": [
+        {
+          "commit": "a71469200b936dff88d1c32a7c88ecfd99030f4e",
+          "subject": "0.3.3",
+          "changed_paths": [
+            "eslint.config.mts",
+            "scripts/check-gates.mjs",
+            "scripts/verify-visual.mjs",
+            "src/core/constants.ts",
+            "src/core/i18n.ts",
+            "src/creation.ts",
+            "src/domain/callout.ts",
+            "src/domain/color.ts",
+            "src/domain/md-meta.ts",
+            "src/domain/mindmap-property.ts",
+            "src/domain/tree.ts",
+            "src/engine/mindmap-nodes.ts",
+            "src/engine/mindmap-snapshot.ts",
+            "src/engine/mindmap.ts",
+            "src/features/mindmap-codeblock.ts",
+            "src/features/node-content-factory.ts",
+            "src/features/node-inline-content.ts",
+            "src/features/node-inline-html.ts",
+            "src/features/node-inline-tokenize.ts",
+            "src/features/view-clipboard.ts",
+            "src/features/view-context-menu.ts",
+            "src/features/view-context.ts",
+            "src/features/view-footnote.ts",
+            "src/features/view-hotkeys.ts",
+            "src/features/view-load-session.ts",
+            "src/features/view-node-actions.ts",
+            "src/features/view-node-color.ts",
+            "src/features/view-syntax.ts",
+            "src/features/view-toolbar.ts",
+            "src/features/view-viewport.ts",
+            "src/features/view-wikilink.ts",
+            "src/features/view.ts",
+            "src/main.ts",
+            "src/markdown/markdown.ts",
+            "src/markdown/md-footnote.ts",
+            "src/markdown/md-heading-format.ts",
+            "src/markdown/md-heading-normalize.ts",
+            "src/markdown/md-heading-syntax.ts",
+            "src/markdown/md-open.ts",
+            "src/markdown/md-outline-lines.ts",
+            "src/markdown/md-outline.ts",
+            "src/markdown/md-serialize.ts",
+            "src/media/images-path.ts",
+            "src/platform/callout-icon.ts",
+            "src/platform/export-svg-postprocess.ts",
+            "src/platform/legacy-mindmap-migration.ts",
+            "src/platform/mermaid.ts",
+            "src/services/document-service.ts",
+            "src/services/document-session-history.ts",
+            "src/services/document-session-registry.ts",
+            "src/services/document-session.ts",
+            "src/services/engine-controller.ts",
+            "src/services/status-bar.ts",
+            "src/services/view-state.ts",
+            "src/settings.ts",
+            "styles.css",
+            "tests/callout.test.ts",
+            "tests/color-directive.test.ts",
+            "tests/creation-folder.test.ts",
+            "tests/document-session-history.test.ts",
+            "tests/document-session.test.ts",
+            "tests/engine-controller.test.ts",
+            "tests/engine-session-snapshot.test.ts",
+            "tests/export-svg-postprocess.test.ts",
+            "tests/find-node-by-dom.test.ts",
+            "tests/footnote.test.ts",
+            "tests/images-path.test.ts",
+            "tests/legacy-mindmap-migration.test.ts",
+            "tests/md-frontmatter-trigger.test.ts",
+            "tests/md-heading-syntax.test.ts",
+            "tests/md-inline.test.ts",
+            "tests/md-open-trigger.test.ts",
+            "tests/md-roundtrip.test.ts",
+            "tests/mermaid-render.test.ts",
+            "tests/mindmap-codeblock.test.ts",
+            "tests/mocks/obsidian.ts",
+            "tests/node-inline-content.test.ts",
+            "tests/save-pipeline.test.ts",
+            "tests/settings.test.ts",
+            "tests/view-clipboard.test.ts",
+            "tests/view-context-menu.test.ts",
+            "tests/view-export.test.ts",
+            "tests/view-footnote.test.ts",
+            "tests/view-layout.test.ts",
+            "tests/view-state.test.ts",
+            "tests/view-syntax.test.ts",
+            "tests/view-wikilink.test.ts"
+          ]
+        }
+      ],
+      "earliest_available_commit": null
+    }
+  ]
+}

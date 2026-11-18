@@ -1,0 +1,6 @@
+/* 发布入口：npm run build / dev 汇总为根目录 styles.css；不要手改产物。 */
+@import './view.css';
+@import '../toolbar/toolbar.css';
+@import '../search/search-bar.css';
+@import './global.css';
+@import '../modal-name.css';

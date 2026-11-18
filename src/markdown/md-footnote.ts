@@ -40,7 +40,7 @@ import {
  * 脚注 id 的字符类（**唯一定义**：定义行与行内引用两处正则都从这里拼）。
  *
  * `id` = `^` 之后到 `]` 之前的任意非 `]`、非换行字符——与 markdown-it-footnote
- * 一致（**允许**逗号 / 空格 / 冒号等）。消费方 `features/node-inline-tokenize`
+ * 一致（**允许**逗号 / 空格 / 冒号等）。消费方 `features/content/node-inline-tokenize`
  * 的 `MARKUP_RE` 用同一份源码拼接，避免「定义认、引用不认」的分叉。
  */
 export const FOOTNOTE_ID_SOURCE = '[^\\]\\n]+';

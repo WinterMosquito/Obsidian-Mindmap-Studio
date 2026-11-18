@@ -3,7 +3,7 @@
  *
  * ## 为什么在 domain
  * 本模块只回答两件事：「从第 N 行起是不是一张表」与「表长什么样」（列数 / 对齐 /
- * 单元格显示文本）。DOM 装配与内联样式在 `features/node-inline-content`；**围栏
+ * 单元格显示文本）。DOM 装配与内联样式在 `features/content/node-inline-content`；**围栏
  * 代码块的排除也在那一侧**——围栏判定的唯一来源是显示层的 `MARKUP_RE`（AGENTS.md
  * 硬规则 5：不造第二份判定），本模块不重复实现。
  *

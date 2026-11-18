@@ -77,7 +77,7 @@ const OFFICIAL_RESTRICTED_IMPORT_PATTERNS = [
 
 /* —— 模块依赖矩阵（K51）机械强制 ——
    **矩阵本体不在此文件**：唯一定义在 scripts/module-boundaries.mjs，由本文件
-   （生成 zone 块）与 tests/module-boundaries.test.ts（校验解析后的真实依赖图）
+   （生成 zone 块）与 tests/contracts/module-boundaries.test.ts（校验解析后的真实依赖图）
    共同消费——两处各写一份必然漂移（硬规则 5）。
 
    本规则只能看**说明符形态**：组内相对引用（`./x`）不受矩阵限制，故组内成环
@@ -134,8 +134,8 @@ export default defineConfig(
 		'vendor/upstream/**',
 		'vendor/patches/**',
 		'scripts/**',
-		'esbuild.config.mjs',
-		'version-bump.mjs',
+		'config/esbuild.config.mjs',
+		'scripts/version-bump.mjs',
 		'versions.json',
 		'main.js',
 		'package-lock.json',
@@ -280,7 +280,7 @@ export default defineConfig(
 		// globals 里）。此前能通过 lint 只是因为 `isDesktopOnly: true` 让官方规则
 		// 顺带带进了 `globals.node`——那次注入挂在 manifest 读取上（cwd 相对，
 		// 见 K43），属「配置承重」。这里显式声明，与本插件是否桌面限定解耦。
-		files: ['src/platform/system-open.ts'],
+		files: ['src/platform/system/system-open.ts'],
 		languageOptions: { globals: { require: 'readonly' } },
 	},
 	{

@@ -188,7 +188,7 @@ export function tokenizeInline(raw: string): InlineToken[] {
 
 /**
  * token 的剥壳显示文本（节点文本中替换 [[]] 包裹后的样子）。
- * export 供节点内联内容渲染（`features/node-inline-content.ts`，方案 B 原型）复用
+ * export 供节点内联内容渲染（`features/content/node-inline-content.ts`，方案 B 原型）复用
  * ——「链接该显示成什么」必须与解析侧同一口径，在别处重写一遍必然漂移。
  */
 export function tokenDisplay(tok: InlineToken): string {

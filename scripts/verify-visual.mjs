@@ -12,7 +12,7 @@
  * - 覆盖：三类图标的分流与存在性、图标尺寸（18×18，防 `foreignObject` 里
  *   0×0 不可见的旧故障）、回形针标题、画布铺满容器、节点测宽随文本变化
  *   （不被容器宽度拉平）；
- * - 覆盖（方案 B 原型，`features/node-inline-content.ts`）：自绘节点内联内容是否
+ * - 覆盖（方案 B 原型，`features/content/node-inline-content.ts`）：自绘节点内联内容是否
  *   真的进入 foreignObject、离屏克隆测宽是否与渲染宽度同源、以及**点击命中契约**
  *   ——合成的 click 事件经引擎 `node_click` 派发后，`event.target` 必须就是锚点本体
  *   且落在节点 group 内（= view-wikilink.findAnchorInNode 的两个前置判据），
@@ -74,14 +74,19 @@
  *
  * 退出码：0 = 通过或（未要求时）缺浏览器跳过；1 = 断言失败或缺浏览器但要求了。
  */
-import { execFile } from 'node:child_process';
+import { buildUiEntrySource, UI_SHIM_SOURCE } from './visual-ui.mjs';
+import { buildCanvasDragEntrySource } from './visual-canvas-drag.mjs';
+import { buildNodeContentCompareSource } from './visual-node-content.mjs';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
+import { buildMiniMapSidebarProbe } from './visual-minimap-sidebar.mjs';
+import { dumpChromePage } from './chrome-page.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -263,7 +268,7 @@ const SCENARIOS = [
 		data: {
 			// 2026-09-27（G4）：数学段必须被自绘接管（引擎 SVG 文本恒为字面）。
 			// 单行 `$$…$$` 渲染为 display 数学；无头页没有真 MathJax（替换链路由
-			// tests/math-jax.test.ts 的假件与实机 CDP 断言覆盖），此处锁定
+			// tests/platform/rendering/math/math-jax.test.ts 的假件与实机 CDP 断言覆盖），此处锁定
 			// 「识别 → 占位（与原文定界符同形）→ 接管」三段确定性行为。
 			text: '方程 $E=mc^2$、$x$ 与 $$y^2$$',
 			mdDerivedText: '方程 $E=mc^2$、$x$ 与 $$y^2$$',
@@ -278,10 +283,10 @@ const SCENARIOS = [
 			// 2026-09-28：围栏代码块必须被自绘接管（引擎 SVG 文本恒为字面围栏）。
 			// 无头页锁定「识别 → 结构（.tmm-codeblock + pre/code + 复制按钮）→
 			// 原文保真（信息行剥离、缩进保留）」；复制写剪贴板链路由
-			// tests/node-codeblock.test.ts 与视图层委托覆盖，此处不涉及剪贴板。
+			// tests/features/content/node-codeblock.test.ts 与视图层委托覆盖，此处不涉及剪贴板。
 			// 2026-10-06：新增语言类与「无运行时则停在字面」的断言（Prism 高亮需要
 			// Obsidian 的 loadPrism，头less 拿不到——token 元素本身由
-			// tests/prism-code.test.ts 的桩面覆盖）。
+			// tests/platform/rendering/code/prism-code.test.ts 的桩面覆盖）。
 			text: '示例\n```js\nconst a = 1;\n  echo hi\n```',
 			mdDerivedText: '示例\n```js\nconst a = 1;\n  echo hi\n```',
 			mdRaw: '示例\n```js\nconst a = 1;\n  echo hi\n```',
@@ -306,7 +311,7 @@ const SCENARIOS = [
 		label: '表格：GFM 管道表自绘为内联样式 <table>（表宽不撑爆节点）',
 		data: {
 			// 2026-10-14：plain 多行节点里的表格块独立成段（识别在 domain/pipe-table，
-			// 装配在 features/node-inline-content），产出 table/thead/tbody，样式
+			// 装配在 features/content/node-inline-content），产出 table/thead/tbody，样式
 			// **全内联**（导出 SVG 不含 styles.css）。第二列分隔行写 `---:` ⇒ 该列
 			// 对齐必须落到内联 text-align（本场景是「对齐不是摆设」的锁定用例）
 			text: '上文\n| 名称 | 数量 |\n| --- | ---: |\n| 甲 | 2 |\n下文',
@@ -428,7 +433,7 @@ function findChrome() {
 /**
  * `obsidian` 的最小垫片（仅在无头验证页里使用）。
  *
- * 为什么需要：本页要加载的模块图包含 `features/view-wikilink.ts`（探针用它的
+ * 为什么需要：本页要加载的模块图包含 `features/navigation/view-wikilink.ts`（探针用它的
  * `ensureOffsetSize`），而它现在会经 `view-link-navigator.ts` 触达 `obsidian`
  * 的运行时导出（Notice / Platform / normalizePath…）。obsidian 包只发布类型、
  * 没有 JS，故打包时会报「Could not resolve "obsidian"」。
@@ -454,6 +459,7 @@ export class Component {
 	registerEvent() {}
 	registerDomEvent() {}
 }
+export class ItemView extends Component {}
 export class MarkdownRenderChild extends Component {
 	constructor(containerEl) {
 		super();
@@ -518,7 +524,7 @@ export function normalizePath(p) {
 	return String(p).replace(/\\\\/g, '/');
 }
 export function setIcon() {}
-// 标注图标（platform/callout-icon 的具名导入）：垫片返回 null = 宿主没有这个图标，
+// 标注图标（platform/rendering/callout-icon 的具名导入）：垫片返回 null = 宿主没有这个图标，
 // 即**生产环境的降级路径**（图标缺失 ⇒ 省略图标、保留标题与类型色）。探针因此
 // 断言的是"无图标时盒子仍成立"，图标本身的取用由 platform 层直连宿主 getIcon。
 export function getIcon() {
@@ -544,21 +550,17 @@ export function requestUrl() {
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
 function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps = 'edit' } = {}) {
 	const mindmapModule = join(ROOT, 'src', 'engine', 'mindmap.ts').replaceAll('\\', '/');
-	const wikilinkModule = join(ROOT, 'src', 'features', 'view-wikilink.ts').replaceAll(
+	const wikilinkModule = join(ROOT, 'src', 'features', 'navigation', 'view-wikilink.ts').replaceAll(
 		'\\',
 		'/',
 	);
 	const inlineContentModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-inline-content.ts',
+		'src', 'features', 'content', 'node-inline-content.ts',
 	).replaceAll('\\', '/');
 	const nodeWidthModule = join(
 		ROOT,
-		'src',
-		'features',
-		'view-node-width.ts',
+		'src', 'features', 'canvas', 'view-node-width.ts',
 	).replaceAll('\\', '/');
 	const imagesPathModule = join(ROOT, 'src', 'media', 'images-path.ts').replaceAll(
 		'\\',
@@ -566,15 +568,11 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 	);
 	const codeblockModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-codeblock.ts',
+		'src', 'features', 'content', 'node-codeblock.ts',
 	).replaceAll('\\', '/');
 	const inlineEditorModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-inline-editor.ts',
+		'src', 'features', 'editing', 'node-inline-editor.ts',
 	).replaceAll('\\', '/');
 	// 导出 SVG 后处理链的模块（与生产 view.ts 的 exportSvgTransforms 同源同序）
 	const exportPostprocessModule = join(
@@ -583,7 +581,7 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		'platform',
 		'export-svg-postprocess.ts',
 	).replaceAll('\\', '/');
-	const mathJaxModule = join(ROOT, 'src', 'platform', 'math-jax.ts').replaceAll(
+	const mathJaxModule = join(ROOT, 'src', 'platform', 'rendering', 'math', 'math-jax.ts').replaceAll(
 		'\\',
 		'/',
 	);
@@ -663,7 +661,7 @@ for (const { name, data } of scenarios) {
 }
 
 // —— mindmap 代码块嵌入探针（features/mindmap-codeblock，2026-10-13）——
-// 五条契约只有真实 DOM 能验（单测只覆盖纯判据，见 tests/mindmap-codeblock.test.ts）：
+// 五条契约只有真实 DOM 能验（单测只覆盖纯判据，见 tests/features/mindmap-codeblock.test.ts）：
 // ① 只读引擎**真建起来了**（.smm-node 出现 ⇒ 解析 → 图片/uid → 引擎装配整链通）；
 // ② 普通滚轮**不**被 preventDefault——引擎 Event.onMousewheel 无条件
 //    preventDefault（vendor upstream core/event/Event.js:148-150），嵌入若不拦，
@@ -1535,7 +1533,7 @@ window.setTimeout(() => {
 // 这一步验证的是「单测覆盖不到」的引擎运行时装配：HTML 是否真进了 foreignObject、
 // 引擎是否按离屏克隆测出了尺寸、以及节点内锚点点击后 event.target 是否就是锚点
 // （= view-wikilink.findAnchorInNode 的两个前置判据；其后的跳转分流已由
-// tests/view-wikilink.test.ts 覆盖）。
+// tests/features/navigation/view-wikilink.test.ts 覆盖）。
 const inlineProbe = document.createElement('pre');
 inlineProbe.id = 'inline-probe';
 document.body.appendChild(inlineProbe);
@@ -2094,7 +2092,7 @@ window.setTimeout(() => {
 				: -1,
 			codeInlineMask: codeCopyButton ? codeCopyButton.style.maskImage : null,
 			// 语言类契约（2026-10-06）：围栏信息行必须落到 code.language-js
-			// ——它既是宿主主题/Prism 的选择器口径，也是 platform/prism-code 查语法的
+			// ——它既是宿主主题/Prism 的选择器口径，也是 platform/rendering/code/prism-code 查语法的
 			// 依据。无头页**没有 Obsidian 运行时**（loadPrism 不可用），故这里断言的是
 			// 高亮**前**的字面形态：类名已就位、代码仍是字面（占位即回退，不空白）。
 			codeLanguageClass: codeBlock
@@ -2279,7 +2277,7 @@ window.setTimeout(() => {
 // 引擎的 checkEnableDragModifyNodeWidth() 只看全局开关（本插件恒开），于是
 // 纯文本 / 含图节点上也会出现左右边框手柄，而引擎的 SVG 文本路径不认
 // customTextWidth（拖了毫无反应＝死手柄，用户实测 2026-09-16）。插件侧给该判定
-// 加了「且会被自绘接管」这一层（features/view-node-width.gateNodeWidthHandles）。
+// 加了「且会被自绘接管」这一层（features/canvas/view-node-width.gateNodeWidthHandles）。
 // 手柄是激活时懒创建的无类名透明 rect（inline cursor: ew-resize），故按此计数。
 const handleProbe = document.createElement('pre');
 handleProbe.id = 'handle-probe';
@@ -4383,7 +4381,7 @@ function chromeArgs(profileDir, { memoryProbe = false, budgetMs = 8000 } = {}) {
  * 每个模式再重试一次——无头渲染在 CI 上有偶发空白输出的历史。
  * 每次尝试的退出码与 stderr 尾部都会进诊断日志。
  */
-async function dumpDom(chromePath, pagePath, profileDir, diag, { memoryProbe = false, budgetMs = 8000 } = {}) {
+async function dumpDom(chromePath, pagePath, profileDir, diag, { memoryProbe = false, budgetMs = 8000, marker = 'id="map-' } = {}) {
 	const args = chromeArgs(profileDir, { memoryProbe, budgetMs });
 	const attempts = [];
 	let lastError = null;
@@ -4397,7 +4395,7 @@ async function dumpDom(chromePath, pagePath, profileDir, diag, { memoryProbe = f
 					[mode, ...args, '--dump-dom', pagePath],
 					{ maxBuffer: 96 * 1024 * 1024, windowsHide: true },
 				);
-				if (stdout.includes('id="map-')) {
+				if (stdout.includes(marker)) {
 					attempts.push(`${label}: ok（DOM ${stdout.length} 字节）`);
 					diag.log(`    · Chrome ${label} 成功（DOM ${stdout.length} 字节）`);
 					diag.file('05-chrome-stderr.txt', String(stderr ?? ''));
@@ -5586,7 +5584,7 @@ function checkInline(dom) {
 		);
 	}
 	// 行内数学（2026-09-27）：数学段必须被自绘接管（引擎 SVG 文本恒为字面 `$…$`），
-	// 且定界符回填进占位文本。MathJax 替换链路由 tests/math-jax.test.ts（假件）
+	// 且定界符回填进占位文本。MathJax 替换链路由 tests/platform/rendering/math/math-jax.test.ts（假件）
 	// 与实机 CDP 断言覆盖——无头页没有真 MathJax，不在此断言替换产物。
 	if (probe.mathInForeignObject !== true) {
 		failures.push(
@@ -6607,11 +6605,9 @@ function buildBenchEntrySource() {
 	const mindmapModule = join(ROOT, 'src', 'engine', 'mindmap.ts').replaceAll('\\', '/');
 	const inlineContentModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-inline-content.ts',
+		'src', 'features', 'content', 'node-inline-content.ts',
 	).replaceAll('\\', '/');
-	const nodeWidthModule = join(ROOT, 'src', 'features', 'view-node-width.ts').replaceAll(
+	const nodeWidthModule = join(ROOT, 'src', 'features', 'canvas', 'view-node-width.ts').replaceAll(
 		'\\',
 		'/',
 	);
@@ -7318,7 +7314,56 @@ async function main() {
 		// 完整 dump-dom 归档：失败时这是唯一能离线复现 DOM 现场的东西
 		await diag.file('10-dom.html', dom);
 
-		failed = await runChecks(dom, diag);
+		// UI 页独立运行，避免它的焦点/样式对引擎和拖动探针产生影响。
+		const baselineCss = execFileSync('git', ['show', 'HEAD:styles.css'], { cwd: ROOT, encoding: 'utf8' });
+		const currentCss = await readFile(join(ROOT, 'styles.css'), 'utf8');
+		await writeFile(join(workDir, 'ui-entry.mjs'), buildUiEntrySource(ROOT, baselineCss, currentCss));
+		await writeFile(join(workDir, 'ui-shim.mjs'), UI_SHIM_SOURCE);
+		await writeFile(join(workDir, 'ui.html'), '<!doctype html><html><body><script src="ui-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'ui-entry.mjs')], outfile: join(workDir, 'ui-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'ui-shim.mjs') } });
+		const uiDom = await dumpDom(chromePath, join(workDir, 'ui.html'), join(workDir, 'ui-profile'), diag, { marker: 'id="ui-components-probe"' });
+		await diag.file('11-ui-dom.html', uiDom);
+		const uiRead = readProbe(uiDom, 'ui-components-probe', 'UI 组件');
+		const uiFailures = uiRead.failures ?? (uiRead.probe?.ok ? [] : ['UI 组件验证未完成']);
+		diag.log('  ' + (uiFailures.length ? '✗' : '✓') + ' ui-components 真实 DOM、生命周期及亮暗 × 窄宽 CSS 计算值对比');
+		for (const failure of uiFailures) diag.log('      - ' + failure);
+
+		// 从 HEAD 提取完整 src 快照，避免基线导入当前修改后的组件而使比较空转。
+		const baselineDir = join(workDir, 'baseline');
+		await mkdir(baselineDir);
+		const baselineArchive = join(workDir, 'baseline.tar');
+		execFileSync('git', ['archive', '--output', baselineArchive, 'HEAD', 'src'], { cwd: ROOT });
+		execFileSync('tar', ['-xf', baselineArchive, '-C', baselineDir]);
+		await writeFile(join(workDir, 'content-entry.mjs'), buildNodeContentCompareSource(ROOT, baselineDir));
+		await writeFile(join(workDir, 'content.html'), '<!doctype html><html><body><script src="content-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'content-entry.mjs')], outfile: join(workDir, 'content-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
+		const contentDom = await dumpDom(chromePath, join(workDir, 'content.html'), join(workDir, 'content-profile'), diag, { marker: 'id="node-content-compare-probe"' });
+		await diag.file('12-node-content-compare.html', contentDom);
+		const contentRead = readProbe(contentDom, 'node-content-compare-probe', '节点内容对比');
+		const contentFailures = contentRead.failures ?? (contentRead.probe?.ok ? [] : ['节点内容对比未完成']);
+		diag.log('  ' + (contentFailures.length ? '✗' : '✓') + ' node-content-compare HEAD 与当前 DOM、尺寸、导出及注入调用对比（' + (contentRead.probe?.compared ?? 0) + ' 组）');
+		for (const failure of contentFailures) diag.log('      - ' + failure);
+
+		await writeFile(join(workDir, 'minimap-entry.mjs'), buildMiniMapSidebarProbe(ROOT));
+		await writeFile(join(workDir, 'minimap.html'), '<!doctype html><html><head><link rel="stylesheet" href="' + pathToFileURL(join(ROOT, 'styles.css')).href + '"></head><body><script src="minimap-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'minimap-entry.mjs')], outfile: join(workDir, 'minimap-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
+		// 真实时钟覆盖 ResizeObserver/rAF 的实际交付与屏幕几何，不能用虚拟时钟替代。
+		const minimapDom = await dumpChromePage(chromePath, join(workDir, 'minimap.html'), join(workDir, 'minimap-profile'), 'minimap-sidebar-probe');
+		await diag.file('13-minimap-sidebar.html', minimapDom);
+		const minimapRead = readProbe(minimapDom, 'minimap-sidebar-probe', '侧栏缩略图');
+		const minimapFailures = minimapRead.failures ?? (minimapRead.probe?.ok ? [] : [minimapRead.probe?.error ?? '侧栏缩略图验证未完成']);
+		diag.log('  ' + (minimapFailures.length ? '✗' : '✓') + ' minimap-sidebar 真实尺寸、导航、切源、隐藏/恢复及 Outline 还原');
+		for (const failure of minimapFailures) diag.log('      - ' + failure);
+		await writeFile(join(workDir, 'canvas-drag-entry.mjs'), buildCanvasDragEntrySource(ROOT));
+		await writeFile(join(workDir, 'canvas-drag.html'), '<!doctype html><html><body><script src="canvas-drag-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'canvas-drag-entry.mjs')], outfile: join(workDir, 'canvas-drag-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
+		const canvasDom = await dumpDom(chromePath, join(workDir, 'canvas-drag.html'), join(workDir, 'canvas-profile'), diag, { marker: 'id="canvas-drag-probe"', budgetMs: 24000 });
+		await diag.file('13-canvas-drag.html', canvasDom);
+		const canvasRead = readProbe(canvasDom, 'canvas-drag-probe', '画布拖拽');
+		const canvasFailures = canvasRead.failures ?? (canvasRead.probe?.ok ? [] : [canvasRead.probe?.error ?? '画布拖拽验证未完成']);
+		diag.log('  ' + (canvasFailures.length ? '✗' : '✓') + ' canvas-drag 两档设置 × Cmd/Ctrl × 缩放及独立 Window、节点/输入/中键/右键/滚轮与中途切换');
+		for (const failure of canvasFailures) diag.log('      - ' + failure);
+		failed = uiFailures.length + contentFailures.length + minimapFailures.length + canvasFailures.length + await runChecks(dom, diag);
 
 		// 真实墙钟基线（opt-in：默认不跑，避免给常规校验加一次重页面渲染）
 		if (ARGS.has('--perf')) {

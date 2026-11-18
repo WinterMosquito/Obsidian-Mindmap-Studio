@@ -51,7 +51,7 @@ jobs:
             - run: npm run lint
 
             # CSS 检查（stylelint）：styles.css 是发布资产之一，而官方目录 scanner
-            # 在 release 模式**强制**跑同一套 ruleset（见 stylelint.config.mjs 顶部
+            # 在 release 模式**强制**跑同一套 ruleset（见 config/stylelint.config.mjs 顶部
             # 说明；规则面照抄 obsidian-workflows src/lint.ts:10-123，浏览器基准由
             # minAppVersion 推得）。此前本地完全没有 CSS 检查。
             - run: npm run lint:css

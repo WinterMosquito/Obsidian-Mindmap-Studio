@@ -90,7 +90,7 @@ type MdLinkStyle = 'wiki' | 'md';
  * 来源两处、语义不同：
  * - **解析期**：按原文形态记录（保往返——未编辑时 mdRaw 逐字回写，编辑后合成回写
  *   也须保持用户原本的写法，不能把 `![a](b.png)` 翻成 `![[b.png]]`）；
- * - **新建/换图**：跟随官方设置「Use \[\[Wikilinks\]\]」（见 platform/vault-prefs），
+ * - **新建/换图**：跟随官方设置「Use \[\[Wikilinks\]\]」（见 platform/workspace/vault-prefs），
  *   关闭时写 md 形态——官方该设置同时管 links 与 images。
  */
 type MdImageStyle = 'wiki' | 'md';

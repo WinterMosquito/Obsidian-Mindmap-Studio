@@ -16,12 +16,13 @@
  *
  * 打包后须人工同步两处 sha256 常量（脚本会打印实际值供核对）：
  *   - vendor/BUILD.md「产物字节级身份」；
- *   - tests/vendor-contract.test.ts 的 EXPECTED_SHA256。
+ *   - tests/contracts/vendor-contract.test.ts 的 EXPECTED_SHA256。
  */
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { build } from 'esbuild';
+import { canvasDragPatch } from '../vendor/patches/canvas-drag-transform.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 const BUNDLE_PATH = join(ROOT, 'vendor', 'simple-mind-map.cjs');
@@ -54,6 +55,7 @@ const lfNormalize = (text) => text.replace(/\r\n/g, '\n');
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
 
 const result = await build({
+	plugins: [canvasDragPatch],
 	stdin: {
 		contents: ENTRY,
 		resolveDir: ROOT,
@@ -104,6 +106,6 @@ if (prevSha === nextSha) {
 } else if (prevSha) {
 	console.warn(
 		`[build-vendor] ⚠️ 字节已变化（写入前 sha256=${prevSha}）——若含补丁改动属预期，` +
-			'请同步 vendor/BUILD.md 与 tests/vendor-contract.test.ts 的 sha256 常量。',
+			'请同步 vendor/BUILD.md 与 tests/contracts/vendor-contract.test.ts 的 sha256 常量。',
 	);
 }

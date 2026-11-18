@@ -22,7 +22,7 @@
  *
  * ⚠ **耦合契约（改动本文件时必读）**：本模块**只负责让缓存键变，它自己不重建任何
  * 元素、也不触发任何重排**。「键变了」到「节点真的被重新测量」之间还差一步
- * **重建时机**，由既有链路提供：`features/view.ts` 的 `installMathFontsHook` 在
+ * **重建时机**，由既有链路提供：`features/view/view.ts` 的 `installMathFontsHook` 在
  * `document.fonts` 的 `loadingdone` 上调`remeasureSettledMathNodes` →
  * `engine/mindmap.refreshNodesCustomContent` → `customCreateNodeContent` 重建
  * 元素 → 此时读到新 epoch ⇒ cache miss ⇒ 重测。
@@ -41,7 +41,7 @@
  * **为什么不需要额外调用点**：引擎的预测量补丁（`Vr`）与数学定稿后的 `reRender`
  * 都经由 `customCreateNodeContent` 重建元素。
  *
- * **落在 core**：唯一消费方是 `features/node-inline-content` 的元素构建入口，
+ * **落在 core**：唯一消费方是 `features/content/node-inline-content` 的元素构建入口，
  * 但它需要 `document.fonts`（features 层的单测是 node 环境），故把「读字体状态
  * + 装监听」这两件与 DOM 相关的重活收在 core，由 features 只调一个纯函数。
  *
@@ -50,7 +50,7 @@
  * `el.ownerDocument`，见 `node-inline-content.buildInlineNodeContent` 的契约）创建，
  * 而本模块的 `readFontsStatus` / `installFontHook` 固定用全局 `document`——popout
  * 窗口内二者是不同`FontFaceSet`。**影响很低**：字体是系统级共享，两个 document 的
- * `status` 通常同步；且 popout 内数学渲染本就受限（`platform/math-jax` 绑主窗口的
+ * `status` 通常同步；且 popout 内数学渲染本就受限（`platform/rendering/math/math-jax` 绑主窗口的
  * `window.MathJax`）。**未按per-window 修**是刻意的：core 不能依赖 features 的
  * `InlineContentDocument` 类型，要 per-window 需把 doc 一路传下来，收益不抵签名
  * 复杂度。改动此处前请先确认这条前提仍成立。
@@ -100,7 +100,7 @@ function readFontsStatus(): string {
  * 单例，`fontEpoch` 也随之是进程级状态——它的读者（`measure-cache` 的测量
  * 缓存）同样跨视图/跨引擎存活。给「进程级单例的监听」配「视图级」生命周期
  * 会出现「视图关了→ epoch 停增 → 新开视图测宽不再失效」，反而制造 bug。
- * 真正需要随视图摘除的字体监听在`features/view.ts` 里，那里走
+ * 真正需要随视图摘除的字体监听在`features/view/view.ts` 里，那里走
  * `Component.register()` 自动摘除——**两处分工不同，不是口径不一致**。
  */
 function installFontHook(): void {

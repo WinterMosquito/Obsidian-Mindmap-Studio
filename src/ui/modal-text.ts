@@ -1,7 +1,7 @@
 /**
  * 节点文本编辑弹窗：自绘（富）节点的**备选编辑入口**（2026-09-28 起，见 K92）。
  *
- * 主入口已改为**内联编辑器**（`features/node-inline-editor`：覆盖层 textarea 编辑
+ * 主入口已改为**内联编辑器**（`features/editing/node-inline-editor`：覆盖层 textarea 编辑
  * **文件里那一行原文**，双击 / F2 / 右键「编辑文本」）；本弹窗保留两类内联不具备的
  * 能力：**别名模式**（纯链接节点）与**原文模式 + 实时预览**（长文本/多行细调）。
  * 入口：右键「在弹窗中编辑」（`view-node-actions.editNodeTextInModal`）。
@@ -20,7 +20,7 @@
  * （列表续行/段落），不能像单行弹窗那样把 Enter 当提交。
  *
  * 刻意不提供「轻标记按钮」：编辑器里显示的就是回写依据，插入 `**粗体**` 只需
- * 用户手输；渲染层负责把它显示成粗体（features/node-inline-content）。
+ * 用户手输；渲染层负责把它显示成粗体（features/content/node-inline-content）。
  * @returns 新的内容（别名或原文，按模式）；取消/直接关闭返回 null
  */
 import { App } from 'obsidian';

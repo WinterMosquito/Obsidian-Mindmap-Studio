@@ -11,7 +11,7 @@ import { countTreeNodes, getRenderRoot } from './mindmap-nodes';
  *
  * ## 为什么需要它
  * 引擎只在命令收尾自动 `addHistory()`（`Command.exec` 对非白名单命令，见 K26b）；
- * 插件侧的「原文写回」通道（`features/node-inline-editor.applyRawNodeContent`：
+ * 插件侧的「原文写回」通道（`features/editing/node-inline-editor.applyRawNodeContent`：
  * 内联编辑 / 节点配色 / 任务勾选）直接改 data 后 `render()`，**不产生历史**——
  * 撤销会跳过这些改动、直接回到更早的快照（用户感知为「一次撤销丢一堆编辑」）。
  * 故该通道收尾必须显式记一条。
@@ -157,7 +157,7 @@ const HISTORY_MIN_COUNT = 30;
  * ≥2731 节点落入下限 30 条（地板之上不再封顶——要完全封顶需引擎只存 diff，
  * 属 vendor 内部；见 K66）。
  *
- * 导出供 `--perf` 内存轮断言「预算确实应用」与 `tests/engine-history-limit.test.ts`
+ * 导出供 `--perf` 内存轮断言「预算确实应用」与 `tests/engine/engine-history-limit.test.ts`
  * 使用；生产路径经 `createMindMap`（创建期）与 `syncHistoryLimit`（会话内）调用。
  */
 export function resolveHistoryLimit(nodeCount: number): number {

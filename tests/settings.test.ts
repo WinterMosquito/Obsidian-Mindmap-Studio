@@ -42,10 +42,10 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 	/**
 	 * 减法护栏（2026-10-09）：下面四项是**已移除**、不是「暂时不暴露」——
 	 * 重新加回等于把产品决策改回去，必须是有意识的动作（并同步 README 与 K 条目）：
-	 * - `autoUpdateLinks` → 改读**官方设置**（`platform/vault-prefs`）；
+	 * - `autoUpdateLinks` → 改读**官方设置**（`platform/workspace/vault-prefs`）；
 	 * - `performanceMode` / `performanceThreshold` → **常开 + 常量阈值**
 	 *   （`core/constants.PERFORMANCE_NODE_THRESHOLD`）；
-	 * - `selfDrawPlainNodes` → 纯文本节点**常开自绘**（`features/node-inline-content`）。
+	 * - `selfDrawPlainNodes` → 纯文本节点**常开自绘**（`features/content/node-inline-content`）。
 	 * 另锁一条**产品决策型默认值**：`autoSplitMixedLinks` 默认**关**（自动拆分改写
 	 * 用户文件结构，须用户显式开启；批量场景另有显式命令）。
 	 */
@@ -74,6 +74,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
+			dragCanvasWithModifier: false,
 			exportImageFormat: 'svg',
 			language: 'en',
 		});
@@ -89,6 +90,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
+			dragCanvasWithModifier: false,
 			exportImageFormat: 'svg',
 			language: 'en',
 		});
@@ -166,11 +168,11 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 		expect(Object.values(out).every((v) => v !== undefined)).toBe(true);
 	});
 
-	it('数字字符串宽容转换（历史 data.json 里的 "2"）', () => {
-		const out = sanitizeSettings({ exportScale: '2' });
-		expect(out.exportScale).toBe(2);
-		// 前后空白同样接受（手改文件常见）
-		expect(sanitizeSettings({ exportScale: ' 3 ' }).exportScale).toBe(3);
+	it('数值设置只接受数字，数字字符串回退默认并记录字段', () => {
+		const report = { dropped: [] as string[] };
+		expect(sanitizeSettings({ exportScale: '2' }, report).exportScale).toBe(DEFAULT_SETTINGS.exportScale);
+		expect(report.dropped).toContain('exportScale');
+		expect(sanitizeSettings({ exportScale: ' 3 ' }).exportScale).toBe(DEFAULT_SETTINGS.exportScale);
 	});
 
 	it('非数字/非有限/空白字符串的数值回退默认，不产生 NaN', () => {
@@ -358,6 +360,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			language: 'en',
 			autoSplitMixedLinks: DEFAULT_SETTINGS.autoSplitMixedLinks,
 			enableDrag: DEFAULT_SETTINGS.enableDrag,
+			dragCanvasWithModifier: DEFAULT_SETTINGS.dragCanvasWithModifier,
 			exportImageFormat: DEFAULT_SETTINGS.exportImageFormat,
 		});
 	});
@@ -373,6 +376,7 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 		'defaultTheme',
 		'defaultThemeStyle',
 		'enableDrag',
+		'dragCanvasWithModifier',
 		'language',
 		'nodeColorScope',
 	];
@@ -526,10 +530,10 @@ describe('sanitizeSettings：非法值诊断报告', () => {
 		expect(ok.dropped).toEqual([]);
 	});
 
-	it('宽容转换与未知键都不登记（历史 "2"、viewState 之外的杂键）', () => {
+	it('数字字符串登记为非法类型，未知键不进入设置报告', () => {
 		const report = newReport();
 		sanitizeSettings({ exportScale: ' 3 ', evil: 'x' }, report);
-		expect(report.dropped).toEqual([]);
+		expect(report.dropped).toEqual(['exportScale']);
 	});
 
 	it('reportDroppedSettings：空清单不输出；非空汇总一次带统一前缀（进程内幂等）', () => {

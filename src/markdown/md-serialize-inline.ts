@@ -205,7 +205,7 @@ export function renderImage(data: MdNodeData, app: App | null): string | null {
 		return `![${alt}${imageSizeSuffix(data)}](${isExternalImageRef(image) ? image : target})`;
 	}
 	// **库内图片的 md 形态**：官方「使用 \[\[Wikilinks\]\]」关闭时新建的图写
-	// `![alt|尺寸](路径)`（该设置同时管 links 与 images，见 platform/vault-prefs）。
+	// `![alt|尺寸](路径)`（该设置同时管 links 与 images，见 platform/workspace/vault-prefs）。
 	// 形态由解析期记录 / 新建时按设置写入（md-meta.mdImageStyle），缺省按 wiki。
 	if (data.mdImageStyle === 'md') {
 		return `![${alt}${imageSizeSuffix(data)}](${target || image})`;
@@ -248,16 +248,4 @@ export function imageVaultPath(data: MdNodeData, app: App | null): string | null
 		return resolvePathToFile(image, app)?.path ?? null;
 	}
 	return image;
-}
-
-/**
- * 图片的「文件名显示名」（历史兼容：旧版本解析曾把文件名回退为纯图节点
- * 文本，经「插入/更换图片」同步的遗留数据仍可能命中；现行解析不再产生）。
- */
-export function imageSelfText(data: MdNodeData): string | null {
-	const target = data.mdImageTarget;
-	if (!target) {
-		return null;
-	}
-	return target.split('/').pop() ?? null;
 }

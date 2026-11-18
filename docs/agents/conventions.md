@@ -1,2242 +1,1177 @@
-# 关键约定 K1–K206（详录）
-
-> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
-> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
-
-## 关键约定
-
-条目编号（形如 `[K16]`）是**稳定引用 ID**：一经分配永不复用、不重编号，新增条目追加到所属组末尾；交叉引用统一写「见 K n」。编号只用于导航与引用，条目间无优先级含义。
-
-**按组定位**（编号**不按组连续**——同一主题下可能跳跃，按组找、别按号段找）：
-
-| 组 | 什么时候进这一组 |
-| --- | --- |
-| 链接、图片与 Markdown 保真 | 改解析 / 序列化 / 双链 / 图片 / 往返格式 |
-| 引擎行为、视口与布局 | 改引擎调用 / 布局 / 视口 / 渲染管线 |
-| 架构边界与单一来源 | 改分层 / 新增模块 / 收口点判定 |
-| 交互对齐 Obsidian 官方 | 改点击 / 双击 / 悬停等交互 |
-| Obsidian API 合规与工具链 | 改构建 / lint / CI / 依赖 / 官方 API 用法 |
-
-查找命令（别通读本文件）：`grep -n "^- \[K" docs/agents/conventions.md` 列全部条目；已知编号直接
-`grep -n "\[K156\]" docs/agents/conventions.md`。**K 区间由 `tests/agents-md-sync.test.ts` 机械校验**
-（标题里的 `K1–K<n>` 必须等于实际最大编号；全仓引用的 `K<n>` 必须都有条目），故不必手工维护。
-
-### 链接、图片与 Markdown 保真
-
-- [K1] 链接/图片引用格式：新增链接与图片**恒写 wikilink**（`[[笔记]]` / `[[附件.pdf]]` / `![[图.png]]`），
-  不遵循 Obsidian 的 `Use [[Wikilinks]]` / `New link format` 设置——三类图标方案依赖文档双链走
-  `mdWikiLinkpath` 通道（自绘文档页图标）；若改为遵循偏好，md 形态笔记链接会落到引擎 hyperlink
-  通道并显示原生链接图标，与既定视觉冲突。**2026-09-15 收敛为「跟随官方偏好 + 默认不变」**：
-  官方 `Use \[\[Wikilinks\]\]` 为**开**（官方默认，绝大多数用户）→ 恒写 `[[双链]]`（视觉不变）；
-  用户**关掉**该设置时 → 新文档链接写 md 形态 `[显示名](路径.md)`（走 hyperlink 通道、显示原生链接
-  图标——这是跟随官方设置的代价，由用户显式选择）。设置经 `vault.getConfig('useMarkdownLinks')`
-  读取（**未进官方 d.ts 的内部接口**），读取失败/不存在按官方默认处理；重命名改写同样支持 md 形态
-  （`links-tree.mdTargetRenamed`，否则这类链接改名后失效）。`New link format` 的最短路径偏好已天然
-  满足（新建链接用 basename），改写时沿用用户原有前缀（见 `renamedWikilink`）。**2026-10-20**：
-  「读设置 + 同名消歧 + 三档拼接」上收为 `links/file-lookup.newReferencePath`，**文档链接与图片
-  引用共用**——此前图片侧直接写 `file.path`（绝对路径），在默认 `shortest` 库中与 Obsidian 的
-  生成写法不一致（裸名引用被扩写）；md 形态（`![alt](路径)`）仍写完整库内路径。历史依据：审计文档
-  `docs/external-audit-2026-09-08.md` §5.2/§7.4（该文档已从工作树移除，需要时用
-  `git log --diff-filter=D -- docs/external-audit-2026-09-08.md` 从历史取回）。
-- [K2] 渲染层定位：正文保持纯 Markdown；布局/视口/打开偏好存 `data.json`（`viewState`，按文件路径），不写入文件。**2026-10-29 修订**：**布局移出 `data.json`**——逐文件布局只存在于文件属性（frontmatter 的 `Mindmap` 值，切换布局即改写该属性）；`viewState` 只剩连线样式 / 配色 / 边框 / 视口，旧数据里的 `viewState[*].layout` 在启动时剔除。「打开偏好」仍由属性声明本身承载（`Markdown` = 终止）。
-- [K3] **行级保真与 `---` 的两种身份**：plain 行的 `mdRaw` 存**未 trim 原文**（`text` 才是 trim 后的显示文本）——缩进代码块（4 空格起）与「行尾两空格 = 硬换行」都是 Markdown 语义，trim 掉即等于改动文件；**列表续行**只保留行尾原文，行首缩进由序列化器按树深度补 `restIndent`（避免双份）。`---`/`-----` 纯短横线行**必须分两种身份**（`md-outline.ts` 的 `isDashLine` 判定）：**空行之后** = 结构分隔线 → 按既定行为整行丢弃；**紧跟非空行之后** = CommonMark 的 **setext H2 下划线 → 保留**（`标题\n---` 是二级标题，丢弃会把标题静默降级为段落）；列表/标题之后的短横线行同样保留为独立分隔线（由序列化器的块分隔补空行）。`=====`（setext H1）一直保留，两条 setext 形态已对齐。
-- [K4] 文档嵌入 `![[笔记]]` / `![[笔记.md]]`（目标末段为文档类扩展名 `.md` / `.canvas` / `.base`，或无扩展名）与文档双链**同通道**（`mdWikiLinkpath` + `mdLinkStyle: 'wiki'` + `mdEmbed: true`）：显示同一枚自绘文档页图标，节点文本 = 别名‖去 `.md` 的目标名，悬停/点图标行为与文档双链一致。**管道位是别名**（`![[笔记|300]]` 的 `300` 是别名，**不是**宽 300）——故解析侧**不得**沿用 `tokenizeInline` 已按图片尺寸剥过的 `tok.label`，必须从原始切片 `parseWikilink` 重解（见 `md-outline.ts` 非图片嵌入分支）。非文档类嵌入（`![[报告.pdf]]` / `![[录音.mp3]]`）才走附件通道（回形针）；其管道位官方**无明文**（PDF 用 `#height=` / `#page=`、音频无尺寸语法），故不解释、原文存 `mdEmbedPipe`，编辑节点后原样回写（不再丢参数）。两类都记 `mdEmbed`，`md-serialize.renderHyperlink` 据此补回 `!`（文档通道即 `effectiveDocWikiLink` 结果前加 `!`）。「是否文档」统一走 `domain/wikilink.isDocumentExtension`（md / canvas / base），「是否附件」统一走 `domain/wikilink.wikilinkTargetIsAttachment`——**勿**再手写 `extension === 'md'`（拖入、链接弹窗、插入链接三处曾各写一份，Canvas/Bases 被判成附件）；点击可打开性走 `constants.canOpenInObsidian`，其清单必须含 `base`（漏登记会把指向 base 的链接误判「无法预览」，回归 `tests/constants.test.ts`）。悬停预览与 `Ctrl/Cmd+点击`走**同一分流**（`view-wikilink.nodeLink`），故附件节点与文档节点等价可预览/可打开（此前只读 `mdWikiLinkpath`/`hyperlink`，附件节点两处都是静默无响应）。回归见 `tests/md-roundtrip.test.ts` 的「文档嵌入」6 例（已验证负向对照：把分流改回「非图片＝附件」即 6 例全红）。
-- [K5] **`[[]]` / `![[]]` 支持度审计结论（对照官方帮助 + `obsidian.d.ts`，四项决策均为「保持现状」）**：① 笔记嵌入的管道位按**别名**处理（`![[笔记|300]]` 的 `300` 是别名，节点文本即显示 `300`）——官方**无明文**，依据 API `Reference.displayText`（`[[page|display name]] → display name`）口径推断，属**有意取舍**；若官方日后改为尺寸/忽略，整改方向是「管道位原文保留」（同 `mdEmbedPipe`），届时再动。② 空 `[[]]` 保持字面文本（Obsidian 亦不视为链接，官方未记载）。③ 一行多链接只有首个可点/可悬停（引擎单链接槽位；官方阅读视图每枚均可点）——未编辑逐字保真、编辑后降级为单链接，已登记。④ **不采用**官方 `parseLinktext` / `getLinkpath` 替换自研 `parseWikilink`：官方那两个函数只给 `path` / `subpath`、**不给别名**，换过去不减代码且会破 domain 零依赖边界；导航已用官方 `getFirstLinkpathDest` + `openLinkText(inner)`，标题/块子路径交核心处理。
-- [K6] 双链节点别名语义（**节点内只显示别名，编辑节点即改别名**）：纯双链节点（整行只有一个双链，节点内显示的就是该链接的可见名＝别名优先）里节点内容等价于别名，故编辑节点后把新文本写成别名回写 `[[目标|新别名]]`（纯判定在 `domain/wiki-display.ts`：`editedWikilinkAlias` + `effectiveDocWikiLink` + `docWikiLinkDisplay`；链接改写走 `domain/wikilink.ts withWikilinkAlias`），不再产出「新文本 + 行尾链接」。边界：① 混合文本节点（`说明 [[链接]]`）不适用——把整段文本当别名会静默吞掉说明文字；② 多行文本不适用（无唯一别名语义，回落旧合成）；③ **附件**嵌入 `![[报告.pdf]]` 不适用（管道位是尺寸参数，不是别名）——但**文档嵌入** `![[笔记]]` 适用（管道位是别名，见 K4）；④ URL / md 链接无别名概念，不适用；⑤ 新别名含 `[` / `]`（用户手输 `[[新目标]]`）→ 不写（Obsidian 不允许方括号出现在 `[[..]]` 内，写进别名位会把整条链接写坏），回落旧合成＝语义上更接近「换链」。新文本与「无别名时的默认显示名」相同（或清空）→ 不写 `|别名` 段（避免 `[[目标|目标]]`），清空文本 = 去别名、链接保留。回写（`renderHyperlink`）与可见名（`nodeLinkDisplay`）必须经同一入口 `effectiveDocWikiLink`，两处口径不一致会让「纯 token 节点」判定失配、合成写出「新文本 + 链接」重复一次。**文档页图标的 tooltip 也走同一入口**（`mindmap.ts` 经 `docWikiLinkDisplay`）——图标 `<title>` 只在节点前缀创建时写一次，若改读解析快照 `mdLinkText`，编辑改别名后 tooltip 会停留在旧别名直到重载；契约已由 `tests/mindmap-wiki-icon.test.ts` 锁定（含负向自检）。**判定层直接回归**：`tests/wiki-display.test.ts`（22 例——原文记 21，2026-10-26 复测为 22；`editedWikilinkAlias` 六道闸门逐条、`effectiveDocWikiLink` 的冗余省略与区块保留、`docWikiLinkDisplay` 的别名优先/回落默认名；该纯判定被回写合成、节点可见名、文档页 tooltip 三处复用，此前无直接用例）。注意：`mdLinkText` 存的是**解析时的原显示名**，是「该节点是否被编辑」的判据之一（见 `editedWikilinkAlias` 闸门 4），**不可**在编辑后把它同步成新别名——那会让判据失效、别名回写整条失效。
-- [K7] 混排双链拆分（links-split）：节点行内与描述文字混排的双链可抽离为**子节点**（父节点保留描述文字、链接处替换为可见名）。全部规则与产品决策（适用节点/待抽链接/空白处理/幂等/资源地址兜底）定义在 `src/markdown/links-split.ts` 文件头契约，本文件不复述；视图侧执行在 `features/view-split-links.ts`：**批量命令 `mindmap-split-links-all`**（全文，含未编辑存量）与**自动触发**（受设置 `autoSplitMixedLinks` 约束且只处理**被编辑过**的节点，判据 `text !== mdDerivedText`；**K108 例外**：插件侧编辑通道（内联编辑器 / 弹窗原文模式）提交时会同步刷新 `mdDerivedText`，该判据恒不成立，故凭 `{ force: true }` 放行）——单节点手动命令 `mindmap-split-links` 已于 2026-09-14 删除、ID 不复用（单节点场景由自动拆分覆盖）。自动检查的对象是**编辑期捕获的候选集**（引擎 `node_text_edit_change` 带节点、经 `captureAutoSplitCandidate` 累积；**K108 起**插件侧编辑通道另经视图 `notifyNodeContentCommitted` 以 `{ pluginChannel: true }` 入集——该通道不走引擎命令、不派发此事件，缺这条会让默认自绘渲染下永不拆分）——**不是检查时刻的激活节点**：编辑提交后快速切换激活不漏拆；编辑中被检查则保留候选等下次；引擎换代（换文件/重载）整体丢弃。回归见 `tests/view-split-links.test.ts`。
-- [K8] 图片自定义尺寸（Obsidian 官方嵌入语法，不落 data.json）：`![[图.png|300]]`（仅宽、等比）/ `![[图.png|300x150]]`（宽高）/ `![alt|300](url)`（外链 md 图，尺寸在标签尾部）。解析进 `mdImageWidth/mdImageHeight`（domain/md-meta 契约）；`walkImageSizeCorrections` 对带参节点按参数定尺寸（仅宽时探测原始比例补高；**2026-09-28 K97 起未设置尺寸的图按图片原始大小展示**）；拖拽调宽改 engine `imageSize custom:true`，保存时 rawOk 尺寸特征（`目标|宽度`，终界 `]`/`x` 防前缀误匹配）不符 → 合成回写 `|宽度`。**加载期自动校正的尺寸绝不回写**（`mdImageAutoSize` 标记；`md-serialize.ts customImageSize` 是取尺寸后缀的唯一出口）：它只是显示用尺寸（`imageSize custom:true`），回写会让用户从未动过的行凭空多出 `|宽度`；标记在**用户拖拽调宽 / 插入或更换图片 / 移除图片**三处清除（前两者属用户意图、尺寸照旧回写；移除图片时清标记同时防止「该节点后续新图也不回写」）。
-- [K9] 图片独占节点（渲染层语义）：纯图行（`- ![[x.png]]`）解析为**无文本节点**（不回退文件名占位），图片节点删除文字（右键「移除文字」/双击清空）后即被图片独占，往返保持；代价是纯图节点不参与文本搜索。「链接已清除」检测**只排除指向本节点图片的嵌入**（非嵌入语法仍是负向断言 `(?<!!)\[\[`），图文混合行可逐字往返；**文档/附件嵌入按链接形态处理**——字段被清空后一并剥离（`rawHasForeignEmbed`），不再整行回写导致链接复活；但**图片类嵌入不是链接**（按目标扩展名判定，收口在 `constants.isRenderableImageTarget`）：同行多余图片（如 `![[a.png]] 与 ![[b.png]]`）不触发该检测——否则**任何保存**都会把非首图的嵌入语法降级为剥壳文本（2026-09-13 修复，回归见 `tests/md-roundtrip.test.ts` 的「同行两张库内图片」）。**「移除图片」的防复活判定不依赖 md 字段残留**：`removeNodeImage` 会清空 `image` 与全部 md 图片字段，故 `rawOk` 以「`image` 为空 + mdRaw 首行仍含图片语法（`![[…]]` 按扩展名 / `![…](…)`，排除缩进代码块）」剥离——只靠 `hasImageMeta` 会因字段全清而失效、图片在保存后复活（2026-09-13 修复，回归见 `tests/md-roundtrip.test.ts` 的「移除图片」用例组）。
-- [K10] 图片/链接对齐 Obsidian：`![[路径]]`/`[[笔记]]` 往返；插入弹窗联想库内文件；悬停预览用 `registerHoverLinkSource` + `hover-link`。合成路径下**外链图片恒写 `![alt|尺寸](url)`**（外链判定先于 `image === mdImageTarget`；`mdImageTarget` 是解析期快照、换图后会过期，地址取当前 `image`）。
-- [K11] 中心主题 ⇄ 文件名：编辑根节点文本会重命名文件（`命名.md`；**仅对声明为导图的文件生效**——普通笔记被手动开为导图时不静默改名）；外部改名后视图重载中心随新名。**重命名必须走 `FileManager.renameFile`**（`view-title-renamer.ts`），`Vault.rename` 只改文件系统、不更新库内其他笔记中指向本文件的链接/反链（官方 d.ts 明确要求用前者，核心文件浏览器/内联标题/CLI 均走前者）。
-- [K12] **渲染层不修解析层遗留**（渲染/解析解耦）：显示名一律取解析层产物（`domain/wikilink.linkDisplayText` 一族），渲染层**只读不改**。典型遗留：`[[folder/笔记.md#标题]]` 这类带子路径的双链，显示名保留 `.md`（`笔记.md#标题`）——文档双链与文档嵌入**口径一致**，属解析期历史包袱；**勿**在 `mindmap.ts` / `view-*` / 悬停预览里补「剥 `.md`」的 render-time 修正分支（会牵动 rawOk 逐字回写与「纯 token 节点」判定，牵一发动全身）。
-- [K13] **节点状态与附件元数据隔离**（新的静态渲染只走视图层）：悬停预览 / 图标 / tooltip 等新的静态渲染手段一律在**视图层**拦截处理（`features/view-wikilink.ts` + `main.ts` 的 `registerHoverLinkSource`、`mindmap.ts` 的前缀渲染钩子），渲染层只**读**解析结果、不回写节点 state；**勿**为此新增或改写 `mdEmbed`——它是「原文带 `!`」的**语法事实位**，读取面仅 `md-serialize`（补 `!` 两处 + 非图片附件的管道位原文一处 `mdEmbedPipe`）与 `wiki-display` 一处排除附件别名，且各自先被 `attachmentUrl` / `mdWikiLinkpath` 闸住；要动这条通道字段（更名 / 拆位）须先评估附件通道副作用，不擅自改。
-- [K14] **导图判据唯一实现**：`domain/mindmap-property.ts`——**单键 `Mindmap`**（键名大小写不敏感），值即**布局**（七值枚举，2026-10-29：`LogicalStructure` / `Mindmap` / `OrganizationStructure` / `CatalogOrganization` / `Timeline` / `Fishbone` + 终止值 `Markdown`）；读侧归一只此一处（`normalizePropertyToken`：trim → 小写 → 去 `-` / `_` / 空白，故 `mindMap` / `mind map` / `MIND-MAP` 同义），官方属性面板的数组形态**取第一项**（空数组＝无值），**未知值 = 不是导图**（fail-closed、静默）。判定入口 = `readMindMapDeclaration`（`isMindMapProperty` 只是它的布尔包装），值 → 引擎 layout id 的唯一实现 = `layoutIdOfPropertyValue`（嵌入的 `%%layout: …%%` 也走它）。写侧恒写标准键 `Mindmap` + **PascalCase 标准值**（`MINDMAP_LAYOUT_VALUES`），**与界面语言无关**；降级写 `Markdown`——它是**显式终止值**（不是「否决票」：同名大小写变体并存时按对象键顺序取第一个命中的键，不按值做优先级）。**旧键 `Type` / `类型` 自 2026-10-28 完全不认**（断代：不读、不写、不删、不迁移、不提示，回归见 `tests/md-frontmatter-trigger.test.ts` 的负向断言）。**勿**另写第二份判据（文件名后缀判据 `hasMindMapMarker` 等三函数已于 2026-10-12 退役，见 K121）。
-- [K45] **frontmatter 写盘取磁盘现值**（防「偶有笔记属性丢失」）：`SavePipeline.save` 在序列化前重读目标文件当前内容，文件头取 `splitFrontmatter(磁盘内容).frontmatter`；只有读不到磁盘内容（读取失败或 `cachedRead` 缺失）才回落到按文件存的加载快照（fail-open，不因读失败丢文件头）。视图打开期间用户在属性面板 / 其它窗格 / 其它设备（同步）改的属性不会被加载时的旧快照覆盖；回写只重写正文，文件头原样回贴。
-- [K46] **frontmatter 解析边界（向 Obsidian 属性解析对齐）**：`md-outline.splitFrontmatter` 三条口径——① 空属性块 `---\n---` 也是合法 frontmatter（不得并进正文，否则保存后整块消失）；② 结束围栏取第一个 `---` 行但**跳过 YAML 块标量（`|` / `>`）内部的 `---`**（硬切会截断属性、残余落进正文）；③ 开头 BOM 计入文件头并在序列化时原样带回（不处理会让首个标题降级为段落、首个列表项多出假缩进）。frontmatter 逐字保留换行形态（CRLF 不归一）。回归见 `tests/md-roundtrip.test.ts`（含 CRLF / 空块 / 块标量 / BOM 用例）。
-- [K47] **「添加链接」写入语义（决策 R4 修订，2026-09-13）**：**仅「完全空白」节点**（无文字、无任何链接通道、无图片、无行内额外 token〔K49〕——含「移除首图后 extra 孤存」形态，判定见 `hasAnyContent`）→ 覆盖（纯双链化：节点文字覆盖为链接显示名 / 附件名，别名优先）；**其余任何情况 → 链接一律建为子节点**，节点原文字、原链接、行内其它 token（K49）、图片全部不动——行内多 token 尾插保真后，拖入 / 添加链接只是「再挂一个链接」，不得覆盖节点已有内容。弹窗（`performAddLink`）与拖拽（`applyDocWikiLink` / `applyNodeAttachment` / `applyAttachmentLink`）同口径；URL / 协议链接同样建子节点（子节点文本为空、保持「仅图标」，`<url>` 由 hyperlink 通道回写）。**副作用**：一键改链入口取消（改链 = 先「清除链接」再添加，或直接编辑节点文本）。回归见 `tests/view-node-actions.test.ts`。
-- [K48] **链接引用定义行整体按纯文本**（参考式 `[label]: destination` / 脚注 `[^id]: 内容`）：这类行是**语法基础设施、不是链接**，但行内 destination 若为裸 URL，会被行内解析的「URL icon-only」通道摘出文本——编辑节点时 URL 被挪到行尾（合成路径），`[label]` 引用全部失效（2026-09-13 规划实测）。故解析侧命中 `md-outline.ts isLinkReferenceDefinition` 即**不提取任何链接字段**（URL 留在文本、节点显示完整定义文本、无链接图标）。判定口径：脚注 `[^id]:` 后内容任意；参考式 `[label]:` 后须是合法 destination（`<…>` 或非空白串，对齐 CommonMark link reference definition），`[X]:` 后无 destination 不豁免。回归见 `tests/md-roundtrip.test.ts`（4 形态 + 2 条不误伤对照）。`[text][ref]` **引用行**本就整体进文本、无需特判；**拆分侧同守卫**（`planSplitLinks` 命中定义行即返回 null——否则 destination 会被抽为子节点、父行退化成 `[ref]:笔记`）；多 token 编辑后保真见 K49。
-- [K49] **多 token 回写（台账里的额外 token，`first: false`）**：一行内有多个链接 / 多 URL / 多图时，只有首个（图、链接各一枚）进 `image` / `hyperlink` / `mdWikiLinkpath` 字段；其余 token 在**编辑后合成**时此前会降级或丢失（多 URL 连内容都丢）。现解析侧把未被首字段承载的 token **原文切片**记入台账（收集点：非首个文档/附件嵌入、非首图、非首个双链、非首个 URL、非首个 md 链接），合成路径（`md-serialize.inlineTokens`）在首图/首链之外**按序尾插**——**内容与语法不丢**；**位置**自 2026-09-14 起由同一台账里**有显示名**的项写回**原位**（见 K52），对不上才回落尾插。未编辑时仍走 `mdRaw` 逐字回写，台账不参与。**单一台账（2026-09-14 归并）**：此前额外 token 单存 `mdExtraTokens`、与对齐表 `mdSegments` 两表并存、需在解析/拆分/清除三处人工同步；现合并为 `mdSegments`（`first` 区分「首 token 字段承载」与「额外 token 原文」），三处各只有一处实现。配套：①「清除链接」只清 `link` 类的**额外**段、保留 `image` 类段与首链段（图片嵌入不是链接，见 K9）；② 拆分命令重写父行时按**新行解析结果**整体重建台账（`links-split.parentSegments`——被抽走的不残留，否则下次合成会写回原位或重复追加；未抽出的多枚不丢失）。**尾插不影响后续整理**：行内多 token（含尾插形态）的双链仍可被**拆分**剥离为**子节点链接**（父行保留为纯文本、无链接语法），或经「清除链接」整体降级为**纯文本**——两条通道均覆盖额外 token（拆分见 K7，清除见 `view-node-actions.clearNodeHyperlink`）。回归见 `tests/md-roundtrip.test.ts`（尾插回落组 + 原位组）、`tests/md-inline.test.ts`（台账登记边界 6 例）、`tests/links-split.test.ts`（拆分重建）、`tests/view-node-actions.test.ts`（清除链接过滤 2 例）。
-
-- [K52] **多 token 编辑后「原位」保真（`mdSegments` 对齐表）**：K49 的尾插只是「内容与语法不丢」，编辑过的行里 token 会被挪到行尾。现解析侧把**在显示文本中可见**的 token 登记为对齐表 `mdSegments`（`{kind, text: 剥壳显示名, raw, first}`，见 `domain/md-meta.MdTokenSegment`），合成路径 `composeFirstLineSegmented`（md-serialize）按段序在新文本里定位显示名，命中即把该 token 的**实时渲染形态**（首链/首图取当前别名与尺寸；额外 token 用 `raw`）写回原位置。边界三条：① **无显示名的 token 分两种**——**首枚**不登记（首图 / 首 URL / 非图片附件嵌入：由字段实时渲染 + 尾插，绝不会写出过期原文），**额外枚**登记为 `text: ''`（只保原文、不参与定位，仍尾插）；② 定位失败（显示名被改写 / 已删）→ 该 token 尾插，不做猜测性替换；③ 命中落在**用户手输的链接语法内部**（`[[…]]`/`[text](…)`，`inLinkSyntax` 判据）也回落尾插——否则会写出 `[[新[[目标]]]]` 这类畸形嵌套。配套不变式：`links-split` 重写父行时按**新行解析结果**重建 `mdSegments`（否则被抽走的 token 会凭旧对齐表复活）；「清除链接」过滤 `link` 类额外段（保留首链段与图片类段，见 `view-node-actions.clearNodeHyperlink`）；二次解析后 `text === mdDerivedText` ⇒ 回到逐字回写（不动点）。台账**同时是 K49 的唯一台账**（2026-09-14 归并，见 K49）。回归：`tests/md-roundtrip.test.ts` 的「多 token 原位保真（mdSegments）」8 例 + 尾插回落组。
-- [K55] **删除笔记**不改写**链接引用**（2026-09-15，用户实测反馈修订）：`links-tree.updateReferences` 此前在 clear 模式（删除笔记 / 移入 `.trash`）把 `hyperlink` 与 `mdWikiLinkpath` 一并清空，却**不动 `text` 与 `mdSegments`**——于是下一次保存的合成路径里首链「无形态可写」被跳过、显示名留在文本中，**`[[笔记A]]` 被静默降级为纯文本 `笔记A`**（用户实测：文件里两处 `[[笔记A]]` 同时失去语法，而同行其它链接因台账仍在而保留语法，形状即「首个链接降级」）。现改为**链接只改不删**：删除/回收站场景保留未解析链接（与 Obsidian 一致——删笔记不改写别处 `[[链接]]`，同名笔记重建即恢复），**重命名**仍照旧改写（`renamedWikilink`）；`changed` 对「仅链接引用」的树返回 false，不触发无意义保存。**附件例外：整条删除**（2026-09-15 第三轮，用户明确要求「附件不纳入，删除后整个删除，文字也删除」）：删除/回收站时清空 `attachmentUrl` / `attachmentName` / `mdAttachmentLinkpath`，**并去掉 `data.text` 里那段可见名**（只清字段的话，名字会在下次保存的合成里变成普通文本残留），随后 `text !== mdDerivedText` ⇒ 走合成 ⇒ 引用语法与名字一起从行里消失；**删空且无子节点的叶子节点连节点一并摘除**（`pruneNodes`，否则留下空列表项 `- `，重新解析会变成一个 `-` 文本节点）；**带子节点的节点不动**（整条删会连带子树，退化为保留未解析引用）。**内嵌图片 `image` 仍按删除即清除**（节点内媒体，目标缺失会留下坏死图块；插件另有显式「移除图片」流程）。回归：`tests/links-tree.test.ts`（链接保留 / 附件整条删除 / 空叶子摘除 / 表驱动 / rename 三形态匹配 / 两处 E2E：用户原文含两处 `[[笔记A]]` 删除后逐字不变、附件行与纯附件节点删除后引用与文字一并消失）。
-- [K56] **交互对齐 Obsidian 官方口径（2026-09-15，批次 1+2）**：以官方帮助库（`obsidian-help-master`，见 K56 附录清单）为唯一依据，把「打开链接 / 悬停预览 / 未解析链接 / 拖放 / 附件嵌入」逐条对齐。**例外一条（2026-10-04 登记）**：官方帮助库**无桌面端导航历史/侧键页面**（全库检索 `navigation history` / `go back` / `side button` 零条目；仅 `Getting started/Mobile app` 记有移动端「历史栈空则该入口灰显」口径）⇒ 该面依据为官方 API 契约（`View.navigation` / `ViewStateResult.history`）+ 实测 `app.js`，见 K111。① **打开链接的落点**按官方 `User interface / Tabs` 的修饰键表分流：无修饰＝当前标签、`Ctrl/Cmd`＝新标签、`Ctrl/Cmd+Alt`＝新标签组、`Ctrl/Cmd+Alt+Shift`＝新窗口（`view-context.HyperlinkOpenMode` → `view-wikilink.hyperlinkOpenMode` → `view-link-navigator.openHyperlink` → 官方 `openLinkText(..., PaneType)`；`current` 即官方 `false` 的命名）；`Shift`/`Alt` **单独**按下不接管（官方表只在 Source 模式下让 Shift 参与「新标签」，本视图无 Source 模式，节点选择语义交回引擎）——`Ctrl+Alt`/`+Shift` 两档此前**未实现**，本次补齐。**2026-09-17（官方 API 对照审计 · 方案 A）**：修饰键判定改用官方 `Keymap.isModEvent`（与官方表逐条一致；官方对中键返回 'tab'，中键仍走独立 `auxclick` 通道，`node_click` 路径以 `button === 0` 前置判定隔离）；工具栏按钮与丝带提示改用官方 `setTooltip`（不再手写 `title`/`aria-label`）；**同类收尾（同日第二批）**：搜索栏 3 按钮（构建 + 语言刷新）与图片弹窗「选择本地图片」按钮一并迁移——后者走官方 `ButtonComponent.setTooltip`（组件级 API，`@since 1.1.0`）；`node-inline-content` 的截断 `title` 属性与引擎 SVG `<title>` **有意保留**（零运行时依赖 / 导出保真，见 K53⑤）。② **未解析链接**：阅读视图里配色更弱（`is-unresolved`，见 K53 ⑧），且**悬停不预览**（目标文件不存在）；`[[#标题]]` 按当前文件解析。③ **拖入系统文件**（官方 `Drag and drop` / `Attachments`）：**任意文件都可导入**（2026-09-15 取消类型白名单，与 Obsidian 一致——它把文件复制进「附件默认位置」再插链接）入库后按 `wikilinkTargetIsAttachment` 分流挂载（图片首张挂所选节点、其余各占子节点；文档走文档双链；其余走回形针）；**按住 `Ctrl`（Win/Linux）/`Option`（mac）则完全不导入**，改为插入指向原位置的绝对链接 `[文件名](<file:///…>)`（`view-dnd.shouldInsertAbsoluteLink` → `applyExternalLink` → 回写由 `md-serialize.renderHyperlink` 的 scheme 分支写 md 链接；点击经 `openHyperlink` 的 `file://` 分支交系统默认应用 `platform/system-open.openAbsolutePathWithSystemApp`）。绝对路径 ↔ URL 的互逆转换收口在 `domain/url.fileUrlFromAbsolutePath` / `absolutePathFromFileUrl`（盘符 / POSIX / UNC 三形态，空格 `%20`，含未编码 `%` 不抛错）。④ **拖入附件默认写嵌入语法**：可嵌入扩展（PDF + 音频/视频，`isEmbeddableAttachmentExtension`）置 `mdEmbed: true` → 回写 `![[报告.pdf]]`（与 Obsidian 拖放一致），zip/epub 等不可嵌入者写 `[[归档.zip]]`。⑤ **残留差异（有意登记）**：`F2` 在导图视图内用于「编辑节点文本」而非 Obsidian 的「重命名文件」（视图 scope 内吞键，见 `view-hotkeys`）；重命名「自动更新链接」无设置开关（总是自动改写）；链接语法固定 Wikilink（不读用户的 Markdown 链接偏好 / 最短路径偏好）；无 `[[` 自动补全与反向链接面板（导图本身即链接可视化）；**2026-09-15 按本条要求逐项对齐**（原「有意差异」现只剩最后一条）：① **`F2`**——未选中节点时
-   **让位**（返回 true，不阻断）→ Obsidian 核心接管＝**重命名当前文件**（官方语义）；选中节点时编辑该节点
-   （导图/画布惯例；中心节点被选中时同理，而中心节点文本即文件名，结果与官方 F2 一致）。此前无条件吞键，
-   等于在导图视图里用不了官方 F2。② **重命名「自动更新链接」**——新增设置项 `autoUpdateLinks`
-   （**默认开启**，与官方「Automatically update internal links」一致）；关闭后重命名不改写链接（变未解析）、
-   删除不清理引用与附件（与官方关掉该设置的表现一致）。**2026-10-09 修订：该设置项已删**——判定改读官方
-   设置本身（`platform/vault-prefs.updatesInternalLinksOnRename`），也不再重复弹提示（官方自己会问），见 K117。
-   ③ **链接语法**——现跟随官方
-   `Use \[\[Wikilinks\]\]` 偏好（详见 K1；官方默认 ⇒ 行为与之前完全相同）。④ **仍存差异（有据）**：
-   原文弹窗（`ui/modal-text`）是纯文本框，**输入 `[[` 无候选**——无编辑器集成就做不到官方那样的
-   行内补全；替代入口是「添加链接」弹窗的库内文件联想（已具备）。「反向链接 / 出链 / 未链接提及面板」
-   **不算差异**：Obsidian 自带的核心面板作用于当前文件，导图视图打开时同样可用，插件不重复实现。**拖入类型白名单已于 2026-09-15 取消**（原登记为「两侧口径不同」的边界）：库内拖入、系统文件导入、链接弹窗联想三处统一走 `wikilinkTargetIsAttachment`（非文档扩展名即附件，无扩展名视为文档）——`[[说明.txt]]` 手写能显示、拖入也同样能挂上；随之删除三份失效白名单（`constants.isLinkAttachmentExtension` / `isImportableExtension` / `isSystemMediaExtension`）与两条失效文案（`common.onlySupportedFiles` / `common.cannotPreview`），并把「不可渲染的库内文件」点击行为统一为**交系统默认应用**（此前只有音视频外跳、其余弹「无法预览」——白名单取消后任意扩展名都可能入库，弹提示等于「链了打不开」）。回归：`tests/view-dnd.test.ts`（PDF 走附件通道 / 笔记走文档通道 / **任意类型走附件通道** / `Ctrl` 绝对链接 / 拿不到原路径不写不提示 / 载荷无文件才提示 `noFilesDropped`）、`tests/url.test.ts`（file URL 往返三形态 + 解码边界）、`tests/view-node-actions.test.ts`（可嵌入 → `mdEmbed`、zip → 无）、`tests/view-wikilink.test.ts`（修饰键矩阵 5 例 + 中键守卫 1 例、未解析不预览）、`tests/node-inline-content.test.ts`（轻标记扩展 / 转义 / 注释 / 未解析标记）、`npm run verify:visual` 的 `syntax` 场景与 `OBSIDIAN_SHIM_SOURCE` 垫片（本页模块图经 `view-wikilink` → `view-link-navigator` 触达 `obsidian` 运行时导出，故 esbuild 加 `alias` 指向最小垫片——**不是** `external`，否则浏览器里留下无法解析的裸导入；垫片自 2026-09-17 起同步导出 `Keymap` 桩（修饰键判定改用官方 API 的具名导入，见本条 ①）。
-- [K54] **节点编辑弹窗的两种模式（2026-09-15，用户实测反馈修订）**：编辑框此前一律编辑 `data.text`（**显示文本**）——双链只剩剥壳名、外链（icon-only）连影子都没有，用户既看不到也改不了语法。现按节点类型分流（`view-node-actions.editNodeText`；**2026-09-28 K92 起该分流移至 `editNodeTextInModal`**——`editNodeText` 改走「引擎编辑框 / 内联编辑器」二选一，模式判定逻辑不变）：① **纯链接节点**（`md-serialize.isPureLinkNode`：整行一个链接/图片、文本即其显示名）→ **别名模式**：编辑 `data.text`，提交经 `setNodeText`（K6 不变）；② **其余富节点** → **原文模式**：编辑**文件里的那一行**（`[[双链]]` / URL / 轻标记全可见可改），预填 `md-serialize.composeNodeContent`（= 下次写盘会写出的内容，与序列化 `nodeLines` 同一实现），**实时预览** `node-inline-content.inlineContentPreview`（**渲染器口径**：URL 显示为地址——与引擎侧 `buildInlineData().text` 的 icon-only 口径**不同**，预览必须用前者，否则用户会以为 URL 又没了），提交经 `markdown/md-line-write.applyRawToNode` **重解析**写回：先清空再回填全部行内字段（链接通道 + 图片通道 + `mdSegments` + `mdImageAutoSize`，清单取自解析侧常量 `md-outline.INLINE_LINK_FIELDS` / `PLAIN_IMAGE_FIELDS`）+ 三个文本字段由解析结果写就 ⇒ `text === mdDerivedText`（**未编辑**）⇒ 保存**逐字写回用户输入**（等价于「改文件再重载」）。多行：首行承载链接语法，续行按纯文本并入（行首按解析侧口径 `trimStart`，缩进由序列化器补）；结构字段（`mdType`/`mdLevel`）不动；取消或未改动不写盘。原文新增/更换图片时：`resolveImagePath` 换资源地址 + `walkImageSizeCorrections` 异步校正尺寸后补一次渲染。回归：`tests/md-line-write.test.ts`（7 例：整体重建 / 未编辑往返锁 / 多行 / 未闭合语法 / 结构字段）、`tests/view-hotkeys.test.ts`（两模式分流 + 预览口径）。
-- [K53] **自绘（富）节点的渲染与编辑入口（方案 B Phase 1）**：含行内链接 / 轻标记 / **超长文本**（见⑦，引擎逐字符换行会对长行二次爆炸）且**无图**的节点由 `features/node-inline-content.ts` 生成 HTML（`a.internal-link[data-href]` / `a.external-link[href]`，与 Obsidian 锚点形态一致），经 `engine/mindmap.ts` 的 `createNodeContent` 钩子注入引擎 `isUseCustomNodeContent` + `customCreateNodeContent`（两键未入 d.cts，`Object.assign` 防腐透传；返回 null 的节点走默认 SVG 文本），点击复用 `view-wikilink` 既有节点内锚点分流（**零改造**）；悬停走**节点级预览**（不按锚点判定，见 K21/回撤说明）。八条边界：① **渲染源随编辑切换**——未编辑读 `mdRaw`，已编辑读 `data.text`（mdRaw 是解析期快照，判据与 rawOk 同源：`text === mdDerivedText`）；② 接管后引擎跳过 text/image/icon/hyperlink/tag/note/**prefix**，故**双链文档页图标在富节点上不再出现**（有意：内联锚点已承担「可点 + 目标名」，对齐阅读视图；三类图标体系仍服务未接管节点），含图节点整体不接管；③ 自绘节点无 `_textData`，引擎编辑框对其**静默 no-op**（`textEdit.show()` 的 `isUseCustomNodeContent()` 守卫）→ 编辑入口统一走 `features/view-node-actions.editNodeText`（默认节点→引擎编辑框、富节点→`ui/modal-text` 弹窗〔2026-09-28 K92 起：富节点主入口＝内联编辑器，弹窗收编为右键备选，分流入口自 `editNodeText` 移至 `editNodeTextInModal`〕；弹窗**两种模式**——纯链接节点别名、其余原文，见 K54），三处入口（双击 / 右键「编辑文本」/ F2）共用；④ **行内语法的显示层**（2026-09-15 扩至官方完整清单）：轻标记 `**粗**`/`__粗__`、`*斜*`/`_斜_`（下划线式要求两侧非字母数字，`snake_case` 不误判）、`` `码` ``（含双反引号跨度）、`~~删~~`、`==高亮==`、`***粗斜***` 只在渲染期剥成语义元素（`strong`/`em`/`code`/`del`/`mark`）；另有 `%%注释%%` **渲染期整段隐藏**（阅读视图口径）与反斜杠转义 `\*`（消费反斜杠、按字面显示——此前会被误渲染成斜体）。两类**隐藏语法**同样触发接管（转义恒触发；注释仅在**去掉后仍有可见内容**时触发，否则会渲染出一个空节点）；全部单层、不跨行、不嵌套、定界符内首尾须非空白，`data.text` 与文件原文一律保真；**含轻标记的节点同样被接管**（2026-09-15 修订：此前只按「含链接」接管，`**粗**` 在无链接节点里原样显示——用户实测发现），代价与含链接节点同款（编辑入口走弹窗，见③）；⑤ **导出保真**：自绘内容的布局/排版/配色/轻标记样式**全部内联在元素上**（`node-inline-content.ts` 的 `CONTENT_STYLES` / `INTERNAL_LINK_STYLES` / `EXTERNAL_LINK_STYLES` / `MARKUP_STYLES` 为唯一来源，`styles.css` 只留纯屏幕装饰）——引擎导出（vendor `getSvgData`）只注入 `joinCss()`（引擎自身 CSS）与 header/footer 的 cssText，**插件 styles.css 不在导出图里生效**，样式一旦只写在类规则里，导出 PNG 就会掉排版（foreignObject 尺寸仍按屏上测宽固定 → 溢出/错位）；⑥ **锚点级悬停预览**：富节点内每枚锚点各自预览**自己**的目标（节点级 `nodeLink` 取「首链」会与所见错位）——指针直接进入锚点走 `node_mouseenter` 的锚点分支，节点**内部**在锚点间移动不会重新触发引擎事件，故另有画布 `mouseover` 委托补齐；节点非锚点区域悬停不再预览；⑦ **性能收口**（2026-09-14，2026-09-15 修订）：段序列按**原文内容寻址**缓存（`segmentCache`，上限 512 满则整表清空——渲染期缓存，重建成本远低于内存风险；内容寻址天然避免跨导图串味）。**超长文本必须接管并截断展示**（原文 > `MAX_INLINE_CONTENT_CHARS`=2000 → 一并接管，尾部 `…` + `data-truncated` + `title` 提示，显示 ≤2000 字；文件与 `data.text` 一字不动，双击弹窗看/改全文）——**原「超长回落引擎」是陷阱**：引擎 `createTextNode` 的换行是**逐字符**迭代（每加一字重新拼接整行 + 重新测量一次），单行开销**二次增长**，用户实测「白屏 / 卡死后关闭」即由此而来；无头 Chrome 同机实测 20k 字单行：引擎 ≈ **+2.8s**（整轮 1.1s→3.9s）vs 自绘 HTML ≈ **0**。渲染成本由此与文本长度**脱钩**（每节点上界 = 2000 字）。**残留边界**：**含图 + 超长文本**的节点无法接管（图片走引擎图片通道），其长行仍由引擎换行承担——建议把该节点拆短（这类节点在方案 B 前也是同样代价）。⑧ **未解析链接弱化（注入式解析）**：库内锚点在目标**未解析**时加 `is-unresolved` 类 + 弱化配色（`--link-unresolved-color`/`-opacity`，字面量兜底供导出图用）——对齐 Obsidian 阅读视图「指向尚不存在的笔记的链接显示为更弱的颜色」，用户据此知道点击会新建/打不开。解析器由调用方注入（`InlineContentOptions.isResolvedLink`，生产在 `view.ts` 经 `view-link-navigator.isResolvedWikiLinkpath` 注入 `metadataCache.getFirstLinkpathDest`）——`node-inline-content` 必须能在无 Obsidian 运行时的页面里打包（`verify:visual` 直接打包它），故**不得**自己 import Obsidian；解析**每次构建实时求值**，不进段序列缓存（缓存按原文寻址，与库状态无关）。判据：`#区块`/`|别名` 不参与解析，`[[#标题]]` 这类同笔记内区块链接按「当前文件存在即已解析」处理。回归：`tests/node-inline-content.test.ts`（接管判定含「仅轻标记」「未闭合标记」「转义/注释」「超长回落」边界、轻标记扩展与转义/注释段序列、未解析标记 5 例、缓存命中、内联样式契约）、`tests/view-wikilink.test.ts`（锚点级悬停 6 例 + 未解析不预览 + 区块链接按目标解析 + 修饰键矩阵）、`tests/view-hotkeys.test.ts`（富节点分支）、`npm run verify:visual` 的 inline / markup / syntax / paragraph / hugeline 场景 + inline / export / scale 三个探针（foreignObject 装配、离屏测宽同源、合成点击命中锚点、`<strong>`/`<code>`/`<mark>` 渲染、仅轻标记节点也接管且无锚点、`\*转义\*` 消费反斜杠、`%%注释%%` 不进显示、未解析链接带 `is-unresolved`（对照组已解析链接不加标记）、超长节点接管 + 显示 ≤2000 字 + `…` + `data-truncated` + `title`、导出 SVG 内联样式、30 富节点全渲染且离屏测宽元素恒为 1；负向自检：关掉 `isUseCustomNodeContent` 报 7 项、去掉内联样式报 1 项、**解析桩改为恒真报「未解析链接未标记 is-unresolved（实得 0）」1 项、注释分支改为不隐藏报「%%注释%% 未被隐藏」1 项**——后两条用于证明新断言非空转，复查时实测过。**注**：该脚本跑在 `--virtual-time-budget` 下（时钟被虚拟化），**不做耗时断言**——性能基线需在真实时钟环境另设。
-
-- [K71] **往返幂等与空结构零丢失（2026-09-25，R1/R2/R8/R9）**：① **块首空行不输出**——`md-serialize.pushBlock` 剥块首空行：围栏相邻 flush 会把空行并入 plain 块 mdRaw（以 `\n` 开头），与补的分隔空行叠加曾致「`# 标题`+空行+围栏」每趟往返多一枚、无不动点；**只剥块首不剥块尾**——列表行不经 pushBlock（直接输出、无分隔逻辑），尾空行从不累积，剥除反而丢用户有意空行（`md-roundtrip.test.ts` 围栏黄金用例锁定）。② **空标题（`#`/`# `）保留为空文本 heading 节点**（此前丢弃＝保存后该行消失，与「空列表项退化 plain」口径对齐）：`classifyLines` 不再按 text 过滤；`#` 首趟归一为 `# `（序列化前缀携带尾随空格），第二趟起不动点；编辑合成走既有 heading 路径（`## 新文字`）。③ **等价性分级与规范化白名单成文**于 `docs/markdown-mindmap-standard.md` §3.6（L0 字节级 / L1 内容级两级定义，白名单 10 条）——**canonical 化函数与白名单一一对应，文档与测试不得漂移**。④ **生成式验证** `tests/md-roundtrip-property.test.ts`（fast-check，devDependency）：P1 不动点 T∘T=T（300 runs）/ P2 canonical 行序列守恒 / P3 任意输入不抛错 / P4 自建语料 `tests/fixtures/roundtrip/*.md`（8 份，正文-only，CRLF 程序生成防 autocrlf 检出漂移）+ 字符级变异冒烟；**生成空间按 #10 收窄**（空列表项钉 0 层缩进——text 为 null 与 `''` 都要覆盖）。⑤ **属性测试发现的既有缺陷已登记**（§3.6 #10）：根层缩进列表保存后缩进按树深度重排，紧随其后的缩进行被二次解析并作续行（内容不丢、第二趟收敛）——彻底修复需 `mdIndent` 类字段（解析/序列化/拆分三处联动），未实施。回归：`md-roundtrip.test.ts`「幂等修复（R1）」3 例 +「空标题保留」例；property 6 例。
-- [K156] **纯浏览不得改动文件：加载基线拦住「打开就重排」（2026-11-02 实机定位并修复）**：
-  ① **症状**：只是把笔记切到导图看一眼（**不编辑**），文件就被重写——`---` 后的空行、标题与列表之间的空行、列表项之间的空行全部消失（松散列表变紧凑列表，阅读视图行距随之变化），连续空行合并成一个。实测：新建文件 `mtime 13:10:27.577` → 打开后 1.1s 变 `13:10:28.693`，此时**尚未关闭视图**。
-  ② **成因**：序列化带规范化（空行归一 / 缩进统一 / 有序列表重排，见 `tests/md-roundtrip.test.ts` 的「规范化」组），与磁盘原文天然不等；而「无差异写盘跳过」比的是**磁盘当前内容**，规范化结果永远「有差异」⇒ 必写。触发源是加载期引擎发出的 `data_change`（`onRootDataChanged` → `scheduleSave`）排出的那一轮自动保存，以及 `onUnloadFile` 的无条件 `save`。
-  ③ **修法**：`SavePipeline.markLoaded(file, tree)` 在**加载完成、引擎建好之后**记下该文件的**正文**（`loadedBody`，`buildBody` 与写盘同一个实现）；`save()` 里若本轮正文与它**逐字相同**，说明本次会话没有任何内容级改动 ⇒ **跳过写盘**。判据刻意不是「与磁盘相同」：那正是拦不住规范化的地方；也刻意**不含文件头**——文件头恒取磁盘当前值、管线从不改它，所以「只在属性面板改了 frontmatter / 切了布局」不该连带把正文规范化一遍（自审发现并补测）。
-  ④ **三处不能省**：**只在加载路径记录**（设置刷新引起的引擎重建不得再记——会把尚未落盘的编辑误标成基线，下一轮保存被跳过）；`markLoaded` 同时建立「最近写出的正文」基线 `lastWrittenBody`（**序列化结果**，与 `hasUnsavedChanges` 的比较基准同源；2026-11-07 P1a 删除后它只服务「同文件另一视图能否安全重载」）；`markLoaded` 的 `tree` 必须与写盘取的**同一来源**（`engine.getDataSnapshot()`），否则两边不可比、判据恒假。
-  ⑤ **实机**（Obsidian 1.14.4）：`# 根` + 松散列表 + 连续双空行的文件，打开等 3s、再关闭，`mtime` 与内容**逐字不变**；随后在导图里改一个节点 → `- 一改` 正常落盘（规范化随真实编辑发生）；编辑后 120ms 内立即关闭也不丢（`onUnloadFile` 的兜底快照路径未被基线误伤）。
-  ⑥ **回归**：`tests/save-pipeline.test.ts`（加载后未编辑不写盘 / 加载后编辑照常写 / 写过盘且没再编辑 ⇒ `hasUnsavedChanges` 为假（另一视图可重载）/ 重新 markLoaded 按新基线判定 / 未记录基线行为不变）。
-  ⑦ **后续修正（当日实机复演后追加，见 K160⑤）**：本会话**写过盘之后**「回到加载态」不再算纯浏览——磁盘上此刻是改后内容，跳过写盘会让撤销落空（屏上原样、文件改后、重开跳回）。守卫改由 `wroteSinceLoad` 分辨，写回的是**加载时的原样正文**（`loadedRawBody`），不是序列化结果。
-
-- [K158] **收尾一致性自检：写出的内容必须与活快照一致（2026-11-02 实机审核）**：
-  ① **线索**：实机见过一次（**至今未复现**）——勾选任务后 DOM 与节点 data 都是 `[x]`、文件仍是 `[ ]`，而 `lastWritten` 里已有该路径（说明确有一轮 save 完成过），此后 60s 内没有新的保存被排上，直到显式保存才写出。
-  ② **根因未定位**：可能的方向有两个（写盘用的是排空循环**开头**的快照；重入路径的 `pendingTree` 可能比本次编辑旧），都属于「快照陈旧」这一类，靠读代码分不出是哪一条。故按**不变式 + 自愈**处理，不赌单一路径。
-  ③ **修法**：`SavePipeline.save()` 排空循环收尾调 `reconcileAfterSave`——用与写盘**同一实现**（`serialize`）把活快照再序列化一次，与刚写出的内容比；不同即 `schedule()` 补排（走防抖，不在排空队列里自我嵌套）。每路径最多补 3 次（`MAX_CONSISTENCY_RETRIES`），超限只 `console.warn` 一次后停手（防「每轮都在变」的抖动空转）。
-  ④ **两种收场故意不补排**：写盘异常（那时「活快照 ≠ 文件」是**预期**，补排只会把一次失败刷成重试风暴）；以及**非自动保存**（命令 / 卸载）——显式保存的调用方本来就在同一个 tick 抓新鲜快照，没有「陈旧」可言，而卸载路径若在此补排，定时器会活过视图拆卸、落到下一个刚加载的文件上（那时基线还没记录，一次补排就变成「打开即重写」，自审发现）。**收尾自检只对真的写过盘的轮次做**：跳过写盘的轮次磁盘本就等于本轮序列化结果，活快照再变只可能是新编辑，它会自己排下一轮。
-  ⑤ **为什么值得每轮多一次 serialize**：写盘取的是排空开头的快照，一次真实差异就等于「用户编辑没落盘」；`serialize` 不产生 IO，代价远低于静默丢编辑。判据与写盘同源，不会误报。
-  ⑥ **回归**：`tests/save-pipeline.test.ts` +7 例（陈旧快照→补排一次并追平 / 内容一致→零额外写盘 / 冲突收场→不补排 / 每轮都变→4 次封顶 / 显式保存→不补排 / 纯浏览跳过→不补排 / 只改 frontmatter→不写盘）。
-
-- [K164] **列表缩进单位随文档走（2026-11-06）**：`MdNodeMeta.mdIndentUnit` 只记在**虚拟根**的 data 上（每层一个单位：`'\t'`，或 1–8 个空格的**原样串**，含 `' \t'` 这类混合），解析期由 `markdown/md-outline-lines.ts` 的 `classifyLines` 实测「第一处有缩进的列表行」的前导空白，序列化经 `markdown/md-serialize.ts` 的 `readIndentUnit`（文件内私有）取用（脏值回落 `'  '`；剪贴板大纲恒用默认——那是**新内容**，没有原文风格可继承）。**为什么必须是数据而不是常量**：此前恒写 2 空格，Tab / 4 空格缩进的笔记**改一个节点**就把全文缩进重排（2026-11-06 实机：整篇 diff），与「未编辑行逐字回写」直接冲突。**两把尺子不可互换**：`leadingIndent`（空格与 Tab 各计 1，用于续行 / 围栏块归层，与 `LIST_RE` 的 `(\s*)` 同口径）vs `leadingSpaces`（只数空格，只服务 frontmatter 块标量的 YAML 缩进判定）——把后者用在列表归层上，Tab 缩进文件的项内围栏会被拆成同级节点（2026-11-04 实机：4 个分支整层错位）。**归一**：混用缩进按第一层宽度归一；测不到单位（全文无缩进列表 / 新建文件）回落 2 空格。回归：`tests/md-roundtrip.test.ts`（Tab / 4 空格 / `' \t'` 混合三例 + 第二趟不动点 + 缺省回落）。
-
-- [K176] **frontmatter 与正文之间的空行按磁盘原样保留（2026-11-09 实机）**：
-  ① **缺陷**：`splitFrontmatter` 把空行留在 `body` 里，序列化器按「块首空白」丢弃 ⇒
-  任何一次真实编辑写盘都会把 `---` 与正文之间的空行吃掉（实机：清理一次
-  `%%none%%` 后 `---` 直接接 `# 父`，Git diff 白多一行删除）。
-  ② **改法**：`splitFrontmatter` 多返回 `gap`（frontmatter 后、正文前的**原样空白行**，
-  0/1/多行、CRLF、仅空格行均保留），`body` 从第一个非空行开始；`writeBody` 的
-  `build(current)` 从**磁盘当前值**同时取文件头与 gap，`wrapBase(body, header, gap)`
-  原样拼回。gap 属于文件头区域，不参与 `loadedBody` / `hasUnsavedChanges` 的正文判据
-  （改属性 / 换布局不因它被判脏）。
-  ③ **为什么取磁盘而不是加载快照**：`processFrontMatter` 只改文件头；gap 与文件头同源，
-  外部（属性面板 / 其它窗格 / 同步）改动后仍按最新形态写，不会被旧快照覆盖。
-  ④ **回退路径**：读不到磁盘内容（`cachedRead` 缺失/抛错）时 gap 记空串，保持旧行为
-  （fail-open，不凭空补空行）；撤销回加载态写的是 `loadedRawBody`（**不含** gap），
-  同样由 `writeBody` 按磁盘补回，不会双份。
-  ⑤ **回归**：`tests/md-inline.test.ts`（gap 切分：0/1/多行、空格行、CRLF）、
-  `tests/save-pipeline.test.ts`（保留空行 / 不凭空补 / 多行与 CRLF）。
-
-### 引擎行为、视口与布局
-
-- [K15] 打开时的默认视口：**100% 缩放 + 整体内容居中**（按渲染内容包围盒居中，不按根节点——根节点居中会让偏心的树偏向一侧；`mindmap.ts centerContentAtFullScale`：先 `setScale(1, 画布中心)` 再按 `draw.rbox()` 包围盒平移；`createMindMap` 传 `fit: false`，引擎首帧后由 `EngineController.restoreOrFitViewport` 在无保存视口时调用）——大图不再被 fit 压到文字不可读，「适应画布」是工具栏/命令的手动动作；有保存视口时优先恢复。回归由 `npm run verify:visual` 的 viewport 探针覆盖。工具栏另有「重置缩放」（`resetZoom` = **以画布中心为锚点回到 100%**，屏幕可见内容保持原位、不居中节点——只 `setScale(1)` 会绕画布原点跳动）。**自动整理默认不改视口**（2026-10-24 用户裁决：只清 `customLeft/customTop` + 重排；`fitView: true` 仅「切布局」路径用，见 K18）——按下「整理」不该夺走当前视野，想看全图按「总览」。该日期之前的口径是「整理后走适应画布」：`arrangeMindMap` 的 RESET_LAYOUT 延时回调 → `fitMindMap`，性能模式走**数据层 fit**（布局几何并集算缩放与居中，零 DOM 装配，2026-10-02，见 K110 ⑥），常规模式沿用引擎 `view.fit()`。首帧窗口内的三个坑（陈旧容器几何 / 根节点居中中间态 / 图片回灌改动包围盒）见 K64。
-- [K16] **连线样式（两态：折线 / 曲线；2026-10-21 用户裁决收敛）**：可选样式只剩 `straight`
-  （折线，正交折线）与 `curve`（曲线）——`auto`（随布局）与 `direct`（直连）下线：默认值固定为
-  折线，「跟随布局」不再有信息量，直连与折线的差异不足以再占一个选项。引擎仍实现三态 `renderLine`
-  分派（curve / direct / straight），但只有逻辑结构图/思维导图/组织结构图可见效果；目录组织图/
-  时间轴/鱼骨图**由布局类本身绘制直线**（只输出 M/L 路径、不接受 `lineStyle`，**勿**误以为
-  「只有组织结构图是直线」）。
-  偏好在 `constants.LINE_STYLE_OPTIONS`（顺序＝界面顺序：折线在前、曲线在后；默认
-  `DEFAULT_LINE_STYLE`＝折线），归一唯一实现在 `constants.normalizeLineStylePreference`
-  （`auto` / `direct` / 未知 / 空串 → 折线），解析唯一实现在 `mindmap-theme.resolveLineStyle`
-  （固定直线布局恒 `straight`，不把无效偏好透传给引擎）；生效链路＝设置 `defaultLineStyle`
-  → 按文件 `viewState.lineStyle` 覆盖 → 右栏「连线」开关 `view.applyLineStyle`
-  → `EngineController.setLineStyle` 重算主题配置（`setThemeConfig` 的「仅连线类属性」差异走
-  轻量重绘）。
-  **连线开关随布局收窄**：`supportsLineStyleSwitch` 为假的固定直线布局，右栏连线开关**置灰**
-  （图标恒为直线；tooltip 按 2026-10-23 裁决只报名字〔`toolbar.lineStyle`〕，`lineStyle.fixedStraight`
-  词条已随之删除），语义＝连线由布局固有绘制，不再用会让人误以为可选的
-  「自动」——这是**纯交互收窄**，文件里的偏好既不写入也不丢失，切回可切换布局后按会话偏好恢复；
-  选项面自 2026-10-22 起**不再常驻**：**连线与边框**升为右缘竖栏的开关按钮
-  （`view-toolbar.buildAppearanceGroup`，点一下互切并写回 `viewState`），
-  **布局与配色**留在右键的级联菜单（`view-context-menu.addLayoutPaletteMenus`，
-  空白右键与节点右键共用同一份）——屏上已无 select，故不再有「重建选项面」这一步。
-  固定直线布局下连线开关置灰（`supportsLineStyleSwitch` 判据仍在）。
-  **存量数据**：`data.json` 里的 `auto` / `direct` 在**读取侧**归一为折线（不批量改写用户文件，
-  下次切换样式时自然落盘）。**勿**在别处硬编码 `lineStyle` 或各自拼选项。回归：
-  `tests/mindmap-theme.test.ts`（两态 + 旧词汇归一 + 固定布局恒折线）、
-  `tests/view-toolbar.test.ts`（开关互切与图标状态 / 固定布局置灰）、`tests/settings.test.ts`（白名单与默认值）。
-- [K17] **根节点连线衔接**：主题配置设 `rootLineStartPositionKeepSameInCurve: true`——引擎**默认从节点
-  中心起画**，根节点→首层子节点的曲线在节点内部就已偏出、从上/下边缘**斜穿而出**（衔接呈
-  「斜戳」观感）；其余层级本就以边缘为起点。开启后根节点与其它层级一致：右缘水平出发再展开。
-  回归锁定在 `tests/mindmap-theme.test.ts`。
-- [K18] **切换布局后自动整理一次**：`EngineController.setLayout` 末尾调 `arrangeMindMap`（`RESET_LAYOUT`
-  清除自由拖拽坐标 + 延时 `fitMindMap`）——否则旧布局下手动拖过的节点会带着 `customLeft/customTop`
-  留在新布局里；且引擎 `setLayout` 内部会把视口变换归零，不 fit 画面会停在左上角。故**切换布局后
-  的视口恒为「适应画布」状态**（这也是布局切换与「打开时 100% + 内容居中」两套视口语义的分界）。
-  回归见 `tests/engine-controller.test.ts`。
-- [K19] **默认热键归零**：引擎 `KeyboardNavigation` 插件自带 **Ctrl+L = RESET_LAYOUT**（只重排、
-  不含「适应画布」），与「自动整理」命令口径冲突，已在 `createMindMap` 末段经
-  `keyCommand.removeShortcut` 移除——自动整理统一走 `mindmap-arrange` 命令（用户自行绑热键，
-  绑到 Ctrl+L 时与菜单 / 命令同一口径：只重排、**保留当前视口**，2026-10-24 起不再 fit——想看全图按「总览」）。回归由 `verify:visual` 的 layout 探针锁定
-  （`engineShortcuts` 不得含 `Control+l`，并带"快捷键表非空"前提断言）。
-- [K20] **无差异写盘跳过**：`SavePipeline.save` 在 `vault.modify` 前用 `vault.cachedRead` 比对
-  **文件当前内容**，一致则跳过写盘（`vault.modify` 即使内容一字未变也会刷新 mtime、惊动元数据
-  缓存与同步；典型场景是「自动整理」——只清引擎内部拖拽坐标，Markdown 文本没变）。
-  只跳过「要写的正是文件里已有的内容」，绝不吞掉真实差异；`cachedRead` 缺失（测试桩/老运行时）
-  或读取抛错时回退为照常写盘（fail-open，绝不因读失败丢写）。回归见 `tests/save-pipeline.test.ts`。
-- [K21] 悬停预览（`hover-link`）：`hoverParent` 必须是官方 `HoverParent`——传本视图的 `leaf`（`WorkspaceLeaf` 实现该接口），**勿传裸 HTMLElement**。弹窗上下翻转由核心按 `targetEl` 的矩形决定，而官方 `HoverPopover.position()` 的锚定矩形是**混合取值**：宽高走 `targetEl.offsetWidth/offsetHeight`、位置走 `getBoundingClientRect()`；SVG 节点 group 没有前两个属性（HTMLElement 专有）→ `bottom/right` 为 `NaN` → 官方定位函数「下方放得下就放下方」的分支恒假（预览只出现在上方），上方也放不下时 `top` 被写成 `"NaNpx"`（等于不显示）。故触发前必须调 `view-wikilink.ts ensureOffsetSize(targetEl)` 补上按实时矩形取值的只读几何（`in` 判断，HTMLElement 不覆盖）；指针坐标不参与定位，勿再改写上报的鼠标事件。**触发面**（`view-wikilink.nodeLink`）：只有库内链接触发，三类等价——文档双链/文档嵌入（`mdWikiLinkpath`）、双链附件/嵌入附件/拖入附件（**门控 `attachmentUrl`**：`mdAttachmentLinkpath` 在「移除引用」后会残留，光看它会留下"幽灵引用"；linktext 取原始 linkpath，`attachmentUrl` 可能已被视图层重写成资源地址）、URL 外链**不触发**（核心只服务库内目标，与阅读视图一致）；`event.buttons !== 0`（拖拽节点滑过其它节点 / 框选扫过）同样不触发——引擎只在"被拖的那个节点"上抑制 `node_mouseenter`。**2026-09-16 定稿为「锚点优先 + 节点级兜底」两级触发面**（两次实测反馈的合成结论）：① 指针在某枚锚点上（`node_mouseenter` 的 `event.target` 命中，或画布 `mouseover` 委托命中——节点体→锚点、锚点→锚点的内部移动只有委托能看到）→ 预览**那一枚**（`anchorLinktext` = `resolveAnchorLink` → `wikilinkLinkpath`）；锚点不是库内目标（外链/畸形）时**继续下滑**而不是放弃；② 否则 → 节点级 `nodeLink` 三通道（文档双链/嵌入 → 附件 → hyperlink）。历史教训：只做锚点级会让「悬在节点上」静默无反应（自绘节点普遍接管，几乎全中）；只做节点级则一行多链接只认首链，**首链是外链时行内库内链接（md 链接指向 `.md`）完全无法预览**（用户实测 `[站点](https://…) 与 [文档](笔记D.md)`）。**两条路径都不得加解析预检**（曾用 `isResolvedWikiLinkpath` 预检「未解析不预览」，目标存在性交核心判断；该函数只服务自绘渲染的未解析弱化配色，经 InlineContentOptions 注入，勿接回预览）。`ensureOffsetSize` 与 400ms 去重（按目标元素，跨两条路径共用）保持不变。
-- [K22] 右键「编辑文本」：`mindmap.ts startNodeTextEdit` 必须**延后一个宏任务**再 emit `node_dblclick`——菜单项 click 会继续冒泡到 `document.body`，引擎 `body_click`（`isEndNodeTextEditOnClickOuter` 默认 true）会立刻关闭刚打开的编辑框；`isInserting` 传 false。
-- [K23]【**已废止 2026-10-11**】拖拽换父辅助：曾由 `drag-target.ts` 在引擎落点判定（指针须精确落在目标矩形内）之外，以两类锚点（**节点中心**均匀圆域 `DRAG_TARGET_RADIUS_PX` / **相邻兄弟间隙中点**）统一按指针距离最近仲裁后外借落点（引擎每帧重置三态、精确命中时让位）。**移除理由**：一行多链接可点化（自绘节点内联锚点）落地后，落点识别域的收益不抵其复杂度（含引擎 Drag 三态防腐面与一条仅为其存在的 CSS 变量钩子）；未文档化且零测试覆盖的 `Alt` 拖拽复制由同一宿主承载，随之一并退役。**浏览器原生拖拽换父不受影响**——指针精确落在目标矩形内时引擎原生命令（`MOVE_NODE_TO` / `INSERT_AFTER`）照旧工作。随之删除：`features/drag-target.ts`、`features/view-drag-duplicate.ts`、`constants.DRAG_TARGET_RADIUS_PX`、`.mindmap-drag-target` 样式，以及 `mindmap.ts` 的 `getDragDropState` / `setDragOverlapTarget` / `setDragPrevTarget` / `getNodeLayoutRect` / `readNodeViewportCenter` / `toCanvasPoint` / `isRootNode` 防腐面。
-- [K24] 新建承载节点（拖入图片/笔记/附件、粘贴、图片子节点）一律走 `view-common.ts insertChildNodeWithData`：统一 `appointNodes=[parent]`（空数组会被引擎静默忽略）与 `isActive:false`，勿再各写一份 `execCommand(INSERT_CHILD_NODE, …)`。
-- [K25] 引擎内部形态（`node.group`、导出倍率 `opt`、Search 插件状态、DoExport、
-  `renderer.textEdit` 等）的访问只出现在 `mindmap.ts` 防腐收口函数中（`services/engine-controller.ts`
-  为同类防腐层），视图层经具名函数使用。
-- [K26] 引擎 `execCommand` 的命令名一律引用 `mindmap.ts` 的 `ENGINE_COMMANDS` 常量（勿写字符串字面量，拼错编译期即报错）。
-- [K26b] **整树替换必须走 `engine/mindmap.replaceMindMapData`（保留撤销历史），勿直调引擎 `setData`**。两者在 vendor 里的差别（0.14.0-fix.3 实测）：`setData` = `CLEAR_ACTIVE_NODE` → **`command.clearHistory()`** → `addHistory()` → `renderer.setData()`，历史被清成「只剩新状态一条」，此后 `BACK`/`FORWARD` **永远无事发生**（用户实测：「拆分双链后 Ctrl+Z 失效」）；`updateData` = `renderer.setData()` → `render()` → `addHistory()`，只把新状态**追加**为一条历史（快照取自 `renderer.renderTree`），且一次 `Ctrl+Z` 即回到替换前。回归锁定：`tests/view-split-links.test.ts`（批量拆分走该入口）、`tests/engine-controller.test.ts`（引用更新走该入口）、`tests/vendor-contract.test.ts`（`updateData` 必须在引擎原型上、`CLEAR_ACTIVE_NODE` 必须在命令表）。单节点/自动拆分别走引擎命令（`SET_NODE_DATA` + `INSERT_CHILD_NODE`，每条各记一条历史 → 逐步回退），故无需整树替换。
-- [K26d] **自绘（富）节点的「拖左右边框改宽」必须由插件收尾**：引擎只对 `isUseCustomNodeContent` 节点给出 `ew-resize` 边框手柄（`checkEnableDragModifyNodeWidth`）——自绘节点都能拖；但引擎**不会把宽度传给自绘内容**：拖拽中每帧只写节点字段 `node.customTextWidth` + `reRender([], { ignoreUpdateCustomTextWidth: true })`（keys 为空 ⇒ `h.custom` 为假 ⇒ **不重建**自绘内容），松手只 `setData({ customTextWidth })` + `render()`（整树 render / `needLayout` 同样不重建，无头实测：内容元素 inline width 仍为空、节点高度不变）。而自绘节点的宽高**全部来自内容元素的离屏测宽**，故必须两处配合：① 自绘内容读 `customTextWidth` 落到元素 `width`/`maxWidth`（`node-inline-content.customTextWidthOf`，口径＝节点框总宽，与引擎给自绘节点的拖拽起点 `node.width` 同尺度，拖动 1:1 不跳变；`maxWidth` 必须同步放开，否则 CONTENT_STYLES 的 500 会把更宽的拖拽钳回 500）；② 松手后**重建**该节点自绘内容（`engine/mindmap.refreshNodeCustomContent`：`node.reRender(['custom'], { ignoreUpdateCustomTextWidth: true })` + `render()`），订阅点 `dragModifyNodeWidthEnd` 在 `features/view-node-width.ts`。缺任一环节即用户实测缺陷「拖宽后节点上下高度不变」（2026-09-16）。**已知引擎边界**：拖拽过程中高度滞后一拍（引擎每帧不重建自绘内容），松手时校正；宽度本身实时跟随。**宽度不落文件**（正文保持纯 Markdown，`customTextWidth` 是引擎数据字段）⇒ 重开文件回落 500 折行上限。回归锁定：`tests/node-inline-content.test.ts`（宽度落元素 + 非法值忽略）、`tests/view-node-width.test.ts`（事件订阅与传参）、`npm run verify:visual` 的 inline 探针（拖宽 500→240 后节点宽 240、元素实测 240、高度变大）。**手柄门禁（2026-09-16 追加）**：引擎的手柄门禁 `checkEnableDragModifyNodeWidth()` 只看**全局开关**（`enableDragModifyNodeWidth && (richText || (isUseCustomNodeContent && customCreateNodeContent))`，本插件恒为真）⇒ **每个节点**都拿到左右边框手柄；但宽度只有自绘节点认（纯文本走 `textAutoWrapWidth` 的 SVG 文本路径，**完全不读 `customTextWidth`**）⇒ 纯文本/含图节点上的手柄是**死手柄**（拖了毫无反应，用户实测）。修法：`view-node-width.gateNodeWidthHandles(node)` 给 Node 原型该方法加一层「且会被自绘接管」（判据与 `buildInlineNodeContent` 同源：`node-inline-content.shouldSelfDrawNode` + `resolveSelfDrawSource`），在**首个内容回调**里安装（回调早于同一节点的 `initDragHandle`；手柄本身又是激活时懒创建，故无漏网），幂等且失败静默（退回旧行为）。**坑**：引擎该方法返回的是 `... && customCreateNodeContent`——**函数本身**（真值非 `true`），包装时只能按真值判断（曾写 `=== true` 导致全节点判成无手柄、拖宽整体失效，无头实测抓到）。回归：`tests/view-node-width.test.ts`（含真值非布尔的桩）、`verify:visual` 的 handle 探针（纯文本节点 0 个 `ew-resize` 手柄、自绘节点 2 个）。
-- [K26f] **引擎两种 `getData()` 语义相反，改动前先认准是哪一侧**（vendor 0.14.0-fix.3 实测，契约在 `tests/vendor-contract.test.ts`）：`Node.getData()` = **活引用**（`getData(t){return t?this.nodeData.data[t]:this.nodeData.data}`）——就地改写即改引擎数据，帧内图片尺寸预览与「清标记」（`delete data.mdImageAutoSize`）都靠它，**不可当快照**；`MindMap.getData()`（整树）= **深拷贝**（走 `command.getCopyData()`）——批量拆分「先改树再整树回灌」靠它，改动可安全就地做。两者写错方向都不会报错，只会静默失效（预览不跟手 / 绕过渲染与历史）。
-- [K26g] **性能三条硬规则**（2026-09-16 优化轮）：① **缓存淘汰用 LRU，禁止「满了整表清空」**——`node-inline-content` 的段序列缓存曾被编辑弹窗的实时预览（每个键入都是新键）整表刷空，此后每次渲染全部重 tokenize（命中率归零）；改 LRU（命中删后重插 → 队尾；超限淘汰最旧一条）后热点条目在洪水下仍命中（回归：`tests/node-inline-content.test.ts` 的 LRU 用例）。② **同一行原文只解析一次**：`md-outline.flushPlain` 曾对 plain 块首行解析两遍（一遍取显示文本、一遍取图片字段），现复用首行结果。③ **设置变更应用到视图必须防抖**（`SETTINGS_APPLY_DEBOUNCE_MS = 250`）：需要重建的键一轮 = 每个打开的视图**销毁并重建引擎 + 全量重渲染 + 工具栏重建**（2026-09-17 起按键差集分流——主题原地生效、默认布局/默认连线样式跳过，见 K59），而 `LIVE_REFRESH_SETTING_KEYS` 含滑块（性能阈值 step 100）——不防抖拖一次滑块重建几十轮（回归：`tests/settings-persist.test.ts` 的「19 档只应用一次」+ `onunload` 丢弃挂起）。
-- [K26h] **引擎图片节点必须有 `imageSize`，任何「先渲染后校正」的路径都要先 `ensureDefaultImageSizes`**（vendor 0.14.0-fix.3 实测）：`createImgNode → getImgShowSize` 直接解构 `data.imageSize`（`let {custom,width,height} = getData('imageSize')`），缺字段即 TypeError、**该节点的渲染链中断**（无头实测：一图缺失 ⇒ 整图 `renderer.root` 为空，对照组在 verify:visual 的 image 探针）。解析器**不产** `imageSize`（`md-outline.PLAIN_IMAGE_FIELDS` 只含 image/mdImage*），旧流程靠「加载期探测在引擎创建前完成」隐式兜底；2026-09-16 起加载路径改为「探测**不**挡首帧」（`collectImageSizeCorrections` 起步于首帧前、`applyImageSizeCorrectionsToEngine` 首帧后按 **data 对象身份 + image 地址**回灌并重渲染一次），以及「把文本节点编辑成图片」（`applyRawNodeContent`）同样属于先渲染后校正——两处都必须先同步填默认值（O(n) 指针遍历，不探测不等加载）。**为什么不能用 uid 回灌**：加载期 uid 尚未分配（`ensureUniqueUids` 在引擎创建时才跑）。回归：`tests/images-path.test.ts`（默认填充幂等）、`tests/engine-image-size.test.ts`（身份/换图/同值/陈旧守卫）、image 探针（渲染尺寸确实随回灌变化）。
-- [K26i] **自绘接管面不回收——其成本模型已被探针钉死**（2026-09-17 量化轮）：两棵同形状 31 节点地图实测 ⇒ ① DOM 元素 8.2（引擎文本）vs 7.5（自绘）/节点，**自绘更轻**（接管后引擎跳过 text/image/icon/hyperlink/tag/note/prefix/postfix 全部默认内容）；② **空 render 构建器调用 0 次**——拖动/缩放期间引擎只改 transform，**不重建节点内容**；③ 改一个节点文本 ⇒ **恰好 1 次**构建器调用。故真实成本是「每次内容重建 ≈ 每节点 1 次构建器 + 引擎 1 次离屏测宽」，**按编辑数线性、不按帧**；收窄接管面（纯单链接节点交回引擎 SVG 文本）换不来帧级收益，却要吃图标体系 / 编辑入口 / 锚点契约的用户可见回退 ⇒ **不回收**。剩余的自绘专属开销只有引擎对 custom content 的离屏测宽（vendor 内部，外部不可跳过）。⚠️ 测不到的坑：`--virtual-time-budget` 虚拟化时钟（耗时断言恒无意义），且 `render()` 经 rAF 调度 ⇒ 计数类测量必须等 settle 再读（同步读恒为 0 是**异步假象**——别拿它当「没发生」的证据）。回归锁定：perf 探针断言（idle 构建器 0 / 改文本恰好 1 / DOM 预算）。
-- [K26e] **高频拖拽类写入不得逐帧走 `execCommand`**（vendor 0.14.0-fix.3 实测）：引擎 `Command.exec` 末尾是 `if (['BACK','FORWARD','SET_NODE_ACTIVE','CLEAR_ACTIVE_NODE'].includes(cmd)) return; this.addHistory()`，而 `addHistory()`（被 `addHistoryTime` 默认 **100ms 防抖**包装）会 `getCopyData()`（**整树深拷贝**）+ `JSON.stringify` 比对后 `emit('data_change')` ⇒ 逐帧走命令 = ① 拖动被切成多条历史（撤销要按很多次）；② 每次变动都触发视图的 `scheduleSave`（800ms 防抖被反复重启 ⇒ 用户实测「保存好几次」）、状态栏与标题重算；③ 全树深拷贝 + 序列化比对正是「拖动卡顿」的主要开销。修法（图片调宽为例）：**帧内 DOM 直写**（`engine/mindmap.previewNodeImageSize` 直写渲染中 `<image>` 的 `width/height`——与引擎渲染同源属性、用户单位 content px；**2026-10-02 二次重构**：旧的「改数据 + 整树 `render()`」在 rAF 合帧下仍是**每帧一次全树重排**，大图拖动持续卡顿），**收尾一次**走命令（一条历史、一次保存调度、一次布局归位，一次 Ctrl+Z 撤回整次拖动）。收尾判据必须是「**与起始值有净变化**」而非「与最后一帧值不同」——最后一帧往往就是最终值，按后者处理整次拖动将完全进不了历史。回归：`tests/feature-teardown.test.ts`（帧内只直写 DOM：属性落值 / 数据未动 / 不渲染 / 不 execCommand；收尾恰好一次 / 拖回原尺寸不提交）+ `verify:visual` 的 history 探针（真实引擎：帧内 `<image>` 宽度＝最后一帧请求值、数据保持基线、0 历史 0 data_change；收尾各 1）。
-- [K26c] **画布滚轮与中键拖由引擎实现，插件不得再注册同名手势**（vendor 0.14.0-fix.3 实测）：滚轮监听在 `mindMap.el` 上且**先 `stopPropagation()`** → 容器级 wheel 监听收不到事件（重复实现＝死代码）；中键拖走 event 模块 `which===2 → isMiddleMousedown` → `drag` → View 平移，mousemove/mouseup 挂在 `window`（拖出画布仍跟手），插件若另按 pointer 事件平移会与引擎的**绝对定位**平移互相覆盖、且 `pointerleave` 让手势半途断掉。官方 Canvas 语义即引擎默认值 + `createMindMap` 显式钉住：`mousewheelAction: 'move'`（滚轮平移）、`disableMouseWheelZoom: false`（`Ctrl/Cmd+滚轮` 以指针为锚缩放）。插件只做引擎没有的四件事：抑制浏览器原生**中键自动滚动**（容器 `mousedown` button===1 → preventDefault，冒泡晚于引擎 el 上的 mousedown，不干扰引擎中键状态）、`Shift+1`/`Shift+2`（键在 view-hotkeys，实现 `fitToScreen`/`zoomToSelection`）、**`Alt + 滚轮` 横轴**（引擎不读 `altKey`，见 K138）、**滚轮平移平滑化**（引擎一格＝当帧 100px 瞬移，见 K144）——后两条都挂在**画布祖先的 capture**，命中即 `preventDefault + stopPropagation`；其余滚轮分支仍一律交引擎，**不得**再写第二份 wheel 平移。回归锁定：`tests/view-viewport.test.ts`（只注册一条 mousedown）+ `tests/vendor-contract.test.ts`（引擎必须保住 stopPropagation/Ctrl 缩放/middle-drag 三处形态）+ `tests/view-hotkeys.test.ts`（Shift+1/2 在输入框内让位，避免打 `!`/`@` 触发缩放）。
-- [K27] 引擎 vendor 文件不可手工编辑；升级时用官方源码重新打包并替换（流程见 `vendor/BUILD.md`）；
-  `styles.css` 只含本插件样式——**不再有 vendor 段**（引擎 dist CSS 全是 Quill 富文本样式，
-  本插件不注册 RichText，样式由引擎运行时注入；详见 `vendor/BUILD.md`）。
-- [K64] **打开时的首帧视口三坑：陈旧几何 / 中间态跳变 / 图片回灌改动包围盒（2026-09-17，承 K15/K26h）**：
-  用户实测三轮才收敛，三条都是「首帧窗口内几何还会变」的不同侧面，修法各自独立，勿合并简化。① **陈旧几何**：
-  引擎只在创建与 `resize()` 时把容器矩形缓存进 `elRect`/`width`/`height`（vendor `getElRectInfo`），而首帧之后
-  工作区布局 settle、文档模式 `refreshToolbar()` 重建都会改容器尺寸/位置且**不触发 `view.onResize`**——
-  `centerContentAtFullScale` 的缩放锚点（`mindMap.width/height`）与 `measureContentBox` 的原点（缓存 `elRect`）
-  便同时按旧画布算 ⇒ 打开即偏移、点「适应画布」才拉回（`fit` 基于实时 `rbox()`，故看起来「内容没问题」）。
-  现取视口前先 `syncCanvasGeometry`（等价走一遍 `resize()`）且换算一律读**实时容器**（`getLiveCanvasRect`；
-  `getCanvasSize` / `getCanvasOrigin` 分别回退缓存 `width/height` 与 `elRect`，保住「容器不可得也先 setScale、
-  只跳过平移」的旧契约）。② **中间态跳变**：引擎默认 `initRootNodePosition=[center,center]`，首次布局把
-  **根节点**摆在画布中心，而视口原先只在 150ms 兜底定时器里设置 ⇒ 用户先看到「根居中」再跳到「整体居中」。
-  现于 **`node_tree_render_end`（引擎布局任务内发出）同帧应用视口**，浏览器不绘制中间态；首帧窗口内给
-  `initialViewportRecalcBudget = 2` 次重算（`resize` 触发的再布局、图片回灌都会改根节点位置与包围盒），
-  用尽即停手、不抢用户之后的视口。③ **图片回灌后包围盒变化**：探测不挡首帧（K26h）⇒ 真实尺寸稍后落定，
-  `scheduleViewportRecenter()`（`VIEWPORT_RECENTER_DELAY_MS=200`，须 > 恢复延迟 150）补一次居中，
-  **仅当视口签名仍是打开时自动设置的那个**（已恢复保存视口、或用户已平移/缩放 ⇒ 不打扰）。
-  两条配套：**保存视口落界校验** `isContentVisibleInCanvas`（恢复后明确判定不可见 ⇒ 放弃恢复、回退默认居中；
-  性能模式与引擎结构不可得 ⇒ `null`＝**fail-open** 保持原状，不误伤合法视口）；`fitMindMap` 同样先同步几何再 fit。
-  回归：`tests/viewport.test.ts`（实时容器优先 / `resize` 早于写视口 / 可见性三态）、`tests/engine-controller.test.ts`
-  （保存视口被判定不可见则回退居中且不 fit）、`verify:visual` 的 viewport 探针。
-- [K130] **导出图数学完整性的根治＝内联 MathJax 字体（2026-10-23，用户裁决「不计成本、执行 A」+ 实机取证 + 对照实验）**：
-  ① **根因**：MathJax 的 stretchy 结构（矩阵/行列式竖线、根号横线、分式线、`\left(…\right)` 括号、cases 大括号、`Σ`/`∫` 的延伸部）**全靠自制字体**（`MJX-TEX-SO` / `MJX-TEX-S1..4` 等）拼装；导出 SVG 在 `<img>` 解码的 secure static mode 里**禁外部资源** ⇒ `app://obsidian.md/lib/mathjax/**` 字体加载不了、只剩系统 fallback ⇒ 这些结构整片消失（屏上一切正常）。此前只放宽 `mjx-c` 的 clip 纵向窗（`math-jax-export-clip.ts`）能救「普通字符被裁下半」，**救不了结构性缺字**——用户实拍行列式竖线与分式线全无。
-  ② **B 方案（导出改 SVG 输出）不可行**：实测宿主 MathJax 4.1.3 只暴露 `tex2chtml` / `tex2chtmlPromise` / `tex2mml` / `tex2mmlPromise` / `typeset*` / `chtmlStylesheet`，**没有 `tex2svg` / `tex2svgPromise`**（Obsidian 只打包了 CHTML 输出）。走 B 只能自带 SVG 输出运行时（约 +0.6–1 MB bundle、`vendor/` 构建、与宿主版本对齐），收益仅是导出体积更小 ⇒ 否决。
-  ③ **A 方案（采用）**：`platform/math-jax-fonts.ts` 预取全部 `@font-face`（路径从 CSS 现取、不硬编码；`requestUrl` 优先 + `window.fetch` 兜底 `app://`；24 个 woff2 实测 **5.6 ms / 303,836 B → base64 405,144 字符**），导出时**按克隆里出现的 `TEX-*` class 裁剪**，只把实际用到的族替换成 `data:` URI（`ZERO`/`BRK` 恒需）；实测探针图 **42,789 → 277,868 B（5 族）**，单行公式约 +10 KB 量级。
-  ④ **时序**：引擎的 `handleBeingExportSvg` 是**同步**的 ⇒ `features/view-export.exportImageAs` 在导出前 `await primeExportMathFonts()`（幂等、并发去重、失败不抛）；未就绪 / 读取失败 → 自动回退「剥离 @font-face + 放宽 clip」的旧行为（不比修复前差）。**失败按「样式表内容」缓存（2026-10-23 补）**：同一份 CSS 已经失败过就直接 `false`，不再重发 2×N 个请求；但**不能**记成会话级不可用——首次导出常发生在 MathJax 尚未挂载时（`readMathJaxCss()` 为空 ⇒ 本轮注定失败），内容一变（首次挂载 / 版本切换）即重试。
-  ⑤ **私有触点登记（规则 9）**：`app://` 取字体字节 + 字体 URL 随宿主变化；防御式实现（任一候选失败即回退、失败只告警一次），且裁剪依据缺失时 `withInlinedMathFonts` 返回 null 而非注入半套样式。
-  ⑥ 回归：`tests/math-jax-fonts.test.ts`（解析 / 裁剪 / 内联 / 回退 9 例 + 预取与失败缓存 3 例）、`tests/math-jax.test.ts` 的「字体快照就绪」用例（走**真实预取**：`requestUrl` 桩返回 3 字节 ⇒ 断言 `data:font/woff2;base64,QUFB`，勿再为测试单开注入口）；实机 PNG+SVG 双路径验收记录见测试库 `10-wiki/log.md`（2026-10-23 条）。
-- [K131] **逐帧写入的定位元素不要挂 CSS transition（2026-10-24，小地图视口框实机取证）**：小地图的视口框由 `updateBox` 在 **rAF 里每帧**写 `left/top/width/height`（当前视口在缩略图上的本地投影）。原样式给这四个属性挂了 `200ms ease`，实测「写 `left += 20px` 后**立即**读 `getBoundingClientRect().left` 仍是旧值」——过渡会拦截每一帧写入，平移/缩放画布时框比主图慢约 200ms（与「图可以慢，框不能迟」的口径直接矛盾）。
-  ① 规则：**逐帧投影的元素不挂定位过渡**；需要动画的是外层容器。
-  ② 若外层容器必须保留尺寸动画（用户 2026-10-24 裁决「小地图的面板动画要保留」），内层定位改**百分比**（`el.style.left = 占比%`）——面板宽高过渡期间内层随容器同比例缩放，与 `img { width:100%; height:100% }` 同步，不会错位。像素坐标 + 容器动画的组合必然在动画期错位。
-  ③ 反例备忘：`.mindmap-minimap-view` 的 `transition` 已删除并注释原因；`.mindmap-minimap` 保留 `opacity/height/width 150ms`。
-  ④ 回归：`tests/view-minimap.test.ts` 断言框写的是百分比（`width: 80%`）；负向自检把该断言改回 `176px` → 恰好 1 例转红。
-- [K132] **异步分片重排之后才能取样（2026-10-24，小地图切布局实机取证）**：`setLayout` → `RESET_LAYOUT` → 80ms 后 fit 全是**异步分片**的；在偏好写入漏斗（`commitPreference`）里直接取样，只能拿到**上一套布局**的几何，而且会把 30s 刷新窗口一并消耗掉（`draw()` 里的 `lastDrawAt` 是**尝试**时刻，失败也推进）⇒ 实机「切了布局，小地图最长 30s 还是旧图」（实测 33s 才对，修后 <305ms）。
-  ① 规则：布局类刷新推迟到渲染落地（`node_tree_render_end`），样式类（同步 `setThemeConfig`，几何未变）仍立即画；两个入口分开（`refreshMiniMap` / `refreshMiniMapAfterRender`），用**哪个由调用点声明**，不要在漏斗里按偏好 key 猜。
-  ② 必须有「帧等价」守卫（`core/minimap-geometry.sameMiniMapFrame`）：落地事件可能仍早于位置回填，此时取样得到的几何与上一帧完全相同——不判等就会把旧图重画一遍、还白吃一个刷新窗口。
-  ③ 失败自愈：取样失败时挂 `drawAfterRender` 交下一次落地补画，而不是干等 30s 节拍；同时 `lastDrawAt` 必须推进（否则 `nextMiniMapDeadline` 立即到期，`tick` 与 `draw` 互相唤醒成自旋）。
-  ④ 回归：`tests/minimap-geometry.test.ts` 的 `sameMiniMapFrame` 4 例；`tests/view-minimap.test.ts` 的「切布局当场不换图 / 落地但同几何不换图」2 例。
-
-- [K133] **缩略图有两条独立预算：连线按节点数门槛、方块按标记数上限（2026-10-25 用户裁决重写）**：`MINIMAP_MAX_MARKS` 只约束**方块**；**画不画连线**由节点数与 `MINIMAP_LINK_NODE_LIMIT` 比较决定。
-  ① 现行口径（2026-10-25 三改后的最终版）：`total ≤ 500`（= `PERFORMANCE_NODE_THRESHOLD`，同文件别名，不另写数）⇒ 全部非鱼骨布局画**全部**父子连线（鱼骨按自己的骨干 + 斜脊规则，见下）；`> 500` ⇒ 只画**子节点深度 ≤ `MINIMAP_LINK_MAX_DEPTH`（= 7）** 的父子边。**不配额、不抽样、不设星形闸**——深图只剩浅层骨架、浅宽图（深度不到 7）等于全画，是明确取舍。深度过滤**只作用于连线**：`buildMiniMapSvg` 画方块仍用全量 marks。鱼骨例外不变：只画骨干 + 斜脊（其骨深 1、脊深 2，永远在上限内 ⇒ 等于不受影响）。历史：3 层 → 一条不画 → 按层分档，前两版在 `realistic-500` 上分别是 3 条与 0 条。
-  ② 判据用**全量**节点数（`buildMiniMapMarks` 返回值里的 `total`），不是抽样后的标记数——两者只在 >2000 时分叉，而门槛是 500。
-  ③ 抽样随之简化：退役「浅层必留」（该规则只为「连线不跨级」存在；≤500 时不抽样，>500 走 shallow 但仍画浅层边），改为**纯 DFS 步长** `ceil(total / maxMarks)` ⇒ 标记数 ≤ `maxMarks + 1`（根恒留）。历史教训：浅层必留 + 全量步长两层叠加曾突破上限（`total 9506 / shallow 1506` ⇒ 3106 块 = 1.55×）。**已知限制**：抽样与连线共用同一份标记集，故 >2000 节点的图浅层连线会随抽样一起变稀（既有行为，未处理）。
-  ④ 回归：geometry「shallow：深 0…8 单链 ⇒ 7 条（第 8 层剪掉）、all ⇒ 8 条、方块数不变」+「浅图 shallow 与 all 逐字节相同（时间轴兄弟横链 / 鱼骨骨脊）」、capture「>500 且深 9 ⇒ 7 条」「>500 但只有 1 层 ⇒ 510 条（全画）」「≤500 ⇒ 全画」、geometry「9506 节点 ⇒ ≤2000 块」。实机（解码 `img.src` 数 `<path>`）：`深树示例`（64）**63**、`realistic-500`（502 / 深 9）**53**、`小地图-单主干-501`（501 / 深 7）**500**、`小地图-宽树`（601 / 深 2）**600**、`小地图-星形`（511 / 深 1）**510**。
-- [K134] **帧等价必须含「标记指纹」，只比外框会漏掉换布局（2026-10-24，小地图四轮修）**：`sameMiniMapFrame` 的判据是「内容盒 ±0.5px + 面板严格相等 + `signature` 相等」，三项缺一。
-  ① 症状：只比内容盒与面板时，「外框恰好相同、内部排布不同」的两套布局被误判同帧 ⇒ `drawWhenLanded` 跳过重画，并把「等渲染落地」的标记当作已消费 —— 小图停在上一次布局，且不再自愈。
-  ② 指纹口径（`marksSignature`）：32 位 FNV-1a，逐个标记混入 `round(x/y/width/height)` 与 depth/root 位。**按整像素取整**与 0.5px 容差同口径：亚像素抖动不该翻脸，布局位移必然改变至少一个整像素坐标。
-  ③ 同批收口：`contentExceedsCanvasAtFullScale` 与 `captureMiniMap` 都接受可选的 `MiniMapMeasure`，视图在**同一次 `refresh`** 里只测一遍全树（`measureMiniMapContent`）——判据与取图同源同刻，5000+ 节点省 1~2 遍遍历；节拍与唤醒路径不传则自测。**2026-10-25 清理批把画布尺寸也一并透传**（两者都接受可选 `canvasSize`）：`refresh` 只读一次实时矩形（`getCanvasSize` 内部是 `getBoundingClientRect`，会强制布局），窄画布门禁、判据、取图共用同一份读数；取不到即**先早退**，不再白跑一遍全树测量（此前 `canvasSize` 为 null 时仍会先 `measureMiniMapContent`）。
-  ④ 回归：`sameMiniMapFrame` 5 例（含「外框相同、指纹不同 ⇒ 不等」）；`tests/view-minimap.test.ts` 的「判据与首帧取图共用同一份测量（两参都原样透传）」与「画布不可得 → 不测全树」；`tests/engine-minimap-capture.test.ts` **15** 例（色/连线样式/鱼骨分派/面板上限/异常只告警一次/传入画布尺寸不读实时矩形/深 9 只画 7 层/浅宽等于全画）。
-
-- [K135] **浮层交互两条：悬停保活、滚轮转发（2026-10-25 用户裁决）**：小地图是**浮层**（覆盖画布 5.8% 面积、可见时吃指针），两条手感缺口必须显式处理。
-  ① **悬停不淡出**：`nextMiniMapDeadline` 的 `MiniMapCadence.hovering` 把 `hideAt` 置 `Infinity`（纯数据表达「不藏」），`mouseleave` 时把 `lastActivityAt` 重置为现在——否则「空闲 29s 才进入、停 5 分钟再离开」会在指针一离开就消失。悬停期间若有脏图仍按刷新间隔换图（指针停留不该让图停在旧数据）。实机：进入 31s 仍 `is-visible`，离开 32s 后隐藏。
-  ② **滚轮转发**：面板挂在 `containerEl` 下、是画布的**兄弟节点**，引擎滚轮处理绑在画布上 ⇒ 不转发就「指针压在小地图上缩放失灵」（实测同一 `Ctrl+滚轮`：画布 0.0861→0.2861，面板完全不动）。做法是面板监听 `wheel`（`passive:false`）→ `preventDefault/stopPropagation` → **重派发**到 `canvasEl`；**不要自算 factor**（锚点/步进/夹紧都在引擎里，自算必然与画布手感分叉）。构造器取自面板所属窗口（popout 跨 realm），缺失静默跳过。
-  ③ **停用必须复位 `hovering`**（2026-10-25 清理批）：面板隐藏后 `visibility: hidden` + `pointer-events: none`，浏览器不再派发 `mouseleave`；残留的 `hovering=true` 会让重新启用的会话把隐藏截止时间算成 `Infinity`，**永不淡出**直到用户再划过一次面板。回归：`tests/view-minimap.test.ts` 四条（悬停 31s 不藏 / 停用后重新启用仍照常淡出 / 转发带 `ctrlKey` 与坐标并 `preventDefault` / 面板未显示时不转发）。
-
-- [K136] **小地图连线必须按布局复刻画布，不能只有一套「猜主轴」的通用模型（2026-10-25 用户裁决「1:1」+ 实机逐段取证）**：`connectorModeForLayout` 从两态扩到**五态**，几何取自画布 `g.smm-line-container` 下 `<path d>` 的真实坐标（该 `d` 是**布局坐标**，外层 `g.smm-container` 才带 `matrix(scale,…,tx,ty)`）。
-  ① **症状与根因分层**：逻辑结构图 / 思维导图此前已满意，其余三个布局不同步。逐层量下来是四件事：**主轴**（画布由布局写死：org/catalog 恒竖直、logical/mindMap 恒水平）被我们按「两盒相对位置」猜——组织结构图的子节点铺得比父节点宽，很多整体落在父左侧，于是 `toLeft` 命中，画出「从父左缘横折」，而画布是「父底中点向下」；**锚点**（左右分支取左右边中点、上下分支取上下边中点、目录/时间轴取**子节点左边界**，目录一级落**左上角**）我们一律取中点；**折点**画布水平 **0.6**、竖直 **0.7**，我们一律 0.5；**拓扑**时间轴一级是**兄弟横链**（同级相连），缩略图数据里只有 `parent`，画不出来。
-  ② **实测值（三个样例文件的坐标）**：组织结构图 `M 683,524.2 L 683,597`（根底中点竖落）+ `M -764.6,597 L 2319.6,597`（母线横跨各一级中心）+ 每个一级 `竖落至子顶中点`；目录组织图 `M 27.6,597 L 1271.4,597`（母线横跨各一级**左边界**）+ 每级 `M x,597 L x,628.2`（在自己左边界竖落到节点头）+ 二级竖轨 `M 15.6,655 L 15.6,968.5`（`x = child.left − 12`、从父底到末子中心）+ 横档 `M 15.6,691.8 L 27.6,691.8`；时间轴一级 `M 723,509.6 L 827,509.6`（父右缘→子左缘）+ 二级竖轨 `x = parent.left + 0.6×(child.left − parent.left)`（`827+0.6×43.36=853.0`）+ 横档到子左边界。**纵向时间轴（`verticalTimeline*`）不归 `chainRail`**：实测其深层就是「父右缘 → 0.6 竖档 → 子左缘」（`M 719.7,602.8 L 752.1,602.8`，`752.1 = 719.7 + 0.6×54`）、一级是**同一中心线的竖链**，正是 `branchH` 的横向分支与竖直退化——映射到 `chainRail` 会把整张图的连线方向画反。三者均**无圆角 `Q`**（折线一律直角），只有逻辑/思维导图带 5px 圆角——故曲线样式只作用于 `branchH`。
-  ③ **实现形态**：几何收敛到 `buildMiniMapLinks(marks, mode): MiniMapLink[]`，一条连线只有三种描述——`elbow`（直线折点：轴 + 比例后的坐标）、`polyline`（顶点序列，鱼骨斜脊）、两者皆无＝直段（竖轨/横档/母线/时间轴一级横连）；`tier` 决定描边深浅（一级深、更深浅）。SVG 装配退化为「坐标映射 + 拼 path」，`buildMiniMapSvg` 不再按布局分支。**别退回去按两盒位置猜主轴**，也别在渲染层另写一份布局判断。
-  ④ **时间轴一级的兄弟横链：已画（2026-10-25 用户裁决「加兄弟横链」）**。画布上它是 `M 913.7,509.6 L 1152.4,509.6`（前一个一级的右缘 → 下一个一级的左缘，同一中心线）。做法：`chainRailLinks` 把根的一级子节点**按 x 升序**串成一条链——根右缘 → 首个一级左缘，之后每段是「前一个的右缘 → 后一个的左缘」；**不再**「根 → 每个一级各连一条」（那种画法在一级不同线时会露出从根发散的斜射线，只是被方块遮住才看似正确）。`MiniMapLink` 仍是「一条线一个描述」，兄弟链只是多几条同 tier 的直段，**没有**引入新的「非父子边」概念。实机：时间轴 8 个一级 ⇒ 该中心线上一排 8 段、起点依次递增（10/27/55/81/107/134/161/185），与画布 `913.7→1152.4` 同形。
-  ⑤ **回归**：`tests/minimap-geometry.test.ts` 新增 4 例（`buildMiniMapLinks` 的 busV / railLeft / chainRail 逐坐标断言 + 未知形态退回 branchH），`connectorAnchors` 4 例期望值按 0.6/0.7 更新。实机（三个样例文件，部署 → 重载后读 `img.mindmap-minimap-img` 的 SVG）：org 117 条连线、一条 `dx=176` 的水平母线、`C` 段 0；catalog 96 条、母线 `dx=200` + 5 个左边界竖落 + 左轨；timeline 83 条、`C` 段 0、竖轨与横档齐备。
-
-- [K137] **会话类副作用的两个收尾口径：唤醒要分「用户手势 / 渲染落地」，拆卸要早于 `await`（2026-10-26 审核修复）**：
-  ① **渲染落地不是用户手势**：`node_tree_render_end` 会被**后台**工作触发（图片尺寸回灌、字体加载、内容重测），它只该续期**已显示**的面板 ⇒ `noteChange` 只在 `session.visible` 时 `wake`；`wake` 的「补一帧 + show」分支因此只有用户入口可达（`data_change` / `view_data_change` / `resize` 各自显式 `wake`，四项外观偏好走 `refreshMiniMap*`，首次出现由 `refresh` 的 `reveal` 负责）。否则用户看着它淡出后，一次后台重渲染又把它叫回来，与「动图后 30s 淡出」的产品口径冲突。
-  ② `drawWhenLanded` 同口径分档：淡出态**只换图、不 `show`**（`drawAfterRender` 标记必须消费掉，否则每次渲染落地都白跑一次取样），可见态才续期并 `show`。
-  ③ **拆卸必须早于 `await`**：`onUnloadFile` 在 `await savePipeline.save(...)` 期间，新文件可能已接管视图并重建会话；`teardownMiniMap` 若放到 await 之后的 `destroyInstance()` 旁，会**误拆新会话**。故它与其它会话收尾（`closeInlineEditor` / `persistViewport` / `titleRenamer.cancel`）同批放在 await **之前**，`onClose` 那处照旧保留（关闭视图不一定走 onUnloadFile）。漏掉这一步的后果：切换文件的间隙里旧面板仍在（可见、可点），加载失败路径更是无人收尾。
-  ④ **回归**：`tests/view-minimap.test.ts` 两条——「淡出后 `node_tree_render_end` 不复活且不取样」「淡出后 `resize` 复活并补一帧」。
-
-- [K138] **Alt+滚轮横轴：插件唯一接管的滚轮分支，且必须挂在画布祖先的 capture（2026-10-26 用户裁决「上滚 = 视野左移」）**：
-  ① 引擎的 wheel 监听就在 `mindMap.el`（= 视图 `canvasEl`）**自身**上、处理前先 `stopPropagation()`：冒泡阶段的容器监听收不到（旧纵向实现即死代码），**同元素**的 capture 也不可靠——target 阶段按注册顺序执行、引擎先注册 ⇒ 会先纵向走一格。故监听挂 `canvas.parentElement`（视图 `containerEl`）的 capture，命中即 `preventDefault + stopPropagation`，再经 `panMindMap` **只改 x**。
-  ② 方向与幅度：`deltaY < 0`（上滚）⇒ dx 为正（内容右移 = 视野左移），与「上滚 = 往上看」同构；幅度 `min(|deltaY|, 100)`——鼠标一格恒一档（100/120 同值），触控板小 delta 按实际像素跟手，**不另做「是否触控板」判定**（引擎 `customCheckIsTouchPad` 是私有启发式，不复刻）。**2026-10-26 起**：Alt 横轴与纵向鼠标格统一走 rAF 指数平滑（K144），小 delta 的总行程不变、但到达时间被拉到 ~100ms 级。
-  ③ 让位项：`Ctrl/Cmd`（缩放优先）、**编辑中**（引擎 wheel 会让编辑框 `hideEditTextBox`、内联编辑器在 `mousewheel` 上提交——输入必须先落数据；那一格走引擎的纵向平移）、指针不在画布内（工具栏 / 搜索栏 / 小地图面板本体；面板的 wheel 转发目标即画布，故转发后仍生效）、纯横向 delta（触控板横滑由引擎原生处理）。
-  ④ 回归：`tests/view-viewport.test.ts`——注册面（祖先 + capture + 非 passive）、上/下方向、封顶、触控板小 delta、四类让位、`altWheelPanDelta` 纯映射。
-
-- [K140] **视口框投影必须读实时画布尺寸；`geometry.canvas` 只是绘制快照（2026-10-26 实机定位「改窗口后方框很久才动」）**：
-  ① 症状：窗口放大后小地图里的视口框原地不动，最长约 30s 才跳到正确值；倍率越高越明显（6× 实测框宽停在 14.5%、正确 20.7%，延迟 **29.7s**；同一 transform 未变，排除引擎重排干扰）。
-  ② 根因：`session.geometry`（内容 / 面板 / **画布**）只在 `draw → applyFrame` 写入；`resize` 只 `noteChange + wake`，`updateBox` 读 `geometry.canvas` ⇒ 到下一次 `draw`（`MINIMAP_REFRESH_INTERVAL_MS = 30s`，且从 **`lastDrawAt`** 起算，不是从缩放起算）之前一直用旧画布。期间若有 `view_data_change`（缩放后引擎居中/重排），框还会按旧画布反复算错——不是"冻住"，是"持续算错"。
-  ③ 修法：`updateBox` 的 `canvas` 改 `getCanvasSize(mindMap) ?? geometry.canvas`（实时优先、隐藏叶回退快照）；`content` / `panel` 仍用快照——它们必须与面板 DOM 当前值一致（`applyFrame` 写入，CSS 过渡期百分比随面板同步缩放）。缩略图与面板尺寸仍按 30s 节拍，**不**在 resize 时重取样（全树测量 + SVG 重建成本高）。代价：每次投影一次实时矩形读取——小地图拖拽本就按帧投影（rAF 合帧）、且每帧要写 4 个样式，多这一次读取不改变量级。
-  ④ 回归：`tests/view-minimap.test.ts`「窗口缩放：视口框按实时画布重投影」——放大 800→1600 ⇒ 80%→100%、缩小到 400 ⇒ 40%，且 `captureMiniMap` 仍只调过一次；负向自检：退回 `geometry.canvas` 时首断言停在 80% 红灯。
-
-- [K141] **鱼骨缩略图骨架 = 一条水平骨干 + 每骨一截 45° 短骨 + 斜脊（2026-10-26 实机修正）**：
-  ① 症状：鱼骨布局下小地图**没有横骨干**，四根骨都从鱼头同一点放射（扇形/星形），与画布不符（用户实机提出）。
-  ② 实测（`fixtures/小地图-布局-鱼骨.md`，17 节点）：画布 9 段 = **1 条水平骨干**（`M 528.4,368.6 L 978.0,368.6`）+ 4 条短斜骨（`dx = dy = 58.6`，两端落在骨干与子节点近边角点）+ 4 条斜脊；旧小图 8 条 = 4 条「根 → 骨」放射线 + 4 条脊，**零水平段**。
-  ③ 根因：`fishboneConnectors` 规则 1 写成「根 → 每个一级一条直段」；引擎 `layouts/Fishbone.renderLine` 实际是「水平骨干（根右缘 → `maxx - offset/tan(fishboneDeg)`）+ 每个一级一截斜骨（起点 `child.left - offsetX`、终点子节点近边角点）」。
-  ④ 口径：`spineY = 根中心线`；斜骨与骨干成 `fishboneDeg`（**默认 45°**，插件不暴露该选项）⇒ `offsetX = |nearEdgeY - spineY|`；同一层各骨该值本应相等（布局由 `root.height/2 + marginY` 决定），取最大值只为退化输入不出负长度。日后若开放角度，须从引擎读 `opt.fishboneDeg` 换成 `offset / tan(deg)`。
-  ⑤ 回归：`tests/minimap-geometry.test.ts`（骨干两点 y 相同、斜骨 45°、脊 x 严格递增）、`tests/engine-minimap-capture.test.ts`（鱼骨 2 骨 ⇒ 5 条 path）；实机同一 fixture 小图与画布逐段对齐。
-  ⑥ **斜脊锚点同样按画布复刻（2026-10-26 二轮修正）**：起点 = 骨块**外缘**（上侧骨顶边 / 下侧骨底边）的 `left + 0.3×宽`（引擎 `Fishbone.indent`，常量在 `core/minimap-geometry.FISHBONE_INDENT`）；折点 = 每个子节点的**朝外角点**（上侧左上 / 下侧左下）。**不要**复用 `connectorAnchors` 的「朝向对方边中点」——实测会让脊从骨块**右缘中点**出发、首段斜率 −2.5 再折回 45°（可见折角），且整条线向骨干内收约 3.2 面板 px。
-
-- [K142] **无选中时 `Ctrl+C` = 复制整张图的大纲（含中心主题），不再提示「请先选择一个节点」（2026-10-26 用户裁决）**：
-  ① 症状（修复前）：刚打开导图 / 点空白后按 `Ctrl+C`，剪贴板原样不动、只弹「请先选择一个节点」；引擎已 `preventDefault`，用户连默认复制都拿不到，反而容易粘出**上一次的旧内容**。
-  ② 口径：有选中 → 复制选中节点及其整棵子树（`collectSelectedSubtrees`，**根被过滤**以免把整篇文档嵌成自己的子节点；**只选中根**时过滤后集合为空，同样落整图分支）；**无选中 → 复制整张图**，中心主题作首行，与选中路径同一序列化口径（标题降级为 `-`、层级用缩进），可直接 `Ctrl+V` 粘回。
-  ③ 实现：`engine/mindmap-clipboard.collectWholeTreeSubtrees`（直接取根节点 `nodeData`）；`copySelectedNodes` 按「选中优先、空则整图」二选一，写剪贴板与提示共用 `writeOutline`；渲染树未就绪（首帧前 / 销毁中）才提示 `common.notLoaded`。**2026-10-26 优化 A**：文本路径不再克隆——`collectSelectedSubtrees` / `collectWholeTreeSubtrees` 返回的是引擎 `nodeData` **本身**（只读，调用方不得改写），`cutSelectedSubtrees` 直接返回引擎 `copyNodeTree` 已产出的副本；uid 不剥离（Markdown 文本里没有 uid），`cloneSubtreeWithoutUid` 已删除。实测 502 节点：逐节点 JSON 克隆 0.3ms + 一份整树内存；`nodeData` 带 `_node` 回指，**不能**用整树 `JSON.stringify` 替代逐节点克隆（会 `Converting circular structure to JSON`）。
-  ④ 已知后果（有意接受）：把这份含中心主题的大纲粘回同一张图的根下，会得到「中心主题的副本」子树。此前过滤根正是为避免这种**选中驱动的误操作**；现在是用户显式复制全图，按「复制什么就粘什么」放行。
-  ⑤ 回归：`tests/view-clipboard.test.ts`（无选中 ⇒ `- 文档\n  - 甲` + 提示「复制」；无根 ⇒ `notLoaded` 且不动剪贴板）、`tests/engine-subtree-clipboard.test.ts`（含根、**同一对象/不克隆**、空 renderer ⇒ `[]`）；实机同一按键路径：剪贴板变为整图大纲、提示「复制」。
-
-- [K143] **右缘竖栏的「组内分隔」画成条目 `border-bottom`（官方 Canvas 同款），不是 1px 缝隙；组圆角 4px（2026-10-26 用户截图对照）**：
-  ① 症状：组内两个按钮看着像「两张分开的小卡片」，缝比官方明显；卡片圆角也比官方更圆。
-  ② 实测（dpr 1.5、同窗口）：官方 `.canvas-control-item` 的 `border-bottom: 1px` computed **0.667px**（浏览器把 1px 边框按设备像素吸附 = 1 物理 px）；旧实现 `gap:1px` + 组底色透出 ⇒ 缝隙 **1 CSS px = 1.5 物理 px**，且是"空"不是线，所以更显眼。圆角：官方 `var(--radius-s)` = **4px**，旧值 **6px**。
-  ③ 修法：组 `gap:0`；`.mindmap-hud-group .mindmap-tool-btn` 加 `border-bottom: 1px solid var(--background-modifier-border)`，`:last-child` 去掉（否则与组下边框叠成 2px）；组 `border-radius: var(--radius-s, 4px)`、`background: var(--interactive-normal)`、`box-shadow: var(--input-shadow)`（官方不是 `--shadow-s`）、**不设 opacity/过渡**；按钮 `height:auto; padding:8px; box-sizing:border-box`（官方盒模型，节距 32.67px = 官方；固定 height 32 + border-box 会把线吃进盒内、每组矮 0.67px）。悬停取色 `--interactive-hover` + `--text-normal`（不是 accent）；置灰只把 `svg` 染 `--text-faint`（不再整块 `opacity:.5`）；`cursor: var(--cursor)`；`--icon-stroke: var(--icon-s-stroke-width)`（本机 2px）。tooltip 用 `setTooltip(..., { placement: 'left' })` 对齐官方 `data-tooltip-position="left"`。移动端媒体查询去掉组的 `padding: 3px`（会把通栏细线缩成短横杠）。
-  ④ 回归：`tests/view-toolbar.test.ts` 断言全部工具按钮的 `data-tooltip-position === 'left'`；几何与取色仍以实机截图 + `getComputedStyle` 对照为准（`lint:css` 只验语法）；换主题时若 `--radius-s` / `--interactive-normal` / `--input-shadow` 缺失，回落 4px / 主题必有变量。**2026-10-26 批 5 补**：落位在**构建与状态回写两处**都要带——`createToggleRow.syncState` 曾漏传 `placement`，切过一次状态的按钮提示会回默认下方；已修并加 1 例锁死（测试桩在省略落位时**清除**旧值，漏传即红；负向自检确认恰好该 1 例转红）。
-  ⑤ 同批清理（批 5）删掉的旧顶栏残留：`.theme-dark .mindmap-toolbar` 的 `background`（`.mindmap-toolbar` 是穿透层 `inset:0`，暗色下会把整块画布盖成 `--background-secondary`）、两条与通用规则逐字重复的暗色按钮规则（其中 `:hover` 与组内 hover 同特异性、靠后出现而**压过** K143 的 `--interactive-hover`）、四个 `*-select` 死选择器（顶栏下拉已移除、源码零引用）、移动端 `.mindmap-tool-btn { width/height: 28px }`（特异性低于组内规则，从未生效）。
-
-- [K144] **滚轮平移平滑化：鼠标格进 rAF 指数趋近，触控板小 delta 仍交引擎（2026-10-26 原型 + 实机曲线）**：
-  ① 症状：引擎对鼠标一格是「固定 100px、当帧到位、零过渡」（`View.js` 的 `translateXY`），实测 `transition-duration: 0s`、单帧 Δ100；连滚/同帧多格直接累加（3 格 = 300px / 0.2ms 一次呈现）。
-  ② 实现：`features/view-viewport` 在画布祖先 capture 拦截**鼠标格**（`|deltaY| ≥ 50`）与 Alt 横轴，把位移累加到目标值，逐帧指数趋近（τ=45ms，约 150ms 走完 95%，单帧限幅 120px），每帧 `panMindMap`；`|deltaY| < 50` 的纵向输入原样交引擎（触控板本来就逐事件跟手，不再叠延迟）。
-  ③ 实机（120Hz）：单格 100px 分 ~20 帧（首帧 −29.9，随后 −11.7 / −9.9 / −8.2 / …，≈350ms 尾部收敛、95% 在 ~150ms）；Alt 同曲线；同帧三格不再 300px 瞬移，而是连续曲线；同帧十格首帧被限幅在 **120px**。500 节点性能模式下平滑期间帧间隔 avg 8.26ms / max 8.8ms（无掉帧）。
-  ④ 收尾：`mousedown`（开始拖拽）与 `Ctrl|Cmd` 滚轮（缩放）取消未走完的平滑；引擎换代（`setupViewportGestures` 再次调用）取消旧会话；到达画布边界（`limitMindMapInCanvas` 夹住）连续 2 帧走不动即丢弃剩余量。
-  ⑤ 已知取舍/待决：τ、阈值 50、Alt 小 delta 也被平滑（约 100ms 级延迟）是产品口径；toolbar fit/center 等**其它视口命令**尚未注册取消（极端时序下会在 fit 后继续走完剩余平滑）；`persistViewport` 不做 flush（动画中关文件可能存到中间位置）。
-  ⑥ 回归：`tests/view-viewport.test.ts` 28 例（分帧总量 / 连滚累加 / 两轴 / 让位项 / mousedown 取消）。
-
-- [K145] **注释语法升级为节点级配色指令（`%%#89CFF0%%`，2026-10-27 用户裁决）**：
-  ① 动机：插件此前只能整篇换配色（`viewState[<路径>].palette`），节点级颜色没有持久化位；而 `%%…%%` 在导图上完全不可见（纯隐藏备注）。改为「注释语法 + 十六进制色」既是用户能写进 Markdown 的唯一真相，也保住了「注释不显示」的既有观感。
-  ② 语义：指令写在节点行**顶层**，该节点 + **全部后代**改色；**就近覆盖**（自身指令优先，否则最近祖先）；**优先级 节点 > 文件配色 > 出厂默认**。落地为节点 data 的 `fillColor` / `lineColor` / `borderColor` / `color` 四键（引擎 `Style.merge` 自身样式优先）；连线色取**子节点**的 `lineColor`（`styleLine(line, childNode)`），故后代连线天然跟随。文字色按 `domain/color.nodeInkColor` 取（首选柔和深灰蓝 `#111827` 够 4.5 就用它，否则在纯黑/纯白里取对比度更大者——深底深字不可读）。**`borderColor` 同色、`borderWidth` 不动**：画不画边框仍由边框开关（主题维度）决定，见 K146 ③。
-  ③ 解析：`features/node-inline-tokenize.colorDirectiveOf` 复用 `MARKUP_RE`（与段序列同一份保护区语义）⇒ 围栏代码 / 行内代码 / 数学里的同形态不识别；写在其它标记内部（`**%%#fff%%**`）也不识别。值收 `#rgb` / `#rrggbb`（4/8 位 alpha 拒绝）与哨兵 `none`（K149）；**非法值仍按普通注释隐藏**（不做可见报错），由用户裁决。
-  ④ 应用时机（两处，缺一则漏）：创建引擎**前**把样式写进 data 树（`view.loadMindMapFromFile` 与 `features/mindmap-codeblock.createEmbedEngine`）——引擎 `handleData` 会克隆数据，建好后再改原树无效；创建后只在 **`node_tree_render_end`** 同步（`syncNodeColorDirectives`），**不能挂 `data_change`**：插件内联编辑（`applyRawNodeContent`）直接改 data 后 render、根本不发 `data_change`（K108），而撤销时 `data_change` 在渲染排队之前发出、`renderer.root` 还是旧树。无变化不重渲染（多数 `data_change` 与颜色无关，大图不为此多付一轮整树渲染）。
-  ⑤ 保真：样式键是派生显示数据，**不写回文件**；指令本身留在 `mdRaw`，删除指令即删除四个样式键（填充 / 连线 / 描边 / 文字色）、回落主题。含图节点与「整行只有指令」的节点不自绘 ⇒ 指令按字面显示（与既有注释同口径，已知边界）。小地图**按节点配色逐块上色**（K146 ④；本条早先「缩略图仍是单色墨」的说法已被该批取代）。
-  ⑥ 回归：`tests/color-directive.test.ts`（归一 / 亮度 / 保护区不识别 / 就近覆盖 / 样式键清除 / 有变化才重渲染）。
-
-- [K146] **节点配色的两个入口、边框与缩略图口径（2026-10-27 用户裁决「入口做进右键配色」）**：
-  ① **入口按右键落点分流**（同一个「配色」标题、两套语义）：右键**节点** → 给该节点及子树写正文指令（`features/view-node-color.applyNodeColor`，首项「默认」＝删指令、跟随整篇配色，**不写 data.json**）；右键**空白** → 整篇方案（`applyPalette`，写 `data.json`）。两处都加「自定义」（`ui/modal-color`，收十六进制 / RGB，统一转 `#rrggbb`；`rgba` 与 4/8 位十六进制同口径拒绝）。节点级色值取**非默认**配色的 `PALETTES[id].light.rootFill`（`paletteNodeColor` 唯一来源，新增配色自动进菜单；「默认」项已表达跟随整篇，不再单列那枚蓝，2026-10-27 用户裁决）；菜单文案按**色相**命名（`nodeColor.*`）。**分组也必须一致**：默认 + 五个颜色同组，只在「自定义」前画一条分隔线——节点侧曾多画一条「默认」后的线，同屏对比时子菜单高度与分组肉眼可见不同（2026-10-27 实机指出并修正，`tests/view-context-menu.test.ts` 锁定「标题序列 + 分隔线条数」两处相等；K149 之后节点侧也不再单列「无颜色」，两处重新逐项相同）。
-  ② **多选取「右键按下」时的集合**：引擎的 `contextmenu` 处理器**先折叠多选**（`clearActiveNodeList` + `active()`），`node_contextmenu` 到达时 `activeNodeList` 往往只剩一个。故在 `node_mousedown`（button 2）里留存选中集合，菜单打开即取走（WeakMap per view）；只给**最上层**节点写指令（`engine/mindmap-nodes.topMostNodes`，与剪贴板的选面判定同一份实现）。
-  ③ **节点颜色覆盖边框色**（补充 K145 的「不覆盖」）：写节点 data 的 `borderColor = hex`，`borderWidth` 仍由边框开关决定；**主题预设**仍不得带 `borderColor`（小地图的默认墨色依赖色板真色）。
-  ④ **小地图按节点配色**：`core/minimap-geometry` 的标记新增 `color`，取样时读 `nodeData.data` 的 描边 → 填充（`pickVisibleColor`，与主题墨色同一条可见性判定；`isTransparentColor` 由 engine 迁入 core）；SVG 给该块单独写 `fill`，颜色进帧指纹（只改颜色也要换图）。
-  ⑤ **自定义整篇配色**：`viewState[<路径>].palette` 的值域扩到十六进制（`normalizePalettePreference`；非法值仍回退 `default`）。渲染侧 `engine/mindmap-palette`（2026-10-27 自 `mindmap-theme` 拆出，两形态的唯一分派点在 `resolvePaletteTheme`）从一个主色派生五档（`domain/color.mixHex`：根＝原色、二级 86% / 三级 93% 向背景靠拢、描边 50%、连线 35%），文字色按各档亮度现算（`contrastTextColor`）；预设 id 的色板与文字色不变。
-  ⑥ 回归：`tests/view-context-menu.test.ts`（节点/空白两套配色菜单、写指令/替换/清除/自定义、右键按下的多选集合）、`tests/color-directive.test.ts`（`parseColorInput` / `setColorDirective` / `topMostNodes`）、`tests/minimap-geometry.test.ts`（逐块颜色、颜色进指纹、SVG 单块 fill）、`tests/mindmap-theme.test.ts`（自定义五档与亮度文字色）。
-
-- [K147] **小地图「30s 节拍」只该覆盖后台重渲染，插件内手势各有显式入口（2026-10-27 实机复盘）**：
-  ① 现象：节点右键改色、点「自动整理」之后，缩略图最长 30s 才反映。根因不是节拍本身（它防的是渲染风暴），而是这两个动作走「插件改 data → `render()`」通道：不发 `data_change`，只经 `node_tree_render_end` → `noteChange` 置脏，拿不到 `wake({ forceDraw })`，于是被当成后台重渲染。
-  ② 判据不是「几何变没变」，而是**效果此刻在不在 data 里**：整篇配色 / 连线 / 边框当场写进 themeConfig ⇒ `refreshMiniMap`（now）；要等一次渲染落地才落到 data 的 ⇒ `refreshMiniMapAfterRender`。据此补两处，**都用 after-render**：`features/view-node-color.applyNodeColor`（本函数只改原文，节点 data 的 `fillColor/borderColor` 要等 `node_tree_render_end` 里的 `syncNodeColorDirectives` 才写入）与 `features/view-toolbar.arrangeMindMap`（`RESET_LAYOUT` + 根回填轮询）。**2026-10-27 实机订正**：节点配色最初写成 `refreshMiniMap`（now），点击后 1.4s 缩略图一动不动——当场采样拿的是旧色，画出一张没变化的图并把 30s 窗口白耗掉；改成 after-render 后由 `drawWhenLanded` 在落地时补画（颜色已进指纹 ⇒ `sameMiniMapFrame` 不会误判同帧）。
-  ③ 为什么不统一改 `noteChange`：它的输入是**引擎事件**，同一事件既可能是用户手势（插件内联编辑、节点增删）也可能是后台重渲染（图片回灌、字体加载、内容重测），按事件类型猜必然误判（K137 已在此踩过一次）。手势只能在**动作发起处**判定，`commitPreference` 的 `miniMap` 字段是同一思路的既有先例。
-  ④ 回归：`tests/view-context-menu.test.ts`（改色后调 `refreshMiniMapAfterRender`；原文没变 / 仅根节点不调）、`tests/view-toolbar.test.ts`（受理后调 `refreshMiniMapAfterRender`，未受理不调）。
-  ⑤ **实机读数**（2026-10-27，Obsidian 1.14.4 / 库内 0.2.5 / `示例/测试/小地图-宽树.md`，35 渲染节点、缩略图 SVG 112660 字符）：**改色写 now 通道** → 点击后 1455ms 缩略图 `src` 仍为 112660（`firstDiff: -1`），而文件已写入 `%%#2e9e8f%%`、节点 `path[fill]` 已变 ⇒ 当场采样只能画出旧色（缺陷实锤）；**改 after-render** → 点击后 2252ms（含 2s 采样 sleep）内 `src` 112660 → 112685，且 SVG 内含 `#2e9e8f`（偏移 78168）。**自动整理**：几何未变时 `posChanged=false / srcChanged=false`（正确，无变化不重画）；模拟拖拽把节点从 `805,-101` 移到 `985,-26` 后再整理，`geoChanged=true` 且 `minimapChanged=true`（2252ms 内含 sleep）。对照：拖拽本身走 `data_change`，那次小图也更新了，但那是距上次绘制已 ≥30s 的自然节拍，不是即时通道——勿据此以为"内容类变更也即时"。
-
-- [K148] **图片「探测失败」记忆加打开期失效（2026-10-27）**：
-  ① 问题：`IMAGE_FAIL_CACHE` 的 5 min TTL 只在**模块内**读写，无任何清除入口（`isImageFailFresh` 仅测试直接调）。瞬态失败（同步刚落地、库索引未就绪、资源地址暂不可解析）会被当成坏图，最长 5 分钟不重探，期间图片按默认/回退尺寸显示，且用户没有手势能提前解除。
-  ② 修法：新增 `media/images-path.forgetImageFail(url)`，由 `services/document-service.parse` 在 `walkResolveImagePaths` 之后对本文件的图**逐个**解除。语义是「重新打开这幅导图 = 再给这些图一次机会」。
-  ③ 三条边界：**不缩短 TTL**（真坏图会每次渲染重付 2.5s 超时）；**不做全表清空**（别的导图的坏图不必跟着重探）；**`mindmap` 围栏块不清**（它是每次进视口就重建的 `MarkdownRenderChild`，清了等于反复重探）。
-  ④ 回归：`tests/images-path.test.ts`（只清指定 URL、其余保持；清掉后确实重新走一次探测）。
-  ⑤ **为何只有单测、没做端到端实机**（2026-10-27）：库内图片的资源地址自带 `?文件修改时间` 缓存串（官方 `getResourcePath` 输出），文件出现或改动时**地址本身就会变**，旧的失败记录天然不命中；要复现「同 URL 恢复」得制造同名且 mtime 不变的覆盖写，不是真实场景。本项价值因此集中在**外链**与**地址不变但当时不可读**（解码失败、偶发 IO）两类。
-
-- [K149] **哨兵 `%%none%%`：给继承链一个「显式空层」（2026-10-27 用户裁决「引入不跟随上层」）**：
-  ① 问题：继承只认「有没有指令」（`own ?? inherited`），于是**彩色子树里的单个节点无法脱色**——删掉指令只会继续继承父色，想「变回主题色」只能把主题色写死成一个 hex（且换主题就错）。2026-10-27 实机复核时菜单还把这类节点勾在「默认」上（自身无指令），等于对用户说谎。
-  ② 语法：注释段内容恰为**裸** `none`（正文 `%%none%%`），外壳空白与大小写宽容（`%% None %%`）；`%%#none%%` **不是**指令（值域只收 `#rgb`/`#rrggbb` 与该裸词）。判定与十六进制同处 `features/node-inline-tokenize.colorDirectiveRanges`（读 / 写共用一份），常量 `domain/color.COLOR_DIRECTIVE_NONE`。
-  ③ 语义：在 `walkColorDirectives` 里折成 `null` 并把 `null` 传下去——**自己回落主题 / 整篇配色，且祖先色到此为止**；子树里再写十六进制的节点照常染色（就近覆盖不受影响）。折 null 只做在遍历里，`engine/mindmap-colors` **不再判一次**（那里看到的已经是「颜色或 null」）。
-  ④ 入口：**首项「默认」就是它**（2026-10-27 用户裁决「转接到默认、删去「无颜色」项」）。「默认」＝回到**整篇配色**（不再看祖先的节点色），`applyNodeColor(view, targets, null)` 按节点分别落地：`inheritedColorOf(node)` 非空（上层还在染色）⇒ 写 `%%none%%` 挡住继承；否则 ⇒ 直接删自身指令（不给文件添注释）。**不能一律删指令**——那正是旧语义的坑（删完照旧继承父色）。勾选态：生效色为哨兵或 null 都勾「默认」；自定义弹窗不预填哨兵。菜单条目因此与整篇侧**逐项相同**。
-  ⑤ 保真与边界：哨兵同样只写正文（`mdRaw` 逐字保真）、不写 `data.json`；写入口复用 `setColorDirective` 的替换 / 追加 / 块级语法行另起一行；围栏代码 / 行内代码 / 数学内不识别；含图节点与「整行只有指令」的节点不自绘 ⇒ 字面显示（与既有注释同口径）。
-  ⑥ 回归：`tests/color-directive.test.ts`（解析口径与 `#none` 拒绝 / 阻断继承的遍历 / 写·换·清哨兵 / 渲染期子树不挂色）、`tests/view-context-menu.test.ts`（「默认」在上层染色时写哨兵 / 上层无色时只删指令 / 上层已被哨兵挡住时删自身哨兵 / 哨兵与未写指令同勾「默认」/ 哨兵换色）。
-
-- [K165] **画布几何只读布局坐标，不读 DOM 包围盒（2026-11-04/06）**：节点盒的统一读取点是 `core/minimap-geometry.readNodeLayoutBox`（`left/top/width/height` 四字段；缺失 / 非有限 / 尺寸非正 ⇒ null），两个消费者——小地图的全树几何与「缩放到选区」的 `engine/mindmap-viewport.measureNodesCanvasBox`——都按 `screen = content × scale + translate` 换算（与 `projectViewportBox`、`mindmap-relations` 的手绘锚定同一口径，别另写一份）。**为什么不用 `getBoundingClientRect`**：性能模式把视口外节点 `removeSelf()` 摘出 DOM ⇒ 大选区只盖住可见部分（缩放落到错误范围），且同步块里是 N 次几何查询；布局几何剪枝后仍完整，离屏节点自然参与。**大图 resize 走尾随合并（`RESIZE_DEFER_MS = 180`，阈值 `LARGE_MAP_RENDER_HINT_NODES`）**：`onResize` 在 ≥1000 节点时只重置定时器、停手后做一次整树 `engine.resize()`；小图仍走 100ms 节流（实时跟手）。两条调度**互斥**：`scheduleDeferredResize` 先取消节流器，小图路径每次也都取消遗留尾随；`onUnloadFile` / `onClose` 必须取消未决尾随，否则它会落到新文件或已销毁的引擎上。代价要认：拖动期间画布保持旧尺寸（≤180ms），换来的是「拖动期每秒数次 0.4s 冻结」变「停手后一次」。回归：`tests/viewport.test.ts`（选区几何）/ `tests/view-resize.test.ts`（两种调度与互斥取消）/ `tests/view-minimap.test.ts`。
-
-- [K167] **节点配色的作用范围：颜色内容写在正文里，渲染侧只管连接线（2026-11-06 用户裁决 + 同日追加）**：
-  ① 问题：给一个节点上色后，整支子树都跟着变色（继承是唯一语义），用户要的是可选的「只给这一个节点」；同日追加「仅本节点档下，前后的连接线也不该带节点色」。
-  ② 关键取舍：**不**给 `walkColorDirectives` 加「按设置决定是否继承」的分支。颜色是写在正文里的**内容**，同一个 `.md` 换个库、换台机器、发给别人必须长得一样；设置项若参与「谁继承谁」，改一次设置所有存量彩色文件当场「掉色」。故作用范围**必须落在正文里**，两种档位＝两种写法。但**连接线着色不是节点自身的颜色内容**，而是「这一支往哪延伸」的线索：范围止于本节点时它没有对象，这一层派生显示态允许随设置走（与 `defaultTheme` 决定连线明暗色同性质）。两处消费因此分开——写入落正文，渲染只增删 `lineColor` 覆盖；随 `data.json` 漂的只有连线色，填充 / 描边 / 文字不会。
-  ③ 落法：`core/constants.NODE_COLOR_SCOPE_OPTIONS` 两档——`subtree`（出厂，＝引入本设置前的行为）只写选中节点的指令；`node` 再给**直接子节点**各补一条 `%%none%%`（`domain/color.scopeSentinels` 判定落点，与 `orphanSentinels` **互为对偶**：一个上色时补、一个撤色时收）。只补一层——哨兵自己会把 `null` 传下去，孙辈再写一条就是重复注释。跳过两类：本次也要上色的节点（马上有自己的指令）、**已有自身指令**的子节点（十六进制＝「这一支我另有安排」，哨兵＝「我显式要默认」，都是用户此前的显式选择，不越权改写）。
-  ④ 折叠口径随之分开：`subtree` 档多选仍走 `topMostNodes`（只写最上层，子孙靠继承）；`node` 档**不折叠**，每个被选中的节点各写一条——否则「父子同选」里的子节点会被写成一条哨兵，等于把用户选中的节点变成「无颜色」。
-  ⑤ 代价（要认）：哨兵让那一支**回落到整篇配色**，而不是「保持它原本从更高祖先继承到的颜色」——注释语法里没有「只挡这一层、继续吃上上层的色」这种表达。两个上色入口（右键节点「配色」/ 空白右键「按分支自动上色」）共用同一份定义，否则同一个设置会在一处静默失效。
-  ⑥ 连接线落地（`node` 档前后两条线都不染色）：`engine/mindmap-colors.applyColorStyle` 在 `colorLine === false` 时**不写 `lineColor`**（其余三键照旧，尤其 `borderColor` 要留给小地图墨色）。引擎 `styleLine(line, childNode)` 读的是**子节点**的 `lineColor` ⇒ 不写覆盖即让「父 → 本节点」回落整篇配色；「本节点 → 子节点」归子节点 data，哨兵已让它回落。判定唯一在 `core/constants.isNodeOnlyColorScope`，由 `features/view.colorLine()` 传给创建前的 `applyColorDirectivesToTree` 与渲染落地的 `syncNodeColorDirectives`；只读嵌入经 `MindmapEmbedConfig.colorLine` 由组合根注入（跟全局默认，同 `themeStyle`）。**切换即时生效**：`nodeColorScope` 进 `LIVE_REFRESH_SETTING_KEYS` + `IN_PLACE_REFRESH_KEYS`，`applySettingsChange` 只重算一次颜色（有变化才 `render()`）、不销毁重建引擎——5000 节点图不该为一个开关付整树 `structuredClone`。
-  ⑦ 回归：`tests/color-directive.test.ts`（`scopeSentinels` 四例 + 落地三例：仅本节点档不写 `lineColor` / 切档只增删覆盖且幂等 / 每次切换各渲染一次）、`tests/view-context-menu.test.ts`（仅本节点补哨兵 / 已有指令不改写 / 父子同选不折叠 / 父节点无变化时只有哨兵那批落地 / 出厂档不写哨兵 / 按分支自动上色同样跟档）、`tests/settings.test.ts`（白名单与脏值留痕 + 切换进差集 + 唯一判定）、`tests/mindmap-codeblock.test.ts`（组合根注入契约）。
-
-- [K168] **层级语法（Markdown 标题 / 无序列表）：同级同语法是往返保真的前提（2026-11-08 用户需求 + 四轮方案裁决）**：
-  ① **需求**：①「新建导图可全局选前几级写 `-` 还是 `#`」；② 标题可选从二级开始（`##`），只影响新建导图；③ 存量文件不动，另给「列表 → 标题」的显式动作；④ 既有继承规则不变（上级 `#` → 下级 `#`，6 级封顶后回列表；上级 `-` → 整支 `-`）。
-  ② **Markdown 事实（实机确认，本条的根因）**：`# 甲` 之后的同级 `- a` 会被解析成**甲的子节点**（`md-outline` 的 `contentParent` 是当前标题），而 `- a` 之后的 `# b` 仍是同级 ⇒ 同一兄弟组的**合法形态是「列表/段落在前、标题在后」**，只有反序才改结构（把列表拖成标题同级，今天表现为「拖了不生效」，格式化之后会表现为结构错乱）。**别把它读成「同组语法必须一致」**——那会把合法的「先列表分支、后标题分支」也判成错误，导致打开文件就改写（见 ⑤）。
-  ③ **回写**：根级新建节点的起始级别取**本文件实测值** `mdHeadingStart`（顶层标题的**最小** `mdLevel`，解析期记在虚拟根，`readHeadingStart` 钳 1..6 缺省 1；取最小是因为新节点恒追加在末尾、最小级别才能稳定 pop 回根子节点）；空文档（正文无节点）用设置里的起点。**设置项 `newMapSyntax`（`list` / `h1` / `h2`，出厂 `list`）只管空文档首节点的语法与标题起点（新建正文为空，见 K201）**——存量文件按正文自身回写（「跟随兄弟」保留：纯列表文档新建仍是 `-`，改设置不会回头影响任何已存在文件）。**不引入第二份状态**：不加 frontmatter 键、不存 `data.json` 逐文件语法，正文是唯一真相。
-  ④ **右键「层级语法」级联**（空白右键，与布局/配色同组；无命令、无弹窗）：**整篇重排、双向可逆**（列表 ⇄ 标题、一级 ⇄ 二级；已有标题按深度重定级，于是不需要「有标题就锁起点」的特例）；**组原子**——某层有转不了的节点（多行/围栏、任务项、有序列表、段落）则整层保持列表并点名阻挡者。执行走 `replaceMindMapData`（深拷贝 + 一条撤销历史）。
-  ⑤ **编辑期守卫**（`onDataChanged` 去抖 120ms + `node_dragend` 立即；拖拽中不判——引擎逐落点执行 `MOVE_NODE_TO`）：**只判四种会改结构的排布**，合法混排一律不动——① 列表/段落排在**同组标题之后**（会被读成该标题的子节点）⇒ 升为同级标题，转不了就 `BACK` 撤回；② 同级标题级别**递增**（`#` 后接 `##`）⇒ 重定级到前一个标题的级别；③ 子标题级别**不深于**父级（会逃到外层）⇒ 重定级到「父级+1」；④ **父是列表**却有标题子节点 ⇒ 就地**整支降为列表**（K169，2026-11-08 用户裁决：接受静默丢大纲条目与 `[[#标题]]` 锚点；只改 md 字段、专有提示可撤销）；**父是段落**却有标题子节点 ⇒ 段落承载不了子级，仍报 `downgrade` 让调用方撤回；⑤ 父级已是 **6 级标题**却又挂标题子节点 ⇒ 就地**降为列表**——第 7 级在 Markdown 里没有标题，是另一类「结构上必然」的降级（不是删标题，而是把分支挂到最深层唯一的表达方式），提示「已改为无序列表，Ctrl+Z 可撤销」。早前把它并入 ④ 判成撤回，实测表现为「拖到最深层被拒 + 提示『该层是无序列表』」（与该层是标题层的事实相反）。**「列表在前、标题在后」是合法排布**（`md-outline` 的 `listStack` 为空时挂 `contentParent`，能逐字往返），故不处理——2026-11-08 实机 P0 就出在旧判据「同组语法必须一致」上：打开一篇 `- 组` + `# 标题甲` 的手写文件会被**改写并落盘**，`- 甲 / - 乙 / # 丙` 更会连发 17 条重复提示并反复 `BACK`（`BACK` 自身又发 `data_change`）。现在守卫带 `suppress` 闩锁（撤回后跳过下一轮）且**加载期天然无动作**（解析器的产物不会是那四种排布）。整支升级前必须过 `findHeadingBlocker`（子孙藏围栏/任务项时硬转会撕裂内容）；重定级只动已是标题的节点（`relevelHeadingBranch`，不顺手把列表子节点转标题）。归一**直接改节点 data、不进撤销栈**（`liveNodeTree` 包装渲染节点，`Node.getData()` 是活引用），故 `Ctrl+Z` 一步同时撤掉「拖拽 + 语法换算」。粘贴在**插入前**换算（`adaptSubtreesToGroup`，同样先过 `findHeadingBlocker`），改不了就放弃这次粘贴而不是留脏中间态。
-  ⑥ **可转判据**（唯一实现 `headingBlockReason`）：单行内容（**去掉末尾独立指令行后**——`%%id%%` / `%%rel%%` / `%%sum%%` 让 `mdRaw` 天然多行，但它们可以跟在标题行后面，库里 `连线A-同列.md` 就是 `# 甲` + `%%rel:…%%`）、非任务项、非有序列表、非段落。**只改 `mdType` / `mdLevel` / `mdMarker`**，`text` / `mdRaw` 一字不改 ⇒ 行尾注释、链接、图片、指令行全部随行保留，保存仍走「未编辑逐字回写」。行内色注释**照转**（代价：Obsidian 的 heading 缓存会把 `%%#hex%%` 算进标题文本，`[[#标题]]` 需连注释一起写——实测确认，用户裁决接受）。
-  ⑦ **模块**：`markdown/md-heading-syntax.ts`（起始级别 / 判据 / 整支升降）、`md-heading-normalize.ts`（守卫归一 + 粘贴换算）、`md-heading-format.ts`（整篇重排 + 当前语法）；视图侧 `features/view-syntax.ts`（挂引擎事件、提示、`BACK` 兜底）。三者都 < 300 行（同职责分层，不是按行数切）。
-  ⑧ **回归**：`tests/md-heading-syntax.test.ts`（判据含指令行 / 组原子 / 6 级封顶 / 双向归一 / 粘贴换算 / **性质测试**：随机混排树 → 归一 → 序列化 → 解析，树形恒等）、`tests/view-syntax.test.ts`（级联重排 / 守卫升级与降级 / 空文档种子 / 勾选态）、`tests/md-roundtrip.test.ts`（`mdHeadingStart` 记录与 `##` 文件的新节点 / 空正文往返）。
-
-- [K169] **拖拽落点决定行语法：标题挂到 `-` 下自动整支降级为列表（2026-11-08 用户裁决）**：
-  ① **需求 / 裁决**：K168 ⑤ 的「只升不降」把「标题拖到列表父下」判成 `downgrade` 并 `BACK` 撤回；实机复现为「七级拖到标题组可以 `- → #`，反过来 `# → -` 做不到」，且提示要求改用整篇右键级联。用户在两个方案里选择**放开守卫**，明确接受「丢掉大纲条目与 `[[#标题]]` 锚点」的代价（插件不补偿、不扫全库）。**2026-11-09 补充**：不再静默——降级时提示「N 个标题失去锚点，`[[#标题]]` 将失效」，见 K178（仍不阻止、不合并）。
-  ② **实现**：`md-heading-normalize.normalizeSiblingSyntax` 把旧 `parentIsListLike` 拆成 `parentIsList`（`mdType === 'list'`）与 `parentIsPlain`。前者对每个 heading 子调用 `convertBranchToList` 整支降级（只改 `mdType` / `mdMarker`、删 `mdLevel`，`text` / `mdRaw` 一字不动、不进撤销栈），并 `continue` **不设 `lastHeadingLevel`** ⇒ 同组后面的列表兄弟不会被规则 1（排在标题之后）误升成标题；降级后的子树仍压栈做幂等复查。后者仍 `blocked 'downgrade'` 让 `view-syntax.runSyntaxGuard` 执行 `BACK`——段落行不承载子级，写成 `-` 也会挂到 `contentParent`，降级救不了父子关系。
-  ③ **反馈**：归一结果新增 `firstDowngraded`；i18n 双语新增 `syntax.guardDowngraded`（中「已按该层语法把「X」改为无序列表（Ctrl+Z 可撤销）」），提示优先级 `firstDowngraded` > `firstDemoted`（6 级封顶）> `firstUpgraded`；`syntax.guardBlockedDowngrade` 文案改为「段落之下无法保留标题…」。Notice 只说结果与可撤销，**不承诺锚点**。
-  ④ **两类降级并存，勿合并文案**：`firstDemoted` 是「父级 6 级标题 ⇒ 第 7 层没有标题语法」的结构性降级（K168 ⑤），本条是「落点本来就是列表」的语法归一；二者共用 `convertBranchToList`，但原因不同，各自有专有提示。
-  ⑤ **边界**：加载期天然无动作（解析器不会产出「列表父 + 标题子」）；**Ctrl+Z（`BACK`）实机把结构与 md 字段一起复原**——`### 另支三级` 回到 `## 另支二级` 下、正文逐字恢复，故提示里的「可撤销」指整次拖拽含语法换算；`suppress` 闩锁仍只服务仍会撤回的 `BACK` 路径（回归改用「升级被阻挡」造撤回）；锚点丢失不可逆（不撤销则已写盘）。
-  ⑥ **回归**：`tests/md-heading-syntax.test.ts`（列表父整支降级 + 同组列表兄弟不误升 + 段落父仍撤回 + 随机树往返保形）、`tests/view-syntax.test.ts`（不 `BACK` / 排保存 / 专有提示 / 段落父撤回 / `suppress` 闩锁）、`tests/view-clipboard.test.ts`（粘贴插入前换算不受影响）。
-
-- [K170] **层级语法切换的数据保真：段落随列表降级、原 marker 与有序编号不被清洗（2026-11-08 漏洞修复）**：
-  ① **三个实机确认的漏洞**：a) `plain` 段落写成无前缀行，整篇转列表（或守卫降级）后重开掉层，紧跟其后的兄弟也被提升到根级（实测：段落第 4 层 → 第 1 层，`乙支` 从 `甲级` 子节点 → 根级）；b) 转标题 `delete mdMarker`，`*` / `+` 往返后退化成 `-`；c) 有序列表编号前缀不在 `mdRaw` 里，序列化按兄弟序号重算 ⇒ 手写 `5.` 被改成 `2.`（实测 `1./5.` → `1./2.`）。
-  ② **修法**：`convertBranchToList` 同时处理 `plain`（`mdType='list'` + 补 `-`，`text` / `mdRaw` 不动）；`planDocumentSyntax('list')` 对 `plain` 也调用它；守卫的 `parentIsList` 分支同样处理 `plain` 子。`convertBranchToHeadings` / `planDocumentSyntax` 转标题时**保留 `mdMarker`**（标题行不写，转回列表恢复）。`MdNodeMeta` 新增 `mdOrderedNumber`（解析 `5.` → 5：`md-outline-lines` 记录、`md-outline.attachList` 落 data），序列化优先用它、新建项回落前一项 + 1。
-  ③ **边界**：`mdMarker` 只在**同一会话**内可恢复——转标题并写盘后文件里没有 marker（标题行不承载），重开再转列表只能补 `-`；`mdOrderedNumber` 是逐节点数据，写盘后重开仍保留。段落转列表项会改变源码形态（无前缀段落 → `- ` 列表项），这是「列表父链下唯一能表达层级的写法」。
-  ④ **回归**：`tests/md-heading-syntax.test.ts`（段落降级 / `*` 往返 / 整篇转列表的段落保形）、`tests/md-roundtrip.test.ts`（有序编号保留 + 往返稳定）、`tests/view-syntax.test.ts`（守卫降级含段落子）。
-
-- [K171] **「层级语法」的可达性边界：不修的防御分支与已接受取舍（2026-11-08 审核沉淀）**：
-  ① **判定标准**（用户能否造出该状态）：同时满足三条才算「做不出」——解析器不产出该树形态、UI 没有产生入口（命令 / 右键 / 拖拽 / 粘贴 / 设置）、守卫或插入前换算会在写盘前拦下。手写 Markdown 也属于用户操作，能手写出来的不算不可达。
-  ② **不修的防御分支（生产不可达）**：a) `planDocumentSyntax('list')` 在 `converted === 0` 时仍删除副本的 `mdHeadingStart`——调用方传深拷贝且提前返回、不回灌；b) `normalizeSiblingSyntax` 的 `parentIsPlain`（段落父下挂标题）——解析器不产出、拖拽会被守卫撤回；c) 「列表父 + 标题子」的树——手写 `#` 会解析到外层，拖拽被 K169 降级；d) 标题节点带 `mdMarker='ordered'`——有序项被 `headingBlockReason` 挡住、永不升标题，转标题保留 marker 只对 `*` / `+` / `-` 生效（K170）；e) `mdOrderedNumber` 出现在非有序项 / 新建节点——字段只在解析 `\d+\.` 时写入；f) `convertBranchToList` 遇到 plain 带 `*` / `+` 的脏 marker——没有第二个来源；g) 被阻挡层的子节点不被遍历——列表层下不存在标题。这些分支保留作非法内存态的 fail-safe，删掉反而让测试 / 未来改动更容易写出坏数据。
-  ③ **已接受、不修的行为**：跨会话 `*` / `+` 退化成 `-`（标题行不承载 marker，语义等价）；跳级标题按深度归一（K168 的既定语义）；`list` 档空文档根级新建写 `#`（需先删光所有节点，极偏）；裸 `-` 按 CommonMark 落段落（不是空列表项）。
-  ④ **已修（2026-11-09，K179）**：给 `plain` 段落手动加子节点后保存，子级会掉一层（plain 行无缩进、子帧 `listIndent` 不 +1）。修法不再要求先裁决「段落是否允许有子级」——序列化见到「段落父 + 子节点」时按列表项输出（`- 段` + 缩进 1 单位），内容与层级都保住，只是该段语法变为列表项。
-  ⑤ **回归**：`tests/md-heading-syntax.test.ts`（段落父 blocked 用例已标注「生产不可达，仅兜底」）、`tests/view-syntax.test.ts`（同）、K169 / K170 的回归套件。
-
-- [K172] **「跟随兄弟风格」按位置判定：列表项只能跟在该层列表之后（2026-11-08 未提交区审核修复）**：
-  ① **缺陷**：`md-serialize` 的「未标注（新建）节点跟随列表」原本只看**整层**是否有列表型兄弟。混排组（`- 甲` + `# 乙`，合法形态是列表在前、标题在后，见 K168）里新建节点因此写出 `- 新`——它排在标题之后，重解析时被读成**乙 的子节点**（实测 `- 甲` + `# 乙` + 新建 → 写出 `- 甲` / `# 乙` / `- 新`，往返只剩 2 个节点），一次保存就静默改结构。② **判据**：看**紧邻的前一个兄弟**——它是列表型则写列表项，否则写标题；**层首仍看整层**（那里写标题会让后续列表项全成它的子节点）。合法组里标题恒在末尾，故该判据与「前面没有标题」等价。③ **守卫同步收窄**（`md-heading-normalize`）：`normalizeSiblingSyntax` 不再换算**空的**新建节点（无 `mdType` / `mdMarker` 且无子节点）——序列化本就按上下文写标题（K98），换算只是把现算结果固化，并在每次在标题上按 Enter 新建同级节点时弹一条「已改为标题」（屏上无任何变化）；**带子节点时不跳过**，否则子标题失去相对层级、重开逃到外层。④ **有序编号边界**：`0.` 是合法起始编号（判据由 `> 0` 改为**非负**，否则静默改成 `1.`）；超出 `Number.MAX_SAFE_INTEGER` 的编号（≥16 位，手写才会出现）**不保真**——写回会变成 `1e+21.`，整行退化成段落，故解析侧只收安全整数、交回序列化按「前一项 + 1」现算。⑤ **回归**：`tests/md-roundtrip.test.ts`（混排组新建 / 纯列表新建 / `0.` / 超长编号）、`tests/md-heading-syntax.test.ts`（空新建节点不动、带子节点照常换算）。⑥ **同类加固**：`domain/mindmap-property` 的三张以用户数据为键的查表改为**无原型**（`Object.create(null)`）——对象字面量命中原型方法会让 `normalizeLayoutId('toString')` 返回函数、`Mindmap Layout: constructor` 读出「合法布局」，与「未知值一律 null（fail-closed）」的契约相反（回归：`tests/md-frontmatter-trigger.test.ts`）。⑦ **迁移不覆盖认不出的布局值**：`legacyMigrationPlanOf`（原 `legacyLayoutValueOf`，见 K187）在「布局键存在但值不是新写法」时只把旧写法（`LogicalStructure`）迁成 kebab，认不出的值原样留着（读侧 fail-closed 回落默认布局）——此前它把这整类文件当成旧契约、拿「思维导图」覆盖，实机表现为 `Mindmap Layout: toString` 在启动 1.5s 后被静默改成 `mindmap`（回归：`tests/legacy-mindmap-migration.test.ts`）。
-
-- [K174] **标题节点的配色指令必须独立成行（2026-11-09 用户裁决「改独立行」）**：
-  ① **缺陷**：`%%#hex%%` 原先一律追加到节点末行行尾；标题节点因此变成
-  `# 支付 %%#89cff0%%`，Obsidian 的 heading 缓存把注释算进标题文本 ⇒ `[[#支付]]`
-  解析失败、`^block-id` 同废。这与联系指令改独立行的理由**逐字相同**（行内注释破坏
-  heading 缓存），只是配色侧当时接受了代价。
-  ② **写侧**：`setColorDirective(raw, color, { ownLine: true })` 把指令放到该节点
-  **最后一行之后**（已有指令一并迁到独立行；清除时整行删）；`features/view-node-color`
-  按 `data.mdType === 'heading'` 传入。列表 / 段落仍行内——那里没有 heading 缓存，
-  多写一行只是 diff 噪音。
-  ③ **解析侧**（必须成对改，否则独立行会变成一个新节点）：`domain/color.isColorDirectiveLine`
-  认整行形态；`md-outline.parseMdOutline` 在「列表续行合并」**之前**把该行归属
-  上一个节点（只写 `mdRaw`，**不进** `mdDirectiveTail`——联系 / 概要写回会整体替换
-  那个块，颜色段会被抹掉）。标题续行缩进为 0、列表续行缩进为 1 单位，两种落点都稳定。
-  ④ **序列化兜底**：`md-serialize` 在**写成标题**时把行尾指令上提为独立行
-  （`hoistColorDirective`）——覆盖「新建节点先上色、之后才写成标题」与存量行内形态；
-  第二次往返即不动点。同批修正：围栏内容行（`classifyLines.fenced`）不再参与指令行
-  归属，代码块里的 `%%rel:…%%` / `%%#hex%%` 不会被抽走。
-  ⑤ **边界**：行内代码 / 数学里的同形态仍不识别（保护区扫描不变）；手动写的行尾形态
-  照读（`colorDirectiveOf` 只看第一处合法指令），下次改色时迁移。
-  回归：`tests/color-directive.test.ts`（整行判定 / 拆分 / ownLine 写入与清除）、
-  `tests/md-roundtrip.test.ts`（标题 / 列表 / 围栏 / 旧行内形态）、
-  `tests/view-context-menu.test.ts`（标题节点写独立行）。
-
-- [K175] **作用范围切回「含子节点」时询问是否清理旧 `%%none%%`（2026-11-09 用户裁决 B）**：
-  ① **问题**：`nodeColorScope` 只决定**下一次上色**怎么写；正文里已有的 `%%none%%`
-  不会随设置回退消失，切回「含子节点」后子节点仍不继承（用户观感「设置没生效」）。
-  ② **为什么不能自动清**：哨兵是**正文内容**（换库 / 换机 / 发给别人都生效），其中既有
-  「仅本节点」上色的产物，也有用户显式点「默认」写下的；自动删会让这些节点重新继承
-  上层颜色。故只在**设置面板从 `node` 切到 `subtree`** 时**问一次**，由用户决定。
-  ③ **范围**：只处理**当前打开**的导图（`main.offerColorSentinelCleanup` 遍历 leaf）——
-  改写要走活引擎的原文通道（`applyRawNodeContents`），关闭的文件没有可写的节点实例。
-  弹窗合并所有视图，报「N 个文件 / M 处」；确认后每个视图**重新扫描**（弹窗期间别的
-  视图可能已改文件），并核对 `view.file.path` 仍是扫描时那个（切走了就跳过）。
-  ④ **落地**：`features/view-node-color` 的 `collectColorSentinelSessions` /
-  `applyColorSentinelCleanup` / `offerColorSentinelCleanup`；判定「哪行是自身哨兵」复用
-  `colorDirectiveOf` + `nodeInlineSource`，删除复用 `setColorDirective(raw, null)`（整行
-  形态连带换行）。整行只剩指令的节点**不清**（会清空内容）；每棵树一次批量写回
-  （`afterCommit:false`，一条撤销）；随后 `scheduleSave`（2s 防抖）。
-  ⑤ **不询**：反方向（切到 `node`）不询——旧哨兵正是该档的机制；同值与脏值不询
-  （`settings.shouldOfferColorScopeCleanup` 是唯一判据）。**关闭的文件不清理**，也不在
-  打开时补问（设置变更只在用户操作的那一刻发生）。
-  ⑥ **回归**：`tests/settings.test.ts`（触发面 2 例）、`tests/view-context-menu.test.ts`
-  （收集 / 一次批量落地 / 切文件守卫 3 例）。
-
-- [K177]【**已被 K180 / K182 取代**】**同文件多视图：覆盖别处修改要提示，但仍不合并（2026-11-09 用户裁决 B）**——同日升级为 Level B：同一文件共享一份文档会话（一棵权威树 + 一条撤销线 + 一条保存管线），外部写入改为「放弃写盘 → 重载 → 草稿留作一条撤销」，不再有「覆盖提示 / 后写者胜」。以下为实现与依据存档。
-  ① **问题**：`onExternalModify` 在「本视图有未保存编辑」时直接 return，关闭时整篇写盘；
-  同文件双开（或外部程序改文件）时，后写者静默覆盖前者的正文，用户关掉标签才知道。
-  ② **做法**：`SavePipeline` 记 `lastSeenDiskBody`（加载时 + 每次写盘成功后更新），写盘时
-  把本次读到的磁盘正文与它比：不同 ⇒ 本轮确会覆盖别处修改 ⇒ 写完回调 `onSaveConflict`
-  （每轮一次），视图弹 Notice「已保存，但覆盖了另一处对本文件的修改」。
-  ③ **不比 `lastWrittenBody`**：那张表在「撤销回加载态」时存序列化结果、磁盘是原样正文
-  （规范化差异），拿它比会恒判冲突；`lastSeenDiskBody` 存的是原始磁盘正文，同源。
-  ④ **只比正文**：只改文件头（属性面板 / 切布局）不算覆盖；没有加载基线（没见过磁盘正文）
-  时不猜，避免误报。
-  ⑤ **不改变写盘语义**：仍然后写者胜，不弹阻塞确认、不做合并、不写冲突副本（这些留作
-  后续可选；关闭路径不能可靠 await UI）。
-  ⑥ **回归**：`tests/save-pipeline.test.ts`（覆盖告警 / 只改文件头不报 / 无基线不误报）。
-
-- [K178] **降级提示要报「失去锚点的标题总数」（2026-11-09）**：
-  ① **问题**：列表父 / 超 6 级的降级会静默丢标题身份，原提示只说「首个节点已改为列表」，
-  用户无法判断有多少 `[[#标题]]` 受影响。
-  ② **做法**：`SyntaxNormalizeResult.demotedHeadings` 在降级**前**数整支标题数；视图在
-  `> 0` 时改用 `syntax.guardDowngradedAnchors`（含 `{count}` 与首个名字），并明确
-  「指向这些标题的 `[[#标题]]` 链接将失效，Ctrl+Z 可撤销」。
-  ③ **边界**：不扫全库引用（异步全库扫描不能放在拖拽热路径）；只报**分支内**标题数，
-  用户据此自行判断。
-  ④ **回归**：`tests/md-heading-syntax.test.ts`（demotedHeadings 计数）、
-  `tests/view-syntax.test.ts`（文案与计数）。
-
-- [K179] **段落父带子节点：序列化按列表项输出（K171④ 修复，2026-11-09）**：
-  ① **问题**：`plain` 行不带缩进，子帧 `listIndent` 不 +1 ⇒ 给段落手动加子节点后保存，
-  子级掉一层（K171④「用户可达，未修」）。
-  ② **做法**：`md-serialize` 的 plain 分支检测 `children.length > 0`，按列表项输出
-  （`- 段` + 子级缩进 1 单位），子帧 `listIndent + 1`。内容与层级都保住，只是这一段
-  的语法从段落变成列表项；正常解析产物里段落仍是叶子。
-  ③ **为什么不在入口拦**：拖拽 / 粘贴 / Enter 三条入口都要拦，且拦截提示更烦；
-  序列化层是唯一出口，改一处即可幂等收敛。
-  ④ **回归**：`tests/md-roundtrip.test.ts`（段落带子节点 → `- 段` + `  - 子`，重解析层级保持）。
-
-- [K195] **视图状态只写变化：同值不落盘 + 打开时的默认视口不落盘（2026-11-11 实机）**：
-  ① **问题**（实机账本：库内 131 篇 md / 96 张导图，`viewState` 39 条、data.json 26 KB）：39 条里
-  23 条 `state.scale === 1`、且无任何按文件偏好——即「打开后没动过视口就关掉」也会整表重写
-  data.json（`persistViewport` → `setView` → `patch` 无条件 `schedulePersist`；写盘器每次都
-  `loadData` + `saveData` 整份文件）。默认视口是当场按容器与内容算出来的，落盘只等于把当时的
-  窗口尺寸固化下来，窗口尺寸一变反而更不准。
-  ② **做法**：`ViewStateStore.patch` 先按序列化结果比较（`isSamePathState`，逐字相同即返回、
-  不排写盘）；`EngineController.persistViewport` 在「未恢复过保存视口（`!restoredSaved`）且
-  当前签名 == 打开时自动设置的 `viewport.defaultSignature`」时直接不写。签名口径复用
-  `viewStateSignature`（与恢复时的幂等短路同源），不另立判据。
-  ③ **边界**：`themeStyle` / `lineStyle` **不**按「等于全局默认」省略——「显式切过」与「从没
-  切过」语义不同（前者保持原值、后者跟随未来的默认变更，见决策表「边框」行）；`view.transform`
-  虽与 `state` 数值重复也**不删**（vendor `setTransformData` 把它直接喂给 `draw.transform`，
-  省 9 KB 要换一处防腐层逻辑并需可见窗口实测）；保存视口被判不可见而回退居中时同样不写，
-  保留用户旧位置（下次打开仍重新判定可见性）。
-  ④ **顺序契约（实机首轮即踩中）**：关闭路径原先在 `invalidateInit()` **之后**才调
-  `persistViewport()`，而 `invalidateInit()` / `destroyInstance()` 都会 `viewport.reset()`
-  清掉 `defaultSignature` / `restoredSaved` ⇒ 跳过判据恒不成立、纯浏览照样写盘（实机：打开
-  `示例/测试/双链目标.md` 不动就关，data.json 立刻长出 1 条 650 B）。修法：`onUnloadFile` /
-  `onClose` 把 `persistViewport()` 提到 `invalidateInit()` **之前**（`backToMarkdown` 本就
-  先落视口），并在 `persistViewport` / `invalidateInit` 两处文件头写明这条时机契约。
-  **单测直接调 `persistViewport()` 抓不到它**——测试必须复现真实关闭顺序。
-  ⑤ **跨视图串视口（实机第二轮抓到，已修）**：`restoreOrFitViewport` 过去每次被
-  「首帧重算窗口」调用都重新读一次 store。于是同一文件两个视图并排时，关掉**平移过的那侧**
-  （它把视口写进 store）会让**另一侧**在紧接着的布局落地里把这份保存视口捡走——实测
-  `engineUnchanged=true` 但 state 被改成对方的值（`restoredSaved` 翻成 true）。修法：store 只在
-  本会话**第一次**应用视口时读一次——`defaultSignature` 非空即表示已进入「默认视口模式」，此后
-  每次布局落地只重算默认视口。回归：`tests/engine-controller.test.ts`「重算窗口不重读 store」
-  （反向验证过：去掉修复该用例即红）。
-  ⑥ **两个裁决（2026-11-11，用户授权最优决策）**：① **不记忆「没动过的默认视口」**——下次打开
-  按当前容器重算（通常更准）；若存的那个视口因窗口变化已出界，仍有既有兜底：`isContentVisibleInCanvas`
-  判不可见 ⇒ 回退居中（实测「存 999999 → 打开回退居中 → 关闭不覆盖」）。
-  ② **历史默认视口条目不清理**——判定「某条等价于默认」必须为每张图重建引擎算一次，成本与风险
-  都不值；误删等于丢用户位置。只停止新增，剩下的条目（实测 39 条 ≈ 19 KB）由「打开时可见性
-  兜底」消化。
-  ⑦ **回归**：`tests/view-state.test.ts`（同值不写 / 关两次只写一次 / 值真变照写 / 逐条判据）、
-  `tests/engine-controller.test.ts`（默认视口不写盘、真实关闭顺序 persist→invalidate、
-  `invalidateInit` 会清空判据、重算窗口不重读 store、用户平移后照写）。
-
-- [K196] **标注（callout）/ 引用块的显示层落地：块级顺序、变量名偏差与「不借官方类」（2026-11-11）**：
-  ① **问题**：`>` 行在解析层是 `plain` 行（整块并进一个多行文本节点），于是 `>`、`[!info]`、`+/-`
-  全部**字面外露**，而标题与正文里的 `**粗体**` / 双链 / 表格 / 代码块又已正常渲染——用户看到的是
-  「渲染坏了一半」而不是「不支持」。官方口径三处取证：帮助页（语法 / 13 类型与别名 / 折叠 / 未登记
-  回落 `note` / 大小写不敏感）、宿主解析正则 `\[!([^\]]+)\]([+\-]?)(?:\s|$)`（`|` 之后是 **metadata**
-  而非别名；类型归一 `trim → 小写 → 空白转 -`；折叠标记后必须紧跟空白或行尾）、宿主 `app.css`
-  （`.callout[data-callout=…]` 只做「`--callout-color` 指到 `--callout-<type>`、`--callout-icon` 指到
-  图标 id」；颜色消费是 `color-mix(in oklch, var(--callout-color) 10%, transparent)`）。
-  ② **块级顺序即契约**：引用 → 围栏 → 表格 → 行内。`scanFenceBlocks` 用的 fence 分支**非行首锚定**，
-  先切围栏会把「引用块内的围栏」（`> ```js`）从中间抽走 ⇒ 引用块被切成两半、标注只剩首行；反过来
-  围栏 / 块级数学 / `%%注释%%` 里的 `> ` 行由 `protectedRanges` 挡住（与表格同一份口径）。已知边界：
-  未闭合围栏不被 `MARKUP_RE` 保护，其中的 `> ` 行会被当引用行（未闭合围栏本就是非法输入）。
-  **同层头部行 = 新块起点（2026-11-11 实机踩到，当日修复）**：解析层把段落之间的空行归一掉
-  （白名单 #2），于是「两个标注之间隔一个空行」到达渲染层时是**一整段连续的 `>` 行**——不在第二个
-  `[!type]` 处断块，它就会变成前一个标注正文里的一行字面文本（实机：`[!abstract]` / `[!failure]` /
-  `[!danger]` / `[!faq]-` 四个全部渲染成正文文字，而单看单测全绿——**单测喂的 raw 保留了空行**，
-  与解析层真实产出的形态不一致，这是本批唯一一个"单测同构但实机不同构"的缺口）。判据只认**本层
-  剥完前缀后**才成立的头部：嵌套 `> > [!todo]` 剥一层后是 `> [!todo]`（以 `>` 开头）⇒ 不进断块分支，
-  仍进正文递归。
-  ③ **变量名与类型 id 不同名（四处，照 id 拼会静默退兜底色）**：`note`→`--callout-default`、
-  `abstract`→`--callout-summary`、`failure`→`--callout-fail`、`danger`→`--callout-error`。id 是用户写在
-  文件里的语义名、变量名是宿主实现细节，**两者本就不是同一件事**，故在 `domain/callout` 的类型元数据里
-  显式列 `cssVar`，而不是改 id 去迁就变量。颜色一律 `var(--callout-<变量>, 兜底色)` 写成链：`var()`
-  不进 `outerHTML`（换主题即时变色、不污染测量缓存键，K114），导出侧由 `CSS_VARS_TO_EXPORT` 注入真值
-  （`getComputedStyle` 对自定义属性已完成 `var()` 替换，故只需注入 13 个 `--callout-*`，不必列 `--color-*`）。
-  ④ **刻意不加官方 `callout` 类**：类名会让主题的 `.callout > *` / `mix-blend-mode` 规则命中节点内容，
-  而导出 SVG 里那段 CSS 并不存在（屏上与导出必须同一份样式来源，K53 ⑤）⇒ 布局全内联、只借**变量**。
-  代价：**自定义类型（CSS 片段定义）按 `note` 取色**，与官方「未登记回落 note」同一兜底。图标同理取宿主
-  `getIcon`（官方帮助自己就警告 Lucide 会更新），缺失即省略图标、保留标题与类型色。
-  ⑤ **折叠只作标记**：折叠态是视图态、不进文件，而导图节点每次重建都会丢 ⇒ 不做交互，`-` 只显示合拢
-  箭头、正文**恒展开**（导图节点是概要面，隐藏正文会看起来像内容丢失）。
-  **能力边界（实机 2026-11-11 逐项核对，与 plain 节点同源、非标注专有）**：正文里的**列表 / 标题**
-  按字面行显示（`li` 数为 0，`- 甲` 就是那两个字符——插件全仓不渲染 `<ul>` / `<h*>`，节点文本本就
-  以行呈现，自绘接管只覆盖行内语义 + 表格 / 代码块 / 数学 / mermaid / 引用）；嵌套至多 2 层；
-  表格单元格里的 `>` 行不成盒（单元格是单行文本）。要"列表成真块"是**另一件事**（plain 节点整体
-  提升为块级渲染），不应按标注缺陷处理。
-  ⑥ **正文递归**：`buildInlineSegments(body)` 再跑一遍同一套段管线（段缓存按内层原文寻址），故标注内的
-  表格 / 代码块 / mermaid / 数学 / 链接自动成立，**不另写块级解析**；嵌套上限 `MAX_QUOTE_DEPTH = 2`，
-  更深的层按字面（原文含 `>` 前缀）铺开、内容不丢。截断走与表格同款的**原子段**（`isAtomicBlock`）：
-  盒子被切一半比整块不显示更糟。
-  ⑦ **回归**：`tests/callout.test.ts`（头部解析 / 别名归一 / 原型键加固 / 变量名偏差 / 前缀剥离）、
-  `tests/node-inline-content.test.ts` 的「引用块 / 标注段」组（切分顺序、围栏与注释的保护、换行归属
-  不变量、**空行分隔的两个标注各自成盒**、嵌套头部不算块边界、DOM 结构、图标注入、折叠标记、嵌套
-  深度、着色节点派生边框、单元格按字面、原子截断）、`npm run verify:visual` 的 `callout` 场景（盒子
-  入 foreignObject × 类型色内联 × 正文递归 × 引用左竖线；无头垫片的 `getIcon` 返回 null ⇒ 同时锁住
-  「图标缺失仍成立」的降级路径）。
-  ⑧ **实机核对（2026-11-11，Obsidian 1.15.0）**：12 个标注全成盒；标题色与宿主
-  `--callout-{tip,summary,default,fail,…}` 的计算值逐一相等（四处命名偏差由此确认）；图标 12/12
-  由宿主 `getIcon` 给出；`+`/`-` 折叠标记分别显示 `▾`/`▸`；嵌套两层的内层落在外层内容区内；普通
-  引用左竖线 `2px` + accent 色；标注内的表格 / 代码块 / 数学 / 链接 / 标签各按同一套管线渲染；
-  打开期间文件未被改写（mtime 不变）。`dev:errors` 干净。
-  ⑨ **重构（2026-11-11，同日）：把「渲染期才知道的事」挪到「解析期只算一次」**——
-  a) **标题定稿**：`CalloutHeader.title` 恒为**展示标题**（显式标题或类型标识 Title Case），
-  解析期算完进段序列缓存；原先渲染期调 `calloutTitleOf` 每次都跑 split/filter/map/join
-  四趟（节点重建是热点路径）。b) **元数据单表**：`calloutVisualOf(type)` 在模块初始化时
-  派生一次（颜色 `var()` 链 + 图标 id），**同一类型返回同一对象**（单测锁这条），取代原
-  先"每次渲染现拼 `var()` 字符串"的 `calloutColorValue` / `calloutIconId` 两个访问器。
-  c) **廉价谓词**：`isCalloutHeaderLine` 与 `parseCalloutHeader` 同一条正则、同一套"类型段
-  非空"规则，但**不产出对象**——块扫描的续行循环按行调用它，原来那里调完整解析（归一 3 次
-  字符串操作 + 查表 + Title Case + 造对象）纯属白付；两处判据必须同口径（单测正反例成对锁）。
-  d) **单趟前缀剥离**：`stripQuotePrefix` 改 `exec` + `slice`（原 `test` + `replace` 把锚定
-  正则跑两遍）。e) **两级扫描快路径**：`scanQuoteBlocks` 先 `includes('>')`、再
-  `QUOTE_LINE_START_RE`（一行以 `>` 起首）——后者省掉 `protectedRanges`（整段跑一遍
-  `MARKUP_RE`），而"含 `>` 但无一行以 `>` 起首"的节点（`a > b`、`<div>`、箭头）很常见。
-  f) **DOM 结构**：`buildQuoteElement` 只做**分派**，外观拆成 `buildCalloutShell` /
-  `buildPlainQuoteShell`（各自一个职责），正文容器按变体取表（`QUOTE_CONTENT_VARIANTS`），
-  标注的取色 / 取图标**一次查表**后传下去——原来同一个 `canonical` 在盒与标题行各查一次、
-  且底色与标题色靠字符串形参传递。
-
-- [K199] **编辑态的文字与底色跟随节点**（固定尺寸/内部滚动策略已由 K203 替代；此处保留当时的原因记录）（2026-11-17，Issue #3）：插件内联原文编辑器按自绘内容盒的屏幕矩形定位，字体、行高、内边距按实时画布缩放，保留亚像素坐标。编辑框与节点共用内容盒宽高，显式覆盖宿主输入框的 min/max 尺寸；不再使用独立的 160px / 40px 最小尺寸，也不在 input 时按 scrollHeight 自行扩张，较长原文在盒内换行/滚动。普通态与编辑态沿用同一节点底色和墨色，透明节点取画布当前底色，避免进入编辑后退成白块。引擎的 `TextEdit.showEditTextBox` 在显示时覆写内联底色与阴影，现有 `beforeTextEdit` 仅能拦截显示、不能覆盖后续赋值；`engine/mindmap-editor` 防御式包装显示方法，在原方法结束后同步适配样式（无延时、无全局 CSS）。方法或 DOM 缺失时保留原行为，安装幂等，包装随引擎实例回收；`features` 不直接访问 `node.style` 或 `renderer.textEdit`。不改变输入原文、提交、撤销、保存及快捷键。回归 `tests/node-inline-editor.test.ts` / `tests/engine-editor.test.ts`；`verify:visual` 覆盖中心与分支在 50% / 100% / 150% 下的文字起点、字号、行高、宽高与输入过程中外框稳定，以及亮暗画布和节点着色下的引擎编辑框底色。
-- [K200] **空白画布连续点击与双击不新建节点**（2026-11-17，用户实机反馈）：空白点击频繁被浏览器识别为双击，原 `view-node-actions.setupCanvasQuickCreate` 会在中心主题下插入空文本节点并立即编辑，结束编辑又保留空节点，形成误操作。现删除该绑定与 `view.setupFeatures` 的注册；沿用既有空白点击结束编辑、取消选中行为。Tab / Enter、节点旁加号、右键菜单仍显式新建空节点并立即编辑；节点双击编辑保持不变。不加设置项、不修改引擎、解析器或空列表项语义。回归 `tests/view-canvas-interaction.test.ts` 执行真实视图构造器的特性装配回调后派发连续点击 / 双击，并验证节点双击编辑与显式新建；右键菜单由 `tests/view-context-menu.test.ts` 验证。
-- [K203] **节点原文编辑自适应宽高，不显示内部滚动条**（2026-11-17，用户截图及补充）：K199 为消除外框错位而固定编辑尺寸，导致原文变长后出现滚动条、光标自动滚到末尾并裁切上部文字。现在按实际字号测原文每行宽度，增长至内容盒 maxWidth 后换行，手动指定宽度沿用；原生 textarea 的 scrollHeight 决定完整高度，并给行末光标与像素舍入留空间。原节点 group 的 visibility 在编辑期临时隐藏，编辑器独自承担文字与外框；关闭/换 DOM/引擎失效时恢复原属性，测量上下文随会话释放。输入只调整编辑 DOM、不写树、不记历史、不保存；提交仍走既有原文写回通道，随后布局更新。回归 `tests/node-inline-editor.test.ts`（增高、预览不污染数据、原显示恢复）、`verify:visual`（根与普通节点在 50%/100%/150%/235% 下的短中文→长中文→短中文尺寸变化、全内容可见、无内部滚动、关闭恢复与一次保存）。
-- [K204] **原生空节点编辑与插件原文编辑共用外框职责**（2026-11-17，用户高亮框截图）：新建空节点走引擎 `TextEdit`，K203 只覆盖自绘节点的插件 textarea；原生 contenteditable 增长时，SVG 的 `.smm-hover-node` 仍按提交前节点尺寸绘制。`engine/mindmap-editor.hideNodeForEditing` 统一暂藏整个节点但保留测量几何，恢复函数幂等且精确保留原 visibility；两条编辑面共用 `NODE_EDITOR_FOCUS_SHADOW`，高亮由编辑面自身 box-shadow 绘制、天然随宽高变化。原生显示/关闭方法防御式包装，关闭前、缩放重开、移除编辑 DOM 或引擎销毁时恢复；缺少关闭方法时不隐藏节点。原文预览不写数据、不加历史、不排保存，提交仍走各自原有通道。无 vendor / CSS / Markdown 格式改动。定向回归 `engine-editor.test.ts` / `node-inline-editor.test.ts`；真实 Chrome 覆盖选中空节点的四档缩放与三种底色、短→长→短输入、旧高亮隐藏、无滚动裁切、未提交数据稳定及关闭恢复。新增选中空节点断言在修复前真实浏览器失败，证明前轮盲区。
-- [K205] **拖动只改变结构与顺序，未命中回原位**（2026-11-18，用户截图与明确授权）：关闭 `enableFreeDrag`，不新增自由坐标持久化。vendor 补丁 18（`patches/structural-drag.js`）复用原生布局分区、连线预览与松手命令；判定统一投影到导图坐标，修复缩放后未缩放四分之一尺寸切屏幕坐标的错误。精确命中优先，邻近可见目标 12px 屏幕容差、退出 16px；同级插入轴保留原生语义，不吸附被拖分支/折叠后代/未挂载节点。检测取所属窗口 rAF 合帧（32ms 兜底，帧/定时谁先执行谁取消另一条），松手取消未决帧并按最终指针/变换同步确认，reset/解绑也取消；输入过程只改预览与选中反馈，结构命令沿用原 mouseup，未命中不留自由坐标、不全图 RESET_LAYOUT、不改变视口。回归 `tests/engine-drag-target.test.ts` + `verify:visual` 的真实 DOM 拖动。K23 历史辅助仍废止：本轮不在 features 另造第二套落点判定或事件循环。
-- [K206] **移除右侧常驻「整理」按钮**（2026-11-18，用户后续建议）：K205 的结构拖动已自动布局、未命中回原位，整理不再是每次拖动后的必要步骤。右缘视图组只留放大/重置缩放/总览/缩小，四组共 10 个按钮；保留画布右键「自动整理」、既有 mindmap-arrange 命令 ID 和布局切换的内部整理管线，作为手动恢复入口。删除仅供该按钮的中英 tipArrange 词条，不删共享 toolbar.arrange 或整理实现。回归沿用 view-toolbar.test.ts 的顺序、按钮数、图标/接线与独立整理功能用例。
-
-- [K201] **新建导图只有中心节点，不预置示例分支**（2026-11-17，用户反馈）：`createDefaultMarkdownContent` 只产出启用/布局属性与分隔空行，正文为空；命名、落点、布局种子保持原流程。移除三条提示文本及中英死词条，现有文件中的提示不自动删除。**首节点语法**：去掉模板后，列表模式失去列表兄弟供序列化跟随，原空文档默认会写 `#`；复用虚拟根 `mdHeadingStart`，空图在列表设置下显式记 null（1–6 仍代表标题起点，缺失仍保历史默认 1），序列化起始 headingLevel 为 null 时按列表写。此标记只在树中，不新增 frontmatter/data.json 字段。撤销或外部修改回到空图时，`view.applySnapshot` 在空根副本上用同一 `seedHeadingStart` 重新初始化，保留已有起点、不修改会话/历史输入；有正文时不播种。纯浏览的序列化正文仍为空，由既有加载基线阻止写盘。回归 `tests/creation-folder.test.ts`（中英真实创建内容、三档首次分支及层级往返）、`tests/md-roundtrip.test.ts`、`tests/md-heading-syntax.test.ts`、`tests/view-canvas-interaction.test.ts`（空快照播种与输入隔离）、`tests/save-pipeline.test.ts`（空图关闭不写盘）。
-
-
-
-### 架构边界与单一来源
-
-- [K28] URL/地址形态判断只允许引用 `domain/url.ts` 的谓词（勿手写 startsWith 前缀链）；**URL 解码一律走 `domain/url.tryDecodeUri`**（2026-10-11 收口：失败返回 `null`，调用方按场景显式选「回落原样 `?? raw`」或「跳过该候选/该行」——此前这条口径在 `domain/url` ×2、`links/file-lookup` ×1、`links/links-resolve` ×3、`links/links-tree` ×1 各写一份 try/catch，`%` 是真实文件名里的常见字符而非常态外输入）；防抖/节流/串行队列/有界并发映射一律用 `concurrency.ts` 原语（勿手写 timer/chain 字段；批量异步任务勿用无界 Promise.all，用 `mapWithConcurrency`）；扩展名清单集中在 `constants.ts`（基表派生，勿复制）。
-- [K28b] **节点链接的「文件写法」只有一个来源：`md-serialize.renderHyperlink`**（wiki 双链 / 附件嵌入 `![[…]]` / md 链接 `[显示名](…)` / autolink `<url>`）。序列化回写与视图侧「复制链接」共用它——复制到剪贴板必须是**粘回笔记即可用的那一串**，此前直接复制通道原文，md 形态只拿到裸路径（粘回去是纯文本）。另：文件夹拖入的选文件口径统一走 `links-resolve.filesUnderFolder`（库根 `'/'` 特判——直拼 `'//'` 前缀会让整库拖入被当成空文件夹）；跨 await 的批量写入一律按「会话所属引擎」守卫（`view.mindMap !== engine` 即放弃，不能只判 `null`：重建后的新实例 ≠ null）。
-- [K29] 库内文件解析只走 `links-resolve.resolvePathToFile` 统一入口（勿自建 getAbstractFileByPath/索引/线性扫描组合）；索引原语在 `links/file-lookup.ts`。全部插件代码由 eslint `no-restricted-syntax` 机械强制（收口点 `links/links-resolve.ts`、`links/file-lookup.ts` 豁免；存在性检查等特例须 disable 并注明理由）；模块依赖矩阵另由 zone 规则强制（见 K51）。
-- [K30] vault rename/delete/create 事件只在 `VaultSyncService.attach` 注册一次，插件侧补充处理经 hooks 注入（勿再 registerEvent 第二份订阅）。
-- [K31] view-* 模块经 `ViewPluginContext` 访问插件能力（settings 活引用/viewState/statusBar 服务），不接触插件实例与状态栏 DOM；节点/悬停等视图态用模块级 WeakMap 内聚，不加到 `MindMapViewContext`。
-- [K32] view-* 模块按需依赖子上下文（R4 上下文瘦身）：只碰 UI 元素的拿 `ViewDomContext`，只碰引擎的拿 `ViewEngineContext`，再与 `Pick<MindMapViewContext, 'lang' | …>` 组合成模块内最窄面（示范：view-search/view-status）；勿默认依赖整个 `MindMapViewContext` 装配面，新成员先落到对应子面。
-- [K33] `errors.ts`：`errorMessage` 提取消息；用户可见错误提示统一用 `notifyError(lang, key, error)`；**内部告警（只在 console 留痕）统一用 `createWarnOnce()`**（2026-10-11 收口）——返回的幂等函数＝去重范围（模块级 const ⇒ 进程一次；视图字段 ⇒ 该视图一次），前缀 `MindMap Studio：` 由其统一添加，**勿再各写 `let warned = false` 或手拼前缀**。凡「失败后行为退化但用户不可感」的路径（导出产物缺失、字体代际监听未装配、冗余 leaf 摘除失败…）都必须留痕：静默即无痕退化（K85 ① 教训）
-  （勿再手写 Notice 拼接）。
-- [K34] i18n 含 `{name}` 占位符的文案用 `tf(lang, key, params)` 格式化（勿手写 .replace 链）。
-- [K35] 弹窗 Promise 的 settle 守卫用 `modal-common.createModalSettle`（关闭兜底经官方 `Modal.setCloseCallback` 注册，**勿覆写 `modal.onClose`**）；库内文件输入联想用 `modal-common.VaultFileSuggest`（勿再各写一份 AbstractInputSuggest 子类）。
-- [K36] 所有 DOM/事件/定时器监听使用 `this.register*` 助手注册，保证卸载清理；引擎实例事件经 `EventBinder` 记录统一销毁。
-- [K37] 命名对照：类名 `MindMapStudioPlugin/MindMapStudioSettings/MindMapStudioSettingTab`（历史上曾以插件旧名 TheMindMap 命名，已随品牌更名统一）。
-- [K50] **模块化设计是硬约束（不是可选项）**：写新逻辑前先回答「它属于哪个已有模块」——答不上来才允许新建文件，且新文件必须只承载一个可命名的关注点。四条强制边界：① **单一职责**——禁止把新职责「顺带」追加进已承担职责的文件，新职责要么进对应模块、要么成独立文件；② **分层单向**——依赖方向恒为 `domain → services → features → 根基础设施`（后者可依赖前者，反向禁止；domain 零依赖由 lint 机械强制，见 K28）；③ **收口唯一**——跨模块能力只允许一份实现（收口点清单见 K25 / K28 / K29），复用优先，严禁造第二份；④ **窄接口**——模块间以最窄契约交互（K31 / K32 的 `ViewDomContext` / `ViewEngineContext` 为示范），不得把整块装配面传给只需要一角的模块。超限文件的拆分判定见「文件规模与豁免」，新增特性落层自检见「新增功能检查清单」第 1 步。
-- [K51] **模块组与依赖矩阵（机械强制）**：src 按模块组组织（组成员见「代码结构」），依赖只能是矩阵许可集的子集——`domain`（L0 零依赖）← `core`（仅 domain）← `links`（core/domain）← `markdown`（core/links/domain）、`media`（core/links/domain）、`engine`（core/domain）、`platform`（core/links/markdown/domain）、`ui`（core/links/media/domain）、`services`（全部 L1 + domain）、`features`（全部下层）。**组合根（`main.ts`/`commands.ts`/`settings.ts`/`creation.ts`）只能被组合根本身引用**——下层引入口即违约；唯一豁免是**类型引用**（视图上下文契约需要 settings 的类型，编译期擦除无运行时耦合）。强制手段：**矩阵唯一定义在 `scripts/module-boundaries.mjs`**（勿在别处再抄一份——两份矩阵必然漂移），由两处共同消费：① `eslint.config.mts` 为每组生成 zone 块（`@typescript-eslint/no-restricted-imports` + `allowTypeImports`），说明符用**任意深度正则**匹配（`^\.\./(?:\.\./)*<组>(?:/|$)`）——`group: ['../x']` 只认字面量，某组新增子目录后 `../../x` 会静默绕过；② `tests/module-boundaries.test.ts` 用 TS AST 抽 import（含动态 `import()`）并按**解析后的真实路径**判层，补上 lint 结构上表达不了的三类：**组内成环**（同组 `./x` 相互引用，lint 只看跨组说明符）、**深层路径**、**`src/` 新增一级目录未登记**（无块覆盖它时 lint 全绿）。组内相对引用（`./x`）不受矩阵限制，但组内不得成环；新增文件先定组再导入。实测拦截力：探针文件分别触发「`core → features`（一层）」「`core/sub → features`（深层）」「`features` 值导入 `../settings`」与「`features` 内两文件互引」四条红灯，而 `import type ... from '../settings'` 按豁免放行。
-
-- [K166] **「内容是否已落盘」只有一个判据：本轮序列化 vs 加载基线（2026-11-06；2026-11-07 随「照搬 `TextFileView`」收窄）**：`services/document-service.ts` 的 `SavePipeline.isAtLoadedState` 比较 `buildBody(活快照)` 与 `markLoaded` 记下的 `loadedBody`（**只比正文**：文件头恒取磁盘当前值、管线从不改它），两个消费面共用——① 纯浏览守卫（相同且本会话没写过盘 ⇒ 不写盘）；② 撤销回加载态时必须落盘（`wroteSinceLoad` 为真时写回 `loadedRawBody`）。**`schedule()` 因此返回 `ScheduleOutcome` 而不是 boolean**：`scheduled`（报「保存中」）/ `noFile`（加载中 / 已卸载，什么都不报）。曾经的 `off`（autoSave 关闭时的只判定轮次 `checkDirty`）与 `suspended`（连续失败挂起）**已随 P1b 与自动保存开关一起删除**（2026-11-07）：只有自动保存一种节奏，失败由 `onSaveError` 表达（报「未保存」，常驻到下一次成功）。**状态栏是插件级共享元素**：只由**活动视图**写入（`setSaveState` 取 `getActiveViewOfType`），换文件复位 `idle`，切语言按当前状态重推。回归：`tests/save-pipeline.test.ts`（`onSaved` 6 例 + 去向 1 例）、`tests/view-status.test.ts`。
-
-- [K173] **节点内 mermaid 渲染：内嵌 Pele，不走宿主 `loadMermaid()`（2026-11-09，实机取证）**：
-  ① **依据**：Obsidian 1.15 起阅读视图的 mermaid 由 **Pele** 渲染（`Obsidian/Credits.md` 记 1.12.0；`obsidian.asar` 内 `/lib/pele.min.js` 699 KB），`loadMermaid()` 返回的是 Pele 的**mermaid 兼容层**（`{initialize,render,parse,mermaidAPI}`），**不是 mermaid.js**。但兼容层 `render` 是 `async`（源含 `$$` 时还要等 MathJax），`window.pele` 又是**按窗口懒加载**（受控重载后无 mermaid 视图时 `typeof window.pele === 'undefined'`；popout 新窗口里同样 undefined）——而节点内容在 `customCreateNodeContent` 里**同步**构建、引擎随即同步离屏测宽，只有 Pele 本体满足「首帧即最终尺寸」（否则要再养一套占位 → 定稿重排会话）。内嵌版还顺带解决 popout 跨窗口。
-  ② **一致性（实测）**：内嵌 `pele@1.13.0` 与宿主 1.12.0 对 **16 种图类型**（flowchart/sequence/class/state/er/mindmap/timeline/pie/gantt/journey/gitGraph/sankey/xychart/kanban/block…）输出**逐字节相同**；产物纯 SVG（无 `foreignObject`），8 ms 首帧 / 24 节点 4 ms / 800 节点 44 ms。体积：全量入口 +720 KB（gzip 269 KB）→ `main.js` ≈1.4 MB；`pele/core` + 8 类 305 KB（若将来要瘦身，只此一档有意义）。
-  ③ **边界**：`pele` 走 npm 依赖 + 精确锁版本（**不进 `vendor/`**——vendor 只存「打过补丁 + sha256 契约」的 bundle）；升级时核对宿主 `Credits.md` 的 Pele 版本，避免「阅读视图能画、节点画得不一样」。渲染收口在 `platform/mermaid.ts`（唯一 import）：`renderMermaidSvg`（内容寻址缓存，键**只含源码**）+ `renderMermaidNode`（`DOMParser('image/svg+xml')` 取根元素，**不用 innerHTML**——项目 `no-unsanitized` / `@microsoft/sdl` 双规则禁用）。容器 `div.tmm-mermaid` 必须 `pointer-events:none`（否则图吃掉拖拽/双击）。**失败即回退**：语法错误 / 未注册类型 / 源码 > `MERMAID_SOURCE_MAX_CHARS`(20000) → 普通代码块 + `createWarnOnce` 留痕。**截断豁免**：`clampSegments` 对 mermaid 段不计预算、不切段（图不能被切一半）。**颜色**走 `--pele-*`（宿主定义在 `body`）⇒ 同一份 SVG 随主题变色、主题切换不清缓存；导出由 `export-svg-postprocess` 的变量白名单补整套 `--pele-*`（不补则暗色导出回落亮色兜底）。
-  ④ **配色：只跟明暗，不跟节点色（2026-11-09 用户裁决，反转同日 P2 的「节点配色 → 图」）**：图是**内容**（颜色是画图人写的语义），节点色是**装饰**（分支标记）——同一段源码放进红色 / 蓝色 / 无色节点必须长得**完全一样**，否则「刚才改了什么」不可预期、截图与对比也不可复现。故 `buildMermaidElement` 一个 `--pele-*` 都不写，颜色全部交给 CSS 解析（主题切换零成本，产物缓存键仍只含源码）。容器另加**不透明纸面**：内联 `background: var(--pele-bg, var(--background-primary))`——必须内联（类规则不进导出克隆），否则彩色节点上图会直接压在节点填充上；「纸」随主题而非随节点，所以纸墨永远成对，不存在「白底白字」。**老版本 / 无 Pele 的宿主兜底**：`styles.css` 的 `.tmm-mermaid` 段把 `--pele-*` 映射为 `var(--mermaid-*, var(--通用变量))`——新版取值链与宿主自己的映射一致（观感零差异），老版本落到 `--background-primary` / `--text-normal` / `--text-faint` 一族，暗色主题不会得到白底图。导出白名单同步补 `--background-primary` / `--background-secondary(-alt)` / `--background-modifier-border` / `--text-faint` / `--text-error` / `--radius-s`（导出克隆里没有插件样式表，纸面靠这些值解析）。**复制源码按钮**复用代码块的 `.tmm-code-copy` + `data-code` 契约（点击委托、✓ 反馈、导出隐身全部零改动），文案单独 `mermaid.copy`；显隐规则与代码块成对写在 `styles.css`。**图内链接（P3）**：`buildMermaidElement` 只给 `a[href]` 放行命中（`pointer-events:auto` + `cursor:pointer`），点击由 `features/view-wikilink` 在引擎 `node_click` 上识别 `.tmm-mermaid a[href]` 后走 `openHyperlink`——**必须拦默认导航**（裸 `<a href>` 在 Electron 里会把整个窗口导航走），且只在 HTML 锚点通道落空时才走它（SVG `<a>` 不是 `HTMLAnchorElement`，`findAnchorInNode` 认不出）。**缩放未做**：`pele.enableZoom` 依赖独立容器与自身 UI，在 foreignObject 内与引擎手势冲突，收益也不如直接拖宽节点。
-  ⑤ **顺带修的既有缺陷（2026-11-09）**：`pushInlineText` 先用 `tokenizeInline` 切链接，**链接先于围栏被吃掉** ⇒ 围栏内含 URL / `[[双链]]` 时整块被切碎，`MARKUP_RE` 的 fence 分支再也配不上，代码块退化成字面文本（实机：mermaid 的 `click A "https://…"` 让整张图不渲染）。修法：`scanFenceBlocks` 在行内 token 化**之前**把围栏整段切出（与 `protectedRanges` 让表格绕开围栏同一条纪律），围栏内容不再经过链接/标记切分。
-  ⑥ **顺带修的第二个既有缺陷（2026-11-09，写示例导图时暴露）**：`classifyLines` 的围栏闭合判据走 `fenceMarker`（≤3 空格）的**绝对**口径，而列表项内的围栏定界符本就在第 4 列（`  - ```js`）⇒ 闭合行永远认不出、围栏状态不退出，**排在代码块之后的兄弟节点与标题整段被吞进代码内容**（实机：示例导图里代码块之后的分支全部消失；此前的示例能跑只是因为围栏位于文件末尾）。修法：围栏状态记下**定界符所在列**，闭合按「与它相差 0–3 列」判定（CommonMark 的相对口径）。回归 `tests/md-roundtrip.test.ts` 正反两条（同列可闭合 / 多缩进 4 列以上仍按内容保留）。**2026-11-12 修正两条**：① 闭合行**可以比开栏更浅**（CommonMark 只有「不超过 +3」这一个上限），`  ```js` 开在第 2 列、顶格闭合是手写文件的常见排法，此前要求 `closeIndent >= column` 会认不出闭合、后续节点整段被吞（探针：`- 甲 / 2 空格围栏 / 顶格闭合 / - 乙` ⇒ 树塌成 3 个节点）；② 围栏内各行按**定界符所在列**计入缩进（不是本行自己的缩进），否则顶格闭合行会掉出所属列表项、单独变成一个 ` ``` ` 节点。`isSelfClosedFenceLine` 同时提到模块级导出，解析 / 渲染 / 脚注三处共用。
-  ⑦ **回归**：`tests/mermaid-render.test.ts`（同步渲染 / 缓存 / 语法错误回退 / 超限）、`tests/node-inline-content.test.ts`（图容器结构、失败回落代码块、`Mermaid` 大小写归一、超长节点截断豁免、**配色变量纸墨成对**、复制按钮契约、围栏内 URL/双链整块保留）。⚠ 无 DOM 环境的同一张图与实机字节不同（1478 vs 1526）——单测只断言结构，字面金样归 `verify:visual`。
-
-- [K180] **文档会话：同一文件一份权威树 + 单游标撤销线（Level B，2026-11-09）**：
-  ① **旧账（实机，0.3.2）**：两个导图视图各一套引擎 / 历史 / 保存管线。A 改一个字，B 要等 A 自己写盘（≈2.2 s）再由 `vault.modify` 重载并**重建引擎**才可见；两侧都改时后写者覆盖前者（K177 只提示）；B 的 Ctrl+Z 撤不掉 A 的修改；两侧引擎 uid 完全不同（`tmm-qw2y…` vs `tmm-wqj4z…`）——按引用互认节点根本不可能。
-  ② **结构**：`services/document-session.ts` 的 `DocumentSession` 持有 `tree`（唯一可写真相）、`SessionHistory`（单游标）、`SavePipeline`（一条管线）与 `SessionViewPort` 集合；视图引擎树只是**只读投影**。注册表 `DocumentSessionRegistry` 按路径键（重命名只迁移键），组合根持有。视图在加载时 `acquire`（首个读盘一次，后续**不读盘**——磁盘可能落后于未保存改动），提交经 `commit(tree, origin)`，撤销 / 重做由会话执行后广播。
-  ③ **单游标是刻意改进**：官方实机是「改动流复制 + 每视图历史镜像 + 各自游标」（CM6 history 字段两侧对象不同、条数漂移 5 vs 4），会出现「A 撤销掉 B 的撤销」「redo 只在执行过 undo 的那个视图可用」。会话单游标没有这两种怪象，Ctrl+Y 在任意视图都可用——**与官方的有意差异，不得改回镜像**。
-  ④ **编排归属**：保存 / 历史 / 广播 / 外部写入归会话；**只有发起视图**跑 `data_change` 那套编排（状态栏、标题改名、自动拆链、语法守卫、联系几何）——接收视图的应用通道不发 `data_change`（见 K181），同一次编辑天然只编排一次。状态栏仍只由活动视图写（K166），会话经 `setSessionSaveState` 回写各视图字段。
-  ⑤ **uid**：引擎 `handleData` 只给缺失节点补 uid（`createUidForAppointNodes`），会话树因此可跨视图稳定；`ensureUniqueUids` 也只补缺失/重复。
-  ⑥ **回归**：`tests/document-session.test.ts`（并发 acquire 只读一次 / 提交只广播其它视图 / 同一树不入历史 / 撤销重做广播全部 / 外部写入两分支 / 每次解绑 flush / 最后销毁 / 无基线不写盘）、`tests/document-session-history.test.ts`（栈语义 7 例）。
-
-- [K181] **跨视图应用快照只走 `applySessionSnapshot`，禁用 `updateData`（无回声的结构性保证）**：
-  ① **为什么**：vendor `updateData` = `handleData` → `renderer.setData` → `render` → **`command.addHistory()`**。最后一步会往引擎历史塞整树快照，并发出 `data_change`——编辑期该事件的**唯一发源**。接收视图因此会再排一次保存、再跑一遍标题改名 / 语法守卫 / 自动拆链（双写 + 重复编排）。
-  ② **`command.pause()` 不可用**：`addHistory` 被 100 ms **延时节流**包装，同步 `pause → updateData → recovery` 之后那次调用仍会在到期时执行；把暂停窗口拉长又会吞掉窗口内真实编辑的 `data_change`（丢保存）。
-  ③ **通道**：`engine/mindmap-snapshot.ts` 的 `applySessionSnapshot` = `handleData` → `emit before_update_data` → `renderer.setData` → `render()` → `emit update_data`。实测（Obsidian 1.15.0，5000 节点）：历史不增、`data_change` 不发、`node_tree_render_end` 一次、视口 `scale/x/y` 与选中态不变；耗时 **90–141 ms**（单节点局部编辑整树渲染 **79–103 ms**，`getData()` **5.5 ms**，整引擎 `setData` 重建 **5422 ms**）。
-  ④ **选中态**：`renderer.setData` 按 uid 保留选中；被删节点的 uid 消失时引擎自动清空 `activeNodeList`（实机确认，无悬空引用）。
-  ⑤ **降级**：引擎接口缺失（版本差异）时退回 `updateData` 并返回 true——宁多一条历史/一次 `data_change`，不丢内容。
-  ⑥ **回归**：`tests/engine-session-snapshot.test.ts`（不进历史 / 不发 `data_change` / 深拷贝 / null / 回退 / 空树）。负向自检：把实现换回 `updateData`，前两条断言即红灯。
-
-- [K182] **外部写入：放弃写盘 + 重载 + 草稿入撤销线 + 有草稿提示一次（替代 K177）**：
-  ① **官方实机（1.15.0）**：外部改动总是进入每个视图（能合并则 diff-match-patch 合并、不能合并则替换）；**只有该视图有未保存改动时**弹一次 Notice（中「“X” 已被外部修改，正在自动合并更改。」/ 英 `… was modified externally, merging changes automatically.`）；无改动静默；整次外部改动是**一条可撤销步骤**，Ctrl+Z 回到草稿、随后 2 s 自动保存把草稿写回磁盘（实测）。
-  ② **本插件不做树级合并**（会重写未编辑行、违反 `mdRaw` 逐字保真），故恒定走官方那条「不可合并」分支：`SavePipeline.writeBody` 写盘前比对磁盘正文与 `lastSeenDiskBody`，不同 ⇒ **一个字都不写**（返回 `aborted`，回调 `onExternalAbort`）；会话 `reloadFromDisk` 重新解析 → 把新树**追加为一条历史**（于是 Ctrl+Z 正好回到草稿）→ 广播 → `markLoaded` 重置基线 → 有草稿时提示一次、无草稿静默。
-  ③ **与 K177 的关系**：K177 的「后写者胜 + 覆盖后告警」被本条**替换**；`onSaveConflict` 删除，新增 `onExternalAbort`；i18n `save.overwroteExternal` 删除，新增 `save.externalReloaded`（中英成对）。
-  ④ **竞态**：`vault.process` 回调里二次比对（读—写之间又变 ⇒ 返回原值不写）；写成功后 `lastSeenDiskBody` 存**落盘形态**（补齐尾随换行）——存序列化形态会因差一个 `\n` 把正常写盘误判成外部改写。
-  ⑤ **回归**：`tests/save-pipeline.test.ts`（abort 不写 / 只改文件头不 abort / 无基线不误判 / 撤销回加载态不覆盖外部）、`tests/document-session.test.ts`（有草稿提示 + 可撤销 / 无草稿静默）。
-
-- [K183] **关闭视图与保存归属：每次 `detach` 都 flush，最后一个解绑销毁会话**：
-  ① **官方实测**：`TextFileView.onUnloadFile` **每次关闭都 save**（不脏也调 `save()` + `getViewData()`，无差异则 mtime 不变）；脏则立即写盘（不等 2 s 防抖）；换文件时先 save 再 `setViewData(clear=true)`（后者才清历史）。
-  ② **本实现**：`session.detach(port)` 每次都 `flush()`（`SavePipeline` 自带无差异跳过），最后一个视图解绑 → 销毁会话并从注册表移除；`onUnloadFile` / `onClose` 都走它。**会话引用必须留到 `closeInlineEditor` 之后**再置空——先置空会把用户刚输入的内容丢掉。
-  ③ **基线**：`markLoadedFromEngine` 只在**首次引擎就绪**时记一次（`baselineRecorded`），设置刷新重建引擎不重记（K156④）；未记录基线时 `flush` 直接跳过（否则「只打开看一眼」就把规范化结果写盘）。
-  ④ **已知差异**：任务书原话「最后一个视图关闭时保存一次」按官方改为「每次关闭都 flush，至多一次真实写盘」。
-  ⑤ **回归**：`tests/document-session.test.ts`（每次解绑 flush / 最后销毁 / 无基线不写盘）。
-
-- [K184] **多视图的订阅、重命名与性能口径（Level B 收口）**：
-  ① **单点分发**：`vault.on('modify')` 由组合根转 `registry.onModify(file)`（一个文件一次，不再逐视图）；`VaultSyncService.onRename` 里 `registry.rename(oldPath, path)` 只迁移会话键——官方实测改名后两个 Markdown 视图 `file.path` 原地更新、历史条数不变、引擎不重载。
-  ② **提交口唯一**：只有发起视图的 `data_change` / `notifyNodeContentCommitted` 触发 `commit(snapshot, this)`；广播跳过 origin（它已是新内容，再应用只会白付一次整树渲染并可能打断交互）。
-  ③ **应用前收尾**：`beforeApplySnapshot` 关内联编辑器、取消点选与联系锚定（`renderer.setData` 会让节点实例全部换新，旧引用失效；不关就会把旧原文写回新树）。
-  ④ **性能**：广播窗口按图规模分级（≤600 节点 0 ms、更大 60 ms，见 K185）；5000 节点实测每次应用 90–141 ms、不重建引擎。被盖住标签的「跳过渲染」实测更差，已回滚（K186 ④）。
-  ⑤ **已知边界**：不做树级合并 / 跨进程 / 冲突副本；两视图同时编辑不再互相覆盖（会话串行提交），但**外部进程**写入仍按 K182 重载。
-  ⑥ **回归**：`tests/document-session.test.ts`（重命名只迁移键）、实机七步（见 `line-count-log.md` 本批记录）。
-
-- [K185] **同步延迟优化：把「编辑 → 另一侧可见」从 0.5 s 压到一帧级（2026-11-09，向官方靠拢）**：
-  ① **差距定位**：官方 Markdown 双视图是编辑即推送（实测 `setViewData` ≈12 ms）。本插件旧链路里，编辑提交信号 `data_change` 由 `Command.addHistory` 在**100 ms 延时节流**末尾发出（上游 `defaultOptions.addHistoryTime`），再叠 80 ms 广播合并窗口，实测另一侧可见 **≈550–900 ms**。
-  ② **优化一：缩短历史收集节流**（`engine/mindmap.ts` 的 `HISTORY_ADD_THROTTLE_MS = 16`，经 `Object.assign` 注入 `addHistoryTime`）。上游 100 ms 只是「合并同一操作内的多次 addHistory」，16 ms 仍覆盖一帧、不会把一次拖拽拆成多条历史；**不能设 0**（同帧多命令会各记一条）。提交语义不变：一次用户编辑仍只进会话历史一次（`commit` 的 `sameTree` 去重）。
-  ③ **优化二：广播窗口按图规模分级**（`services/document-session.computeBroadcastDelayMs`）：≤**600** 节点直接 0 延迟（下一任务即应用，小图一次应用只有几毫秒）；>600 节点仍用 **60 ms** 合并窗口（5000 节点单次应用实测 90–141 ms，逐键广播会占满主线程）。窗口随树规模动态换 debouncer，旧未决任务丢弃。
-  ④ **优化三：隐藏窗口不渲染**（对齐官方「后台不重绘」）：`broadcastNow` 见 `document.visibilityState === 'hidden'` 只置 `pendingHiddenBroadcast`，`visibilitychange` 恢复可见时由 `handleVisibilityChange()` 补一次；树 / 历史 / 保存照常推进（隐藏期间用户无法编辑，不存在丢提交）。监听随会话销毁移除。
-  ⑤ **顺带省掉两处整树拷贝**：`history.push(..., knownDistinct = true)`——`commit` 已用 `sameTree` 证明新树与当前不同，不再为判等序列化两遍整树；广播不再为每个接收视图 `structuredClone`（`applySessionSnapshot` 的 `handleData` 本来就深拷贝，引擎从不持有会话树）。5000 节点实测 `structuredClone` ≈7 ms、双份 `JSON.stringify` 判等 ≈1.8 ms。
-  ⑥ **实测（Obsidian 1.15.0，双视图，0.3.2 构建）**：`version` 更新 **18–20 ms**（原 ≈100 ms）、B 侧可见 **82–86 ms**（原 ≈550–900 ms）、撤销 / 重做广播 **5–7 ms**、两侧引擎探针未变（不重建）。大图仍走 60 ms 窗口（应用 90–141 ms）。
-  ⑦ **未做**：引擎历史仍由发起视图写入（只作旁路，不供用户可见撤销；省内存需改提交信号，收益小风险大）；被盖住标签的延后应用实测更差，已回滚（K186 ④）。
-  ⑧ **回归**：`tests/document-session.test.ts` 新增「分级阈值（600/601）」「隐藏窗口推迟 + 恢复补一次且不重复」2 例，`tests/document-session-history.test.ts` 新增 `knownDistinct` 1 例；全量 110 文件 / **2985 用例**。
-
-- [K186] **跨视图广播的三个边界修正 + 一次实测回滚（2026-11-09）**：
-  ① **撤销 / 重做 / 外部重载必须 forceAll**：`commit` 会记 `pendingOrigin`（广播时跳过发起视图，省一次重渲染）；若在合并窗口内立刻撤销，`pendingOrigin` 仍指向它 ⇒ 它停在撤销前的旧内容上。实机（700 节点）复现：编辑后 25 ms 撤销，A 显示 `n0X`、B 显示 `n0`、会话树 `n0`。修法：`broadcastNow(forceAll)`，撤销 / 重做 / 重载传 true（先清 `pendingOrigin`，再判隐藏 / 应用）。修复后四视图全部 `n0`。
-  ② **补应用必须先 `beforeApplySnapshot` 再置 `applying`**：应用期间 `commit` 被守卫拒绝；若把「提交内联编辑」放在 `applying = true` 之后，用户最后几个字会丢。
-  ③ **应用结束取消排队广播**：`beforeApplySnapshot` 里的提交会排一次广播；外层随后已应用最新树，那个排队广播是**第二次整树渲染**（大图 ≈120 ms）。应用期间没有新提交 ⇒ 取消安全。
-  ④ **回滚：不要跳过被盖住标签的渲染**。曾按 `HTMLElement.isShown()`（官方 API）判断「同组被盖住」并推迟应用，省一次整树渲染；实测切回该标签时要现场补渲染：700 节点 **428.8 ms**（更脏时 924.6 ms）才可见，而后台渲染本是 8 ms 批量异步、不阻塞输入——推迟反而更差。**结论：所有视图保持同步渲染**。官方 Markdown 能「不可见不重绘」是因为文本 diff 便宜，树模型不成立。
-  ⑤ **回归**：`tests/document-session.test.ts` 新增「合并窗口内撤销，发起视图也收到」「应用前提交不丢且只渲染一次」2 例。
-
-- [K187] **一次性迁移只换写法、不造声明（2026-11-09 实机订正）**：`platform/legacy-mindmap-migration` 的判据从「值能认出旧布局就迁」改为**以启用键为前提**，动作拆成 `{ layout, enable }` 计划（`legacyMigrationPlanOf`）：
-  ① **旧启用值**（`Mindmap: Timeline`）→ `enable: true`：改写成 `Mindmap: Mindmap`，旧值搬进 `Mindmap Layout`。这一支**优先于布局键**——旧契约不看布局键，键里的脏值不构成用户选择（`Mindmap: Timeline` + `Mindmap Layout: toString` 迁成 `timeline`）。
-  ② **已是启用信号** → `enable: false`：只补 / 归一布局键（无键 ⇒ `mindmap`；旧写法 ⇒ kebab；认不出的值**原样留着**，见 K172⑦）。
-  ③ **没有启用键 / 值是 `Markdown` / 未知值** → 返回 null、**不碰文件**。此前无条件 `setMindMapEnabled`，会把「只剩一个布局键」的普通笔记与用户主动「切换为 Markdown」的文件在启动 1.5 s 后静默变成导图（两类都可手写复现）。
-  ④ **同一个旧值读口**：新增 `domain/mindmap-property.readLegacyMindMapLayout`（布局键的旧写法 → 引擎 id），迁移与「以导图打开」升级共用。升级路径此前只接 `readLegacyLayout`，布局键是旧写法时会被种子值覆盖——迁移窗口内先手动打开即丢用户选择。
-  ⑤ **回归**：`tests/legacy-mindmap-migration.test.ts`（计划表 + 两类「不碰」）、`tests/md-frontmatter-trigger.test.ts`（新读口）、`tests/md-open-trigger.test.ts`（升级保留旧写法布局）。
-
-- [K188] **编辑期「就地归一」必须同步会话权威树（2026-11-09 实机，Level B 回归）**：
-  ① **现象**：层级语法守卫把 `# 甲` 后面的 `- 列表乙` 就地升级成 `# 列表乙`，屏上正确、**文件没写**；重开又变回列表项（树形与屏上不一致）。
-  ② **根因**：守卫改的是引擎**活数据**（不重渲染、不发 `data_change`），而 Level B 之后保存取**会话权威树**——`view.scheduleSave()` 只排程、不提交；`commit` 早在守卫之前（`data_change`）就发生过了，会话树停在归一前的写法。
-  ③ **修法**：`DocumentSession.updateCurrent(tree, origin)` + `SessionHistory.replaceCurrent`——更新权威树与版本，**替换当前快照**而不新增历史（Ctrl+Z 仍一步撤掉「拖拽 + 换算」），随后广播给其它视图并排保存；视图侧 `commitDerivedTree()` 供守卫调用。
-  ④ **回归**：`tests/document-session.test.ts`（updateCurrent 后撤销回编辑前）、`tests/document-session-history.test.ts`（replaceCurrent）、`tests/view-syntax.test.ts`（守卫调用 `commitDerivedTree`）。实机：升级 / 降级两条守卫路径都写盘，双视图同步，`dev:errors` 无条目。
-
-- [K189] **会话撤销必须由视图**同名**实现（`undo` / `redo`），否则静默退回引擎历史（2026-11-09 实机）**：`MindMapViewContext.undo?()` 是**可选**方法，视图实现成 `undoSession` / `redoSession` 时结构类型**不报错**（可选成员不要求实现），而 `view-hotkeys` / 右缘竖栏 / 右键菜单都按 `view.undo` 判定 —— 会话撤销**从未被调用**（实机 `typeof view.undo === 'undefined'`），Ctrl+Z 走的是每视图一条引擎历史（正是 Level B 要消灭的形态）。改名即可，无其它调用点。**同类提醒**：给 `MindMapViewContext` 加可选钩子时，视图侧方法名必须逐字对齐。另修一条提示：纯重定级（`##` 拖成 `#`）此前落到 `syntax.guardUpgraded` 且名字为空（`firstUpgraded` 只在「列表 → 标题」赋值）⇒ 新增 `firstReleveled` 与 `syntax.guardReleveled`（中英）。回归：`tests/view-syntax.test.ts`（纯重定级提示）、`tests/md-heading-syntax.test.ts`（`firstReleveled`）。
-
-- [K190] **打开导图不做两件无用功（2026-11-09 实机）**：
-  ① **不空报「保存中」**：首帧前的 `data_change` 是引擎自身规范化（`seedInitialHistory` 播种历史），不是用户编辑；`onRootDataChanged` 原先无条件 `scheduleSave()` ⇒ 每次打开都显示「保存中…」两秒，并空跑一轮「正文与加载基线相同」的保存（读盘 + 序列化、不写盘）。改为**只在 `commitSession()` 真的提交进会话时**才排保存（`commitSession` 返回布尔）。
-  ② **不重放整树**：视图 `attach` 后紧接着用 `cloneTree()` 建引擎，内容与会话树逐字相同；`appliedVersions` 原先没有预置，`onViewReady` 判成「落后」再 `applySessionSnapshot` 一次 ⇒ 大图每次打开白付一次整树渲染（实测 90–141 ms）。改为 `attach` 时预置当前 `version`（期间若有新提交仍会补一次）。
-  ③ **回归**：`tests/view-layout.test.ts`（源码契约：`if (this.commitSession())` 门控）、`tests/document-session.test.ts`（attach 预置后 `onViewReady` 不重放；引擎未就绪时仍补）。实机：打开 `saveState=idle`、状态栏只有节点数；编辑后 `saving → saved`；`dev:errors` 无条目。
-
-- [K191] **图内链接的三条点击通道必须一起覆盖，且一律跨 realm 判定（2026-11-09 实机）**：
-  ① **缺一条通道**：`view-wikilink` 的锚点判定原用 `instanceof HTMLAnchorElement`，Pele 把 mermaid 的 `click A "…"` 渲染成 **SVG** `<a href>`（`SVGAElement`）——左键分支因此新增了 `.tmm-mermaid a[href]` 独立通道（P3），但**中键**的画布 `auxclick` 通道仍只认 HTML 锚点 ⇒ 中键落在图内链上没有接管，裸 `<a href>` 被 Electron 默认行为处理（另开窗口 / 外部浏览器），与左键「新标签」语义分叉。修法：auxclick 在普通锚点落空后走同一个 `mermaidAnchorLink`。
-  ② **跨 realm**：同文件三处 `target instanceof Element` / `instanceof HTMLAnchorElement` 在 popout 里恒 false（元素来自另一个 realm）⇒ 独立窗口里的锚点点击 / 中键 / 悬停全部静默失效。统一改用 `core/event-binder.elementFromTarget`（硬规则 5 的既有实现），`resolveAnchorLink` / `anchorLinktext` 的形参随之放宽为 `Element`（它们只读 `getAttribute`）。
-  ③ **注释同步**：`platform/mermaid` 头注释原写「不含交互 / 图内链接不启用」，与 P2（复制源码）/ P3（图内链接）矛盾——改为如实描述「图不参与命中，只有复制按钮与图内锚点放行；缩放仍不启用」。
-  ④ **回归**：`tests/view-wikilink.test.ts`（图内锚点中键 → 新标签；跨 realm 的 `{ closest }` 目标仍能跳转）。实机：图内 `[[05-空转]]` 左键当前标签、中键新标签（`mindmap-view` 9 → 10、活动 leaf 变更）、明暗切换不重渲染（同一 `<svg>`）、`--pele-bg` 纸面不吃节点红、坏语法回落代码块、文字 + 图同节点正常、`%%{init}%%` 原样进 `data-code`。
-
-- [K192] **「清理旧 `%%none%%`」按文档计一次，不按视图（2026-11-09 实机，Level B 交互）**：`collectColorSentinelSessions` 原先逐个视图扫描；Level B 之后同一文件的多视图**共享一棵树**，于是同一处哨兵被算成 N 处（实机：4 个视图 ⇒ 弹窗「4 个已打开的导图 / 4 处」，实际 1 个文件 1 处），落地时还会对同一棵树重复 `applyRawNodeContents` N 次（N 次整树重渲 + N 条撤销）。修法：按 `view.file.path` 去重，一个文件只留一个代表视图（第一个有引擎的）。回归：`tests/view-context-menu.test.ts`（同一路径三个视图 → 一个会话、计数 1）。实机：4 视图下弹窗报「1 个 / 1 处」、清理后哨兵消失、Notice 报「已清理 1 处」。
-
-- [K193] **豁免表只留一处，门禁的「打包面依赖」必须写明（2026-11-09 实机核对）**：
-  ① **单一登记处**：`docs/agents/architecture.md` 曾与 `AGENTS.md` 并行维护同一张「超 300 行豁免表」，实测同一文件出现两个读数（1121 / 1280）——门禁只读一张，另一张必然漂移。当时收归 `AGENTS.md` 的表（2026-11-17 按 K202 迁到 `docs/agents/index.md`，`architecture.md` 继续只给指向），`check-gates.mjs` 的 `--fix-lines`、「未登记超限」核对与 `agents-md-sync` 的漂移阈值全部只读这一处。
-  ② **`--all` 的前置条件**：`check:gates -- --all` 会跑 `build:vendor`，而重打包的裸包名（`@svgdotjs/svg.js` 等）由 esbuild 从 `node_modules/` 解析、本仓库 `package.json` **有意**不声明（版本由 `vendor/upstream/package.json` 决定，见 `vendor/BUILD.md`「打包面依赖」）。未预装时 `--all` 必然红灯 ⇒ 帮助文案与 `testing.md` 都写明「只改普通源文件不要加 `--all`」。实机：不加 `--all` 的整链 7 步全过（build / test 3003 / lint / lint:css / check:dead-code / verify:visual / check:release），加 `--all` 在 `build:vendor` 解析 `@svgdotjs/svg.js` 处失败（环境缺依赖，非仓库回归）。
-  ③ **lint 豁免清单 = 真实直调面**：撤销 `src/links/file-lookup.ts` 的 `getAbstractFileByPath` 豁免（该文件已无此调用；留着会让「豁免清单 = 真实直调面」失真，审计项 V18），`src/platform/system-open.ts` 的裸 `require` 改为在该文件显式声明 `globals.require`——不再依赖 `isDesktopOnly: true` 顺带带进的 `globals.node`（那次注入挂在 manifest 读取上，cwd 相关，见 K43）。
-  ④ **回归**：`tests/check-gates.test.ts`（计划映射）、`tests/agents-md-sync.test.ts`（索引 / K 区间 / 豁免表漂移）、`tests/docs-standard.test.ts`（标准文档符号与版本指针）。实机：`--dry-run` 报「未登记超限 0、豁免表逐行一致」，`--fix-lines` 回填后复跑「无需回填」。
-
-- [K202] **开发入口与可变维护记录分离**（2026-11-17，用户要求）：根目录 `AGENTS.md` 保留固定硬规则、常用命令与按需读取方式；源码/测试文件清单、文件规模与豁免、文档入口及 K 区间统一迁到 `docs/agents/index.md`；原详细决策表逐字迁到 `docs/agents/decisions.md`。新增/删除文件、回填行数、追加实现记录时不再修改入口。具体行为约定按 `decisions.md` 维护，依据与历史仍在本文件；固定开发规则改变才更新入口。`agents-md-sync.test.ts` 与 `check:gates --fix-lines` 改读索引，保持原有文件登记、漂移、K 引用与表格检查；新增临时目录真实脚本回归，确保回填不触碰 `AGENTS.md`。所有资料按模块或 K 编号定位读取，不要求通读索引/决策/历史。
-
-- [K194] **Level B 的四条实机缺陷：广播窗口失配 / 改名基线失配 / 过期提交覆盖 / 应用期静默排保存（2026-11-09 实机定位并修复）**：
-  ① **广播窗口在装配处失活**：`DocumentSession.scheduleBroadcast` 用 `options.broadcastDelayMs ?? computeBroadcastDelayMs(...)`，但 `DocumentSessionRegistry` 构造参数默认 `SESSION_BROADCAST_DELAY_MS`（60）且 `acquire` 无条件注入 ⇒ `main.ts` 的 `new DocumentSessionRegistry(this.app)` 永远走 60 ms，K185 的「≤600 节点 0 ms」只在单测里成立（实机 63 节点 `delayOpt: 60`）。修法：注册表第二参改为可选 `undefined`，`acquire` 只在显式传值时注入；`main.ts` 不改。
-  ② **改名只搬会话键**：`SavePipeline` 的六张表（`loadedBody` / `lastWrittenBody` / `loadedRawBody` / `lastSeenDiskBody` / `wroteSinceLoad` / `consistencyRetries`）全按 `file.path` 存。`registry.rename` 只搬 Map 键，`markLoadedFromEngine` 又有一次性闩锁 ⇒ 改名后 `isAtLoadedState` 返回 null（纯浏览守卫失效、打开即重排全文）、`diskChangedSinceSeen` 恒 false（外部写入被吞 / abort 判定失效）、`hasUnsavedChanges` 恒 false（草稿提示丢失）。实机内存复现：改名后 `atLoaded:null`、`dirty:false`、连 `"SOMETHING-ELSE"` 都判不出。修法：`SavePipeline.rename(oldPath, newPath)` 迁移六张表，`DocumentSession.rename` → `registry.rename` 调用。
-  ③ **过期提交整树覆盖**：两个视图各自持有完整树；B 在收到 A 的广播前提交，其快照不含 A 的编辑，`commit` 直接替换权威树并广播（只跳过 B）⇒ A 的编辑在会话树与 A 的屏幕上同时消失（实机隔离会话：A 提交 `A-edit`、20 ms 后 B 提交 `B-edit`，会话树只剩 `B-edit`）。本插件不做树级合并（保 `mdRaw` 逐字），故选择**可见地不合并**：`commit` / `updateCurrent` 发现 `appliedVersions.get(origin) < versionValue` 时拒绝、`notifyStaleCommit()` 提示一次（`save.staleCommit` 双语），并由紧随的广播把该视图刷回权威树；接受提交时同步把 origin 的 `appliedVersions` 推到新版本（广播跳过 origin，不会替它更新）。
-  ④ **应用期提交仍排保存**：`notifyNodeContentCommitted` 无条件 `commitSession()` 后 `scheduleSave()`；`applying` 期间 `commit` 返回 false（引擎树正在被替换，接受更危险），但保存照排 ⇒ 写的是旧权威树。修法：与 `onRootDataChanged` 同口径，只有 `commitSession()` 返回 true 才排保存。
-  ⑤ **回归**：`tests/document-session.test.ts`（注册表默认分级 / 改名后纯浏览不写盘 / 改名后外部写入仍重载 / 过期提交被拒且不覆盖已有编辑）、`tests/view-layout.test.ts`（源码契约：插件原文通道同样门控）。实机（修前探针）：`delayOpt:60`、改名后 `atLoaded:null / dirty:false`、A 编辑被 `B-edit` 覆盖、`applying` 内 `commit` 返回 false 且 `C-during-apply` 消失；修后复验见 `docs/agents/line-count-log.md` 本批记录。
-
-### 交互对齐 Obsidian 官方
-
-- [K38] 交互对齐 Obsidian 官方帮助（`Editing shortcuts` / `Attachments` / `Drag and drop`）：
-  - 视图内 `Mod+Z` / `Mod+Shift+Z` / `Mod+Y` = 引擎撤销/重做（属系统级编辑快捷键，
-    非命令默认热键，不违反 no-default-hotkeys；引擎自身未绑定，由视图 scope 接管）；
-  - 视图内 `F2` = 编辑当前激活节点文本（`features/view-hotkeys.handleEditNodeHotkey`，
-    同由视图 scope 接管）：引擎自己也绑了 F2，但其 `onKeydown` 要求事件目标为
-    `document.body` 且指针在画布内（`enableShortcutOnlyWhenMouseInSvg` 默认 true），
-    点击节点后常不触发；处理器接管后即阻断冒泡（否则引擎的 window 级监听会再
-    hide+show 一次，编辑框闪烁），并在输入框/编辑框内让位、正在编辑时忽略——
-    本视图内核心 F2「重命名文件」因此不再触发（根节点文本仍同步文件名）；
-  - **视图作用域必须自行创建**：`View.scope` 在 Obsidian 1.5.7+ **默认为 null**
-    （核心 View 构造函数不赋值；官方文档要求 `this.scope = new Scope(this.app.scope)`，
-    核心文件浏览器亦如此），不创建时 `scope?.register(...)` 静默失效、视图内所有
-    快捷键全废。故快捷键注册统一走 `view-hotkeys.registerViewHotkeys(view)`——
-    它内部 `ensureViewScope` 保证作用域存在，调用方勿再自己传 scope；
-  - 剪贴板粘贴图片按核心约定命名 `Pasted image YYYYMMDDHHMMSS`
-    （`images-save.buildPastedImageName`；`SaveImageOptions.filename` 显式命名
-    优先于 File.name 与 preferredName，仅粘贴路径使用）；
-  - 外部拖入图片=导入附件目录并挂到节点（与官方拖入行为一致，保留原文件名）；
-  - 命令一律不定义默认热键（用户经 Hotkeys 设置自行分配）；引擎插件自带的 Ctrl+L
-    （KeyboardNavigation 的 RESET_LAYOUT）已在 `createMindMap` 末段移除，自动整理统一走
-    `mindmap-arrange` 命令。
-- [K139] **小地图面板不得设 `aria-label`：核心会把任何 `[aria-label]` 弹成可见 tooltip（2026-10-26 用户裁决「删去字样」）**：
-  ① 症状：鼠标停在小地图上浮出「导图小地图（方框为当前视口）」。
-  ② 根因（`obsidian.asar` 1.13.x 反查 + 实机 DOM）：核心在 `body` 上委托 `pointerover`/`pointerout`、选择器就是 `"[aria-label]"`，命中后直接读该属性作提示文本 `createDiv({cls:"tooltip", text})`（`data-tooltip-delay` 缺省 1000ms、`data-tooltip-position` 缺省 bottom）。故 **不是** `setTooltip` 专属——手写 `setAttribute('aria-label', …)` 一样会弹；也与 `title` / CSS 伪元素无关（实测 `getComputedStyle(panel,'::after').content === 'none'`，全量样式表无 `[aria-label]` + `::after` 规则）。唯一抑制口是元素计算样式 `--no-tooltip: true`（核心内部约定）。
-  ③ 处置：面板**只留 `role="group"`、不加可访问名**，`minimap.label` 双语词条一并删除（面板是纯视觉浮层，不需要可访问名）。日后要恢复可访问名**不要**回填 `aria-label`——改 `aria-labelledby` 指向视觉隐藏文本（标准 ARIA，不进 `[aria-label]` 选择器）。
-  ④ 验收：实机悬停面板后 `document.querySelector('.tooltip')` 不再出现该文本（单元测试覆盖不到核心的委托监听）。
-
-- [K150] **任务复选框与标签只能走「插件自绘 + 正文派生」，不能写引擎 `tag` / `note` / `icon` 字段（2026-10-28 用户裁决；实机 + vendor 取证）**：
-  ① 引擎事实（vendor 0.14.0-fix.3 的 `createNodeData`）：`this._customNodeContent` 存在时 `mt(...)` 后**直接 return**，其后的 `createImgNode` / `createIconNode` / `createTagNode` / `createNoteNode` / `createAttachmentNode` 全不执行 ⇒ 自绘节点上 `data.tag` / `data.note` 不会渲染、也不会进引擎搜索（引擎 search 只匹配文本）。本插件「快速文本节点渲染」恒开 ⇒ 文本节点全是自绘 ⇒ 写这些字段等于写一个永不显示的第二份数据。故：任务 = `data.mdTask` + 自绘 `span.mindmap-node-task`；标签 = 段序列 `kind:'tag'` + 自绘 `a.tag[data-tag]`；**备注（`note`）与附件映射明确不采用**（标准 Markdown 无对等物，`%%note:` 属私有语法，脚注定义行会破逐字保真）。
-  ② **任务 token 是「正文前缀」而非列表标记**（`- [ ] 文本` 的 `- ` 是标记，`[ ]` 属于正文）：`mdRaw` 必须保留 token（未编辑逐字回写），`text` 与 `mdDerivedText` 必须**一起**剥（`md-serialize.rawOk` 的唯一判据是两者相等；只剥其一会让整篇任务节点恒被判「已编辑」）。合成侧三条路径（纯 token / 分段 / 尾插）统一在 `composeNodeFirstLine` 末尾拼回 `mdTaskToken`（`[X]` 原样保留）；`links-split.writeSplitPlanToData` 重建父行后同样要重剥离，否则拆分一次链接父节点就多出一个 `[ ]`。
-  ③ **标签留在 `text` 里**（与 wikilink 剥壳相反）：Obsidian 阅读视图里 `#tag` 本就是可见文本，故只加段样式、零写回——`rawOk` 恒成立，风险面为零。判定顺序：`MARKUP_RE` 的保护区（注释 / 围栏 / 行内码 / 数学 / 转义）先切走，剩余 prose 再按「前一个字符非词字符」判标签；**转义产物**（`\#` → `#`）单独成段并带 `escaped` 标记，否则 `\#标题` 会被当成标签（回归：`tests/node-inline-content.test.ts` 的转义字符集用例）。
-  ④ **私有触点**（规则 9）：官方没有标签搜索 API，走 `app.internalPlugins.getPluginById('global-search').instance.openGlobalSearch('tag:#名')`；`internalPlugins` 与该方法都不在 `obsidian.d.ts`，故收口在 `platform/tag-search.ts`、任何一层缺失/抛错都降级为**一次**可见 `Notice`（`tag.searchUnavailable`）+ 一条 `console.warn`，不许每次点击重复弹、也不许静默空转（回归：`tests/tag-search.test.ts`）。
-  ⑤ **撤销**：插件侧「原文写回」通道（内联编辑 / 节点配色 / 任务勾选）直接改 data 后 `render()`，**不产生历史**（引擎只在 `Command.exec` 收尾 `addHistory()`，K26b）；这样的快照序列与数据脱节 ⇒ 一次 `Ctrl+Z` 会连带回退更早的未记录编辑（数据损失，不是「少个功能」）。故 `applyRawNodeContent` 收尾统一调 `engine/mindmap-history.recordHistory`（引擎 `command.addHistory()`，d.cts 未声明，防御式读取）。**不要**在批量循环里逐条跳过再补一条：`addHistory` 自带 100ms 防抖，连续写入天然合并为一条快照。
-  ⑥ **已知边界**（有意，勿当缺陷）：含图节点不接管自绘 ⇒ 任务复选框与标签 pill 都不画，也不提供右键入口（裁决 4）；轻标记内部不识别标签；`#123` 全数字不是标签；仅列表项首行识别任务；无右键菜单 / 键盘入口 / 多选批量（裁决 6）。
-  ⑦ **对勾不能进复选框盒的文本节点（2026-10-28 实机：勾选后节点「下沉」）**：空 inline-block 的基线取底边 margin edge，盒内一旦出现 `✓` 基线改为字形基线 ⇒ 所在行盒被撑高 2px ⇒ 引擎重测出节点高 26→28：勾选瞬间节点上下各长 1px（gY 151→150）、**下方兄弟节点整列下移 1px**（181→182 / 212→213）、复选框相对文字下沉（y 158→160，文本 155→154）。同文件静止态即可看到差异：未勾选节点 26、已勾选 28。故对勾一律渲染在**绝对定位层**（`TASK_GLYPH_STYLES`：`position:absolute` + 四边 0 + flex 居中 + `pointerEvents:none`），盒本体 `position:relative` 且两态都只有一个「空 / `✓`」子节点；修复后实机勾选前后高度、位置全部不变（gH 恒 26、兄弟不动）。两条看似对症但**无效**的补丁备查：`overflow:hidden`（DOM 内容盒回到 26，但引擎测得的节点高仍 28 ⇒ 内容与盒不一致，更偏）、`vertical-align:middle`（仍 28）。结构前提由 `tests/view-node-task.test.ts` 锁住（盒本体无裸文本 + 对勾层 `position:absolute`），像素级回归只能靠实机（Node 桩无布局）。**实机复验（2026-10-28 清理批）**：13px 盒在勾选前后 `foreignObject` 高度恒 25.59px（本轮实机读数），与相邻普通列表项一致；`execCommand('BACK')` 回退后 DOM 的 `data-task` 与磁盘 token **同时**回到 `[ ]`（`command.back()` 只移动索引、不落数据——撤销请走 `execCommand('BACK')`，别拿 `command.back()` 当判据）。
-  ⑧ **跨 realm 的事件目标判定只此一份**（2026-10-28）：复选框与标签 pill 都要「`Event.target` → 元素」，早期两个模块各写一份 `typeof closest === 'function'` 的能力判定。现已收口到 `core/event-binder.elementFromTarget`——放 core 而非 `features/view-common`：`view-tag` 是只读嵌入路径上的模块，`view-common` 会顺带把 `engine/mindmap` → vendor 拖进模块图（`tests/view-tag.test.ts` 实测 `document is not defined`）。回归：`tests/event-binder.test.ts`。
-
-- [K151] **标签 pill 与任务复选框的配色与 Wiki 链接同源（2026-10-28 用户裁决「A. 严格同链接」）**：
-  ① **唯一基色**：`features/node-inline-html.THEME_LINK_COLOR` = `var(--link-color, var(--text-accent, #7f6df2))`——内链文字 / 标签 pill 文字 / 复选框描边与完成态填充**共用这一个常量**。三处各写一份 var 链会违反硬规则 5：任何一处调兜底链都会与另两处失配。原 `NODE_ACCENT_FALLBACK`（字面量 `#7f6df2`，等于把 Obsidian 默认强调色钉死）已删除——它正是「改强调色 / 换主题，pill 与复选框纹丝不动」的成因。**链尾还有两个下级消费者**（2026-10-29 审核批补齐）：`EXTERNAL_LINK_STYLES`（`var(--link-external-color, <常量>)`）与 `UNRESOLVED_LINK_STYLES`（`var(--link-unresolved-color, <常量>)`）——同样复用常量、不手抄；手抄版少一级 `--text-accent`，回归里那行 `toContain('var(--text-accent')` 就是用来抓它的。
-  ② **底色是派生值，不是第二个色源**：pill 底 = `color-mix(in srgb, <THEME_LINK_COLOR> 14%, transparent)`。14% 落在 `#7f6df2` 兜底上时与旧值 `rgba(127, 109, 242, 0.14)` 等价 ⇒ 无主题变量环境（导出图回退时）观感不变。`color-mix` 需 Chromium 111+（1.13 的 Electron 远高于此）；这是它**首次进入导出产物**（`styles.css` 里用过，但那份 CSS 不进导出 SVG），故实机导出一张含标签的 PNG 必须确认底色仍在。
-  ③ **勾色交主题，不能在构建期判定**：底色既已是 CSS 变量，构建期就拿不到亮度 ⇒ 原来的 `ink === '#ffffff' ? 深勾 : 白勾` 只对**着色节点**成立（`ink` 是已知十六进制；深勾是常量 `TASK_MARK_DARK` = `#1f2937`，且在 B 方案下填充恒浅 ⇒ 该分支只在 data 里出现深 fillColor 时可达）。主题分支改用 `var(--text-on-accent, #ffffff)`（Obsidian 语义色：强调底色上的文字色），并加进 `platform/export-svg-postprocess.CSS_VARS_TO_EXPORT`（漏登记则导出图静默回退白勾）。浅色链接色配白勾的对比不足**接受**——原生 `input[type=checkbox]` 同样如此，属「与主题自洽」。**注入侧取的是 computed value，链路两端对称**（2026-10-29 实机订正——审核批一度误判为「声明值 + 会丢色」）：`getComputedStyle().getPropertyValue('--x')` 对自定义属性已完成 `var()` 替换，默认主题 `--link-color: var(--text-accent)` 实测取到 `hsl(210, 100%, 50%)`、`--text-on-accent: var(--my-ink)` 取到 `#00ff00` ⇒ 注入的恒是字面量，**不需要**把被引用的下级变量逐个收进 `CSS_VARS_TO_EXPORT`。唯一边界同样对称：引用目标未定义时该变量的 computed value 是**空串**（guaranteed-invalid）⇒ 导出侧 `!value` 跳过注入、`var()` 落备用值，屏上同一时刻也退到 `--text-accent`（实测 `--link-color: var(--nope)` → computed `''`、标签色 `rgb(0, 128, 255)`）。
-  ④ **着色节点不跟主题**：仍走 `tones.ink` / `tones.chip`，与链接的 `anchorStyle`（墨色 + 下划线）同一套规则——优先级「节点指令 > 文件配色 > 主题」不变。
-  ⑤ **不改度量**：明确**不接** `--tag-size` / `--tag-weight` / `--link-weight`。字体度量一变，引擎离屏测量缓存（键 = `outerHTML`，K114）会命中旧宽度 ⇒ `foreignObject` 装不下换行后的内容而裁字。颜色不影响度量，故主题切换**不需要**重建节点内容、也**不需要** `content-remeasure`。
-  ⑥ 回归：`tests/node-inline-content.test.ts`（标签 pill / 复选框 / 内链三者 `color` **逐字相同**的同源断言——「严格同链接」唯一可机器验证的形态；外链侧断言链尾含 `var(--text-accent`，锁「复用整条链、不手抄」）、`tests/node-inline-tag.test.ts`（主题分支含 `var(--link-color` 与 `color-mix`；着色分支 `toBe(tones.ink/chip)`）、`tests/view-node-task.test.ts`（描边 / 填充 / 勾色三态 + 着色分支）、`tests/export-svg-postprocess.test.ts`（`--text-on-accent` 在白名单内）。
-
-- [K152] **引擎离屏测量容器的残渣清理（2026-10-29 实机定位并修复）**：
-  ① **症状**：画布容器下 `-99999px` 处常驻一个 DIV，里面是**最后一次测量**的节点内容副本。开一张含 4 个任务项的图，`document.querySelectorAll('.mindmap-node-task')` 返回 **5**；副本里的 `span[role="checkbox"]` 带 `aria-label`，与真实节点无从区分。
-  ② **成因**（vendor，非本插件）：`Node.measureCustomNodeContentSize` 把自绘内容克隆进 `commonCaches.measureCustomNodeContentSizeEl` 测一次 `getBoundingClientRect` 就返回——**每次测量开头自己 `innerHTML=''`，但测完不清**。故残渣恒定 1 份（不随渲染次数累积，不是内存泄漏），但**永远存在**。
-  ③ **为什么必须隔离**：`-99999px` 既不把元素移出**无障碍树**（只有 `display:none` / `visibility:hidden` / `aria-hidden` 才会），也不移出**焦点顺序**。前者让读屏用户多遇到一个孤立复选框并可能尝试操作；后者更隐蔽——副本里的 `a[href]`（外链）与 `button`（代码块复制按钮）能被 Tab 聚焦，焦点「消失在屏幕外」。同一份残留还会让任何「批量查询 + 绑定」的新代码命中幽灵（插件现行的事件委托都走 `closest`，只看事件目标向上，故未受影响）。
-  ④ **修法**：`engine/mindmap.clearMeasureResidue`——清空内容 + 给容器戴 **`aria-hidden` 与 `inert`**。**这两个属性不是给「已清空的内容」用的**：清空只消灭此刻的残渣，而残渣在单节点重渲染（`reRender(['custom'])` 之类，不发 `node_tree_render_end`）后会长回来、最长活到下一次整树渲染结束；属性一旦设上就一直在，把那段窗口里的副本一并隔离（`inert` 同时管焦点与命中，且不改布局 ⇒ 测量照常）。注册点唯一：`createMindMap` 内 `mindMap.on('node_tree_render_end', …)`——**时机只能是渲染结束**：容器可能早在创建期就被首帧前的批量预测量（`preMeasureCustomContents`）建好，但渲染过程中引擎会持续往它填副本（每个自绘节点一次），只有该事件才是「本轮测量都已完成」的稳定点；而测量是同步「建 → append → 取 rect」，清空不会打断后续读取。放在 `createMindMap` 内 ⇒ 视图与只读嵌入两个创建点一并覆盖。
-  ⑤ **清空为何安全**（三条独立理由，别只凭其中一条）：ⓐ 下一次测量本来就先自清再填，外部清空等价于提前清；ⓑ 首帧前的批量预测量（`preMeasureCustomContents`，补丁 5）用 `__preMeasuredContentMap` 按 uid 持有**元素本体**，进容器的只是 `cloneNode`，且它自己在末尾就 `holder.innerHTML=''`；ⓒ 测量缓存是内容寻址的（键 = `addXmlns` 后的 `outerHTML`），不在这个元素里 ⇒ 清空不影响命中率。
-  ⑥ **实机**（Obsidian 1.14.4）：修复前 `boxes=4→5`（任务数 4）；修复后 `boxes=2`（样例 2 个任务）、`hostKids=0`、`hostAria=true`、`inert=true`，**切换一次任务触发重渲染后仍为 2 / 0 / true / true**，可见 `foreignObject` 高度 29 / 27 / 26 / 26 / 26 与既有口径一致（清空与 `inert` 均未影响测量）。`dev:errors` 干净。
-  ⑦ **回归**：`tests/engine-measure-residue.test.ts`（直测：清空 + `aria-hidden` + `inert` + 幂等〔第二次调用**零写操作**〕+ 四种 no-op；源码契约：`createMindMap` 内的注册点仍在）。**勿**改成「只在销毁时清」（噪音在整场会话里都在）、也**勿**试图「给测量副本加标记」——显示与测量是同一构建回调产出的两份 DOM，创建期无法区分。
-
-- [K153] **联系：孤儿 `%%id%%` 的回收（2026-10-30 实机定位并修复）**：
-  ① **症状**：A 的 `%%rel:aaaa01 | 依赖%%` 指向 B 的 `%%id:aaaa01%%`。删掉这条联系线，再删掉 A（或先删 A 让那条边随节点消失），B 的正文里仍留着一整行 `%%id:aaaa01%%`。画布上看不见（注释语法隐藏），但它出现在该节点的**原文编辑框预填**里（`composeNodeContent` 的 rawOk 分支返回 `mdRaw`，含指令行）——用户接着输入就把它变成节点正文（`%%id:aaaa01%%补充` 不再是合法指令行，`mdDirectiveTail` 变 null）。实机读数：删线后 `data.mdRaw = '目标节点乙\n%%id:aaaa01%%'`、F2 编辑框预填同样是这两行。
-  ② **成因**：`%%id%%` 只在建边时**懒加**（`createRelation`：目标没有 id 才补），**从不回收**。两条删除路径都只处理「边」不处理「身份」：`removeRelation` 只摘源节点的 ref（注释写着「目标节点的 `%%id%%` 保留，可能还有入边」，但没有「已无其它入边」的分支）；`stripInboundRelations` 只清**指向被删节点**的入边，不管被删节点**曾指向**的目标。
-  ③ **修法（判定面唯一）**：`engine/mindmap-relations.collectRelationTargets(mindMap, except?)`——`collectRelationIds` 的对偶（一个收身份、一个收引用）。两个删除入口共用它，且**只在全树再无 ref 指向该 id 时**才摘：
-      · `removeRelation(view, from, to)`：把目标那一行（`id: null`）与源节点那一行**合并成一次** `applyRawNodeContents`（一次渲染 / 一次保存 / 一条撤销）；
-      · `stripInboundRelations(view, { node, state })`：入参从 `deletedId` 扩成「被删节点的实例 + 删除前的关系状态」，它自己那条出边随节点消失，目标若因此再无入边就摘掉其 id；两件事都走 `applyRawToNode`（只改 data，并进 `REMOVE_NODE` 那一条历史）。
-      · **多入边节点不误删**：id 仍被任何 ref 指向时必须原样保留（示例文件里「6/20 全量上线」有两条入边）；实机验证删掉其中一条后 `%%id:bbbb01%%` 仍在。
-  ④ **⚠ 实例树滞后一拍（第一版修复的坑）**：`REMOVE_NODE` 只把节点从 `parent.nodeData.children` 摘掉（vendor `removeFromParentNodeData`），**实例树要等 `render()` 才更新**——`stripInboundRelations` 正运行在「数据已删、实例还在」那一拍里，被删节点自己的 `%%rel%%` 仍会被 `collectRelationTargets` 算作「还有人指向」⇒ 删线回收生效、删节点回收**完全不生效**（实机：删掉最后一条入边的持有者后 `%%id:bbbb01%%` 仍在）。故必须按**对象身份**把被删实例排除（`collectRelationTargets(mindMap, deletedNode)`），遍历时也跳过它（别往游离 data 上写）。
-  ⑤ **边界（有意，勿当缺陷）**：文件里**手工**写下的悬空 ref / 手写 id 不清理（那行没被编辑，静默改动破坏逐字保真，规则 4）；本修复只回收「本次删除直接造成」的残渣。撤销照旧一次到位：删线（两行改写）与删节点（含 id 回收）各一次 `Ctrl+Z` 完整还原（实机：文件逐字回到删除前）。
-  ⑥ **回归**：`tests/view-node-relation.test.ts`（删线回收 / 多入边保留 / 删节点回收 / 实例树滞后按身份排除 / 同一节点 ref+id 合并一次改写）、`tests/engine-relations.test.ts`（`collectRelationTargets` 收集全树、`except` 排除、空引擎返空集）。
-
-- [K154] **联系线配色（2026-10-31）**：
-  ① **语法**：`%%rel:id | 标签 | geo=… | color=#rrggbb%%`——颜色是 `%%rel%%` 的**属性段**，不是独立指令：注释不能嵌套，且指令行整行有形状约束（`isDirectiveLine`）。解析从**尾部**逐段消费 `geo=` / `color=`（各至多一段、**顺序无关**、可全省略）；重复出现或形状不符（`foo=…`）即停、该段仍属标签——**绝不吞用户文字**（`%%rel:id | 公式 a=b%%` 的标签完整保留）。值非法（`red` / `#12345` / 带 alpha）**丢弃该段、保留边**（与 `geo=` 同一取舍：辅助数据坏了不该让整条边退化成普通注释）。写侧固定 `geo` → `color`，保证幂等（同内容重放不产生文件 diff）。归一复用 `domain/color.normalizeHexColor`（读侧收三位缩写，写侧恒 `#rrggbb`）。**一段一行**（2026-11-02）：同一节点的 `%%id%%` 与每条 `%%rel%%` 各占一行（写侧只产出段，行的拼接与顺序由 `domain/directive.renderDirectiveBlock` 统一——`renderDirectiveLine` 已删，它是不认识 `sum` 段的第二份写入口）——增删一条边只动它自己那一行（diff 能看出改的是哪条），枢纽节点不再出现 700 字符长行，且 `parseDirectiveLine` 的整行 fail-closed 只波及坏掉的那一行；旧的一行多段形态仍照读，**只在联系操作改写该节点时**归一（改文本走 `mdDirectiveTail` 原样回贴）。
-  ② **入口只有一个：右键线**（与删线 / 改标签同形，2026-10-30「一切从线出发」裁决的延续）：默认 + **与节点配色同一套色族** + 自定义…。色族表复用 `view-node-color.nodeColorOptions`（同一个「薄荷」在节点上与在连线上是同一个 hex，一支子树和它的出边才像同一族）；「自定义…」复用 `ui/menu-submenu.addCustomColorItem`。带 `paletteNodeColor` 之外的实色（手写 hex）时勾在「自定义」上。
-  ③ **落地**：`associativeLineStyle[目标 uid].associativeLineColor`（源节点 data）——引擎 `AssociativeLine.getStyleConfig(node, toNode)` 先读这份**按目标 uid** 的覆盖、缺键才回落到节点样式（＝主题）。**只写颜色**：宽度 / 虚线 / 标签字号仍由主题单一表达（越权写入会让「连线偏好」失效）；**激活色不覆盖**——点线时的高亮是「选中」这条独立语义（引擎默认 `rgba(2,167,240,1)`），跟着线色变反而看不出选中。整张映射**整体重建**（Markdown 是唯一真相），没着色的边**不占键** ⇒ 删掉 `color=` 段下一轮就回落主题；变化判据只比 `associativeLineColor`（data 可手改，别的键不该触发重画）。
-  ④ **写回与既有编辑的交叉**：改色走 `rawWithState` + `applyRawNodeContents`（一次提交 / 一条撤销，与删线、改标签同通道）。两条**必须带走颜色**的路径：`updateRelationLabel`（已用 `...ref` 展开）、`persistRelationGeometry`（拖端点后重建 refs——颜色只存在于正文、引擎侧没有可回读的产物，必须从当前 ref 原样搬过去，否则**拖一次线就把颜色抹掉**）。
-  ⑤ **不在本特性内**（有意）：不做按节点子树自动推导线色（线的颜色只表达这一条边）、不做渐变色/透明度（`%%#hex%%` 同口径只收实色）、只读嵌入照常显示颜色（同一份 `applyRelationsToTree`），但**不可改**。
-  ⑥ **回归**：`tests/relation-directive.test.ts`（解析 / 归一 / 顺序无关 / 非法丢弃 / 重复段归标签 / 指令行判定）、`tests/engine-relations.test.ts`（写映射 / 无颜色删键 / 同色不重写 / 多目标只写着色项）、`tests/view-node-relation.test.ts`（子菜单结构、勾选态、写回原文、保留 `geo`、默认删段、同色不写盘）。
-
-- [K155] **右键菜单必须独占（2026-10-31 实机定位并修复）**：
-  ① **症状**：在节点上连续右键（换一个节点、或把节点拖到别处再右键），屏幕上叠出**多个一模一样**的菜单，位置几乎重合；打开过「配色」子菜单后更明显（父菜单 + 子菜单一起留着）。
-  ② **成因**：Obsidian 关闭已弹菜单靠的是**收到 `mousedown`**（宿主在 document 上收口），而引擎在节点上把 `mousedown`（拖拽起手）与 `contextmenu` 都 `stopPropagation` 了 ⇒ 只要指针落在节点上，宿主永远收不到那次按下，**旧菜单永不关闭**，新菜单直接叠上去。实机读数：两次右键 = 2 个 `.menu` 同时 `display:flex` 且 rect 相差 3px；而在 body 上 mousedown 后两者都会消失（证明关闭机制本身是好的，只是被 stopPropagation 挡住）。
-  ③ **修法**：`ui/menu-submenu.showExclusiveMenu(host, menu, pos)` 成为**唯一**弹出入口（节点菜单 / 画布空白菜单 / 联系线菜单三处）。它做三件事：关掉该宿主上一个菜单树 → 记账（`WeakMap<host, Menu>`）→ `menu.onHide` 时把记账清掉（用户点条目、宿主自己关，都不会留下陈旧引用）。级联子菜单在 `addCascadingMenu` 里登记（`WeakMap<Menu, Menu[]>`）：子菜单是**独立**的 `.menu`，父菜单 `hide()` 未必带上它，所以关的时候要整棵树关。另外画布 `pointerdown`（capture）调 `closeOpenMenu(view)`——左键选中 / 拖节点同样该收起菜单（那一下 mousedown 也被引擎吞了）。
-  ④ **为什么不用 `document.querySelectorAll('.menu')` 一把删**：那会绕过 `Menu` 的 Component 生命周期（`onHide` 回调、事件解绑、历史栈），留下悬空引用；我们只关**自己创建**的实例。
-  ⑤ **实机**（Obsidian 1.14.4）：修复前连续右键两节点 `visibleCount=2`；修复后 `1`。右键线 → 打开「联系配色」子菜单（2 个 `.menu`，父 + 子）→ 再右键节点：`1`（父子一起收）。画布 `pointerdown` 后菜单立即为 0。`dev:errors` 干净。
-  ⑥ **回归**：`tests/view-context-menu.test.ts`（连续右键两节点只留一个、`pointerdown` 收起）、`tests/view-node-relation.test.ts`（连续右键两条线只留一个）。
-
-
-
-- [K157] **长耗时导出必须有可见反馈（2026-11-02 实机定位并修复）**：
-  ① **症状**：首次「导出图片」整段无任何提示。实测 385 节点含公式的图 **24 025 ms**（同会话第二次 699 ms，小图 114 ms），期间界面毫无反馈——用户以为卡死，重复点击；而重复点击会叠加同一份字体预取的排空队列。
-  ② **成因**：`exportImageAs` 先 `await primeExportMathFonts()`（24 个 MathJax woff2 逐字节取回并内联，冷启动是唯一大头），随后才是引擎的 `doExport` 位图化；两条路径都没有 Notice。
-  ③ **修法**：`features/view-export.ts` 的 `showExportProgress(lang)`——**超过 `EXPORT_PROGRESS_DELAY_MS`（400ms）才弹**常驻 `new Notice(t(lang,'export.exporting'), 0)`，`finally` 里 `dismissProgress()`（清定时器 + `hide()`）。延迟的意义是**快路径不闪**：小图 114ms、含公式复导出 0.7s 都不出提示；慢路径（首次字体预取 / 超大图）一定有。文案 `export.exporting` 双语（「首次导出需准备数学字体，可能较慢」）——不解释原因时用户会把这个等待当成缺陷。
-  ④ **实机**（Obsidian 1.14.4）：把阈值临时置 0 复验——点击导出后 131ms 出现 `.notice`（文案正确），导出结束后 `.notice` 归 0（常驻提示确实被撤，不是留在屏上）；恢复 400ms 后快速导出实测不弹。
-  ⑤ **回归**：`tests/view-export.test.ts`（超阈值弹常驻并隐藏 / 快路径不弹且定时器已撤 / 失败路径同样撤）。`tests/mocks/obsidian.ts` 的 `Notice` 桩补 `hide()`（官方语义：`timeout=0` 常驻）。
-
-- [K159] **两态开关补 `aria-pressed`（2026-11-02 实机审核）**：
-  ① **症状**：竖栏「边框 / 连线」在 DOM 里恒为 `class="mindmap-tool-btn"` + `aria-label` 恒为名字，读屏器读到的只是一个普通按钮——当前档只由 Lucide 图标表达（`square` / `square-dashed`、`slash` / `spline`），而图标对读屏器是空的。
-  ② **修法**：`ToggleRowState` 增 `pressed`，`createToggleRow` 构建时写一次、每次 `syncState()` 重挂一次。**必须每次重挂**：官方 `setTooltip` 会重写 `aria-label`，而按下态不在 label 里，只写一次会被后续的 tooltip 刷新抹掉。口径＝**图标所示那一档**：边框＝有边框（`square`）、连线＝曲线（`spline`）。
-  ③ **视觉不变**：tooltip 仍只报名字、图标仍是唯一视觉状态（2026-10-23 裁决不受影响）；`aria-pressed` 只增加无障碍层信息。
-  ④ **置灰的连线开关不写**：固定直线布局下它没有两档可切，`disabled` 已表达不可用，再报按下态是假信息。
-  ⑤ **实机**（1.14.4）：初始 `边框=true / 连线=false`，各点一次后 `边框=false / 连线=true`，`aria-label` 仍为「边框 / 连线」；`data.json` 的 `themeStyle` / `lineStyle` 随切换正常落盘。
-  ⑥ **回归**：`tests/view-toolbar.test.ts` +3 例（初始按当前档 / 切换后翻转且 label 未被抹掉 / 置灰不报）。
-
-- [K160] **撤销链必须从「打开时」起算，且「撤到原样」要真的落盘（2026-11-02 实机定位并修复）**：
-  ① **症状（两条，互相掩盖）**：**(a)** 打开导图后**第一次**编辑按下 `Ctrl+Z` 毫无反应（实测：勾选 `- [ ] 甲` → 文件变 `- [x] 甲` → 撤销后仍是 `[x]`）；**(b)** 编辑 → 撤销后，屏上回到原样而**文件仍是改后内容**，关标签（卸载路径的显式保存同样被吞）再重开又跳回改后——「撤销了，但没撤」。
-  ② **(a) 的成因**：引擎创建后命令历史是空的，`addHistory` 只在命令收尾被调用（`recordHistory` 说明）⇒ 第一条快照永远是**第一次改动之后**的状态；`Command.back()` 要求 `activeHistoryIndex - 1 >= 0`，index 停在 0 就直接返回。故不仅首次编辑撤不掉，也永远**回不到打开时的原样**。实测 `history.length === 0` → 勾选后 `1/idx 0` → `BACK` 后仍 `0`。旁证：**点一下节点**会因别的通道（`applyRawNodeContent` → `recordHistory`）推一条快照，于是「先点后改」的编辑反而能撤——这正是缺陷被漏掉的原因。
-  ③ **(a) 的修法**：`mindmap-history.seedInitialHistory`，在 `createMindMap` 里挂**一次性** `node_tree_render_end`（`if (!isReadonly)`），首帧渲染落地时播种。**时机必须是渲染之后**：创建瞬间的树还没被引擎规范化（`expand` 等字段渲染期才补），此刻播种会与渲染后那条快照内容不同 ⇒ 实测「打开后 `2 条 / idx 1`」——第一次 `Ctrl+Z` 只翻了个看不见的字段，等于空转；改到渲染落地后，打开时恒为 `1 条 / idx 0`。**必须用非防抖的 `originAddHistory`**：`addHistory` 被引擎以 `addHistoryTime`（100ms）包装，播种若走它会被紧随的编辑合并掉，第 0 步又变成「编辑后」。实机验证：播种后首个动作即勾选复选框 → `2/idx 1` → `BACK` 文件逐字回到原样。
-  ④ **(b) 的成因**：K156 的纯浏览守卫只看「本轮序列化 == 加载时序列化」，**没看磁盘现在是什么**。本会话写出过一次编辑后，磁盘已是改后内容，此时「回到加载态」是一次真实改动，却被整轮跳过（`lastWritten` 还被顺手写成磁盘值，`reconcileAfterSave` 因此也判等成功，救不回来）。
-  ⑤ **(b) 的修法**：守卫加 `wroteSinceLoad`（`markLoaded` 复位、`vault.modify` 成功置位）；成立时改走真实写盘，内容取**加载时的原样正文** `loadedRawBody`（`MdParseResult` 新增 `body` 字段，`DocumentService.load` 透传）——否则「改了又撤」会把**没编辑过的行**按序列化规范化一遍（空行被吞、松散列表变紧凑），违反「未编辑行逐字回写」。**不能**改成「与磁盘比」：那会把「浏览期间他处改了文件」也变成一次覆盖（P1a 的职责）。
-  ⑥ **实机**（1.14.4，按真实路径复演）：点节点 → 双击改字 → Enter（`甲改` 落盘）→ `Ctrl+Z`（屏上 `甲`）→ 关标签 → 重开。修前：文件全程是 `甲改`、重开回到 `甲改`。修后：撤销即把 `甲`（原样正文）写回，重开显示 `甲`。
-  ⑦ **回归**：`tests/engine-history-limit.test.ts` +4 例（优先非防抖入口 / 缺 `originAddHistory` 时回落 / 引擎面缺失安全 no-op / 抛错只留痕）；`tests/save-pipeline.test.ts` +5 例（编辑后撤销回加载态→写回原样正文 / 卸载路径同样落盘 / 外部改写后显式保存照常写回 / 重新 `markLoaded` 复位写盘标记→纯浏览零写盘 / 未传 `rawBody` 时回落为序列化结果）。
-
-- [K161] **大图首帧要有可见反馈：2 s 的同步长任务不能只留一块空白画布（2026-11-02 实机测量）**：
-  ① **实测**（Obsidian 1.14.4 / 本机）：502 节点 → 引擎创建 38–86 ms、首帧 47–103 ms（无感）；5000 节点 → 引擎创建 148–165 ms、首帧 **2.24–2.57 s**。用 `PerformanceObserver('longtask')` 抓到**单个 2043–2393 ms 的任务**——整段界面无响应，画布空白且无任何提示。
-  ② **归属**：把 `mindMap.emit` 包一层计时后确认，本轮 `node_tree_render_end` 的**插件处理链只占 5.1 ms**（配色指令同步 + 联系同步 + 图片校正 + 数学重测），其余 **2218 ms 全在引擎 `_render()` 内**（布局 + 节点渲染，vendor 只读，插件侧无从拆分）。故本批**不改引擎**，只解决「用户不知道发生了什么」。
-  ③ **修法**：`features/view.showLargeMapRenderHint`——节点数 ≥ `LARGE_MAP_RENDER_HINT_NODES`（1000）时建一层 `.mindmap-render-hint`（文案 `view.renderingLargeMap`，双语、带 `{count}` 插值）。节点数在加载的 **rAF 回调里**用**解析出的树**算好（`countTreeNodes`，零拷贝）存进 `LoadSession.pendingRenderHint`，提示本体由 `onEngineReady` 建（时机理由见 ④、为什么不就地建见 ⑧）。
-  ④ **为什么这个时机才看得见**：引擎的 `render()` 只是 `setTimeout(0)`（vendor `Render.render`），而 `onEngineReady` 正是 `mindMap.render()` 之后的**同一个同步块**（`engine-controller.renderMindMap`）⇒ 提示在浏览器绘制这一帧之前落进 DOM、长任务开始前上屏。反过来在首帧事件里创建，就只能是一句自己都看不到的提示。
-  ⑤ **摘除**：首帧 `node_tree_render_end`（一次性，走 `engineEvents`，随引擎销毁回收）+ `RENDER_HINT_TIMEOUT_MS`（15 s）兜底，防渲染抛错时提示永久盖住画布；`onUnloadFile` / `onClose` 显式清，并把未消费的 `pendingRenderHint` 一并丢弃。层级 `z-index: 5` 低于竖栏与菜单，`pointer-events: none` 不吞事件。
-  ⑥ **阈值为什么是 1000**：500 节点首帧 ≤ 103 ms，提示只会闪一下；1000 起单次任务进入秒级。与 `PERFORMANCE_NODE_THRESHOLD`（500，决定引擎是否虚拟渲染）**无关**。
-  ⑦ **未做**：真正的「不冻结」要靠分片渲染（vendor 内部按分片 yield），收益大但属引擎改造，记入待办。
-  ⑧ **为什么不在 rAF 回调里就地建**（2026-11-02 实机复核）：`initMindMap` 在容器 0 尺寸（后台标签 / 折叠面板）时**不建引擎**，只挂 `ResizeObserver` 等尺寸就绪（`engine-controller.tryRender` 返回 false）⇒ 那一刻 `this.mindMap` 为 null，提示既绑不上 `node_tree_render_end`（只能等 15 s 兜底，而它是不透明全屏遮罩，切回来像卡死 15 s），同一根因还会让 `markLoaded(file, getDataSnapshot()=null, …)` 被它的空守卫**静默吞掉**——加载基线缺失后，该文件此后每轮自动保存都不再算「纯浏览」（打开即重排全文，K156 要消灭的行为在后台标签上复活）。故两者统一改为「加载路径留 pending（`LoadSession.pendingBaseline` / `pendingRenderHint`）→ `onEngineReady` 消费」，引擎同步建好的常规路径在加载回调里即完成，时序与原实现等价。
-
-- [K162] **概要（Summary，2026-11-02）**：
-  ① **语法**：`%%sum:<count> | 文字%%` 写在**第一个被覆盖的兄弟**上，`count` = 从它起连续覆盖的同级节点数（`1..999`）。锚第一个兄弟而不是父节点的理由：锚父节点得写「第几个到第几个」，在前面插兄弟会让整段区间错位；锚第一个兄弟时只有**区间内部**的增删才改变覆盖面，与「这一条起往后 N 条」的直觉一致。越界 `count` 读到即夹到最后一个兄弟（文件数字原样保留），重叠按文档序前者权威。
-  ② **指令块语法必须收口**（新增 `domain/directive`）：加 `sum` 时若在 `domain/relation` 里再抄一遍「整行由段组成」的扫描，两条判据迟早分叉（一行被关系侧认作正文、又被概要侧认作指令）。抽出后 `DIRECTIVE_KEYS` 是唯一关键字表，段形状 / 行判定 / 尾块拆贴 / 规范顺序（`id → rel → sum`）只此一处，`relation` 与 `summary` 只解释**自己 key 的 value**。**连带行为变化**：`isDirectiveLine` 不再判 value 合法性——写错的 value（`%%rel:xyz%%`）由「字面段落」变成「隐藏的指令行」，只丢语义、不再在画布上冒出一个空节点（`tests/relation-directive.test.ts` 同步改口径）。
-  ③ **引擎落点**：父节点 data 的 `generalization: [{uid, text, range:[start,end]}]`（`range` = 兄弟下标闭区间）。**单节点也用父节点形态** `range:[i,i]`：实机比对与引擎「挂在节点自己身上」的形态渲染完全相同，但模块只留一条路径。`uid` 按文档序分配 `sum-N`（同一棵树两次同步得到同一组 uid，不抖动）。
-  ④ **两个时机 + 补一轮渲染**：`applySummariesToTree`（创建引擎**前**写 data 树——视图与 ```mindmap 只读嵌入共用，嵌入不接同步、无编辑入口）与 `syncLiveSummaries`（`node_tree_render_end`，与配色 / 联系同一时机）。概要框是**布局产物**（括号按被覆盖兄弟的包围盒现算），当帧写 data 不会让已画好的括号跟着动 ⇒ `view.scheduleSummaryRender` 延后一拍整树再渲染；第二轮同步发现无变化即停（不会自激）。
-  ⑤ **编辑通道一律 raw**：文字走弹窗，**不用引擎内联编辑框**——概要文字只存在于正文的 `%%sum%%` 段，`SET_NODE_TEXT` 只改派生 data，下一轮同步就被正文覆盖（用户观感「打字一闪就没了」），与联系标签同一取舍。删除同理：概要节点**不在** data 树的 `children` 里，交给 `REMOVE_NODE` 会删掉**别的**兄弟，故 `deleteActiveNode` 与 `Delete` / `Backspace` 都先判概要节点；概要节点的右键菜单也独立（正文那套编辑项对它全是错的）。
-  ⑥ **互不抹除**：写联系只替换 `id` / `rel` 段、写概要只替换 `sum` 段，其余段逐字带回（实机：同一节点上 `%%rel%%` 与 `%%sum%%` 并存、两种指令各自生效）。
-  ⑦ **观感**：概要不吃「边框」开关（`generalization` 主题档恒为 1px 虚线框）——虚框是它唯一的身份线索（无边框档位下正文节点全透明），与联系线恒虚线同一取舍。
-  ⑧ **回归**：`tests/summary-directive.test.ts`（值语法 / 只动 sum 段 / 范围规划）、`tests/engine-summaries.test.ts`（父节点映射 / uid 唯一 / 空规划删键 / 同步幂等）、`tests/node-pick.test.ts`（会话唯一 / done 与 continue / 取消幂等 / 重建清理）。
-  ⑨ **长区间入口（2026-11-02 实机复核后补）**：鼠标只有 `Ctrl+单击` 能逐个加选（`Shift+单击` 引擎不支持、空白拖动是平移画布），而且右键一按下引擎就把多选高亮折叠成一个 —— 用户看到的证据全是「只能给一个节点加概要」。故菜单按选中集合分两条：「概要（覆盖 N 个）」直接建，「概要…」进入**两次点选**（起点 = 右键节点，再点一下落定终点；终点可点在起点前面，区间取两端之间）。点选会话抽到 `features/node-pick`，**联系也改走它**：`node_click` / `draw_click` 各只有一个，两特性各持一份必然互相看不见，`Esc` 也只能取消其中一方。失败路径（不同父节点 / 概要框或中心主题作终点 / 与已有概要重叠）一律**留在选点态**，换个终点再来 —— 重开一次菜单的成本比「猜哪里错了」低得多。**错误提示与常驻指引是两条**：`planPickedRun` 的失败原因用短提示（自散），「从谁开始、点哪里」的常驻 Notice 原样留着——把它改写成错误文案，用户反而看不到下一步该点什么。
-  ⑩ **反查必须用规划器的区间（2026-11-03 审查修复）**：概要节点是派生实例，正文里那条 `%%sum%%` 只能靠区间反查。**不能按 `count` 对宽度**：越界 `count` 读到即被夹到最后一个兄弟（文件里的数字刻意不改，见 ①），此后两者不再相等 —— 用户先给 4 个兄弟加概要、再删掉其中 1 个就必然踩到，表现是「右键概要 / 按 Delete 毫无反应」（`entryOfSummary` 返回 null，调用方静默 return）。修法：`domain/summary` 的规划本体收回私有 `planSummaryDeclarations`（范围 + **产出它的那条声明**），`planSummaryRanges`（区间，引擎落点用）与 `summaryEntryIndexOfRange`（反查，交互用）都是它的投影 —— 判据只有一份，将来改规划规则不会让反查漂移。反查失败**不静默**：给 `summary.unresolved` 提示（正文被手改、`range` 缺失这类真异常）。回归 `tests/summary-directive.test.ts` 的「反查」describe。
-
-- [K163] **右键拖拽＝框选，松手弹「选区菜单」（2026-11-03 实机定位）**：
-  ① **现象**：右键拉框能选中节点（引擎 `select` 插件），但松手后弹出的是**空白菜单**（新建节点 / 布局 / 配色 / 整理），跟刚框出来的选区毫无关系——用户观感是「框选没生效，只弹了个菜单」。根因：Windows 上 `contextmenu` 在 **mouseup 之后**派发，而画布空白处的处理器无条件 `preventDefault` + 弹空白菜单。
-  ② **判据**：画布 capture 记右键按下点（`pointerdown`，`button === 2`），`contextmenu` 到达时算位移，**> `RIGHT_DRAG_THRESHOLD_PX`（5px）视为拖拽**；起点**取用即清**（一次右键只判一次）。**不能问引擎**：插件在 `mouseup` 就复位 `isSelecting` 并移除选框，那一刻已经问不出「刚才是不是在拉框」。阈值 5px 是「滤掉手抖」与「允许小幅框选」的折中（实测 3px 抖动仍走单击）。
-  ③ **行为**：拖拽 + 框到了非根节点 ⇒ 弹**选区菜单**（`概要（覆盖 N 个）` / `复制`）；拖拽但没框到 ⇒ 一个菜单都不弹；右键从**节点**上拖开 ⇒ 节点菜单让位（节点吞掉右键拖动，框选不从节点起手，拖动是手势不是「打开菜单」）；单击 ⇒ 照旧。
-  ④ **为什么不放删除**：`deleteActiveNode` 只删一个节点（`requireActiveNode`），多选下与标题不符；真要批量删得先做批量通道。
-  ⑤ **已知边界**：框选是**相交判定**（vendor `checkInNodes`），垂直排布时下沿擦到下一个兄弟会顺手带上；框外的已选中节点会被移出选中集；`Ctrl`/`Cmd` + 左键拖也能框选（插件对修饰键旁路），但那条路径不产生 `contextmenu`，因此没有选区菜单。
-  ⑥ **选中是「防抖落地」的（第一版的坑）**：引擎的框选在**防抖的 mousemove** 里 `checkInNodes`，实测松手后**约 150ms** 才进 `activeNodeList`（`node_active` 由 `setTimeout(0)` 派发）。第一版在 `contextmenu` 里直接读选中：框住一段有节点时读到空 → 什么都不弹；框住空白时读到**上一轮的选中**（还没被清掉）→ 弹出一个「概要…」的**假菜单**（实机 2026-11-03 复现）。改为**一律挂起**（记松手点）→ 等 `node_active` 到了再按那时的选中决定弹不弹，另设 250ms 兜底（框出来的正好是原选中时引擎不发事件，此时仍应把菜单弹出来）。
-  ⑦ **松手压在节点上＝「什么都没弹」（2026-11-03 实机抓包，第一版漏掉的第二种失败）**：框选结束时鼠标常正好落在某个节点上（画布密集，框的下沿/右沿一扫而过）。节点自己的 `contextmenu` 处理器会把事件**吞掉**——既 emit 不到 `node_contextmenu`、也不冒泡到画布（实测整场只有 `node_active`，`node_contextmenu` 零次）。挂在冒泡阶段的判定因此永远轮不到 ⇒ 用户看到「框选完没有任何反应」。修法：把拖拽判定挪到画布 **capture** 阶段，判到拖拽就 `preventDefault` + `stopPropagation` + 挂起选区菜单（节点菜单不再参与）。
-  ⑧ **空白右键会清掉选中（用户视角：选区凭空消失）**：引擎在右键按下时 `clearActiveNodeList`（`draw_click`）。框选完随手右键一下，选区就没了、菜单里也没有概要。修法：按下时（capture，早于引擎）留一份选中；空白分支（非拖拽）先 `setActiveNodes` **复原**，菜单顶部给选区操作、分隔线之下给**空白菜单全套**（用户不该为了「新建节点」先取消选中）。节点分支不复原：它的条目是单节点语义（`deleteActiveNode` 取 active[0]），复原多选会让「删除节点」删错对象。
-  ⑨ **回归**：`tests/view-context-menu.test.ts` 新增 9 例（单击 / 手抖 3px / 拖拽后不立即弹且 `node_active` 才弹且报覆盖数 / 框住空白且松手时旧选中还在 → 落地后不弹 / 拖拽无选中 / 只框到根 / 从节点起手让位 / 左键不记起点 / 新按下作废挂起）。
-  ⑩ **陈旧「按下」必须清（2026-11-03 审查）**：`rightPressSelection` 只在**右键按下**时被覆盖，节点菜单消费掉这次按下后要显式删掉 —— 否则之后一次**没有右键按下**的 `contextmenu`（macOS `Ctrl+左键`、键盘菜单键）会走空白分支，把这份陈旧选中复原到画面上，弹出一个与当下无关的选区菜单。同时把冒泡分支里的拖拽判定删掉：起点已在 capture 取用即清，那里恒为 false（死分支），留着只会让人以为冒泡阶段也能判手势。
-
-### Obsidian API 合规与工具链
-
-- [K39] Obsidian API 合规（已对照官方 `obsidian.d.ts` **1.13.2** 与项目安装的 **1.13.1** 双层审计）：
-  所用 API 全部为官方面
-  （含 `FileSystemAdapter.getBasePath`、`getAvailablePathForAttachment`、
-  `getFirstLinkpathDest`、`registerHoverLinkSource`、`SettingDefinitionItem`、
-  `Keymap.isModEvent`、`setTooltip` 等），
-  零废弃 API 使用。仅存**三处**无官方等价的私有触点，均防御式实现并文档化
-  （2026-10-09：原 ① file-explorer「新建」菜单注入（`view.fileCreator`）已随
-  「新建导图双入口合并」删除——同一动作由官方 `file-menu` 的**文件夹右键项**承担，
-  见 `main.ts` 的 `TFolder` 分支）：
-  ① `links/links-resolve.ts` 拖拽兜底 `dragManager`；
-  ② `system-open.ts` 桌面端 `require('electron').shell.openPath`（d.ts 无系统打开 API）；
-  ③ `platform/math-jax.ts` 数学渲染面（d.ts 无等价）：`window.MathJax.tex2chtml/tex2svg`
-   直调 + `#MJX-CHTML-styles` 样式表读写（导出注入与就绪判定需要）——其中
-   `loadMathJax` / `finishRenderMath` 为官方 @public，渲染调用与 flush 均收口在本模块
-   （见 K85 / K87 / K113）。
-  勿新增私有 API 触点；官方补齐后优先替换。
-- [K40] **版本基线**：`manifest.minAppVersion: 1.13.0`（比较基准）< 安装 typings `1.13.1`（`tsc`/lint
-  的真实类型来源）< 官方最新 `1.13.2`（仅参照物）三者自洽。声明式设置的锚点
-  （`PluginSettingTab.getSettingDefinitions`、`SettingTab.setControlValue`、
-  `SettingDefinitionItem`、`SettingDefinition`）**全部 `@since 1.13.0`**；全插件
-  `from 'obsidian'` 的导入面（22 个符号）**没有一处 `@since > 1.13.0`**。故 1.13.0 是
-  「恰好覆盖、零盈余」的最小值：**不可下调**（低于 1.13.0 无声明式设置 API），**也不必上调**。
-- [K41] **声明式设置的「键」是 lint 盲区（重要）**：`no-unsupported-api` 只访问
-  `MemberExpression` / `NewExpression` / 类 `superClass` / `CallExpression`，**对象字面量的键
-  永不检查**。若在 `getSettingDefinitions()` 返回的对象里写了比 `minAppVersion` 更新的字段
-  （1.13.1：`SettingDefinitionGroup.search`、`SettingDefinitionPage.displayValue` / `.status`、
-  `SettingSliderControl.displayFormat`；1.13.2：`SettingSecretControl.type:'secret'`），
-  **不会有任何 lint 或 `tsc` 报警**（该成员确实存在于已安装的 typings 里）。因此
-  **升 `minAppVersion`、或给声明式设置新增键时，必须人工核对对应 `@since`**，不能指望工具兜底。
-- [K42] **`isDesktopOnly` 是承重配置，不是发布元数据**：K5 的负向断言 `(?<!!)\[\[` 属**正则后行断言**（lookbehind），而官方规则 `obsidianmd/regex-lookbehind` **仅在 `isDesktopOnly !== true` 时报告**——其实现为 `options.isDesktopOnly ?? getManifest()?.isDesktopOnly`（`eslint-plugin-obsidianmd/dist/lib/rules/regexLookbehind.js`），`true` 时整个 `Literal` 分支直接不报。即：**这行 lint 通过完全依赖 `manifest.json` 的 `isDesktopOnly: true`**，不是因为它本身合规。改 `isDesktopOnly`、或要加移动端支持之前，**必须先把这些正则改写为不带 lookbehind 的等价式**（如 `(^|[^!])\[\[`），否则 ① `npm run lint --max-warnings 0` 立刻失败；② iOS < 16.4（Safari 16.4 才支持 lookbehind）会**真实抛异常**，`md-serialize` 整条保存管线随之失效。⚠ **改写面不止一处**（2026-11-09 复核）：`src/markdown/md-serialize.ts` 的链接检测 1 条 + `src/features/node-inline-tokenize.ts` 的轻标记 4 条（`(?<![\p{L}\p{N}])___…` / `__…` / `(?<!\*)\*…` / `_…`）。加移动端支持按「5 条正则 + 全量往返回归」估算，别按一条算。
-- [K43] **lint 依赖 manifest 且是 cwd 相对的**：`eslint-plugin-obsidianmd` 的 `getManifest()`
-  用 `fs.readFileSync("manifest.json")`，**相对 `process.cwd()`**——故必须在**插件根**
-  跑 `npm run lint`。cwd 不对（如从仓库根/父目录跑）时 manifest 读成 `null`，会让
-  ① `no-nodejs-modules`（`isDesktopOnly` 为 true 时 `off`）、② `regex-lookbehind`
-  （仅 `isDesktopOnly !== true` 才 report）、③ `globals.node` 注入 三者**同时翻到
-  「非桌面」分支**，产生假告警与假 `no-undef`。即：K42 的 `isDesktopOnly` 豁免下的
-  「lint 通过」是 **cwd 相关**的结论，不是无条件事实。
-- [K44] **`no-unsupported-api` 的两条静默失效路径**（都不报错，而是规则整条 `return {}`）：
-  ① 阈值取 `options.minAppVersion ?? getManifest()?.minAppVersion`，manifest 读不到即关闭
-  ——**2026-09-17 已从配置侧封堵**：`eslint.config.mts` 对 `src/**/*.ts` 显式传
-  `minAppVersion`（值读自 `manifest.json`，不重复字面量），options 优先于 manifest，
-  故本条**不再随 cwd 漂移**（K43 的其余两条耦合——`no-nodejs-modules` 与 `globals.node`
-  ——仍依赖 cwd，未封堵）；
-  ② 版本信息取自**项目实际安装的 typings**（`findObsidianDtsPath(program)` 在 TS program
-  里找 `.../obsidian/obsidian.d.ts`，`@since` 映射缓存于
-  `node_modules/.cache/eslint-plugin-obsidianmd/since-map.json`，按 obsidian 包版本为 key）——
-  故**lint 的可见版本上沿＝安装的 typings 版本**，既不是插件自带的 obsidian 版本，也不是
-  官方最新发布版本。升级/降级 `obsidian` 依赖都会改变这条规则的判定基准（缓存自动重建）。
-- [K57] **死代码检查（knip）与导出面基线（2026-09-17 审计，同日常态化）**：`npm run check:dead-code`
-  （knip v6，devDependency + `knip.json`；CI 在 lint 后执行）覆盖**未使用文件 / 导出 / 类型**，当前**基线零残留**。
-  两条口径：① **「仅测试引用」的导出有意保留**——31 项（`DEFAULT_SETTINGS`、`closeSearchBar`/`searchNext`/`searchPrev`/
-  `doSearch`/`updateSearchCount`、`computeResizedSize`、`nodeViewportCenter`/`pickNearestNode`/`gapCenter`、
-  `applyImageSizeCorrectionsToTree` 一族等）被 13 个测试文件直接 `import`，是「纯逻辑直测」（检查清单 #4）的测试入口；
-  去导出即测试编译失败、且无生产收益（生产侧零跨模块引用已核）——`knip.json` 以 tests 为入口，故此类不产生告警；
-  **复核口径**：另以 `vitest: false` + 排除 tests 的对照配置运行可复现该清单，勿机械删除。
-  ② **零引用导出/类型一律去除 `export`**（本次已清理 17 个符号去导出 + 1 条死再导出 + 死接口 `TreeNodeLike`，
-  `tsc --noUnusedLocals` 同步归零；mock / 垫片删去未引用的 `MarkdownRenderChild`，`plain-text-parser.mjs` 删去未引用的默认导出）——
-  新增模块报出零引用导出时按同口径处理（仍内部使用 → 去导出；确无用途 → 删除）。knip 需 Node `^20.19.0 || >=22.12.0`
-  （CI 矩阵 22/24 满足；**插件本体 `engines.node` 已于 2026-10-04 由 `>=18` 提到 `>=20`**，对齐官方
-  `obsidianmd/obsidian-workflows` 的 `action.yml:47-51` 最低要求 20——`>=18` 低于官方门槛，虽不影响
-  实际发布（CI 固定用 24），但会让本地开发环境声明与官方支持面脱节）。
-  **配置收紧（2026-10-04）**：`knip.json` 原先只有 4 个键（`$schema`/`entry`/`ignore`），
-  项目文件范围靠 knip 启发式推断；现补 `project: ["src/**/*.ts","tests/**/*.ts","vendor/**/*.d.cts"]`
-  显式声明边界，并据 knip 提示移除已被 `project` 覆盖的 `ignore: ["vendor/**"]`（两条都收窄而非放宽：
-  `project` 只把 `vendor` 下的**手写类型声明** `.d.cts` 纳入，`simple-mind-map.cjs` 与 `upstream/**`
-  仍在检查面外）。补 `project` 后重跑**仍基线零残留、零配置提示**，说明推断与显式声明结论一致。
-
-- [K58] **编辑成本基线：引擎整树渲染「无脏值比对」（2026-09-17 量化，`verify:visual` 新增 `edit` 探针）**：
-  探针规模 500 节点 / **非性能模式**（全部节点在 DOM）/ DOM 3759 元素，动作走**生产路径** `setNodeText`；
-  口径为**时钟无关计数**（CI 跑在 `--virtual-time-budget` 下，耗时不可测）。三条实测结论：
-  ① **单次编辑 = 布局落地恰好 1 次**：`setNodeText` = `SET_NODE_DATA`（vendor 实测**只写数据、不渲染**
-  ——`setNodeData(t,e){Object.keys(e).forEach(n=>{t.nodeData.data[n]=e[n]})}`）+ 显式 `render()` ⇒ 一次入口、
-  一次布局，**编辑路径无冗余渲染**（勿再把它当性能项）。引擎另有「`node.reRender()` 为假即跳过整树 render」
-  的局部路径（`setNodeDataRender(t,e,n)`，`n=true` 时跳过、仅补发 `node_tree_render_end`），但文本编辑会改
-  节点宽度 ⇒ 必须重排 ⇒ 走整树 render 是当前唯一正确选择（禁用该捷径换取的只是错误布局）。
-  ② **内容重建 O(1)**：编辑一个节点只调用 1 次自绘构建器（500 节点规模下依然成立，与 30 节点 perf 探针同结论）。
-  ③ **属性写入 O(n) 且几乎全是空写**：空 render 对照（数据一字未改）实测 **2495 条属性变更 = 真变化 0 + 同值空写 2495**；
-  真实编辑只在此之上叠加少量真变化（自绘节点编辑 998、纯文本节点编辑 1）⇒ 引擎整树渲染**无条件重写每个节点与
-  连线的属性、无脏值比对**，单次编辑的 DOM 写入约 83%~99.96% 是纯浪费。
-  **推论与边界**：a) 该浪费位于 vendor 渲染器内部，插件侧**无法直接消除**（`node.reRender` 只重建内容、不替代
-  全局布局，而布局必是全局的）；插件能做的只有「不为无谓原因调用 `render()`」（每次 = 2495 次空写）并让
-  `render()` 的 `setTimeout(0)` 合并窗口持续生效；b) **性能模式是现成缓解**——视口外节点被摘出 DOM
-  （count 探针：151 节点 → DOM 11 组）⇒ 空写只落在可见子集，故 >500 节点（默认阈值）已被保护，
-  **100–500 节点区间**才是全量承受者；c) 绝对值仍未知（虚拟时钟测不到 ms）⇒ **后续「局部重绘」类改造的 ROI
-  判据是「能否减少 render 次数」，而非让单次 render 更快**；真实耗时需在应用内或不带 `--virtual-time-budget`
-  的通道另测。探针自身成本 ≈ +1s 虚拟时间；测量完即 `holder.remove()`，DOM dump 维持 ~343KB（不摘会到 ~992KB）。
-
-- [K59] **设置变更按键差集分流：不再一律重建引擎（2026-09-17，承 K58 量化）**：`applySettingsToViewsNow`
-  此前对每个打开的视图一律 `refreshMindMap()`（= 整树 `structuredClone` + 销毁重建引擎 + 全量重渲染 +
-  工具栏重建）。现改为：`main.ts` 记「上次已应用快照」→ `settings.diffLiveRefreshKeys(previous, next)`
-  算出**真正变化的即时刷新键**（首次应用返回全部键，保守走完整路径）→ 视图 `applySettingsChange(keys)`
-  按键路由：① **defaultTheme** → `engine.applyTheme()`（`setThemeConfig` 原地生效，与 css-change 同款）；
-  ② **defaultLayout / defaultLineStyle** → **跳过**；③ 其余（enableDrag / language）→ 仍
-  `engine.refresh()`（performanceMode / performanceThreshold 同日改为原地切换，见 K60；**2026-10-09：这两个设置项
-  已删**，路由表随之只剩 `defaultTheme` 原地 + `enableDrag` / `language` 重建，见 K117）。**为什么 ② 可以跳过**：会话字段
-  `currentLayout`/`currentLineStyle` 在 `loadMindMapFromFile` 就按「文件显式选择 ?? 默认值」定值，
-  之后 `resolvePreference('layout')` / `resolvePreference('lineStyle')` 读的都是会话字段 ⇒ **改默认值对已打开的图本就不生效**
-  （重建一轮也不会改变任何渲染），与「默认值只对新打开的文件生效」的产品语义一致——旧路径在这两个键上
-  是**纯浪费**。**边界**：默认值变更**不写入** viewState（那是「本文件的显式选择」，仅工具栏切换时写）；
-  `changedKeys` 为空集时视图什么都不做；防抖（250ms）保留——滑块档位仍会反复触发应用。
-  **主题路径的收益边界（勿夸大）**：`setThemeConfig(themeConfig)` 内部仍会走一次整树 `render()`
-  （vendor 实测：`ma(n)` 为真时以空 source 渲染、否则 `CHANGE_THEME`），故省掉的是**整树
-  `structuredClone` + 引擎销毁重建**（整套 SVG DOM、插件注册、引擎事件、视口重设、工具栏重建）；
-  要连那次重渲染也省掉需要引擎侧支持，插件不改 vendor。回归：`tests/settings.test.ts` 的
-  `diffLiveRefreshKeys` 4 例（首应用全集 / 空集 / falsy 边界与无关键 / 并集）。
-
-- [K60] **性能模式运行时切换：`updateConfig` 原地生效，不重建引擎（2026-09-17，承 K59）**：设置面板的
-  **性能阈值是唯一的滑块类高频控件**，此前每次应用都重建引擎。引擎**显式支持**运行时切换（vendor
-  0.14.0-fix.3 实测）：`updateConfig` 只合并 opt 并派发事件（**自身不渲染**），Renderer 的
-  `after_update_config` 分支在 `openPerformance` 变化时**绑定/解绑 `view_data_change` 处理器**并
-  `forceLoadNode()`；裁剪本身每次渲染现取活值（`Node.render` 解构 `opt.openPerformance` /
-  `opt.performanceConfig` 后按 `checkIsInClient(padding)` 判定，视口外 `removeSelf()`）。唯一不随运行时
-  切换生效的是节流窗口 `performanceConfig.time`（`bindEvent` 创建时捕获；只影响视口变化后的重渲染节流，
-  不影响正确性）。实现：`engine/mindmap.applyPerformanceMode(mindMap, enabled)` = `updateConfig`，
-  **且只在开启方向补一次整树 `render()`**——`forceLoadNode` 自带的那次渲染走「强制加载」分支**不裁剪**，
-  实测两个方向不对称：**关闭**方向只 `updateConfig` 即达目标态（DOM 全量，1 次落地）；**开启**方向若不补
-  `render()` 会停在「全部节点仍在 DOM」直到下一次视口变化才裁剪（DOM 151→**151**），补一次即立刻收敛到
-  裁剪态（DOM 151→**11**，代价 2 次落地，见 render-eco 探针）。阈值判据与创建期同源
-  （`core/constants.shouldEnablePerformanceMode`：创建按数据树、运行期按**渲染树**，两口径同构——性能
-  模式下渲染树结构仍完整，见 count 探针）；控制器 `applyPerformance` 取渲染树计数并与引擎配置共用
-  `PERFORMANCE_CONFIG`（创建与切换不再各写一份）；视图把两个性能键路由到它（**不重建**）。
-  回归：`verify:visual` 的 **perf-switch 探针**（151 节点图、创建时关闭：DOM 组数 **151 → 开启 11 →
-  关闭 151**，渲染树恒 151）+ `tests/constants.test.ts` 判据 3 例 + `tests/engine-controller.test.ts`
-  的 `applyPerformance` 2 例（阈值分支 / 无引擎静默，并断言引擎实例未换）。
-  **2026-10-09 减法（见 K117）**：`performanceMode` / `performanceThreshold` 设置项已删——性能模式改为
-  **常开 + 常量阈值**，没有触发源之后控制器 `applyPerformance` 与视图的两键路由**一并删除**
-  （`tests/engine-controller.test.ts` 改为护栏：创建选项不含这两键、控制器不再暴露 `applyPerformance`）。
-  引擎侧 `applyPerformanceMode` / `PERFORMANCE_CONFIG` **保留**：`verify:visual` 的 perf-switch 探针
-  仍靠「创建时显式关闭」构造两种局面（`CreateMindMapOptions` 的这两个键降级为**引擎级覆盖**，生产不传）。
-
-- [K61] **渲染经济审计：一次动作至多一次布局落地（2026-09-17，承 K58/K60）**：K58 已证明「一次整树渲染」
-  本身按节点数写属性（无脏值比对、无短路），故插件侧唯一能省的就是**别让一个动作产生多次布局落地**——
-  引擎 `render()` 有 `setTimeout(0)` 合并窗口 ⇒ **同一任务内的重复入口免费**，跨任务才是真多一轮。
-  审计两步：① **静态**：逐个核对插件侧 `mindMap.render()` 调用点（`features/view-node-actions.ts` 的
-  「有文本时由 `setNodeText` 内部渲染、无文本才自行重绘」三处 + 异步图片校正 `.then` 里的补渲染 +
-  `SET_NODE_HYPERLINK` 后的一次、`services/engine-controller.ts` 首帧一次、`engine/mindmap.ts` 各包装
-  函数内部一次）——**未发现跨任务的重复渲染**；② **动态**：`verify:visual` 新增 **render-eco 探针**，
-  对 8 条代表性动作（图尺寸写入 / 帧内预览 / 自绘重建 / 整树替换 / 性能模式开与关 / 两条引擎命令 /
-  裸 `updateConfig` 对照）逐条数 `node_tree_render_end`，并钉成回归闸门：包装函数恰好 1 次、开启性能模式
-  2 次（有意，见 K60）、引擎命令单独调用 ≤1。**审计查出并修掉一处**：`applyPerformanceMode` 曾无条件补
-  一次 `render()`，实测在**关闭**方向与 `forceLoadNode` 自带的那次重复（2 次落地、DOM 结果相同）⇒ 现只
-  在开启方向补，省掉每次「关闭性能模式」的一整轮全树渲染。
-
-- [K62] **设置按键分流的收敛结论：只剩 `enableDrag` / `language` 两个键重建（2026-09-17，承 K59/K60）**：
-  逐键核对「有没有运行时通道」后定为终局，勿再重复试探。① **`enableDrag` 保持重建**：节点拖拽由引擎的
-  Drag 插件承担，而插件是**创建期注册**的（`createMindMap` 里 `if (options.enableDrag) addPlugin(Drag)`）；
-  引擎侧没有对应开关可切（Drag 的启动只受 `opt.readonly` 拦，`enableFreeDrag` 仅决定拖拽结束行为且是
-  opt 活值），运行时要切换只能 `removePlugin(Drag)` / `addPlugin(Drag)`——前者**未入 d.cts**（需再加一处
-  防腐透传），且属**插件生命周期操作**（插件在构造期绑定 `node_mousedown`/`mousemove`/`node_mouseup`/`mouseup`，
-  是否完整解绑需逐个核对，另有 window 级监听）；收益只是「一个很少切换的布尔设置少重建一轮」，
-  **风险/收益不划算**。② **`language` 保持重建**：d.cts 无 `lang` 选项，语言在创建期被**闭包捕获**两处
-  ——`defaultInsertSecondLevelNodeText` / `defaultInsertBelowSecondLevelNodeText`（引擎新建节点时的默认文案）
-  与自绘钩子的 `lang` 实参（超长截断提示等）；不重建则二者与新语言不一致。UI 侧文案另有
-  `refreshLanguageUi()` + `refreshToolbar()` 全量刷新。
-  **终局路由表**（`features/view.applySettingsChange`）：**原地** = `defaultTheme`（`setThemeConfig`）、
-  `performanceMode` / `performanceThreshold`（`updateConfig`，K60）、`defaultLayout` / `defaultLineStyle`
-  （对已打开的图本就不生效，跳过，K59）；**重建** = `enableDrag` / `language`。
-  **2026-10-09 修订（见 K117）**：两个性能键已随设置项删除 ⇒ 路由表收缩为 **原地 = `defaultTheme`、
-  跳过 = `defaultLayout` / `defaultLineStyle`、重建 = `enableDrag` / `language`**（`IN_PLACE_REFRESH_KEYS`
-  现为 3 个外观键，`LIVE_REFRESH_SETTING_KEYS` 少 2 项）。
-
-- [K63] **真实墙钟通道（`--perf`）与「整树渲染 ≲0.6ms」的结论（2026-09-17，承 K58/K61）**：页内计时在
-  `--virtual-time-budget` 下不可用（`Date`/`performance` 被虚拟化），但**进程墙钟差**可用——虚拟时间只在
-  **空闲**时瞬时推进，而布局与 DOM 写入消耗的是真实 CPU ⇒ 同一页跑「空跑 / 负载」两种入口，两次
-  Chrome 调用的墙钟差 ≈ 负载的真实成本（口径同 release notes 的「同页 1.1s → 3.9s」）。实现：
-  `npm run verify:visual -- --perf [--perf-edits N]`（默认 300，opt-in，CI 不受影响；默认值自 K66 起由 100 上调）：负载块
-  （`buildEntrySource({ workloadEdits })` 注入的 `perf-load-probe`）在 500 节点 / 非性能模式 / DOM 3759
-  元素图上做 N 次 `setNodeText`（每次恰好一次整树渲染，见 edit / render-eco 探针），空跑 = 同页同图但不编辑；
-  **打包与写盘移出计时窗口**（否则 esbuild 的百毫秒级耗时会算进差值），A/B/B/A 交替各取**最小值**——
-  单次 A→B 实测出过 **−233ms** 的负差值（第二次运行因 profile / 文件缓存而更快），交替取最小可抵掉这类
-  单调漂移。**实测**：100 次编辑 ≈ **58ms**、300 次 ≈ **89ms** ⇒ 每次整树渲染 **≲0.6ms，且与运行间噪声
-  （±100ms）同量级**；即 K58 量到的「每节点数条同值空写」在绝对时间上**可忽略**。该口径**不含**历史快照
-  （编辑间隔未越历史防抖 ⇒ 连打被并成一条）；含历史后（K65 的 150ms 间隔、默认 300 次）实测 ≈ **13.1s**
-  ⇒ **43.6ms/次** = 渲染 ≲0.6ms + `addHistory` 的整树深拷贝与 JSON 比对（见 K65）。
-  **结论**：引擎侧属性重写再优化（局部重绘等）ROI 很低；插件侧「不产生多余渲染」（K60/K61）已是正确收尾。
-  要更紧的界需要应用内专用计时通道（当前口径只能给上界）。
-- [K65] **长会话内存基线：唯一的大头是引擎命令历史快照，上限确实生效（2026-09-17，承 K58/K63；`--perf` 的内存轮）**：
-  `--perf` 的负载块在**强制 GC 后**采样堆 / DOM / 命令历史 / 段缓存。两个前置：① 内存轮给 Chrome 加
-  `--js-flags=--expose-gc` + `--enable-precise-memory-info`（不回收的堆读数是「分配水位」，看不出泄漏）；
-  ② **编辑间隔取 150ms**（> 引擎 `addHistoryTime` 的 100ms 防抖）——否则虚拟时钟下 100 次连打被并成
-  **一条**历史（实测「编辑后：历史 1」），历史与内存增长读数全部失去意义；间隔靠虚拟时间等待，不污染
-  墙钟，代价是虚拟预算要随编辑数放大（`budgetMs`）。**实测（500 节点 / 非性能模式 / DOM 3759 元素）**：
-  ① **历史是唯一大头**：每条快照 ≈ **91KB 字符串**（堆内 ≈ 183KB/条）⇒ 100 次编辑 +18.3MB；520 次编辑
-  到**上限 500 条**时堆 **106.3MB（+91MB）**，即「单视图最坏水位 ≈ 上限 × 每条字节」——旧两档策略
-  （<2000 节点 500 条 / ≥2000 节点 100 条）里 500 节点图（≈91MB）反而重于 2000 节点图（≈70MB）；
-  上限现已改为按 30MB 预算反推，见 K66。② **单次编辑真实成本 ≈ 43ms**，而渲染
-  只占 ~0.5ms ⇒ 编辑手感的大头在 `addHistory` 的**整树深拷贝 + JSON 比对**，不在渲染——进一步支持
-  K63「渲染侧优化到此为止」的结论（要找手感收益，得从历史/快照下手，且那在 vendor 内部）。
-  ③ **无结构泄漏**：`g.smm-node` 增量 0、离屏测量元素恒 1、段缓存 ≤512（LRU 有界）；DOM 的少量增量
-  可**完整归因**于「负载用引擎级 `setNodeText`（不同步行内字段）⇒ 富节点判为非接管、切回引擎 SVG
-  渲染（div −1 与 g/path/rect/text/tspan 各 +1）」，生产走原文写回不发生（见 K54）。
-  硬断言（测量元素 ≤1 / 历史条数 ≤ 上限 / 段缓存 size ≤ max；K66 起另有「上限 = 预算反推值 / 满仓精确
-  裁剪 / 快照堆 ≤ 预算」三条）只随 `--perf` 跑，CI 不受影响；默认编辑数自 K66 起为 300。
-- [K66] **命令历史上限改为按 30MB/视图的预算反推，撤销深度随图规模收敛（2026-09-17，承 K65）**：
-  旧策略按节点数分档（`HISTORY_LIMIT_NODE_COUNT` / `HISTORY_LIMIT_MAX_COUNT`）在档内仍是最坏水位的
-  「上限 × 每条字节」，且档位边界有跳变。现 `engine/mindmap` 导出 `resolveHistoryLimit(nodeCount)`：
-  `floor(HISTORY_BUDGET_BYTES / (节点数 × HISTORY_SNAPSHOT_BYTES_PER_NODE))`，再 clamp 到 **[30, 500]**
-  （下限＝可用性保底「连改两下还有得撤」；上限＝引擎默认 `maxHistoryCount`，**只降不升**——等于默认值时
-  不动 `opt`）。实测对照：**500 节点 ⇒ 163 条（91MB→30MB）**、**2000 节点 ⇒ 40 条（70MB→30MB）**、
-  ≥2731 节点落入地板 30 条（地板区不再被预算封顶——完全封顶需引擎只存 diff，属 vendor 内部）。
-  384B/节点 由 K65 实测（500 节点 ≈182KB 堆/条 ⇒ 373B）上取整，给 vendor 快照字段漂移留余量，真膨胀
-  由预算断言兜底报警。**断言升级**（`--perf` 内存轮 `checkLongSessionMemory`；默认编辑数 100 → **300**
-  以使 500 节点图满仓）：① `historyCap === resolveHistoryLimit(节点数)`（预算确实应用，而非引擎默认
-  500）；② 编辑数 > 上限 ⇒ `historyCount === 上限`（满仓逐条裁剪，不多不少）；③ 此时快照堆 ≈
-  `historyBytes × 2`（UTF-16 确定性换算，无平台噪声）≤ 预算。回归：`tests/engine-history-limit.test.ts`
-  （预算兑现 / 单调不增 / 边界与地板 / 实测对照值 163 与 40）。
-  **（2026-10-02 补）会话内同步**：创建期只按「打开那一刻」的节点数反推一次，长会话内长大的图
-  （粘贴 / 连续编辑 / 拖入）会让预算逐步失效——从空图长到 1000 节点仍留 500 条 ⇒ 最坏 ≈192MB。
-  现 `engine/mindmap.syncHistoryLimit(mindMap)` 在 `EngineController` 的 `data_change` 通道上按 **1s 节流**
-  重算（值未变不动 `opt`；下调不会立刻裁剪已存历史，引擎 push 时才 shift，渐进收敛即可）。
-  回归：`tests/engine-history-limit.test.ts`（下调 / 等值跳过 / root 缺失 / 抛错吞掉）+
-  `tests/engine-controller.test.ts`（data_change → 节流窗口内恰好一次）。
-- [K67] **「自动整理」的渲染窗口竞态：RESET_LAYOUT 落在 root 暂缺的异步布局窗口内必抛错（2026-09-17，用户实测；承 K26h）**：
-  实测 `自动整理失败 TypeError: Cannot set properties of null (setting 'customLeft')`，栈为
-  `Renderer.resetLayout → 树遍历 → 回调首行`。根因是三段拼合：① `Renderer.render` 把 `_render` 排进
-  `setTimeout(0)`（合并连续请求）；② `_render` **先 `this.root = null`**，再由 `layout.doLayout(cb)` 回填，
-  而布局 `doLayout` 经分片执行器逐步跑（每步之间 `setTimeout(0)`，见 vendor 的 `It`）⇒ root 缺失**跨越
-  多个宏任务**；③ `resetLayout` 遍历前**不校验 root**（同层 `expandToLevel` 有 `this.renderTree &&` 守卫、
-  `forceLoadNode` 有 `t &&` 守卫，唯它没有）⇒ 窗口期内遍历把 null 交给回调，首行赋值即抛。**大图
-  （性能模式 / 数百节点）单次渲染跨的宏任务更多、窗口更宽**，越容易撞上；与 K26h「渲染链中断 ⇒
-  `renderer.root` 恒空」是同一根因的两种时长（瞬时 vs 永久），本条目只管瞬时态。修法（插件侧；
-  vendor 不可手工编辑，见 K27 / `vendor/BUILD.md`）：`engine/mindmap.arrangeMindMap` 先查
-  `getRenderRoot`，缺失则按 `RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS` 轮询等回填，上限
-  `RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS`（超限只记日志、不抛）；回填后仍走原「RESET_LAYOUT → 80ms 后
-  fit」路径。回归：`tests/viewport.test.ts`（窗口期延后执行 / 上限放弃两条）。
-
-- [K68] **性能轮（2026-09-18）：四处「重复付出的成本」收敛——索引增量补建与校验节流、拖拽帧内预筛、自绘判定缓存**：
-  ① **`create` 事件由整体失效改增量补建**（`file-lookup.FileLookupIndexService.noteCreated`，与全量重建共用
-  `writeFileEntries` 键形态表，勿各写一份）：`create` 是最高频的一类库事件（批量导入 / 外部同步 / 图片入库后
-  立即解析路径即高频路径），原「invalidate 即整体失效 + 下次查询全量重建」会让风暴期内的每次查询都付一遍
-  O(文件数 × 路径深度 + getResourcePath)（注释自述大库数百毫秒）。rename / delete **仍整体失效**——旧形态键
-  无法安全地增量摘除（后缀键可被多个文件共享，摘错会误删别人的键）；文件夹 create 不进索引（只收录 TFile）。
-  ② **`validate` 数量比对加时间窗节流**（`VALIDATE_MIN_INTERVAL_MS`，构造函数可注入时钟供测试推进）：
-  「索引未命中」的自愈查询在一次保存序列化里可能逐节点发生（每个解析不出的图片/附件各触发一次），逐次
-  `getFiles` 全量数组拷贝是纯浪费。窗口内直接复用缓存；`invalidate` 重置窗口；`lastValidateAt === null`
-  （首次校验）不受节流——事件遗漏的自愈只被推迟到窗口外，本就是 best-effort。
-  ③ **basename 同名冲突查询走索引计数**（`hasBasenameConflict`，`view-node-actions.newDocLinkpath` 消费）：
-  替代每次新建文档链接的 `getFiles` + `some` 全量扫描；索引未建立时回落原扫描（fail-open 语义不变）。
-  ④【**已废止 2026-10-11**】**拖拽落点识别域帧内预筛**（原 `drag-target.handleMove`）：曾以平方距离就地
-  判定（`engine/mindmap.readNodeViewportCenter` 零分配读取中心、与 `drag-target.nodeViewportCenter` 同字段表
-  同公式）命中半径才创建锚点对象。随拖拽换父辅助整体移除（见 K23）：相应引擎防腐面、常量、样式与
-  `feature-helpers` 中的几何一致性单测同批删除。
-  ⑤ **自绘接管判定随段序列缓存**（`node-inline-content.segmentEntryOf`）：`hasRichSegments` / `needsHiddenSyntax`
-  是只依赖原文的纯函数，原每次节点内容重建都重扫 3 个正则 + 段遍历，现与段序列同条目（LRU 512 与
-  `segmentCacheStats` 口径不变；`isResolvedLink` 仍在每次构建时求值、不进缓存——它依赖库状态）。
-  ⑥ **（2026-10-02 补，推翻 P5 旧决策）「拖宽帧内全树 render」已消除**：`previewNodeImageSize` 从
-  「改数据 + 整树 `render()`」改为**直写渲染中 `<image>` 的 width/height**——帧内引擎渲染 **0 次**
-  （render-eco 探针「预览 0」），节点外框与兄弟布局由收尾一次 `setNodeImageSize` 归位。旧「明确不改」
-  的理由（浪费在 vendor 内部、ROI 判据是减少 render 次数）在「直写可把帧内 render 降到 0」成立后反转。
-  DOM 生效由 `tests/feature-teardown.test.ts`（帧内 `<image>` 属性 + 数据未动）与 history 探针钉住；
-  调用方须保证节点在 DOM（性能模式视口外节点静默跳过，收尾提交兜底）。
-  回归锁定：`tests/file-lookup.test.ts`（增量补建 / 幂等 / 无缓存 no-op / 节流窗口 / basename 计数与回落）、
-  `tests/feature-helpers.test.ts`（就地版与返回值版逐例一致）。
-
-- [K69] **性能轮（2026-09-18，第二轮）：资源地址直解免全库建索引、引用预检零分配、解析纯文本快路径**：
-  ① **资源地址（app://）直解**（`domain/url.resourceUrlPathCandidates` + `links-resolve.resolveResourceUrlDirect`）：
-  索引是**惰性全库构建**（10 万文件实测 **303.8ms** 同步阻塞，而「打开含图文档」的首个图片解析
-  ——`resolvePathToFile('app://…')`——就会触发它）。直解把该分支改为「提取 host 后的路径候选
-  （原样 + decode）→ `getFileByPath` 直查 → **`getResourcePath(file) === url` 全等校验**」，
-  实测 **1.9µs**（10 万文件库，getFiles 调用 0 次）；校验不通过（含 mtime 缓存串过期）回退索引
-  ——历史/非标准形态的兜底能力与行为不变（唯一有意差异：文件被外部修改后，陈旧索引对**新地址**
-  会 miss 返回 null，直解按当前地址校验可命中——方向为「更正确」）。**全等校验不可省**：只按路径
-  直查会让手工构造的伪地址（`app://x/笔记.md`）命中「路径巧合」的真实文件。
-  ② **引用预检零分配**（`core/node-data.nodeReferenceMatches` 取代原 `nodeReferenceHaystack`，
-  消费方 `engine-controller.rendererTreeHasMatchingRef`）：预检按**全树**调用、无关文件的命中率
-  通常为 0，原「拼接比对串 + includes」每节点一次数组 + join；新实现只对非空字符串字段做子串
-  比较，2000 节点实测 **0.68ms → 0.51ms**（1.3×；无引用节点零分配，含链接的图收益较小）。
-  原比对串的「跨字段误命中」（needle 含 `|` 横跨两字段）不再发生——更严格只减误报，真实引用都在
-  单字段内。另一处差异：**空 needle 不再恒命中**（旧 `haystack.includes('')` 恒真，而 `oldBasename`
-  对 `.gitignore` 这类「点开头且无其他点」的文件名去扩展名后为空 ⇒ 旧实现每次重命名/删除这类文件
-  都会白走一遍整树深拷贝精确路径）。
-  ③ **解析无 token 快路径**（`md-outline.buildInlineData`）：纯文本行不再经 pieces 数组 + 切片 +
-  join（归一化口径不变：连续空格折叠 + trim）；2000 节点（80% 纯文本行）parse **2.0ms**。
-  ④ **`--perf` 复测**：真实墙钟 300 次编辑 ≈ 48.5ms/次（与上一轮 48.0 同量级，无回归）；内存轮
-  4 条硬断言全绿（离屏测量 1 / 历史 163 == 上限 / 上限 == `resolveHistoryLimit(500)` / 段缓存 ≤512）。
-  ⑤ **verify:visual 的 viewport / anchor 探针就绪判定改为「`node_tree_render_end` 事件 + 轮询
-  （上限 600ms）」**：原固定 150ms 在冷启动/高负载下偶发**假失败**（2026-09-18 实测两次：容器尚无
-  `.smm-node` → 锚定探针读 null 尺寸、视口探针包围盒为空 → 字段缺失；同代码复跑即过，与代码无关）。
-  **注意 `buildEntrySource` 返回模板字符串**——页内注释里不得出现反引号（会提前终止字符串，实测
-  踩坑：`ReferenceError: node is not defined`）。
-  回归锁定：`tests/links-resolve.test.ts`（直解命中不建索引 / 回退索引 / 编码与 mtime 形态 /
-  校验失败回退 / 无路径段 / `getResourcePath` 抛错兜底）、`tests/url.test.ts`（路径候选提取的
-  11 条边界）、`tests/engine-controller.test.ts`（空 needle 不再触发恒命中的零拷贝短路）。
-  **未改**：拖宽全树 `render()`（P5，维持 K68 结论——渲染非编辑手感大头）。
-
-- [K70] **性能轮（2026-09-20，第三轮）：打开多节点图的默认视口居中不再装配全量 DOM**（用户实测
-  「多节点打开卡顿严重、加载很久」）：
-  ① **主因**：性能模式下视口外节点被引擎回收，`draw.rbox()` 只覆盖可见子集 ⇒ 旧实现
-  `centerContentAtFullScale` 先 `forceLoadNode()` 把整树**同步**装配进 DOM 再测包围盒（vendor 的
-  forceLoadNode 是同步递归 render），且该动作在打开窗口内被**多轮**触发：首帧渲染结束 →（forceLoadNode
-  结束时 emit `node_tree_render_end` → **同步重入**同一处理器，重算预算 2 被连耗）→ 150ms 兜底预算 +1
-  → 图片回灌后的补居中（不受预算限制）。按已有实测口径（500 节点 ≈ 3759 DOM 元素，见 K58），
-  2000 节点图每轮约 1.5 万元素的同步装配 × 4 轮 ⇒ 打开窗口内的主线程长任务。
-  ② **修复**（`engine/mindmap.measureContentBoxFromData`）：性能模式改用**数据层几何并集**——遍历
-  `renderer.root` 全树读 `left/top/width/height`（与引擎裁剪判定 `checkIsInClient` 同源；vendor 实读
-  `get left() { return this.customLeft || this._left }`，拖拽调整过位置的节点与渲染读同一字段），
-  零 DOM 装配、O(n) 纯计算；平移量 = 画布中心 −（布局中心 × scale + translate）（引擎
-  `getNodePosInClient` 同口径）。数据层几何不可得（`renderer.root` 缺失等中间态）回退原 DOM 测量路径，
-  **不补 forceLoadNode**（此时 rbox 多半同样不可得，静默降级）。常规模式（非性能）行为不变（rbox 精确）。
-  **`fitMindMap` 曾仍 forceLoadNode**（**2026-10-02 已消除**，见 K110 ⑥：性能模式改为**数据层 fit**
-  ——目标缩放 `min(1, 可用宽/盒宽, 可用高/盒高)` + 内容中心落画布中心，与 vendor `View.fit` 的
-  flag 1/2/3 同式同果（三 flag 的最终中心均为画布中心）；数据层几何不可得时回退旧路径）。
-  ③ **探针**（`verify:visual` 的 `perf-box`，121 节点 > 阈值 100 + 800×300 视口）：钉住「节点 DOM 数
-  在居中前后均 < 总数 50%（不装配全量）」「内容中心 = 画布中心 ±2px」「数据层盒与 DOM
-  全量盒尺寸差 ≤ 8px」；**2026-10-02 扩**：`fitMindMap` 后 DOM 仍 < 50%（数据层 fit 不装配）+
-  fit 缩放 ∈ (0,1] + fit 后内容仍居中 + 第二次调用零 `view_data_change`（幂等短路）。**规模刻意取刚过阈值的最小量**：探针在共享页面里跑，图越大其分片渲染任务链
-  （`view_data_change` 后每子节点一个 setTimeout）越长——2026-09-20 实测 641 节点版本把其余探针的读取
-  窗口推后，连锁失败 **43 项**（dump 里场景已渲染、探针读取时尚未：自绘内容是探针之后才创建的）。
-  ④ **打开窗口内的重复调用幂等短路**（承 ① 的「多轮触发」）：`centerContentAtFullScale` 现于
-  「比例已是 1 且内容已在画布中心（< 0.5px）」时**完全不动 view**——vendor 的 `setScale` **无条件**
-  emit `view_data_change`（`scaleInCenter` 在 Δ=0 时也 `transform() + emit`），性能模式下经 200ms
-  节流器触发**分片整树渲染**（每轮 = 整树布局 + 属性空写，K58 口径）；打开窗口内本函数被调 3 次
-  （首帧渲染结束 / 150ms 兜底 / 图片回灌补居中），其中「几何未变」的兜底轮此前每轮白渲染一次，
-  现为 O(n) 纯计算后直接返回。比例已是 1 时也跳过 `setScale`（同源 emit 浪费；通常与
-  `translateXY` 的 emit 落同一节流窗口、收益较小，但避免「仅有 setScale 的调用」白开一个窗口）。
-  ⑤ **回归锁定**：`tests/viewport.test.ts`（性能模式走数据层几何并集、**不** forceLoadNode、平移量与
-  几何不变量；数据层几何不可得回退 DOM 测量且仍不 forceLoadNode；**已在目标态零调用**、
-  **比例 1 跳过 setScale**）。
-
-- [K72] **打开大图的成本主体：引擎逐字符文本测量；插件侧以自绘接管规避（2026-09-25，性能轮实测）**：
-  ① **实测定位**（`verify:visual --bench-open`，真实墙钟）：打开成本 ≈ 1.8s 固定 + Σ(节点字符数 × **0.13ms**)
-  （5000 与 10000 节点独立拟合一致）；5000 节点含 5% 长文本（1540 字）= 58.8s、去长文本 8.6s、
-  **全节点自绘 1.36s**（6.3 倍）；折叠 3 层反而 34.9s（引擎给每个折叠节点渲染展开按钮 ≈ +26s，
-  **净负，勿采用**）。
-  ② **根因**（vendor 内部，插件不可改）：`nodeCreateContents.createTextNode` 逐字符换行循环
-  （每字符一次 `measureText` + O(L²) 字符串重建）+ `measureText` 每字符一次「克隆 → 挂 body →
-  `getBBox()` 强制布局 → 移除」（svg.js retry 路径）；发生在**渲染期节点构造**，早于
-  `MindMapNode.render` 的性能模式门——`openPerformance` 裁剪不掉它。**上游补丁建议（快路径 +
-  canvas measureText + 缓存）未入库**（原提案文档已不在仓库）：根因分析见本条，插件侧以 ③ 的
-  自绘接管规避。
-  ③ **插件侧规避（已实施）**：`settings.selfDrawPlainNodes`（默认开；**2026-10-09 起该设置项已删、
-  纯文本节点恒自绘**，接管判据收敛为「段序列非空 ∨ 超长」，另删掉 `rich` / `hidden` 两个附带判定
-  与其两个正则，见 K117）——所有含文字节点经
-  `node-inline-content` 自绘接管，引擎 `createNodeData` 提前 return、测量全跳过；**边界**：空文本 /
-  含图 / 隐藏后无可见内容（纯空白、整行注释）不接管（否则渲染空节点或丢图片/图标）；
-  自绘节点双击走插件侧编辑器（`editNodeText` 经 `isCustomNodeContent` 运行时事实分流，零改动自动
-  适配；2026-09-28 K92 起＝内联编辑器，弹窗收编为右键备选入口）；**宽度手柄门禁**改为消费同一
-  运行时事实（`engine/mindmap.isCustomNodeContent`），
-  替代原静态判定 `shouldSelfDrawNode`（零引用，已删）。
-  ④ **设置路由（K62 同族）**：`selfDrawPlainNodes` **不在** LIVE_REFRESH 集合——仅对**之后打开**的
-  文件生效（避免切换设置时大图重建卡顿）；`selfDrawPlain` 经 `InlineContentOptions` 每次构建
-  实时读取（回调持有 settings 活引用），重开文件即生效。
-  ⑤ **回归**：`node-inline-content.test.ts`（selfDrawPlain 接管 + 边界 4 例）、
-  `view-node-width.test.ts`（运行时事实门禁 + 自绘纯文本形态）、`settings.test.ts`（布尔校验）；
-  性能基线 `npm run verify:visual -- --bench-open`（opt-in，同 `--perf`）。
-- [K73] **编辑帧成本的真实构成：引擎 `nodeDraw.has()` 的 O(n) 兄弟查找独占 27ms；三处引擎补丁把空 render 落地 26.1→2.7ms、一次编辑 47.6→21.4ms（2026-09-25，性能轮实测 + vendor 自有补丁）**：
-  ① **实测分解**（`verify:visual --perf --perf-ops=<变体>` 真实墙钟差分，A/B/B/A 取最小；
-  变体全表与口径见 `vendor/BUILD.md`「补丁清单」节）：500 节点 / 非性能模式 ——
-  `copy`（getCopyData 整树深拷贝）0.2ms、`stringify`（JSON.stringify 整树）0.55ms、
-  `compare` ≈0、`history`（originAddHistory 全流程）**0.8ms**、`editnohist` 46.1ms vs
-  `edit` 47.6ms（**addHistory 真实增量仅 1.5ms**）、`idle`/`rafonly`/`layoutonly`/`themetick` ≈0、
-  `rendertick`（一次空 render 落地）**26.1ms**、`rendernocb` 26.2ms、`rootrender` 27.1ms、
-  `nodeupdate`（全子节点 update 总量）0.8ms、`noderenderline` ≈0。
-  ② **修正 K65 的归因**：K65 推断「编辑手感大头在 addHistory 的整树深拷贝 + JSON 比对」——
-  实测为**误**（0.8ms，占 3%）；K58 的「2495 条同值空写」在绝对时间上也可忽略（约 1.4ms，
-  与 K63 的旧判断一致）。真凶是 `MindMapNode.render` 复用分支的 `this.nodeDraw.has(this.group)`：
-  svg.js `has → index` = `[].slice.call(childNodes).indexOf(node)` —— **每节点每轮把全部兄弟
-  节点拷进新数组再线性查找**，500 节点即 25 万次操作 + 500 次数组分配/轮 ≈ **27ms**。
-  ③ **三处自有补丁（已入 vendor，改动面与维护流程见 BUILD.md「补丁清单」）**：a) 上述 has →
-  `parentNode` 直接父判断（O(1)，语义等价：has 只判直接子且节点 group 在 nodeDraw 下平铺）
-  ——**空 render 落地 26.1→2.7ms、一次编辑 47.6→21.4ms**；b) 节点数据快照去 JSON 化
-  （`cloneNodeData` 值级深拷贝 + `isNodeDataChanged` 深比较，替代每节点每轮 1 parse + 3
-  stringify；保留因**零写点依赖**——任何数据变化都反映在值上——且消除整树序列化分配，≈1.4ms）；
-  c) svg.js `attr` 同值短路（`vendor/patches/`，经打包 entry 注入；空 render 2495 次同值
-  setAttribute → 0 mutation，编辑路径同值空写 1997→0，≈1.4ms，大图/低端设备边际更大）。
-  ④ **方法论与契约**：页内时钟在 `--virtual-time-budget` 下虚拟化（同步代码期间时钟不动），
-  耗时只能用「同页两次调用的进程墙钟差」；`mutation` 变体采集 DOM 变更分布（补丁后空 render
-  mutation = 0；edit 探针同值空写 0 为机械判据）。**新快照为值级对象（非字符串）**：生产面
-  `MindMapNode.update` 与 `Base` lru 分支，消费面 `Base.checkIsNodeDataChange` 唯一，异常
-  形态按「已变化」处理（安全方向）。
-  ⑤ **生产口径 vs 负载旧口径（2026-09-25 追加实测，重要）**：`--perf` 负载原未接
-  `selfDrawPlain: true`（生产自 K72 起默认开）——编辑后 text 不含链接段 ⇒ 不接管 ⇒
-  切回引擎 SVG 渲染 + 逐字符测量，**此前测得的 47.6ms 是旧口径人造成本**；负载改接
-  生产默认后（编辑保持自绘，DOM 变化 -0.5 元素/次），**一次编辑 = 5.3ms**（render 落地
-  3.0 + addHistory ≈1.5 + 编辑同步 <1）。以 git HEAD 旧产物在生产口径下同测对照：
-  **一次编辑 29.4→5.3ms（-82%）、空 render 落地 28.1→3.0ms（-89%）**。
-  ⑥ **回归**：1578 测试全绿（含 vendor sha256 契约更新为 `e02e796a…` / 408,032 B）；
-  全部视觉探针；lint；打开基准不劣化（5000 节点 1298ms）。
-- [K74] **打开路径测量缓存：自绘内容尺寸按 `outerHTML` 内容寻址；重复打开 5000 节点 1276→≈810ms（-37%）（2026-09-25，性能轮续，补丁 4）**：
-  ① **背景**：`measureCustomNodeContentSize` = 清空离屏容器 + appendChild +
-  getBoundingClientRect（每节点一次强制 reflow），测量段占打开成本 ≈0.15ms/节点（K72）。
-  ② **补丁 4**（改动面与实测见 BUILD.md「补丁清单」）：自绘内容全内联样式（K53 ⑤）
-  ⇒ `outerHTML` 即完整尺寸 key；模块级缓存（跨引擎实例存活）⇒ 同文件重复打开
-  （生产高频：切回/重开）命中率 ≈100%；命中时连 `cloneNode` 一并省（调用方改传源元素）；
-  **字体未就绪（`document.fonts.status !== 'loaded'`）不写缓存**（防 fallback 度量污染）。
-  ③ **容量须 ≥ 工作集（实测教训）**：4096 容量下「顺序重扫 + 淘汰」击穿命中率，
-  收益仅 20%（省 261ms）；放大到 ≥工作集（定 16384，最坏 ≈16MB）后省 466–518ms。
-  ④ **验证通道**：`BENCH_TWICE=1`（`--bench-open`）同页建图→首帧→销毁→重建，与单次
-  运行墙钟差 = 第二次打开成本；`--perf-ops=clockcheck` 定论**页内时钟不可用**（3e7 次
-  sqrt 忙等页内读数 = 0.0ms，K58 旧结论成立）。⑤ **边界**：首次打开不变（缓存冷）；
-  本补丁只消测量段——内容构建 / 节点对象 / 布局为引擎固有成本。**当前 sha 以 BUILD.md
-  登记为准**（补丁 4 后 `09718fde…` / 408,449 B）。回归：全量测试 + 视觉探针
-  （尺寸类断言即缓存正确性验证）。
-
-- [K75] **首帧前预测量 + 元素复用：打开 5000 节点再降 8%；并修正「测量段 700ms」的高估（2026-09-25，性能轮续，补丁 5）**：
-  ① **机制**（改动面与实测见 BUILD.md「补丁清单」补丁 5）：`new MindMap` 之后、首帧前
-  经 `MindMap.preMeasureCustomContents(mindMap, buildContent)`（engine/mindmap.ts 绑定
-  doc/style/lang 注入，与 `customCreateNodeContent` 同一条构建链）walk 数据树、以轻量
-  代理节点预生成自绘内容 → clone 集中挂载（`width: max-content` wrapper 保持块级宽度
-  语义）一次 reflow → 尺寸写补丁 4 缓存；构建出的元素按 uid 存入
-  `__preMeasuredContentMap`、正式内容创建点优先复用（取用即删）⇒ 首帧只剩一遍构建。
-  配套把 `checkEnableDragModifyNodeWidth` 从 opt 开关改为**实例事实**
-  （`isUseCustomNodeContent()`）——复用后内容可不经构建回调创建，opt 口径会给死手柄
-  （实例口径与拖宽内部三重检查对齐）。
-  ② **两段实验的负→正结论**：A1（只预测量、不保留元素）实测**净零**（100% 命中
-  4750/4750 但总时长无变化）——预测量构建 + 正式构建构成**两遍构建**，抵消测量节省；
-  A2（元素复用）省掉第二遍构建后 **1258→1151ms（-8%）**。
-  ③ **对 K72/K74 的修正**：「测量段 ≈700ms / 0.15ms/节点」**高估约 5 倍**——A2 净收益
-  仅 102ms ⇒ 4501 次测量的真实成本 ≈100–150ms；`twice` 通道（K74）的「重复打开
-  -37%」中**主体是同页第二张图的整体热页红利**（同页对照不纯），缓存独占收益远小于此。
-  ④ **诊断常驻**：`__PREMEASURE_STATS__`（预测量构建/命中/写入）与
-  `__MEASURE_STATS__`（正式测量命中/未命中）页面全局、`--bench-open` 打印——
-  测量缓存健康度的长期观测。
-  ⑤ **边界**：预测量在 `createMindMap` 同步段完成（处于 Obsidian 加载态内）；构建/
-  数据/样式任何不一致只会导致缓存 miss 或复用失效（回退原路径，零副作用）；单节点
-  构建抛错即跳过该节点。
-
-- [K76] **打开分片渲染（激活引擎既有 async 通道）：主线程阻塞从「整树单块」降为「单节点块」，代价 +1.4%~+3.4%；专项审计结论入册（2026-09-25，性能轮方案 B，补丁 6）**：
-  ① **动机**：打开 5000 节点的 1.14s 是**单个同步宏任务**（UI 全程冻结）——K72 把测宽
-  成本换到自绘路径、K75 把测量段做薄之后，这是打开路径最后一处体感缺口。
-  ② **机制**（改动面与实测见 BUILD.md「补丁清单」补丁 6）：`_render` 整树渲染原传
-  `root.render(cb)`；改为 `opt.renderAsync` 为真时传 `root.render(cb, false, true)`——
-  激活 `MindMapNode.render` **既有** async 通道（每子节点一个宏任务，回调计数链完整）。
-  **非新机制**：性能模式视口变化路径（`onViewDataChange`，Render.js bindEvent）一直
-  以 async=true 运行；本次只是把 `_render` 主路径接上。插件侧按
-  `RENDER_ASYNC_NODE_THRESHOLD`（1000）注入，显式覆盖通道
-  `CreateMindMapOptions.renderAsync`（对照实验用）。
-  ③ **实测对照**（`--bench-open` + `BENCH_RENDER_ASYNC=0/1`，同 bundle 仅页内全局变量
-  不同）：500 节点 473→489ms（+3.4%）｜5000 节点 1137→1164ms（**+2.4%**）｜10000 节点
-  2255→2287ms（+1.4%）——相对代价随规模**下降**（绝对 +16~32ms）；正确性指标
-  （DOM .smm-node / 自绘锚点 / 截断数）三规模全一致；生产默认路径（不设变量、5000 ≥
-  阈值）实测 1168ms 与强制分片一致（阈值判据生效）。
-  ④ **专项审计结论（两窗口模型）**：布局窗口（`root=null`、doLayout 分片期间）是
-  **既有**窗口（K67 守卫覆盖）；渲染窗口（`root` 已回填、`isRendering=true`）为本轮
-  新增面，逐项核实——重入由 `hasWaitRendering` 排队兜底（多次 render() 合并重跑）；
-  `node_tree_render_end` 仍在整树完成时 emit（插件侧视口恢复零改动）；引擎 12 处
-  `renderer.root` 消费点全为交互触发且 root 已回填、部分自带判空；未渲染节点
-  （group=null）与性能模式视口外**同构**（既有容忍覆盖：点击落空不崩，拖拽/框选/
-  键盘导航正常）；`highlightNode` 的 `isRendering` 跳过语义自洽（登记）。**唯一新增
-  守卫**：async 派发前检查 `mindMap.el`（destroy 断链，避免销毁后在游离 DOM 上白跑）。
-  ⑤ **边界**：分片序 = 树序（根→子逐步长出），非视口优先；`forceLoadNode`（配置切换
-  路径）未接分片（低频，登记）；「UI 不冻结」是机制性结论（主线程最坏阻塞 ≈ 单节点
-  渲染 0.2ms），无头探针验证的是总时长与正确性。
-  ⑥ **回归**：1578 测试全绿（含 vendor sha256 契约更新）；全部视觉探针；lint；打开
-  基准三规模正确性一致（`8c0a6d83…` / 410,276 B）。
-
-- [K77] **打开成本的精确构成：「内容构建」仅 ≈60–110ms（不是 800–950ms）——「构建加速」方向负结论（2026-09-25，性能轮调研）**：
-  ① **实验**（`--bench-open` + 新增 `BENCH_VARIANT=no-content` / `BENCH_STOP_AT=start`
-  探针）：no-content = `createNodeContent` 返回带尺寸空 span（`cssText` 定 180×60）
-  ——变量只有 `buildInlineNodeContent` 的构建与测量。5000 节点实测：full **1137ms**
-  vs no-content **924ms** → 构建+测量 ≈ **213ms**；减测量段 ≈100–150ms（K75 独立实测）
-  ⇒ **构建段 ≈60–110ms**——与 K75 的 A2 净收益 107ms（= 一遍构建）交叉吻合。
-  ② **两个方法论教训**：空元素**必须带尺寸**——无尺寸节点塌缩 ⇒ 树变矮 ⇒ 651 组
-  （vs 15 组）挤进视口被装配，差值完全不可归因（首轮实验 +47ms 的假象）；**跨进程
-  分段差分（`BENCH_STOP_AT=start` vs end）信噪比不足**——固定开销漂移 ±100–260ms
-  淹没段成本（100–200ms 级），full@stop(1401) 反而 > full@end(1137)。变量隔离必须
-  走「同口径 end、单变量替换」矩阵。两探针保留（`verify:visual` 脚本内，默认不激活）。
-  ③ **构成修正**（推翻 K72 时代的「构建 ≈800–950ms」推算）：打开 1137ms ≈ 构建
-  60–110 + 测量 100–150 + **引擎固有 ≈880–980**（5000 × 节点对象构造/getSize/
-  事件绑定、布局 4 task、foreignObject/连线、首帧装配；**后经 K78 修正：其中
-  ≈174ms 是 initDragHandle 的监听器泛滥，固有余量 ≈710–810ms**）。**大头在
-  引擎固有成本**，插件侧不可及；cssText 批量化/cloneNode 模板等手段的上限 =
-  构建段的 30–50%（≈20–50ms，打开 -2~4%）——**负 ROI，不投入**。
-  ④ **后续若再探**：唯一量级项 = 引擎固有段的「节点对象轻量化 / 布局算法」——
-  vendor 上游贡献方向（成本高，见 K76 审计模式）；插件侧打开路径**就此收官**
-  （K72 自绘换路径 → K74/K75 测量做薄 → K76 冻结消除 → K77 构成定论）。
-
-- [K78] **vendor 上游贡献首战：拖宽监听器惰性注册——打开 5000 节点再降 13%（-174ms），并修复潜伏泄漏（2026-09-25，性能轮，补丁 7）**：
-  ① **发现路径**（「补丁即探针」方法论）：K77 把 ≈880–980ms 归入「引擎固有」后，
-  逐个审计 constructor 每节点调用链（`getSize` 已做薄 / `updateGeneralization`
-  守卫早退 ≈5–10ms 非热点 / **`initDragHandle`**——补丁 5 ③ 的实例口径门禁让
-  5000 自绘节点全部通过，每节点 3 个监听器（window mousemove/mouseup +
-  mindMap node_mouseup）= **15000 个**，且全库无解绑）。
-  ② **三重代价**：打开期注册实测 ≈174ms（**A/B/B/A 交替对照**：手工回滚基线
-  min 1327ms vs 补丁 min 1153ms，哈希双向校验 `8c0a6d83↔1e335f8f`——跨时段
-  漂移 ±100–260ms 再次被同批交替消掉，K77 教训的第二次应用）；此后每次鼠标
-  移动 10000 个 window 监听器被调用后早退（运行期长尾）；**节点销毁后实例被
-  window 监听器永久持有**（每开一次大图 +10000 监听器 + 实例滞留——K65 长会话
-  探针测 DOM 增删未覆盖此形态，登记为 vendor 上游 bug 的本仓库修复）。
-  ③ **补丁 7**（改动面与机制见 BUILD.md「补丁清单」）：`initDragHandle` 只 bind；
-  手柄 `mousedown` 开会话才注册、`mouseup` 收尾（新增
-  `unbindDragHandleGlobalEvents`）即解——常态零全局监听；收尾补 `!this.group`
-  守卫（会话中节点被删除时安全）。同引用重复 `addEventListener` 浏览器天然去重。
-  ④ **回归**：1578 测试（含 sha256 契约 `1e335f8f…` / 410,692 B）/ 全部视觉探针
-  （`history` 拖宽全流程、`handle` 手柄显隐覆盖惰性注册路径）/ lint。
-  ⑤ **方向定调**：这是「vendor 上游贡献（节点对象轻量化）」的第一个实锤——
-  「固有」成本必须逐点审计而非整体放弃；其余固有段（节点构造/布局 4 task/
-  foreignObject/装配）尚有 ~700–800ms，逐点审计的边际成本递增，**按需再战**
-  （下一个候选：布局 4 task 的 walk 分布与 `getSize` 重复调用分布）。
-
-- [K79] **布局平移的二次复杂度实锤：adjustTopValue 293 万次子树平移 → 延迟物化 O(n)，5000 节点再降 6%（2026-09-25，性能轮，补丁 8/9）**：
-  ① **发现**（K78 后的下一个候选：布局 task 的 walk 分布）：新增 `BENCH_VARIANT=
-  count-layout` 页内包裹计数探针（零 upstream 改动）——5000 节点逻辑结构图首帧：
-  `adjustTopValue` 1 次、`updateBrothers` **2101 次**（含递归）、`updateChildren`
-  **平移 292 万节点次**（≈节点数 × 584——同一子树被多级祖先的 updateBrothers
-  反复全量平移，``updateChildren`` 为递归子树遍历）。
-  ② **短路实验的失败与教训**：`skip-adjust`（页内 patch `adjustTopValue=noop`）
-  读数 +570ms 且 DOM 629 组（vs 15）——**几何塌缩污染视口裁剪**，同 K77 空元素
-  教训的第三次出现：**后置处理的短路必改几何 ⇒ 短路法不适用于布局**。正确路径 =
-  「等价优化本身即探针」（几何正确的补丁，收益即份额）。
-  ③ **补丁 8**（字段快路径）：`item[prop] += offset` 走 getter/setter（`customTop
-  || _top` 读 + 写 `_top`）；核实 `_top`/`_left` 唯一读点在 getter 内部，「分量
-  自定义位置 undefined」时字段直写严格等价——单独收益仅 ≈23ms（V8 访问器内联
-  良好）——**排除「访问器是大头」假设**。
-  ④ **补丁 9**（延迟物化，量级项）：可延迟性前提逐条核实——difference 判定不读
-  top（只读 childrenAreaHeight2/height/margin）、adjustTopValue 同 task 内无外部
-  观察者 ⇒ `updateBrothers` 只记账（子树根 + 累计 offset）、末尾自顶向下一次物化
-  （O(n)）。**等价性边界**（实施中推演修正）：物化的「继承」在 hasCustomPosition
-  截断（对齐原 updateChildren 递归守卫）、「遍历」不截断（记账根可位于自定义位置
-  祖先之下）——几何逐字节等价的验证 = `layout` 探针（六布局 × 连线 × 根连线起点）
-  + 全部视觉探针 + 1578 测试全绿。
-  ⑤ **实测**（同批 A/B）：5000 节点 **1161→1091ms（-70ms / -6%）**；10000 节点
-  **2255→1741ms**（含补丁 7 复合）。相对 293 万次的操作量，-70ms 说明**单次
-  遍历/回调成本很低**（JIT 友好），二次复杂度在**更大图**才会进一步放大——
-  本补丁的真正价值 = 把 O(传播×子树) 降为 **O(n)** 的结构性改善。
-  ⑥ **回归**：1578 测试（含 sha256 `ce3bbadd…` / 411,297 B）/ 全部视觉探针 /
-  lint；`count-layout` 计数探针常驻供后续布局调研复用。
-
-- [K80] **「outerHTML 镜像序列化」负结论：估算 25–70ms 的候选实测 < 噪声（≈30ms）——已回滚；节点构造段审计收口（2026-09-25，性能轮）**：
-  ① **候选**：`measureCustomNodeContentSize` 以 `outerHTML` 作内容寻址 key——预测量
-  与正式测量对**同一元素**各序列化一次（5000 节点打开 ≈9500 次「镜像序列化」），
-  按 5–15μs/次估算 25–70ms，看似诱人。
-  ② **补丁 10（零行为差异版）**：预测量阶段把 key 附着为元素 **JS 属性**
-  （`__smmMeasureKey`，不参与 HTML 序列化），正式测量优先取用。正确性前提已核实：
-  `addXmlns` 幂等（重复 setAttribute 同值无变化）、元素在「预测量 → 正式测量」
-  之间无任何修改路径（MathJax 异步注入是唯一的构建后修改，但它发生在**首次测量
-  之后**且无重测机制；本方案不改「测量回写附着」，故「元素修改后重测」的既有
-  语义完全不变——当时的保守取舍，事后被证明选对了）。
-  ③ **实测与决策**：补丁组 1117/1137/1153ms vs 基线组 1091/1098/1123ms——**两组
-  区间完全重叠**（回滚后复测 1131/1191 亦重叠）⇒ 收益 < 组内噪声 ≈30ms，**序列化
-  单次成本远低于估算**（~1–2μs，DOM 序列化为 native 快速路径）。**回滚**（哈希
-  机械校验 `ce3bbadd` 精确还原）——不为无实测支撑的优化增加代码面。
-  ④ **方法论**：本轮第三次「估算被实测否定」（K77 构建段、K79 访问器、K80 序列化）
-  ——**微优化的估算必须先过同批 A/B 的噪声检验**；K78 起的「同批交替对照」是唯一
-  可信判据（跨时段漂移 ±100–260ms ≫ 噪声 ≫ 多数单项优化收益）。
-  ⑤ **节点构造段审计收口**：剩余已知候选（`checkIsInClient` 的 `draw.transform()`
-  每节点读取、`createNodeData` 的 `typeList/createTypes` 每节点数组构建、
-  `updateGeneralization` 的 removeGeneralization 细节、首帧 renderLine 遍历）
-  预估单项均 <30ms——**逐点审计的收益已低于测量噪声**，打开路径的插件侧+vendor
-  自有补丁优化**就此收口**（累计：K72 自绘换路径 → K74/K75 测量做薄 → K76 分片
-  冻结消除 → K77 构成定论 → K78 监听器 -13% → K79 布局平移 -6% → K80 收口）。
-  ⑥ **若未来仍要动**：剩余量级项只在「节点对象构造 / 首帧装配遍历」的**结构性
-  重写**（如延迟构造视口外节点——改动引擎核心生命周期，风险等级 = 补丁 9 之上），
-  或接入真实时间性能通道（longtask）另立靶点——两者的共同前提是**先有 ≥50ms 的
-  可复现单项收益证据**。
-
-- [K94] **性能复核（2026-09-28，批次 3 基准审计；只测量、不断言）**：三条主线读数列为后续对照基线——
-  ① **打开**（`--bench-open`，真实墙钟，各规模 2 次取最小）：500 / 5000 / 10000 节点 = **441 / 960 / 1562ms**
-  （对照 2026-09-25 性能轮 473 / 1137〔K76〕/ 2255〔K76〕ms；5000 与 10000 降 16% / 31%，跨日期对比仅供趋势参考）；
-  测量缓存健康（5000 节点：预测量构建 4750 → 全部写入，正式测量命中 4750 / 未命中 0）；视口裁剪生效
-  （DOM `.smm-node`：500 节点图 24、5000/10000 图 15，均 ≪ 总数）。
-  ② **编辑帧**（`--perf`，500 节点 / 非性能模式 / 300 次编辑，A/B/B/A 取最小）：**4.0ms/次**（每次 = 一次整树渲染；
-  对照 K73 补丁后基线 5.3ms，-25%）。
-  ③ **长会话内存**（同轮）：每次编辑堆 +0.1MB；历史满仓 163 条投影 29.6MB ≤ 30.0MB 预算（K66 上限生效）；
-  段缓存 LRU 512/512（容量上限内）；DOM 净变化 -0.5 元素/次（无泄漏增长）。
-  ④ **复查后复测（同日，批次 2【函数拆分】/批次 4【测试】落地后）**：编辑帧仍 4.0ms/次（与 ② 一致）；
-  打开 420–432 / 952–979 / 1540–1760ms——10000 节点首测 1760ms 属**运行间噪声**（复测回落 1540ms），
-  跨次波动幅度：500 节点 ±5%、5000 节点 ±3%、10000 节点 ±13%（复测即回归）；**无回归**。
-  结论：**无劣化、无需优化**；后续性能轮以此为对照读数（测量通道：`verify:visual --bench-open / --perf`，opt-in 不断言）。
-
-- [K81] **社区目录对照通道：本地工作流已 ⊇ scanner 校验面（探针双向验证，0 实质缺口）；`lint:scanner` 常驻为「防收窄护栏」（2026-09-25，社区目录工作流优化轮）**：
-  ① **范围**：以官方 `obsidianmd/obsidian-workflows` v1.0.0 源码（`src/manifest.ts`
-  / `repo-checks.ts` / `lint.ts` / `release.ts` / `main.ts`）为**校验面权威定义**，
-  逐面审计本仓库工作流。**结论：0 实质缺口，多处更严**——
-  · scanner stylelint：`stylelint.config.mjs` 已照抄官方 ruleset + electron 版本
-  推导（`minAppVersion 1.13.0 → electron 39`）✓；
-  · scanner ESLint：`eslint.config.mts` 已接入 `eslint-plugin-obsidianmd ^0.4.2`
-  recommended（比 scanner 固定的 0.4.1 新）+ 项目更严边界，`--max-warnings 0`
-  ——**探针双向对照**（同一违规样本两侧跑）：问题集完全一致，scanner 经
-  `toWarns` 把 recommended 降级而**本地保持 error**（no-implied-eval /
-  no-unsafe-call / rule-custom-message 均为 error），即**本地 ⊇ 且更严**；
-  · manifest/versions/readme/license：`check:release`（versions 逐条 semver +
-  一致性 + README + License 缺失/非 OSI 分级，见 K109）比 scanner 更严（scanner 的
-  semver 违规仅 warning）＋
-  `obsidianmd/validate-manifest` / `validate-license` 规则双通道 ✓；
-  · release 面：tag 一致性本地**硬失败**（scanner 仅 warning）、attestation
-  等价、draft release 额外携带 LICENSE/THIRD-PARTY-NOTICES 与发布说明 ✓。
-  ② **交付**：`scripts/scanner-lint.mjs`（`npm run lint:scanner`）——用 scanner
-  **固定版本集**（官方 `SCANNER_ESLINT_DEPS`，刻意不用项目 0.4.2）＋**逐字照抄**
-  的 `buildScannerEslintConfig(true)` 配置＋**隔离安装**（专属缓存目录，空
-  userconfig 隔离开发机 npm 配置，node 直跑 npm/npx CLI 入口；**2026-09-29 K109
-  补强**：配置隔离不止 userconfig——子进程 env 亦须净化 `npm_config_allow_scripts`，
-  安装目录 `package.json` 声明 `allowScripts: {}`——npm 11.9+ 的 project-scoped
-  策略会拒 CLI/env 层来源）实跑——输出
-  「假如现在提交社区目录，JS/TS 面会扫出什么」。**定位不是补本地缺的检查**
-  （本地已覆盖），而是把对照关系机械化：a) 可直接作发布门禁；b) **防收窄
-  护栏**——未来本地配置被无意改窄时「本地绿 + 本通道红」即暴露缺口。
-  已接入 `lint.yml`（Node 24 主矩阵）与 `release.yml`（发布门禁）。
-  ③ **边界（登记）**：· `vendor/**` 不在对照范围（第三方源码入仓，其 .js 不入
-  tsconfig，官方配置的 projectService 会报 78 条 "not found by the project
-  service" 解析错误淹没结论）——**若服务端确实扫描 vendored 源码，以服务端
-  报告为准**；应对预案：把 `vendor/upstream/` 移出版本库（保留 `vendor/patches/`
-  + 文档化 `npm install simple-mind-map@0.14.0-fix.3 --no-save` 拉取流程，
-  重打包脚本对 upstream 缺失给出明确报错）；· 官方配置显式声明的
-  `obsidianmd/regex-lookbehind` 在 0.4.1/0.4.2 上实测均未触发（探针
-  `/(?<=a)b/` 两侧不报）——照抄配置，以服务端为准。
-  ④ **附**：审计中确认 scanner ESLint 对本仓库 `src/`（69 文件）扫描 **0 违规
-  0 警告**——社区目录的 JS/TS 检查面天然通过；探针（`src/__scanner_probe__.ts`）
-  已删除，对照证据即上述双向对照表。
-  ⑤ **CI 接入的实证修正（同日，#57/#58 两次红的根因）**：`lint:scanner` 入 CI 后
-  24.x 矩阵连续失败（22.x 与 release.yml 均绿）。排除法 + 本地按 CI 同序列复现
-  （`npm run test:coverage` → `npm run lint:scanner`）：根因 = **`test:coverage`
-  （24.x 独有步骤）生成的 `coverage/lcov-report/*.js`（6 个自带 JS）被 type-aware
-  扫描**、报「not found by the project service」；官方 IGNORES 列表**不含
-  `coverage`**（官方 CI 流程不先生成它），release.yml 因无 coverage 步骤而幸免，
-  本地因从未跑过 coverage 而绿。**修复**：IGNORES 的「本项目特有适配区」补
-  `coverage` / `verify-visual-logs`（本地复现序列验证通过）。**同批加固**（防
-  同型环境差异）：依赖安装重试 ×3（网络抖动自愈）、Linux npm-cli 路径候选
-  （runner 的 `lib/node_modules` 布局）、eslint 由 npx 改为**直连 CLI 入口**
-  （消除 npx「项目 node_modules 优先」的解析歧义——本地与 CI 走不同代码路径的
-  根源）。**教训**：本地预检的「绿」必须以**与 CI 相同的目录状态**验证（生成物
-  目录是第一类差异源，与 K72 的「空元素几何污染」同属「环境不对齐」家族）。
-
-- [K82] **官方模板对照审计：0 缺口（构建配置逐字节同源），开发最佳实践全面满足或超越（2026-09-25，社区目录工作流优化轮续）**：
-  ① **范围**：以官方 `obsidianmd/obsidian-sample-plugin`（master，含其 AGENTS.md
-  的 18 类最佳实践清单）逐条对照本仓库。**结论：0 缺口**——
-  · 构建配置：`esbuild.config.mjs` 与模板**逐字节同源**（banner / external 列表
-  / prod 判定 / sourcemap 策略 / treeShaking / minify 全一致），`package.json`
-  build 脚本与 `tsconfig.json`（strict + noUncheckedIndexedAccess 等）逐字段
-  对齐且多两项（`noImplicitOverride` / `allowJs`）；
-  · 工程实践：**不提交构建产物**（`main.js` 在 .gitignore 且未被 git 跟踪）、
-  **tags 无 v 前缀**（0.0.5/0.1.0…0.1.3，与「Do not use a leading v」一致）、
-  `register*` 守卫 27 处覆盖（外加引擎事件的 `EventBinder` 统一销毁，K36）、
-  manifest 全字段（含 `isDesktopOnly: true` 与稳定 id）、`onload` 轻量装配
-  （引擎懒创建于视图打开时）；
-  · **超越面**：ESLint 版本更新（obsidianmd 0.4.2 vs 模板 0.4.0）+ scanner
-  对照通道（K81）；分层架构 + 依赖矩阵机械强制（K50/K51，模板仅「多文件」建议）；
-  1578 测试 + 视觉探针 + CI 矩阵（模板仅手动测试）；AGENTS.md 数千行工程记录
-  （模板 270 行速查）；`main.ts` 330 行超线但已登记豁免（模板建议「最小化」=
-  生命周期编排，实际职责即此）。
-  ② **可反向吸收项**：无（模板的全部实践本仓库均已满足）。
-  ③ **边界**：本审计为静态对照（文档 + 配置 + 工程文件），未逐条重放模板的
-  「Troubleshooting」清单（其条目均为环境类问题，本仓库 CI 与本地构建长期绿）；
-  引擎升级与发布流程的对照见 vendor/BUILD.md 与 release.yml。
-
-- [K83] **官方开发者指南规则对照（eslint-plugin-obsidianmd 源码全量）：0 缺口；locale 规则探针实测全为误报，不接入（2026-09-25，社区目录工作流优化轮续）**：
-  ① **范围**：以官方 `eslint-plugin`（master，版本 **0.4.2**——与本仓库
-  devDependency 同版本，无新规则可升）的**完整规则表（40 条）+ 配置构成**
-  （`recommended` / `recommendedWithLocalesEn` 增量块，`lib/index.ts:351-394`）
-  逐条对照。
-  ② **`recommendedWithLocalesEn` 增量评估（2 条 locale 规则）**：官方文件模式为
-  `**/en.json` / `**/en*.ts` / `**/en-*.ts` / `**/en/*.ts` 等——本仓库英文文案在
-  **`src/core/i18n.ts`（basename `i18n` 不匹配）**，且规则内部有硬编码文件名判定
-  （`isEnglishLocaleModule`，无法经配置绕过）。**探针实测**（把 EN 字典原文复制为
-  `src/en-probe.ts` 匹配 `**/en-*.ts`，启用规则 + `allowAutoFix` 跑
-  `--fix`）：13 条警告**全部为引用类误报**——键盘键名（`(Tab)`→建议`(tab)`、
-  `press F2`→`f2`）、引用 Obsidian 官方设置名/选项显示名（`"Default location for
-  new attachments"`、`"Auto"`、`Logical structure`）、数量拼接片段
-  （`'node'/'nodes'`）、Markdown 语法占位符（`[links](url)`→建议`URL`）。
-  **裁决：不接入、文案不改**（规则无法豁免引用类场景，此即其 warn 级 + 默认
-  不自动修的原因）；探针与临时配置已删除。
-  ③ **`prefer-active-doc`（官方默认禁用，🚫）评估**：本仓库 5 处「裸 document」
-  引用经逐一核对**全部为注释文本或循环变量名**（`for (const document of
-  documents)` 的 TFile 命名）——**0 真实违规**；官方亦禁用（标识符名误报），
-  不启用。
-  ④ **结论**：开发者指南规则面对本仓库 **0 缺口**——`recommended` 全表已启用
-  （上轮 scanner 审计已验证 src 69 文件 0 违规），增量规则经探针实测不适用，
-  禁用规则无真实违规。与 K81（scanner 校验面）、K82（模板最佳实践面）合流：
-  社区目录三线对照（校验 / 实践 / 指南）**全部闭环**。
-
-- [K84] **许可声明合规：`LICENSE` 与 `vendor/THIRD-PARTY-NOTICES.md` 必须随 release 资产分发——「插件」不是豁免形态；内联注释实测仅存 1 段，本文件是逐库声明的主载体（2026-09-25，发布合规口径修正）**：
-  ① **义务判定（为什么不豁免）**：`main.js` 中约 **72%** 是 vendored 的 MIT / BSD 代码
-  （引擎 + svg.js / katex / quill(BSD-3-Clause) / deepmerge / eventemitter3 / xml-js /
-  uuid 等）——MIT 要求声明「包含在所有副本或实质性部分中」；BSD-3 要求以 **binary
-  form** 再分发时在「随分发提供的文档和/或其他材料」中复现声明。条款触发于「分发了
-  副本 / 实质性部分」这一事实（release 下载 / BRAT 自动更新 / 用户 vault 内的
-  `main.js` 都是副本），**发布物叫「插件」还是「软件」与判定无关**；Obsidian
-  目录/市场不做第三方声明检查 ≠ 无义务（请求权人是各库版权持有人）。
-  ② **实测口径（本轮修正）**：`--legal-comments=inline`（`build:vendor` 配方）只保留
-  带 `@license` / `@preserve` / `/*!` 标记的注释——`vendor/simple-mind-map.cjs` 与
-  `main.js` 中均**仅存 1 段**（svg.js 的 `@license MIT` 横幅），其余依赖均无内联
-  声明。故 **`vendor/THIRD-PARTY-NOTICES.md` 是逐库声明的主载体**（§3），内联注释仅
-  为补充佐证——**不得因「产物已有内联注释」删减发布资产**。检测覆盖面必须同时用
-  `@license` / `@preserve` / `/*!` 三标记（只测 `@license` 会漏判 `/*!` 形态）。
-  ③ **机制与落点**：`release.yml` 的 `gh release create` 携带
-  `LICENSE vendor/THIRD-PARTY-NOTICES.md`（与 `main.js` / `manifest.json` /
-  `styles.css` 并列）；Obsidian 目录解析只读三件套，**多带文件不影响目录校验**。
-  本轮同步修正：`THIRD-PARTY-NOTICES.md` §3 与 `BUILD.md` 改实测口径、`release.yml`
-  注释（原「0 命中」为 2026-09-17 审计时点口径）、`stylelint.config.mjs` 悬空审计
-  文档引用清理。
-  ④ **政策边界**：已发布版本的 `docs/release-notes-<tag>.md` 是**历史快照**——时点
-  口径与失效引用**不改**（保持发布记录原样）；现行文档/配置内的悬空引用按「移除或
-  改指现行记录」处理（范例见 K1：保留引用并标注 `git log --diff-filter=D` 取回路径）。
-
-- [K85] **行内数学渲染的 API 面假设错误（2026-09-27 实机取证修复）：Obsidian 1.13.7 经 `loadMathJax()` 注入的 MathJax 3.2.2 是 CHTML 组件——只有 `tex2chtml` / `tex2chtmlPromise`，没有 `tex2svg`；而 `math-jax.ts` 旧实现唯一调用的就是 `tex2svg`（实机恒为 undefined）→ 产物恒 null → 数学永久停在字面占位 `$…$`，且被「占位即回退」静默吞掉（单测注入假 MathJax 未覆盖该 API 面、verify:visual 无真 MathJax，两处盲区叠加）。**
-  ① **取证**（隔离实机实例 + CDP，用户 0.1.4 构建 / Obsidian 1.13.7）：`typeof window.MathJax === 'object'`（v3.2.2）、`typeof MathJax.tex2svg === 'undefined'`、`typeof MathJax.tex2chtml === 'function'`；`tex2chtml('E=mc^2')` 返回 `<mjx-container class="MathJax" jax="CHTML">`（与阅读视图产物同源）；导图三节点 `.mindmap-node-inline-math` 均 `isConnected=true` 且子节点仅 `#text`（字面占位）——同时排除「时序/挂载」假设（曾据性能轮 preMeasure 元素复用推断的 `isConnected` 守卫拦截不成立）。
-  ② **修复（两层，实机复验后补齐第二层）**：**第一层（API 面）**——渲染优先级改为 `tex2chtml`（实机通道）→ `tex2svg`（兼容回退）；API 面全缺时 `console.warn` **一次**（模块级去重 `warnRenderApiMissing`），不再静默。**第二层（替换时机）**——引擎「首帧前预测量 + 元素复用」（补丁 5 / A2）在**未挂载**状态下走构建链；MathJax 热加载时 `await loadMathJax()` 立即返回，替换时 `holder.isConnected === false` → 若只尝试一次就放弃，「关闭再打开文件」必现字面（冷加载时因 await 期间元素已挂载而侥幸成功——两条路径都必须正确）。故未连接时产物**入队**（`pendingMath`）、随后帧经 0ms 定时器重试（`schedulePump`/`pumpPending`，预算 30 帧；不用 rAF 因后台/隐藏窗口会被节流），耗尽即放弃（导出快照/离屏克隆的安全回退）。`isConnected` 守卫语义保留（仅决定"立即替换"还是"入队"），`display` 形参通道为 `$$…$$` 支持预留；落点仍是 `math-jax.ts` 单文件，`node-inline-content` 注入面不变，vendor 零改动。
-  ③ **回归防线 + 实机证据**：`tests/math-jax.test.ts`（9 例：通道优先级 / 兼容回退 / 返回 null 回退 / 告警去重 / 抛错不上抛 / 未挂载暂不替换且帧预算耗尽后放弃 / **挂载后补替换命中** / loadMathJax 拒绝）+ `verify:visual` 新增 `math` 场景（占位 span 必须落 foreignObject、定界符回填占位文本，锁定「识别 → 占位 → 接管」三段）。实机（隔离实例 CDP，Obsidian 1.13.7）：首次打开 / 关闭重开（原失败路径）/ 编辑重建三条路径均 `.mindmap-node-inline-math` ×3 全部替换、字面残留 0，截图确认节点显示排版后的 `E = mc²`。**断言选择器注意**：产物是 `<mjx-container class="MathJax" jax="CHTML">`——按**标签名** `mjx-container` 查（`.mjx-container` 类选择器恒 0 命中，排查中曾因它误判"未渲染"）。
-  ④ **教训**：① 对外部注入对象的方法假设（即便走的是"官方通道"）必须**实机验证**，且"方法缺失"要显式告警——静默回退会把 API 假设错误变成不可见的功能缺失；② **同步构建 + 异步替换**的组合在「先构建、后挂载」路径下必有时序缺口，正确写法是"未就绪就暂存、挂载后再应用"，而不是一次性判断即放弃；③ 排查"没渲染"类问题要同时怀疑**断言工具**（选择器/取数口径）本身。
-  ⑤ **同轮扩展（G4，用户确认后落地）：单行 `$$…$$` 渲染为 display（块级）+ `\$` 转义 + 判据单一来源**——① **`MATH_SOURCE` 单一来源**：MARKUP_RE 的数学备选分支与接管判据 `INLINE_MATH_RE` 改为同源构造（`new RegExp(MATH_SOURCE)`），消除「分成两处写会漂移」；**双美元写在单美元之前**（更长定界符优先），`$$E=mc^2$$` 整段命中——修复前它会撕裂成「孤立 `$` + 行内数学 + 孤立 `$`」（注释声称的"按字面"实际不成立）。② **`InlineSegment.display` 标记**决定占位形态（`$…$` / `$$…$$`）与渲染通道（`tex2chtml({ display })`，`renderMath` 注入面加形参透传）；该字段必须经 `pushText` 重建段对象、`trimEdges`、`clampSegments` **全链保留**——首版遗漏 `pushText` 导致 display 丢失（单测红灯即拦下，已补）。③ **`ESCAPABLE_CLASS` 加 `$`**：`\$x\$` 显示字面 `$x$` 不触发数学、`价格 \$5 与 \$6.50 元` 不再残留反斜杠（修复前 `\$` 既不被消费、又会被当作数学定界符误判）。④ **边界**：**多行**块级数学（`$$` 独占行、内容跨行）不匹配、逐行字面——`[^$\n]` 不跨行，且解析层本就按行拆节点（能力缺口，非匹配缺陷）；未纳入本轮。⑤ **实机复验**（隔离实例 CDP）：4 段数学（3 行内 + 1 display）全部替换、`mjx-container[display="true"]` 恰 1、转义组无反斜杠/无 `$` 残留；单测 100 例（node-inline-content 90 + math-jax 10）与全量 1594 例、lint、verify:visual（math 场景含 `$$y^2$$` 三段占位断言）全绿。
-  ⑥ **第三层：样式表 + 字体 + 可见性三层保底（2026-09-27 二轮实机，用户「数学段消失」截图为证）**：CHTML 字形由 `<style id="MJX-CHTML-styles">` 的**逐字符规则**承载（`mjx-c.mjx-c1D438.TEX-I::before { content: "E" }` + `font-family: MJXZERO, MJXTEX-I`），**字体数据未就绪时字符宽度为 0**——此时替换产物 = 用户看到的「空白」（既非数学也非字面；用户控制台 22 条 Chromium「Slow network … Fallback font」即 MathJax 字体在慢速加载）。三层保底：① **替换前** `ensureMathFonts()` 显式加载 MJX 字体、带 **2.5s 超时**（超时照常替换，不阻塞打开）；② **替换后 60ms 自检**改判 **宽与高皆 > 0**（旧实现只查宽度，漏掉高为 0 的场景）→ 任一为 0 即**回退字面占位**并告警一次（宁可见的字面，不要看不出原因的空白）；③ **字体就绪自动重试**——回退段登记 `deferredMath`，监听 `document.fonts` 的 `loadingdone` 事件与 `ready` 承诺，字体一就绪即自动换回产物（`retryDeferredMath`；每段只做一轮，仍失败保留可见字面，无重试风暴）。**实机证据**：用户环境诊断 `replaced 24/24`、产物 `49×17`、字体 `MJXTEX / MJXTEX-I / MJXZERO = loaded`、样式表 15380 → 全部可见；隔离实例同字符「字体未加载 0 宽 / 已加载 8×11」（规则与字体族名不变，**唯一变量是字体数据是否就绪**）。**单测**新增 4 例（高度自检 / `loadingdone` 自动换回 / 重试失败保留可见字面 / 字体加载拒绝不阻塞）+ 全量 1603 例绿。
-- [K86] **数学渲染的「测量—替换时序」缺口（P4，2026-09-27 实机复验修复）：引擎对自绘内容按「离屏克隆 + getBoundingClientRect」**同步**测量（vendor `measureCustomNodeContentSize`），而 MathJax 替换是**异步**的——首次渲染必然「按字面占位测量」；替换后**没有任何重测机制**，节点尺寸停在占位高度（块级 `$$…$$` 尤甚：实测 655px 内容 / 512px 外框，内容被裁）。**
-  ① **修复三件套**：**产物缓存 + 同步复用**（`platform/math-jax.getRenderedMathNode`：`I:`/`B:` + TeX → 产物模板，复用时 `cloneNode`；`node-inline-content.buildMathElement` 命中即**同步**放置产物 → 引擎量到真实宽高；且因不再触发异步替换而**无重排循环**）；**定稿回调 → 合并批量重排**（`renderMathWithMathJax(tex, holder, display, onSettled)`，定稿＝产物保留 **或** 回退字面；holder→回调登记走 **WeakMap**（`settleCallbacks`）以贯穿「立即替换 / 挂载后补替换 / 字体就绪重试」三条路径而不污染各处签名；视图层 `scheduleMathRemeasure` 收集 Set + `window.setTimeout(0)` 合并 → `engine.refreshNodesCustomContent`（逐节点 `reRender(['custom'])` + **恰好一次**全树 `render()`））；**字体分批就绪再同步**（`document.fonts` 的 `loadingdone` 会多次触发——首批测量可能偏小；`view.installMathFontsHook` 每批把登记过的节点再同步一次，随 `register` 注销）。
-  ② **实机验收**（隔离实例 + 用户样式表 dump 复现环境 + B1–B7 语料）：24/24 替换、holder 与产物高度全一致、**17 个自绘节点「外框高度 == 内容高度」（溢出节点 0）**（修复前 655/512）；导出 SVG 最大 `foreignObject` 高度 **655**（与屏上一致）+ MathJax 逐字符规则 **24 条**注入 + `@font-face` 已剥离。
-  ③ **教训**：**「能渲染」≠「渲染对」**——前几轮的验证断言停留在「元素存在 / 尺寸非零」，而用户一眼看出的是「高度只给一行、内容被裁」。凡涉及**异步替换**的改动，验收断言**必须包含「容器尺寸 ≥ 内容尺寸」**；且**时序缺口要在最初的问题清单里闭环**（P4 早在首份报告列出，却连续多轮未修，最终以用户截图形式回归）。
-
-- [K87] **数学样式就绪的「flush 依赖」缺口（B′，2026-09-27 实测定稿并实施）：CHTML 逐字符规则只在样式表 flush 时写入——不驱动 flush 时产物「非零但塌缩」（`mjx-c` 全 0 宽），「容器宽高 > 0」判据无法识别，会把错误尺寸送进产物缓存与 P4 重排。**
-  ① **取证（多探针，本机 + 隔离实例双环境）**：`renderMath` / `finishRenderMath` / `loadMathJax` 均为官方 @public；**flush 前** `14×20` 且 11 个 `mjx-c` 全 0 宽，**flush 后** `130×20` 且全 > 0（高度 114 vs 171 同证）；`finishRenderMath` 单次 ≈**1s**（本机 1006ms / 隔离 981–1046ms 的固定成本，故**只按批调用**）；**只增不减**——S0.5 本机实测（138 规则 / 13 字形规则 / 11461 字节）调用前后零丢失、二次调用幂等，与历史事故源头 `startup.document.updateDocument()`（会把用户 15380 字节样式表重写为 6858 内部快照、抹掉字形）**行为不同**，故弃 `updateDocument`、统一走官方 flush。
-  ② **设计（B′：保留 `tex2chtml` 直调 + 自驱 flush 生命周期；`renderMath` 换道经逐字节等价验证后由用户裁决不做）**：**就绪判据**＝产物内**全部 `mjx-c` 宽 > 0**（无 `mjx-c` 退回「宽高皆 > 0」）；渲染后**同步**尝试放置，未就绪则**同一同步块内撤回字面**（浏览器不绘制中间态，消灭「先空白后出现」窗口）并登记待定；**按批合并调度 `finishRenderMath`**（100ms 合并窗口、单飞不并发），完成后放行重试；重试只做「放置与判定」，**产物恒为同一实例**（不重复渲染，无风暴）；预算＝挂载等待 200 泵 × 16ms、规则重试 3 轮（耗尽保留可见字面 + 告警一次）。**移除**旧 `ensureChtmlStyles`（`updateDocument` 路径）与字体就绪 hook（字体为渐进渲染，DOM 到位即随数据到达显形；`ensureMathFonts` 前置等待保留）；**缓存与 `onSettled` 门禁**：仅成功放置后写入/通知——塌缩产物绝不入缓存。
-  ③ **验收（隔离实例冷启动 + 视觉 + 导出，全绿）**：冷启动仅开导图（无阅读视图预热）**24/24 就绪、零字面残留、零告警**（修复前此场景必塌缩/空白）；截图确认 `前 $$E=mc^2$$ 后` 渲染为**居中块级公式**、行内 `5x²` / `abcx`、C 组转义按字面（无反斜杠）；导出 data URL 解码后 **74 个 `mjx-container` + 15 条逐字符规则注入 + `@font-face` 零残留**；单测 31 例（math-jax 套件重写）+ 全量 1618 例 / lint 0 警告 / build 全绿。
-  ④ **验收教训（本轮探针自身两处缺陷，均已修正）**：① 全局 `querySelectorAll` 取样命中了**隐藏 tab 的旧视图容器**（0×0）→ 误报「全部塌缩」；断言必须限定**可见容器**（`.mindmap-view-container` 宽高 > 0）并核对 `activeLeaf` 归属。② `doExport.export('svg')` 返回 **data URL**，直接正则统计的是 base64 文本 → 必须先解码再断言。
-
-- [K88] **数学尺寸同步的静默失效（2026-09-27 用户复验「首次渲染框小于内容」实机复现修复）：定稿回调闭包捕获的是 vendor **预测量轻量代理对象**（只有 `nodeData`/`getData`，无 `reRender`）——`refreshNodesCustomContent` 的可选链 `reRender?.()` 静默 no-op，节点外框停在字面占位测量值（实测 B 节点 512px 外框 / 655px 内容，29 次回调全部无痕，8s 内永不自愈）。**
-  ① **定位链（全部实机取证）**：注入计数器确认 `scheduleMathRemeasure` 被调 29 次（通知链正常）；记录入参形态 = `ctor:"Object"` + keys `[nodeData, mindMap, layerIndex, isGeneralization, customTextWidth, effectiveStyles, getData, style]` —— 与 vendor `preMeasure.js` 的代理对象逐字吻合；`__MEASURE_STATS__: hit 17 / miss 0`（重排若真跑过必有 miss）；手动对 `renderTree → data._node`（真实 MindMapNode，`Base.js: data._node = newNode`）调 `reRender(['custom'])` → **512 → 655 立即修复**（机制有效，喂进去的对象错）。
-  ② **修复**：`math-jax` 的定稿回调**改为携带 holder**（`onSettled(holder)`）→ 视图层 `scheduleMathRemeasure(holder)` **批次执行时**经既有 `findNodeByDom` 反查真实 MindMapNode 再重排；字体分批再同步同样只对**已解析的真实节点**执行；解析失败**显式告警一次**（不再静默）。`refreshNodesCustomContent` 对 `reRender` 缺失同样**显式告警**（消灭静默 no-op，K85 ① 教训）。**验收**：冷启动 `clipped: []`、B 节点 655/655、`miss 29`（重排真实发生）。
-  ③ **教训**：① **异步回调闭包捕获的对象可能在语义上"过期"**（构建期代理 vs 运行期真实实例）——跨模块传递"谁"时应传递**可反查的锚点**（DOM holder）而非构建期对象；② 「可选链 + 静默跳过」把功能失效变成无痕退化，任何 `?.()` 兜底都要配**首次告警**；③ 尺寸类断言必须包含 **「容器 ≥ 内容」**（K86 已记录，本轮验收首次真正纳入探针）。
-
-- [K89] **块级数学定界符对齐官方阅读视图（2026-09-27 用户 B 组复验修复）：`$$…$$` 内容**可跨行、可含单个 `$`**——开 `$$` 找**最近**的 `$$` 闭合。B3（`$$` 独占行的三行块）/ B4（多行 vmatrix）/ B6（`$$$x$$$` → tex = `$x` + 末尾字面 `$`）三者均由同一条正则修复覆盖。**
-  ① **官方基准（隔离实例阅读视图实测）**：B3/B4 → `math-block` + `display="true"`（跨行块级数学）；B6 → display 数学，内容 `$x`（`$` 作普通字符渲染）+ 末尾 `$` 按字面保留——与「开 `$$` 取最近闭合」完全一致。修复即 `MATH_SOURCE` 的 mathBlock 支：`\\$\\$(?!\\s)` → `\\$\\$(?![ \\t])`（允许紧随换行、仍拒绝空格防 `$$ 5` 价签——**其中开侧空格守卫已于 K90 ② 移除，以对齐 Obsidian 宽松口径**）+ 内容 `[^$\\n]*?\\S` → `[\\s\\S]*?\\S[\\s\\S]*?`（允许跨行与内容含 `$`，首尾空白由段流水线 `trimEdges` 裁掉，MathJax 空白不敏感）。
-  ② **附带修复：多行围栏代码块**（` ```+ … ``` ` 同长度闭合）新增独立分支，排在内联代码之前——否则跨行块级会让**围栏内的 `$$` 误配对**成数学；同时围栏内容按 `code` 段渲染，更贴近 Obsidian（阅读视图围栏为代码块）。F 组语料经核查无跨行配对风险（节点内仅一个裸 `$$`）。
-  ③ **回归**：`node-inline-content.test.ts` 新增/改写 5 例（三行块 / 多行 vmatrix / 三美元两段形态 / 围栏不误配对 / `$$ 5` 价签防护不回归）+ 全量 1623 例 / lint 0 警告 / `verify:visual` 通过；实机（隔离实例冷启动）：B3/B4/B6 全部 display 渲染、围栏为代码、**`clipped: []`**、24/24 就绪。
-
-- [K90] **数学通道两处实证缺陷修复（2026-09-27 用户 LaTeX 样张全量复验）：① 就绪判据对「设计上零宽字符」永久误判——含 `\sin` 一族命名函数的公式 3 轮 flush 重试耗尽后退字面，并误告警「数学产物不可见（字体/样式未就绪）」；② `$$` 开侧空格守卫让 `$$ f(x)=… $$` **整段不进数学通道**，块内 `\\` 还被转义分支吃成单 `\`（字面显示失真，与 MathJax 无关）。**
-  ① **A1 取证与修复（就绪判定）**：用户样张 `$\lim_{x\to 0}\frac{\sin x}{x}=1$` 停在字面 + 控制台告警。无头 Chrome + MathJax 3.2.2 CHTML（tex-chtml 组合件，与 `loadMathJax` 注入同版本同输出形态）逐字符取证：**flush 后**该产物唯一零宽字符是 `mjx-c2061`——`\sin x` 之间 MathJax 自动插入的 U+2061 函数应用符，`::before` computed content 为**空串**、设计上恒零宽（对照 `\sin x` 最小编译同现；未 flush 时全字符 content 为 `none`，该差分同时钉住 flush 前后两态）。**修复**：`isProductReady` 内零宽字符按 content 分流——`""` = 显式空内容规则（不可见操作符，U+2062/2063 同理）→ 视为就绪；`none`（规则未落盘）与非空字形规则 → 仍判未就绪（**「塌缩态」检测力不变**，不放行部分塌缩）；判定环境无 `getComputedStyle` 时防御式回退旧口径（单测桩/异常宿主）。
-  ② **B1 取证与修复（块级开侧守卫）**：用户样张 cases 节点字面显示为**单 `\`**（源文 `\\`，截图取证）——定性链：mathBlock 开侧 `(?![ \t])` 拒绝空格 → 不命中 → 块内 `\\` 落入 escaped 分支（`ESCAPABLE_CLASS` 含 `\\`）被消费成转义反斜杠。对照取证：同 tex 原样喂 MathJax，flush 后 cases 全部 15 字符宽 > 0（可正常渲染，此前只是从未到达）。**修复**：去掉开侧空格/制表守卫（对齐 Obsidian 宽松口径——`$$ x=1 $$` 照常渲染为公式，用户确认）；闭侧数字排除与内容非空约束保留；行内 `$` 价签口径不变。**边界（2026-09-27 阅读视图实测裁决为「与官方一致」，非缺陷，见 ④）**：单遍扫描器按**最早匹配位置**定优先，行内孤立的 `$` 会与更靠后的反引号内 `$` 配对成数学；样张该行已改写为无歧义形态。
-  ③ **回归**：`math-jax.test.ts` 新增 4 例（不可见字符视为就绪 / `none` 仍撤回 / 非空 content 仍撤回 / 无 `getComputedStyle` 回退）+ `node-inline-content.test.ts` 改写「`$$ 5` 价签防护」为「未配对仍字面」并新增 3 例（开侧带空格进 display / 配对优先 + 尾部字面 / cases 全等钉住 `\\` 保真）；全量 **1630 例** / lint 0 警告 / `verify:visual` 通过；样张逐行 tokenizer 审计 26 行（20 数学 + 6 字面）：25 行符合预期，唯一偏差为上述边界行（样张已改写）；部署 vault `main.js` 哈希 `3E5EDA9A…F9E`（待用户实机复验）。
-  ④ **配对边界实测与官方逐条比对（2026-09-27 用户执行，阅读视图）**：验证样张 `LaTeX边界验证.md` 8 例（V0 正常公式 / V1 孤立在前+反引号在后 / V2 反引号在前+孤立在后 / V3–V4 价签 / V5 公式+代码+公式 / V6 单个孤立 / V7 纯代码），插件侧分类经 tokenizer 审计先行钉死、用户逐条回填——**8/8 与 Obsidian 阅读视图一致**：V1 官方**同样配成公式**（闭定界符取反引号内 `$`、一个反引号进入 tex，用户截图取证；「删掉括号内反引号 `$` 即恢复字面」）⇒ 单遍扫描器的最早位置优先语义**与官方同口径**；V3/V4 官方亦**全字面** ⇒ 插件行内价签防护（开侧拒空白 + 内容以 `\S` 收尾 + 闭侧拒数字）为**官方口径的实证对齐**，非保守偏离；阅读视图与实时预览无差异。**结论：该边界为官方同款行为，不修。**
-
-- [K91] **节点内代码块轻量渲染 + Obsidian 同款复制（2026-09-28 用户确认方案后实施）：围栏块从「行内码样式」升级为块级盒子（等宽 + `--code-background` + 保留换行/缩进 + 双轴滚动 + 右上角悬停复制按钮，点击复制去围栏/去信息行的代码并短暂 ✓），不做 Prism 高亮（「轻量」裁决）。**
-  ① **数据与保真**：fence 段新增 `block: true` 标记（与 `display` 同款「重建段必须保留」纪律）；`splitFenceInfo` **展示时**剥离首行信息行（```` ```js ```` 的 `js`，CommonMark 口径；不改 fence 正则 ⇒ 零回归面）；**prose 连续空格归一化下沉**到 `splitMarkedText` 各 prose 分支（`pushPlain`/标记体），代码与数学段原文保真——此前全文预归一化会把 4 空格缩进压成 1 空格（渲染盒是 pre-wrap，观感直接被毁）；`trimEdges` 对 block 段**只裁边缘空行**（`\n`）、不裁缩进；`needsHiddenSyntax` 增加 fence 判定（`selfDrawPlain` 关闭时纯代码节点也与数学同级强制自绘）。
-  ② **样式与导出隐身**：结构/配色全内联（导出保真口径同 CONTENT_STYLES）；复制按钮可见性走**变量间接层**——内联 `opacity: var(--tmm-code-copy-opacity, 0)`，屏上由 styles.css 在 `.tmm-codeblock:hover / :focus-within` 置 1（变量可穿透内联声明，绕开「内联样式压过类规则」的层叠死结，**无需 `!important`**）；导出 SVG 不带 styles.css ⇒ 兜底 0 ⇒ 按钮天然隐身。图标用 mask + `currentColor`（随主题取色，data-URI 不写死颜色）；`CODE_BLOCK_MAX_HEIGHT_PX = 360` 封顶防长块炸版面。
-  ③ **交互接线（方案 A）**：构建器保持**零 Obsidian 依赖、零监听**（`buildCodeBlockElement` 只产出 `.tmm-codeblock > button.tmm-code-copy + pre > code`）；点击语义在 `features/node-codeblock.ts` 经引擎 `node_click` 委托（与 view-wikilink 锚点同款，view.ts 同段注册），`resolveCodeCopyTarget` 纯函数解析目标 → 属主窗口 `navigator.clipboard.writeText` → ✓ 反馈 1.2s（重复点击重置计时）。**待实测风险项实测关闭**：verify:visual 合成点击证实 `node_click` 的 `event.target` 就是按钮本体（非锚点元素穿透到真实 target）——委托选择器成立，无需备用方案 B。
-  ④ **回归**：`node-inline-content.test.ts` 新增 7 例（block 标记+信息行剥离 / 缩进空行保真 / 行内码空格保真 / 预览口径 / DOM 结构契约 / aria-label 随 lang / 纯代码节点接管）+ `node-codeblock.test.ts` 新增 4 例（解析四态）+ verify:visual 新增 `codeblock` 场景与 inline 探针断言（原文/按钮/变量间接层/点击契约）；全量 **1641 例 / 52 文件** / lint 0 警告 / lint:css 通过 / `verify:visual` 全绿。
-  ⑤ **解析层配套修复（md-outline / md-serialize，功能可用的前提，样张全文解析审计发现）**：`classifyLines` 的围栏状态此前**不感知列表项**——项内代码块的**闭合围栏**（缩进 ≤3 仍匹配 `fenceMarker`）被误判为**新围栏的开始**，后续标题/节点被整段吞进代码内容（一个文件里第二个代码块起结构即坏）。修复三件：① 列表项文本以围栏开始时置围栏状态（同行自闭合 ```` ```code``` ```` 除外，`selfClosed` 判定——顺带修掉顶层一行式围栏的同类吞行）；② 围栏闭合后的分隔空行**并入前项 mdRaw**（此前产空文本节点；并入后结束列表区，后续同级项不嵌套、文件空行逐字保留）；③ 序列化器 `nodeLines` 对空续行**不加 restIndent**（缩进空行 = 尾随空格污染文件）。**已知边界**：列表项内代码的深层缩进仍被续行 `trimStart` 归一（序列化器按树深度补 restIndent 的既有设计）——需要缩进保真的代码块用**段落式写法**（无列表标记，mdRaw 逐字）。回归：`md-roundtrip.test.ts` 新增「列表项围栏」2 例（结构不吞 + 往返不动点）；全量 **1643 例**。
-  ⑥ **交互对齐 v2（2026-09-28 用户复验反馈：「只能复制第一行 + 不明显」）**：① **复制源改构建期 dataset**——`buildCodeBlockElement` 把段文本写入 `button[data-code]`，`resolveCodeCopyTarget` **优先读 dataset**（缺失才回落 `pre > code` 的 textContent）——点击路径不再依赖 closest/querySelector 的 DOM 链（用户实测「复制到第一行」时渲染层 `<code>` 已实测含完整两行，DOM 读取链是唯一未锁定变量，dataset 从根上消除该类脆弱性）；② **按钮常显**（对齐 Obsidian 阅读视图：复制按钮一直在，悬停增强）——styles.css 基础 `--tmm-code-copy-opacity: 0.55`、hover/聚焦 1（内联兜底 0 = 导出图隐身不变）；③ 原生 `title` 提示（Obsidian 自家 tooltip 在 foreignObject 内不可用，零依赖近似）；④ **端到端复制回归**：verify:visual 桩剪贴板 + 真实视图层处理器（node-codeblock 注册，与生产 view.ts 同入口）——点击按钮后 `writeText` 实参断言 = 完整两行（`const a = 1;\n  echo hi`），复制链路被无头实测锁定。全量 **1645 例**。
-  ⑦ **部署勘误（2026-09-28「按钮看不到」根因）**：历次部署只拷 `main.js`、**从未同步 `styles.css`**——vault 内 styles.css 停在 9/14，`.tmm-codeblock { --tmm-code-copy-opacity: 0.55 }` 常显规则整体缺失 ⇒ 按钮内联兜底 0 ⇒ 永不可见（v1 的 hover 显形同样依赖该文件，一并失效）。已同步 styles.css（期间一次凭记忆误写的内容已被仓库真实文件覆盖修复）。**部署口径勘正：`main.js` 与 `styles.css` 两件都必须拷贝 vault 插件目录**；导出保真不受影响（导出图本就不带 styles.css，按钮在导出图里仍隐身）。
-  ⑧ **配色校准（2026-09-28 用户截图反馈「图标白色」，两轮）**：第一轮 `--text-faint`→`--text-muted` **实测无效（用户复验仍浅色）** ⇒ 定性：该 CSS 变量在画布 foreignObject 子树内取不到值（未定义时 color 回退到**继承值**=节点文字色，浅色节点文字→观感近白；与两版都是浅色吻合）。第二轮改**兜底方案**：`color: var(--text-muted, #666666) !important`（取到变量=跟随主题；取不到=官方默认灰）+ `.theme-dark` 分支兜底 `#999999`、hover `--text-normal` 兜底 `#1f1f1f/#ececec`；`is-copied` 同步 `!important`（否则被基态压住）；!important 仅限屏显层按钮图标色（导出图不带 styles.css 不受影响）。已部署 vault 并读回验证。**第三轮（用户贴出按钮 DOM 后定性）**：用户按钮 DOM 显示 v2 特征齐全（data-code/title/opacity 变量）且常显生效 ⇒ 其 Obsidian 加载的是 **v2 时代的 styles.css**（图标色仍是旧 `--text-faint`），**后两轮 styles.css 更新从未被重载**（opacity 变量继承正常也排除「变量在画布子树取不到」假说）——问题本质是 styles.css 加载时机不可控。**根治：图标基色内联进构建器**（`CODE_COPY_BUTTON_STYLES` 加 `color: var(--text-muted, #666666)`，内联优先级高于非 !important 类规则 ⇒ 只依赖 main.js 重载；导出不受影响——按钮在导出图本就 opacity 兜底 0 隐身），styles.css 的 color/hover/is-copied 规则保留（新鲜加载时提供 hover 增强与 is-copied 态）；契约测试补 `styleOf(button).color` 断言；部署核验=仓库与 vault 的 main.js 各含内联色串 1 处。**第四轮（用户仍报浅色 ⇒ 外观全内联）**：① 基色变量升级为 `var(--icon-color, var(--text-muted, #666666))`——`--icon-color` 是 Obsidian 原生图标按钮的取色变量，主题可独立于 `--text-muted` 定义（前三轮取错变量层的嫌疑）；② **图标形状/填充全部内联**（`maskImage` data-URI + `backgroundColor: currentColor` 进 `CODE_COPY_BUTTON_STYLES`，类型放宽为 `& Record<string, string>` 容纳 mask 键）⇒ 按钮外观**零 styles.css 依赖**；③ ✓ 反馈态内联直改（`showCopiedFeedback` 快照 `style` 属性原文 → setProperty 撤 mask/底色 + 成功色/字号 → 到点逐字还原），不依赖类规则新鲜度；④ styles.css 的图标类规则**保留未删**（旧版下内联全胜、新版下同意图不打架，删除反而引入大段精确匹配风险）；⑤ 教训记录：本轮一次三连并行编辑因凭记忆拼凑内容几乎污染三个文件（实检仅一处注释乱码，已修）——**多文件联动改动必须逐个「读回→编辑」串行执行**。verify:visual 全绿；部署核验=两边 main.js 各含 `mask-image` 与 `--icon-color` 串 1 处。
-  ⑨ **图标 CSS 规则删除 + 导出隐身显式化（2026-09-28 第五轮，用户裁决「删去 styles.css 图标规则，加强内联样式」后选 A 方案）**：① 构建器撤 `opacity: var(--tmm-code-copy-opacity, 0)`——「CSS 变量间接层」退役，屏上**恒显**（默认 1，对齐 Obsidian 原生按钮），补 `borderRadius: '4px'` 内联；② **导出图隐身改显式**：`features/node-codeblock.hideCopyButtonsInExportSvg`（克隆 SVG 内按钮置 opacity 0，形态不符安全 no-op；`NodeListOf` 须 `Array.from`，tsconfig 无 DOM.Iterable）与 `injectMathStylesIntoExportSvg` 组合挂 `handleExportSvg`（engine-controller）——不再依赖「styles.css 缺席」这种隐式机制；③ styles.css 53 行图标规则整块删除（容器 opacity 变量 + 按钮全部类规则 + is-copied），仅留指路注释——本文件不再持有任何按钮规则；④ 契约测试改口径（opacity → undefined + `borderRadius` '4px'）+ 隐藏函数单测 2 例（置 0/原样返回 + 形态不符 no-op）+ verify:visual 探针换 `codeInlineMask`（data-URI 断言）；⑤ 过程教训：第五轮一度凭记忆拼 old_str 且回执不可信而停手——**grep 二次确认后发现删除实际已落盘**，教训固化：任何「记忆 vs 回显」冲突一律以 grep/read 复核为准，绝不凭记忆构造长锚点。构建/1646 测试/verify:visual 全绿；部署核验=vault main.js 含 mask-image、styles.css 规则清零 + 指路注释在。
-  ⑩ **lint 存量清零 + 导出链组合根注入（2026-09-28 第六轮，方案 A 经用户确认）**：① 存量违规三类——`obsidianmd/no-static-styles-assignment`（内联样式字面量直赋：`showCopiedFeedback` 6 处 + 导出隐身 `setProperty` 1 处）、`@typescript-eslint/no-deprecated`（`typeof root.querySelectorAll !== 'function'` 方法引用命中 DOM lib 的 deprecated 重载签名）、`no-restricted-imports`（engine-controller 直 import features 违反 K51）。其中 6 处字面量直赋在 0.1.5 提交即存在（疑为 eslint-plugin-obsidianmd 升 0.4.2 后新规则暴露——「全链全绿」的核对须以实际跑 lint 为准）。② 修复（外观**保持 100% 内联**，不改为 CSS 类）：写法改 `Object.assign(el.style, 表)`（`COPIED_FEEDBACK_STYLES` / `HIDDEN_BUTTON_STYLE`）——规则只拦字面量直赋，且 `eslint-comments/no-restricted-disable` 禁止 disable obsidianmd/* 规则，而 Object.assign 是 `node-inline-content` 构建期样式的既有合规写法；查询改直接调用 + try/catch 兜底（勿写方法引用）；导出链改 `EngineControllerDeps.exportSvgTransforms` 由组合根（view.ts）注入 `[injectMathStylesIntoExportSvg, hideCopyButtonsInExportSvg]`，engine-controller 只按序 reduce（services 不再依赖 features）。③ 验证：build / 1646 测试 / lint（`--max-warnings 0` 零输出）/ lint:css / check:dead-code / verify:visual 全绿。④ 附：豁免表补登记 `platform/math-jax.ts`（661）/ `links/links-tree.ts`（437）/ `links/links-resolve.ts`（351），全表行数快照更新为 2026-09-28（该批 20 个超限文件全登记；`node-inline-editor.ts` 随 K92 一并登记，共 21）。
-- [K92] **节点内联编辑（2026-09-28 用户确认方案 A 后实施）：自绘（富）节点的双击 / F2 / 右键「编辑文本」不再弹窗，改为节点位置上的覆盖层 textarea 编辑**文件里那一行原文**——不改 vendor（零补丁），交互对齐官方 Canvas（help: Plugins/Canvas「Edit a card」：双击进入、点击外部停止、Esc 停止编辑）。**七项裁决**：① 触发 = 双击 / F2 / 右键「编辑文本」（**单击选中后直接键入不启用**）；② 编辑范围 = 统一原文、无别名分流（`composeNodeContent` 预填 → `applyRawToNode` 提交，与弹窗原文模式同一写回入口；**K108 约束**：该收口 `applyRawNodeContent` 末尾必须调 `view.notifyNodeContentCommitted(node)`——此通道不走引擎命令、不派发 `data_change` / `node_text_edit_change`，缺调用会让「中心主题改名文件」与「混排双链自动拆分」静默失效）；③ `Escape` = **「停止并保留」（＝提交，对齐官方措辞；与弹窗的 Esc=取消有意不同）**；④ 点击编辑器外 = 提交（document mousedown capture；另对齐引擎：画布滚轮 `mousewheel` 也提交）；⑤ `Shift+Enter` = 换行（`Enter` / `Mod+Enter` / `Tab` 提交；IME 组合态短路，中文选词回车不误提交）；⑥ 弹窗保留为**备选入口**（右键「在弹窗中编辑」→ `editNodeTextInModal`：别名模式与实时预览仍只在弹窗）；⑦ 不新增设置项。**实现**（`features/node-inline-editor.ts`，364 行已登记豁免）：`Object.assign(el.style, 表)` 全内联样式（同 K91 ⑩ 合规口径）、`doc.body.createEl`（prefer-create-el）、会话按**引擎实例**登记（WeakMap：多视图独立；重复打开先提交，对齐引擎 `show()`）、`scale` / `node_tree_render_end` 重定位（节点不在树 → 提交关闭）、**会话所属引擎守卫**（引擎重建的残留会话不写回）、视图 `onClose` 与**引擎重建前**（view.ts 三处）主动提交——用户输入不丢。**统一编辑态判据 `isAnyNodeEditing`**（引擎编辑框 ∨ 内联）替换 F2/Delete 守卫、自动拆分检查、标题重命名的 `isEditingText` 调用点（`engine-controller.isEditingText` 保留引擎语义）。回归：`tests/node-inline-editor.test.ts`（14 例：按键表 / 会话生命周期 / 重建守卫 / 重复打开）、`tests/view-hotkeys.test.ts`（自绘→内联、纯链接→内联、编辑中吞键 3 例改写）、`tests/view-context-menu.test.ts`（条目序列 + 备选入口点击）。**取代 K53 ③ / K54 中「富节点 → 弹窗」的入口描述**（弹窗机制与两种模式本身仍有效，仅入口降级为备选）。
-- [K93] **新建节点「空文本 + 立即编辑」与空列表项解析口径（2026-09-28 方案 B 经用户确认）**：① **交互**——所有新建节点入口（引擎 `Tab`/`Enter`、工具栏/右键「添加子/同级」、节点旁加号与空白右键「新建节点」（空白双击入口已于 K200 移除））的初始文本改为**空**（此前为 i18n「节点」/「子节点」/「新建节点」占位文字），并**立即进入引擎编辑框**（新建即可直接输入，无需先删占位文字）。实现：`engine/mindmap.createMindMap` 的两个 `defaultInsert*NodeText` 选项置空串；`view-common.insertChildNodeWithData` 新增 `options.openEdit`（缺省 false）——**新建路径**传 true，引擎走 `inserting` 路径（渲染后**强制激活**新节点并 emit `node_dblclick(..., isInserting=true)` → 编辑框）；拖入/粘贴/拆分/Alt 拖复制等路径保持 false（不抢激活、不打断当前操作）。② **解析口径**——空列表项（`- `）**保留为空 list 节点**（此前退化为显示 `-` 的 plain 段落，即 K55 注释所称「脏数据」）。判据必须用 **trimEnd 前的 rawLine**（`classifyLines` 早先把行尾空白 trim 掉，`line` 里的 `- ` 只剩裸 `-`、不满足 `LIST_RE`；**裸 `-` 仍落 plain**，与 CommonMark「marker 后无空白不是列表项」一致），序列化按 marker + 空内容输出 `- ` ⇒ **往返不动点**、`-` 脏节点消失。③ 回归：`tests/md-roundtrip.test.ts`（空列表项保留 / 裸 `-` 落 plain / 两趟不动点）、`tests/md-roundtrip-property.test.ts`（生成器空间不变：空项仍钉 0 层缩进；P1 不动点保持）、`docs/markdown-mindmap-standard.md` §3.6 白名单 #6 与映射表同步。④ 附带清理：i18n `default.secondLevel` / `default.belowSecondLevel` 删除（成死键）；`menu.newNode` 仍用于菜单标题。⑤ 边界：空节点由引擎渲染为空框（2026-09-28 实测 30×31px——内容仅零宽占位字符 `\ufeff`，尺寸由节点内边距与一行行高撑出）、图内可见可点可双击编辑、可持久化（`- `）；K55 的「删空叶子即摘除」行为保留（删除流程仍不留空节点，零残留口径不变）。
-
-- [K95] **导图内链接呈现口径（2026-09-28 用户实测确立）：自绘（富）节点内链接一律以「主题链接色的超链接字体」呈现、无图标；URL 显示为地址文本而非图标。**
-  ① **自绘节点**（绝大多数含文字节点）：`node-inline-html` 的 `INTERNAL_LINK_STYLES`（`--link-color`，默认蓝色系）/ `EXTERNAL_LINK_STYLES`（`--link-external-color`）渲染 `<a>` 文本锚点、`textDecoration: none`；未解析目标用 `--link-unresolved-color` + 半透明（`is-unresolved` 类名契约不变）。**三个样式表已于 2026-10-16 随装配层拆至 `node-inline-html.ts`**，`node-inline-content` 只剩门面 re-export（2026-10-29 订正本行指向）。
-  ② **URL 不做 icon-only（渲染层）**：`linkSegmentOf` 把 autolink / bareUrl / mdLink 一律还原为**可点文本**（URL 显示为地址）——与**解析层** `buildInlineData` 的 icon-only（URL 不进 `data.text`）**并存不矛盾**：前者是渲染口径、后者是数据口径（与 K54 的「渲染器口径」同源，指同一事实的前后两处记录）。
-  ③ **图标体系只在未接管节点**：文档页图标（`mindmap.ts` createNodePrefixContent）/ 回形针（attachmentUrl）/ 引擎链接图标（hyperlink）——自绘节点整体跳过引擎 icon/prefix/hyperlink 渲染（K53 ②）；两处图标映射注释已补分层说明（`view-node-actions` 的 mdWikiLinkpath 注释 / `md-outline` 的 wiki 分支注释）。
-  ④ **文档同步**：vault 验收样张「三、链接」组按本口径改写（原「文档页图标 / 回形针图标 / URL icon-only」表述订正为「蓝色超链接字体、无图标、URL 显示为地址」，并新增「未解析链接」观察项）。
-  ⑤ 回归：`tests/node-inline-content.test.ts`（锚点样式与显示名）、`tests/view-wikilink.test.ts`（锚点分流与修饰键表）。
-
-- [K96] **修复「图片尺寸校正从未生效」：匹配改双通道（身份 + uid）+ 回灌改「root 未就绪不消费 + 首帧补灌」（2026-09-28，用户截图实测发现）**
-  ① **症状**：含图节点外框全部停在默认 200×120——图片在框内等比留白（`preserveAspectRatio="meet"`，不变形），但**宽度不随图片原始比例变化**（实测附件：左/右栏顶部排列 300×60 应 600×120、主题色 350×377 应 111×120，实际同为 200×120 框）。
-  ② **根因（两缺陷叠加，探针实测分离）**：**(a) 主因——匹配通道失效**：回灌按**对象身份**匹配（`node.getData() === correction.data`），但真实引擎对树 data 做**包装/拷贝**——verify 探针实测 `identitySame=false`（引擎节点 data ≠ 树 data），身份永远落空 ⇒ 校正写入 0 条 ⇒ 图片从未按比例。**单测用桩掩盖**（桩的 `getData()` 直接返回传入对象）；此前主组探针又用「引擎自己的 data」回灌（自匹配）同样掩盖。**(b) 次因——时序竞态**：`view.applyPendingImageCorrections` 原实现「先清空 pending 再回灌」，而 `onEngineReady` 时首帧渲染未完成（`renderer.root` 为 null，实测 `preReadyApplied=0`）→ 即便匹配修好，这批 pending 也会永久丢失且无重试。
-  ③ **修复**：① `engine/mindmap.ts` 的 `applyImageSizeCorrectionsToEngine` 改**双通道**——对象身份优先、**uid 回退**（`data.uid === correction.data.uid`，非空才用；uid 在回灌时必然已分配，`ensureUniqueUids` 在引擎创建前同步跑完），两通道都要过 `image` 地址守卫；② `src/features/view.ts` 两处——`applyPendingImageCorrections` 加 `getRenderRoot` 就绪判定（**未就绪不消费**、保留 pending），`onEngineReady` 挂 `node_tree_render_end`（首帧渲染完成）幂等监听补灌；三条触发路径（探测 `.then` / 引擎就绪 / 首帧渲染完成）互补。
-  ④ **验证**：`verify:visual` image 探针——主组改用**树 data**（生产同款）必须命中 1 条（uid 通道生效），端到端链路实证 `preApplied=0 → onReadyApplied=1 → 终值宽=120`，并记录 `身份同一=false / uid同一=true` 两个事实；`engine-image-size.test.ts` 补 3 例（包装数据按 uid 命中 / uid 命中仍过 image 守卫 / 双通道均落空丢弃）→ 55 文件 **1691** 用例 + lint 全绿；已部署 vault 并双哈希核对。
-  ⑤ **不变式**：自动校正仍**不回写文件**（`mdImageAutoSize` 标记）；官方参数 `![[图|300]]` 的优先级与语义不变；`ensureDefaultImageSizes` 先填默认尺寸的引擎硬要求不变（`getImgShowSize` 对缺失 imageSize 直接抛错）。**教训**：桩测试会掩盖「引擎是否持同一 data」这类**跨边界集成事实**——跨结构边界（我方树 ↔ 引擎内部）的契约必须用**真实引擎探针**验证，不能只靠单测。
-  ⑥ **后续**：K97（同日用户两轮澄清定稿）把未设置尺寸的图从「按比例自适应」改为「**按图片原始大小展示**」；K96 的两个修复（uid 双通道、首帧补灌）与 `ensureDefaultImageSizes` 全部保留。
-
-- [K97] **图片尺寸口径（用户裁决终版）：未设置尺寸＝按图片原始大小展示，设置尺寸＝按参数展示（2026-09-28，两轮澄清后定稿）**
-  ① **口径**（**最终语义，勿再改**）：**未设置尺寸的图（`![[图]]`）按图片自身原始大小（1:1 自然尺寸）展示**——多大就多大，不统一高度、不比例缩放；**长边超过 `IMAGE_MAX_SIDE_PX`（320px；2026-11-05 由 480 下调，只因观感，不改语义）时等比缩小**（只缩不放：一张 2000px 截图否则会把画布版面压扁——节点是空间对象，与 `CODE_BLOCK_MAX_HEIGHT_PX` 同一理由）；**设置了官方尺寸参数**（`![[图|300]]` / `![[图|300x150]]` / `![alt|300](url)`）则按参数展示（仅宽时探测原始比例补高），**显式参数不受该上限约束**（用户意图优先，写 `|2000` 也照做）；**插入/拖入的图片等同未设置尺寸**（走自然尺寸路径、同上限）。探测失败（外链图离线等）→ 保持/回退默认盒 200×120（`custom:false`，引擎按 imgMax 约束、框内等比留白）。
-  ② **澄清过程**（防误改）：K96 修复让「高度统一 120、宽度按比例」的自适应首次生效（300×60 → 600×120 / 350×377 → 111×120）；用户先表述为「未设置按默认大小」→ 曾被实现为**统一 200×120**（错解），用户再澄清「按图片大小加载」＝**图片原始大小**；第三轮敲定长边 **480px** 封顶（推荐值：默认盒宽 200 的 2.4 倍 ≈ Obsidian 分栏半宽；用户既有样张 300×60、350×377 均不受影响）。三轮差异要记牢：**不是**统一盒、**不是**统一高度比例，而是**自然尺寸 1:1 + 长边封顶**。
-  ③ **实现**：`core/constants.IMAGE_MAX_SIDE_PX = 320`（2026-11-05 由 480 下调，详见 ①） + `media/images-path.fitImageWithinMaxSide(w,h)`（纯函数：长边超限时等比收窄、只缩不放、最小 1px）——两条自然尺寸路径共用（`collectImageSizeCorrections` 无参数分支、`createNaturalSizeSetNodeImageOptions`）。`collectImageSizeCorrections` 无参数分支＝探测自然尺寸 → 套上限 → `{width, height, custom:true}` + `autoSize:true`（写树标 `mdImageAutoSize` → 序列化**跳过回写**：显示口径不写文件）；已有 `imageSize.custom`（用户拖宽）不覆盖；参数分支不变（不经 `fitImageWithinMaxSide`、`autoSize:false`）。`walkImageSizeCorrections`（去 Aspect 命名）；`computeAspectImageSize` 已删。`mindmap-theme.ts` 的 `imgMaxWidth/imgMaxHeight`（=200×120）**保留**：只约束 `custom:false` 兜底路径（首帧/探测失败），`getImgShowSize` 对 `custom:false` 必然读取、删之行为未定义（注释已写明防误删）。K96 的两个修复（uid 双通道回灌、首帧补灌）与 `ensureDefaultImageSizes`（首帧兜底）全部保留。
-  ④ **不变式**：自然尺寸（含 320 封顶后的尺寸）是**显示口径**、绝不回写（`mdImageAutoSize` 标记）；**插入/拖入**与**用户拖拽调宽**属用户意图、照旧回写 `|宽度`；**显式尺寸参数不受该上限约束**。
-  ⑤ **验证**：`tests/images-path.test.ts` **51** 例（`fitImageWithinMaxSide` 5 例含「上限内的存量图不受影响」与极端比例、自然尺寸校正+自动标记、超长边按 `IMAGE_MAX_SIDE_PX` 等比、显式参数 2000 不受限、参数路径各形态、并发与缓存、失败回退）；上限断言一律从常量派生（再调不碎测试）；全量用例 + lint + verify:visual 全绿；已部署 vault 并双哈希核对。
-
-- [K98] **新建节点按层级回写为 Markdown 标题（用户需求：「严格回写前六级子节点为六级标题」，2026-09-28）**
-  ① **需求与背景**：解析侧 `#`~`######` ⇄ 第 1~6 层节点（既有，见 md-outline 文件头）；回写侧此前**未标注（新建）节点一律写 `-` 列表项**——用户在导图里画出的层级结构保存后会「塌成一层列表」。现改为**按层级回写**：第 1~6 层 → `#`~`######`（与解析侧严格对称）；第 7 层起 → 列表（缩进降级法，Markdown 只有 6 级标题）。
-  ② **边界（保护既有语义，三条）**：**已有 mdType 的节点按其原类型回写**（列表内容不会被强行改成标题——「无损回写」底线）；**列表/段落上下文中的新建节点仍写列表**（标题写进列表或段落中间会撕裂文档结构）；**显式选了列表标记（mdMarker）的新节点**尊重用户选择、同样走列表。
-  ③ **实现**（`markdown/md-serialize.ts`）：`SerializeFrame` 增 `headingLevel: number | null`（`0` = 根、`1..6` = 当前标题级别、`null` = 不可标题化）；heading 分支传 `level < 6 ? level : null`、plain/list 分支传 `null`；新增分支「未标注 + 无 mdMarker + `headingLevel !== null`」→ `pushBlock('#'.repeat(level + 1) + ' ')`（6 级之下自然落入列表分支）。空标题往返由「前缀携带尾随空格」保证（`## ` → 空 heading 节点、不动点）。
-  ④ **连带修复**：`markdown/links-split.ts` 的 `buildChildren` 显式标 `mdType:'list'` + `mdMarker:'-'`——拆出的链接子节点语义是「其下的列表项」，不标则会在标题上下文被 K98 升级成下一级标题（把「说明 + 链接」的父子关系写成标题并列）。
-  ⑤ **验证**：`md-roundtrip.test.ts` 更新/新增 6 例（层级严格递进 `#`→`##`→`###`→`####`；边界＝6 级之下与列表内回落列表；空节点闭环；URL/双链合成；**纯标题兄弟→标题**、**含列表兄弟→跟随列表**、**纯列表文档不冒标题**）；`save-pipeline.test.ts` 约 20 处期望更新（`- A` → `# A`、根的直接子 → `#`、其子 → `##`）；全量 55 文件 **1700** 用例 + lint 全绿。
-  ⑥ **补充（用户批准的设计改进，同日）**：**新建节点跟随兄弟风格**——同层存在**列表型兄弟**（`mdType:'list'`，或未标注但选了列表标记）时写列表；否则按层级写标题。动机：**纯列表文档**（无标题、通篇列表）里新建原本会冒出 `# 一级标题`、与既有风格违和；补充后这类文档新建 → 继续列表，标题树里新建 → 照旧 `#`/`##`（K98 主规则不变）。实现：`siblingsFollowList(frame.children)` 加进标题分支条件（当前待写节点自身不命中判定——无 mdMarker，无需排除）。
-
-- [K99] **修复「导出 PNG 部分节点内容被裁」：导出 SVG 注入 Obsidian CSS 变量（2026-09-28，用户截图实测）**
-  ① **症状**：导出 PNG 中**多行文字节点第二行被切半**、LaTeX 节点文字不全；屏上渲染正常。
-  ② **根因**：自绘节点内容用文档级 CSS 变量定字体（`var(--font-interface, sans-serif)` / `--font-monospace` / `--code-background` / 链接三态色等，`node-inline-content.ts` CONTENT_STYLES 为唯一来源）；**导出时克隆 SVG 处于独立渲染环境（data URL → img），文档级样式表不在其中 → 变量未定义 → 回退内联兜底值 `sans-serif`**——字体度量与屏上不同 → 换行点漂移、行高变化 → 内容超出 foreignObject 固定高度被裁。
-  ③ **修复**（新文件 `platform/export-css-vars.ts`，**2026-10-17 并入 `platform/export-svg-postprocess.ts`**）：`injectObsidianCssVarsIntoExportSvg`——导出时从 `getComputedStyle(document.body)` 取**宿主实际生效值**（白名单 15 个：字体三件 / mono / code 背景+正文 / 链接四态 + accent / text-normal/muted/highlight-bg/icon-color），以 `<style>svg { --x: y; }</style>` 注入克隆 SVG 根（自定义属性沿后代继承，foreignObject 内 HTML 生效）；空值跳过、全部为空/环境不可用/形态不符时安全 no-op。与 `injectMathStylesIntoExportSvg` 同模式（只改克隆 SVG），接入组合根 `exportSvgTransforms` 链首。
-  ④ **验证**：`tests/view-export.test.ts` +6 例（注入格式/空白跳过/全空 no-op/环境不可用/形态不符矩阵）；全量 55 文件 **1705** 用例；lint 0 警告。
-  ⑤ **安全加固（2026-09-28 复核发现并修复）**：变量值来自**宿主主题**（用户可安装第三方主题与 CSS 片段，内容不受控），原实现把 `getPropertyValue` 的值**原样拼进** `svg { … }` → 形如 `Inter} svg{opacity:0` 的值会**闭合规则块并注入任意 CSS 规则**，篡改导出图（内容隐藏/错位）。`textContent` 不会被解析为 HTML，故**无脚本执行面**，但样式注入成立。修复：新增 `SAFE_CSS_VALUE` 字符白名单（放行 `[\w\s#'"(),.:/%!-]`，拒绝 `{}<>;` 等），不合法则**跳过该变量**（回退内联兜底值、导出仍可用）；`tests/view-export.test.ts` +1 例（含 `}` 闭合与 `<script>` 两种可疑值均被丢弃、安全值照常注入）。
-
-- [K100] **修复「含公式节点外框与内容不符」：数学重排回退到「按产物元素反查节点」（2026-09-28，用户控制台告警 `flushMathRemeasure` 定位失败）**
-  ① **症状**：含行内 `$…$` / 单行 `$$…$$` 公式的节点**外框与内容不符**（用户实测：自动整理后才恢复）；控制台告警「数学节点尺寸同步未命中归属节点，内容可能被裁剪」（`flushMathRemeasure`）。
-  ② **根因**：重排只按**占位 holder** 反查节点（`findNodeByDom`）；而「替换定稿 → 批量重排」之间隔着 `setTimeout(0)`，**该窗口内引擎若发生全树重渲染**（典型即 **K96 图片尺寸回灌的补灌 `render()`**，含图文档首帧后必然发生）→ 节点 DOM 重建 → **旧 holder 随重建被丢弃** → 反查落空 → 跳过并告警 → 这些节点的尺寸停留在「字面期」测量。（内容是对的——重建时缓存命中、产物同步放——但尺寸不是，故表现为框与内容不符；字体钩子也因此一并失效。）
-  ③ **修复**：① `engine/mindmap.ts` 新增 `findNodesByMathProducts(mindMap)`——从渲染树根节点的 group 上溯所属 `<svg>`（天然限定本视图、不受同页其它导图干扰），一次查询全部 `.mjx-container`（**MathJax 产物就在活 DOM 里**，占位 holder 不在），逐个 `findNodeByDom` 归一去重；② `features/view.ts` 的 `flushMathRemeasure`：holder 解析失败时改用该回退重测，**仅当回退也未命中**才保留一次性告警（避免静默退化，K85 教训）。
-  ④ **验证**：`tests/engine-image-size.test.ts` 新增 3 例（产物反查命中并去重 / 产物已脱离任何 group → 空 / 渲染根缺失与无 svg 祖先 → 安全空）；全量 55 文件 **1708** 用例 + lint + `verify:visual` 全绿。
-  ⑤ **不变式**：数学三态链路与「禁止全树重排」（K88）语义不变；回退命中的节点同样写入 `mathRemeasureNodes`，故字体分批就绪时 `remeasureSettledMathNodes` 仍会二次修正（K87 的 3 次上限不变）。**教训**：以「可重建的 DOM 元素」作长周期定位锚点是脆弱的——跨 `setTimeout` 的编排要锚定**不会随重建失效的对象**（此处：产物元素 / 节点本身）。
-  ⑥ **生命周期加固（同日复核）**：`mathRemeasureNodes` 此前**只增不减**（4 处引用全为定义/添加/读取）→ 引擎重建（换文件/设置刷新/文档模式切换）后旧节点被长期持有（**内存累积**），且字体钩子会对**已销毁**节点调重测。修复：在 `onEngineReady`（引擎新建即换新）、`onUnloadFile`、`onClose` 三处 `clear()`（只清集合、不触发任何重排，K88 约束不变）。另：`flushMathRemeasure` 增加「`this.mindMap` 已空则静默返回」早退——批量窗口（`setTimeout`）内视图可能已关闭，否则会走回退并对空引擎打**误导告警**。相邻项已复核无需改：`refreshNodesCustomContent` 已具 null/空数组/`reRender` 缺失/异常四重防护；导出 Blob 已 `revokeObjectURL`（延迟回收）；图片尺寸缓存已有 LRU 上限（失败 200 / 落盘 1000）+ TTL + 磁盘值正整数校验。
-  ⑦ **资源回收加固（同日第二轮）**：`probeImageNaturalSize` 的**失败/超时路径增加中止在途下载**（`img.removeAttribute('src')`）——此前结算后浏览器仍会把整张大图拉完，白占带宽与内存（图片多/外链大图时明显）。用 `removeAttribute` 而非 `src=''`：后者在部分浏览器会以**当前页面 URL 再发一次请求**，反成额外开销；成功路径不动（已解码完成）。回归：`tests/images-path.test.ts` +2 例（失败须移除 src / 成功须保留），桩 `FakeImage` 补 `removeAttribute` 面。同轮已复核**无需改**：数学产物模板缓存已有上限 200 + FIFO 淘汰；导出文件名取自 `TFile.basename`（Obsidian 保证合法），无路径穿越面；探测结果 `.then` 已有文件代际校验（`loadingFilePath !== file.path` 即丢弃，旧文件尺寸不会灌进新引擎）。
-  ⑧ **异常逃逸防护（同日第三轮）**：`EngineController.refresh()`（设置变更 → 重建引擎）原**无异常保护**，`structuredClone` 遇不可克隆值抛 `DataCloneError` 会逃逸出设置应用路径（中断后续键的应用）。现按 `initMindMap` 既有风格包 try/catch：记录错误并**保留现有引擎可用**（重建失败远好过中断设置应用）；`initMindMap` 自身失败仍由它内部销毁 + 提示，外层不重复兜底。同轮已复核**无需改**：`walkTree` 与 `parseMdOutline` 均为**迭代实现**（显式栈 headingStack/listStack），深嵌套无爆栈面；整树拷贝走原生 `structuredClone`（非 JS 递归）；节点级拷贝（`copyNode` / `cloneNodeData`）只拷节点 data、不含子树，无深递归面。
-  ⑨ **第四轮审计：四处候选面已达标，未做改动（避免为凑数引入回归）**——① `exportScale` / `performanceThreshold` 均经 `pickClampedInt` 边界校验（手改 `data.json` 的极大值不会导致导出 OOM；**2026-10-09 修订：`performanceThreshold` 设置项已删，此项只剩 `exportScale`，见 K117**）；② `SavePipeline.save()` 已有 try/catch + `finally` 复位 + 删除守卫（`getFileByPath` 存在性检查，防「删除后重建」）+ 无差异跳过 + frontmatter **以磁盘当前内容为准**（不抹外部属性改动）+ 失败立即复位排空状态（不沿错误链续写）；③ `FileLookupIndexService` 以 `cache = null` 整体失效（无逐条残留、可被 GC 回收），配库事件失效 + 数量比对自愈 + 500ms 节流，`encodeURIComponent`/`getResourcePath` 各有 try；④ 深嵌套无爆栈面（见 ⑧）。**已知但不改的权衡**：`writeFileEntries` 为每文件按路径段数写多个后缀键（兼容历史/绝对路径形态），深目录库下索引条目 = 文件数 × 平均深度——加段数上限会破坏路径后缀兼容，故维持现状、在此备案。
-
-- [K101] **自绘节点外链 `href` 协议白名单（防御纵深，2026-09-28 第五轮加固发现）**
-  ① **发现**：`node-inline-content` 生成外部锚点时把**链接原文直接写进 `<a href>`**，未做协议过滤；节点文本来自 Markdown，可写 `[点我](javascript:…)`。Obsidian 运行在 Electron 上，`javascript:` / `data:` 一旦被宿主按链接打开（中键、右键新标签、Obsidian 外链委托）即成**脚本执行面**。
-  ② **风险实测修正**：不带 `//` 的 `javascript:alert(1)` 会被 `tokenizeInline` 判为**库内** linkpath（走 internal 分支，只写 `data-href`、**本就不写 href**）——故常规形态本已安全；**真正的 external 分支只收 `scheme://` 形态**（`isSchemeUrl`），风险面比初判小，但 `javascript://…` 确实会走进来（已实测确认，用例即据此构造）。
-  ③ **修复**：`domain/url.isSafeAnchorHref`（安全协议白名单 http/https/mailto/ftp(s)/obsidian/file；无 scheme 的相对地址与库内路径放行；大小写不敏感，`data:` / `vbscript:` 一律拒绝）；`node-inline-content` 的 external 分支经它守卫——非安全协议**仍按外链样式呈现、只是不设 `href`**（点击走 `data-href` 分流，插件侧 `isHttpUrl` / `isHyperlinkProtocolUrl` 已有过滤，功能不受影响；本项是第二道闸）。
-  ④ **验证**：`tests/url.test.ts` +3 例（安全协议放行含大小写 / `javascript:`·`JavaScript:`·前导空白·`data:`·`vbscript:` 拒绝 / 无 scheme 放行）；`tests/node-inline-content.test.ts` +1 例端到端（`[点我](javascript://alert(1))` 确为 external-link 且无 href）；全量 55 文件 **1716** 用例 + lint + knip 全绿。
-  ⑤ **教训**：评审「用户输入 → DOM 属性」链路时，**先看解析分类再判断注入面**——本案 `javascript:` 无 `//` 反而被判库内（初判风险偏高），但**边界形态 `scheme://` 确实可达**，防御纵深仍值得加；用例必须按**实际可达的分类**构造，否则会写出断言错误形态的假用例（本轮首个版本即因此失败）。
-
-- [K102]【**已废止 2026-11-07**】**同文件多 leaf 互斥（P0 加固，2026-09-28 多轮健壮性审计产出）**——互斥已删除；2026-11-09 起进一步改为 **Level B**（同一文件共享一份文档会话，见 K180；`AGENTS.md` 决策表「同文件多视图的同步」），中间的「多视图并存 + 后关闭者胜」形态也已作废。以下为废止前的实现与依据，保留备查。
-  ① **缺口**：同一 `.mindmap.md` 可被多个 leaf 打开（Obsidian 允许同文件多标签：Ctrl+点击新开、重启后布局恢复），而每个 MindMapView 持有**独立引擎 + 独立 SavePipeline** → 两实例的防抖保存交错时**后写覆盖先写**（丢编辑），且各自的挂起状态（图片回灌、数学重排）互相不知道对方。
-  ② **实现**：`view.ts` 的 `onLoadFile` 开头做互斥——扫描 `getLeavesOfType(VIEW_TYPE)` 中同路径既有实例（判定用 `other.loadingFilePath ?? other.file?.path`，覆盖对方仍在装载中的窗口），命中则：`Notice`（新键 `common.mindMapAlreadyOpen`，中英）+ `revealLeaf` 激活既有 leaf + **本 leaf 延迟 `detach()`**（onLoadFile 内同步 detach 会与 Obsidian 装载流程竞争，故 `setTimeout(0)` 且 try/catch 兜底）。
-  ③ **空实例安全性**：跳过初始化即被摘除的 leaf，其 `onClose` 各步均有空守卫——`getDataSnapshot()` 返回 `?? null`、`persistViewport()` 双条件（`file && mindMap?.view`）、`destroyInstance()` 幂等、`savePipeline.save()` 对无文件直接返回。
-  ④ **验证**：build / lint / 全量 1716 用例 / `verify:visual` 全绿；**多 leaf 场景需实机复验**——双标签打开同一文件应提示并切换到既有标签、DevTools 中不出现第二个引擎实例。
-  ⑤ **教训**：文件视图类插件的「全局唯一资源」（此处=文件写权限）必须在**装载入口**做实例互斥，不能依赖用户不这么操作；`FileView` 生命周期里 detach 必须**异步**且带兜底。
-
-- [K103]【**已废止 2026-11-07**】**保存管线两项 P1 加固（2026-09-28 多轮健壮性方案落地）**——P1a（外部改动检测）/ P1b（连续失败挂起）已随「保存策略照搬 Obsidian `TextFileView`」整体删除（现行策略见 `AGENTS.md` 决策表「写盘时机」与 K166；`forgetBaseline` / `checkDirty` / `ScheduleOutcome` 的 `off`·`suspended` 同时消失）。以下为废止前的实现与依据，保留备查。
-  ① **P1a 外部改动检测**：自动保存写盘前比对「磁盘当前内容（`cachedRead`）」与「上次写盘基线（`lastWritten`，按路径）」——不一致即文件被外部修改（同步盘/其它窗口/手动编辑），自动保存**绝不覆盖他人改动**：跳过本轮写盘（同失败路径复位），每路径**只提示一次**（`externalConflictNotified`，防告警疲劳）；**显式保存（命令/卸载路径）不带检测**——卸载时哪怕外部改过也必须落盘（丢编辑比覆盖更糟），显式成功后基线随之更新、自动保存恢复正常。`schedule()` 是唯一开启检测的入口（`{checkExternal: true}`）。
-  ② **P1b 连续失败降级**：写盘失败计数连续累加（成功一次即清零），达 `SAVE_FAILURE_SUSPEND_THRESHOLD=3` 挂起自动保存（`schedule()` 不再排程，防告警疲劳），一次性 Notice（`save.autoSuspended`）；显式保存不受影响，任何一次成功即解除挂起。
-  ③ **实现**：`SavePipelineDeps` 增可选回调 `onExternalChange(file)` / `onAutoSaveSuspended()`（view.ts 接 `notifyError`，新 i18n 键 `save.externalChangeSkipped` / `save.autoSuspended` 中英）；`save(file?, treeHint?, opts?)` 增 `checkExternal`。
-  ④ **验证**：`tests/save-pipeline.test.ts` +4 例（外部改动跳过且只提示一次 / 显式保存不检测且基线更新 / 连续失败挂起→显式成功解除 / 成功清零计数），全量 55 文件 **1720** 用例 + lint + knip 全绿。
-  ⑤ **教训**：①测试桩的 `cachedRead` 必须随 `modify` **联动更新**——否则「写盘后磁盘内容」不变，外部改动检测会被自己的写入误触发（真实 vault 语义：写入即更新读取缓存）；②`gate/fail` 按**索引**操作累积 gates 数组，串行队列下多轮 gate 必须逐个 await 后再操作，否则索引错位直接挂起——多轮写盘失败场景用 `mockRejectedValueOnce` 按次序消耗更稳。
-
-- [K104] **修复「首帧公式节点尺寸不同步」：产物反查选择器补我方 holder 类（2026-09-28 用户实测 + 控制台探针定位）**
-  ① **症状**：含「文字 + `$$…$$` 同行」数学的节点**首帧渲染时公式区域缺失**（行内 `$…$` 与独占行 `$$…$$` 正常），**重开文档恢复正常**；控制台告警「数学节点尺寸同步未能定位归属节点，内容可能被裁剪」。
-  ② **诊断**（用户按指引执行控制台探针，7 个 holder 全部命中）：`已渲染=true`（替换确实发生）、**`有产物`（`.mjx-container`）= false**、`字形`（`mjx-c`）= 50/112/20/100/70/20/120（非零）、**`零宽字形 = 0`**（规则已 flush、度量正常）、holder 尺寸正常。
-  ③ **根因**：该环境 MathJax 走 **`tex2svg`**（产物为 `<svg>`，**没有 `.mjx-container` 容器类**），而 K100 的产物反查**只匹配 `.mjx-container`** → 首帧 holder 随引擎重渲染脱离（K96 图片回灌）后，`findNodeByDom(holder)` 与产物反查**双双失败** → 重排被跳过 + 告警 → 尺寸不同步。「仅首次失败」的机制：重开时产物缓存命中、**构建期同步放置**，完全不走异步替换与重排链。
-  ④ **修复**：`engine/mindmap.findNodesByMathProducts` 选择器改**双通道** `.mindmap-node-inline-math, .mjx-container`——前者是**我方 holder 类**（替换后仍保留、与 MathJax 输出形态无关，稳定锚点），后者兼容 CHTML 环境。
-  ⑤ **验证**：`tests/engine-image-size.test.ts` +1 例（**断言选择器含 holder 类**，防止被改回只认容器类）；全量 55 文件 **1721** 用例 + lint 全绿。
-  ⑥ **教训**：反查/定位类逻辑**不要依赖第三方输出的 DOM 形态**（MathJax 有 CHTML/SVG 两条输出路径，DOM 形态不同）——必须锚定**自己写入的类名/属性**；「仅首次失败、重开恢复」是**异步链路 vs 缓存同步路径**差异的强信号，优先查「缓存命中时会跳过哪一步」。
-  ⑦ **第二层修复（同日追加，用户 `innerHTML` 诊断驱动）**：产物经查**完全正常**（`<mjx-container class="MathJax" jax="CHTML">`、宽 49.9px、`mindmap-inline-math` 类齐全）而告警仍在 → 真因是**引擎渲染窗口**：`Renderer._render` 期间 `renderer.root` 被**置 null**（K67 已记录该中间态），此时 `findNodeByDom` 与产物反查**必然双双落空**——此前被误判为「定位失败」：告警 + **永久跳过**该批重排。修复：`flushMathRemeasure` 在「全部落空且尚未重试」时**暂存 holders**（`deferredMathHolders`）且**不告警**，由 `node_tree_render_end`（root 已回填）调 `retryDeferredMathRemeasure` **重试一次**；重试仍失败才告警（防静默退化），成功后清暂存与标记（防「重排→渲染→再重排」循环）。**教训**：解析失败要先区分「**目标真失效**」与「**引擎处于中间态**」——后者应延迟重试而非告警。
-
-- [K105] **修复「导出 PNG 字体回退默认字体、多行节点被裁（残余）」：K99 值校验从 ASCII 白名单重写为结构性字符拒绝（2026-09-29 用户截图 + 控制台诊断）**
-  ① **症状**：导出 PNG 中部分多行节点文字被裁（第二行只露上半截），**导出图字体与屏上不一致、回退为默认字体**（用户实机比对确认）；屏上渲染正常。
-  ② **根因**：K99 的值校验为正向字符白名单 `/^[\w\s#'"(),.:/%!-]+$/`，其中 `\w` 只匹配 ASCII——**中文环境字体栈含非 ASCII 字体名**（控制台诊断实据：`--font-interface` = `"HarmonyOS Sans", "HarmonyOS Sans SC", '??', …`，`'??'` 为非 ASCII 字符的控制台降级显示；`--font-text` / `--font-monospace` 同形态，三者白名单校验均 `false`）→ **三个字体变量全部被静默跳过** → 导出环境变量未定义 → 回退 `sans-serif` → 换行点漂移、内容超出 foreignObject 被裁（与 K99 修复前同症状，成因在过滤层而非注入层）。字符枚举白名单对「合法但非 ASCII」的值天然漏杀。
-  ③ **修复**：`platform/export-css-vars.ts`（现 `export-svg-postprocess.ts`）校验改为**拒绝结构性字符**（CSS 注入的唯一载体）——`UNSAFE_CSS_VALUE_CHARS = /[{};\\<>&@]/`（`{}` 闭合/开启规则块、`;` 结束声明、`\` 转义重构如 `\7d` 生成 `}`、`<>&` 标记构造、`@` at-规则）＋控制字符（码点 `< 0x20` / `0x7F`，含换行/制表）＋长度上限 1000（防超长值放大注入体积）；其余（中文 / PUA / emoji / 任意 Unicode）**全部放行**。控制字符不用正则表达（字符类控制字符范围触发 `no-control-regex`，该规则意图拦截编码事故、此处是有意过滤；项目不引入 eslint-disable，故以码点判断落实现）。
-  ④ **验证**：`tests/view-export.test.ts` +3 例（Unicode 字体名中文/PUA 放行 / 控制字符与反斜杠拒绝且同批安全值照常注入 / 超长拒 + 恰好 1000 通过），既有「`}` 闭合与 `<script>` 拒绝」用例保持通过；全量 55 文件 **1724** 用例 + build + lint(0 警告) + knip 全绿。
-  ⑤ **待实机复验**：重载后导出对比——若字体与屏上一致即闭环；**若仍不一致但已变化**（如回退 Segoe UI / 系统字体而非此前默认形态）→ 屏上生效字体为 @font-face 本体（诊断第 2 项：文档注册 `Inter` / `"Source Code Pro"` / `'??'` 等），`<img>` 解码的 SVG 独立文档访问不到主文档 @font-face，需第二阶段修复（font-face 规则注入，可行性待探针；本项不预设方案）。
-
-- [K106] **修复「导出 PNG 临界节点仍被裁（K105 残余）」：导出侧 foreignObject 几何余量（2026-09-29 CLI 实机全链路定位）**
-  ① **症状**：K105 后重载导出仍有个别节点文字被裁（"6.1 块级公式（`$$` 独占行、三行形态）"第二行"态）"只露上沿）；**字体已与屏上一致**；屏上渲染正常。
-  ② **定位（CLI `obsidian eval` 实机）**：a) **变体扫描**（同内容 + 同变量注入、`<img>` 解码后数墨迹带）：`--font-monospace` 长栈=2 行，去掉或替换为 `monospace`=1 行，`--font-interface` 无关；b) **环境对照**：同内容在主文档真实 foreignObject 渲染 **1 行**、在 `<img>` 解码路径渲染 **2 行**——**跨环境文本度量偏差 ~2px 实锤**（内容/变量/字体全相同）；c) **排除**：@font-face 注入（`'??'` 是**空壳 @font-face 无 src**、屏上实际命中系统字体 Cascadia Mono）、`text-spacing-trim` 等文档级属性注入、UI 关键字剔除/替换（`"Cascadia Mono"` 单独注入亦 2 行）；d) **修复验证**：FO 宽 +2/+4/+6/+8px 均恢复 1 行。
-  ③ **修复**（新文件 `platform/export-foreign-object-padding.ts`，**2026-10-17 并入 `platform/export-svg-postprocess.ts`**）：`padForeignObjectsForExport`——遍历克隆 SVG 全部 `foreignObject`，**宽 +12px**（覆盖实测偏差分布上界——轻量节点 ~2px、标点密集长文本行可达 ~12px，同日二次实机修订自初版 +4）+ **高 +20px**（≈1 行行高，"换行也不裁"兜底）；**横向余量左右各半**（2026-11-11 修正，见 ④）；尺寸非法跳过、无 FO/形态不符安全 no-op、原样返回同一对象；接线组合根 `exportSvgTransforms` **链首**。DOM 遍历遵循项目既有纪律（`Array.from` + try/catch，勿用方法引用形态——会命中 DOM lib deprecated 重载、触发 no-deprecated，同 `node-codeblock.ts` 注释）。
-  ④ **取舍**：加宽后内容右端仍在节点形状内（余量在形状内部消耗）→ 不溢出形状；不换行时零视觉差异；屏上恰好临界换行的极少数节点导出可能少一行（罕见，优于缺字）；极端节点"多一行但完整"（优于"缺半行"）。
-  **④-b 横向必须左右各半（2026-11-11 用户实拍 + 导出 SVG 量化）**：初版只加 `width`、不动 `x`，而内容盒宽度 = FO 宽度 ⇒ 自绘内容的 16px 左右内边距不变、可用宽却多 12px，**右内边距被压到 4px**。实测（导出 SVG 属性）：节点形状宽 **176**、FO 宽 **188**、x 缺省（= 0）⇒ 内容盒 [16,172]，凡是撑满内容盒的子元素（标注 / 引用的色块盒、表格、代码块）右缘距边框只剩 4px、左侧仍是 16px，观感即"节点边框右边比左边窄"。修法：`x -= PAD_WIDTH/2`（缺省 x 按 0 算——引擎导出的 FO **不写 x**，实测 20/20，按 NaN 跳过会让修正静默失效）⇒ 内容盒 [10,166]，左右各 10px。**纵向不左移同理**：内容是顶对齐的，`y` 上移会把文字顶出边框，那 20px 只能落在下方。
-  ⑤ **验证**：`tests/export-fo-padding.test.ts` +4 例（加量+原样返回 / 非法尺寸跳过且其余照常 / 无 FO no-op / 形态不符矩阵）；**CLI 实机复验**：构建部署到 vault → `obsidian vault="O" plugin:reload` → 重建视图 → 导出目标节点图 → **"6.1"节点恢复完整单行** ✓；全量 56 文件 **1728** 用例 + build + lint(0 警告) + knip 全绿。**2026-11-11 复验（对称化之后）**：重新导出，20 个 FO 全部 `x="-6"`，形状 176 / FO [-6,182] / 内容 [10,166] 左右各 10px；`tests/export-svg-postprocess.test.ts` 新增「横向余量左右各半」例（断言左右内边距相等）与 x 缺省用例。
-  ⑥ **教训**：①「屏上正常、导出异常」的终极定位器是**同内容跨环境对照**（主文档真实 FR vs `<img>` 解码），而非逐属性猜测；②凡"依赖屏上测量固定尺寸 + 导出重建布局"的架构都需评估**几何余量兜底**；③**CLI 命令的目标 vault 默认是"最近聚焦"**——多 vault 环境必须 `vault=<名>` 显式定向（本次曾误发到另一 vault）；④`obsidian eval` 传参用 `code='…'`（PowerShell 单引号）+ JS 双引号，`\"` 组合会静默破坏传参。
-
-- [K107] **修复「导出 PNG 数学节点末行文字压到节点底边框线（K106 残余）」：导出侧数学容器高度钉扎（2026-09-29 CLI 实机像素取证）**
-  ① **症状**：K106 后导出仍有个别节点异常——长数学节点（块级公式 + 说明文字）**末行文字下缘被节点底部边框线穿过**（用户实拍"（无裁切、无空洞）"；屏上渲染正常）。像素扫描实据：导出图中文字墨迹底部 = 底边框线位置（间隙 0），屏上同节点底部余量 +5px；K106 后**横向**已达标（"）"右间隙 24.5px），异常全在**纵向**。
-  ② **机制（导出环境对照实验锁定）**：导出渲染环境（`<img>` 解码独立文档）里 MJX 字体不可用，回退字体度量把 `mjx-container` 盒子撑大（实测屏上 31.24px → 导出 ~56.3px，≈1.8 倍）→ 数学所在行行盒变高 → **下方文字整体下移 ~8px**（同图左侧纯文本节点无此现象 ⇒ 漂移源自数学块）。7 变体扫描：`line-height:0` / `display:inline-block` / `vertical-align: top|bottom` 覆盖均无效或过头，**仅"钉 height = 屏上实测值"命中**（文字带 [87.3, 100.3] → [78.3, 91.3]）。
-  ③ **修复**（`platform/math-jax.ts` 新增 `pinMathContainerHeightsInExportSvg`，接入 `exportSvgTransforms` 链紧随 `injectMathStylesIntoExportSvg`）：克隆内 `mjx-container` 与主文档同名元素**按文档序一一配对**，把实测高度（屏幕像素 ÷ 画布缩放 = 布局像素，元素自身 `rect.width/offsetWidth` 归一）以内联 `height: Npx !important` 钉入克隆；数学字形仍可能越过自身盒底 ~5px——落在数学与文字之间的行间隙内（实测 23.5px），无碰撞。
-  ④ **配对守卫（含一次实机误判）**：候选**限定 `<svg>` 内**——引擎的离屏测量容器挂在画布容器下（svg 外）且内含内容克隆（带 mjx-container），首版未过滤导致「实机 8 vs 克隆 7」计数不符 → 全链 no-op（导出字节与修复前完全一致，一度误判"修复无效"）；过滤后 7 vs 7 配对成功。单元素实测不可用跳过、数量不符/形态不符/无 mjx 一律 no-op；属主文档取克隆 `ownerDocument`（popout 兼容）；查询域优先 `.mindmap-canvas-container` 退回全文。
-  ⑤ **验证**：`tests/math-jax-export-pin.test.ts` +8 例（配对钉扎与缩放归一 / 域优先与全文退回 / svg 外候选排除 / 数量不符零写入 / 单元素不可测跳过 / 无 mjx no-op / 形态不符矩阵 / style 缺失兜底）；全量 57 文件 **1736** 用例 + build + lint(0 警告) + knip 全绿；**CLI 实机复验**（部署 → `plugin:reload` → 重建视图 → 导出目标子树）：文字带 **[87..97.5] → [78..91]**（与屏上位置重合）、与底边框间隙 **6.5px**、越界 0、数学形状位置不变；导出 PNG 字节 42824 → 46053（证明钉扎确实进入导出链路）。
-  ⑥ **教训**：①「屏上正常、导出异常」类问题的度量必须在**导出环境**内做（同节点多变体对照），屏上/主文档内测量不能替代；②几何余量（K106）解决"被裁"，**"纵向流漂移"必须钉住参与布局的盒子尺寸**——环境级字体缺失会让尺寸自洽的布局整体漂移；③**配对类实现要先枚举"同名元素的所有宿主"**（引擎离屏测量容器即典型暗桩）；计数守卫会静默 no-op，"输出未变化（字节/hash 完全一致）"应作为修复未生效的第一判据。
-
-- [K108] **修复「默认自绘渲染下：编辑中心主题不重命名文件 + 编辑混排节点不自动拆分双链」：插件侧编辑通道补齐"提交后编排"（2026-09-29 CLI 实机功能验收定位）**
-  ① **症状**：CLI 建图逐个功能验收时发现两项 README 承诺功能**静默失效**——a) 双击中心主题改名（如改为 `K108-已改名`），节点文本已变但**文件不重命名**；b) 编辑混排节点 `- 说明文字 [[校验]] 尾巴`，**不自动拆出链接子节点**，而批量命令「拆分全文混合链接」正常。两者均无报错（控制台 `dev:errors` 为空）。
-  ② **机制（两层根因，实机取证）**：视图的全部后续编排挂在**引擎事件**上——`data_change` → `onRootDataChanged`（scheduleSave + 节点计数 + `TitleRenamer.schedule`）、`onDataChanged` → `scheduleAutoSplitCheck`、`node_text_edit_change` → `captureAutoSplitCandidate`。而自绘（富）节点的编辑走**插件侧内联编辑器**（K92 起为主入口，弹窗原文模式同一收口 `applyRawNodeContent`）：它**直接改 data + `render()`，不走引擎命令**，故两个事件都不派发 → a) 改名永不调度（对照实验：手动 `setData` 触发一次 `data_change` 后文件**立即**改名，证明 TitleRenamer 本身可用）；b) 候选集为空 → 拆分 no-op。**第二层**：即使补上通知仍不拆分——`autoSplitNode` 的判据 `text !== mdDerivedText` 在原文提交路径下**恒不成立**（`applyRawToNode` 重解析原文时会同步刷新 `mdDerivedText`；引擎编辑框只改 `text`，快照才留在解析期）。
-  ③ **修复**（方案对比后取"经视图回调补齐"，拒绝"features 直发引擎事件"以免破坏 `engine/mindmap.ts` 唯一防腐收口）：a) `ViewNodeEditContext` 新增 `notifyNodeContentCommitted(node)`（`MindMapViewContext` 同步具备），`view.ts` 实现为「scheduleSave + 计数刷新 + `titleRenamer.schedule()` + 捕获拆分候选 + 调度拆分检查」，由 `applyRawNodeContent` 在 render 后调用（一次覆盖内联与弹窗两条通道）；b) `captureAutoSplitCandidate(view, node, { pluginChannel: true })` 记入候选集的 `forced` 子集，`autoSplitNode(view, node, { force })` 对该子集**放行 `mdDerivedText` 判据**。
-  ④ **验证**：`tests/node-inline-editor.test.ts` +2 例（提交后通知视图且携带节点 / 无改动提交不通知）、`tests/view-split-links.test.ts` +1 例（force 下 `text === mdDerivedText` 也拆分）；全量 57 文件 **1739** 用例 + build + lint(0 警告) + knip 全绿；**CLI 实机复验**（部署 → `plugin:reload` → 重建视图）：中心主题改名 → 文件重命名为 `K108-已改名.mindmap.md`、混排节点编辑 → 自动拆出子节点 `校验` 且落盘 `  - [[校验]]`、普通编辑保存与批量命令（幂等提示"没有可拆分的混排双链"）与状态栏计数回归正常。
-  ⑤ **教训**：①**窄接口新增成员必须同步到 `MindMapViewContext`**——装配面多处把 context 透传给编辑入口（`editNodeText` 等），只加子接口会让整片调用点 TS2345；②测试桩用 `as unknown as` **断言不补运行时成员**，新增"必调方法"会让桩报 `is not a function`（本次 5 例同时失败），补桩要与改接口同步；③**"引擎事件驱动编排"架构下，任何绕过引擎命令的新通道都必须显式复刻编排回调**，否则功能静默失效（无异常、无日志）；④判据类守卫（如"是否编辑过"）要按**通道**复核：不同通道对元数据快照的影响不同（原文重解析会刷新快照，纯 text 写入不会）。
-
-- [K109] **0.1.5 发布准备：`lint:scanner` 解除 npm 11.9+ 阻断、`check:release` 补 License 校验、发布说明补齐（2026-09-29）**
-  ① **背景**：0.1.5 未推送（远端最新 tag 0.1.4），本轮把 K99–K108 的修复并入 0.1.5 一起发布；本地按 CI 门禁自证时发现 `npm run lint:scanner` 在开发机失败、`check:release` 缺 License 面。
-  ② **`lint:scanner` 阻断（EALLOWSCRIPTS）根因**：`npm run` 会把**当前 npm 配置**以 `npm_config_*` 环境变量注入脚本进程——开发机用户级 `~/.npmrc` 的 `allow-scripts=<白名单>` 因此经 **env 层**进入再启动的子 npm；npm 11.9+ 的 `resolveAllowScripts` 对「CLI/env 层提供的 `allow-scripts`」在 project-scoped install 中**直接判错**（`--userconfig` 只能隔离配置文件、隔离不掉 env；实测复现：手动执行成功、`npm run` 下失败，唯一差异即该 env 变量）。
-  ③ **修复**（`scripts/scanner-lint.mjs`）：a) 新增 `stripNpmAllowScriptsEnv()`，**所有 npm/npx 子进程与 eslint 直连路径统一净化环境**；b) 安装目录 `package.json` 显式声明 `allowScripts: {}`（npm 官方要求的合法落点，空对象＝不允许任何依赖运行安装脚本）；c) `ignore-scripts=true` 写入 `.npmrc`（命令行 `--ignore-scripts` 在 project-scoped install 中同样被 npm 11.9+ 拒绝）；d) `--userconfig` 的配置隔离语义保留不变。
-  ④ **`check:release` 补 License**（`scripts/check-release-metadata.mjs`）：缺失/空 = **error**（退出 1）、识别不出 OSI 许可 = **warning**（不阻断），分级对齐官方 `obsidian-workflows` 的 repo-checks「error if missing, warn if non-OSI」；候选名 `LICENSE` / `LICENSE.md` / `LICENSE.txt` / `COPYING`，判据只看文件头 2000 字符并做宽松关键词匹配（避免措辞差异误报）。
-  ⑤ **发布说明**（`docs/release-notes-0.1.5.md`）：补入本轮用户可见变化（导出 PNG 保真四类裁切/压线、中心主题改名、混排双链自动拆分、重复打开让位、外部修改保护、首帧公式尺寸、外链协议白名单），测试基线 55 文件/1700 例 → 57 文件/1739 例，兼容性说明补「同一 `.mindmap.md` 仅保留一个编辑实例」。
-  ⑥ **验证**：清缓存后 `lint:scanner` 全新安装 352 包并**通过**；`check:release` 三场景（MIT / 非 OSI / 缺失）行为正确且仓库 `LICENSE` 按原样恢复；`build` + 57 文件 1739 用例 + `lint`(0 警告) + `lint:css` + `check:dead-code` + `verify:visual` 全绿。
-  ⑦ **教训**：①**`npm run` 注入的 `npm_config_*` 环境变量是「配置隔离」的暗桩**——只清 userconfig 文件不够，子进程 env 也要净化；②npm 11.9+ 把 `allow-scripts` 的**来源层**写进了语义（CLI/env 一律拒绝、project 层才合法），跨 npm 版本的脚本必须按「落点合规」而非「结果等价」来写；③发布元数据护栏按官方 repo-checks 的**分级**补齐（error/warn 分明），别把 warn 面升成 error 面。
-
-- [K110] **性能轮（2026-10-02，量化驱动的取舍与瘦身）**：起点是性能画像实测——**渲染与编辑路径已收敛**
-  （`--perf`：单次编辑 ≈4.2ms@500 节点、每动作 1 次布局落地、300 次编辑 DOM 无泄漏、历史 163 条 14.8MB ≤ 30MB 预算），
-  故本轮只改「有实测支撑」的项，并在 ⑧ 记录**六项经量化后明确不实施**的决策数据（防后人重复投入）。
-  ① **INLINE_RE 入口短路**（`md-outline.tokenizeInline`）：四个必要子串全缺（`]]`/`](`/`<`/URL 协议前缀）
-  ⇒ 直接空返——第二备选 `[^\]]*` 在「大量 `[` 起点但无闭合」的长行上逐起点回退（单行最坏 O(n²)，此前
-  可秒级阻塞打开/保存）；实测病态行 21000 字符 **0.13ms**、token 密集行 20000 字符/2000 token 0.37ms。
-  ② **保存视口幂等短路**（`engine-controller.restoreOrFitViewport`，承 K70④ 家族）：`setTransformData` 无条件
-  emit `view_data_change`（性能模式 = 一轮分片整树渲染），而 150ms 兜底会二次调用——按 `scale|x|y` 签名比较，
-  已在保存视口上则零调用（`transformSignatureOf` 与 `viewSignature` 共用口径）。
-  ③ **segmentCache 字符预算**（`node-inline-content`）：条目数上限（512）对长行键失效（最坏 ≈20MB 常驻、
-  顺序全量重建下 LRU 命中率≈0，`--perf` 实测 512/512 满仓）——加 `SEGMENT_CACHE_MAX_CHARS = 1M` 总预算 +
-  单条 > 32k 字符不缓存；`segmentCacheStats` 增 `chars/maxChars`，探针加字符维度断言（防退化为只按条目数）。
-  ④ **createNodeContent 选项实例化**（`view.ts`）：内容只依赖视图与设置 ⇒ 选项对象 + 4 闭包改为**实例级一次**
-  （`inlineContentOptions`；此前每节点重建 ≈2 万临时闭包 @5000 节点），唯一会话中可变项 `selfDrawPlain` 每次构建就地覆盖。
-  ⑤ **siblingsFollowList 按层惰性**（`md-serialize.SerializeFrame.followList`）：同层 k 个未标注节点从各自
-  扫整层 O(k²) 降为按层一次。
-  ⑥ **fitMindMap 数据层化**（`engine/mindmap.fitPerformanceMindMapFromData`，K70 残留消除）：性能模式不再
-  `forceLoadNode` 全树同步装配（5000 节点 ≈1.1s，K70 口径）——目标缩放 `min(1, 可用宽/盒宽, 可用高/盒高)`、
-  平移 = 内容中心 → 画布中心（**推导**：vendor fit 三 flag 的最终中心均为 `p + (E-2p)/2 = E/2`，故无需分支；
-  `setScale` 不传锚 = 位移不变，随之读新变换算平移；`fitPadding` 默认 50）；已在目标态零调用。
-  ⑦ **refresh 删冗余 structuredClone**（`engine-controller`）：引擎 `getData()` 已是深拷贝（`vendor-contract` 已钉），
-  一轮重建由 3 次全树拷贝降为 2 次。
-  ⑧ **量化后明确不实施**（决策数据，阈值定 200ms）：整树序列化 5000 节点仅 **4.4ms**（未编辑）/ 6.3ms（10% 编辑）
-  / 14.2ms（全图带自定义尺寸·最坏）⇒ 序列化惰性上下文、增量序列化、Web Worker 均**收益不足不立项**；
-  links-rename 一次 ≈15ms 且属低频库事件 ⇒ 预筛不做；math-jax 泵单轮 < 10ms 且 `isProductReady` 天然短路
-  （未就绪态首枚即返）⇒ 抽样/切片不做。（原 drag-target 每帧 ≈1–3ms ⇒ 合并遍历收益 < 1ms 不做；该模块已于 2026-10-11 移除，见 K23。）
-  ⑨ **回归**：`tests/md-inline.test.ts`（短路语义 2 例）、`node-inline-content.test.ts`（字符预算 1 例）、
-  `engine-controller.test.ts`（视口幂等 1 例）；`verify:visual` 的 perf-box 探针扩 4 条 fit 断言、history 探针
-  改 DOM 直写口径（联动更新见 K26e 与 K68 性能轮的 ⑥ 段）；`--perf` 轮段缓存读数带字符维度。
-
-- [K111] **修复「导图视图下鼠标侧键后退失效」（2026-10-04，CLI 实机全链路定位）**：Obsidian 的侧键链路＝window 冒泡
-  `mousedown`(button 3/4) → `window.history.back/forward`（官方启动时 `patchWindow` 挂到 HistoryHandler 栈顶：
-  workspace handler → `activeLeaf.history.back/forward()`）→ `Navigation.go(∓1)` → `setViewState` 恢复
-  （依据：`obsidian.asar/app.js` 1.13.7 实测提取）。**官方帮助库无桌面端导航历史/侧键页面**
-  （全库检索 `navigation history` / `go back` / `side button` 零条目；仅 `Getting started/Mobile app`
-  记有移动端「历史栈空则该入口灰显」口径）⇒ 本条依据为官方 API 契约（`View.navigation` /
-  `ViewStateResult.history`）+ 1.13.7 实测，属 K56「官方帮助为唯一依据」的**显式例外**（该例外
-  已回写 K56 依据句）；插件与 vendor 引擎均不拦截该事件（vendor 零 `stopPropagation`，
-  合成 mousedown 走官方监听器完整复现）。缺陷根因在**导航历史被视图切换污染**：打开 .mindmap.md 会先后记录
-  「同文件 markdown 中间态 + 导图态」两条相邻历史，导图下后退第一步落在中间态上 →
-  `openAsPreferenceRestorer.autoSwitch` 立即切回导图 → `recordHistory` 重录 + `pushState` 清空 forwardHistory
-  ⇒ **净效果为零**（CLI 实测：后退后两个栈长度与视图均无变化；清理尾部 1 条同文件中间态后
-  back 即刻恢复正常）。导图态本身**照常记入**导航历史（实测栈内存在 `mindmap-view` 条目，
-  视图层无需干预 `ViewStateResult.history`；在 viewState 里传 `history: true` 无作用，状态去重
-  已覆盖）。修法＝**历史栈卫生**（方案 A，用户确认）：**视图切换不是导航点**（对齐官方单态
-  视图 Canvas/PDF）——
-  `openAsMindMap` / `openAsMarkdown` 落定后经 `setViewSwitchDoneHook`（`md-open` 依赖倒置，组合根 `main.ts`
-  注入）调用 `platform/nav-history.pruneViewSwitchNoise`：清理 leaf 的 back/forward 历史里「尾部连续同文件段」内
-  「视图类型 ≠ 目标类型」的冗余条目——异文件 / 形态异常条目即停（不跨段，保护被隔开的真实导航点）；
-  `leaf.history` 是私有结构（未公开 API），防御式访问 + 形态校验，失败静默降级为修复前行为
-  （与 K39 登记的其余私有触点同策略）。修复后语义：导图下侧键后退直达上一个导航点（通常上一文件）；
-  回本文件其他视图用「Switch to Markdown」。回归：`tests/nav-history.test.ts` 16 例
-  （单条 / 双条 / 切回方向 / 多条 / 跨段保护 / 幂等 / 形态异常 / 双栈 / getter 抛错，
-  外加 `md-open` 钩子接线 4 例：通知时机 / 目标类型参数 / 切换失败不通知 /
-  钩子抛错不误报「切换失败」）。**接线两处易错点**：通知必须在 `setViewState`
-  成功后的 try **之外**（否则钩子异常被误报成切换失败），且调用点仍兜一层
-  try（`notifyViewSwitchDone`）——文件菜单等 `void openAsMindMap(...)` 调用方无
-  catch，钩子抛错会变成未处理拒绝。
-
-- [K112] **工具栏图标尺寸「变量 + 自包含」双写（消除对官方内部类名的隐式依赖）**：`styles.css`
-  的 `.mindmap-tool-btn` 同时写 `--icon-size: 16px` **与** `.mindmap-toolbar .mindmap-tool-btn > svg
-  { width: var(--icon-size, 16px); height: var(--icon-size, 16px) }`——兜底规则特异性 (0,2,1) 高于官方
-  `svg.svg-icon` 的 (0,1,1)，**留一级余量**（官方需提到 (0,3,1) 以上才压得过），故不依赖样式加载顺序。
-  ⚠ **兜底取「`var(--icon-size, 16px)`」而非裸 `16px`（2026-10-04 审阅修正）**：本规则特异性高于官方，
-  写死值会连官方的变量通道一起压掉，`--icon-size` 彻底失效、K112 保留变量的理由（跟随官方尺寸体系／
-  允许用户与主题覆盖）随之失效。走 `var()` 才两条失效路径都兜住：变量在位 → 跟随变量；官方改名致其
-  不再消费、而变量又被移除或置为无效值 → 回落 16px（实测把 `--icon-size` 强制置 `initial` 即走此支）。
-  **实机实测（1.13.7）三条依据**：
-  ① 官方全局 `svg.svg-icon { height/width:
-  var(--icon-size) }`（`obsidian.asar/app.css`，全库 101 处 `--icon-size` 体系）**确实消费**该变量
-  ——只写变量即生效（我们 16px vs 原生按钮 18px；注入 24px 图标跟随）；② 变量路径**依赖官方内部
-  类名**，官方改名即失效——此时由兜底规则接管（官方改名或改取值都不会
-  让图标跳回主题默认 18px）；③ 加自身规则后把 `--icon-size`
-  强制置 `initial !important`（模拟官方不再消费）实测**仍 16px、stroke 1.75px 逐项一致** ⇒ 兜底独立
-  生效。**为何保留变量**：官方体系里 16px 恰为 `--icon-s` 档（实测 body 级 `--icon-size: 18px`
-  = `--icon-m`），变量在位可继续跟随官方尺寸体系；且官方 1.13.7 **无**用户可配的图标尺寸设置项
-  （532 个 `option*` 键中仅 `optionCustomIcon`），故不损失「跟随用户设置」的价值。子选择器用 `> svg`
-  （实测按钮内唯一元素即该 svg，为按钮直接子）。**同族决断（2026-10-04，2026-10-11 废止）**：
-  `--mm-drag-target-color`（`.mindmap-drag-target` 的 drop-shadow 颜色）当时判为**用户可覆盖钩子**并选择
-  **文档化**（README 中英「拖拽换父」条目各一句）。**该决定已随拖拽换父辅助整体移除而失效**（见 K23）：
-  类与变量都不再存在，README 对应条目同步删除——功能本身被删时，「保留覆盖口子」的前提不再成立。
-  （历史理由备查：不加设置项——一次性视觉偏好不值得进 `data.json`，CSS 变量本身即主题覆盖通道。）
-- [K113] **修复「Obsidian 1.14 把 MathJax 3.2.2 换成 4.1.3 ⇒ 行内数学全量退回字面 `$…$`」：零宽豁免判据改为双形态（2026-10-06 CLI/CDP 实机取证 + 宿主包静态分析）**：
-  ① **根因（与配置/时序无关的静态铁证）**：读宿主 `app://obsidian.md/lib/mathjax/obsidian-mathjax.js`（1,139,224 字节）的
-  `addCharStyles` 实现为 `const c = { padding: this.padding(i,l) }; … t[a] = c`——MathJax 4 的逐字符规则
-  **只写 `padding`、不再写 `content`**；全包 `::before` 仅 2 处且均属 `mjx-linebox` 换行，与字符无关。实机样式表
-  印证：`mjx-c.mjx-c1D438 { padding: 0.68em 0.764em 0px 0px; }`、不可见操作符 `mjx-c.mjx-c2061 { padding: 0px; }`
-  （其 `::before` 计算值为 `none`），且整表**0 条** `content:""`。而 `isInvisibleCharByDesign` 只认
-  `content === '""'` ⇒ **恒 false** ⇒ 含 U+2061/U+2062 的公式（MathJax 为隐式乘法/函数应用自动插入，
-  `E=mc^2`、`\sin x` 实测均含）永久判未就绪 → 3 轮 flush 重试耗尽 → 保留字面 + 误告警
-  「数学产物不可见（字体/样式未就绪）」。按正确时序（渲染 → flush → 判定）实测 `E=mc^2` 几何完全正常
-  （`57.7×19.3`，可见字符宽全 > 0），**只有判据误判**。
-  ② **已排除的其余三项变更**（逐条查证，均与本插件无关）：`.HyperMD-math`——`src/` 无 CM6 /
-  `registerEditorExtension` / `HyperMD`（0 命中）；`SettingDefinitionItem#id`——12 条设置项名称互异
-  （12 个唯一 i18n key），`id` 仅用于区分同名兄弟项/重命名保引用，本插件二者皆无；新增
-  `--tooltip-`/`--notice-`/`--hotkey`/`--tab-inner-`/`--tab-container-` CSS 变量——`styles.css` 不涉及
-  tooltip/notice/hotkey/tab，已在用 `--background-primary`/`--text-muted` 等既有语义变量。
-  ③ **同版本未回归项（实测确认，勿重复排查）**：`tex2chtml` 仍在（宿主 `app.js` 自身即
-  `MathJax.tex2chtml(e,{display:t})`）、`tex2svg` 依旧 absent（与 1.13.7 同，非本次引入）；`#MJX-CHTML-styles`
-  id 未变（flush 时由 `chtmlStylesheet()` 创建）⇒ 导出注入（K100）链路完好；逐字符规则在 CSSOM 与
-  `textContent` 中均在、24 条 `@font-face` 仍在 ⇒ 导出 SVG 字形可见性与 `stripFontFaceRules` 不受影响；
-  字体族 `MJX-TEX-ZERO`/`MJX-BRK`/`MJX-TEX-N`（**v3 是 `MJXZERO`/`MJXTEX`**）仍匹配 `/MJX/i` ⇒
-  `ensureMathFonts` 无需改。**记档**：v4 的 `@font-face src` 改为**相对路径**
-  （`url("/lib/mathjax/tex-font/…")`，v3 是 `app://obsidian.md/…`）——当前导出链路会剥掉 `@font-face`，故无影响。
-  ④ **修法（判据双形态，两代都保留）**：`isInvisibleCharByDesign` 先查 v3 形态（空 `content`），未命中再按
-  字符码查其**逐字符规则**：`padding` 各分量全为 0 ⇒ 判为「设计上不可见」。索引从
-  `#MJX-CHTML-styles` 的 CSSOM 建（**按 flush 代际缓存**，每轮 flush 后规则会变，缓存必须随之失效），
-  选择器容忍字体类后缀（MathJax `addCharStyles` 的 `"mjx-c"+charSelector+(o?"."+o:"")`，本版本实测未出现但
-  源码允许）。**语义等价性**（对照 v4 `padding([t,e,s],i=0){return [t,s+i,e,0].map(…)}`）：四项为
-  `[左, 右+ic, 字宽, 0]`，**字宽为 0 且无内边距**的字符本就不占横向空间 ⇒ 与 v3 空 content 规则同义；
-  实测可见字符恒有非零分量（`0.68em 0.764em` / `0.367em 0.778em` / `0.442em 0.878em 0.011em`）⇒ 不误伤。
-  **规则缺失仍判未就绪**（未 flush / 尚未 typeset）——保留对塌缩态的检测力，这是该判据存在的原意。
-  ⑤ **为何不改用官方 `renderMath(source, display)`**：宿主内部 `hj` 函数本身就是
-  `MathJax.tex2chtml(e,{display:t})`，产物逐字节等价 ⇒ 就绪判据问题原样存在，**不解决问题**；且
-  K90② 已就同一问题做过逐字节等价验证并由用户裁决保留 `tex2chtml` 直调。
-  **为何不弃用判据、改以「flush 完成为唯一就绪信号」**：那会失去 S0.5 建立的塌缩保护（flush 失败时放入
-  不可见产物＝历史上「先空白后出现」事故的根因），属用保护换简洁，与该模块「占位即回退」的取向相悖。
-  ⑥ **实测坑（勿重犯）**：① `chtmlStylesheet()+append` **不是**官方 flush 的等价替身——宿主
-  `vj` 依赖模块级 `fj` 引用与 `dataset.change` 切换，沙箱里无法驱动，故「flush 后仍缺规则」的观察**不能**
-  当作判据缺陷的证据（我据此误判过一次，改用 CSSOM 规则判别式后复测通过）；② 批量同步测量会踩
-  字体渐进加载，**必须** `await document.fonts.ready` + `requestAnimationFrame` 双帧 + 延时再量，
-  否则可见字符也被瞬时量成 0 宽；③ 逐字符规则**必须从 CSSOM（`sheet.cssRules`）取**，且要匹配
-  `mjx-c.mjx-cXXXX`（两个类），漏掉第二个类会全量 `MISSING`。
-  ⑦ **落点与门禁**：仅 `src/platform/math-jax.ts`（判据 + 文件头「MathJax 面」注释）、
-  `tests/math-jax.test.ts`（+5 例：v4 零 padding 放行 / 字体类后缀 / padding 非全零仍不放行 /
-  规则缺失仍不放行 / 索引按 flush 代际失效）、本文与 `architecture.md` 描述、`AGENTS.md` 豁免表
-  行数（813 → 905）。`minAppVersion` **保持 1.13.0**（双形态使两代宿主都正确，不必抬高门槛）。
-  **无新增 `src/`/`tests/` 文件** ⇒ 代码结构索引无需变更。
-  ⑧ **实机验收（2026-10-06，Obsidian 已更新至 MathJax 4.1.3；证据链四段）**：
-  ① **门禁**：`npm run build` / `npm test`（60 文件 **1825 例**全绿）/ `npm run lint` /
-  `npm run check:dead-code` 全部 exit 0。② **静态**（已部署 `main.js` 逐字核对）：压缩后
-  `mm()`（代际缓存 + `/^mjx-c\.mjx-c([0-9a-f]+)(?:\.[\w-]+)?\s*\{([^}]*)\}$/i`）、
-  `fm()`（`/^0(?:px|em|rem|%)?$/`）、`gm()`（v3 分支 `::before` 空 `content` → v4 分支
-  码点查表）四要素齐全。③ **宿主原生运行期**（`obsidian restart` 清掉取证期注入 → 以宿主
-  **逐字配置**（含完整 `[+]` 24 包与全部 options）加载 → `\sin x+E=mc^2` → 官方 flush 等价）：
-  U+2061 / U+2062 的规则均为 `padding: 0px`，**旧判据 `false` / 新判据 `true`**，
-  `OLD_isProductReady:false` vs `NEW_isProductReady:true`，box `105.5×19.3` 几何正常。
-  ④ **端到端**（vault 新建 `math-verify.mindmap.md`，4 个含公式节点）：**8 个
-  `.mindmap-node-inline-math` 全部含 `mjx-container[jax="CHTML"]`**（`𝐸 =𝑚𝑐2` /
-  `sin⁡𝑥` / `cos⁡𝑥` / `√𝑎2+𝑏2` / `𝑎𝑏` / `∫10𝑥2𝑑𝑥`，宽高均非 0），
-  **画布内 `$` 字符数 = 0**，`dev:errors` 与 `dev:console level=warn` **均无输出**
-  （即未触发「数学产物不可见…已回退为字面显示」误告警），导图其余功能（图片/链接/工具栏/
-  布局连线控件）无回归。`math-verify.mindmap.md` **保留在 vault 作为回归夹具**。
-
-- [K114] **修复「MathJax 4 字体渐进加载 ⇒ 引擎离屏测量命中偏小旧宽度 ⇒ `foreignObject` 裁掉节点底部」：把字体代际编进测量缓存键**（2026-10-06 CLI/CDP 实机取证 + 宿主包静态分析 + 受控实验）：
-
-  ① **现象**：用户截图 `根式 $\sqrt{3+12}$` 节点第二行自底部被切。裁切层是 `foreignObject`（`overflow:hidden`），实测 `path.smm-node-shape` 29.83 / `foreignObject` 30.83，而 `div.mindmap-node-inline-content` 真实需要 **44.79** ⇒ 缺 13.96px。逐节点对照：`E=mc^2` 缺 11.72、`\sqrt{}` 缺 13.96、`\sin/\cos` 恰好 0、`\frac/\int` 富余 5.64（**富余掩盖了缺陷**，故不是所有公式都可见症状）。
-
-  ② **受控实验确立充要条件**（三组，事后全部还原）：把 `foreignObject` 宽度**人为改小 4px**（119→115）⇒ 内容高 28→**45**、垂直溢出 **+17**、裁切复现；改小 9px（110）同样溢出 17px；修正回 119 ⇒ 溢出 0。**结论：裁切 ⟺ `foreignObject` 宽度 < 内容自然宽**（差 4px 即触发，因换行使高度需求翻倍而 `foH` 不变）。
-
-  ③ **机制**（vendor 静态分析）：引擎 `measureCustomNodeContentSize`（`$l`）按**元素 `outerHTML`** 把测量结果缓存进 **vendor 模块级** `St` Map（16384 项 LRU，**键不含字体状态、不含引擎代际**）；预测量补丁（`Vr`）在 `document.fonts.status !== 'loaded'` 时**既不测量也不写缓存**（实机统计 `hit:5, queued:0, wrote:0, canCache:false`）。MathJax 字体渐进加载后自然宽变化而 `outerHTML` 不变 ⇒ 重测命中偏小旧宽度。`view.ts` 既有注释已承认「首批测量可能偏小」，但只针对**高度**，漏了**宽度变化会触发换行**这一放大器。
-
-  ④ **已排除的两个修法（勿重走）**：**`width:max-content`** —— 只是把垂直裁切换成**水平**裁切（实测 `hOver` 4px / 9px），**不是修复**；**`ignoreUpdateCustomTextWidth: false`** —— 会让内容自然宽覆盖用户拖拽设定的 `customTextWidth`，**破坏 K26d「拖左右边框改宽」**，出局。
-
-  ⑤ **第一版修法被实机证伪并废弃（K85 ① 教训的又一次复现）**：初版把「绕缓存标记」挂在 `refreshNodesCustomContent`（数学定稿后的重测入口）并逐出 `__preMeasuredContentMap` 条目强制重建。部署后实测 **`renderedWithMark: 0`** —— 插桩确认该路径在复现场景**根本不执行**（`[K114DBG]` 零输出），即修法挂在一条不会走的路径上，**静默 no-op**。根因：节点尺寸由引擎 `Vr` 预测量 + 常规 `getSize` 决定，不经该入口。**教训：修复点必须选「一定被走到」的位置，否则验证时只能靠"看起来没报错"判断成功。**
-
-  ⑥ **最终修法（无调用时机依赖）**：`core/measure-cache.ts` 的 `fontMeasureKey()` 返回 `<fonts.status>:<epoch>`，`epoch` 在每次 `loadingdone` 与 `fonts.ready` 时递增；`features/node-inline-content.buildContentElement` 把它写进根元素 `data-mmx-font-epoch`。于是**预测量元素与重测元素都携带正确 epoch**（两条路径都经 `customCreateNodeContent`），缓存自动按字体状态分区：字体状态不变 ⇒ 键不变 ⇒ **缓存照常命中（零额外测量）**；状态一变 ⇒ 键必变 ⇒ 必然重测。**不碰 vendor、不改布局语义、无私有触点。**
-
-  ⑦ **落点为何是 core**：唯一消费方是 features 的元素构建入口，但需要 `document.fonts`（features 单测是 node 环境）；走 `engine` 则 features 被拖入 vendor bundle 运行时依赖（实测导致 `node-inline-content.test.ts` / `node-codeblock.test.ts` 收集期 `document is not defined`），且 `node-inline-content.ts` 原本对 engine **只做 `import type`** 以守住该边界。
-
-  ⑧ **验收**：`build` / `test`（61 文件 **1835 例**）/ `lint` / `lint:css` / `check:dead-code` / `check:release` 全 exit 0；`verify:visual --require-chrome` 通过（含 `export`「自绘内容样式随导出 SVG 带出」与 `scale`「无测量垃圾」探针）。实机（部署后重启）：**5/5 渲染节点带最新字体代际**（修法前 0）、`foW == natW` 全部相等、垂直溢出 0 / 无裁切、`dev:errors` 空；预测量统计 `canCache:true` ⇒ 稳态仍多数命中缓存，**无性能回归**。新增 `data-*` 只落在屏上渲染 DOM，不进文件（正文由 `mdRaw` 逐字回写）。
-
-  ⑧.1 **代码审查后的三项加固（2026-10-06 同日）**：
-  ① **补明耦合契约**（`core/measure-cache.ts` 文件头）：本模块**只改缓存键、不重建元素、不触发重排**。「键变了」→「真被重测」之间还差**重建时机**，由既有 `features/view.ts` 的 `installMathFontsHook`（`document.fonts` `loadingdone` → `remeasureSettledMathNodes`）提供。**该钩子若被移除/改名，本修复会静默退化为 no-op**（键变但无人重建 ⇒ 旧宽度留存 ⇒ 裁切复现）——正是 ⑤ 那次no-op 的同款陷阱，必须留档。
-  ② **属性名缩短为 `data-mmx-f`**：它进每个自绘节点的 `outerHTML`，即引擎缓存键**与导出 SVG 内容**，成本随导图规模线性放大。实测 `data-mmx-font-epoch`（19 字符）连值共 **31 字节/节点**（占小节点 `outerHTML` 的 7.5%、10000 节点 ≈ 310 KB）→ 缩到 `data-mmx-f`（10 字符）后 **22 字节/节点（-29%）**。取舍是「可读性 vs 每节点字节数」，改名前后各量一次。
-  ③ **`verify:visual` 新增两条不变式断言**（math 场景）：**机制存在性**（自绘内容盒必须带字体代际标记）与**宽度不变式**（内容盒底边不得超出 `foreignObject` 底边 >0.5px）。⚠ 无头环境**无真 MathJax**（K85⑥ 盲区），「字体渐进加载 → 宽度陈旧」这条触发路径在此**不可复现**，故固化的是两条可判定的不全等式。实测取数非空：**37 个内容盒、`overflowPx` 全为 0、100% 带标记**（用翻转阈值的方式验过断言不是空过）。
-
-  ⑧.2 **实机验收的操作陷阱（如实记录，勿重踩）**：`obsidian open path=<导图>` 会**重建 leaf**，把已渲染好的导图打空（实测：重启后 `smd:5` 已渲染，一执行 `open` 即变 `smd:0` 且 `mindMap` 实例为 null，`onLoadFile` 不落地、无任何报错）。**正确姿势：重启 Obsidian 后直接测量，不要再 `open`**；否则会误判为功能缺陷。同类症状此前已用 A/B（把src 还原到 HEAD 重建、构建失败故 `main.js` 未变）证明与本改动无关。
-
-  ⑨ **未闭合项（如实记录）**：原始坏态依赖「预测量发生在字体未就绪窗口」的时序竞态，**本轮未能按需稳定复现**，故修复有效性由「机制 + 不变式（`foW == natW`、零裁切）」证明，而非「复现→治愈」证明。回归夹具 `math-verify.mindmap.md` 保留在 vault。
-
-- [K115] **修复「代码块复制按钮常态压住首行约 2 个字符」：改为悬停显形（对齐 Obsidian 原生）+ 定位改逻辑属性**（2026-10-06 用户截图 + 运行中 `app.css` 实测取证）：
-
-  ① **现象与量化**：复制按钮绝对定位在代码盒右上角（`top:6/right:6`，20×20），而代码盒 `padding` 是 `10px 12px`、`pre` 的 `padding-right` 实测 **0** ⇒ 按钮覆盖到距边 26px、pre 从 12px 起算 ⇒ **重叠约 14×16px（≈首行 2 个字符）**。实机`elementFromPoint` 确认落点即按钮，非误判。
-
-  ② **原生权威依据（运行中 `app.css`，非记忆）**：
-     `.markdown-rendered pre:not(:hover) > button.copy-code-button { display: none }`（11854）
-     与 `.markdown-rendered button.copy-code-button { position:absolute; top:0; inset-inline-end:0; … }`（11857）。
-     ⇒ 原生用 **`display:none`**（不占布局、不可聚焦、不参与命中测试）、**逻辑属性**、且**不为按钮预留任何 padding**——**原生同样允许遮挡**，靠 hover 才出现来避免常态遮挡。
-
-  ③ **否决的三个替代方案**：
-     - **外扩按钮 + 节点边框右移**：要**改变内容自然宽** ⇒ 换行变化 ⇒ **把 K114 刚修好的「`foreignObject` 宽度 ≠ 内容自然宽 ⇒ 裁切」风险请回来**，且导出图会留一条空白带（按钮已隐身但空间仍在）。**这是唯一会重新引入已修 bug 的方案**。
-     - **`pre` 加 `padding-inline-end` 预留**：只给首行预留会让后续行满宽 ⇒ **视觉不对称**；给全行预留则内容区变窄 ⇒ 可能增加换行（同上耦合）。
-     - **绝对定位到代码盒外侧**：**物理不可行**——`foreignObject` 是 `overflow:hidden`，移出内容盒即被裁。
-     - （附否决的变体：`opacity:0 + pointer-events:none`，不如 `display:none`——必须额外加 `pointer-events` 才不挡鼠标，且样式表失效时「透明但存在」= 功能失效，比遮挡更糟。）
-
-  ④ **落地形态（一石三鸟）**：
-     `@media (hover: hover) { .tmm-codeblock:not(:hover) > .tmm-code-copy { display: none; } }`
-     - 桌面（`hover:hover`）：`:not(:hover)` 隐藏 →悬停显示；
-     - 触屏/移动（`hover:none`）：**整条规则不生效 ⇒ 按钮常显**，无需另写降级块；
-     - **默认态仍留内联** ⇒ 样式表未加载时**退化回改动前的遮挡**（而非「功能消失」），降级方向安全。
-     另把 `CODE_COPY_BUTTON_STYLES` 的 `right:'6px'` 改为 **`insetInlineEnd:'6px'`**（对齐原生 `inset-inline-end`，修 RTL 不镜像）。
-
-  ⑤ **hover 宿主为何是 `.tmm-codeblock` 而非 `pre`**：原生按钮是 `pre` 的**子元素**，本插件按钮是 `.tmm-codeblock` 的**兄弟**子元素（`buildCodeBlockElement` 先 `appendChild(button)` 再 `appendChild(pre)`）⇒ 照抄原生的 `pre:not(:hover) > button` **永不命中**。已由契约测试锁住。
-
-  ⑥ **导出为何仍需 JS 隐身**：导出 SVG **不含 styles.css** ⇒ 悬停规则不生效 ⇒ 按钮在导出图里是常显态，`hideCopyButtonsInExportSvg`（`features/node-codeblock.ts`）**仍是必需的第二道保险**，未因本改动而变成冗余。
-
-  ⑦ **⚠ 已知行为变化（与原生一致，可接受）**：`showCopiedFeedback` 的 ✓ 反馈持续 1.2s，而按钮现在 hover 才显示 ⇒ **用户在 1.2s 内把指针移出代码块，✓ 立即不可见**（改动前恒显 ⇒ 一定可见）。
-
-  ⑧ **⚠ 已知盲区**：悬停行为**无法被自动化门禁覆盖**——`verify:visual` 的 `code` 探针用合成 `MouseEvent`，**绕过命中测试**（`display:none` 照样能触发）；`lint:css` 只验语法。防护依赖 ⑨ 的契约测试 + 实机 CDP `Input.dispatchMouseEvent` 手动验证（`mouseMoved` 可触发 `:hover`；但 `mousePressed/Released` 在本环境不送达，**故「真实鼠标点击」未能实机验证**，改用与探针同源的合成 click，覆盖同一 `node_click` 入口）。
-
-  ⑨ **门禁**：新增 4 条契约（`node-inline-content` 断言 `insetInlineEnd==='6px'` 且 `right===undefined`、`opacity`/`display` 均 `undefined`；`node-codeblock` 断言导出隐身仍必需 + **跨文件读 `styles.css`**（剥注释后）钉住悬停规则存在、用 `display:none`、宿主是 codeblock、且不用 opacity）。全量 `test` **1839 例**（61 文件）/ `build` / `lint` / `lint:css` / `check:dead-code` / `verify:visual --require-chrome` 全 exit 0。实机：常态 `display:none`、CDP hover 下 `display:flex`（20×20，距 pre 右缘 6px）、合成 click 后 600ms 出现 `✓` + `is-copied`、`dev:errors` 空；截图确认未悬停的代码块文本完整可见。
-
-  ⑩ **「外观内联却新增类规则」不矛盾**（防后人误删规则）：「类规则口径不可靠」针对**外观**（形状/底色/圆角）——必须 100% 内联，因导出 SVG 只序列化元素自身、不含插件 styles.css；本条规则管**显隐**——导出时按钮本就被 JS 显式隐身，且悬停是纯交互态、无导出语义。**外观 = 必须内联（导出保真），显隐 = 必须走类表（屏上交互）**。
-
-- [K116] **代码块原生化：接官方 `loadPrism` 做语法高亮 + 补三处渲染缺口**（2026-10-06，官方帮助库与 `obsidian.d.ts` 取证 + 用户确认路径 A）：
-  ① **官方口径与路径选择**：Obsidian 帮助「Basic formatting syntax §Code blocks」明写**阅读视图用 Prism**、Source / Live Preview 不用。导图节点是阅读视图**同级的展示面** ⇒ `loadPrism()` 就是正路。**不选**「整段交回 `MarkdownRenderer.render`」：`registerMarkdownCodeBlockProcessor` 的官方 doc 明写 *"change how the document looks in reading mode"*（**只作用于阅读视图管线**），且 `MarkdownPreviewRenderer` **只有 register / unregister、没有读取/枚举已注册处理器的 API** ⇒ 想让 dataviewjs 一类第三方语言处理器生效只能整段交回宿主管线，代价是导出离屏克隆里没有该管线（必然退字面）、异步破坏「同步纯 DOM、零监听、可单测」契约（`node-inline-content` 模块头）。**已知取舍**：第三方语言处理器在导图节点里不生效（已与用户确认本批不做）。
-  ② **与 `platform/math-jax` 的差异必须成对阅读**：`Prism.tokenize` 是**同步纯函数**，产物就是 token 元素树 ⇒ 数学通道的**四件重活一件都不搬**：不搬字体就绪（无私有区码点）、不搬样式 flush（无塌缩态）、不搬就绪判据（无零宽字符）、不搬挂载后补替换队列（`tokenize` 不需要元素已挂载）。**只保留两件**：产物缓存（`getRenderedCodeNodes`，消除「按字面测量 → 替换后溢出」窗口）与定稿回调（换的是**尺寸同步机制**，不是数学专属，故复用 `scheduleMathRemeasure`）。
-  ③ **token 用 `tokenize` 而非 `highlight`**：`highlight()` 返回 HTML 字符串，回读需要 `innerHTML`（注入面 + DOM 解析）；`tokenize` 给原始 token 流，可逐字走 `createTextNode`，**全程零 innerHTML**。
-  ④ **颜色必须「探测 + 内联」**：token 配色来自宿主 `app.css` 的 `.token.<类型>` 规则，而导出 SVG **不含 app.css**（K91/K99 口径）⇒ 不内联则导出图「有 token、无颜色」。探针是 **holder 自身的浅克隆**（同标签同内联样式）挂 `document.body`，**两次读数取差值**：空类名读「继承色」→ token 类名读「主题色」，**相等即不内联**（否则会把继承色冻进内联 style：屏上看不出问题，但换主题后不再跟随阅读视图、且导出图固化了该色）。
-  ⑤ **主题切换走 `refreshPrismTokenColors`**（`view.ts` 已有的 `css-change` 钩子，**无条件调用**——明暗未变的主题切换同样改色）：清两张缓存 + **就地改写屏上 token 的内联色**（不重建节点：改色代价 O(节点数)，重建还要走引擎逐节点测宽）。产物缓存必须一起清，否则重建命中旧色克隆、而就地改写此时已跑完、救不回来。
-  ⑥ **顺带补的三处既有缺口**（本批同修）：**`~~~` 围栏渲染侧不识别**（解析层 `md-outline.classifyLines` 认 `` ` ``{3,} 与 `~`{3,}，渲染层 `MARKUP_RE` 只认反引号 ⇒ 波浪号围栏退化成普通文本；两侧口径裂缝）；**语言码此前被丢弃**（`splitFenceInfo` 返回的 `lang` 在调用点只解构 `code` ⇒ 无从高亮，现贯通为 `InlineSegment.lang` + `code.language-*`，白名单见 `core/constants.normalizeFenceLanguage`）；**缩进式代码块无视觉通道**（官方帮助把 Tab / 4 空格块与围栏块并列，此前在显示层被 `trimEdges` 剥掉缩进、渲染成普通文字；现按 CommonMark 走同一块级通道并剥 4 空格/1 制表符，**已知边界**：列表项内的缩进块拿不到缩进——解析层把列表续行的行首缩进剥掉了，故维持原样）。
-  ⑦ **门禁**：`tests/prism-code.test.ts`（20 例：`hasOwnProperty` 守卫 / 四种失败面保留字面 / 嵌套 token 与别名 / 颜色差值探测与正负缓存 / 产物 FIFO / 主题刷新 / popout 属主窗口 / 探针挂载宿主）+ `node-inline-content` 新增 14 例（语言类、缓存命中同步放置、无语言不空跑、缩进块通道与两条不误判）；`verify:visual` 的 `codeblock` 场景加两条断言（`code.language-js` 已就位 + **无 Obsidian 运行时时必须停在字面、不得渲染空白**）。
-
-  ⑨ **代码审查（2026-10-07）发现并修复的两个 Major**（评审把「全绿」判为「测试盲区」——两处都恰好落在 fake 桩测不出的事实上）：
-  - **颜色差值探测的基线取自错误继承链**（潜伏、主题相关）：基线原本在 `document.body` 上读，等于 `--text-normal`；而真实 `<code>` 继承的是 `.tmm-codeblock` 的内联 `color: var(--code-normal, …)`。在「`--code-normal ≠ --text-normal` 且该 token 类型未被主题着色」的主题上，**两次读数不等 ⇒ 把正文色误内联**（屏上偏色、换主题后不再跟随阅读视图、导出图固化该色）。实机证据：默认主题两者同为 `#222222`，故**该主题下不可见**——即「前提从未被证伪过」。修法：探针挂到 **holder 自身的父节点**（`context.parentElement`），与真实元素同继承链、`.markdown-*` 类作用域与自定义 CSS 片段全部生效；同一 task 内挂→读→移除（无绘制、无闪烁；vendor 无 `MutationObserver`，引擎不受影响）。同时给颜色缓存加**负缓存**（未着色类型的 `null` 也缓存，避免按节点数放大的重复探针）。
-  - **代码块挂在数学专属的尺寸同步流水线上，兜底与告警都不认它**：`flushMathRemeasure` 的反查兜底是 `findNodesByMathProducts`（选择器 `.mindmap-node-inline-math, .mjx-container`）。代码块 holder 随全树重建脱离时，兜底**捞不到它**；而只要图里存在数学节点，`nodes.length > 0` 就让**本批代码块被静默跳过、不重测也不告警**（foreignObject 仍是按字面量的尺寸 ⇒ K114 同类裁切）——正是 K85 ① 列为教训的失效模式。修法三件事：① `findNodesByMathProducts` → **`findNodesByContentProducts`**，选择器补第三通道 `.tmm-code-hl`；② 告警文案改中性（「自绘内容节点（公式/代码块）」）；③ `scheduleMathRemeasure` / `flushMathRemeasure` / `pendingMathRemeasure` / `mathRemeasureNodes` / `deferredMath*` / `retryDeferredMathRemeasure` / `remeasureSettledMathNodes` 全部改中性命名（`…Content…`），避免下一个接入者按名字误以为数学专属（`installMathFontsHook` / `mathFontsHookInstalled` 保持原名——它们确实只服务 MathJax 字体）。**兜底仍是过包含的**（K100 既有边界）：holder 彻底消失**且**其产物也不在活 DOM 时仍会被静默跳过，未改设计，已在代码注释登记。
-  - 顺带修：popout 窗口下 `window.Prism` 取不到（改按 holder 属主窗口反查，与 `math-jax` 的主窗口边界同款但零成本可修）、缩进块显示文本裁掉尾部换行（与围栏块 `trimEdges` 口径统一）、`prism-code.test.ts` 的 document 桩补类型（`FakeDocument`）。
-
-  ⑪ **导出体积的前瞻记录（本次刻意不做）**：`data-mmx-f`（K114，22 字节/节点）会随live DOM 进入导出 SVG。本轮**核实后决定不剥离**——`view-export.ts` 只有 `exportPNG`，SVG 是引擎栅格化后的**瞬时中间态**（`downloadBlob`/`downloadDataURL` 落的文件名是 `.png`），剥离对用户可见收益为零，却要新增一条导出 transform + 测试 + 索引登记，净负收益。**若将来新增 SVG/PDF 导出入口，须一并 `removeAttribute('data-mmx-f')`**（此时它才是实打实的体积与信息泄漏）。
-
-- [K117] **减法批次：删重复入口与重复判定，四项设置收口（2026-10-09，用户「落地减法」指令 + 同类插件横评结论）**：
-  ① **自动拆分混排双链默认关**（原默认开）：拆分＝把行内链接抽成子节点＝**结构性改写用户文件结构**，
-  而自绘节点已能让一行内每枚链接各自可点（K53 / 方案 B 的 Phase 1），该结构性补偿不必默认发生。
-  批量入口仍是显式命令 `mindmap-split-links-all`（不受设置约束）；存量 `data.json` 里为 `true` 的保持开启。
-  回归：`tests/settings.test.ts` 的「减法护栏 + 产品决策型默认值」例把该默认值钉死（翻转必须是显式动作）。
-  ② **「新建导图」双入口合并**：删除 `src/features/file-creator.ts`（注入 file-explorer「新建」菜单）——
-  同一动作由官方 `file-menu` 的**文件夹右键项**承担（`main.ts` 的 `TFolder` 分支，一直是公开 API 通道），
-  该注入只为「右键文件夹」多给一个入口却依赖未公开 `view.fileCreator`。私有触点由四处降为三处（K39 已同步），
-  `CORE_VIEW_TYPE.FILE_EXPLORER` 随之删除。
-  ③ **`autoUpdateLinks` → 读官方设置**（`platform/vault-prefs.updatesInternalLinksOnRename`，取 `!== false`：
-  该键在用户没动过开关时**不存在**于配置里，`undefined` 必须读作「开」，否则升级后引用更新会静默失效）。
-  为什么要读官方而不是各存一份：本插件与核心会**同时**改写同一批引用（核心改磁盘、本插件改内存树），
-  两侧开关不一致就会出现「核心改了、本插件又写回旧值」的互相覆盖。**本插件仍必须自己更新一遍内存树**
-  （不是重复实现）：核心只改磁盘，而本视图持有内存树快照，下一次自动保存会把旧链接写回去；两侧产出同一枚
-  新链接因此收敛，保存管线的外部改动检测是第二道保险。官方关掉该设置后**自己会问是否更新**（Settings.md），
-  故本插件**不再弹 Notice**（避免同一事件二次提示，改 `console.warn` 留痕），`hasReferencesFor` 预检不变。
-  回归：`tests/vault-prefs.test.ts`（三读取器的默认值 / 非法值 / 方法缺失 / 抛错四条退化面）。
-  ④ **性能模式与阈值收成内部判据**：原为设置项（开关 + 100–2000 滑块），用户无法为「阈值取多少」建立
-  心智模型，而虚拟渲染在大图下总是更优、阈值之下本就不生效（无副作用）。现为常量
-  `PERFORMANCE_NODE_THRESHOLD = 500` + **缺省常开**；`CreateMindMapOptions` 的两键降级为**引擎级覆盖**
-  （`verify:visual` 的 perf-switch / count / bench 探针仍靠它们构造「阈值之上 / 之下」两种局面）；
-  无触发源之后控制器 `applyPerformance`（运行时切换）与视图的两键路由**删除**，`PERFORMANCE_THRESHOLD_MIN/MAX`
-  删除。回归：`tests/constants.test.ts` 判据 + `tests/engine-controller.test.ts` 护栏（创建选项不含两键、
-  控制器不再暴露 `applyPerformance`）。
-  ⑤ **`selfDrawPlainNodes` 去设置化 → 纯文本节点恒自绘**：接管判据收敛为「**段序列非空 ∨ 超长**」——
-  删掉 `rich`（`hasRichSegments`）与 `hidden`（`needsHiddenSyntax`）两个附带判定、其 `INLINE_MATH_RE` /
-  `ESCAPED_MARKUP_RE` / `INLINE_COMMENT_RE` 三个正则，以及段缓存的 `rich` / `hidden` 两个布尔字段
-  （缓存现在只存段序列，`segmentEntryOf` 直接返回段数组）。**行为等价性核对**：注释段被整段吞掉
-  （段序列为空）⇒「整行只有 `%%注释%%`」仍不接管（不会渲染出空节点）；转义 / 数学 / 围栏代码段本就是段，
-  判据覆盖不变；**含图节点仍由 `data.image` 提前拦下**（解析侧对行内首个可渲染图片一律写 `data.image`，
-  `md-outline.ts`），故「图片只走引擎图片通道」不受影响。代价（既有）：这类节点没有引擎内联编辑框，
-  双击走 `features/view-node-actions` 的内联编辑器 / 弹窗。回归：`tests/node-inline-content.test.ts` 的
-  接管判定例改为「纯文本也接管」并保留四条边界（空文本 / 含图 / 整行注释 / 纯空白）；
-  `scripts/verify-visual.mjs` 的负载与 `--bench-open` 场景不再传 `selfDrawPlain`（恒自绘即生产路径）。
-  ⑥ **有意不做（留给后续单独决策）**：`Ctrl`/`Option` 拖入写 `file:///` 绝对链接、`platform/nav-history`
-  （侧键历史卫生）、自绘文档页图标 + URL icon-only 通道的简化——三者都动用户可感行为或保真面，不在本批。
-
-- [K118] **引擎图标通道的可达性：自绘遮蔽 prefix / hyperlink / attachment（2026-10-11 实机复核 + 门禁修复）**：
-  ① **事实**：引擎 `createNodeData` 在节点有自绘内容时**早退**——vendor 原文
-  `if (this._customNodeContent) { mt(this._customNodeContent); return; }`，其后才是
-  `image / icon / text / hyperlink / tag / note / attachment / prefix / postfix` 的创建。
-  故**任何**自绘节点都不再产生这些默认内容。自 2026-10-09（K117⑤：`selfDrawPlainNodes`
-  去设置化、含文本节点一律自绘）起，三条链接图标通道只剩**插件主动让给引擎**的形态可达：
-  空文本（URL / `<url>` 单独成节点）与含图节点。
-  ② **实机复核（2026-10-11，Obsidian CLI + 真实库）**：库内 `feature-verify.mindmap.md`
-  的 `[[笔记]]` 节点渲染为 `<a class="internal-link" data-href="笔记">笔记</a>`，**无**文档页
-  图标；`[[报告.pdf]]` 无回形针；而临时节点的空文本 + `mdWikiLinkpath` / `hyperlink` /
-  `attachmentUrl` 分别得到 文档页图标 = 1 / `target="_blank"` = 1 / `svg[cursor=pointer]` = 1。
-  **0.1.9（上一版 `main.js` sha `70e40c52…`）与当前批行为完全一致** ⇒ 属**既有**行为
-  （自 2026-09-25 `selfDrawPlainNodes` 默认开即如此），本批只是把「唯一逃生口」（设置项）删掉。
-  ③ **影响面**：`docs/markdown-mindmap-standard.md` 原表述「双链指向文档 = 自绘文档页图标」
-  与实际不符，已在该表加⚠️可达性说明；README 的「keeping the dedicated document icon」同理。
-  **是否把文档页图标 / 回形针恢复进自绘内容（例如在自绘内容里渲染内联图标）属待定产品决策**——
-  恢复会动节点观感与测宽、需要内联样式与导出契约，不在本次门禁修复批内。
-  ④ **门禁（`verify-visual`）随之修正**：`doc` / `url` / `attach` 三场景改用**空文本**形态
-  （唯一可达通道），新增 `docnode` 场景（生产形态 `[[笔记]]`）**反向锁定**「自绘 + 无引擎图标」；
-  场景探针改为**按子节点 group 定位**（场景根节点文本 = 场景名，且现在同样自绘，容器级
-  `querySelector` 会先命中根 ⇒ 断言读错节点），几何改读引擎节点字段（`data-width` 只由引擎
-  文本通道写入）、图标在子节点 group 内计数。另：`handle` 探针增加「空文本节点 0 手柄」的控制组，
-  `perf` 探针的引擎侧改用空文本 + hyperlink（否则两侧都全量自绘、A/B 失效，引擎侧预算上限
-  实测 13.0/节点 → 16），`scale` 探针判据改为「自绘数 = 节点总数（67）」。
-
-> **教训**：门禁的**场景数据必须与生产形态同形**。`doc` 场景原先省略 `mdRaw`（只剩纯文本 +
-> `mdWikiLinkpath`）且场景块不传 `selfDrawPlain`，于是它验证的是「非生产配置 + 退化数据形态」，
-> 图标通道的断言长期为**假契约**——自绘判据一改就整片转红，且掩盖了图标被自绘遮蔽这一事实。
-
-- [K119] **编辑含图节点会把图片搬到行尾：无显示名 token 缺「原位信息」（2026-10-12 实机实测 + 锚点修复）**：
-  ① **症状**（实机复现，非理论推演）：任何让节点进入「已编辑」态的操作——双击内联编辑、引擎编辑框、
-  **图片拖拽调宽**（改尺寸使 `rawOk` 失败）——都会把行内图片挪到**行尾**并多出一个空格：
-  `- 前后文：前 ![[图|200]] 后` 编辑后 → `- 前后文：前 后改 ![[图|260]]`；
-  一行两图更糟：`- 双图：![[a|200]] 与 ![[b|150]]` 调宽后 → `- 双图： 与 ![[b|150]] ![[a|260]]`（首图被摘出原位）。
-  ② **根因**：`composeFirstLineSegmented` 靠「在 `data.text` 里 `indexOf` token 的**显示名**」做原位替换，
-  而**首图与 icon-only URL 不向显示文本贡献任何字符**（前者以节点图呈现，后者只留图标）⇒ 查找必然 `-1`
-  ⇒ 落进 `pending.push(form)` 的尾插分支（`line + ' ' + tail`）——顺序被改写、空格凭空多出。
-  解析侧此前**根本不登记**这两类 token 的台账段（`md-inline.test.ts` 有「首枚不登记」「首图不登记」两例
-  把该行为写成了契约），合成侧自然无从下手。
-  ③ **修复（`MdTokenSegment` 增锚点族 + 合成侧增插入点分支）**：
-  - 解析侧（`md-outline.tokenAnchors`）：首图与 icon-only URL 也登记段，`text` 为空串，
-    另记 `before` / `after`（token 左右**紧邻**的非空白文字 run，截断 32 字符）与
-    `sepBefore` / `sepAfter`（该侧是否有空白分隔）。左右均按**相邻 token 边界**裁剪——
-    否则 `前 ![[a]] 与 ![[b]] 后` 里 `a` 的右邻会把 `![[b]]` 一起吞进锚点，反查时那串文字
-    在新文本里根本不存在（`b` 的显示名才是），必然失配。
-  - 合成侧（`md-serialize.anchorInsertPoint` / `insertionForm`）：`slot.start === slot.end` 即**插入点**
-    （不改动文本，只把 token 放进去），与替换型 slot 共用同一遍拼装、按 `start` 升序输出。
-    `sepBefore` 为真时补一个前导空格——原文那个分隔空格在节点文本里被折叠掉了
-    （`标注 ![[图|200]]` 的 text 只有 `标注`），不回补就写出 `标注![[图|250]]`。
-  ④ **邻接一致性校验是关键**（少了它会产出错位）：原文里 token 与锚点之间是什么形态，新文本里必须仍成立。
-  `- 对比 https://a.com 与 [[B]]` 被改成 `对比结果` 后，短锚点 `对比` **仍能在 `对比结果` 里命中**
-  ⇒ token 会被塞进「对比|结果」中间。加校验后拒绝该命中、回落尾插（`对比结果 <https://a.com> [[B]]`）。
-  ⑤ **兜底**：一枚都没能原位定位（`slots` 为空）时 `composeFirstLineSegmented` 返回 `null`，
-  交回 `composeFirstLine` 的尾插路径——后者的 token 顺序取自 `inlineTokens`（按 `mdRaw` 出现位置），
-  比分段路径的「首链先、首图后」权威（纯图行插入链接即走这里：必须是 `![[a.png]] [[笔记]]` 而非反过来）。
-  ⑥ **回归**（`md-roundtrip.test.ts` 新增 5 例 + `md-inline.test.ts` 台账形状 2 例改写）：
-  后置文本 / 紧贴前缀 / 一行两图 / 锚点被改写回落尾插 / 图 + icon-only URL。
-  既有用例中把旧行为写成契约的 3 例（「无显示名的首图尾插」等）已按新契约改写。
-  ⑦ **教训**：「无显示名 ⇒ 位置信息不在文本中 ⇒ 只能尾插」是一条**被注释合理化了很久**的伪结论；
-  真正缺的是「把位置用**锚点**独立记下来」。当一处代码的注释开始用「位置信息不在文本中」解释
-  一个用户可见的错位时，该把这句话当成缺陷线索而不是设计依据。
-
-- [K120] **星号粗体/斜体不能嵌套：`bold`/`ital` 的标记体写死排除 `*`（2026-10-12 实机实测 + 不对称修复）**：
-  ① **症状**：`**外层 *内层* 尾**` 整段退化为字面（屏幕上露出裸 `**`），而 `**外层 _内层_ 尾**`
-  正常渲染为粗体内斜体 —— 同一语法、两种定界符、行为分叉。
-  ② **根因**：`MARKUP_RE` 的 `bold` 分支标记体是 `[^*\n]*`（**排除 `*`**），`boldU` 是 `[^_\n]*`
-  （不排除 `_`）——下划线版靠「定界符只管自己那个字符」天然支持嵌套，星号版被自己排除了。
-  ③ **修复（两分支各自收紧/放宽到「恰好够用」）**：
-  - `bold`：`\*\*(?<bold>\S(?:(?!\*\*)[^\n]*\S)?)\*\*` —— 允许体内出现**单个** `*`、仅禁止 `**`。
-    既放行内层斜体，又不会让外层粗体越过下一对 `**` 乱配对（`**a** b **c**` 仍是两段粗体）。
-  - `ital`：加「不与 `*` 相邻」的双向守卫 `(?<!\*)\*(?!\*)…\*(?!\*)`，并允许体内出现**成对** `**`
-    （`(?:[^*\n]|\*\*[^*\n]*?\*\*)*`）。`*斜 **粗** 尾*` 由此得到 `italic` 包 `bold` 的嵌套，
-    与 Obsidian 一致；而 `**粗**` 不会再被 ital 从内部凑出假的 `<em>粗</em>` 把一行切碎。
-  ④ **刻意不做的**：`*斜 **粗** 尾*` 这种「星号同时作两层定界符」的完全通用解需要定界符栈
-    （CommonMark 的做法），本模块是单遍正则 + 递归扫描（`MAX_MARKUP_DEPTH = 2`），不为此引入栈。
-    下划线版无此歧义，不受影响。`***粗斜***` 仍是独立分支。
-  ⑤ **回归**（`node-inline-content.test.ts` 新增 5 例，含既有 1 例改写）：
-  星号版一层嵌套 / 不跨越下一对 `**` / 斜体包粗体 / 游离单 `*` 不乱配对 / 下划线版不受影响。
-  ⑥ **教训**：`*` 与 `_` 两条分支的**标记体字符类必须成对审阅**——一处改、另一处不改，
-  就会长出一条用户可见的行为分叉，且分叉会被「反正 `_` 版能用」的注释掩盖过去。
-
-- [K121] **触发判据从文件名后缀改为 frontmatter 声明：`.mindmap.md` 退役**（2026-10-12 用户裁决）：
-  ① **判据**：frontmatter 键 `Mindmap` 值为 `mindmap`（单键口径见 K14）。判据经官方
-  `MetadataCache.getFileCache(file)?.frontmatter` **同步**读取——文件菜单回调、命令
-  `checkCallback`、vault 事件这些只能同步返回的调用点因此**无须异步化**；缓存未就绪（刚创建 /
-  刚改名）或读取失败时返回 false，由组合根监听 `metadataCache.on('changed')` 调
-  `MindMapAutoOpener.activateDeclaredLeaves()` 补判（**只补「0→1」**：删掉声明不会把正在
-  编辑的导图视图抽走，声明只决定「打开时怎么进」）。
-  ② **删除面**：`constants.ts` 的 `MD_FILE_SUFFIX` / `hasMindMapMarker` / `stripMindMapStem` /
-  `withMindMapMarker`（共 6 个导出，判据改为 `domain/mindmap-property.ts` 唯一实现）；
-  `document-service` 的 `isMdDocument` 出参；`view.ts` 的 `mdDocumentMode` / `isMdDocument()`
-  契约成员——工具栏「切换回 Markdown」改为**恒显**（本视图承载的任何 md 都能切回编辑），
-  加载后重建工具栏的分支随之删除。虚拟根名直接取 `file.basename`。
-  ③ **打开方式不再存 data.json**（`ViewStateStore.getOpenAs/setOpenAs`、`setOpenAsPreferenceHook`
-  退役）：**「以 Markdown 打开」= 持久降级**——走官方 `FileManager.processFrontMatter` 把声明
-  **改写为 `Mindmap: Markdown`**（`domain/mindmap-property.setMindMapProperty`：顺带收敛同名
-  大小写变体，不碰旧键），此后不再自动进导图
-  视图。三个入口同语义（文件右键 / 工具栏 / 命令 `mindmap-back-to-markdown`）；代价是
-  **没有「临时看一眼源码」的轻量入口**（声明式模型的自觉取舍）。降级必须**先写属性再切视图**：
-  卸载时的保存按 K45 取**磁盘现值**回贴文件头，顺序颠倒会把 `Markdown` 覆盖回 `Mindmap`。
-  ④ **任意笔记入口**：「以思维导图打开」命令与文件右键对**任意 `.md`** 开放（消除「必须先改名 /
-  新建」这一最大采纳摩擦）；右键项按声明**互斥**显示（声明为导图 → 「以 Markdown 打开」；
-  其余 → 「以思维导图打开」）。手动开为导图的普通笔记会**先经 `declareAndOpenAsMindMap`
-  把声明写入 frontmatter**（无声明→补**种子布局**的标准值，即设置「默认布局」对应的属性值，出厂即 `Mindmap: Mindmap`；已声明→不重序列化），
-  即打开一次即正式成为导图、下次自动打开；此后**可编辑并回写**，但**不参与中心主题 ⇄ 文件名
-  同步**（见 K11）。降级/升级走官方 `processFrontMatter`，值随打开方式取 `Markdown`/`Mindmap`；
-  升级对已声明文件与降级对「已是 Markdown」文件均免写，避免每次打开都重序列化 YAML。
-  升级/降级回调内再做一次权威判据（防 MetadataCache 滞后导致的误判新增第二把键）。
-  **2026-10-28 单键化（破坏性断代，本节口径的唯一现行版本）**：声明键收敛为**单键**
-  `Mindmap`（键名大小写不敏感，值 `Mindmap` / 降级 `Markdown`），**与界面语言完全无关**；
-  旧键 `Type` / `类型` **完全不认**——不读、不写、不删、不迁移、不提示。原「改语言全库收敛
-  键名」的迁移（连同其值守卫与「按语言选键」函数）已**整体删除**：设置面板切语言
-  **不再触碰任何文件**（`refreshLanguageUi` 只刷文案）。存量旧键文件表现为「普通笔记」：
-  文件右键显示「以思维导图打开」，点一次即补写标准键、值取**种子布局**（出厂 `Mindmap:
-  Mindmap`；旧键原样留在文件里，插件不再管它）。收敛同名变体时写的是**文件已声明的布局**，
-  不是种子值，否则「缓存滞后 + 同名变体并存」会把用户已选的布局静默重置。
-  ⑤ **零兼容**：存量 `.mindmap.md` 不再被识别为导图——作为普通 md 打开、**内容零改动**，不会
-  损坏。改名 + 补属性的一次性迁移工具属本条的**第二阶段（P2）**，尚未落地。
-  ⑥ **教训**：判据从「文件名」（同步、无 IO）换成「内容声明」时，官方 MetadataCache 是唯一
-  同时满足「官方 API 优先」与「不把 7 个调用点异步化」的落点；**键名越多、读侧分支越多**，
-  跨语言与跨设备的「看不见的导图」面就越大——最终裁决是键名单一化（2026-10-28）。
-
-- [K122] **`mindmap` 代码块只读嵌入恢复（0.0.3 移除的能力回归，2026-10-13 用户裁决）**：
-  ① **定位与形态**：普通笔记里写**语言标识为 `mindmap` 的围栏块** = **只读导图预览**——不回写文件、
-  不参与保存管线、**不写 `data.json`**（无 `ViewStateStore` 触点）；块体与 `.mindmap.md` 正文是
-  **同一份大纲语法**（标题 / 列表），解析走同一个 `parseMdOutline`，故不存在第二套格式。注册在
-  组合根（`registerMarkdownCodeBlockProcessor` + `ctx.addChild`），渲染逻辑全在
-  `features/mindmap-codeblock.ts`。**语言键沿用 0.0.1 的 `mindmap`**
-  （`core/constants.CODE_BLOCK_LANGUAGE`）——存量旧笔记无需改动即重新可用；与第三方插件抢注同键
-  的行为官方未文档化，已登记为文档风险（见 `docs/markdown-mindmap-standard.md`）。
-  ② **只读 = 引擎原生 `readonly`，不是自造开关**：0.0.1 用的是自造 `forCodeBlock`（不注册
-  `Search`/`DoExport` + 换代码块主题）；上游本就有 `readonly`（`constants/defaultOptions.js:13`），
-  消费点覆盖**全部命令**（`core/command/Command.js:106/137/157`）与双击进编辑框 / 拖拽 / 多选 /
-  图片调宽 / 画笔，而**渲染不受影响**。插件侧为真时**不注册任何交互插件**：`Search` /
-  `KeyboardNavigation` 经 `KeyCommand.bindEvent` 在 `window` 上注册 keydown（`KeyCommand.js:88`），
-  会与宿主笔记抢 `Ctrl+F` 与方向键；`TouchEvent` 抢触屏手势；`DoExport` 在嵌入里没有入口。
-  ③ **滚轮必须归宿主页面**：引擎 `Event.onMousewheel` 无条件 `stopPropagation + preventDefault`
-  （`core/event/Event.js:148-150`）⇒ 不拦就会把**笔记滚动卡死**在嵌入图上（指针悬在图上时）。
-  做法是在引擎容器**外**的 capture 阶段只 `stopPropagation`、**不** `preventDefault`：引擎收不到
-  wheel，浏览器默认滚动照常发生。备选「`pointer-events:none` 穿透」会一并杀掉节点内链接的悬停与
-  点击；「vendor 补丁加选项」只在将来要求嵌入内普通滚轮**平移**时才值得（要走 `patches` →
-  `build:vendor` → 两处 sha256）。
-  ④ **超限不建引擎**：节点数 > `CODE_BLOCK_MAX_NODES`（500）时降级为**只读缩进大纲 + 可见提示行**
-  ——一篇笔记可有多个块，每块一个引擎（含离屏测量、MathJax/Prism 注入）会让打开成本随块数线性叠加。
-  阈值**不复用** `PERFORMANCE_NODE_THRESHOLD`（那个是「虚拟渲染」阈值，超了照样渲染）。
-  ⑤ **共享收口（一处都不另写）**：自绘内容装配 → `features/node-content-factory.ts`（视图与嵌入
-  同工厂，宿主相关的只有 `isResolvedLink` / `onSettled`）；定稿尺寸同步 → 复用
-  `ContentRemeasureSession`（宿主 = RenderChild）；链接跳转与未解析弱化 → `view-link-navigator`
-  （入参从整张 `MindMapViewContext` 收窄为 `MindMapLinkHost { app, file.path, lang }`——两个函数
-  实测只用这三样）；主题写入 → 新增防腐入口 `engine/mindmap.applyThemeConfig`（`isDarkTheme` +
-  `getThemeConfig` 的**合成只此一处**，engine-controller 与嵌入共用）；resize →
-  `engine/mindmap.resizeMindMap`。
-  ⑥ **刻意不复刻视图的两处机制**（各有理由，勿"顺手统一"）：**不加代际锁**——`RenderChild` 一次性，
-  块体重渲即换新实例、unload 断开观察器，不存在文件视图那类「过期 tree 覆盖当前文件」的跨文件竞态；
-  **不建「活动嵌入注册表」**（旧方案稿的中央 `css-change` 分发）——RenderChild 的官方生命周期已保证
-  摘除，中央表是第二份收口，改为每实例一条 `registerEvent(app.workspace.on('css-change'))`。
-  ⑦ **降级与失败一律可见**：空块体 → 提示行；解析 / 引擎异常 → 清半初始化实例
-  （`cancelEngineTimers` + `destroyMindMap`）+ 块内提示行 + `console.error`（**不** `notifyError`：
-  一篇笔记可能有很多块，逐块弹通知会刷屏，口径同决策表「内部错误走 console」）。
-  ⑧ **回归**：`tests/mindmap-codeblock.test.ts` 16 例（展示树折叠 4 例喂真实 `parseMdOutline` 产物、
-  降级边界、语言键锁定、`readonly` 不注册插件 / 可编辑视图仍注册、`applyThemeConfig` 合成口径、
-  `measureContentFitToWidth` 只缩不放与留白双向扣除、styles.css 类名与挂载点高度链）+
-  `verify:visual` 新增 `embed` 探针（4 节点真渲染、**挂载点随内容**、无节点越界、computed
-  `resize: none`、**左键拖画布后节点位移 0**、**合成 wheel 的 `defaultPrevented === false`**、
-  **容器收窄即重排**（640px 的宽内容嵌入收窄到 240px：高度变小且无节点越界）、
-  601 条平铺 ⇒ 只读大纲 + 提示行含 602/500）。2026-10-13 **实机复核**（库内真笔记，
-  `obsidian eval` 驱动）：阅读视图 4 节点 / 699px→80px、收窄 300px→63px、回弹 80px，
-  两次都无节点越界；后台标签激活（零尺寸等待路径）同样挂载；`obsidian dev:errors`
-  无新增条目；嵌入渲染前后 `data.json` 哈希不变（写盘来自导图视图的视口持久化）。
-  ⑨ **形态对齐 Obsidian 里的 Mermaid（2026-10-13 追加，用户「保证内容完整显示、而非可调节
-  可移动内容」）**：从本机 `obsidian.asar` 抽出官方 `app.css` / `app.js` 取证——
-  **官方 Mermaid 配置**是 `startOnLoad:!1, securityLevel:"strict", themeVariables:{fontFamily:
-  "var(--font-mermaid)"}, flowchart/sequence/git/er:{useMaxWidth:!1}, gantt/journey/class/state/
-  pie:{useMaxWidth:!0}`（**mindmap 类型未被覆盖** ⇒ 走 Mermaid 缺省 `useMaxWidth: true`，即 SVG
-  `width:100%` + `max-width: 原宽`：**只缩不放**）；`app.css` 侧对 `.mermaid` 只有
-  `.mermaid-wrapper{display:flex;flex-direction:column}`（**无 max-height、无固定高度**）与
-  实时预览的 `overflow-x:auto`，**没有任何 resize 手柄或平移语义**（另有 `.mermaid-wrapper
-  .is-guarded` 的**安全守卫卡**——那是 securityLevel 的「允许渲染」按钮，与尺寸无关）。
-  据此定形态：**① 容器高度随内容**——新增 `engine/mindmap.measureContentFitToWidth`
-  （`scale = min(1, 可用宽/内容宽)`，高度 = 原高 × scale + 两侧留白；性能模式走数据层几何、
-  常规走 DOM rbox 除以当前比例还原）与泛化版 `centerContentAtScale`（由
-  `centerContentAtFullScale` 抽出，视图仍只走 `scale=1` 入口）；**② 高度是输出**，故嵌入
-  **不得**用 `fitMindMap`（双轴适配会把高度当输入，自相矛盾）；**③ 高度变了要请引擎重排**
-  （`resizeMindMap`）——引擎只看创建/`resize()` 时的画布尺寸，而布局根落位与性能模式的
-  视口剔除判据都读它，不重排会把高图判成「视口外」而裁掉可见节点；重排事件里高度已稳定
-  （比例只依赖宽度）⇒ 最多多跑一轮收敛；**④ 不可拖动**——新增 `enableViewDrag`（原生
-  `isDisableDrag`，`View.js:34/44` 切断左键与中键拖动画布；`readonly` **不含**这一层，
-  2026-10-13 实测遗漏）；**⑤ 不可调节**——删掉 `styles.css` 的 `resize: vertical` 手柄；
-  **⑥ 观察器先建且常驻，只认宽度变化，且重排隔一帧落**——`renderOrWait` **先**注册
-  `ResizeObserver` **再**试挂引擎：首帧同步挂载成功时也必须注册，否则高度口径锁死在首帧，
-  容器变窄则内容被 `overflow: hidden` 裁掉、变宽则留一片空白（旧形态是「挂载成功即早退」，
-  而这条路径恰是最常见的一条；2026-10-13 自查修复，回归由探针 `embed-resize-probe` 钉住）；
-  回调里过滤「只有我们自己写的高度变了」，否则自适应高度与观察器互触发不收敛；**「重建布局 +
-  重算高度」经 `deferFit` 推到下一帧**——在 RO 回调里同步写高度会让本次投递循环留下未投递的
-  通知，Chrome 记 `ResizeObserver loop completed with undelivered notifications`（实机
-  `obsidian dev:errors` 每个尺寸变化各一条，实测隔帧后消失；挂载路径保持同步，实机无此告警）；**⑦ 顺带补上块内代码块复制按钮**——把
-  `registerCodeBlockInteractions` 的入参从整张 `MindMapViewContext` 窄化为
-  `CodeBlockInteractionHost { mindMap, engineEvents }`（视图与嵌入共用同一份实现，
-  否则按钮是「看得见点不动」的死件）。
-  ⑩ **节点内链接点击**由 Obsidian 自身处理，**勿**再接 `view-wikilink` 的点击跳转
-  （2026-10-13 实机结论）：嵌入落在**笔记的 Markdown 预览容器内**，自绘锚点又是官方
-  形态 `a.internal-link[data-href]`，故核心的文档级委托直接命中——实机（vault 内临时
-  笔记，`a.click()` 合成点击）实测 `data-href="Note"` → 活动文件由测试笔记切到
-  `Note.md`、markdown 叶数 1 → 1（**同标签打开、无双开**）。再挂一份 `node_click`
-  跳转会让每次点击打开两次（本插件在自定义视图里必须自己接，正是这条差异的来源）。
-  ⚠ **隐藏副本**：同一块的渲染子会同时存在于**源码模式（live preview）的 `.cm-editor`
-  与阅读视图**（前者在阅读模式下 `clientWidth = 0`）——自动化探针/脚本必须把选择器
-  限定在 `.markdown-preview-view` 内，否则读到 0 尺寸的隐藏副本而误判「没渲染」
-  （本轮实机踩到）。0 尺寸副本**不建引擎**（零尺寸等待拦下），无额外开销。
-  ⑪ **实机验收（2026-10-13，vault 内临时笔记，测后已删除）**：小图（4 节点）挂载点
-  **699×80**（旧实现固定 360px 空框 ⇒ 已是随内容）、`resize: none`、无节点越界、
-  合成 wheel `defaultPrevented === false`、左键拖画布后节点位移 0、601 条平铺 ⇒
-  `engineMounted: false` + 大纲 + 提示「导图节点数 602 超过嵌入上限 500，此处仅显示大纲」、
-  `dev:errors` 无错误。
-- [K123] **节点内渲染 GFM 管道表（表格块 → 内联样式 `<table>`）**（2026-10-14，用户裁决 + 官方样式包实测取证）：
-  - **问题**：表格行在解析层就并入 plain 多行节点（`mdType: 'plain'`，见 `docs/markdown-mindmap-standard.md` §2.1 / §3.4），显示层只按「一个含 `\n` 的文本节点 + `white-space: pre-wrap`」折行 ⇒ 节点里永远是一串裸 `|`，没有任何产生 `<table>` 的代码路径。
-  - **路径选择（方案 A，用户确认）**：识别走新模块 `src/domain/pipe-table.ts`（纯逻辑、零依赖），装配走 `src/features/node-inline-content.buildTableElement`（表格段 `kind: 'table'` + 三张内联样式表）。**不选**官方 `MarkdownRenderer.render`（`obsidian.d.ts:6079` 可渲染表格）：异步 + 每节点 `Component` 生命周期会破坏本模块「同步纯 DOM、零监听、可单测」的契约，且导出离屏克隆里没有宿主管线、导出 SVG 不含 `app.css` ⇒ 表格线/对齐/配色全丢——与 K116 对代码块的同一取舍同源（那里已明确否决「整段交回宿主管线」）。
-  - **识别口径**：表头行 + 分隔行**成对**才成立；分隔行必须含**未转义 `|`**（借此把 setext 下划线 `标题\n---` 与 `---` 分隔线挡在门外——它们是解析层的既有语义）；外框管道可有可无；单元格内 `\|` 还原为字面 `|`；列数不足补空、超出截断；数据行遇空行、或不含未转义 `|` 的行即结束（不吞后续段落）。**围栏代码块 / 块级数学内的表格行不识别**：保护区复用显示层 `MARKUP_RE` 源码构造**独立实例**（不造第二份围栏判定，也不受该模块级共享正则 `lastIndex` 影响）；缩进代码行同样排除。
-  - **显示纪律**：结构 / 边框 / 内边距 / 表头底色 / 列对齐**全内联**（导出 SVG 不含 `styles.css` 与 `app.css`，K91/K99 口径）；表宽以内容盒为顶（`max-width: 100%` + 单元格 `overflow-wrap: anywhere`——用户裁决「不允许表格超宽撑爆节点」）；**不设高度上限**（代码块那套「限高 + 块内滚动」在导出克隆里会裁掉内容）；表格段**要么整张显示、要么整张不显示**（沿用链接段的截断口径，`clampSegments` 无需特判——表格段 `kind !== 'text'` 自然走 break 分支）。
-  - **官方实测（`resources/app.asar` 与 `obsidian.asar` 交叉 grep，两包零命中）**：官方样式表**没有** `th { text-align }`，也没有阅读视图的 `border-collapse` 规则（唯一命中是帮助浮层 `.overlay-help`）⇒ ① 未指定对齐的列**不写** `text-align`（`th` 走浏览器 UA 默认居中、`td` 左对齐——与阅读视图同源；写死左对齐反而会与阅读视图分叉）；② `border-collapse: collapse` 与表头底色是本插件的**画布取舍**（已在代码注释登记理由，不谎称「对齐阅读视图」）。无头 Chrome 里读到的计算值 `["center","right"]` 正是这条口径的实测锁定。
-  - **换行归属**：表格段**吃掉**与它相邻的边界换行 ⇒ 段序列 `text` 拼接 = 原文，编辑弹窗预览里表格独占行、不与段落粘连；渲染侧文本块因此不带多余换行（表格是块级元素，换行由它自己承担）。
-  - **边界（有意）**：单元格内不支持图片嵌入渲染（`image` 非空的节点整体不接管，K118 既有边界）与表格嵌表格；单元格是单行文本 ⇒ 其中不可能再切出表格段（递归天然终止）。
-  - **门禁**：`tests/pipe-table.test.ts` 17 例（正例 + 反例：setext / 分隔线 / 列数不等 / 非法分隔单元格 / 全空表头 / 错位表头 / `\|` 与 `\\|` 两种转义）；`tests/node-inline-content.test.ts` 新增表格段组 8 例 + 段类型契约定名从「仅两种 kind」更新为三种；`verify:visual` 新增 `table` 场景（`th`/`td` 文本、`tr` 数、计算出的边框/内边距/对齐、表宽不溢出内容盒）+ 导出产物断言（`<table>`、单元格内联边框/内边距、`text-align: right` 落进导出 SVG）+ **嵌入对照**（新挂 `map-embed-table`：视图与嵌入共用同一份装配 ⇒ 嵌入画布内也必须是 `<table>`）。
-
-- [K124] **修复「阅读视图进入导图后，切回 Markdown 恒落编辑视图」：视图状态读入/写回点覆写 `setState` / `getState`**（2026-10-15，CLI 实机源码取证）：
-  - **症状（用户报告）**：md 文档在**阅读视图**以导图打开，再「以 Markdown 打开」/「切换回 Markdown」后落在**编辑视图**；编辑视图进入时恰好正确（掩盖了缺陷）。
-  - **断裂 ①（读回链路恒失败）**：`openAsMindMap` 把进入前模式写进 `setViewState` 的 state（`{file, mdBackMode}`），读点却在 `onLoadFile` 里经 `leaf.getViewState()` 取——实机读出官方源码：`WorkspaceLeaf.getViewState()` 的 state **完全取自 `view.getState()`**（`{ type, state: e.getState() }`），而视图基类链 `View.getState()` 恒 `{}`、`FileView.getState()` 只回 `file` ⇒ **不覆写 `getState()` 自定义键就永远读不回**（恒回退 `'source'`；布局保存 workspace.json 同样丢模式）。实机取证：修复前 `leaf.getViewState().state` 为 `{"file":"…"}`。
-  - **断裂 ②（文件菜单硬编码）**：组合根「以 Markdown 打开」直接传 `'source'`，从不读进入前模式（实机：`getLeaf(false)` 就是当前导图 leaf，信息本就在手边）。同批修正为「**全库**查找该文件的导图视图 → `setActiveLeaf` 带到前台 + 复用 `backToMarkdown()`」——与工具栏/命令同语义；导图在后台标签时也命中（旧实现按活跃 leaf 判断，会顶掉当前标签页）。
-  - **修法（读入点前移）**：视图覆写 **`setState` 读入**（官方 `setViewState` 把传入 state 原样交给 `view.setState`——实机源码 `c = e.state || {}` → `n.setState(c, s)`，唯一权威来源；先于 super 的 `loadFile → onLoadFile` 装载落字段）+ **`getState` 写回**（`{...super.getState(), mdBackMode}`，官方字段不重复手写）；`onLoadFile` 旧读点删除（来源唯一）。⚠ **设计陷阱**：若只覆写 `getState()` 而读回仍留在 `onLoadFile`，构成**自读自赋值**（读回时字段还是默认值，恒 `'source'`）——读入点必须前移。
-  - **回归**：新增 `tests/view-md-back-mode.test.ts` 5 例（原型自有 getState / getState 回显 file+mdBackMode / 写入键 ⊆ 读回键 / setState 读入点 / 非法值白名单回退）；mock `FileView` 补 `getState` + `setState` 官方契约最小面。实机：阅读视图 → 导图（`mdBackMode: preview` 随状态存活）→ 菜单入口（**后台标签**场景）→ 落阅读视图且带到前台；`dev:errors` 无新增。
-
-- [K125] **终端一律 Git Bash（须写全路径 `& 'C:\Program Files\Git\bin\bash.exe' -lc '…'`），仅需 Windows 专属能力时才切 PowerShell 7**（2026-10-15 用户裁决；2026-10-20 实测修订调用形式）：
-  - **口径**：本仓库一切命令行操作（构建、测试、lint、`obsidian` CLI 实机验证、`scripts/probe-*.sh` 探针）**一律经 Git Bash** 执行——调用形式为 `& 'C:\Program Files\Git\bin\bash.exe' -lc '…'`（本机 Bash 5.3.15 / MINGW64）。仅当任务确需 Windows 专属能力（注册表、HKLM 环境变量、PowerShell 专有 cmdlet）才切回 **PowerShell 7+**，且须在输出中说明原因（7+ 与 bash 共用 .NET / CrossPlatform 约定，切换成本低）。
-  - **⚠ 调用形式订正（2026-10-20 实测）**：旧口径写的裸 `bash -lc '…'` 在本机**会落到 WSL**，不可用。实测证据：① `bash -lc 'echo $HOME; uname -s'` → `HOME=/home/legion`、`Linux`；② `Get-Command bash -All` 只回 `C:\Users\LEGION\AppData\Local\Microsoft\WindowsApps\bash.exe`（WSL App Execution Alias）；③ PATH 中 Git 项只有 `C:\Program Files\Git\cmd`（该目录无 `bash.exe`），`C:\Program Files\Git\bin` **不在** PATH。故 `bash` 永远不可能解析到 Git Bash，必须写全路径。
-  - **理由**：① 与既有生态一致——探针脚本（`scripts/probe-*.sh`）本就是 bash，`grep` / `sed` / `tail` 等 Unix 工具直接可用（同日实测：PowerShell 里 `ls -la | head` 报「术语 'head' 不被识别」，须改写为 `Select-Object -First`）；② 单引号语义可预测，`obsidian eval --code='…'` 的内联 JS 在**单层** bash 下不易被破坏（K107 ④ 的 PowerShell 单引号经验对单层调用仍有效）。
-  - **注意（双层调用仍会坏引号）**：经 PowerShell → bash **双层**传递时，内联 `--code='…'` 的引号与中文参数会静默损坏——`obsidian eval` 一律把 JS 包装进 `.sh` / `.mjs` **脚本文件**再执行（本仓库 `scripts/probe-*.sh` 即此模式的落地）。
-
-- [K126] **渲染保真与引用形态一日批（2026-10-20，四批均为实机取证 + 用户裁决）**：
-  - **① 粗体标记体跨对吞并**：`**粗一** 与 **粗二**` 整行被吞成一段粗体、裸 `**` 外露。根因：`MARKUP_RE` 的 `bold` 分支只在标记体**首字符后**判定一次 `(?!\*\*)`，随后 `[^\n]*` 贪婪回溯到行内**最后一个** `**`；既有用例 `**a** b **c**` 因标记体单字符恰好触发守卫而全绿（假绿）。修法：标记体改逐字符 temper（`(?:(?!\*\*)[^\n])*`），`boldU` 同步 `(?!__)`（此前 `[^_\n]*` 排除 `_`，`__粗 _斜_ 粗__` 同样外露）。
-  - **② `image-resize` 收敛 + 跨 realm 判定**：`instanceof SVGImageElement` 对 popout 窗口（另一 realm）恒 false ⇒ 手柄永不出现、帧内预览静默不写。判定上收 `engine/mindmap-nodes.isNodeImageElement`（标签名 + 取矩形能力），与 `previewNodeImageSize` 共用；同批把 setup/teardown 的清理三行、帧内与收尾的「引擎代际」判据各收口一份。
-  - **③ 调宽回写不再扩写引用**：合成回写原按 `resolvePathToFile(image).path` 写，`![[sample-icon.svg]]` 拖宽后变成 `![[fixtures/assets/sample-icon.svg|190]]`。现优先保留 `mdImageTarget`（仍指向同一文件时），仅目标失效 / 指向别的文件才回落真实路径；`image` 无法反查库内路径时保持旧口径（`links-split` 的「宁可不动」兜底依赖它）。
-  - **④ 新建图片的路径形态跟随官方 `New link format`**：此前 `normalizeImageReference` 直接写 `file.path`（绝对），无视设置。现与文档链接共用 `links/file-lookup.newReferencePath`（`shortest` 最短**唯一** / `relative` / `absolute`；**同名口径随引用形态**——省略 `.md` 的文档链接按去扩展名 basename，带扩展名的图片 / 附件 / `.canvas` 按文件名，`a.png` 与 `a.md`/`a.jpg` 不算同名，2026-10-21 审核修复此前复用 basename 计数导致的误判）；实机两档：库内唯一 → `![[sample-icon.svg|160]]`，存在同名 → `![[fixtures/assets/sample-icon.svg|160]]`。**存量引用不因后来出现同名文件而改写**（实测 Obsidian 只在重命名/移动时更新链接；改写未编辑行会破 `mdRaw` 逐字保真）——用户裁决「维持现状」，方案「保存时自动消歧存量」**已否决**。
-
-- [K127] **节点外观主题维度（2026-10-21，用户裁决 + 实机取证）**：设置新增「主题」（`themeStyle`，全局生效），与「主题色」（`defaultTheme`，原「默认主题」改名）**正交**——前者管节点形态、后者管明暗色板；两者在面板紧邻呈现，数据与渲染通道互不相干。
-  - **① 首套主题＝仅去边框（含填充）**：`borderless` 把 second / node 的 `fillColor` / `borderColor` 置 `transparent`、`borderWidth` 置 0；root 保留主题色填充作视觉锚点（它本就无描边）。**填充必须一起去**——实测亮色下 second `#f1f5f9` 与画布 `#ffffff` 仅差 2%，只去描边仍是一层淡灰块（肉眼可见）；暗色下 node `#1e1e1e` 与画布同色，故此举在暗色下观感与改造前完全一致。字体跟随 Obsidian 官方设置，**不引入字体配置**（用户裁决：不留无用缺口）。
-  - **② 可扩展规范（后续加主题只加数据、不改渲染代码）**：id 唯一源 `core/constants.THEME_STYLE_OPTIONS`（`as const` 派生 `ThemeStyleId`，勿手写第二份字面量联合），外观数据唯一源 `engine/mindmap-theme-presets.ts`，两者由 `Record<ThemeStyleId, …>` 编译期强制对齐（漏写即编译失败）；**id 发布即冻结**（写进 `data.json`）；主题只能覆盖节点填充/描边——字号、间距、连线各由 `variant` 单一来源表达，越权即与主题色/布局/连线偏好三方打架；**不得引入节点级样式**（本插件节点样式无持久化位，Markdown 是唯一真相）。
-  - **③ 纯视图态**：不碰 Markdown / `mdRaw` / 节点数据；与主题色同一通道原地换肤（`applyThemeConfig`），`themeStyle` 同时进 `LIVE_REFRESH_SETTING_KEYS` 与 `IN_PLACE_REFRESH_KEYS`，切换**不重建引擎**。`mindmap` 代码块嵌入与 SVG 导出读同一份 settings，自动跟随。
-  - **④ 参数收口**：`applyThemeConfig` 由 5 个位置参数（其中 4 个是 `string`，`themePref` / `themeStyle` 极易错序）改为 `ThemeConfigInput` 对象；`CreateMindMapOptions.themeStyle` 设**必填**（新增调用点漏传即编译失败）；`engine-controller.writeThemeConfig` 只收覆盖维度（`Partial<Pick<…, 'layout' | 'lineStyle'>>`），不再 spread 整份设置、也不再把 `enableDrag` 带进写主题的函数。
-  - **⑤ 验证**：`tests/mindmap-theme.test.ts` +6 例（默认观感不变 / 无边框填充与描边同时归零 / 根节点保留锚点 / 不得越权改字体度量与连线 / 主题色×主题×连线三维正交 / 脏值回退）；**2026-10-21 订正：本项已移出全局设置**——改按文件记在 `viewState[<路径>].themeStyle`、由导图顶栏切换（与配色同形态，见 K128 ⑦），故 `settings.sanitizeSettings` 白名单与 `LIVE_REFRESH_SETTING_KEYS` 均**不再包含**它。原始设置形态的实机读数留档：`themeStyle=borderless` → `node.fillColor=transparent` / `node.borderWidth=0` / `root.fillColor=#4a90d9`，双向切换均未重建引擎；当轮全量 82 文件 2205 用例 + `build` + `lint` + `check:dead-code` + `verify:visual` 全绿。
-  - **⑥ 未做（用户明示后续再议）**：节点级高亮（参考图里「作者：王维」式黄框——本插件无节点样式持久化位，四条备选路径见会话记录，均需先解决「样式存哪」）；字体配置（**配色已于同日由 K128 落地**，不再属未做项）。`paddingX` 仍为 16：无边框下文字离折线略远，若收紧需同步 `features/node-inline-html.ts` 的估宽常量。
-
-- [K128] **配色（色相方案）维度（2026-10-21，用户裁决 + 实机取证）**：配色与「主题色」（明暗）、「主题」（节点形态）**三维正交**——它只换整套色板的色相。**它不是全局设置**：按文件记在 `data.json` 的 `viewState[<路径>].palette`，由**导图顶栏**切换（与布局 / 连线样式同一种「按文件记忆」形态）。用户裁决：配色是「这篇导图长什么样」，不该由全局设置统一；`MindMapStudioSettings` 因此**没有** `palette` 字段。
-  - **① 数据形态：5 色 + 共用文字色**。每套只给 `rootFill` / `secondFill` / `nodeFill` / `border` / `line`；文字色三档（`TEXT_LIGHT` / `TEXT_DARK`）**不随配色变**、只按明暗定。理由：新增配色只需 5 个 hex，且不会出现「某套配色的浅底配错深字」这类不可读组合——文字色的对比度只需按明暗校核一次，不必每套重算。
-  - **② 七套与命名**（**2026-11-05 整组换色板**：7 套统一改用 Tailwind 色阶——亮色 `rootFill` 600 档 / `secondFill` 50 档 / `border` 200 档 / `line` 400 档，暗色 800 / 950 / 900 档。旧值的问题是「根色偏灰、二级三级几乎与画布同色」，整图只剩一个色块；新色板浅档带明确色相，才看得出「这是薄荷 / 琥珀 / 紫藤」。同轮把「着色节点内表格线」改成按对比度兜底（45% 墨色不够时步进到 ≥2:1）。以下为历史：2026-10-29 增至七套：新增 `rose` 补上「琥珀 68° → 紫藤 305°」之间 120° 的色相空档；`forest` 由 `#2f7d5a`（h160）调到 `#3f7c2f`（h133）——原值与薄荷 h182 仅差 18°，节点级配色下主色 ΔE 仅 18.0、派生填充 2.7，实机两支几乎同色）：`default`（基准，与改造前逐值一致）/ `mint` / `amber` / `wisteria` / `forest` / `slate`，中文「默认 / 薄荷 / 琥珀 / 紫藤 / 森林 / 石板」。基准项叫「默认」而非「蓝」：它是「什么都不改」的那一项，与 `themeStyle.default` 同一命名口径。命名规则（用户）：颜色词尽量两字、物品/植物名不设限——六套全部落在物品/植物命名。**不叫「紫罗兰」**：颜色词且三字，违规；且 `#7c5cd6` 观感更接近紫藤（偏亮偏蓝）而非罗兰紫。
-  - **③ id 冻结与唯一源**：`PALETTE_OPTIONS`（`core/constants`，`as const` 派生 `PaletteId`）是唯一源——工具栏选项面与 `viewState` 白名单共用它；`PALETTES`（`mindmap-theme-presets.ts`）用 `Record<PaletteId, …>` 反向约束（漏写即编译失败）；未知名回退 `default`（读取侧 `normalizePalette`，写入侧 `applyPalette` 同样归一，避免脏值在 `data.json` 里复利）。管线 `buildThemeConfig` 只多一次查表，零分支。
-  - **④ 嵌入不吃配色**：`mindmap` 代码块**恒用 `DEFAULT_PALETTE`** —— `MindmapEmbedConfig` 不含该字段，`mount` 与 `css-change` 两处都写 `palette: DEFAULT_PALETTE`，并由契约测试锁死「两处出现 + 不读 `settings.palette`」。理由：嵌入是正文里的只读小盒，用户换配色属于「我的导图长什么样」，不该把正文里的嵌入一起染色（用户裁决）。
-  - **⑤ 生效与验证**：切换经 `view.applyPalette` → `viewState.setPalette(路径)` + `engine.applyTheme()`（**原地换肤、不重建引擎**）；**不进** `LIVE_REFRESH_SETTING_KEYS`（它不是设置项）。实机：顶栏选 `mint` → 引擎 `root #2e9e8f` / `second #eaf7f4` / `line #93c9bf`，且 `viewState['示例/思维导图.md'].palette === 'mint'`（与 `view` 并存于同一条目）；`wisteria` → `#7c5cd6` / `#f3effc` / `#b8a6e0`；嵌入块在 `wisteria` 下仍为蓝。全量 82 文件 2214 用例 + `build` + `lint` + `lint:css` + `check:dead-code` 全绿。
-  - **⑥ 未做**：分支彩虹（每个分支不同色，引擎支持但那会打破「second 统一浅底」的现有观感，需另一份配置）；全局默认配色（当前新文件恒 `default`；若需要「新建即某某配色」再加一个设置项作为初始值）。
-  - **⑦ 同日追加：主题（节点外观）并入同一形态**。用户裁决把 `themeStyle` 也从全局设置移除——设置面板只留「主题」＝明暗（`defaultTheme`，文案从「主题色」改回「主题」），节点外观与配色都改为**按文件记 + 顶栏切换**。落点与配色完全对称：`view-state.getThemeStyle/setThemeStyle`（hydrate 白名单加 `themeStyle`）、`view-toolbar` 第四个下拉 `.mindmap-theme-select`、`view.applyThemeStyle`（归一 → 写 `viewState` → `engine.applyTheme()` 原地换肤）、`view.resolveThemeStyle`（读侧归一）。**嵌入**：`mindmap` 代码块**跟随全局默认**（`MindmapEmbedConfig` 含 `themeStyle`，由组合根取 `settings.defaultThemeStyle`），**不跟**顶栏那份按文件值——与 `layout` / `lineStyle` 同性质。同日再订正，见 ⑩。
-  - **⑧ 同日再订正：UI 改称「边框」，并补回一个全局默认**。① 顶栏标签与选项文案改为「边框」/「有边框」「无边框」（`toolbar.themeStyle` / `themeStyle.default`），**内部 id、`viewState` 键、`ThemeStyleId` 一律不动**——它们已写进 `data.json`，改名即用户设置失效；② 全局设置**新增** `defaultThemeStyle`（「默认边框样式」），只决定**新建**导图的初始值：`view.resolveThemeStyle()` 走 `currentThemeStyle ?? settings.defaultThemeStyle`，与 `defaultLayout` / `defaultLineStyle` 同构；③ 因为它是「默认值」而非逐文件覆盖，故进 `LIVE_REFRESH_SETTING_KEYS` 与 `IN_PLACE_REFRESH_KEYS`（重算走会话字段，不会改动当前文件的实际边框）。
-  - **⑨ 缺陷与修复：「默认边框样式」对新建导图无效（2026-10-21 用户实测报障）**。**根因**：`view.loadMindMapFromFile` 把四个「按文件偏好」各写一遍，其中 `themeStyle` 回落的是**硬编码** `DEFAULT_THEME_STYLE`（`'default'`）而不是 `settings.defaultThemeStyle`；随后 `resolveThemeStyle()` 的 `currentThemeStyle ?? settings.defaultThemeStyle` 因会话字段已被赋成非 null 而永不生效。**修复方式（不是改一行了事）**：把四项合成抽成纯函数 `services/view-state.resolveFilePreferences({ saved, defaults })`——`defaults` 类型要求**四个维度全给**，漏写/写错在调用点一眼可见；单测覆盖三条（全无记录取默认 / 逐维独立 / `themeStyle` 缺省值必须是 `defaults.themeStyle` 而非硬编码 `default`）。**另记一条工具链教训**：并行执行 `npm run build` 与 `Copy-Item` 会部署到**旧产物**（构建尚未写完），表现为「改了没效果」——实机验证必须串行：build → 复制 → reload。
-  - **⑩ 订正：`mindmap` 围栏块也遵循「默认边框样式」（2026-10-21 用户报障）**。原先嵌入恒用 `DEFAULT_THEME_STYLE`，理由是「它没有当前文件身份」——但**「全局默认」恰恰不需要文件身份**，`layout` / `lineStyle` 早就这么做了（`MindmapEmbedConfig` 里就有这两项）。改法：config 加回 `themeStyle` 字段，由组合根注入 `settings.defaultThemeStyle`；`mount` 与 `css-change` 两处改用 `config.themeStyle` / `next.themeStyle`。**配色仍恒用 `DEFAULT_PALETTE`**——它只有按文件记的值、没有全局默认，两者的差别就在这。契约测试改为锁「两处 `themeStyle: config/next.themeStyle` + 两处 `palette: DEFAULT_PALETTE` + 源码不读 `settings` + `main.ts` 注入的是 `defaultThemeStyle`」。实机：`defaultThemeStyle=borderless` → 嵌入 `second/node` 的 `fill` 为 `rgba(0,0,0,0)`；改回 `default` → 恢复 `#f1f5f9` / `#f8fafc`。
-  - **⑪ 同日重构：把「四维同构」收成三处唯一实现（行为零变化）**。K128 落地后，四项「按文件偏好」在四个位置各写了一遍同构代码，是典型的「第五个维度漏一处」结构，故做三处收敛：
-    1. **`core/constants.pickOption`**：`normalizeThemeStyle` / `normalizePalette` 的 `find + 三元` 合并为私有 `pickOption(value, options, fallback)`；默认值仍由调用方传入（两维默认来源不同），但「回退逻辑」只剩一份。
-    2. **`services/view-state`**：四个 getter 的 `typeof === 'string'` 与四个 setter 的 `patch` 收成 `getPreference` / `setPreference`（键类型 `PreferenceKey = 'layout' | 'lineStyle' | 'palette' | 'themeStyle'`）；具名 getter/setter 保留为**一行薄封装**，只承担语义与注释。
-    3. **`features/view`**：`resolve*` 的归一**前移到 `loadMindMapFromFile` 入口**（脏值止步于此），四个 `resolve` 退化为 `?? 默认` 兜底；`apply*` 收成 `commitPreference({ key, value, normalize, applyToEngine })`——归一 → 会话字段 → 引擎通道 → 持久化四步只写一次，维度靠 `SESSION_FIELDS`（`as const satisfies Record<PreferenceKey, string>`）映射到私有字段，漏写即编译失败。
-  - **验证**：全量 82 文件 2219 用例仍然全绿（重构不改行为）；实机一次改四个下拉，`viewState` 条目落盘为 `{ layout: 'mindMap', lineStyle: 'curve', palette: 'amber', themeStyle: 'borderless' }`——证明 `SESSION_FIELDS` 映射无误（这是该重构唯一的新风险点，也是最需要实机取证的一点）。行数：`view.ts` 1249 → 1255、`constants.ts` 685 → 699（注释增量大于代码减量，两表已回填）。
-- [K129] **UI 组装面：右缘竖栏 + 右键级联（2026-10-22~23，多轮用户裁决 + 实机取证）**：导图视图的控件从「一条 40px 顶栏」彻底改为**右缘竖排图标**，并做了两处「入口二选一」的收口——同一能力不在两处重复提供。
-  - **① 现状（唯一口径）**：`view-toolbar.buildToolbar` 产出**四组**（DOM 顺序＝Tab 序）—— 文档（返回 / 导出）→ 外观开关（连线 / 边框，**点一下互切**）→ 视图（放大 / 重置 / 总览 / 缩小，常驻整理已于 K206 移除）→ 历史（撤销 / 重做）。**整理**（2026-10-23 新增，位于「总览」与「缩小」之间）与右键菜单的**自动整理**是同一动作：共用 `view-toolbar.arrangeMindMap` 与同一枚 `sparkles` 图标，tooltip 只有两个字「整理」（比菜单标题「自动整理」短，`toolbar.tipArrange` 与 `toolbar.tipFit` 同族）。`.mindmap-toolbar` 只是 `pointer-events:none` 的**穿透层**，每组 `.mindmap-hud-group` 才是 `pointer-events:auto` 的浮起卡片；组内按钮用 `gap:1px` + 组底色透出分隔线（对齐 Canvas `.canvas-control-group`：`padding:0`、条目 32×32、radius 0）。
-  - **② 入口二选一**：**连线 / 边框**在竖栏当开关（写 `viewState`），右键菜单里**不再有**这两项；**布局 / 配色**留在右键的级联菜单（`addLayoutPaletteMenus`），**空白右键与节点右键共用同一份实现**。屏上没有任何 `select` —— `ViewDomContext` 的 4 个 `*Select` 字段已删除，改为只读方法现算（菜单勾选态现算，不缓存第二份状态）。**2026-10-23 收敛（R3）**：四个 `resolve*()` 合成一个 `resolvePreference(key: PreferenceKey)`——读取侧与写入侧 `commitPreference({ key, … })` 以同一个键为中心对称，`MindMapViewContext` 接口面 −3；新增一项偏好时两侧各加一行。
-  - **③ 「二级菜单」用宿主原生级联（2026-10-27 订正）**：`MenuItem.setSubmenu` **不在** `obsidian.d.ts`，但运行时存在，语义是**无参调用、返回一个新 Menu**（内部给条目加 `has-submenu` 与右向箭头；悬停约 250ms 或点击由宿主展开，位置贴住父项右缘；手机上改为整页切换）。2026-10-23 记的「挂上也不展开」是**用法错误**——当 setter 传了自建菜单，参数被忽略、条目加到了没人引用的那个菜单上。现由 `view-context-menu.createNativeSubmenu` 单点封装（规则 9 私有触点），运行时缺该方法时回退「点击父项 → 光标处弹出独立菜单」（键盘触发用条目矩形当锚点）。判断 API 是否生效仍看**可观察行为**（箭头 + 悬停展开），不看它自己加的类名。
-  - **④ `setIcon` 对不存在的图标名静默失败**：换图标时试过 `tilde`（~ 形曲线），Obsidian 内置 Lucide **没有**该图标 → 渲染出**空 `<svg>`**，无报错、无告警（实测 `svg.innerHTML` 长度 0）。**换图标的验收动作**＝实机读 `button.querySelector('svg').innerHTML` 非空；现用 `slash`（一条斜直线）+ `spline`（曲线）表达连线样式。
-  - **⑤ 开关类按钮的自我同步**：外观变更**不重建工具栏**，所以开关按钮的图标 / 提示必须在 `toggle()` 之后**自己重算**（`describe()` 现算 + `applyState()`），否则会出现"数据变了、按钮还显示旧值"（2026-10-23 实机踩到）。固定直线布局下连线开关**置灰**（`is-disabled` + `disabled` + 不挂 `onclick`），不给假交互。
-  - **⑥ 回归**：`tests/view-toolbar.test.ts`（四组结构 / 图标接线 / 开关互切与图标状态 / 固定布局置灰 / 「外观四项不在屏上」反向断言）、`tests/view-context-menu.test.ts`（空白菜单 9 项、节点菜单 13 项与 `G.tail` 顺序、级联弹出与勾选、**菜单里不得再出现连线/边框**）。
-
-- [K197] **脚注（footnote）的只读渲染：段型、按原文寻址的边界与「不隐藏定义行」（2026-11-11）**：
-  ① **问题**：`[^id]` 在节点里是字面字符（渲染层此前无分支），而定义行 `[^id]: 内容` 早已被解析层按「链接引用定义」整行豁免、落成 `plain` 节点 ⇒ 文件里的脚注是「存在但不可用」：既没有可点的引用，也没有可读定义的入口（官方帮助 Footnotes 段：引用 / 定义 / 命名 / 续行缩进 2 空格 / 行内脚注仅阅读视图）。
-  ② **只做读侧**：定义行仍是节点，`text` / `mdRaw` 一字不动（硬规则 4）。新增的只有段型 `kind: 'footnote'`（`MARKUP_RE` 一支，`(?!:)` 让定义行保持字面）与一次交互期索引（`markdown/md-footnote.collectFootnoteDefinitions` 读 `domain/md-meta.nodeInlineSource` 现算 ⇒ 编辑自动跟随，无第二份快照）。**关键事实**：索引的数据源必须是**引擎渲染树**（`engine.collectRenderNodeData`，`node_tree_render_end` 失效缓存）——`ensureUniqueUids` 只在 `engine-controller.initMindMap` 里补传给引擎的那份克隆，会话权威树与解析树**都没有 uid**；首版按会话树索引 ⇒ 所有 `uid` 为空串、点击恒失败（当日自查发现并改正）。**判定单点**：`md-outline.isLinkReferenceDefinition` 的 `^` 分支委托 `isFootnoteDefinition`，不另写「以 `[^` 开头」。
-  ③ **徽标只承载 id**：段序列按原文寻址缓存（K114 的测量缓存也以 `outerHTML` 为键），把定义正文塞进段会让同一行在不同文档里产出不同段；故正文在**事件发生时**由 `features/view-footnote` 现查（点击 → `revealNodeByUid` 定位定义节点；悬停 → 画布内浮层，`pointer-events: none`）。代价：浮层里的公式 / 代码高亮只走**产物缓存**（异步定稿的尺寸重测在浮层里必然落空——`content-remeasure` 按 holder 反查节点）。
-     **定位回调是异步的**：`goTargetNode` → `expandToNodeUid` 在需要展开祖先时走 `mindMap.render(callback)`，而 `Render.render` 是 `setTimeout(…, 0)` ⇒ 回调在下一宏任务才触发。按同步回调判成功会「已跳转却弹『定义不存在』」；现由**索引持有命中判据**（uid 取自同一棵渲染树），`revealNodeByUid` 只回答「引擎是否接住了这次定位」，两种失败用不同文案（`missingDefinition` / `revealFailed`）。
-  ④ **标签用原 id，不做全文编号**：编号依赖文档序，会让同一行在不同文档产出不同段（破坏 ③ 的纯度）；命名脚注在导图里反而更可读。若要做，唯一可行形态是**渲染后置处理**（构建期只出 id，渲染落地后按文档序改写徽标文本）。
-  ⑤ **不隐藏定义行（v1 裁决，仅探讨过）**：隐藏要么把定义挂进「前一个节点」的 `mdRaw`（位置守恒，但随载体删除 / 拖动丢内容，且 `md-serialize.nodeLines` 的 `restIndent` 会把列 0 的定义缩进成列表续行、**一次保存即损坏**），要么挂文档根做「尾块」（只对连续尾块保真，夹心定义首次保存即搬家）。两条路都要新增编辑面，收益（布局整洁）不足以付这份代价。
-  ⑥ **边界**：围栏 / 缩进代码（≥4 空格或 Tab）内的同形行不算定义；列表续行的缩进写法不进索引（解析层已并进上一项 `text`）；行内脚注 `^[…]` 不支持（Obsidian 亦仅阅读视图支持）；未定义引用**照常出徽标**、点击给提示（不做「按字面」——那要求构建期知道全文有没有该定义，直接破坏 ③）。另：`\[^1\]` 这类反斜杠写法在扫描层按字面退回——本模块的可转义白名单不含方括号，正则否则会从**第二个字符**起配出一枚 id 带反斜杠的假徽标（用例抓到；判据用**反斜杠奇偶**，故 `\\[^1]` 仍是真的引用）。
-     **续行判据（2026-11-12 实机订正）**：续行必须**有缩进**——相对内容起始列 ≥ 1，优先读解析层记的 `MdNodeMeta.mdContinuationIndents`（列表项续行在 `mdRaw` 里已被 `trimStart`，绝对缩进只剩这一份；经 `nodeContinuationIndents` 读，`text` 被编辑后自动失效并回落行首空白），否则按行首空白现算。**同列的非空行是另一段正文**：此前按「定义后的非空行一律算续行」会把它一起隐藏（节点上静默少一段、文件里还在），同列行里的 `[^2]` 也因此应当编号——与阅读视图逐字对照一致。
-  ⑦ **回归**：`tests/footnote.test.ts`（语法单源 / 文档序 / 围栏与缩进代码 / 重复 id 首个生效 / 编辑跟随）、`tests/node-inline-content.test.ts`（段型、受保护区、`(?!:)`、DOM 契约 `sup > a[data-footnote-id]` **无 href / data-href**、表格单元格、`buildInlineTextContent`）。
-  ⑧ **同日实机复现并修复的三个交互缺陷**（`features/view-footnote`，由 `tests/view-footnote.test.ts` 的 DOM / 事件桩直测钉死）：**① 命中面错层**——`data-footnote-id` 只写在内层 `<a>`，鼠标落在 `<sup>` 的行高 / padding 区域时 `closest` 向上找恒落空 ⇒ 悬停与点击静默失效；改为按 `.mindmap-node-footnote-ref` 命中**外层 sup**、id 从内部 a 读（顺带修好「a → sup」被误判为移出）。**② 同 id 多枚徽标**——旧判据 `id === visibleId` 直接 return，`mouseout` 排的 hide 没被撤销 ⇒ 从第一枚 `[^1]` 移到第二枚时浮层消失且停在上一个坐标；改为**元素身份**判重，且 mouseover 一律先 `clearTimers()`（移出又移回同一枚也要撤销未决 hide）。**③ 渲染窗口吞 show**——`node_tree_render_end` 在单节点 reRender / 分片渲染上同样派发，旧实现在回调里无条件 `hide()` 清掉 140ms 未决的 showTimer ⇒ 悬停期间恰好重绘一次就永远不弹；改为只失效索引 + `dismiss()` 收起已显示浮层，**不动定时器**。另补：未定义引用悬停也显示「未找到定义」浮层（原来只有点击给 Notice，看起来像坏了）。三个缺陷都不影响数据 / 写盘，但都属「点了没反应」，正是交互层缺自动化回归时最容易漏掉的一类。
-  ⑨ **用户视角打磨（2026-11-11 第二批，六条按序落地）**：① **浮层可交互**——去掉 `pointer-events:none`，`mouseenter` 撤销待执行的 hide、`mouseleave` 重排，文字可选中复制；内部锚点经宿主注入的 `openLink` 打开（浮层不在节点里，`view-wikilink` 的 `node_click` 委托收不到那里的点击）。② **浮层内滚动**——`overflow-y: auto` + `overscroll-behavior: contain`，并在浮层自身 `wheel` 上 `stopPropagation`；`view-viewport.handleWheelGesture` 对 `FOOTNOTE_PREVIEW_CLASS` **放行**（否则「想滚脚注」会缩放或平移画布）。**高度上限必须按画布收缩**（2026-11-11 实机）：`positionPopover` 用 `maxHeight = clamp(画布高 - 2×8, 120, 420)` 改写——只读嵌入容器可能只有 208px 高，写死 420px 会让浮层溢出容器被 `overflow: hidden` 裁掉，而内部滚动只作用于浮层自身，**超出容器的那截永远看不到**（实测 211px 浮层被裁 11px）。宽度同理：`maxWidth: min(360px, calc(100% - 16px))`。③ **编号后置**——`applyFootnoteLabels` 按**首次引用顺序**改写徽标文本（构建期仍只写 id，保「同一原文 → 同一 DOM」）；扫描必须**递归到表格单元格与引用块正文**，漏一处会让后面所有编号整体前移；**只给有定义的引用编号**（未定义引用必须跳过，否则它后面所有脚注整体前移，实机 18:46 抓到）；测量发生在后置之前，编号比长 id 窄 ⇒ 节点最多偏宽一点。**不写 `title` 与 `aria-label`**（2026-11-11 实机复现：前者给浏览器原生 `[^1]` 白框，后者被 Obsidian 的全局 tooltip 委托读成「跳转到脚注 [^1]」黑框，鼠标停在徽标上两个提示同时冒出来）；语义改用不触发 tooltip 的 `role="doc-noteref"`，屏幕阅读器仍能识别。④ **未定义弱化**——`is-unresolved` + `--link-unresolved-*` 变量色 + 截断 id（>12 码点），全文进 `title`：外露 193px 长 id 会把节点文本撑乱。**浮层必须显式 `user-select: text`**：画布根节点通常 `user-select: none`（拖拽语义），不覆盖则浮层里的文字选不中（实机抓到）。**徽标必须固定宽度**（`inline-block + min-width: 0.9em`，2026-11-11 实机复现）：引擎在**字体就绪前**测宽，数字宽度随字体变化 ⇒ 窄节点上第二枚徽标被挤到第二行（内容盒 31→51、引擎节点框不变 ⇒ 溢出压住下方节点，`脚注-05-嵌入` 的「引用₁ 与 ₂」）；`padding` / 负 `margin` 之类"缩宽度"的做法无效——测量宽会跟着缩、换行点不变，必须让**测量值 = 渲染值**。⑤ **定位既不闪烁也不选中（2026-11-11 晚间两次裁决）**——先撤掉当天的「闪一下」：定义行已折叠成 chip / 被渲染剥离，点击徽标跳过去看不到任何脚注正文，`opacity` 闪动没有信息价值、只剩视觉噪音（用户实测：「点击脚注后不应该有窗口闪烁了，因为看不见了」）；再撤掉选中：`goTargetNode` 内部会 `node.active()`，被高亮圈住的往往只是表格或 chip（用户实测：「还是有节点被高亮圈住」）。现实现按引擎同样三步**自己组合**（`expandToNodeUid` → `findNodeByUid` → `moveNodeToCenter`），只去掉 `active()`；上游三件缺失时才回退 `goTargetNode`。`flashNodeByUid` 与就位回调一并删除，不留无消费方的装饰层。⑥ **定义块折叠**——`markdown/md-footnote.splitFootnoteDefinitions` 与索引**同源判定**（围栏 / 缩进代码 / 续行），`resolveSelfDrawSource` 只剥**显示源**；整节点只有定义时渲染汇总 chip（**`脚注`**——**不报条数**：`脚注 N` 会被读成「第 N 条脚注」，`N 条脚注` 又啰嗦，2026-11-11 用户裁决；点击/悬停展开全部定义）——不接管会让引擎回落渲染 `data.text`，隐藏**静默失效**。**共同前提**：`text` / `mdRaw` / 序列化 / 保存管线零改动，编辑弹窗与内联编辑器仍看得到原文，纯浏览仍零写盘。
-
-- [K198] **会话树进引擎前必须补齐图片默认尺寸（2026-11-12 实机 P0）**：
-  ① **结论**：`DocumentSession.applyToPort` 在把树交给 `port.applySnapshot` 前一律过 `media/images-path.withDefaultImageSizes`；视图侧 `applySnapshot` 保持薄通道。补齐是**显示派生**：只在有「有 `image` 无 `imageSize`」节点时经 `domain/tree.cloneTree` 深拷贝后补，跨视图广播的引擎树零拷贝，派生字段也**不回灌会话权威树**（跨视图逐字可比、写盘只读 md 字段，硬规则 4）。
-  ② **依据**：解析器不产 `imageSize`（见 `ensureDefaultImageSizes` 文件头），vendor `createImgNode → getImgShowSize` 对缺失值直接解构 `let {custom,width,height} = getData('imageSize')` ⇒ TypeError 打断整轮 `createNode`，`renderer.root` 变 null、DOM 停在旧画面、后续命令静默 no-op。初次建引擎的兜底在 `features/view.ts` 的 `ensureDefaultImageSizes(tree)`（K97）；Level B 的 `reloadFromDisk → broadcastNow → applySessionSnapshot` 用的是**重新解析**的树，恰好绕开它。实机：含 `![[图]]` / `![[图|147]]` 的两份样本各做一次外部写入，全新实例 3 次复现；无图片样本同样操作正常（64 节点树完整、外部文本上屏）。
-  ③ **边界**：不改 `text` / `mdRaw` / 序列化 / 保存管线；不改 vendor；不做「引擎缺字段自动兜底」的第二份判定。会话树保持解析原样，`markLoaded` 基线「序列化结果与磁盘逐字一致」不变。
-  ④ **回归**：`tests/images-path.test.ts`（零拷贝 / 副本补齐 / 原树不改）、`tests/document-session.test.ts`（外部重载后 port 收到的树带尺寸、会话树不带）、`scripts/verify-visual.mjs` 的 image 探针（`applySessionSnapshot(withDefaultImageSizes(解析器产物))` 后 root / 2 节点 / `<image>` 齐全）。
-  ⑤ **同日复验补的显示层缺陷（P2）**：只补默认盒虽不崩，但外部写入后图片从「160×160 自然尺寸 / 147×147 `|147` 参数」退回「200×120 默认盒」——加载期的 `collectImageSizeCorrections → node_tree_render_end` 异步回灌只在**建引擎**时跑，快照应用不会重跑。修法不是再跑一遍探测（异步 + uid 匹配 + 每次广播重复探测），而是**复用接收视图当前引擎里已定稿的尺寸**：`features/view.knownImageSizes()` 在 `applySnapshot` **应用之前**从 `getRenderRoot()` 收 `imageSize.custom === true` 的条目，按 `media/images-path.imageSizeKey`（地址 + `mdImageWidth/Height`，同一张图 `![[a.png]]` 与 `![[a.png|300]]` 不能共用一个尺寸）索引；`reuseKnownImageSizes` 把命中项搬进新树（无命中零拷贝、命中才深拷贝、原树不改）。只认 `custom:true` 是为了不把「曾回落到默认」的态固化；外部换图 / 新增图片仍停在默认盒这一安全终态。文件里的尺寸参数一字未改，视觉探针新增三条断言（定稿尺寸 1 份 / 引擎 data 仍 120×40 `custom:true` / `<image>` 宽 120）。实机 A/B：`功能验收.md` 160×160 & 200×200、`思维导图.md` 147×147，外部写入后三者全部原值保持。
+# 关键约定 K1–K218
+
+- **用途与权威边界**
+  - 本文按主题整理约定摘要与边界，K 编号保持稳定，供定点查阅。
+  - 当前实现决策以 [decisions.md](decisions.md) 为准；Markdown 格式以 [标准文档](../markdown-mindmap-standard.md) 为准。
+  - 本文保留当前约定与必要边界；已废止条目只保留稳定编号和替代指针，旧方案不作为实现要求。
+- **定位方式**
+  - 先按主题定位，再找 K 编号；同组编号不连续，编号不表示优先级。
+  - 已知编号可用 `rg -n '^\- \[K156\]' docs/agents/conventions.md`，直接阅读该条要点。
+  - K 编号不复用、不重编号；子编号继续保留。区间与全仓引用由文档契约测试校验。
+- **维护方式**
+  - 摘要采用「条目 → 要点 → 约定与边界」的多层 bullet，不展开调用链和测量流水。
+  - 修改跨文件约定时更新决策与摘要；单文件实现细节写在源码契约中，不另建排查历史档案。
+  - 维护义务的唯一清单见 [process.md](process.md#文档维护规则与同步义务)，日常维护不改稳定入口 AGENTS.md。
+- **按主题定位**
+  - 链接、图片与 Markdown 保真：解析、引用、编辑与回写。
+  - 引擎行为、视口与布局：引擎调用、画布几何与布局行为。
+  - 架构边界与单一来源：分层、能力收口与文档会话。
+  - 交互对齐 Obsidian 官方：快捷键、菜单与无障碍。
+  - Obsidian API 合规与工具链：API、渲染、门禁与重构。
+
+## 链接、图片与 Markdown 保真
+
+- [K1] **新引用跟随 Obsidian 偏好**
+  - 要点
+    - 新增链接遵循宿主的双链开关与新链接路径设置；文档链接和图片引用共用路径生成入口。
+    - 同名消歧发生在写引用时，存量引用不因后来出现同名文件而改写。
+
+- [K2] **Markdown 内容与视图偏好分开存储**
+  - 要点
+    - 正文保留标准 Markdown；专用导图的启用与布局由文件属性承载，视图偏好按文件存储；普通笔记临时视图只保留内存选择，见 K218。
+    - 早期把布局写入视图状态的方案已退役；当前属性契约见 K14、K213。
+
+- [K3] **行级原文与短横线语义**
+  - 要点
+    - 原文保留行内空白、缩进代码和硬换行；显示文本与原文分别保存。
+    - 短横线的分隔线与 setext 标题身份按解析器契约区分，不在渲染层重新解释。
+
+- [K4] **文档嵌入与附件嵌入**
+  - 要点
+    - 文档嵌入与双链共用文档通道；别名控制显示名，附件参数保留原文。
+    - 文档、附件和图片的分类共用已有判据，导航与悬停采用同一分流。
+
+- [K5] **双链解析的能力边界**
+  - 要点
+    - 空双链保留字面文本；路径、子路径与别名分开处理，导航交给 Obsidian。
+    - 引擎单链接槽位与自绘逐枚交互分开处理，见 K53、K117。
+
+- [K6] **纯双链节点编辑别名**
+  - 要点
+    - 纯双链节点的显示名、回写别名与图标提示共用同一判据；清空别名仍保留目标。
+    - 混合文本、多行、附件、URL 和含非法方括号的别名不套用纯双链规则。
+
+- [K7] **混排双链拆分**
+  - 要点
+    - 显式批量命令与可选的编辑后自动拆分共用规划逻辑；自动拆分默认关闭，见 K117。
+    - 候选来自编辑期捕获，不以检查时的选中节点替代；解析和幂等规则留在模块契约。
+
+- [K8] **图片尺寸写入 Markdown**
+  - 要点
+    - 用户指定或拖拽改变的尺寸回写宿主图片语法，不另存一份尺寸偏好。
+    - 加载时探测出的显示尺寸不回写；无参数图片的展示口径见 K97。
+
+- [K9] **纯图片节点与移除语义**
+  - 要点
+    - 纯图片节点不补文件名文字；移除图片或链接后，原文残留不能使内容复活。
+    - 同行其它图片保留；图片嵌入与文档、附件链接分别处理。
+
+- [K10] **图片与链接的宿主语法**
+  - 要点
+    - 库内双链、图片嵌入及悬停预览沿用宿主能力；合成外链图片使用 Markdown 图片语法。
+    - 更换图片后的地址取当前值，不使用解析时的旧地址。
+
+- [K11] **中心主题与文件名关联**
+  - 要点
+    - 中心主题仍取文件名，专用图隐藏 .mindmap.md 格式后缀；专用图中心改名保留后缀，普通笔记临时视图不触发重命名。
+    - 重命名走 FileManager 以更新库内引用；本批文档整理不改变这项产品行为。
+
+- [K12] **显示层不修补解析结果**
+  - 要点
+    - 显示名直接消费解析层产物；渲染、悬停和提示不各自补一套字符串修正。
+    - 需要改变显示语义时，先核对解析、原文保真及纯链接判定的共同契约。
+
+- [K13] **显示反馈与语法事实隔离**
+  - 要点
+    - 图标、提示和悬停属于显示层，不能借此改写节点的嵌入语法事实。
+    - 附件通道字段变化须一起核对序列化与别名解释。
+
+- [K14] **导图启用与布局的唯一判据**
+  - 要点
+    - 默认自动打开同时检查专用文件后缀与启用属性；布局只识别当前短 id，临时视图语义见 K218。
+    - 判定集中于 domain/mindmap-property；早期单键布局枚举和历史迁移由 K213 取代。
+
+- [K45] **保存使用当前文件头**
+  - 要点
+    - 写盘时保留磁盘最新 frontmatter，不用加载快照覆盖属性面板或其它视图的修改。
+    - 当前写入走原子读改写；正文与文件头的空行见 K176。
+
+- [K46] **frontmatter 切分保真**
+  - 要点
+    - 空属性块、BOM、块标量内的短横线及 CRLF 都按原文保留。
+    - 不能用遇到第一条短横线就结束的简化切分破坏 YAML。
+
+- [K47] **添加链接不覆盖已有内容**
+  - 要点
+    - 完全空白节点可承载新链接；已有文字、图片或链接时，新链接作为子节点。
+    - 弹窗与拖入共用内容判据，改链可通过原文编辑或先清除再添加。
+
+- [K48] **引用定义行保留全文**
+  - 要点
+    - 链接引用与脚注定义属于语法基础设施，解析和拆分不抽走其目标内容。
+    - 脚注引用的只读交互另见 K197，定义行仍保留为节点。
+
+- [K49] **多 token 使用单一台账**
+  - 要点
+    - 多链接、多 URL 与多图片的额外原文统一登记，编辑后不丢内容或语法。
+    - 拆分重建台账；清除链接不误删图片段；原位对齐见 K52。
+
+- [K52] **编辑后的 token 尽量保留原位**
+  - 要点
+    - 按显示段与原文对齐恢复 token，命中时使用当前链接与尺寸。
+    - 对不上时保留原文并尾插，不猜测替换，也不嵌套进用户新写的链接语法。
+
+- [K55] **删除文档不清除引用**
+  - 要点
+    - 删除笔记保留未解析链接，重建同名文件可恢复；重命名继续更新引用。
+    - 附件删除按既定内容移除契约处理，不能只清字段留下可见名。
+
+- [K56] **链接交互对齐宿主**
+  - 要点
+    - 点击修饰键、未解析目标、悬停与拖放按官方帮助分流。
+    - 官方帮助缺少的导航历史行为用 API 与宿主实测补证，见 K111。
+
+- [K54] **弹窗编辑的模式边界**
+  - 要点
+    - 纯链接节点可编辑可见名，其它富节点编辑即将回写的原文并显示预览。
+    - 日常节点编辑已使用内联通道，见 K92；弹窗模式不替代保存判据。
+
+- [K53] **富节点由插件自绘**
+  - 要点
+    - 轻标记、逐枚链接与图片等呈现由自绘通道提供，解析和回写继续遵守 Markdown 契约。
+    - DOM、局部样式与段模型已按 K209 拆分；解析器不移入 UI。
+
+- [K71] **Markdown 往返达到不动点**
+  - 要点
+    - 规范化在允许范围内收敛；空标题、空列表及原文结构不能静默丢失。
+    - 等价级别与规范化白名单唯一维护于 Markdown 标准文档。
+
+- [K156] **纯浏览不写盘**
+  - 要点
+    - 加载后记序列化基线，未编辑时跳过规范化写盘。
+    - 本会话已写过盘后撤销回加载态，须写回加载原文，不能再按纯浏览跳过。
+
+- [K158] **自动保存收尾核对活快照**
+  - 要点
+    - 真正写盘的自动保存轮次收尾比较当前内容，不一致时有界补排。
+    - 失败、无差异跳过与显式收尾不制造额外重试风暴。
+
+- [K164] **列表缩进随文件**
+  - 要点
+    - 从正文实测缩进单位，回写保留 Tab、空格及合法混合单位。
+    - 列表归层与 YAML 缩进使用不同判据；无实测值时使用既定默认。
+
+- [K176] **文件头与正文间空行保留**
+  - 要点
+    - 写盘保留磁盘当前文件头及其与正文之间的原样空白。
+    - 这部分不参与正文脏判据，撤销回原文也不能重复拼接空行。
+
+## 引擎行为、视口与布局
+
+- [K15] **默认视口与手动总览**
+  - 要点
+    - 无保存视口时按内容居中并使用 100% 缩放；有保存视口则恢复。
+    - 重置缩放以画布中心为锚点；整理通常保留视野，切布局的整理另做总览。
+
+- [K16] **连线样式只有折线与曲线**
+  - 要点
+    - 全局默认、按文件偏好和渲染归一共用选项来源。
+    - 布局固有直线时开关置灰，不丢用户偏好；读取非法值按当前默认处理。
+
+- [K17] **根节点连线衔接**
+  - 要点
+    - 曲线从根节点边缘平顺展开，避免从节点内部斜穿边框。
+    - 通过主题配置表达，不另写连线绘制逻辑。
+
+- [K18] **切布局后整理**
+  - 要点
+    - 切换布局清除旧自由坐标并在新布局落地后取总览。
+    - 异步窗口中的安全判据见 K67；常规结构拖动不做全图整理，见 K205。
+
+- [K19] **命令不设默认热键**
+  - 要点
+    - 发布命令保留用户配置空间，不注册默认快捷键。
+    - 视图内系统编辑快捷键属于视图作用域，见 K38。
+
+- [K20] **无差异不写盘**
+  - 要点
+    - 序列化结果与写盘基线一致时跳过修改。
+    - 纯浏览还须使用加载基线，不能只拿规范化结果与磁盘比较，见 K156。
+
+- [K21] **悬停预览走宿主事件**
+  - 要点
+    - 注册悬停来源并派发宿主 hover-link，文档和附件共用导航分流。
+    - 链接目标和打开方式沿用宿主语义。
+
+- [K22] **菜单开启编辑的事件时序**
+  - 要点
+    - 从右键菜单进入引擎编辑时，延后开启以避开菜单点击的外部关闭事件。
+    - 保留一次开启，不让同一点击立即关闭新编辑面。
+
+- [K23] **已废止：插件侧拖拽换父辅助**
+  - 要点
+    - 旧的独立落点模块、判定和事件循环不再恢复。
+    - 当前邻近吸附在引擎补丁中实现，见 K205。
+
+- [K24] **承载内容的新节点统一入口**
+  - 要点
+    - 拖入、粘贴与添加图片等新建承载节点动作共用插入适配。
+    - 统一父节点与激活参数，避免入口各自拼接引擎命令。
+
+- [K25] **引擎访问经防腐层**
+  - 要点
+    - 引擎内部数据、搜索、导出和节点形态由 engine/mindmap 的具名接口收口。
+    - 特性层不能直接读取 renderer 或节点内部 DOM。
+
+- [K26] **引擎命令名集中定义**
+  - 要点
+    - 引擎命令使用统一常量，拼写及可用命令由类型检查约束。
+    - 不在业务模块散落字符串命令名。
+
+- [K26b] **整树修改与快照投影分开**
+  - 要点
+    - 整树编辑要保留撤销链；直接重置引擎数据会清空历史。
+    - Level B 的跨视图投影采用无回声快照通道，见 K181；撤销权威属于文档会话。
+
+- [K26d] **自绘节点调宽必须完成内容重测**
+  - 要点
+    - 拖宽不仅更新外框，还要让自绘内容消费新宽度并在收尾重测布局。
+    - 高频预览与最终提交分开，见 K26e。
+
+- [K26f] **活数据与深拷贝快照不可混用**
+  - 要点
+    - 引擎节点数据是活引用，整树数据出口是深拷贝；调用方须按职责使用。
+    - 防腐层和测试保留这一区别，不能把活引用当不可变快照。
+
+- [K26g] **高频路径控制重复成本**
+  - 要点
+    - 缓存逐项淘汰，避免满表清空；同一行原文复用解析结果；设置应用防抖。
+    - 数值和实现细节由现有常量、模块契约及性能基线维护。
+
+- [K26h] **图片树必须先补默认尺寸**
+  - 要点
+    - 任何先显示再异步探测的图片路径，都须先提供引擎可解构的尺寸。
+    - 初次创建和会话快照两条入口均须覆盖，见 K198。
+
+- [K26i] **保留自绘内容接管**
+  - 要点
+    - 自绘承担统一呈现与编辑契约；拖动和缩放不应重建内容，单节点编辑只重建受影响内容。
+    - 历史成本测量属于证据，不凭虚拟时钟耗时决定缩减接管面。
+
+- [K26e] **拖拽预览不逐帧提交**
+  - 要点
+    - 图片等尺寸拖动只更新显示预览，松手后提交一次真实变化。
+    - 中途不加历史、不发内容变更、不排保存；拖回原尺寸不提交。
+
+- [K216] **画布热键拖拽设置只改变原生起手判据**
+  - 要点
+    - `dragCanvasWithModifier` 缺省关闭：空白左拖平移、Cmd/Ctrl 左拖框选；开启时两者互换。设置加载与引擎未传选项的缺省一致，显式 true/false 偏好继续保留。右键框选/选区菜单、中键平移与滚轮缩放保留。
+    - 起手时锁定手势，松开热键或中途切换设置不改变当前操作；下一次起手读取新值。节点起手不变画布平移，开启时 Mod 节点拖动不改结构；普通节点拖动仍归原生 Drag。
+    - 设置经既有 sanitize/持久化/差集刷新管线，经 engine 的具名入口原地 updateConfig，不重建引擎、不改共享文档会话/历史/Markdown。
+    - vendor 补丁仅改 Event/View/Select/Drag 原判据，禁止新增插件侧平移或框选循环；只读嵌入无选择/编辑插件。纯逻辑与独立 Chrome 页面覆盖两档设置、双修饰键、缩放和独立 Window。
+
+- [K26c] **画布手势各有一个实现**
+  - 要点
+    - 引擎负责缩放与中键拖动；插件只补宿主中键抑制、Alt 横移和平滑滚动。
+    - 同一手势不能同时注册两套平移处理。
+
+- [K27] **vendor 通过补丁流程维护**
+  - 要点
+    - vendor bundle 不手改；修改补丁后重新打包并同步哈希契约。
+    - 插件样式不引入上游 Quill CSS；引擎样式由运行时注入。
+
+- [K64] **首帧视口须等几何稳定**
+  - 要点
+    - 默认居中避开旧容器尺寸与中间态；图片尺寸回灌后核对内容可见性。
+    - 常规和性能模式各按既有路径取几何，不为居中强制装配全量 DOM。
+
+- [K130] **导出数学内联字体**
+  - 要点
+    - 独立导出补入数学字体，使完整公式不依赖宿主页面中的字体加载状态。
+    - SVG 内容存在不等于 PNG 光栅化完整，需核对实际导出产物。
+
+- [K131] **逐帧位置更新不叠 transition**
+  - 要点
+    - 小地图视口框等逐帧定位元素直接跟随计算结果。
+    - CSS 动画不能制造落后于真实几何的第二条运动曲线。
+
+- [K132] **布局完成后采样**
+  - 要点
+    - 切布局等异步重排先等渲染落地，再取缩略图和几何。
+    - 样式变化可立即刷新，两类入口不能混为一个。
+
+- [K133] **小地图连线与方块分预算**
+  - 要点
+    - 连线是否绘制按全量节点数和深度判断，节点方块数量按标记上限采样，两者分别约束。
+    - 不能以采样后的数量决定连线门槛；具体限额由几何模块契约维护。
+
+- [K134] **小地图帧指纹包含结构标记**
+  - 要点
+    - 等价帧判定除外框，还包括布局、连线及节点颜色等呈现指纹。
+    - 外框一样不代表图像未变化。
+
+- [K135] **小地图悬停保活与滚轮转发**
+  - 要点
+    - 悬停小地图期间保活；滚轮转发到画布，沿用同一缩放与平移语义。
+    - 停用面板时复位悬停状态；跨窗口转发取所属窗口的事件构造器。
+
+- [K136] **小地图连线按布局生成**
+  - 要点
+    - 缩略图复刻各布局的连线结构，不用一个猜主轴模型替代。
+    - 映射与几何算法唯一维护于既有小地图模块。
+
+- [K137] **会话唤醒与拆卸的时机**
+  - 要点
+    - 用户手势可唤醒小地图，后台渲染只续期已显示面板；淡出后换图不重新显示。
+    - 切文件时的会话拆卸先于 await，避免旧操作回来后误拆新会话。
+
+- [K138] **Alt 滚轮横移**
+  - 要点
+    - 插件只接管引擎缺少的 Alt 横轴语义，其余滚轮分支保留原职责。
+    - 幅度和方向由现有手势契约统一计算。
+
+- [K215] **缩略图在右侧 Outline 内常驻**
+  - 要点
+    - 主窗口只暂借一枚右侧 Outline 的公开容器，保留核心视图/状态；来源为同窗口最近的主内容导图，侧栏获焦不切源。离开导图或卸载时还原原内容及控件，其它侧栏页签和 tag 面板不动。
+    - 小导图也显示全图；复用原取样/SVG/视口投影/拖拽/滚轮，同一组件迁移而非重建导航。侧栏按可用尺寸等比居中，渲染事件短节流刷新，平移缩放仅更新框；隐藏或折叠暂停取样，不主动展开或切走其它页签。
+    - 侧栏用 `MiniMapPanelSize.inset` 留 12px 绘图区边距，SVG/蓝框/拖动共用 `miniMapScale`；内容范围包含全树节点及同一份连线的顶点/控制范围，最小像素标记也须完整留在面板内。宿主容器 padding 与 img 尺寸规则需按真实层级隔离；不能只测自然宽度或靠裁切通过验证。
+    - 唯一未公开契约是核心 view type `outline`，防御边界及自有 ItemView 回退见决策表；popout 无官方侧栏 API，继续使用原窗口浮层，不借主窗口文档。浮层启用/淡出规则仍保留。
+
+- [K140] **视口框读取实时画布尺寸**
+  - 要点
+    - 投影使用当前画布宽高，绘制快照仅用于内容与面板几何。
+    - 改窗口后不能长期等待下一次整图刷新才纠正视口框。
+
+- [K141] **鱼骨小地图保留骨架**
+  - 要点
+    - 水平骨干、短骨与斜脊按鱼骨布局实际几何生成。
+    - 不套用通用树连线导致缩略图结构失真。
+
+- [K142] **无选中复制整图大纲**
+  - 要点
+    - 有选中复制子树；无可复制选中项时复制含中心主题的整图。
+    - 只选中根时也使用整图分支。
+
+- [K143] **竖栏组内分隔对齐 Canvas**
+  - 要点
+    - 分隔线在条目上表达，按钮间距、圆角与 tooltip 使用既定宿主样式。
+    - 样式归组件目录，旧穿透层不能刷满画布背景。
+
+- [K144] **鼠标滚轮平移平滑**
+  - 要点
+    - 格状滚动在帧内趋近目标，触控板小增量与缩放仍按原手势分流。
+    - 停用、切引擎或销毁时取消帧工作。
+
+- [K145] **节点颜色指令属于正文**
+  - 要点
+    - 顶层颜色注释是颜色来源；自身覆盖最近祖先，再回落文件配色。
+    - 代码、数学等保护区不识别；派生引擎样式不回写为第二份内容。
+
+- [K146] **节点与整图配色入口分开**
+  - 要点
+    - 节点右键写正文颜色指令，空白右键改整图配色偏好。
+    - 边框宽度仍由边框开关决定，小地图读取节点实际描边色。
+
+- [K147] **小地图动作后显式刷新**
+  - 要点
+    - 插件内样式、结构与布局操作使用对应刷新入口。
+    - 后台节拍是兜底，不能让明确操作等待下一次节拍。
+
+- [K148] **图片探测失败缓存可失效**
+  - 要点
+    - 同一会话不重复轰炸失败地址；重新打开时让资源有再次探测机会。
+    - 失败仍提供安全尺寸，不能把一次暂时失败当永久不可用。
+
+- [K149] **显式默认颜色阻断继承**
+  - 要点
+    - none 哨兵使该节点和后代回到整图配色；无祖先色可挡时直接删自身指令。
+    - 哨兵留在 Markdown，跨窗口或设备仍有同样语义。
+
+- [K165] **画布几何来自布局数据**
+  - 要点
+    - 包围盒与缩略图几何使用引擎布局坐标，不把 DOM 是否挂载当节点是否存在。
+    - 性能模式不能因离屏节点未装配而漏掉内容。
+
+- [K167] **节点颜色作用范围写入内容**
+  - 要点
+    - 仅本节点与含子节点通过正文指令和哨兵表达，渲染层不另存作用范围。
+    - 切设置只改变后续动作；已有哨兵清理须用户选择，见 K175、K192。
+
+- [K168] **层级语法保持往返结构**
+  - 要点
+    - 正文决定当前语法与标题起点；新图设置只初始化空文档，显式重排按兄弟组原子执行。
+    - 列表在前、标题在后的同级混排合法；只归一会改变重解析结构的排布。
+
+- [K169] **标题拖入列表整支降级**
+  - 要点
+    - 落点是列表父时，整支改为列表并保留内容，和拖拽共享一次撤销。
+    - 标题锚点可能失效，提示统计见 K178；段落父的防御边界单独处理。
+
+- [K170] **语法切换保留元数据**
+  - 要点
+    - 整支转列表时段落也转成承载项；有序编号保留，列表 marker 在会话内可恢复。
+    - 写成标题后文件中不再有 marker，重开不承诺恢复该会话记忆。
+
+- [K171] **层级语法的可达边界**
+  - 要点
+    - 防御分支先按解析、结构守卫及粘贴入口判断用户能否到达。
+    - 当时段落父掉层的问题已由 K179 修复；不将历史未修列表当当前缺陷。
+
+- [K172] **兄弟风格按插入位置继承**
+  - 要点
+    - 新节点位于该层最后一个标题之后时，不因前面有列表而误写成该标题的子项。
+    - 起点以本文件实测语法为准，保留合法前列表后标题的混排。
+
+- [K174] **标题的颜色指令独立成行**
+  - 要点
+    - 给标题上色把指令放在下一行，避免宿主标题缓存把指令算进锚点。
+    - 已有行尾指令保留原文；内容写法及指令清除共同核对。
+
+- [K175] **改作用范围不自动删正文哨兵**
+  - 要点
+    - 从仅本节点改为含子节点时，询问是否清理当前打开文档中的旧哨兵。
+    - 用户确认后重新扫描并核对文件归属；按文档只处理一次，见 K192。
+
+- [K177] **已取代：多视图后关闭者胜**
+  - 要点
+    - 同文件视图共享权威会话，不能各写各的正文。
+    - 当前同步与外部冲突见 K180、K182。
+
+- [K178] **降级提示统计标题锚点**
+  - 要点
+    - 提示整支实际失去锚点的标题数，并明确可撤销。
+    - 不扫描全库引用，不能把标题数说成受影响链接数。
+
+- [K179] **段落父回写为列表承载**
+  - 要点
+    - 段落有子节点时按列表项输出并补正确缩进，保住重解析层级。
+    - 普通解析中的叶子段落保持原形，不为浏览改写文件。
+
+- [K195] **视图状态只写真实变化**
+  - 要点
+    - 同值不排写盘，未动过的自动默认视口不保存；关闭前先持久化再重置控制器。
+    - 同文件其它视图保存的视口不能带跑本视图；不批量清理历史默认条目。
+
+- [K196] **callout 与引用块只做呈现**
+  - 要点
+    - 引用、围栏、表格、行内内容按块级顺序解析，再交 UI 渲染。
+    - 保护区不识别引用；折叠与类型归一遵循宿主语义，原文不因显示变化而改写。
+
+- [K199] **编辑文字与底色跟随节点**
+  - 要点
+    - 编辑面保留当前节点的字号、文字色与底色，使编辑状态自然衔接。
+    - 当时固定尺寸与内部滚动方案已由 K203 替代。
+
+- [K200] **空白连续点击不创建节点**
+  - 要点
+    - 空白单击与双击只保持选择或清空行为，不新增根级空节点。
+    - 新建仍由明确命令、菜单、Tab、Enter 或加号进入。
+
+- [K203] **原文编辑自适应尺寸**
+  - 要点
+    - 编辑面按文本测宽，达到宽度上限后换行并显示完整高度，不产生内部滚动条。
+    - 预览只改编辑 DOM；暂藏原节点，关闭恢复，提交才更新树、历史和保存。
+
+- [K204] **两种编辑面统一高亮职责**
+  - 要点
+    - 引擎空节点编辑和插件原文编辑暂藏旧节点，由编辑面自身绘制外框及高亮。
+    - 高亮随尺寸变化；关闭、缩放、替换与销毁都恢复原可见状态。
+
+- [K205] **结构拖动邻近吸附**
+  - 要点
+    - 只改变父子结构与顺序；精确命中优先，再给可见邻近目标屏幕容差，松手核对最终位置。
+    - 未命中回原位，不留下自由坐标、不做全图整理、不改变视口；判定在引擎补丁中。
+
+- [K206] **常驻整理按钮移除**
+  - 要点
+    - 结构拖动自动归位后，右侧不再常驻整理按钮。
+    - 右键和命令仍保留显式整理能力。
+
+- [K201] **新图只含中心主题**
+  - 要点
+    - 初始 Markdown 只写启用与布局属性，正文为空，不预置示例分支。
+    - 首个节点语法按新图设置一次初始化，后续由正文自身决定。
+
+## 架构边界与单一来源
+
+- [K28] **通用判定与并发原语唯一**
+  - 要点
+    - URL、解码、扩展名与并发机制复用对应公共模块。
+    - 批量异步任务使用有界并发；解码失败由调用方显式选回退或跳过。
+
+- [K28b] **复制链接共用文件写法**
+  - 要点
+    - 序列化与复制链接使用同一渲染出口，剪贴板内容须能直接粘回 Markdown。
+    - 文件夹查找共用入口；跨 await 写入核对原会话和引擎归属。
+
+- [K29] **库内文件解析统一入口**
+  - 要点
+    - 路径查找与索引操作经 links 层既有收口，业务模块不拼自己的扫描链。
+    - ESLint 与真实依赖图共同检查边界。
+
+- [K30] **Vault 事件统一订阅**
+  - 要点
+    - 创建、删除、重命名由同步服务单点订阅，补充行为经 hooks 注入。
+    - 同一事件不因新特性增加第二份订阅。
+
+- [K31] **特性模块通过上下文访问能力**
+  - 要点
+    - 视图特性只拿设置、状态服务等所需能力，不持有插件实例或共享状态栏 DOM。
+    - 局部节点、悬停与会话状态在所属模块内聚。
+
+- [K32] **上下文保持窄接口**
+  - 要点
+    - 模块按需组合 DOM、引擎与少量视图字段，不默认接受整个装配面。
+    - 新成员先明确属于哪个子契约。
+
+- [K33] **错误与告警格式统一**
+  - 要点
+    - 用户可见错误、消息提取与内部去重告警复用 core/errors。
+    - 用户不可见的能力退化仍留痕；去重范围由告警实例的生命周期决定。
+
+- [K34] **占位文案统一格式化**
+  - 要点
+    - 带参数的国际化文案使用统一格式化入口。
+    - 不逐处手写替换链；中英文词条同时维护。
+
+- [K35] **弹窗收尾与文件联想复用**
+  - 要点
+    - 弹窗 Promise 只完成一次；关闭兜底与库内文件联想使用公共实现。
+    - 关闭回调使用宿主注册方式，避免覆写生命周期方法。
+
+- [K36] **监听与定时器随生命周期清理**
+  - 要点
+    - DOM、宿主事件、定时器与引擎事件统一登记，在卸载时释放。
+    - 不留下模块外无法追踪的监听器。
+
+- [K37] **项目命名保持一致**
+  - 要点
+    - 当前插件、设置与设置页使用 MindMap Studio 的统一命名。
+    - 历史品牌名只作记录；更名应作为单独任务处理。
+
+- [K50] **模块化的四条边界**
+  - 要点
+    - 单一职责、分层单向、能力收口唯一、模块接口最窄。
+    - 新职责先找所属模块；是否拆分由职责判定，不按行数机械切割。
+
+- [K51] **依赖矩阵只有一个来源**
+  - 要点
+    - scripts/module-boundaries.mjs 同时驱动 lint 和真实依赖图测试。
+    - 新组先定层；组内禁止成环；子目录不增加新的依赖许可。
+
+- [K166] **保存状态有一个判据**
+  - 要点
+    - 共享保存管线报告内容是否落盘，活动视图负责写共享状态栏。
+    - 保存错误保持未保存提示，下一次成功恢复；加载与应用快照不空报保存中。
+
+- [K173] **mermaid 使用宿主同款渲染器**
+  - 要点
+    - 平台层负责 npm 内嵌渲染器的加载与渲染，UI 只消费注入能力。
+    - 它作为锁版本依赖打包，不进入仅存补丁 bundle 的 vendor 目录。
+
+- [K180] **一文件一文档会话**
+  - 要点
+    - 同文件视图共享权威树、撤销时间线和保存管线；各自保留引擎与视口。
+    - 编辑经会话广播，视图只是投影，不建立各自独立写盘权威。
+
+- [K181] **快照投影不产生回声**
+  - 要点
+    - 跨视图应用只走无历史、无内容变更事件的快照入口。
+    - 不能用会追加历史的普通整树更新替代，也不靠临时暂停吞掉事件。
+
+- [K182] **外部写入优先保留磁盘新内容**
+  - 要点
+    - 写盘前发现磁盘正文变更，放弃陈旧写入并重载；草稿保留为可撤销快照。
+    - 有草稿提示一次，无草稿静默；不做未经授权的树级合并。
+
+- [K183] **关闭保存由会话负责**
+  - 要点
+    - 内容变化两秒防抖，关闭、切文件及卸载立即 flush；同文件只有一条保存管线。
+    - 内联编辑必须先提交，再停用提交入口和释放视图。
+
+- [K184] **会话订阅与重命名迁移**
+  - 要点
+    - 重命名迁移会话注册键，不重建各视图引擎；订阅与合并广播按会话生命周期管理。
+    - 所有路径基线也须迁移，补充修复见 K194。
+
+- [K185] **广播延迟按图规模选择**
+  - 要点
+    - 小图立即广播，大图使用短合并窗口，跳过已持有最新内容的发起视图。
+    - 默认装配不得无条件注入延迟而使分流失活，见 K194。
+
+- [K186] **广播收尾与撤销一致**
+  - 要点
+    - 撤销、重做及外部重载广播给所有视图；应用前先完成本地编辑，避免最后输入被守卫丢弃。
+    - 所有视图保持同步渲染；当时跳过隐藏标签的优化已回滚。
+
+- [K187] **已废止：一次性历史属性迁移**
+  - 要点
+    - 不再在启动时识别、改写或清洗旧声明。
+    - 当前只实现现行数据契约，见 K213。
+
+- [K188] **就地归一同步权威树**
+  - 要点
+    - 语法守卫修改 Markdown 字段后，同步当前会话快照但不新增撤销历史。
+    - 不让下一轮广播拿旧权威树覆盖已归一的字段。
+
+- [K189] **视图撤销方法保持同名契约**
+  - 要点
+    - 视图的 undo 与 redo 明确委托会话，所有入口使用同一时间线。
+    - 不能因适配命名不匹配而静默回退引擎历史。
+
+- [K190] **打开不空保存、不重复投影**
+  - 要点
+    - 只有实际内容提交才排保存；已用当前会话树建好的引擎不再重放同版本。
+    - 初始化期间若确有新版本仍须补应用。
+
+- [K191] **图内链接覆盖所有点击通道**
+  - 要点
+    - 正文、标签、双链等相关入口一起覆盖，事件目标按元素能力判定。
+    - popout 是另一 realm，不使用本窗口 instanceof 判断排除合法目标。
+
+- [K192] **哨兵清理按文档去重**
+  - 要点
+    - 同文件多视图只计一次提示、扫描与提交。
+    - 确认后的重新检查使用共享文档状态，不能按每个 leaf 重复清理。
+
+- [K193] **豁免与门禁定义唯一**
+  - 要点
+    - 超限文件只登记于 index；门禁显式覆盖配置与打包面依赖。
+    - 批次流水保存历史值，不复制当前豁免表。
+
+- [K202] **稳定入口与可变维护分开**
+  - 要点
+    - AGENTS.md 保留固定规则与导航，索引、决策、理由和流水归 docs/agents。
+    - 日常清单、行数与批次记录不触发入口文档重写。
+
+- [K194] **会话广播与改名基线完整**
+  - 要点
+    - 拒绝落后视图的整树提交并回刷权威树；改名迁移保存基线；应用期间不重复排保存。
+    - 不做树级合并或跨进程同步；用真实装配与关闭顺序验证。
+
+## 交互对齐 Obsidian 官方
+
+- [K38] **视图快捷键与宿主交互**
+  - 要点
+    - 视图自行创建作用域，接管编辑、撤销与剪贴板动作，并在输入面内让位。
+    - 撤销和重做由文档会话驱动，见 K180、K189；附件命名及打开方式对齐宿主。
+
+- [K139] **小地图无障碍语义**
+  - 要点
+    - 小地图面板保留 group 角色，不加 aria-label，避免宿主把它显示为可见 tooltip。
+    - 如需恢复面板名称，使用 aria-labelledby；控件本身仍须有明确可访问标签。
+
+- [K150] **任务与标签从正文派生**
+  - 要点
+    - 任务 token、标签及交互走自绘通道，不写引擎 tag、note 或 icon 的第二份数据。
+    - 原文与显示文本分开，复选状态更新沿用正文提交机制。
+
+- [K151] **标签与任务使用宿主链接色**
+  - 要点
+    - 标签 pill 与任务复选框的颜色与 wiki 链接同源。
+    - 着色节点内的可读性按派生内容色契约处理。
+
+- [K152] **离屏测量残渣隔离**
+  - 要点
+    - 渲染完成后清理测量副本，容器排除无障碍树和键盘焦点。
+    - 清理不能干扰下一轮测量；不可只等引擎销毁才处理。
+
+- [K153] **删除联系回收无主身份**
+  - 要点
+    - 删边或删源节点后，目标再无入边时移除它的身份指令。
+    - 清理与主动作合为同一次原文提交，仍有引用时保留身份。
+
+- [K154] **联系线颜色使用统一来源**
+  - 要点
+    - 联系线颜色写在联系指令属性中，线的右键菜单复用节点色族与自定义颜色入口。
+    - 只覆盖颜色，线宽、虚线、字号仍由主题管理；选中高亮保持独立语义。
+
+- [K155] **右键菜单只显示一份**
+  - 要点
+    - 插件节点、画布和选区菜单确定归属后阻止宿主重复弹菜单。
+    - 右键拖动的分流另见 K163。
+
+- [K157] **长耗时导出有可见反馈**
+  - 要点
+    - 导出期间展示进度或忙碌状态，结束与失败均收尾。
+    - 反馈覆盖实际异步阶段，不能仅在开始时闪一下。
+
+- [K159] **两态开关提供按下状态**
+  - 要点
+    - 连线、边框等开关的可访问状态随实际偏好更新。
+    - 不只靠图标或 tooltip 表达当前值。
+
+- [K160] **撤销能回到打开原样**
+  - 要点
+    - 首帧落地后建立初始历史；第一次编辑必须可撤销到加载状态。
+    - 回到加载态还须正确写回原文，见 K156；Level B 的权威撤销线见 K180。
+
+- [K161] **大图初始化有可见反馈**
+  - 要点
+    - 长首帧任务期间显示正在构建，完成或失效时结束反馈。
+    - 无报错且空画布不等于已完成初始化，自动化还须核对可见性和引擎就绪。
+
+- [K162] **概要锚定首个被覆盖兄弟**
+  - 要点
+    - 概要覆盖从锚点开始的连续兄弟，边界与重叠按已有契约解释。
+    - 指令块语法统一，显示派生不制造另一份正文；具体格式见标准文档。
+
+- [K163] **右键拖动后的菜单分流**
+  - 要点
+    - 框到节点显示选区菜单，未框到不弹菜单；普通右键继续按落点处理。
+    - 拖动判断在事件链结束前记录，不能松手后再问已清空的引擎选择状态。
+
+## Obsidian API 合规与工具链
+
+- [K39] **官方 API 优先**
+  - 要点
+    - 优先使用官方声明与帮助文档；确有缺口的私有触点须防御式实现并登记。
+    - 历史审计的数量不作当前清单；实际触点与防御边界见对应模块契约及决策表。
+
+- [K40] **最低宿主版本有功能依据**
+  - 要点
+    - 最低版本须覆盖实际使用的声明式设置等 API，不能只为发布元数据调整。
+    - 安装的类型版本、最低运行版本与参照文档版本分别核对。
+
+- [K41] **设置对象键须核对版本**
+  - 要点
+    - 新增声明式设置字段时人工检查其引入版本。
+    - 对象字面量的键不由现有 API lint 完整覆盖，编译通过不等于最低版本可用。
+
+- [K42] **桌面限定影响正则可用性**
+  - 要点
+    - 移动端支持或变更桌面限定前，先审查并替换依赖后行断言的正则。
+    - 须覆盖序列化与轻标记扫描，并执行完整往返回归。
+
+- [K43] **lint 在插件根目录执行**
+  - 要点
+    - 部分宿主 lint 规则按工作目录读取 manifest，运行位置是检查契约的一部分。
+    - 从父目录执行可能改变桌面判据与全局环境。
+
+- [K44] **API lint 的有效边界**
+  - 要点
+    - 最低版本阈值显式来自 manifest；可检查的 API 上沿来自项目安装的 typings。
+    - 调整类型依赖时重新核对规则与缓存，不拿最新在线文档当实际检查上沿。
+
+- [K57] **死代码检查保留测试入口**
+  - 要点
+    - 无用途文件与导出去除；纯逻辑直测所需的导出仍算有效入口。
+    - 检查配置包含测试，不凭仅生产入口的对照报告机械删除。
+
+- [K58] **历史测量：单次编辑成本**
+  - 要点
+    - 文本尺寸变化需要布局重排；插件首先消除无必要的重复渲染。
+    - 计数与耗时分别验证；当前性能基线以同轮测量为准。
+
+- [K59] **设置按键差集应用**
+  - 要点
+    - 设置变化只触发受影响的主题、界面或引擎能力，避免一律重建。
+    - 后续收敛见 K60、K62；现行键集由设置刷新实现维护。
+
+- [K60] **性能模式原地更新**
+  - 要点
+    - 支持原地更新的性能配置不重建引擎，保留视口与编辑上下文。
+    - 配置更新后的重渲染只付一次，不重复销毁并重建实例。
+
+- [K61] **一次动作至多一次布局落地**
+  - 要点
+    - 先批量写入数据，再统一安排布局；不让多个适配重复触发整树渲染。
+    - 对计数与真实耗时分别验证，不能互相替代。
+
+- [K62] **历史收敛：设置刷新范围**
+  - 要点
+    - 可原地更新的设置不重建；不影响当前文件的默认值变化不刷新当前图。
+    - 现行重建键集唯一维护于设置刷新入口，不在文档复制易漂移的清单。
+
+- [K63] **真实性能使用真实时钟**
+  - 要点
+    - 耗时结论采用真实墙钟通道，虚拟时钟只用于结构及次数断言。
+    - 历史毫秒读数不可直接当当前门槛。
+
+- [K65] **历史测量：长会话内存**
+  - 要点
+    - 历史快照是需重点约束的内存来源，测试须验证实际保留深度。
+    - 共享会话后的撤销归属见 K180，内存结论须按当前会话模型复核。
+
+- [K66] **历史深度按预算收敛**
+  - 要点
+    - 撤销链使用既有内存预算与图规模限制，不无限保留整树快照。
+    - 当前共享历史由会话管理，不沿用旧的每视图独立历史模型。
+
+- [K67] **整理避开 root 未就绪窗口**
+  - 要点
+    - 异步布局进行时不对缺失的渲染根执行整理命令。
+    - 收尾等待与回退在引擎控制层统一处理，不由按钮各自补逻辑。
+
+- [K68] **历史优化：索引、拖拽与接管缓存**
+  - 要点
+    - 减少全库重建、逐帧分配与重复自绘判定。
+    - 旧拖拽辅助已退役，见 K23；不为性能优化恢复已删除的业务路径。
+
+- [K69] **资源解析先走低成本路径**
+  - 要点
+    - 可直接解析的资源不先建全库索引，纯文本解析使用快路径。
+    - 快路径必须与完整路径保持语义一致，已有回归共同覆盖。
+
+- [K70] **居中不强制装配全图 DOM**
+  - 要点
+    - 大图默认居中从布局数据计算几何，避免临时关闭性能模式。
+    - 常规与性能模式共同满足内容可见性契约，性能读数须重新测量。
+
+- [K72] **历史测量：文本测量成本**
+  - 要点
+    - 大图成本分析先区分引擎逐字符测量与插件内容构建。
+    - 不按未经验证的成本估计重写渲染器；先测量再确定修改范围。
+
+- [K73] **引擎性能修订遵循 vendor 流程**
+  - 要点
+    - 引擎内部优化写为补丁，重新打包并同步构建说明及哈希测试。
+    - 改动前后按同轮测试对照热点，不能直接改 bundle。
+
+- [K74] **自绘测量按内容缓存**
+  - 要点
+    - 自绘内容尺寸按内容寻址，重复打开可复用测量。
+    - 字体代际也是缓存正确性的组成部分，见 K114。
+
+- [K75] **首帧预测量复用元素**
+  - 要点
+    - 预测量与正式构建复用既有结果，避免同内容重复构建。
+    - 分段计时明确包含哪些工作，避免把复用或等待时间重复归因。
+
+- [K76] **大图分片渲染**
+  - 要点
+    - 使用引擎已有异步通道分散长任务，收尾必须等待真实渲染完成。
+    - 分片的总耗时与输入阻塞分别测量，避免只优化其中一项。
+
+- [K77] **历史负结论：内容构建并非主要瓶颈**
+  - 要点
+    - 性能方案先对热点取证，再决定是否增加新的缓存或重构。
+    - 当时的成本分解不能作为其它图规模、宿主或版本的固定比例。
+
+- [K78] **拖宽监听按需注册**
+  - 要点
+    - 无需拖宽能力的节点不预先注册整套监听；节点销毁释放已注册资源。
+    - 监听生命周期由补丁契约与回归验证，不能仅以节点不可见推断监听已释放。
+
+- [K79] **布局平移避免重复遍历**
+  - 要点
+    - 子树平移的内部优化须保留最终布局几何和一次物化的语义。
+    - 算法补丁遵循 vendor 流程，以布局回归与实际复杂度测量验证。
+
+- [K80] **历史负结论：镜像序列化**
+  - 要点
+    - 未超过测量噪声的优化不保留额外复杂性。
+    - 已回滚候选只作证据，不能作为现行架构要求。
+
+- [K94] **历史性能复核仅作基线**
+  - 要点
+    - 解析、渲染与长会话读数用于后续同条件对照。
+    - 不把历史测试数量或毫秒数写成当前固定验收值。
+
+- [K81] **社区 scanner 作为护栏**
+  - 要点
+    - 本地门禁与社区校验面持续对照，防止后续配置收窄。
+    - 当时无实质缺口的审计结论不是所有后续版本的免检证明。
+
+- [K82] **构建对照官方模板**
+  - 要点
+    - 模板对照用于确认构建、工作流与开发要求，没有依据不替换现有技术选择。
+    - 当前配置以真实文件为准，模板或工作流升级后重新核对差异。
+
+- [K83] **lint 规则先核对实际拦截力**
+  - 要点
+    - 新规则先做正负探针，避免把误报当合规缺口。
+    - 未验证实际拦截力的规则不接入门禁；误报与缺口分别处理。
+
+- [K84] **许可声明随副本分发**
+  - 要点
+    - 发布三件套同时附带项目许可证与第三方许可说明。
+    - 内联 bundle 注释不能代替完整许可声明。
+
+- [K85] **数学渲染核对宿主实际能力**
+  - 要点
+    - 使用宿主实际提供的 MathJax 渲染面，能力缺失要有回退与告警。
+    - 官方加载 API 与私有渲染触点分开登记，适配集中在平台层。
+
+- [K86] **数学异步定稿后重测**
+  - 要点
+    - 离屏同步测量可能先量到占位文本，产物定稿后须重新测量节点。
+    - 不能只替换 DOM 而保留旧外框几何。
+
+- [K87] **数学样式就绪后缓存**
+  - 要点
+    - MathJax 产物缓存和尺寸同步以字体、字符样式确已生效为前提。
+    - 容器宽高非零不足以证明公式没有塌缩。
+
+- [K88] **数学重测定位真实节点**
+  - 要点
+    - 异步定稿不能把预测量代理误当可重渲染的引擎节点。
+    - 必须从当前引擎定位真实节点；进一步回退见 K100、K104。
+
+- [K89] **块级数学按闭合定界符切分**
+  - 要点
+    - 块级数学允许跨行并含单个美元符号，寻找最近的合法闭合。
+    - 定界符解释集中在扫描器，不由 UI 再解析。
+
+- [K90] **数学就绪判据尊重零宽字符**
+  - 要点
+    - 设计上零宽的数学字符不算样式未就绪；块级定界符的合法空白不误挡。
+    - 边界与负向样本由数学及 token 扫描回归覆盖。
+
+- [K91] **代码块呈现与复制**
+  - 要点
+    - 围栏内容保留换行和缩进，复制操作去除围栏及信息行。
+    - 最初的无高亮方案已被 K116 更新；按钮呈现见 K115。
+
+- [K92] **节点原文内联编辑**
+  - 要点
+    - 富节点在节点位置编辑即将回写的原文，提交与取消沿用既有会话机制。
+    - 自适应尺寸和统一高亮见 K203、K204；组件分工见 K208。
+
+- [K93] **新节点为空并立即编辑**
+  - 要点
+    - 新建子节点、同级节点和加号入口使用空文本并进入编辑。
+    - 空列表项保留结构；空白双击新建入口已由 K200 移除。
+
+- [K95] **自绘链接以文本呈现**
+  - 要点
+    - 自绘节点中的链接使用宿主链接色，URL 显示地址文本并可交互。
+    - 引擎单槽图标通道与自绘链接通道分开，见 K118。
+
+- [K96] **图片异步校正不丢首帧**
+  - 要点
+    - 图片匹配兼顾对象身份与节点 uid；root 未就绪时保留待回灌结果。
+    - 首帧落地后再消费校正，不能提前清空队列。
+
+- [K97] **图片无参数显示原始尺寸**
+  - 要点
+    - 显式宽高按参数显示，仅宽保持比例；无参数从自然尺寸取值，超过显示上限时等比缩小。
+    - 探测失败先使用安全默认尺寸，自动尺寸不回写，见 K8。
+
+- [K98] **历史规则：新节点标题层级**
+  - 要点
+    - 新节点语法现在跟随文件实测起点、兄弟位置与父级约束。
+    - 早期前六级恒写标题的方案已被 K168、K172、K201 更新。
+
+- [K99] **导出注入宿主主题变量**
+  - 要点
+    - 导出 SVG 为自绘内容补齐其依赖的宿主 CSS 变量。
+    - 屏幕上已有主题变量不代表独立导出环境也有。
+
+- [K100] **数学重测具有定位回退**
+  - 要点
+    - 缓存复用或预测量使对象关联失效时，按产物元素反查当前节点。
+    - 不让可选调用静默跳过真正的尺寸更新。
+
+- [K101] **自绘外链协议白名单**
+  - 要点
+    - 渲染 href 只接受已有协议白名单，非法地址保留显示回退。
+    - URL 判断共用 domain/url，不在 DOM 构建器重写规则。
+
+- [K102] **已废止：同文件多视图互斥**
+  - 要点
+    - 不阻止多个视图打开同一文档，也不采用后关闭者胜的策略。
+    - 当前一文件一会话，见 K180、K194。
+
+- [K103] **已废止：旧保存加固方案**
+  - 要点
+    - 连续失败挂起与旧保存开关等机制不恢复。
+    - 当前两秒防抖、关闭 flush 与外部冲突由共享会话处理，见 K166、K182、K183。
+
+- [K104] **数学产物反查覆盖插件容器**
+  - 要点
+    - 首帧重测选择器必须识别插件自己的数学 holder。
+    - 真实产物、定位成功与几何更新分别验证，不能只检查定稿回调触发。
+
+- [K105] **导出 CSS 值校验保留合法字体**
+  - 要点
+    - 主题变量校验阻挡结构性注入字符，同时接受合法非 ASCII 字体名。
+    - 不用过窄字符白名单使中文或用户字体静默回退。
+
+- [K106] **导出几何留出光栅化余量**
+  - 要点
+    - 导出 foreignObject 为像素取整留下安全边距，避免临界内容被裁。
+    - 余量只作用于导出，不改变交互节点布局。
+
+- [K107] **导出数学容器使用定稿高度**
+  - 要点
+    - 独立导出环境中保留屏幕已确定的数学高度，避免末行压边或裁切。
+    - 字体完整性另见 K130。
+
+- [K108] **插件编辑提交后编排**
+  - 要点
+    - 原文编辑提交后也要执行主题重命名、候选拆分等已有业务后处理。
+    - 不能只依赖引擎编辑事件；输入预览阶段不提交、不保存。
+
+- [K109] **发布检查覆盖说明与许可证**
+  - 要点
+    - 发布门禁校验必需元数据、许可证与版本说明；scanner 调用采用实际可运行方式。
+    - 工具版本变化后验证实际命令可运行，不沿用旧版本的通过结论。
+
+- [K110] **历史性能轮的取舍**
+  - 要点
+    - 优化以实际画像为依据，几何计算不强制全量 DOM，低收益方向不增加结构。
+    - 旧拖拽辅助相关候选已随 K23 废止；数字只作当时证据。
+
+- [K111] **鼠标侧键保留导航历史**
+  - 要点
+    - 视图让宿主导航事件链正常冒泡，并正确声明导航能力与历史状态。
+    - 快捷键失效须查事件链与视图契约，不能再绑定一套后退实现。
+
+- [K112] **工具栏图标尺寸自包含**
+  - 要点
+    - 工具栏同时设置宿主图标变量和自身尺寸，减少对内部类名的隐式依赖。
+    - 当时的旧拖拽辅助内容已废止；局部样式现归组件，见 K207。
+
+- [K113] **MathJax 代际能力适配**
+  - 要点
+    - 数学就绪检查兼顾宿主实际产物形态，升级后重新核对零宽字符和字体能力。
+    - 旧宿主实测是适配依据，不硬编码为唯一运行版本。
+
+- [K114] **字体代际进入测量缓存键**
+  - 要点
+    - 字体渐进加载后失效旧宽度，避免公式定稿但节点仍使用偏小缓存。
+    - 内容缓存与尺寸缓存的代际须一致。
+
+- [K115] **代码复制按钮按需显形**
+  - 要点
+    - 复制按钮在悬停或键盘交互时可发现，不在常态覆盖代码首行。
+    - 定位使用逻辑属性以适应布局方向。
+
+- [K116] **代码高亮使用宿主 Prism**
+  - 要点
+    - 围栏语法高亮经官方加载入口，呈现和复制沿用宿主行为。
+    - 无高亮的早期轻渲染方案仅保留为历史。
+
+- [K117] **减少重复入口与默认副作用**
+  - 要点
+    - 混排链接自动拆分默认关闭；新建入口、设置和判据优先合并重复能力。
+    - 显式批量操作仍保留；已删除命令 ID 不复用。
+
+- [K118] **引擎与自绘链接通道分开**
+  - 要点
+    - 自绘接管时引擎部分图标通道不可达；功能与测试须验证用户实际走到的通道。
+    - 不能用仅存在的数据字段证明图标或点击已工作。
+
+- [K119] **无显示名 token 也保留位置**
+  - 要点
+    - 图片等 token 用原文锚点参与编辑合成，避免改字时搬到行尾。
+    - 锚点无法匹配时走已定义回退，不猜测破坏新语法。
+
+- [K120] **轻标记支持合法嵌套**
+  - 要点
+    - 粗体、斜体扫描按定界符语义处理，不用排除所有星号的简化规则。
+    - 相邻标记与嵌套标记共同回归，补充修复见 K126。
+
+- [K121] **文件属性声明导图**
+  - 要点
+    - 文件名后缀不再作为自动接管判据，启用与布局遵守当前属性契约。
+    - 不自动迁移旧声明，见 K14、K213。
+
+- [K122] **Markdown 围栏只读嵌入**
+  - 要点
+    - mindmap 代码块提供只读导图；布局指令和全局默认由组合根注入。
+    - 不挂编辑、保存或完整视图依赖；主题和连线默认与按文件偏好分开。
+
+- [K123] **GFM 表格在节点内渲染**
+  - 要点
+    - 表格按块识别，使用内联样式与宿主主题变量呈现。
+    - 保护区内不识别表格；表格行后写指令不能制造额外单元格。
+
+- [K124] **切回 Markdown 保留原模式**
+  - 要点
+    - 视图状态正确记录和恢复编辑或阅读模式。
+    - 返回 Markdown 不能一律落到编辑态。
+
+- [K125] **历史宿主约定：Windows 终端**
+  - 要点
+    - 当时的 Windows 调用形式与 WSL 别名问题保留为历史依据。
+    - 当前会话按实际 macOS/zsh 工具执行，不能照搬 Windows 路径。
+
+- [K126] **渲染保真与跨窗口能力判定**
+  - 要点
+    - 相邻和嵌套标记分别识别；图片手柄等通过能力判定支持 popout。
+    - 新引用遵循宿主路径偏好，存量原文不被新引用逻辑扩写。
+
+- [K127] **边框与明暗主题正交**
+  - 要点
+    - 边框预设只表达填充与宽度，不改字号、间距、连线或主题描边色。
+    - 无边框仍保留真实描边色供缩略图取墨；偏好作用域以 decisions.md 为准。
+
+- [K128] **整篇配色按文件记忆**
+  - 要点
+    - 配色与明暗、边框分别管理；预设及自定义颜色经统一解析。
+    - 当前短 id 不接旧名称别名，见 K213；只读嵌入使用既定默认配色。
+
+- [K129] **右缘竖栏与右键菜单分工**
+  - 要点
+    - 竖栏保留文档、外观开关、视图与历史四组；布局和配色采用右键级联。
+    - 常驻整理按钮已移除，见 K206；组件装配边界见 K207。
+
+- [K197] **脚注只读交互**
+  - 要点
+    - 引用显示轻量徽标并按当前文档原文找定义，定义行仍保留节点。
+    - 徽标不缓存定义正文；交互期索引从当前渲染树取数据，不制造另一份快照。
+
+- [K198] **会话快照补图片显示尺寸**
+  - 要点
+    - 解析树进入引擎前补齐缺失尺寸，并复用本视图已探测的同地址尺寸。
+    - 尺寸是显示派生，不回灌权威树或修改正文。
+
+- [K207] **工具栏与搜索组件内聚**
+  - 要点
+    - ui 组件内聚骨架、局部交互与样式，features 适配业务状态和回调。
+    - 组件不持有视图、引擎、Vault 或保存服务；样式从统一 CSS 入口构建。
+
+- [K217] **创建入口与原生命名弹窗**
+  - 要点
+    - 新建导图从命令面板或文件夹右键进入，不注册左侧丝带按钮；命令 ID 保持原值。
+    - 命名弹窗沿用官方 Modal、输入框和按钮，只局部使用宿主中号圆角与间距变量。
+    - 局部样式旁置于 modal-name.css，其他弹窗与全局主题不受影响。
+
+- [K208] **编辑会话与编辑组件分工**
+  - 要点
+    - features 管理会话、原节点暂藏及提交守卫；ui 管理文本框、输入、焦点和测量。
+    - 样式旁置并保留既有坐标、缩放与尺寸契约，不改变输入与提交时序。
+
+- [K209] **内容 UI 与解析模型分离**
+  - 要点
+    - features 保留自绘接管和唯一段分派；ui 管理各段 DOM 与样式；共享段模型在 core。
+    - 图标、公式、mermaid 与预览以窄接口注入，UI 不访问引擎或 Vault，不重新解析。
+
+- [K210] **能力子目录不增加依赖层**
+  - 要点
+    - platform 与 features 按能力分目录，一级组仍是依赖许可单位。
+    - 迁移同步真实 import 与完整路径索引，不添加无必要转发入口。
+
+- [K211] **测试目录对齐主要职责**
+  - 要点
+    - 模块测试跟随源码能力目录，工程契约集中于 contracts，公共测试资源单独保留。
+    - 不强求一源一测；组合入口测试留根目录，迁移不改断言。
+
+- [K212] **配置与执行脚本归档**
+  - 要点
+    - 显式加载配置归 config，执行脚本归 scripts；自动发现的约定入口留根目录。
+    - 路径相对真实配置位置计算，工作目录和工具扫描范围须有回归。
+
+- [K213] **只实现当前数据契约**
+  - 要点
+    - 允许破坏性演进，删除旧属性迁移、旧布局与配色别名等历史读取兼容。
+    - 非法值走当前默认或拒绝路径；启动不迁移写盘，宿主 API 适配与 Markdown 保真继续保持。
+
+- [K214] **版本标签指向需求完成快照**
+  - 要点
+    - v0.x.x 标签标对应需求最终完成点；base 取上一完成点，版本号提交另外记录。
+    - 映射依版本说明与真实差异确定，一版可跨多次实现；不与发布流程中的版本标签混用。
+
+
+- [K218] **普通笔记临时视图与专用导图**
+  - 打开与保存
+    - 普通 Markdown 可以从原生标题栏、菜单或命令切到导图；打开与返回不写属性。
+    - 节点正文编辑继续使用文档会话、自动保存和撤销；纯浏览保持零写盘。
+  - 视图状态
+    - 普通笔记的布局、视口与外观只保留在当前标签，关闭或重启后恢复 Markdown。
+    - 专用图返回 Markdown 的选择只属于当前标签，后台扫描不会立即反转；重命名保留选择，导航换文件后失效。
+  - 文件命名
+    - 新建图使用 .mindmap.md，并初始化启用与布局属性；默认自动打开同时要求后缀与启用属性。
+    - 编号放在完整后缀之前，显示标题隐藏格式后缀，中心主题改名保留后缀。

@@ -16,7 +16,7 @@
  *   都是 vitest 用例，已在 `npm test` 内，不单列（避免双跑）。
  *
  * **豁免表行数对账**（附带静态核对，每次都跑）：
- * - 行数漂移：登记值 vs 实测（口径 = `tests/agents-md-sync.test.ts` 的
+ * - 行数漂移：登记值 vs 实测（口径 = `tests/contracts/agents-md-sync.test.ts` 的
  *   `countSourceLines`；`--fix-lines` 回填 `docs/agents/index.md` 的**唯一**豁免表。
  *   `docs/agents/architecture.md` 自 2026-11-09 起不再复制该表——两张表并行时只有
  *   一张受门禁，另一张必然漂移（实测同一文件曾出现 1121 / 1280 两个读数）；
@@ -50,11 +50,34 @@ const EXEMPTION_ROW_RE = /^(\|\s*`(src\/[^`]+\.ts)`\s*\|\s*)(\d+)(\s*\|)/;
 /** verify:visual 的触发面 = 自绘判据 / 节点渲染 / 探针脚本（AGENTS.md 校验链措辞的路径化） */
 const VISUAL_MATCHERS = [
 	'scripts/verify-visual.mjs',
-	'src/features/node-',
+	'scripts/visual-ui.mjs',
+	'scripts/visual-canvas-drag.mjs',
+	'scripts/visual-minimap-sidebar.mjs',
+	'scripts/chrome-page.mjs',
+	'src/core/minimap-geometry.ts',
+	'src/engine/mindmap-minimap.ts',
+	'scripts/visual-node-content.mjs',
+	'config/esbuild.config.mjs',
+	'src/ui/toolbar/',
+	'src/ui/search/',
+	'src/ui/node-editor/',
+	'src/ui/node-content/',
+	'src/core/node-content-types.ts',
+	'src/domain/node-edit-key.ts',
+	'src/features/view/view-toolbar.ts',
+	'src/features/view/view-search.ts',
+	'src/features/view/view-minimap.ts',
+	'src/platform/workspace/minimap-sidebar.ts',
+	'src/platform/workspace/markdown-mindmap-action.ts',
+	'src/markdown/md-open.ts',
+	'src/features/content/',
+	'src/features/editing/',
+	'src/features/canvas/',
+	'src/features/media/',
+	'src/features/relations/node-pick.ts',
 	'src/features/mindmap-codeblock.ts',
 	'src/domain/pipe-table.ts',
-	'src/platform/prism-code.ts',
-	'src/platform/math-jax',
+	'src/platform/rendering/',
 ];
 
 const flags = process.argv.slice(2);
@@ -71,7 +94,7 @@ if (flags.includes('--help') || flags.includes('-h')) {
 	process.exit(0);
 }
 
-/** 行数口径与 tests/agents-md-sync.test.ts 的 countSourceLines 一致（末尾换行不计行） */
+/** 行数口径与 tests/contracts/agents-md-sync.test.ts 的 countSourceLines 一致（末尾换行不计行） */
 function countSourceLines(absPath) {
 	try {
 		const lines = readFileSync(absPath, 'utf8').split('\n');
@@ -201,16 +224,16 @@ export function buildPlan(changed, { all } = { all: false }) {
 		{
 			args: ['run', 'lint:css'],
 			label: 'npm run lint:css',
-			match: (f) => f === 'styles.css',
-			why: () => 'styles.css 在变更集',
-			skipNote: 'styles.css 未变更',
+			match: (f) => f.endsWith('.css') || f === 'config/esbuild.config.mjs' || f === 'config/stylelint.config.mjs',
+			why: () => 'CSS 源/产物、构建或检查配置在变更集',
+			skipNote: 'CSS 源/产物、构建及检查配置未变更',
 		},
 		{
 			args: ['run', 'check:dead-code'],
 			label: 'npm run check:dead-code',
-			match: (f) => f.startsWith('src/') || f.startsWith('tests/'),
-			why: () => 'src/ 或 tests/ 有变更（导出面无法从路径判断，宁多跑，K57）',
-			skipNote: 'src/tests 未变更',
+			match: (f) => f.startsWith('src/') || f.startsWith('tests/') || ['package.json', 'config/knip.json', 'config/esbuild.config.mjs'].includes(f),
+			why: () => '源码、测试或构建/死代码检查入口有变更（K57）',
+			skipNote: '源码、测试与构建/死代码检查入口未变更',
 		},
 		{
 			args: ['run', 'build:vendor'],
@@ -222,7 +245,7 @@ export function buildPlan(changed, { all } = { all: false }) {
 		{
 			args: ['run', 'verify:visual', '--', '--require-chrome'],
 			label: 'npm run verify:visual -- --require-chrome',
-			match: (f) => VISUAL_MATCHERS.some((m) => f.startsWith(m)),
+			match: (f) => f.endsWith('.css') || VISUAL_MATCHERS.some((m) => f.startsWith(m)),
 			why: (hit) => `自绘判据 / 节点渲染 / 探针在变更集：${hit.join('、')}`,
 			skipNote: '自绘判据 / 节点渲染 / 探针未变更',
 		},
@@ -397,7 +420,7 @@ function main() {
 	console.log('实机验证（人工/AI）：obsidian reload（重载库）→ 装新 main.js → obsidian dev:errors');
 }
 
-// 只在**直接执行**时跑门禁：被 `tests/check-gates.test.ts` import 时仅提供纯函数
+// 只在**直接执行**时跑门禁：被 `tests/contracts/check-gates.test.ts` import 时仅提供纯函数
 // （buildPlan / parseExemptionRows），否则一 import 就会真跑 npm 链。
 if (
 	process.argv[1] &&

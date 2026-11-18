@@ -283,8 +283,8 @@ export const fileLookupIndex = new FileLookupIndexService();
  * **只用于新建**：既有引用改写沿用用户原始写法（`md-serialize` 保留
  * `mdImageTarget` 的口径、`links-tree` 的引用更新），本函数不参与。
  *
- * **唯一实现**：文档链接（`features/view-node-actions`）与图片引用
- * （`features/view-image-actions`）共用——两侧各写一份「读设置 + 判同名 + 拼路径」
+ * **唯一实现**：文档链接（`features/editing/view-node-actions`）与图片引用
+ * （`features/media/view-image-actions`）共用——两侧各写一份「读设置 + 判同名 + 拼路径」
  * 必然漂移（2026-10-20 审计：图片侧此前直接写 `file.path`，无视该设置）。
  *
  * @param options.omitMarkdownExtension 文档链接可省 `.md`（Obsidian 解析规则，

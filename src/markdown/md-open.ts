@@ -1,38 +1,42 @@
 /**
- * 声明模式文档：触发判定、声明读写与视图切换。
- *
- * 触发判据 = frontmatter 的 `Mindmap` 键值严格为 `Mindmap`（唯一收口在
- * domain/mindmap-property）。其它任何值（含默认回写的 `Markdown`）都不启用插件——
- * 插件不接管、不改文件、不写盘，交给 Obsidian 原生渲染。
- *
- * 布局只存在于 `Mindmap Layout` 键：`readDeclaredLayout` 是视图侧取布局的
- * **唯一入口**，`applyLayout`（view.ts）写属性也是唯一写入口。`data.json` 里
- * 不再有逐文件布局。
- *
- * 渲染承载（B3 显式切换）：命中的文件仍是普通 Markdown（默认用 Obsidian
- * markdown 视图打开）；插件在它出现于 markdown 视图时自动切到本插件的导图视图
- * （时机在 platform/mindmap-auto-open），用户可经「以 Markdown 打开」把它**持久
- * 降级**（把 `Mindmap` 改写为默认值 `Markdown`，布局键原样保留）。
- *
- * 打开方式不再存 data.json：文件本身就是声明，没有第二份状态可失配。
+ * 视图打开不改文件：普通 .md 可临时编辑为导图，专用 .mindmap.md 按声明默认打开。
+ * 显式选择只属于当前 leaf；返回 Markdown 不升级/降级属性，重启不恢复普通笔记导图。
  */
 import { App, MarkdownView, TFile, WorkspaceLeaf } from 'obsidian';
 import { CORE_VIEW_TYPE, VIEW_TYPE } from '../core/constants';
-import { notifyError } from '../core/errors';
-import { type Language } from '../core/i18n';
-import {
-	isMindMapDisabled,
-	isMindMapEnabled,
-	readLegacyLayout,
-	readLegacyMindMapLayout,
-	readMindMapLayout,
-	setMindMapDisabled,
-	setMindMapEnabled,
-	setMindMapLayout,
-} from '../domain/mindmap-property';
+import { isDedicatedMindMapPath } from '../domain/mindmap-file';
+import { isMindMapEnabled, readMindMapLayout } from '../domain/mindmap-property';
+
+interface ViewModeChoice { file: TFile; mode: 'mindmap' | 'markdown' }
+const viewModes = new WeakMap<WorkspaceLeaf, ViewModeChoice>();
+
+function currentChoice(leaf: WorkspaceLeaf, file: TFile): ViewModeChoice | undefined {
+	const choice = viewModes.get(leaf);
+	if (choice && choice.file.path !== file.path) {
+		viewModes.delete(leaf);
+		return undefined;
+	}
+	return choice;
+}
+
+/** 自动打开尊重当前标签明确选择的 Markdown；导航换文件后选择失效。 */
+export function canAutoOpenMindMap(leaf: WorkspaceLeaf, file: TFile): boolean {
+	return currentChoice(leaf, file)?.mode !== 'markdown';
+}
+
+/** 当前运行期显式打开过的导图；不保存到 workspace.json 或插件数据。 */
+export function isExplicitMindMapOpen(leaf: WorkspaceLeaf, file: TFile): boolean {
+	return currentChoice(leaf, file)?.mode === 'mindmap';
+}
+
+/** 进入前的 Markdown 模式，非法/缺失状态一律回退编辑模式。 */
+export function readMdBackMode(state: unknown): 'source' | 'preview' {
+	return (state as { mdBackMode?: unknown } | null)?.mdBackMode === 'preview'
+		? 'preview' : 'source';
+}
 
 /**
- * 视图切换落定钩子（由组合根注入「导航历史卫生」，见 platform/nav-history，K111）：
+ * 视图切换落定钩子（由组合根注入「导航历史卫生」，见 platform/workspace/nav-history，K111）：
  * 打开 / 切回是**视图切换**而非导航点——把 leaf 历史里同文件的跨视图冗余条目
  * 收敛掉；否则侧键后退会落在「同文件旧视图态」上又被声明驱动逻辑切回，
  * 净效果为零（用户实测：导图视图下侧键后退无反应）。
@@ -69,133 +73,28 @@ function notifyViewSwitchDone(
 	}
 }
 
-/**
- * 本文件是否为「声明为思维导图」的 markdown（frontmatter 判据）。
- *
- * 走官方 MetadataCache（O(1) 缓存读取）：判据因此保持**同步**，文件菜单回调、
- * 命令 `checkCallback`、vault 事件这些只能同步返回的调用点无须改造。
- * 缓存尚未就绪（刚创建/刚改名）或读取失败时返回 false，由
- * `metadataCache.on('changed')` 补判（见 main.ts）。
- */
+/** 专用 .mindmap.md 且启用属性命中时默认打开；普通笔记只走显式临时入口。 */
 export function isMindMapFile(
 	app: App,
 	file: TFile | null | undefined,
 ): boolean {
-	if (!file || file.extension !== 'md') {
+	if (!file || !isDedicatedMindMapPath(file.path)) {
 		return false;
 	}
 	return isMindMapEnabled(app.metadataCache.getFileCache(file)?.frontmatter);
 }
 
-/**
- * 读本文件的布局声明（`Mindmap Layout` → 引擎 layout id）；无键 / 空值 / 未知值
- * 一律 `null`（由调用方回退设置项「默认布局」）。
- *
- * 同步读 MetadataCache——视图加载需要在**同步路径**上知道布局（手动升级不读它：
- * 那是「无声明」的入口，写的是种子值）。
- * 缓存滞后（刚写完属性）时返回 `null`，由调用方按默认布局兜底；随后的
- * `metadataCache.changed` 会把已打开的视图纠正过来（`view.syncDeclaredLayout`）。
- */
+/** 专用文件读取布局属性，普通笔记返回 null 并使用当前视图默认布局。 */
 export function readDeclaredLayout(
 	app: App,
 	file: TFile | null | undefined,
 ): string | null {
-	if (!file || file.extension !== 'md') {
+	if (!file || !isDedicatedMindMapPath(file.path)) {
 		return null;
 	}
 	return readMindMapLayout(
 		app.metadataCache.getFileCache(file)?.frontmatter,
 	);
-}
-
-/**
- * 把文件切到「不启用」：`Mindmap` 改写为默认回写值 `Markdown`（**持久降级**）。
- *
- * 三个入口同语义：文件右键「以 Markdown 打开」、工具栏「切换回 Markdown」、
- * 命令 `mindmap-back-to-markdown`——同名动作不允许两种行为。
- *
- * 走官方 `FileManager.processFrontMatter`（YAML 解析/序列化归官方）；只改启用键，
- * **布局键与正文一律不动**——这正是「切回 Markdown 再切回来，布局还在」的原因。
- *
- * 短路条件只有「值已经就是 `Markdown`」：属幂等优化，避免每次切换都重序列化 YAML。
- * 键名恒为标准键 `Mindmap`（`setMindMapDisabled` 顺带收敛同名变体）。
- */
-async function downgradeMindMapProperty(
-	app: App,
-	file: TFile,
-	lang: Language,
-): Promise<void> {
-	if (isMindMapDisabled(app.metadataCache.getFileCache(file)?.frontmatter)) {
-		return;
-	}
-	try {
-		await app.fileManager.processFrontMatter(
-			file,
-			(fm: Record<string, unknown>) => {
-				// 权威判据（缓存可能滞后）：已经是默认回写值时不覆盖
-				if (isMindMapDisabled(fm)) {
-					return;
-				}
-				setMindMapDisabled(fm);
-			},
-		);
-	} catch (error) {
-		// 用户可感：属性没改写成功，下次打开还会自动进导图——不能静默
-		//（改写失败也不阻断切回 Markdown：视图仍切，属性问题单独提示）。
-		console.error('改写思维导图属性失败，下次打开仍会进入导图视图:', file.path, error);
-		notifyError(lang, 'command.downgradeFailed', error);
-	}
-}
-
-/**
- * 把文件提升为「启用插件」（**持久升级**）：手动把任一篇普通笔记开为导图后的
- * 副作用——让它在 frontmatter 里正式成为导图，下次自动打开。
- *
- * 写 `Mindmap: Mindmap`；**布局键缺失或非法时**才补布局，取值顺序：① 旧契约写在
- * 启用键里的布局值（`Mindmap: Timeline`，见 `readLegacyLayout`）；② 布局键里的
- * 旧写法（`Mindmap Layout: LogicalStructure`，见 `readLegacyMindMapLayout`）；
- * ③ 种子值（设置「默认布局」对应的引擎 id，由调用方传入——`md-open` 不引
- * settings）。已有合法布局原样保留：升级动作不能把用户已选的布局重置成默认值。
- *
- * 走官方 `processFrontMatter`，键名与语言无关。**已启用且布局合法时不改写**
- * （免每次打开重序列化 YAML）；回调内再做一次权威判据兜住缓存滞后。
- */
-async function upgradeMindMapProperty(
-	app: App,
-	file: TFile,
-	lang: Language,
-	seedLayout: string,
-): Promise<void> {
-	const cached = app.metadataCache.getFileCache(file)?.frontmatter;
-	if (isMindMapEnabled(cached) && readMindMapLayout(cached) !== null) {
-		// 已启用且布局合法：免磁盘写入
-		return;
-	}
-	try {
-		await app.fileManager.processFrontMatter(
-			file,
-			(frontmatter: Record<string, unknown>) => {
-				// 旧布局值有两个落点，都必须在写之前读：
-				// ① 旧契约把布局写在启用键里（`Mindmap: Timeline`）——启动迁移会搬走它，
-				//    但迁移尚未跑到时（刚同步进来的文件）不能把用户的布局选择换成种子值，
-				//    且 `setMindMapEnabled` 会覆盖这一格；
-				// ② 手改成布局键却还是旧写法（`Mindmap Layout: LogicalStructure`）——
-				//    `readMindMapLayout` 只认 kebab，不接住同样会被种子值覆盖。
-				const legacy =
-					readLegacyLayout(frontmatter) ??
-					readLegacyMindMapLayout(frontmatter);
-				setMindMapEnabled(frontmatter);
-				// 保留文件已声明的布局；缺失/非法才落旧值/种子值
-				if (readMindMapLayout(frontmatter) === null) {
-					setMindMapLayout(frontmatter, legacy ?? seedLayout);
-				}
-			},
-		);
-	} catch (error) {
-		// 用户可感：声明没写成功，下次打开不会自动进导图——不能静默
-		console.error('写入思维导图属性失败，导图声明不会持久:', file.path, error);
-		notifyError(lang, 'command.upgradeFailed', error);
-	}
 }
 
 /**
@@ -217,7 +116,7 @@ const SWITCHING_CLASS = 'mindmap-view-switching';
  * 启动恢复时两者会命中同一个 leaf——不去重就会 `setViewState` 两次，
  * 后一次在遮罩被摘掉之后又切一遍，画面重新闪回 Markdown。
  */
-const pendingSwitches = new WeakMap<WorkspaceLeaf, Promise<void>>();
+const pendingSwitches = new WeakMap<WorkspaceLeaf, { path: string; promise: Promise<void> }>();
 
 /**
  * 在途切换的兜底超时（ms）：超过它仍未 settle 就从 `pendingSwitches` 摘掉。
@@ -230,21 +129,18 @@ const pendingSwitches = new WeakMap<WorkspaceLeaf, Promise<void>>();
  */
 const SWITCH_PENDING_TIMEOUT_MS = 3000;
 
-/**
- * 把当前 leaf 切换到导图视图（记录进入前的编辑/阅读模式，供返回）。
- *
- * 纯视图切换、不写文件——声明驱动自动打开（platform/mindmap-auto-open）与
- * 已声明文件的入口走这里；手动把普通笔记开为导图需先经 `declareAndOpenAsMindMap`
- * 把声明落盘。
- */
+/** 切当前标签到导图，记录进入前的编辑/阅读模式；不写属性或正文。 */
 export function openAsMindMap(
 	leaf: WorkspaceLeaf,
 	file: TFile,
 ): Promise<void> {
 	const pending = pendingSwitches.get(leaf);
 	if (pending) {
-		return pending;
+		return pending.path === file.path
+			? pending.promise
+			: pending.promise.then(() => openAsMindMap(leaf, file));
 	}
+	viewModes.set(leaf, { file, mode: 'mindmap' });
 	let timer: number | null = null;
 	let done: Promise<void>;
 	done = performOpenAsMindMap(leaf, file).finally(() => {
@@ -253,18 +149,18 @@ export function openAsMindMap(
 			timer = null;
 		}
 		// 只清自己（并发场景下后注册者覆盖，见上）
-		if (pendingSwitches.get(leaf) === done) {
+		if (pendingSwitches.get(leaf)?.promise === done) {
 			pendingSwitches.delete(leaf);
 		}
 	});
 	timer = window.setTimeout(() => {
 		timer = null;
 		// 卡死：摘掉登记让后续触发能重试（见 SWITCH_PENDING_TIMEOUT_MS）
-		if (pendingSwitches.get(leaf) === done) {
+		if (pendingSwitches.get(leaf)?.promise === done) {
 			pendingSwitches.delete(leaf);
 		}
 	}, SWITCH_PENDING_TIMEOUT_MS);
-	pendingSwitches.set(leaf, done);
+	pendingSwitches.set(leaf, { path: file.path, promise: done });
 	return done;
 }
 
@@ -275,10 +171,10 @@ async function performOpenAsMindMap(
 	// 已经是导图视图（重复触发 / 在导图标签内换文件）：不重复切换，否则白闪。
 	// 防御式读：`leaf.view` 在叶子被分离的瞬间可能已清空（测试桩也没有这层）
 	const view = leaf.view as
-		| { getViewType?: () => string; containerEl?: HTMLElement }
+		| { getViewType?: () => string; containerEl?: HTMLElement; file?: TFile | null }
 		| null
 		| undefined;
-	if (view?.getViewType?.() === VIEW_TYPE) {
+	if (view?.getViewType?.() === VIEW_TYPE && view.file?.path === file.path) {
 		return;
 	}
 	const mode: 'source' | 'preview' =
@@ -304,40 +200,13 @@ async function performOpenAsMindMap(
 	notifyViewSwitchDone(leaf, file.path, VIEW_TYPE);
 }
 
-/**
- * 手动「以思维导图打开」：先把声明写入 frontmatter（标准键 `Mindmap`、值为
- * `seedLayout` 对应的属性标准值），再切到导图视图。使任一篇笔记经本入口打开
- * 后即成为正式导图，下次自动打开。已是声明的文件不重复写（见
- * `upgradeMindMapProperty`）。
- *
- * @param seedLayout 引擎 layout id（组合根传 `settings.defaultLayout`）——
- *   这里刻意不给默认值：第二个「默认布局」来源会与设置项各说各话。
- */
-export async function declareAndOpenAsMindMap(
-	app: App,
-	leaf: WorkspaceLeaf,
-	file: TFile,
-	lang: Language,
-	seedLayout: string,
-): Promise<void> {
-	await upgradeMindMapProperty(app, file, lang, seedLayout);
-	await openAsMindMap(leaf, file);
-}
-
-/**
- * 从导图视图切回 Markdown（mode: source 编辑 / preview 阅读）。
- *
- * 先降级属性再切换：改写属性后本 leaf 的导图视图仍持有文件，卸载时的保存会按
- * K45 读磁盘现值（此时已是 `Markdown`）回贴，不会把改写结果覆盖回 `Mindmap`。
- */
+/** 从导图切回 Markdown；只影响当前标签，不改文件属性。 */
 export async function openAsMarkdown(
-	app: App,
 	leaf: WorkspaceLeaf,
 	file: TFile,
 	mode: 'source' | 'preview' = 'source',
-	lang: Language = 'zh',
 ): Promise<void> {
-	await downgradeMindMapProperty(app, file, lang);
+	viewModes.set(leaf, { file, mode: 'markdown' });
 	try {
 		await leaf.setViewState({
 			type: CORE_VIEW_TYPE.MARKDOWN,
