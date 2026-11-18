@@ -86,6 +86,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
 import { buildMiniMapSidebarProbe } from './visual-minimap-sidebar.mjs';
+import { dumpChromePage } from './chrome-page.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -7346,7 +7347,8 @@ async function main() {
 		await writeFile(join(workDir, 'minimap-entry.mjs'), buildMiniMapSidebarProbe(ROOT));
 		await writeFile(join(workDir, 'minimap.html'), '<!doctype html><html><head><link rel="stylesheet" href="' + pathToFileURL(join(ROOT, 'styles.css')).href + '"></head><body><script src="minimap-bundle.js"></script></body></html>');
 		await build({ entryPoints: [join(workDir, 'minimap-entry.mjs')], outfile: join(workDir, 'minimap-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
-		const minimapDom = await dumpDom(chromePath, join(workDir, 'minimap.html'), join(workDir, 'minimap-profile'), diag, { marker: 'id="minimap-sidebar-probe"' });
+		// 真实时钟覆盖 ResizeObserver/rAF 的实际交付与屏幕几何，不能用虚拟时钟替代。
+		const minimapDom = await dumpChromePage(chromePath, join(workDir, 'minimap.html'), join(workDir, 'minimap-profile'), 'minimap-sidebar-probe');
 		await diag.file('13-minimap-sidebar.html', minimapDom);
 		const minimapRead = readProbe(minimapDom, 'minimap-sidebar-probe', '侧栏缩略图');
 		const minimapFailures = minimapRead.failures ?? (minimapRead.probe?.ok ? [] : [minimapRead.probe?.error ?? '侧栏缩略图验证未完成']);

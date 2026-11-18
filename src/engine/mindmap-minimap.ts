@@ -19,10 +19,12 @@ import {
 } from '../core/constants';
 import {
 	buildMiniMapMarks,
+	buildMiniMapFrameLinks,
 	buildMiniMapSvg,
 	computeMiniMapSize,
 	connectorModeForLayout,
 	measureMiniMapBounds,
+	miniMapDrawingBounds,
 	pickVisibleColor,
 	MINIMAP_FALLBACK_COLORS,
 	type MiniMapBox,
@@ -32,6 +34,7 @@ import {
 	type MiniMapLinkMode,
 	type MiniMapMeasure,
 	type MiniMapSize,
+	type MiniMapPanelSize,
 } from '../core/minimap-geometry';
 import { createWarnOnce } from '../core/errors';
 import { getRenderRoot } from './mindmap-nodes';
@@ -42,12 +45,12 @@ const warnCaptureFailed = createWarnOnce();
 
 /** 一次缩略图取样的完整结果（视图层据此定尺寸、换图、投影视口框） */
 export interface MiniMapFrame {
-	/** 内容盒（布局坐标） */
+	/** 内容盒（布局坐标；侧栏包含节点盒及实际绘制连线范围） */
 	content: MiniMapBox;
 	/** 画布尺寸（像素） */
 	canvas: MiniMapSize;
 	/** 面板尺寸（浮层宽 160–220；侧栏为完整承载区） */
-	panel: MiniMapSize;
+	panel: MiniMapPanelSize;
 	/** 标记指纹：判「换没换图」的第三项（见 `sameMiniMapFrame`） */
 	signature: number;
 	/** 缩略图（`data:image/svg+xml` URL，交给 `<img>` 解码） */
@@ -126,10 +129,15 @@ export function captureMiniMap(
 		if (!sampled) {
 			return null;
 		}
+		const linkMode = resolveLinkMode(sampled);
+		const appearance = readAppearance(mindMap);
+		const links = buildMiniMapFrameLinks(sampled.marks, appearance.connector, linkMode);
+		// 侧栏按完整绘制范围 fit：目录轨线、曲线控制点可能在节点盒外。
+		const content = panelSize ? miniMapDrawingBounds(sampled.bounds, sampled.marks, links) : sampled.bounds;
 		// 高度上限 = 画布高 × 60%（「开放高度但封顶」，2026-10-24 用户裁决）：
 		// 高瘦内容长成可用比例，又不占满左侧整列
 		const panel = computeMiniMapSize(
-			sampled.bounds,
+			content,
 			size.height * MINIMAP_MAX_HEIGHT_RATIO,
 			panelSize,
 		);
@@ -139,21 +147,20 @@ export function captureMiniMap(
 		// 连线画到哪一档看**节点数**（2026-10-25 用户裁决，最终版：按性能模式阈值分档
 		// ——≤阈值画全部父子连线，>阈值只画前 `MINIMAP_LINK_MAX_DEPTH` 层）。判据用
 		// 全量节点数，不是抽样后的标记数；深度过滤在 core 侧只作用于连线，方块全画。
-		const linkMode = resolveLinkMode(sampled);
-		const appearance = readAppearance(mindMap);
 		const svg = buildMiniMapSvg(
-			sampled.bounds,
+			content,
 			sampled.marks,
 			panel,
 			appearance.colors,
 			appearance.lineStyle,
 			appearance.connector,
 			linkMode,
+			links,
 		);
 		return {
-			// 映射基准与视口框共用**全量节点包围盒**（不是抽样标记的盒子，也不是
-			// rbox 口径的内容盒）：三者不一致会让小图一侧留白、比例与主图对不上
-			content: sampled.bounds,
+			// 图、框与拖动共用此内容盒：全树节点基础 + 侧栏实际连线外扩。
+			// 不用 rbox（性能模式只覆盖已物化节点），也不因抽样缩小映射范围。
+			content,
 			canvas: size,
 			panel,
 			signature: sampled.signature,

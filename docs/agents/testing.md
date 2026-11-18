@@ -68,8 +68,8 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 **已知缺口：小地图没有视觉门禁**（2026-10-24 登记；判定为「不需要常驻补」，理由见下）。
 `features/view/view-minimap`、`core/minimap-geometry` 与引擎读取面已由
 `tests/features/view/view-minimap.test.ts`（**29** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
-`tests/core/minimap-geometry.test.ts`（**74** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
-`tests/engine/engine-minimap-capture.test.ts`（**15** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
+`tests/core/minimap-geometry.test.ts`（**80** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
+`tests/engine/engine-minimap-capture.test.ts`（**16** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
 **肉眼一眼可见**的风险：CSS 级联（面板定位/层级/pointer-events/过渡）与 `<img>` 对
 data-URL SVG 的解码。往 `verify:visual` 加场景需要把 features 层也 bundle 进页面并补
 Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— 投入产出比不划算。
@@ -275,9 +275,9 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 
 `tests/platform/workspace/minimap-sidebar.test.ts` 验证只借一枚右侧 Outline、Markdown/卸载恢复、来源切换、原容器清理、边栏折叠与异步 fallback 跨生命周期清理；`view-minimap.test.ts` 补侧栏常驻、小图显示、隐藏不测树、短节流刷新、滚轮锚点与跨窗口拒绝。原几何与浮层回退测试继续保留。
 
-`verify:visual` 的独立 `visual-minimap-sidebar.mjs` 页使用真实引擎和 CSS 检查 SVG 解码、整个面板尺寸、多源绑定、视口拖动/滚轮缩放、切布局、尺寸变化（虚拟时钟页经官方 layout-change；ResizeObserver 回调另有直测）、隐藏/折叠恢复与 Outline 原内容/导航控件还原，tag 面板保持可见。Workspace/ItemView 是官方接口替身；不把 Chrome 结果当成真实 Obsidian 已加载或主题手感验收。
+`verify:visual` 的独立 `visual-minimap-sidebar.mjs` 页经 `scripts/chrome-page.mjs` 的真实时钟 CDP pipe（兼容 Node20，不依赖 WebSocket 全局或额外包）运行，使用真实引擎和 CSS 检查 SVG 解码、整个面板尺寸、多源绑定、视口拖动/滚轮缩放、切布局、真实 ResizeObserver 尺寸变化、隐藏/折叠恢复与 Outline 原内容/导航控件还原，tag 面板保持可见。Workspace/ItemView 是官方接口替身；不把 Chrome 结果当成真实 Obsidian 已加载或主题手感验收。
 
-独立真实时钟 Chrome CDP 验证另跑同一侧栏页：不启用 virtual-time-budget，拉宽时不发 workspace/layout 事件，真实 ResizeObserver 自动将组件与图片更新到 500px，17 项场景通过。该复核覆盖真实观察器交付；完整 leaf/引擎不重建的跨窗口搬运仍需实际 Obsidian 手验。
+侧栏页保留 17 项交互/生命周期检查，并对宽图、高图、2300 节点抽样大图、六布局与 RTL 做 20 组绘制 fit 检查：逐个量取真实 SVG rect/path 的 bbox，要求至少 10px 实际边缘空白，图/面板/承载原点与尺寸一致，无水平滚动隐藏溢出，当前 capture 与显示图片同帧，蓝框实际屏幕矩形与唯一投影一致。页面使用真实 ItemView 层级及宿主 specificity 的盒模型/图片样式压力；ResizeObserver 拉宽至 500px 不手动发 workspace/layout 事件。核心 geometry/capture 与 CDP helper 均触发视觉门禁并有触发契约直测。实际 Obsidian 主题手感与完整 leaf/引擎不重建的跨窗口搬运仍需手验。
 
 画布热键拖拽（K216）：`settings-canvas-drag.test.ts` 锁定默认开启、false 持久化/加载、坏值归一、双语原名、声明式控件和差集刷新；`engine-canvas-drag.test.ts` 直测互斥判据与真实 vendor 的 Mod 节点起手；`view-canvas-interaction.test.ts` 验证原地设置应用不重建或投影会话快照。`verify:visual` 的 `visual-canvas-drag.mjs` 使用独立页面/Chrome profile，在真实浏览器派发 DOM 鼠标手势，覆盖两档设置 × plain/Ctrl/Meta × 0.5/1/2.35 缩放、真实选区与平移、中键/右键/菜单/滚轮、节点/输入起手、中途切换与独立 Window、只读嵌入，并断言画布操作无 data_change/内容历史。该页与原结构拖动探针隔离；Obsidian 实机鼠标/触控板手感、平台原生 Ctrl 点击菜单及完整 popout 生命周期仍需人工验收。
 
