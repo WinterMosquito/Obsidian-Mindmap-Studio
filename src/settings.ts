@@ -112,6 +112,8 @@ export interface MindMapStudioSettings {
 	autoSplitMixedLinks: boolean;
 	exportScale: number;
 	enableDrag: boolean;
+	/** 空白画布左拖：true＝框选，Cmd/Ctrl 左拖平移；false＝反向。 */
+	dragCanvasWithModifier: boolean;
 	/** 导出图片格式（png 位图 / svg 矢量）；点击导出按钮时按此直接导出 */
 	exportImageFormat: ExportImageFormat;
 	language: Language;
@@ -140,6 +142,7 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	autoSplitMixedLinks: false,
 	exportScale: 2,
 	enableDrag: true,
+	dragCanvasWithModifier: true,
 	exportImageFormat: 'png',
 	language: 'zh',
 };
@@ -297,6 +300,8 @@ export function sanitizeSettings(
 			pickClampedInt('exportScale', EXPORT_SCALE_MIN, EXPORT_SCALE_MAX) ??
 			DEFAULT_SETTINGS.exportScale,
 		enableDrag: pickBool('enableDrag') ?? DEFAULT_SETTINGS.enableDrag,
+		dragCanvasWithModifier:
+			pickBool('dragCanvasWithModifier') ?? DEFAULT_SETTINGS.dragCanvasWithModifier,
 		exportImageFormat:
 			pickFrom('exportImageFormat', EXPORT_IMAGE_FORMAT_OPTIONS) ??
 			DEFAULT_SETTINGS.exportImageFormat,
@@ -320,6 +325,7 @@ const LIVE_REFRESH_SETTING_KEYS = [
 	'defaultTheme',
 	'defaultThemeStyle',
 	'enableDrag',
+	'dragCanvasWithModifier',
 	'language',
 	// 作用范围切换要当场看到连接线变化；视图走原地重算（见
 	// features/view/view.applySettingsChange），不重建引擎
@@ -560,6 +566,11 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 						name: t(this.lang, 'settings.enableDrag'),
 						desc: t(this.lang, 'settings.enableDragDesc'),
 						control: { type: 'toggle', key: 'enableDrag' },
+					},
+					{
+						name: t(this.lang, 'settings.dragCanvasWithModifier'),
+						desc: t(this.lang, 'settings.dragCanvasWithModifierDesc'),
+						control: { type: 'toggle', key: 'dragCanvasWithModifier' },
 					},
 					{
 						name: t(this.lang, 'settings.exportScale'),

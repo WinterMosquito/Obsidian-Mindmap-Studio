@@ -80,7 +80,7 @@ const mindMapPrototype = (vendor.MindMap as { prototype: Record<string, unknown>
  * 产物而不是内容改动，两者在上游行为上等价，故不作为漂移处理。
  */
 const EXPECTED_BUNDLE_SHA256 =
-	'3c9449a2545e23dd027c7acba18c8ef903a36243c1930fb5b0ee70919603ab00';
+	'005e6866d3aa51ea109b2e3e1dbdc1454b95425c5e585920cc78ecfc03d6f73b';
 const bundleSha256 = createHash('sha256')
 	.update(readFileSync(BUNDLE_PATH, 'utf8').replace(/\r\n/g, '\n'), 'utf8')
 	.digest('hex');
@@ -300,6 +300,7 @@ describe('vendor 契约：防腐层触碰的引擎内部字段', () => {
 		'openPerformance',
 		'removeNodeWhenOutCanvas',
 		'enableFreeDrag',
+		'dragCanvasWithModifier',
 		'customHyperlinkJump',
 		// 注：原「Drag 落点三态」（overlapNode / prevNode / nextNode / checkOverlapNode）
 		// 与 MOVE_NODE_TO / INSERT_AFTER / INSERT_BEFORE 三命令的令牌已随

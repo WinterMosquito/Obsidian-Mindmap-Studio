@@ -154,6 +154,8 @@ export interface CreateMindMapOptions {
 	palette: string;
 	isDark: boolean;
 	enableDrag: boolean;
+	/** 空白画布热键平移；缺省开启。节点 Drag 插件与只读嵌入独立。 */
+	dragCanvasWithModifier?: boolean;
 	/**
 	 * **只读嵌入**（Markdown ```mindmap 代码块，可选；缺省 = 可编辑视图）。
 	 *
@@ -416,6 +418,8 @@ export function createMindMap(
 				// 唯一例外：`Alt + 滚轮` 横轴由插件在**画布祖先的 capture** 阶段接管
 				// （引擎不读 altKey；同元素 capture 会被引擎按注册顺序抢先）。
 				mousewheelAction: 'move',
+				// 补丁 19 只改起手判据，使用原生 Event/View/Select 循环（K216）。
+				dragCanvasWithModifier: isReadonly ? undefined : options.dragCanvasWithModifier ?? true,
 				disableMouseWheelZoom: false,
 				// 历史收集节流（上游 100 ms → 16 ms）：`data_change` 是本插件
 				// 的编辑提交信号，越早到越接近官方的即时同步（K185）。

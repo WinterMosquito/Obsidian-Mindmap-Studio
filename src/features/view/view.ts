@@ -46,6 +46,7 @@ import type {
 } from '../../core/engine-types';
 import { notifyError } from '../../core/errors';
 import {
+	applyCanvasDragMode,
 	applyColorDirectivesToTree,
 	applyImageSizeCorrectionsToEngine,
 	applyRelationsToTree,
@@ -212,6 +213,7 @@ const RENDER_HINT_TIMEOUT_MS = 15_000;
  *   `loadMindMapFromFile` 里已按「文件显式选择 ?? 默认值」定值，此后默认值
  *   变更对已打开的图**本就不生效**（重建一轮也不会有任何可见变化）⇒ 跳过即
  *   行为等价的优化（省掉整树 `structuredClone` + 全量重渲染，实测口径见 K58）；
+ * - `dragCanvasWithModifier`：仅 updateConfig 原地更新画布起手模式（K216），不触发渲染或会话提交；
  * - `nodeColorScope`：只改「连接线要不要跟着节点色」这层派生样式，重算一次
  *   颜色即可（见 `applySettingsChange`）。
  *
@@ -236,6 +238,7 @@ const IN_PLACE_REFRESH_KEYS = new Set([
 	'defaultThemeStyle',
 	'defaultLineStyle',
 	'nodeColorScope',
+	'dragCanvasWithModifier',
 ]);
 
 /**
@@ -499,6 +502,7 @@ export class MindMapView
 				themeStyle: this.resolvePreference('themeStyle'),
 				palette: this.resolvePreference('palette'),
 				enableDrag: this.plugin.settings.enableDrag,
+				dragCanvasWithModifier: this.plugin.settings.dragCanvasWithModifier,
 				// 性能模式与阈值不再由设置传入（2026-10-09 减法）：引擎缺省
 				// 即「开启 + PERFORMANCE_NODE_THRESHOLD」，无需在此复述
 			}),
@@ -1485,6 +1489,9 @@ export class MindMapView
 			// applyThemeStyle、applyPalette；defaultThemeStyle 只影响新建导图，
 			// 这里没有分支，保留在集合里只为避免无谓重建）
 			this.applyTheme();
+		}
+		if (changedKeys.has('dragCanvasWithModifier')) {
+			applyCanvasDragMode(this.mindMap, this.plugin.settings.dragCanvasWithModifier);
 		}
 		if (changedKeys.has('nodeColorScope')) {
 			// 只增删 `lineColor` 覆盖：颜色内容（填充 / 描边 / 文字）不变，重算一次

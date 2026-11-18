@@ -28,6 +28,12 @@ import {
 // `mindmap-viewport-canvas`（后者是 engine 内部形态）
 export { getCanvasSize };
 
+/** 原地更新画布手势模式（K216）；补丁按起手模式完成当前手势，不改变树或历史。 */
+export function applyCanvasDragMode(mindMap: MindMap | null, basedOnHotkey: boolean): void {
+	if (!mindMap || mindMap.opt.dragCanvasWithModifier === basedOnHotkey) return;
+	mindMap.updateConfig({ dragCanvasWithModifier: basedOnHotkey });
+}
+
 /**
  * 大图 fit 的**最小可读比例**（产品裁决 2026-10-17）。
  *

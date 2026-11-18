@@ -74,6 +74,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
+			dragCanvasWithModifier: false,
 			exportImageFormat: 'svg',
 			language: 'en',
 		});
@@ -89,6 +90,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			autoSplitMixedLinks: false,
 			exportScale: 4,
 			enableDrag: false,
+			dragCanvasWithModifier: false,
 			exportImageFormat: 'svg',
 			language: 'en',
 		});
@@ -358,6 +360,7 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 			language: 'en',
 			autoSplitMixedLinks: DEFAULT_SETTINGS.autoSplitMixedLinks,
 			enableDrag: DEFAULT_SETTINGS.enableDrag,
+			dragCanvasWithModifier: DEFAULT_SETTINGS.dragCanvasWithModifier,
 			exportImageFormat: DEFAULT_SETTINGS.exportImageFormat,
 		});
 	});
@@ -373,6 +376,7 @@ describe('diffLiveRefreshKeys（设置变更的最小刷新差集）', () => {
 		'defaultTheme',
 		'defaultThemeStyle',
 		'enableDrag',
+		'dragCanvasWithModifier',
 		'language',
 		'nodeColorScope',
 	];

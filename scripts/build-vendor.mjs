@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { build } from 'esbuild';
+import { canvasDragPatch } from '../vendor/patches/canvas-drag-transform.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 const BUNDLE_PATH = join(ROOT, 'vendor', 'simple-mind-map.cjs');
@@ -54,6 +55,7 @@ const lfNormalize = (text) => text.replace(/\r\n/g, '\n');
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
 
 const result = await build({
+	plugins: [canvasDragPatch],
 	stdin: {
 		contents: ENTRY,
 		resolveDir: ROOT,

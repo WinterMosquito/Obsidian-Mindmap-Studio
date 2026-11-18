@@ -20,12 +20,16 @@ const harness = vi.hoisted<{
 	events: EventBinder | null;
 	openEditor: ReturnType<typeof vi.fn>;
 	applySnapshot: ReturnType<typeof vi.fn>;
+	applyCanvasDragMode: ReturnType<typeof vi.fn>;
+	refresh: ReturnType<typeof vi.fn>;
 }>(() => ({
 	deps: null,
 	engine: null,
 	events: null,
 	openEditor: vi.fn(),
 	applySnapshot: vi.fn(() => true),
+	applyCanvasDragMode: vi.fn(),
+	refresh: vi.fn(),
 }));
 
 vi.mock('obsidian', async (importOriginal) => {
@@ -42,6 +46,7 @@ vi.mock('../../../src/services/engine-controller', () => ({
 	EngineController: class {
 		mindMap = harness.engine;
 		engineEvents = harness.events;
+		refresh = harness.refresh;
 		constructor(deps: EngineControllerDeps) { harness.deps = deps; }
 	},
 }));
@@ -51,6 +56,7 @@ vi.mock('../../../src/engine/mindmap', () => ({
 	isCustomNodeContent: () => true,
 	isSummaryNode: () => false,
 	applySessionSnapshot: harness.applySnapshot,
+	applyCanvasDragMode: harness.applyCanvasDragMode,
 }));
 vi.mock('../../../src/features/editing/node-inline-editor', () => ({
 	openNodeInlineEditor: harness.openEditor,
@@ -108,6 +114,8 @@ afterEach(() => {
 	harness.deps = null;
 	harness.openEditor.mockClear();
 	harness.applySnapshot.mockClear();
+	harness.applyCanvasDragMode.mockClear();
+	harness.refresh.mockClear();
 	vi.unstubAllGlobals();
 });
 
@@ -138,6 +146,16 @@ describe('空图快照重新初始化（K201）', () => {
 });
 
 describe('视图画布交互（K200）', () => {
+	it('热键拖拽设置原地生效：不重建引擎、不改变会话树', () => {
+		const { view, root, execCommand } = setupView();
+		view.plugin.settings.dragCanvasWithModifier = false;
+		view.applySettingsChange(new Set(['dragCanvasWithModifier']));
+		expect(harness.applyCanvasDragMode).toHaveBeenCalledExactlyOnceWith(view.mindMap, false);
+		expect(harness.refresh).not.toHaveBeenCalled();
+		expect(harness.applySnapshot).not.toHaveBeenCalled();
+		expect(root.children).toHaveLength(0);
+		expect(execCommand).not.toHaveBeenCalled();
+	});
 	it('连续点击空白，包括双击，不增加中心节点的子节点或执行编辑命令', () => {
 		const { canvas, root, execCommand } = setupView();
 		for (let i = 0; i < 3; i++) {
