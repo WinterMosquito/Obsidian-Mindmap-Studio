@@ -232,3 +232,10 @@ describe('视觉比较的独立 HEAD 快照', () => {
 		}
 	});
 });
+
+
+describe('Markdown 临时视图的视觉门禁', () => {
+	it.each(['src/markdown/md-open.ts', 'src/platform/workspace/markdown-mindmap-action.ts'])('%s 触发真实 DOM 验证', file => {
+		expect(labelsOf(buildPlan([file]))).toContain('npm run verify:visual -- --require-chrome');
+	});
+});

@@ -35,8 +35,6 @@ const ZH = {
 	'command.openAsMindMap': '以思维导图打开',
 	'command.openAsMarkdown': '以 Markdown 打开',
 	'command.backToMarkdown': '切换回 Markdown',
-	'command.downgradeFailed': '切换为 Markdown 文档失败：',
-	'command.upgradeFailed': '切换为思维导图文档失败：',
 	'command.splitLinksAll': '拆分文档内全部混排双链',
 	'modal.text.titleRaw': '编辑节点原文（Markdown）',
 	'modal.text.hintRaw':
@@ -379,9 +377,6 @@ const ZH = {
 
 	// ===== 大图首帧渲染 =====
 	'view.renderingLargeMap': '正在渲染 {count} 个节点…',
-	// 「返回」把文件属性降级为 Markdown 是持久改动（下次不再自动进导图），
-	// 而界面只表现为换了个视图 ⇒ 必须告知，否则用户以为只是切换显示
-	'view.backToMarkdownDone': '已切回 Markdown；该文件属性已改为 Mindmap: Markdown',
 
 	// ===== 导出 =====
 	'export.exporting': '正在导出图片…（首次导出需准备数学字体，可能较慢）',
@@ -443,8 +438,6 @@ const EN: Record<TranslationKey, string> = {
 	'command.openAsMindMap': 'Open as mind map',
 	'command.openAsMarkdown': 'Open as Markdown',
 	'command.backToMarkdown': 'Switch to Markdown',
-	'command.downgradeFailed': 'Failed to switch to a Markdown document: ',
-	'command.upgradeFailed': 'Failed to switch to a mind map document: ',
 	'command.splitLinksAll': 'Split all mixed links in document',
 	'modal.text.titleRaw': 'Edit node source (Markdown)',
 	'modal.text.hintRaw':
@@ -774,10 +767,6 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 大图首帧渲染 =====
 	'view.renderingLargeMap': 'Rendering {count} nodes…',
-	// "Back" downgrades the file property to Markdown (persistent) while the UI
-	// only looks like a view switch — say so, or it reads as a display toggle
-	'view.backToMarkdownDone':
-		'Switched back to Markdown; the file property is now Mindmap: Markdown',
 
 	// ===== 导出 =====
 	'export.exporting':

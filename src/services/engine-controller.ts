@@ -448,6 +448,7 @@ export class EngineController {
 	 * 纯浏览照样写盘）。视图的两条关闭路径（`onUnloadFile` / `onClose`）已按此排序。
 	 */
 	persistViewport(): void {
+		if (this.deps.shouldPersistViewState?.() === false) return;
 		const file = this.deps.getFile();
 		if (!file) {
 			return;
@@ -501,7 +502,7 @@ export class EngineController {
 			return;
 		}
 		const savedView =
-			this.viewport.defaultSignature === null
+			this.viewport.defaultSignature === null && this.deps.shouldPersistViewState?.() !== false
 				? this.deps.viewState.getView(file.path)
 				: null;
 		try {

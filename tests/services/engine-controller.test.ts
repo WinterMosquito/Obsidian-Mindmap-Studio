@@ -262,7 +262,7 @@ interface Harness {
 const harnesses: Harness[] = [];
 
 function buildHarness(
-	options: { canvas?: CanvasStub | null; file?: TFile | null } = {},
+	options: { canvas?: CanvasStub | null; file?: TFile | null; persistViewState?: boolean } = {},
 ): Harness {
 	const canvas =
 		options.canvas === undefined ? new CanvasStub() : options.canvas;
@@ -296,6 +296,7 @@ function buildHarness(
 		app: new App(),
 		getCanvasEl: deps.getCanvasEl,
 		getFile: () => file,
+		shouldPersistViewState: () => options.persistViewState !== false,
 		getLang: () => 'zh',
 		isDark: deps.isDark,
 		getSetupOptions: deps.getSetupOptions,
@@ -1717,5 +1718,21 @@ describe('EngineController 防腐收口（引擎内部形态不外泄）', () =>
 		expect(
 			'applyPerformance' in (h.controller as unknown as Record<string, unknown>),
 		).toBe(false);
+	});
+});
+
+
+describe('临时导图的视口', () => {
+	it('有旧缓存时仍使用默认视口，关闭后不新增状态写入', () => {
+		vi.useFakeTimers();
+		const h = buildHarness({ file: makeFile('OS.md'), persistViewState: false });
+		h.viewState.hydrate({ viewState: { 'OS.md': { view: { state: { scale: 2, x: 40, y: 50 } } } } });
+		const read = vi.spyOn(h.viewState, 'getView');
+		const write = vi.spyOn(h.viewState, 'setView');
+		h.controller.initMindMap({ data: { text: 'OS' }, children: [] });
+		vi.advanceTimersByTime(150);
+		h.controller.persistViewport();
+		expect(read).not.toHaveBeenCalled();
+		expect(write).not.toHaveBeenCalled();
 	});
 });

@@ -21,6 +21,7 @@
  * 树快照（`save(file, treeHint)`）。违反该不变式会把新文档正文写进旧文件、
  * 或让旧文件丢掉 frontmatter。
  */
+import { mindMapFileTitle } from '../domain/mindmap-file';
 import { App, TFile } from 'obsidian';
 import { AUTO_SAVE_DEBOUNCE_MS } from '../core/constants';
 import { createDebouncer, createSerialQueue } from '../core/concurrency';
@@ -118,7 +119,7 @@ export class DocumentService {
 	 */
 	parse(content: string, file: TFile): DocumentLoadResult {
 		// 根（中心主题）文本 = 文件名（不含扩展名）；改名由视图编排
-		const rootName = file.basename;
+		const rootName = mindMapFileTitle(file);
 		const parsed = parseMdOutline(content, rootName);
 		const tree = parsed.tree;
 		// 图片：库内路径/外链 → 资源地址（mdImageTarget 保留原目标串，供回写）。

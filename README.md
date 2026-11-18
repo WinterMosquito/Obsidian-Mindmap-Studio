@@ -107,13 +107,13 @@ MindMap Studio is a **rendering layer**, not a file-format converter. It reads a
 ## 📖 Usage
 
 ### 1) Create & open a mind map
-- Run **Create new mind map** (command palette) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-10-13.md` file is created and opens in the mind-map view. **New maps contain only the central node named after the file, with no example branches**; select it and press `Tab` to add your first branch. The folder follows the **Default location for new mind maps** setting — by default Obsidian's own "Default location for new notes". You can also **right-click any folder → Create new mind map** to create it right there.
-- **Turn any note into a mind map**: add `Mindmap: Mindmap` to its frontmatter (the key is case-insensitive) and the note opens as a mind map as soon as it is opened. **The layout is a second key**, `Mindmap Layout`:
+- Run **Create new mind map** (command palette) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-10-13.mindmap.md` file is created and opens in the mind-map view. **New maps contain only the central node named after the file, with no example branches**; select it and press `Tab` to add your first branch. The folder follows the **Default location for new mind maps** setting — by default Obsidian's own "Default location for new notes". You can also **right-click any folder → Create new mind map** to create it right there.
+- **Dedicated mind maps** use `name.mindmap.md`. New maps include `Mindmap: Mindmap` and `Mindmap Layout` in their frontmatter. Automatic opening requires both this suffix and the enabled property. The layout is a second key, `Mindmap Layout`:
 
   | `Mindmap` value | Meaning |
   |---|---|
   | `Mindmap` (`mindMap` / `mind map` too) | **Enabled**: rendered as a mind map |
-  | `Markdown` | **Not enabled**: plain Markdown (what *Switch to Markdown* writes) |
+  | `Markdown` | **Not enabled**: plain Markdown (an explicit property value) |
   | Anything else (including the six legacy layout names) | **Not enabled**: the plugin leaves the file alone |
 
   | `Mindmap Layout` | Layout |
@@ -125,8 +125,8 @@ MindMap Studio is a **rendering layer**, not a file-format converter. It reads a
   | `timeline` | Timeline |
   | `fishbone` | Fishbone |
 
-  Both keys share **one normalisation** (`trim` → lowercase → drop `-` / `_` / whitespace, so `mindmap-layout` and `logical-structure` work); an array value uses its first item. A missing or unrecognised layout falls back to the **Default layout** setting while **the file keeps its original text**. Remove the enable key (or set it to `Markdown`) to stop. **No renaming, no new file, no format conversion.** The legacy keys `Type` / `类型` are **no longer recognised** (since 2026-10-28); the six legacy layout values in `Mindmap` **no longer enable** the plugin — about 1.5 s after startup a **one-shot migration** rewrites them as `Mindmap: Mindmap` + `Mindmap Layout: <matching value>` (spelling only, no declarations invented, idempotent; the migration is removed in 0.4.0).
-- **Any note becomes a mind map**: any `.md` file opens from its **context menu → Open as mind map** (or the same command), can be edited and saved back; the **first open writes the declaration** into the frontmatter — `Mindmap: Mindmap` + `Mindmap Layout: <the Default layout setting>` — so the note is now officially a mind map and opens as one on its own next time (a note already declared is left untouched). A *declared* file instead shows **Open as Markdown** (which rewrites the enable key to `Markdown` and **keeps the layout key**, permanently; switching back restores the layout).
+  Property spelling is normalised; arrays use the first item. Missing or invalid layouts fall back to the Default layout setting without changing the file. Existing ordinary `.md` notes keep their contents and open as Markdown, including notes with older mind-map properties.
+- **Temporary mind-map editing**: click the **Open as mind map** icon in a Markdown view header, or use the context menu or command. Opening and returning do not add or change frontmatter. Editing nodes saves the Markdown body as usual; layout, viewport and appearance choices stay in the current view. Ordinary notes reopen as Markdown, including after app restart. Returning to Markdown restores the previous editor/reading mode.
 - The command palette also lists **Create mind map in current folder**, **Search nodes**, **Fit to canvas**, **Arrange mind map** and **Export image** — the same actions as the on-map rail and the context menu.
 
 ### 2) How Markdown becomes a map
@@ -227,8 +227,8 @@ Undo/redo are driven by the **document session** (views of the same file share o
 
 ### 4) Saving & persistence
 - Unedited lines are written back **verbatim** (frontmatter preserved; blank lines between paragraphs and standalone `---` separators are normalised); editing a **pure wikilink** node (the whole line is one wikilink) edits its **alias**, written back as `[[note|new alias]]` (clearing the text drops the alias and keeps the link; nodes that mix text and a link still round-trip as "text + link").
-- **The layout lives in the file's own property** (`Mindmap Layout` — switching it from the context menu rewrites that key and never touches the body); line style, palette, border and viewport are kept per file in the plugin `data.json`. Whether a file **is** a mind map is the enable key `Mindmap`, so there is no second source of truth. Node image sizes go into the note itself as official embed syntax (`![[img|300]]`).
-- Editing the **central node** renames the file (Obsidian updates links/backlinks); declared mind maps only.
+- **Dedicated maps** store layout in `Mindmap Layout`, and viewport/appearance per file in plugin data. **Temporary ordinary-note views** keep these choices in memory. Opening and returning never rewrite frontmatter. Node edits and image sizes remain Markdown content.
+- Editing the **central node** renames the file (Obsidian updates links/backlinks); dedicated .mindmap.md maps only.
 - **The same map can be open in several tabs** (since 2026-11-09): they share **one document session** — one content tree, one undo timeline, one save pipeline — so edits and undo/redo stay in sync (no engine rebuild, and neither viewport nor selection jumps). Closing any tab saves immediately; the session is destroyed when the last one closes, and renaming / moving the file only migrates the session key. The note's reading view can still be open next to the mind map.
 - **Save cadence follows the official `TextFileView`**: a **2-second** debounce after content changes (there is no "Auto-save" setting), plus an immediate save on close / file switch / plugin unload; **browsing never writes** (a round whose body equals the load baseline is skipped), and the EOL form (CRLF / LF) and trailing double spaces are preserved.
 - If the file is changed **outside** Obsidian (sync folder, another window): before writing, the plugin notices the body on disk changed, so it **skips the write** and loads the latest version; an unsaved draft is kept as **one undoable step** (`Ctrl+Z` brings it back) with a notice. A failed write only reports "Unsaved"; the next edit simply retries.
@@ -259,7 +259,7 @@ Everything lives in **Settings → MindMap Studio** (stored locally in the plugi
 | Setting | Default | Notes |
 |---|---|---|
 | Language | 中文 | UI language for the plugin's own labels and messages. It **never touches your files**: the mind-map declaration key is always `Mindmap`, whatever the UI language |
-| Default layout | Logical structure | Seed value written into `Mindmap Layout` when creating / upgrading a note (six layouts: Logical structure / Mind map / Organization chart / Catalog organization / Timeline / Fishbone); existing maps keep their own property and are unaffected |
+| Default layout | Logical structure | Seed value written into `Mindmap Layout` when creating a map or temporarily opening a note (six layouts: Logical structure / Mind map / Organization chart / Catalog organization / Timeline / Fishbone); existing maps keep their own property and are unaffected |
 | Default line style | Elbow | Used when creating a new mind map (Elbow / Curve; switchable only for Logical structure / Mind map / Organization chart — the other three layouts draw native straight connectors) |
 | Default border style | Bordered | Border style for new mind maps (Bordered / Borderless; each map can toggle it anytime with the *border* button on its rail). A per-map value only exists **once the rail toggle has been used explicitly**: switched maps keep their value, everything never switched (embeds included) follows this default |
 | Theme | Follow Obsidian | Light/dark palette for maps: Follow Obsidian / Force light / Force dark |

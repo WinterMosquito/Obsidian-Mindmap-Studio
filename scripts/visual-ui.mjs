@@ -5,10 +5,13 @@ export function buildUiEntrySource(root, baselineCss, currentCss) {
 	const toolbar = join(root, 'src/ui/toolbar/toolbar.ts').replaceAll('\\', '/');
 	const search = join(root, 'src/ui/search/search-bar.ts').replaceAll('\\', '/');
 	const nameModal = join(root, 'src/ui/modal-name.ts').replaceAll('\\', '/');
+	const markdownAction = join(root, 'src/platform/workspace/markdown-mindmap-action.ts').replaceAll('\\', '/');
 	return `
 import { Toolbar } from ${JSON.stringify(toolbar)};
 import { SearchBar } from ${JSON.stringify(search)};
 import { openNameInputModal } from ${JSON.stringify(nameModal)};
+import { MarkdownMindMapAction } from ${JSON.stringify(markdownAction)};
+import { MarkdownView } from 'obsidian';
 // 仅补宿主公开 DOM 扩展；不替换组件逻辑。
 HTMLElement.prototype.createEl = function(tag, info = {}) {
 	const el = document.createElement(tag);
@@ -148,6 +151,25 @@ const assert = (value, label) => { if (!value) throw new Error(label); };
 			modals++;
 			frame.remove();
 		}
+		// 原生标题栏按钮按具体视图归属打开文件；重复布局与语言刷新不叠加按钮。
+		const opened = [];
+		const leaf = { setViewState: async state => { opened.push(state); } };
+		const mdView = new MarkdownView(leaf); leaf.view = mdView;
+		mdView.file = { path: 'OS.md', extension: 'md' };
+		let lang = 'zh';
+		const cleanups = [];
+		const headerActions = new MarkdownMindMapAction({
+			getLeavesOfType: () => [leaf], on: () => ({}), onLayoutReady: callback => callback(),
+		}, () => lang);
+		headerActions.register({ register: callback => cleanups.push(callback), registerEvent: () => {} });
+		headerActions.refresh(); lang = 'en'; headerActions.refresh();
+		const headerButton = mdView.header.querySelector('.mindmap-open-action');
+		assert(mdView.header.children.length === 1 && headerButton.getAttribute('aria-label') === 'Open as mind map', '原生标题栏按钮去重与语言刷新');
+		headerButton.click(); await Promise.resolve(); await Promise.resolve();
+		assert(opened.length === 1 && opened[0].state.file === 'OS.md' && opened[0].state.mdBackMode === 'source', '标题栏按钮点击切换当前文件');
+		cleanups.forEach(callback => callback());
+		assert(!mdView.header.querySelector('.mindmap-open-action'), '标题栏按钮随卸载移除');
+		mdView.header.remove();
 		bar.dispose(); hud.dispose();
 		oldInput.dispatchEvent(new Event('input'));
 		assert(inputs === 1 && buttons.every(b => b.onclick === null), '销毁解绑真实监听与按钮');
@@ -163,6 +185,15 @@ export const UI_SHIM_SOURCE = `
 export class App {}
 export class TFile {}
 export class AbstractInputSuggest {}
+export class MarkdownView {
+	constructor(leaf) { this.leaf = leaf; this.header = document.createElement('div'); document.body.appendChild(this.header); }
+	getMode() { return 'source'; }
+	addAction(icon, title, callback) {
+		const button = this.header.createDiv('clickable-icon view-action');
+		setIcon(button, icon); setTooltip(button, title); button.addEventListener('click', callback);
+		return button;
+	}
+}
 export class Modal {
 	constructor(app) {
 		this.containerEl = app.document.createElement('div');

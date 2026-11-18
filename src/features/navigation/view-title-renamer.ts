@@ -3,7 +3,8 @@
  * 根节点文本编辑停止（防抖 + 非编辑态）后重命名 .mindmap.md 文件，
  * Obsidian 原生更新链接/反链；外部改名后视图重载，中心随新文件名。
  */
-import { App, Notice, TFile } from 'obsidian';
+import { mindMapFileName, mindMapFileTitle } from '../../domain/mindmap-file';
+import { App, Notice, normalizePath, TFile } from 'obsidian';
 import { createDebouncer } from '../../core/concurrency';
 import { notifyError } from '../../core/errors';
 import { isMindMapFile } from '../../markdown/md-open';
@@ -68,10 +69,10 @@ export class TitleRenamer {
 
 		const title = (this.deps.getRootText() ?? '').trim();
 		const sanitized = sanitizeFileName(title).trim();
-		if (!sanitized || sanitized === file.basename) return;
+		if (!sanitized || sanitized === mindMapFileTitle(file)) return;
 
-		const folder = file.parent ? `${file.parent.path}/` : '';
-		const newPath = `${folder}${sanitized}.md`;
+		const folder = file.parent && !file.parent.isRoot() ? `${file.parent.path}/` : '';
+		const newPath = normalizePath(`${folder}${mindMapFileName(sanitized)}`);
 		if (newPath === file.path) return;
 
 		// 非解析用途，仅判断路径是否已存在（类型化 getter 成对，官方推荐）

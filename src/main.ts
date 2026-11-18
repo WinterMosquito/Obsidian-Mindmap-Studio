@@ -25,7 +25,7 @@ import { MindmapEmbedRenderChild } from './features/mindmap-codeblock';
 import { createNewMindMap } from './creation';
 import {
 	isMindMapFile,
-	declareAndOpenAsMindMap,
+	openAsMindMap,
 	openAsMarkdown,
 	setViewSwitchDoneHook,
 } from './markdown/md-open';
@@ -46,12 +46,14 @@ import type { StatusBarService } from './services/status-bar';
 import { updateStatusBar } from './features/view/view-status';
 import { pruneViewSwitchNoise } from './platform/workspace/nav-history';
 import { MindMapAutoOpener } from './platform/workspace/mindmap-auto-open';
+import { MarkdownMindMapAction } from './platform/workspace/markdown-mindmap-action';
 import { MiniMapSidebar } from './platform/workspace/minimap-sidebar';
 import { attachMiniMap, onMiniMapSessionChange, refreshAttachedMiniMap } from './features/view/view-minimap';
 
 export default class MindMapStudioPlugin extends Plugin {
 	override settings!: MindMapStudioSettings;
 	statusBarEl: HTMLElement | null = null;
+	private markdownAction: MarkdownMindMapAction | null = null;
 	/**
 	 * 插件是否已卸载。`workspace.onLayoutReady` 回调不可注销（返回 void，
 	 * 非 EventRef），布局就绪前禁用插件时回调仍会执行——须自行判定。
@@ -191,6 +193,8 @@ export default class MindMapStudioPlugin extends Plugin {
 
 		// 命令面板入口；文件夹右键入口在下方的 file-menu 监听中注册。
 		registerCommands(this);
+		this.markdownAction = new MarkdownMindMapAction(this.app.workspace, () => this.settings.language);
+		this.markdownAction.register(this);
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.refreshStatusBarLabel();
@@ -253,13 +257,7 @@ export default class MindMapStudioPlugin extends Plugin {
 		);
 	}
 
-	/**
-	 * 声明式自动打开：frontmatter 声明为导图的文件以 markdown 视图出现时，自动
-	 * 切入导图视图（运行期事件 + 启动多档延时恢复）。打开方式不记入 data.json
-	 * ——文件属性即声明，没有第二份状态可失配。
-	 *
-	 * `opener` 只在本方法内被事件回调与启动恢复引用，故不必成为类字段。
-	 */
+	/** 专用导图按属性自动打开；显式 Markdown 选择和普通笔记临时模式只属于当前标签。 */
 	private registerAutoOpen(): void {
 		const opener = new MindMapAutoOpener(
 			this.app.workspace,
@@ -395,7 +393,7 @@ export default class MindMapStudioPlugin extends Plugin {
 	 * 按**文件**查找而非活跃 leaf：导图在后台标签时也应切它，而不是顶掉当前标签页；
 	 * 全库至多一个导图实例（见 onLoadFile 的 P0 互斥），故命中即停。
 	 *
-	 * @returns 是否命中；未命中时调用方走 `openAsMarkdown` 降级路径
+	 * @returns 是否命中；未命中时调用方走 `openAsMarkdown` 返回路径
 	 */
 	private revealOpenMindMap(file: TFile): boolean {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
@@ -409,13 +407,7 @@ export default class MindMapStudioPlugin extends Plugin {
 		return false;
 	}
 
-	/**
-	 * md 文件的右键项（**互斥**一项，避免同名动作两种行为）：
-	 * - 声明为导图（frontmatter `Mindmap` 的值为布局枚举）→「以 Markdown 打开」，
-	 *   点击**持久降级**（属性改写为 `Markdown`），此后不再自动进导图视图；
-	 * - 其他 md →「以思维导图打开」，把当前标签切到导图视图
-	 *   （「任意笔记可预览为导图」的入口），并按设置的种子布局写声明。
-	 */
+	/** Markdown 文件菜单：打开与返回只切视图，正文保存由已有文档会话负责。 */
 	private addMarkdownFileMenuItems(menu: Menu, file: TFile): void {
 		const lang = this.settings.language;
 		if (isMindMapFile(this.app, file)) {
@@ -428,11 +420,9 @@ export default class MindMapStudioPlugin extends Plugin {
 						// auto-open 未跑）直接切回 Markdown
 						if (!this.revealOpenMindMap(file)) {
 							void openAsMarkdown(
-								this.app,
 								this.app.workspace.getLeaf(false),
 								file,
 								'source',
-								lang,
 							);
 						}
 					}),
@@ -444,12 +434,9 @@ export default class MindMapStudioPlugin extends Plugin {
 				.setTitle(t(lang, 'command.openAsMindMap'))
 				.setIcon('dot-network')
 				.onClick(() => {
-					void declareAndOpenAsMindMap(
-						this.app,
+					void openAsMindMap(
 						this.app.workspace.getLeaf(false),
 						file,
-						lang,
-						this.settings.defaultLayout,
 					);
 				}),
 		);
@@ -551,6 +538,7 @@ export default class MindMapStudioPlugin extends Plugin {
 	 */
 	refreshLanguageUi(): void {
 		refreshCommandLabels(this);
+		this.markdownAction?.refresh();
 		this.refreshStatusBarLabel();
 		this.forEachMindMapView((view) => {
 			view.refreshSearchBarLabels();

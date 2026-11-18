@@ -284,3 +284,5 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 侧栏承载、view-minimap 或 visual-minimap-sidebar 探针变化会触发真实视觉门禁，触发面由 check-gates 与其契约测试共同维护。组合版本同时运行侧栏与热键拖拽两份独立浏览器页面，不因合并而遗漏其中一项。
 
 创建入口与命名弹窗（K217）：`language-refresh.test.ts` 验证命令注册/语言刷新不注册丝带按钮且保留两个创建命令，既有 ID/语言刷新顺序继续直测；`modal-input.test.ts` 与 `creation-folder.test.ts` 保留空名、确认、取消及落点回归。`verify:visual` 的 `visual-ui.mjs` 页使用真实命名表单代码与官方 Modal/按钮的最小 DOM 替身，覆盖窄宽 × 明暗四组，验证中号弹窗圆角、宿主输入圆角、输入宽度、空名禁用及 Enter/Esc。替身不证明实际 Obsidian 已重载，主题和操作手感留实机验收。
+
+临时导图与专用文件（K218）：`md-open-trigger` 直测打开/返回零属性写入及标签选择隔离；`mindmap-auto-open` 覆盖普通笔记重启恢复、显式临时打开保留与专用图返回不被后台反转。`markdown-mindmap-action` 验证标题栏去重、语言、分屏文件归属和卸载；`view-temporary-state` / `engine-controller` 验证普通笔记布局/视口/外观不持久化，`document-session` 验证无属性文件节点编辑仍保存正文、撤销仍原样恢复。`mindmap-file` / `creation-folder` / `view-title-renamer` 锁定后缀、编号与改名；`verify:visual` 的 UI 页覆盖真实 DOM 标题栏按钮点击与清理，使用官方 API 替身，实际 Obsidian 的未保存编辑切换、后台标签/独立窗口、重启恢复仍需实机验收。

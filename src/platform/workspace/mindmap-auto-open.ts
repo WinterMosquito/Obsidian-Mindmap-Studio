@@ -1,6 +1,6 @@
 /**
  * 声明驱动自动打开：frontmatter 声明为导图（`Mindmap: Mindmap`）的文件，
- * 每当它以 markdown 视图出现，就自动切到本插件的导图视图。
+ * 按 .mindmap.md 与启用属性默认打开，当前标签的显式选择优先。
  *
  * 本模块只管**时机**，判据由组合根注入（`isDeclaredMindMapFile`，唯一实现在
  * markdown/md-open 的 isMindMapFile）。为什么需要这块时序逻辑：
@@ -12,14 +12,17 @@
  * 2. 启动期：工作区恢复（重启）时 active-leaf-change 对初始叶子可能不触发、或
  *    触发瞬间 file 尚未就位——scheduleStartupRestore 以多档延时扫描恢复。
  *
- * 不再需要「打开方式偏好」：打开方式由文件属性承载（「以 Markdown 打开」= 把
- * 属性改写为 `Markdown`，见 markdown/md-open），没有第二份状态可失配。
+ * 打开选择仅在 md-open 的 WeakMap 中暂存；普通笔记重启恢复为 Markdown，正文不变。
  */
 import type { Component, TFile, Workspace, WorkspaceLeaf } from 'obsidian';
 import { MarkdownView } from 'obsidian';
-import { AUTO_OPEN_SCAN_DEBOUNCE_MS, CORE_VIEW_TYPE } from '../../core/constants';
+import { AUTO_OPEN_SCAN_DEBOUNCE_MS, CORE_VIEW_TYPE, VIEW_TYPE } from '../../core/constants';
 import { createDebouncer, type Debouncer } from '../../core/concurrency';
-import { openAsMindMap } from '../../markdown/md-open';
+import { isDedicatedMindMapPath } from '../../domain/mindmap-file';
+import {
+	canAutoOpenMindMap, isExplicitMindMapOpen, openAsMarkdown,
+	openAsMindMap, readMdBackMode,
+} from '../../markdown/md-open';
 
 /**
  * `file-open` 未命中叶子时的重试延时（ms）。
@@ -74,7 +77,7 @@ export class MindMapAutoOpener {
 		);
 		component.registerEvent(
 			this.workspace.on('active-leaf-change', (leaf) => {
-				if (!leaf || this.isOwnView(leaf.view)) {
+				if (!leaf) {
 					return; // 已是导图视图（含在导图标签内切换文件）
 				}
 				this.autoSwitch(leaf);
@@ -139,10 +142,13 @@ export class MindMapAutoOpener {
 				continue;
 			}
 			const file = view.file;
-			if (!file || !this.isDeclared(file)) {
+			if (!file || !canAutoOpenMindMap(leaf, file) || !this.isDeclared(file)) {
 				continue;
 			}
 			this.switchToMindMap(leaf, file);
+		}
+		for (const leaf of this.workspace.getLeavesOfType(VIEW_TYPE)) {
+			this.restoreTemporaryLeaf(leaf);
 		}
 	}
 
@@ -155,6 +161,9 @@ export class MindMapAutoOpener {
 	 * 一份，`openAsMindMap` 里的并发去重保证不会与 `active-leaf-change` 抢着切。
 	 */
 	private switchFileNow(file: TFile, retried = false): void {
+		for (const leaf of this.workspace.getLeavesOfType(VIEW_TYPE)) {
+			this.restoreTemporaryLeaf(leaf);
+		}
 		if (!this.isDeclared(file)) {
 			return;
 		}
@@ -183,15 +192,28 @@ export class MindMapAutoOpener {
 	}
 
 	private autoSwitch(leaf: WorkspaceLeaf): void {
+		if (this.isOwnView(leaf.view)) {
+			this.restoreTemporaryLeaf(leaf);
+			return;
+		}
 		const markdownView = leaf.view;
 		if (!(markdownView instanceof MarkdownView)) {
 			return;
 		}
 		const file = markdownView.file;
-		if (!file || !this.isDeclared(file)) {
+		if (!file || !canAutoOpenMindMap(leaf, file) || !this.isDeclared(file)) {
 			return;
 		}
 		this.switchToMindMap(leaf, file);
+	}
+
+	/** 普通笔记的导图仅属于本次显式打开，工作区恢复/标签换文件时回到 Markdown。 */
+	private restoreTemporaryLeaf(leaf: WorkspaceLeaf): void {
+		if (!this.isOwnView(leaf.view)) return;
+		const view = leaf.view as { file?: TFile | null; getState?: () => unknown };
+		const file = view.file;
+		if (!file || isDedicatedMindMapPath(file.path) || isExplicitMindMapOpen(leaf, file)) return;
+		void openAsMarkdown(leaf, file, readMdBackMode(view.getState?.()));
 	}
 
 	/**
@@ -202,6 +224,7 @@ export class MindMapAutoOpener {
 	 * 以未处理拒绝的形式静默消失。两条路径共用一处也避免后续再次分叉。
 	 */
 	private switchToMindMap(leaf: WorkspaceLeaf, file: TFile): void {
+		if (!canAutoOpenMindMap(leaf, file)) return;
 		// `Promise.resolve` 包一层：入口一旦被替换/裁剪成同步实现（测试桩、旧版
 		// shim），直接 `.catch` 会在 `void` 表达式上抛「undefined.catch」的
 		// 未捕获异常——扫描是后台动作，不该把插件事件链带崩

@@ -105,10 +105,11 @@ function makeHarness(
 		body?: string;
 		text?: string;
 		isDocumentHidden?: () => boolean;
+		filePath?: string;
 	} = {},
 ): Harness {
 	const file = Object.assign(new TFile(), {
-		path: FILE_PATH,
+		path: options.filePath ?? FILE_PATH,
 		basename: 'session.mindmap',
 	});
 	const disk = {
@@ -131,7 +132,7 @@ function makeHarness(
 				disk.body = next;
 				return next;
 			},
-			getFileByPath: (path: string) => (path === FILE_PATH ? file : null),
+			getFileByPath: (path: string) => (path === file.path ? file : null),
 			// 含图片的树在序列化 / 图片地址解析时会走官方链接解析与索引兜底
 			getFiles: () => [file],
 		},
@@ -650,5 +651,26 @@ describe('DocumentSession（生命周期与注册表）', () => {
 		// 不调 markLoadedFromEngine
 		await h.session.flush();
 		expect(h.disk.body).toBe('# A\n');
+	});
+});
+
+
+describe('普通 Markdown 的导图编辑', () => {
+	it('纯浏览不写盘；节点编辑仍保存正文，撤销仍回到原样且不新增属性', async () => {
+		const h = makeHarness({ filePath: 'notes/OS.md' });
+		await open(h);
+		const write = vi.spyOn(h.app.vault, 'process');
+		const view = new FakeView(h.file.path);
+		h.session.attach(view);
+		await h.session.flush();
+		expect(write).not.toHaveBeenCalled();
+		expect(h.session.commit(tree('新节点文本'), view)).toBe(true);
+		await h.session.flush();
+		expect(h.disk.body).toBe('# 新节点文本\n');
+		expect(h.disk.body).not.toContain('Mindmap:');
+		h.session.undo();
+		await h.session.flush();
+		expect(h.disk.body).toBe('# A\n');
+		await h.session.detach(view);
 	});
 });

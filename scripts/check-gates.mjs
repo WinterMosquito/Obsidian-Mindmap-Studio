@@ -68,6 +68,8 @@ const VISUAL_MATCHERS = [
 	'src/features/view/view-search.ts',
 	'src/features/view/view-minimap.ts',
 	'src/platform/workspace/minimap-sidebar.ts',
+	'src/platform/workspace/markdown-mindmap-action.ts',
+	'src/markdown/md-open.ts',
 	'src/features/content/',
 	'src/features/editing/',
 	'src/features/canvas/',

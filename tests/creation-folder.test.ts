@@ -175,7 +175,7 @@ function settingsStub(
 
 /** 期望的文件名（新建一律是普通 `.md`；导图身份靠正文的属性声明） */
 function expectedFileName(): string {
-	return `${TYPED_NAME}.md`;
+	return `${TYPED_NAME}.mindmap.md`;
 }
 
 describe('新建导图从中心节点开始（K201）', () => {
@@ -359,7 +359,7 @@ describe('新建思维导图的落点判定', () => {
 		await createNewMindMap(stub.app, settingsStub(), '');
 		// 首次探针用库根口径（不带前导斜杠），命中后追加序号 1
 		expect(stub.probedPaths[0]).toBe(expectedFileName());
-		expect(stub.created[0]?.path).toBe('测试导图 1.md');
+		expect(stub.created[0]?.path).toBe('测试导图 1.mindmap.md');
 	});
 });
 

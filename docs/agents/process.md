@@ -90,3 +90,5 @@ GitHub 的提交列表与 Actions 列表**只显示提交标题 / run 名称**�
 
 
 **组件样式（K207）**：工具栏/搜索栏的局部样式放在对应 `src/ui/` 目录，剩余样式在 `src/ui/styles/`。新增样式必须被 `src/ui/styles/index.css` 导入；构建后连同生成的根目录 `styles.css` 一并交付。DOM/骨架/局部交互变更触发 `verify:visual`，CSS 源与构建配置同时触发 CSS lint 和视觉验证；单纯维护索引、行数与 K 范围仍只改 `docs/agents/`。
+
+**临时导图（K218）**：Markdown 标题栏动作与 `markdown/md-open.ts` 的模式切换变化进入真实 DOM 视觉门禁。新建 .mindmap.md 约定或打开/返回语义变更须同步 Markdown 权威标准、双语 README 和对应回归；普通笔记的正文保存仍遵守现有保真与冲突规则。

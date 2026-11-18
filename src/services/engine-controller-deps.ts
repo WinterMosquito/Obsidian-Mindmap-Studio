@@ -40,6 +40,8 @@ export interface EngineControllerDeps {
 	getCanvasEl(): HTMLElement | null;
 	/** 视图当前文件（视口持久化按文件路径存取） */
 	getFile(): TFile | null;
+	/** 临时导图不读取或写入按文件视图状态；缺省沿用持久模式。 */
+	shouldPersistViewState?(): boolean;
 	getLang(): Language;
 	/** 当前是否深色主题（css-change 后由视图重算并通知） */
 	isDark(): boolean;

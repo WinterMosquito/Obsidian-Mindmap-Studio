@@ -203,14 +203,14 @@ describe('标准文档一致性（docs/markdown-mindmap-standard.md）', () => {
 		expect(missing, missing.join('\n')).toEqual([]);
 	});
 
-	it('退役后缀 .mindmap.md 只在说明退役的行出现', () => {
-		const offenders = LINES.map((line, index) => ({ line, no: index + 1 }))
-			.filter(({ line }) => line.includes('.mindmap.md') && !line.includes('退役'))
-			.map(({ line, no }) => `${no}: ${line.slice(0, 80)}`);
-		expect(
-			offenders,
-			`以下行仍以 \`.mindmap.md\` 指代导图文件（该后缀已于 2026-10-12 退役）：\n${offenders.join('\n')}`,
-		).toEqual([]);
+	it('专用导图示例使用完整 .mindmap.md 后缀，普通笔记临时打开', () => {
+		const creation = LINES.find(line => line.startsWith('> **新建导图初始内容')) ?? '';
+		expect(creation).toContain('名称.mindmap.md');
+		expect(creation).toContain('名称 1.mindmap.md');
+		const opening = LINES.find(line => line.startsWith('- **任意笔记入口**')) ?? '';
+		expect(opening).toContain('临时打开');
+		expect(opening).toContain('编辑正文');
+		expect(opening).toContain('不写属性');
 	});
 
 	it('白名单 10 条与「实现 / 锁定用例」映射表逐条对齐', () => {

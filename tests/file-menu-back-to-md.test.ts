@@ -22,7 +22,7 @@ vi.mock('../src/engine/mindmap', () => ({}));
 const mdOpen = vi.hoisted(() => ({
 	isMindMapFile: vi.fn(() => true),
 	openAsMarkdown: vi.fn(),
-	declareAndOpenAsMindMap: vi.fn(),
+	openAsMindMap: vi.fn(),
 }));
 vi.mock('../src/markdown/md-open', () => mdOpen);
 
@@ -136,7 +136,7 @@ describe('文件右键「以 Markdown 打开」的分支选择（main.ts）', ()
 	beforeEach(() => {
 		mdOpen.isMindMapFile.mockReturnValue(true);
 		mdOpen.openAsMarkdown.mockClear();
-		mdOpen.declareAndOpenAsMindMap.mockClear();
+		mdOpen.openAsMindMap.mockClear();
 	});
 
 	it('该文件的导图视图在后台标签：带到前台并复用视图返回入口，不做降级', () => {
@@ -165,11 +165,9 @@ describe('文件右键「以 Markdown 打开」的分支选择（main.ts）', ()
 		expect(other.backToMarkdown).not.toHaveBeenCalled();
 		expect(mdOpen.openAsMarkdown).toHaveBeenCalledTimes(1);
 		expect(mdOpen.openAsMarkdown).toHaveBeenCalledWith(
-			h.app,
 			h.getLeaf.mock.results[0]?.value,
 			file,
 			'source',
-			'zh',
 		);
 	});
 
@@ -196,14 +194,11 @@ describe('文件右键「以 Markdown 打开」的分支选择（main.ts）', ()
 
 		expect(item.click).toBeTypeOf('function');
 		expect(mdOpen.openAsMarkdown).not.toHaveBeenCalled();
-		expect(mdOpen.declareAndOpenAsMindMap).toHaveBeenCalledTimes(1);
+		expect(mdOpen.openAsMindMap).toHaveBeenCalledTimes(1);
 		// 第 5 参是**种子布局**（设置 defaultLayout）：升级写的是它的标准属性值
-		expect(mdOpen.declareAndOpenAsMindMap).toHaveBeenCalledWith(
-			h.app,
+		expect(mdOpen.openAsMindMap).toHaveBeenCalledWith(
 			h.getLeaf.mock.results[0]?.value,
 			file,
-			'zh',
-			'logicalStructure',
 		);
 	});
 });

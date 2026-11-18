@@ -10,6 +10,7 @@
  * - openHyperlink（view-link-navigator.ts） 节点超链接跳转路由；
  * - 本类只做编排：生命周期事件 → 装配 services 与 view-* 交互特性。
  */
+import { isDedicatedMindMapPath, mindMapFileTitle } from '../../domain/mindmap-file';
 import {
 	type EventRef,
 	FileView,
@@ -74,7 +75,7 @@ import {
 	type ImageSizeValue,
 } from '../../media/images-path';
 
-import { openAsMarkdown, readDeclaredLayout } from '../../markdown/md-open';
+import { openAsMarkdown, readDeclaredLayout, readMdBackMode } from '../../markdown/md-open';
 import {
 	normalizeLayoutId,
 	setMindMapLayout,
@@ -256,19 +257,6 @@ const SESSION_FIELDS = {
 	themeStyle: 'currentThemeStyle',
 } as const satisfies Record<PreferenceKey, string>;
 
-/**
- * 从视图状态读「进入前 md 模式」（唯一的取值 + 白名单判定）。
- *
- * 状态未经校验（用户手改 workspace.json 等可能产生任意值，`state` 本身也可能
- * 是 null / 非对象），非法/缺失一律回退 source（与 ViewStateStore.hydrate 的
- * 防御风格一致）。消费点只有 setState 覆写（读入点），见那里。
- */
-function readMdBackMode(state: unknown): 'source' | 'preview' {
-	return (state as { mdBackMode?: unknown } | null)?.mdBackMode === 'preview'
-		? 'preview'
-		: 'source';
-}
-
 export class MindMapView
 	extends FileView
 	implements MindMapViewContext, SessionViewPort
@@ -359,7 +347,7 @@ export class MindMapView
 	/**
 	 * 当前连线样式偏好（straight 折线 / curve 曲线；2026-10-21 收敛为两态）。
 	 * **按文件**持久化到视图状态存储，由本类经 `applyLineStyle` /
-	 * `resolvePreference` 维护（布局不在此列——它只存文件属性，见 `currentLayout`）。
+	 * `resolvePreference` 维护（专用导图的布局在文件属性，临时视图只保留内存值，见 `currentLayout`）。
 	 */
 	private currentLineStyle: string | null = null;
 	/**
@@ -492,6 +480,7 @@ export class MindMapView
 			app: this.app,
 			getCanvasEl: () => this.canvasEl,
 			getFile: () => this.file,
+			shouldPersistViewState: () => !this.isTemporaryMindMap,
 			getLang: () => this.lang,
 			isDark: () => this.isDark,
 			getSetupOptions: () => ({
@@ -647,7 +636,7 @@ export class MindMapView
 
 	override getDisplayText(): string {
 		// 中心主题 ⇄ 文件名同步（改中心即重命名）；标题显示即文件名
-		return this.file ? this.file.basename : t(this.lang, 'common.mindMap');
+		return this.file ? mindMapFileTitle(this.file) : t(this.lang, 'common.mindMap');
 	}
 
 	override getIcon(): string {
@@ -862,11 +851,11 @@ export class MindMapView
 		// 避免某一维回落到硬编码默认而漏掉设置项（2026-10-21 themeStyle 踩过此坑）。
 		// 布局不在其中——它只认文件属性（`data.json` 不再保存逐文件布局）。
 		const prefs = resolveFilePreferences({
-			saved: {
+			saved: isDedicatedMindMapPath(file.path) ? {
 				lineStyle: this.plugin.viewState.getPreference(file.path, 'lineStyle'),
 				themeStyle: this.plugin.viewState.getPreference(file.path, 'themeStyle'),
 				palette: this.plugin.viewState.getPreference(file.path, 'palette'),
-			},
+			} : {},
 			defaults: {
 				lineStyle: this.plugin.settings.defaultLineStyle,
 				themeStyle: this.plugin.settings.defaultThemeStyle,
@@ -1103,6 +1092,10 @@ export class MindMapView
 	// 三项同构（会话字段 ?? 默认值），与写入侧 `commitPreference` 以
 	// `PreferenceKey` 为中心对称：新增一项偏好时两处各加一行即可。
 
+	private get isTemporaryMindMap(): boolean {
+		return !this.file || !isDedicatedMindMapPath(this.file.path);
+	}
+
 	resolvePreference(key: PreferenceKey): string {
 		switch (key) {
 			case 'lineStyle':
@@ -1285,7 +1278,7 @@ export class MindMapView
 		const next = config.normalize(config.value);
 		this[SESSION_FIELDS[config.key]] = next;
 		config.applyToEngine(next);
-		if (this.file) {
+		if (this.file && !this.isTemporaryMindMap) {
 			this.plugin.viewState.setPreference(this.file.path, config.key, next);
 		}
 		refreshMiniMap(this);
@@ -1325,7 +1318,7 @@ export class MindMapView
 			return;
 		}
 		const file = this.file;
-		if (file) {
+		if (file && !this.isTemporaryMindMap) {
 			// 在途标记（见字段注释）：写属性触发的 `changed` 据此让位给本方法
 			this.pendingLayoutWrite = layoutId;
 			try {
@@ -1768,7 +1761,7 @@ export class MindMapView
 		refreshToolbar(this);
 	}
 
-	/** 文档模式：切回 Markdown 编辑/阅读（恢复进入前模式；声明随之降级） */
+	/** 文档模式：切回 Markdown 编辑/阅读（恢复进入前模式，不改属性） */
 	backToMarkdown(): void {
 		if (!this.file) {
 			return;
@@ -1776,17 +1769,10 @@ export class MindMapView
 		this.engine.persistViewport();
 		const file = this.file;
 		void openAsMarkdown(
-			this.app,
 			this.leaf,
 			file,
 			this.mdBackMode,
-			this.lang,
-		).then(() => {
-			// 属性降级是**持久改动**（下次打开不再自动进导图），而界面只表现为换了
-			// 个视图 ⇒ 必须说清楚，否则用户以为只是切了显示（2026-11-03 实机：
-			// 点「返回」后 `Mindmap: LogicalStructure` 静默变成 `Mindmap: Markdown`）。
-			new Notice(t(this.lang, 'view.backToMarkdownDone'));
-		});
+		);
 	}
 
 	// ==================== 搜索栏（委托 view-search.ts） ====================

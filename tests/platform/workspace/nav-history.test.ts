@@ -246,7 +246,6 @@ describe('md-open 视图切换落定钩子接线', () => {
 
 		// app 桩：元数据缓存为空 ⇒ 无导图声明可降级（不触碰 fileManager）
 		await openAsMarkdown(
-			{ metadataCache: { getFileCache: () => null } } as never,
 			leaf as never,
 			file,
 			'preview',

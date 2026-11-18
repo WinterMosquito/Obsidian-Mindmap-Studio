@@ -204,8 +204,8 @@ describe('register（运行期事件接线）', () => {
 
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 		expect(openAsMindMapMock).toHaveBeenCalledWith(leaf, file);
-		// 只查询 markdown 类型叶子（导图叶子无需恢复）
-		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN]);
+		// 同时扫描 Markdown 自动打开与普通笔记的导图恢复
+		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN, VIEW_TYPE,]);
 		expect(CORE_VIEW_TYPE.MARKDOWN).toBe('markdown');
 		// 目标视图类型为插件导图视图
 		expect(VIEW_TYPE).toBe('mindmap-view');
@@ -259,7 +259,7 @@ describe('register（运行期事件接线）', () => {
 		await Promise.resolve();
 
 		// 扫描确实落地（否则本用例会在「根本没扫」的情况下通过）
-		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN]);
+		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN, VIEW_TYPE,]);
 		expect(openAsMindMapMock).not.toHaveBeenCalled();
 	});
 
@@ -301,7 +301,7 @@ describe('active-leaf-change 自动切换（单叶判定，不做全量扫描）
 		const harness = setupHarness(['a.md']);
 		harness.register();
 
-		harness.fireLeafChange({ view: markdownViewWith({ own: true, file: fakeFile('a.md') }) });
+		harness.fireLeafChange({ view: markdownViewWith({ own: true, file: fakeFile('a.mindmap.md') }) });
 		harness.fireLeafChange(undefined);
 		harness.fireLeafChange({ view: {} });
 		harness.fireLeafChange({ view: markdownViewWith({ file: null }) });
@@ -357,10 +357,10 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 			[leaf, file],
 		]);
 		expect(harness.queriedTypes).toEqual([
-			'markdown',
-			'markdown',
-			'markdown',
-			'markdown',
+			'markdown', VIEW_TYPE,
+			'markdown', VIEW_TYPE,
+			'markdown', VIEW_TYPE,
+			'markdown', VIEW_TYPE,
 		]);
 	});
 
@@ -466,7 +466,7 @@ describe('scheduleStartupRestore（启动多档延时）', () => {
 });
 
 describe('file-open 防抖（scheduleDeclaredLeavesScan，2026-10-15）', () => {
-	it('连发只落地一次扫描（queriedTypes 只增一条）', () => {
+	it('连发只落地一次扫描（每轮扫描两种视图类型）', () => {
 		vi.useFakeTimers();
 		const harness = setupHarness(['a.md']);
 		const file = fakeFile('a.md');
@@ -482,15 +482,15 @@ describe('file-open 防抖（scheduleDeclaredLeavesScan，2026-10-15）', () => 
 
 		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS);
 
-		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN]);
+		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN, VIEW_TYPE,]);
 		expect(openAsMindMapMock).toHaveBeenCalledTimes(1);
 
 		// 窗口过后新触发照常调度（不是「只扫一次」的一次性闸门）
 		harness.fireFileOpen();
 		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS);
 		expect(harness.queriedTypes).toEqual([
-			CORE_VIEW_TYPE.MARKDOWN,
-			CORE_VIEW_TYPE.MARKDOWN,
+			CORE_VIEW_TYPE.MARKDOWN, VIEW_TYPE,
+			CORE_VIEW_TYPE.MARKDOWN, VIEW_TYPE,
 		]);
 	});
 
@@ -511,7 +511,7 @@ describe('file-open 防抖（scheduleDeclaredLeavesScan，2026-10-15）', () => 
 		expect(harness.queriedTypes).toEqual([]);
 
 		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS);
-		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN]);
+		expect(harness.queriedTypes).toEqual([CORE_VIEW_TYPE.MARKDOWN, VIEW_TYPE,]);
 	});
 
 	it('卸载（宿主清理回调）后：未决的扫描不再触发', () => {
@@ -603,5 +603,44 @@ describe('file-open：按文件名立即切换（不等待防抖/启动档位）
 		vi.advanceTimersByTime(AUTO_OPEN_SCAN_DEBOUNCE_MS + 10);
 		expect(openAsMindMapMock).not.toHaveBeenCalled();
 		harness.unloadHost();
+	});
+});
+
+
+describe('临时导图与当前标签的恢复', () => {
+	it('工作区恢复的普通笔记回到 Markdown，并恢复进入前的阅读模式', () => {
+		const h = setupHarness([]);
+		const file = fakeFile('OS.md');
+		const setViewState = vi.fn(async () => undefined);
+		const leaf = { view: { own: true, file, getViewType: () => VIEW_TYPE, getState: () => ({ mdBackMode: 'preview' }) }, setViewState };
+		h.setLeaves([leaf]); h.activate();
+		expect(setViewState).toHaveBeenCalledWith({ type: CORE_VIEW_TYPE.MARKDOWN, state: { file: 'OS.md', mode: 'preview' } });
+	});
+
+	it('本轮显式打开普通笔记时启动扫描保留视图，标签换文件后临时授权失效', async () => {
+		const actual = await vi.importActual<typeof import('../../../src/markdown/md-open')>('../../../src/markdown/md-open');
+		const h = setupHarness([]);
+		const file = fakeFile('OS.md');
+		const setViewState = vi.fn(async () => undefined);
+		const leaf = { view: { own: true, file, getViewType: () => VIEW_TYPE }, setViewState };
+		await actual.openAsMindMap(leaf as never, file);
+		h.setLeaves([leaf]); h.register(); h.activate();
+		expect(setViewState).not.toHaveBeenCalled();
+		leaf.view.file = fakeFile('Other.md');
+		h.fireLeafChange(leaf);
+		expect(setViewState).toHaveBeenCalledWith({ type: CORE_VIEW_TYPE.MARKDOWN, state: { file: 'Other.md', mode: 'source' } });
+	});
+
+	it('专用导图明确返回 Markdown 后不被后台扫描切回，另一个新标签仍自动打开', async () => {
+		const actual = await vi.importActual<typeof import('../../../src/markdown/md-open')>('../../../src/markdown/md-open');
+		const h = setupHarness(['Map.mindmap.md']);
+		const file = fakeFile('Map.mindmap.md');
+		const first = { view: markdownViewWith({ file }), setViewState: vi.fn(async () => undefined) };
+		await actual.openAsMarkdown(first as never, file);
+		h.setLeaves([first]); h.activate();
+		expect(openAsMindMapMock).not.toHaveBeenCalled();
+		const second = { view: markdownViewWith({ file }) };
+		h.setLeaves([first, second]); h.activate();
+		expect(openAsMindMapMock).toHaveBeenCalledExactlyOnceWith(second, file);
 	});
 });

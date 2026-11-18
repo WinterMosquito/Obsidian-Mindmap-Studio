@@ -6,7 +6,7 @@ import { MarkdownView, Plugin, type TFile } from 'obsidian';
 import { MindMapView } from './features/view/view';
 import { createNewMindMap, type NewMindMapSettings } from './creation';
 import { fitToScreen } from './features/canvas/view-viewport';
-import { declareAndOpenAsMindMap } from './markdown/md-open';
+import { openAsMindMap } from './markdown/md-open';
 import { t, type TranslationKey } from './core/i18n';
 
 /**
@@ -205,18 +205,15 @@ function registerDocumentCommands(plugin: CommandsHost): void {
 			if (checking) {
 				return true;
 			}
-			void declareAndOpenAsMindMap(
-				plugin.app,
+			void openAsMindMap(
 				view.leaf,
 				file,
-				plugin.settings.language,
-				plugin.settings.defaultLayout,
 			);
 			return true;
 		},
 	});
 
-	// md 文档：从导图视图切回 Markdown（并把导图声明持久降级为 Markdown）
+	// md 文档：从导图视图切回 Markdown（恢复进入前的编辑/阅读模式）
 	plugin.addCommand({
 		id: COMMAND_IDS.backToMarkdown,
 		name: t(plugin.settings.language, 'command.backToMarkdown'),

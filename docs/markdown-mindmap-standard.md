@@ -55,17 +55,17 @@
 
   读侧归一只此一处（`normalizePropertyToken`：`trim` → 小写 → 去 `-` / `_` / 空格，**键名与值共用**），故 `Mindmap Layout` / `mindmap-layout` / `MindmapLayout` 都认，`logical-structure` 不认；官方属性面板的数组形态**取第一项**（空数组＝无值）。布局读口是 `readMindMapLayout`，值 → 引擎 id 的唯一实现是 `layoutIdOfPropertyValue`（`normalizeLayoutId` 额外接受引擎 id，供入口归一）。判据唯一实现在 `src/domain/mindmap-property.ts`（**双键**，写侧恒写标准键名与标准值，**与界面语言无关**）。
 
-  命中后文件以 markdown 视图出现时自动切到导图视图（双击/链接/重启恢复均生效）；「切换回 Markdown」随时返回，并恢复进入前的编辑/阅读模式（模式随视图状态**跨会话保留**）。文件**名**不参与判定——`.mindmap.md` 后缀已于 2026-10-12 退役。
+  命中后文件以 markdown 视图出现时自动切到导图视图（双击/链接/重启恢复均生效）；「切换回 Markdown」随时返回，并恢复进入前的编辑/阅读模式（模式随视图状态**跨会话保留**）。默认自动打开同时要求 `.mindmap.md` 后缀和启用属性；普通 `.md` 的导图视图只由用户显式打开。当前标签的 Markdown 选择只保留在内存，关闭后重新打开专用文件仍按声明进入导图。
 
-- **当前格式与破坏性变更（K213，开发分支）**：不再迁移旧导图属性、不读取旧布局别名。`Mindmap: LogicalStructure` 等旧启用值不自动接管；手动「以导图打开」会写当前启用值，并在布局缺失/非法时使用设置提供的种子布局。`Mindmap Layout: LogicalStructure` 与嵌入指令 `%%layout: logical-structure%%` 不再解释为 `logical`：前者回落默认布局，后者按非法指令提示并回落默认布局。旧键 `Type` / `类型` 继续作为无关属性保留。启用、布局与本文其余字段仍使用当前 Markdown 约定。
-- **布局只存在于文件属性**：切换布局（右键「布局」）会改写布局键，**不写 `data.json`**（视图状态只读取当前字段，加载不写盘）；属性被外部改写（属性面板 / 其它窗格 / 同步）时，已打开的导图跟随重排但**不回写**文件。设置项「默认布局」只是**新建/升级时的种子值**，不参与任何已存在文件的解读。
-- **降级（原「打开方式记忆」）**：没有第二份「打开方式」状态（不存 `data.json`）。**「以 Markdown 打开」= 持久降级**——把启用键改写为 `Mindmap: Markdown`（`FileManager.processFrontMatter`，无声明值则补写），此后不再自动进导图视图；三个入口同语义（文件右键「以 Markdown 打开」、工具栏「切换回 Markdown」、命令「切换回 Markdown」）。只改启用键，**布局键与正文一字不动**——这正是「切回 Markdown 再切回来，布局还在」的原因。短路条件只有「值已经是 `Markdown`」（幂等优化）。**升级**（手动「以思维导图打开」任意笔记）反之：无声明时补写 `Mindmap: Mindmap` + `Mindmap Layout: <种子布局>`，已声明则不动 YAML。**代价**：不存在「临时看一眼源码再切回」的轻量入口。
-- **任意笔记入口**：文件右键「以思维导图打开」与同名命令对**任意 `.md`** 可用（右键项按声明互斥显示），因此「先改名/新建才能用」不再是前置条件；手动打开会**先把声明写入 frontmatter**（无声明→写启用键 + 种子布局键），即打开一次即正式成为导图、下次自动打开；此后**可编辑并回写**，且声明已写入，故编辑中心主题同样会重命名文件（守卫只看属性声明 `isMindMapFile`，见 `src/features/navigation/view-title-renamer.ts`）。
+- **当前格式与破坏性变更（K213 / K218）**：专用导图采用 `.mindmap.md`，新建时写当前启用和布局属性；普通 `.md` 即使含旧有导图属性也默认由 Markdown 打开。文件不会因打开视图被升级、降级或自动重命名。旧启用值与旧布局别名继续不迁移、不解释，原有属性按无关文件内容保留。
+- **布局的作用域**：专用 `.mindmap.md` 切换布局时改写 `Mindmap Layout`，不写 `data.json`；普通笔记的临时导图布局只存在于当前视图内存。外部改写专用文件属性时，已打开导图跟随重排但不回写；临时视图不跟随这些属性。
+- **打开与返回只切视图**：标题栏按钮、文件菜单和命令「以思维导图打开」不调用属性写入；「切换回 Markdown」恢复进入前的编辑/阅读模式，属性原样保留。显式选择按 leaf 与当前文件路径暂存，避免自动打开立即把返回操作反转；导航换文件后选择失效。重启恢复的普通笔记回到 Markdown，专用文件仍按声明默认打开。
+- **任意笔记入口**：普通 `.md` 可从原生标题栏快捷按钮、文件右键或同名命令临时打开为导图。纯浏览、切换布局和视口不写属性或插件按文件状态；编辑正文仍走文档会话、撤销和自动保存管线，无声明也可保存。普通笔记的中心主题不触发文件重命名。
 - **自动打开的时机**：判据经官方 `MetadataCache.getFileCache` 同步读取；已打开的文件被**就地**加上属性时，由 `metadataCache.on('changed')` 补判。时机编排在 `src/platform/workspace/mindmap-auto-open.ts`（active-leaf-change / file-open / 启动多档延时；定时器经 `host: Component` 注册随组件注销清理）。
 
 ---
 
-> **新建导图初始内容（2026-11-17）**：只创建 `Mindmap: Mindmap` 与 `Mindmap Layout` 属性，正文为空，画布仅显示文件名对应的中心节点；不预置示例、快捷键提示或空白子节点。首个用户节点遵循 `newMapSyntax` 设置：列表 / 一级标题 / 二级标题，后续按正文自身写法回写。
+> **新建导图初始内容（2026-11-18）**：生成 `名称.mindmap.md`，只含 `Mindmap: Mindmap` 与 `Mindmap Layout` 属性，正文为空。中心主题显示「名称」，隐藏格式后缀；重名编号位于完整后缀之前（`名称 1.mindmap.md`）。首个用户节点遵循 `newMapSyntax`，正文层级约定保持原样。
 
 ## 2. 渲染方向：Markdown → 思维导图
 
@@ -298,7 +298,7 @@
 
 > 规则：正文归导图、文件头归磁盘；布局写文件属性（`Mindmap`），视口存 `data.json`。
 
-- 正文保持纯 Markdown，且**没有任何视图状态写进正文**。布局是唯一写进**文件头**的视图状态（`Mindmap Layout` 的值，见 §1）；视口与三项外观偏好存 `data.json`（`src/services/view-state.ts` + `src/core/persistence.ts` 的 `PluginDataWriter`：串行队列 + 写前重读合并）。升级到 2026-10-29 语义**不改写任何文件**：`Mindmap: Mindmap` 直接按「思维导图布局」解读；`data.json` 里残留的 `viewState[*].layout` 由启动清理剔除。
+- 正文保持纯 Markdown，且没有视图状态写进正文。专用导图布局写 `Mindmap Layout`，视口与外观按文件保存；普通笔记临时导图的这些选择只在当前视图内存中保留。正文编辑按现有保真管线保存，打开和返回不改文件头。
 - 中心节点 ⇄ 文件名：编辑中心节点文本会重命名文件——**必须走 `FileManager.renameFile`**（`src/features/navigation/view-title-renamer.ts`；`Vault.rename` 只改文件系统、不更新库内反链），Obsidian 原生更新链接/反链；外部改名后视图重载中心随新名。
 - 保存管线在 `src/services/document-service.ts`（防抖 / 串行排空 / 卸载快照兜底 / `onSaveError` 上报）。**文件头新鲜度**：写盘前先读目标文件当前内容，frontmatter 取**磁盘现值**（读失败才用按文件存的加载快照）——插件不持有也不回写"自己记得的文件头"，外部（属性面板/其它窗格/同步）改动的属性因此不会被覆盖；**frontmatter 与正文之间的空行**同样按磁盘原值拼回（`splitFrontmatter().gap`：0 / 1 / 多行、CRLF、仅空格行都原样保留；序列化器不参与）——编辑一个节点不会顺手吃掉这一行（2026-11-09 实机，K176）；**写盘归属不变式**：一次写盘的目标文件与其内容必须同源——排空期间换文件（core **不 await** `onUnloadFile`）时，树快照与 frontmatter 一律按**该次写盘的那个文件**取（`getSnapshotFor(file)` / `getFrontmatterFor(file)`），不同文件不并入同一批次，避免「新文件的正文写进旧文件」或丢 frontmatter。
 - 文件重命名/**移动**后的引用改写（`src/links/links-tree.ts`）：`[[链接]]` 的**形态跟用户走**（原链接带路径前缀 → 继续写路径），但路径取**新位置**——跨文件夹移动只换 basename 会留下 `[[folder/新名]]` 悬空链接；裸名链接保持裸名；`.md` 可省略扩展名，canvas/base 必须带。
