@@ -16,7 +16,7 @@
  *
  * 打包后须人工同步两处 sha256 常量（脚本会打印实际值供核对）：
  *   - vendor/BUILD.md「产物字节级身份」；
- *   - tests/vendor-contract.test.ts 的 EXPECTED_SHA256。
+ *   - tests/contracts/vendor-contract.test.ts 的 EXPECTED_SHA256。
  */
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -104,6 +104,6 @@ if (prevSha === nextSha) {
 } else if (prevSha) {
 	console.warn(
 		`[build-vendor] ⚠️ 字节已变化（写入前 sha256=${prevSha}）——若含补丁改动属预期，` +
-			'请同步 vendor/BUILD.md 与 tests/vendor-contract.test.ts 的 sha256 常量。',
+			'请同步 vendor/BUILD.md 与 tests/contracts/vendor-contract.test.ts 的 sha256 常量。',
 	);
 }

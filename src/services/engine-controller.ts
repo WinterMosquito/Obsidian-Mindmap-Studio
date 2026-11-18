@@ -297,7 +297,7 @@ export class EngineController {
 			return;
 		}
 		// 数据来源：引擎 `getData()` **本身已是深拷贝**（`command.getCopyData()`
-		// → `copyRenderTree` + `simpleDeepClone`，契约由 tests/vendor-contract.test.ts
+		// → `copyRenderTree` + `simpleDeepClone`，契约由 tests/contracts/vendor-contract.test.ts
 		// 钉住），initMindMap 内部还会再克隆一次（`handleData`）——2026-10-02 删除了
 		// 此前的第三份 `structuredClone`（其注释声称「防传活引用被就地修改」，该论据
 		// 在当前 vendor 行为下不成立；一轮重建原为 3 次全树拷贝）。

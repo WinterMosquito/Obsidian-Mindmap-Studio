@@ -11,7 +11,7 @@
 |---|---|---|
 | `index.md` | 文件清单与规模表 | 先搜文件名，只读对应记录；不是启动时必读全文 |
 | `decisions.md` | ≈90 KB | 按场景/模块/K 编号只读相关决策行 |
-| `architecture.md` | ≈600 行 | 只读目录树里你要动的那几行（豁免表已收归 `index.md`，本文件不再复制） |
+| `architecture.md` | < 100 行 | 按模块阅读职责与依赖说明；逐文件清单见 `index.md`（豁免表已收归 `index.md`，本文件不再复制） |
 | `conventions.md` | ≈2200 行（~500 KB） | **禁止通读**；按 §4 的找法定位，或直接 `grep -n "\[K<编号>\]"` |
 | `line-count-log.md` | ≈600 行 | 平时不读；追新批次记录或行数对账时只看首尾（新记录**追加到该文件**，不进 AGENTS.md） |
 | `baseline-metrics.md` | ≈470 行 | 只读你要用来判回归的那一行；其余是历史读数 |
@@ -36,7 +36,7 @@
 
 见 `process.md` 的「变更 → 文档义务」表（**唯一清单**，本文件不复制）。其中五类已机械
 enforce，漏做会红灯而不是靠自觉：源码 / 测试文件登记完备、`docs/` 清单里的文档真实存在、
-K 编号区间、K 交叉引用、Markdown 表格列数（都由 `tests/agents-md-sync.test.ts` 覆盖）。
+K 编号区间、K 交叉引用、Markdown 表格列数（都由 `tests/contracts/agents-md-sync.test.ts` 覆盖）。
 
 ## 4 · `conventions.md` 的找法（**别按号段猜主题**）
 

@@ -16,7 +16,7 @@
 
 ## 代码结构索引
 
-> 每个文件独立登记；一级目录表示依赖层，子目录表示能力归属。完整路径由 `tests/agents-md-sync.test.ts` 校验（K210）。职责与依赖见 [architecture.md](architecture.md)。
+> 每个文件独立登记；一级目录表示依赖层，子目录表示能力归属。完整路径由 `tests/contracts/agents-md-sync.test.ts` 校验（K210）。职责与依赖见 [architecture.md](architecture.md)。
 
 - **src/**
   - **组合根**
@@ -234,144 +234,177 @@
     - [mindmap-codeblock.ts](../../src/features/mindmap-codeblock.ts)
     - [view-export.ts](../../src/features/view-export.ts)
 
-- **tests/**
-  - **fixtures/**
-    - **roundtrip/**
-  - **helpers/**
+- **tests/**：按主要被测模块对齐源码；组合入口测试与 `setup.ts` 留在根目录（K211）。
+  - **contracts/**：工程契约、构建与工具链校验
+    - [agents-md-sync.test.ts](../../tests/contracts/agents-md-sync.test.ts)
+    - [check-gates.test.ts](../../tests/contracts/check-gates.test.ts)
+    - [css-build.test.ts](../../tests/contracts/css-build.test.ts)
+    - [docs-standard.test.ts](../../tests/contracts/docs-standard.test.ts)
+    - [module-boundaries.test.ts](../../tests/contracts/module-boundaries.test.ts)
+    - [plain-text-parser.test.ts](../../tests/contracts/plain-text-parser.test.ts)
+    - [vendor-contract.test.ts](../../tests/contracts/vendor-contract.test.ts)
+  - **domain/**：领域规则
+    - [callout.test.ts](../../tests/domain/callout.test.ts)
+    - [color-directive.test.ts](../../tests/domain/color-directive.test.ts)
+    - [domain.test.ts](../../tests/domain/domain.test.ts)
+    - [md-frontmatter-trigger.test.ts](../../tests/domain/md-frontmatter-trigger.test.ts)
+    - [node-edit-key.test.ts](../../tests/domain/node-edit-key.test.ts)
+    - [pipe-table.test.ts](../../tests/domain/pipe-table.test.ts)
+    - [relation-anchor.test.ts](../../tests/domain/relation-anchor.test.ts)
+    - [relation-directive.test.ts](../../tests/domain/relation-directive.test.ts)
+    - [summary-directive.test.ts](../../tests/domain/summary-directive.test.ts)
+    - [url.test.ts](../../tests/domain/url.test.ts)
+    - [wiki-display.test.ts](../../tests/domain/wiki-display.test.ts)
+  - **core/**：通用机制
+    - [concurrency.test.ts](../../tests/core/concurrency.test.ts)
+    - [constants.test.ts](../../tests/core/constants.test.ts)
+    - [errors.test.ts](../../tests/core/errors.test.ts)
+    - [event-binder.test.ts](../../tests/core/event-binder.test.ts)
+    - [math-placeholder.test.ts](../../tests/core/math-placeholder.test.ts)
+    - [measure-cache.test.ts](../../tests/core/measure-cache.test.ts)
+    - [minimap-geometry.test.ts](../../tests/core/minimap-geometry.test.ts)
+    - [persistence.test.ts](../../tests/core/persistence.test.ts)
+  - **links/**：链接与文件解析
+    - [file-lookup.test.ts](../../tests/links/file-lookup.test.ts)
+    - [links-resolve.test.ts](../../tests/links/links-resolve.test.ts)
+    - [links-tree.test.ts](../../tests/links/links-tree.test.ts)
+  - **markdown/**：Markdown 解析、写回与往返
+    - [clipboard-outline.test.ts](../../tests/markdown/clipboard-outline.test.ts)
+    - [footnote.test.ts](../../tests/markdown/footnote.test.ts)
+    - [links-rename.test.ts](../../tests/markdown/links-rename.test.ts)
+    - [links-split.test.ts](../../tests/markdown/links-split.test.ts)
+    - [md-heading-syntax.test.ts](../../tests/markdown/md-heading-syntax.test.ts)
+    - [md-inline.test.ts](../../tests/markdown/md-inline.test.ts)
+    - [md-line-write.test.ts](../../tests/markdown/md-line-write.test.ts)
+    - [md-open-trigger.test.ts](../../tests/markdown/md-open-trigger.test.ts)
+    - [md-roundtrip-property.test.ts](../../tests/markdown/md-roundtrip-property.test.ts)
+    - [md-roundtrip.test.ts](../../tests/markdown/md-roundtrip.test.ts)
+    - [md-task.test.ts](../../tests/markdown/md-task.test.ts)
+  - **media/**：图片与附件
+    - [images-path.test.ts](../../tests/media/images-path.test.ts)
+    - [pasted-name.test.ts](../../tests/media/pasted-name.test.ts)
+  - **engine/**：引擎封装与真实 vendor 行为
+    - [engine-drag-target.test.ts](../../tests/engine/engine-drag-target.test.ts)
+    - [engine-editor.test.ts](../../tests/engine/engine-editor.test.ts)
+    - [engine-history-limit.test.ts](../../tests/engine/engine-history-limit.test.ts)
+    - [engine-image-size.test.ts](../../tests/engine/engine-image-size.test.ts)
+    - [engine-measure-residue.test.ts](../../tests/engine/engine-measure-residue.test.ts)
+    - [engine-minimap-capture.test.ts](../../tests/engine/engine-minimap-capture.test.ts)
+    - [engine-node-move.test.ts](../../tests/engine/engine-node-move.test.ts)
+    - [engine-refresh-nodes.test.ts](../../tests/engine/engine-refresh-nodes.test.ts)
+    - [engine-relations.test.ts](../../tests/engine/engine-relations.test.ts)
+    - [engine-session-snapshot.test.ts](../../tests/engine/engine-session-snapshot.test.ts)
+    - [engine-subtree-clipboard.test.ts](../../tests/engine/engine-subtree-clipboard.test.ts)
+    - [engine-summaries.test.ts](../../tests/engine/engine-summaries.test.ts)
+    - [find-node-by-dom.test.ts](../../tests/engine/find-node-by-dom.test.ts)
+    - [mindmap-theme.test.ts](../../tests/engine/mindmap-theme.test.ts)
+    - [mindmap-wiki-icon.test.ts](../../tests/engine/mindmap-wiki-icon.test.ts)
+    - [node-text-edit.test.ts](../../tests/engine/node-text-edit.test.ts)
+    - [viewport.test.ts](../../tests/engine/viewport.test.ts)
+  - **platform/**：Obsidian 平台集成
+    - **rendering/**
+      - **code/**
+        - [prism-code.test.ts](../../tests/platform/rendering/code/prism-code.test.ts)
+      - **math/**
+        - [math-jax-export-pin.test.ts](../../tests/platform/rendering/math/math-jax-export-pin.test.ts)
+        - [math-jax-fonts.test.ts](../../tests/platform/rendering/math/math-jax-fonts.test.ts)
+        - [math-jax.test.ts](../../tests/platform/rendering/math/math-jax.test.ts)
+      - [mermaid-render.test.ts](../../tests/platform/rendering/mermaid-render.test.ts)
+    - **system/**
+      - [clipboard.test.ts](../../tests/platform/system/clipboard.test.ts)
+      - [system-open.test.ts](../../tests/platform/system/system-open.test.ts)
+    - **workspace/**
+      - [legacy-mindmap-migration.test.ts](../../tests/platform/workspace/legacy-mindmap-migration.test.ts)
+      - [mindmap-auto-open.test.ts](../../tests/platform/workspace/mindmap-auto-open.test.ts)
+      - [nav-history.test.ts](../../tests/platform/workspace/nav-history.test.ts)
+      - [tag-search.test.ts](../../tests/platform/workspace/tag-search.test.ts)
+      - [vault-prefs.test.ts](../../tests/platform/workspace/vault-prefs.test.ts)
+    - [export-svg-postprocess.test.ts](../../tests/platform/export-svg-postprocess.test.ts)
+  - **ui/**：UI 组件
+    - **node-content/**
+      - [node-content-components.test.ts](../../tests/ui/node-content/node-content-components.test.ts)
+    - **node-editor/**
+      - [node-editor.test.ts](../../tests/ui/node-editor/node-editor.test.ts)
+    - [modal-common.test.ts](../../tests/ui/modal-common.test.ts)
+    - [modal-input.test.ts](../../tests/ui/modal-input.test.ts)
+  - **services/**：文档会话与视图服务
+    - [document-session-history.test.ts](../../tests/services/document-session-history.test.ts)
+    - [document-session.test.ts](../../tests/services/document-session.test.ts)
+    - [engine-controller.test.ts](../../tests/services/engine-controller.test.ts)
+    - [save-pipeline.test.ts](../../tests/services/save-pipeline.test.ts)
+    - [view-state.test.ts](../../tests/services/view-state.test.ts)
+  - **features/**：视图能力编排
+    - **canvas/**
+      - [drag-session.test.ts](../../tests/features/canvas/drag-session.test.ts)
+      - [view-node-width.test.ts](../../tests/features/canvas/view-node-width.test.ts)
+      - [view-viewport.test.ts](../../tests/features/canvas/view-viewport.test.ts)
+    - **content/**
+      - [content-remeasure.test.ts](../../tests/features/content/content-remeasure.test.ts)
+      - [node-codeblock.test.ts](../../tests/features/content/node-codeblock.test.ts)
+      - [node-content-write.test.ts](../../tests/features/content/node-content-write.test.ts)
+      - [node-inline-content.test.ts](../../tests/features/content/node-inline-content.test.ts)
+      - [node-inline-tag.test.ts](../../tests/features/content/node-inline-tag.test.ts)
+      - [view-footnote.test.ts](../../tests/features/content/view-footnote.test.ts)
+      - [view-node-task.test.ts](../../tests/features/content/view-node-task.test.ts)
+      - [view-tag.test.ts](../../tests/features/content/view-tag.test.ts)
+    - **editing/**
+      - [node-inline-editor.test.ts](../../tests/features/editing/node-inline-editor.test.ts)
+      - [view-clipboard.test.ts](../../tests/features/editing/view-clipboard.test.ts)
+      - [view-dnd.test.ts](../../tests/features/editing/view-dnd.test.ts)
+      - [view-hotkeys.test.ts](../../tests/features/editing/view-hotkeys.test.ts)
+      - [view-node-actions.test.ts](../../tests/features/editing/view-node-actions.test.ts)
+      - [view-paste.test.ts](../../tests/features/editing/view-paste.test.ts)
+      - [view-syntax.test.ts](../../tests/features/editing/view-syntax.test.ts)
+    - **media/**
+      - [feature-helpers.test.ts](../../tests/features/media/feature-helpers.test.ts)
+      - [feature-teardown.test.ts](../../tests/features/media/feature-teardown.test.ts)
+    - **navigation/**
+      - [view-split-links.test.ts](../../tests/features/navigation/view-split-links.test.ts)
+      - [view-wikilink.test.ts](../../tests/features/navigation/view-wikilink.test.ts)
+    - **relations/**
+      - [node-pick.test.ts](../../tests/features/relations/node-pick.test.ts)
+      - [view-node-relation.test.ts](../../tests/features/relations/view-node-relation.test.ts)
+    - **view/**
+      - [view-canvas-interaction.test.ts](../../tests/features/view/view-canvas-interaction.test.ts)
+      - [view-context-menu.test.ts](../../tests/features/view/view-context-menu.test.ts)
+      - [view-layout.test.ts](../../tests/features/view/view-layout.test.ts)
+      - [view-md-back-mode.test.ts](../../tests/features/view/view-md-back-mode.test.ts)
+      - [view-minimap.test.ts](../../tests/features/view/view-minimap.test.ts)
+      - [view-resize.test.ts](../../tests/features/view/view-resize.test.ts)
+      - [view-search.test.ts](../../tests/features/view/view-search.test.ts)
+      - [view-status.test.ts](../../tests/features/view/view-status.test.ts)
+      - [view-toolbar.test.ts](../../tests/features/view/view-toolbar.test.ts)
+    - [mindmap-codeblock.test.ts](../../tests/features/mindmap-codeblock.test.ts)
+    - [view-export.test.ts](../../tests/features/view-export.test.ts)
+  - **helpers/**：共享测试辅助代码
     - [node-content-dom.ts](../../tests/helpers/node-content-dom.ts)
     - [node-editor-dom.ts](../../tests/helpers/node-editor-dom.ts)
-  - **mocks/**
+  - **mocks/**：宿主替身
     - [obsidian.ts](../../tests/mocks/obsidian.ts)
-  - [agents-md-sync.test.ts](../../tests/agents-md-sync.test.ts)
-  - [callout.test.ts](../../tests/callout.test.ts)
-  - [check-gates.test.ts](../../tests/check-gates.test.ts)
-  - [clipboard-outline.test.ts](../../tests/clipboard-outline.test.ts)
-  - [clipboard.test.ts](../../tests/clipboard.test.ts)
-  - [color-directive.test.ts](../../tests/color-directive.test.ts)
-  - [concurrency.test.ts](../../tests/concurrency.test.ts)
-  - [constants.test.ts](../../tests/constants.test.ts)
-  - [content-remeasure.test.ts](../../tests/content-remeasure.test.ts)
+  - **fixtures/**：共享测试样本
+    - **roundtrip/**
+      - [01-comprehensive.md](../../tests/fixtures/roundtrip/01-comprehensive.md)
+      - [02-tables-quotes-html.md](../../tests/fixtures/roundtrip/02-tables-quotes-html.md)
+      - [03-links-heavy.md](../../tests/fixtures/roundtrip/03-links-heavy.md)
+      - [04-headings-multiroot.md](../../tests/fixtures/roundtrip/04-headings-multiroot.md)
+      - [05-deep-lists.md](../../tests/fixtures/roundtrip/05-deep-lists.md)
+      - [06-inline-syntax.md](../../tests/fixtures/roundtrip/06-inline-syntax.md)
+      - [07-ordered-lists.md](../../tests/fixtures/roundtrip/07-ordered-lists.md)
+      - [08-blank-lines.md](../../tests/fixtures/roundtrip/08-blank-lines.md)
   - [creation-folder.test.ts](../../tests/creation-folder.test.ts)
-  - [css-build.test.ts](../../tests/css-build.test.ts)
-  - [docs-standard.test.ts](../../tests/docs-standard.test.ts)
-  - [document-session-history.test.ts](../../tests/document-session-history.test.ts)
-  - [document-session.test.ts](../../tests/document-session.test.ts)
-  - [domain.test.ts](../../tests/domain.test.ts)
-  - [drag-session.test.ts](../../tests/drag-session.test.ts)
-  - [engine-controller.test.ts](../../tests/engine-controller.test.ts)
-  - [engine-drag-target.test.ts](../../tests/engine-drag-target.test.ts)
-  - [engine-editor.test.ts](../../tests/engine-editor.test.ts)
-  - [engine-history-limit.test.ts](../../tests/engine-history-limit.test.ts)
-  - [engine-image-size.test.ts](../../tests/engine-image-size.test.ts)
-  - [engine-measure-residue.test.ts](../../tests/engine-measure-residue.test.ts)
-  - [engine-minimap-capture.test.ts](../../tests/engine-minimap-capture.test.ts)
-  - [engine-node-move.test.ts](../../tests/engine-node-move.test.ts)
-  - [engine-refresh-nodes.test.ts](../../tests/engine-refresh-nodes.test.ts)
-  - [engine-relations.test.ts](../../tests/engine-relations.test.ts)
-  - [engine-session-snapshot.test.ts](../../tests/engine-session-snapshot.test.ts)
-  - [engine-subtree-clipboard.test.ts](../../tests/engine-subtree-clipboard.test.ts)
-  - [engine-summaries.test.ts](../../tests/engine-summaries.test.ts)
-  - [errors.test.ts](../../tests/errors.test.ts)
-  - [event-binder.test.ts](../../tests/event-binder.test.ts)
-  - [export-svg-postprocess.test.ts](../../tests/export-svg-postprocess.test.ts)
-  - [feature-helpers.test.ts](../../tests/feature-helpers.test.ts)
-  - [feature-teardown.test.ts](../../tests/feature-teardown.test.ts)
-  - [file-lookup.test.ts](../../tests/file-lookup.test.ts)
   - [file-menu-back-to-md.test.ts](../../tests/file-menu-back-to-md.test.ts)
-  - [find-node-by-dom.test.ts](../../tests/find-node-by-dom.test.ts)
-  - [footnote.test.ts](../../tests/footnote.test.ts)
-  - [images-path.test.ts](../../tests/images-path.test.ts)
   - [language-refresh.test.ts](../../tests/language-refresh.test.ts)
-  - [legacy-mindmap-migration.test.ts](../../tests/legacy-mindmap-migration.test.ts)
-  - [links-rename.test.ts](../../tests/links-rename.test.ts)
-  - [links-resolve.test.ts](../../tests/links-resolve.test.ts)
-  - [links-split.test.ts](../../tests/links-split.test.ts)
-  - [links-tree.test.ts](../../tests/links-tree.test.ts)
-  - [math-jax-export-pin.test.ts](../../tests/math-jax-export-pin.test.ts)
-  - [math-jax-fonts.test.ts](../../tests/math-jax-fonts.test.ts)
-  - [math-jax.test.ts](../../tests/math-jax.test.ts)
-  - [math-placeholder.test.ts](../../tests/math-placeholder.test.ts)
-  - [md-frontmatter-trigger.test.ts](../../tests/md-frontmatter-trigger.test.ts)
-  - [md-heading-syntax.test.ts](../../tests/md-heading-syntax.test.ts)
-  - [md-inline.test.ts](../../tests/md-inline.test.ts)
-  - [md-line-write.test.ts](../../tests/md-line-write.test.ts)
-  - [md-open-trigger.test.ts](../../tests/md-open-trigger.test.ts)
-  - [md-roundtrip-property.test.ts](../../tests/md-roundtrip-property.test.ts)
-  - [md-roundtrip.test.ts](../../tests/md-roundtrip.test.ts)
-  - [md-task.test.ts](../../tests/md-task.test.ts)
-  - [measure-cache.test.ts](../../tests/measure-cache.test.ts)
-  - [mermaid-render.test.ts](../../tests/mermaid-render.test.ts)
-  - [mindmap-auto-open.test.ts](../../tests/mindmap-auto-open.test.ts)
-  - [mindmap-codeblock.test.ts](../../tests/mindmap-codeblock.test.ts)
-  - [mindmap-theme.test.ts](../../tests/mindmap-theme.test.ts)
-  - [mindmap-wiki-icon.test.ts](../../tests/mindmap-wiki-icon.test.ts)
-  - [minimap-geometry.test.ts](../../tests/minimap-geometry.test.ts)
-  - [modal-common.test.ts](../../tests/modal-common.test.ts)
-  - [modal-input.test.ts](../../tests/modal-input.test.ts)
-  - [module-boundaries.test.ts](../../tests/module-boundaries.test.ts)
-  - [nav-history.test.ts](../../tests/nav-history.test.ts)
-  - [node-codeblock.test.ts](../../tests/node-codeblock.test.ts)
-  - [node-content-components.test.ts](../../tests/node-content-components.test.ts)
-  - [node-content-write.test.ts](../../tests/node-content-write.test.ts)
-  - [node-edit-key.test.ts](../../tests/node-edit-key.test.ts)
-  - [node-editor.test.ts](../../tests/node-editor.test.ts)
-  - [node-inline-content.test.ts](../../tests/node-inline-content.test.ts)
-  - [node-inline-editor.test.ts](../../tests/node-inline-editor.test.ts)
-  - [node-inline-tag.test.ts](../../tests/node-inline-tag.test.ts)
-  - [node-pick.test.ts](../../tests/node-pick.test.ts)
-  - [node-text-edit.test.ts](../../tests/node-text-edit.test.ts)
-  - [pasted-name.test.ts](../../tests/pasted-name.test.ts)
-  - [persistence.test.ts](../../tests/persistence.test.ts)
-  - [pipe-table.test.ts](../../tests/pipe-table.test.ts)
-  - [plain-text-parser.test.ts](../../tests/plain-text-parser.test.ts)
-  - [prism-code.test.ts](../../tests/prism-code.test.ts)
-  - [relation-anchor.test.ts](../../tests/relation-anchor.test.ts)
-  - [relation-directive.test.ts](../../tests/relation-directive.test.ts)
-  - [save-pipeline.test.ts](../../tests/save-pipeline.test.ts)
   - [settings-persist.test.ts](../../tests/settings-persist.test.ts)
   - [settings.test.ts](../../tests/settings.test.ts)
   - [setup.ts](../../tests/setup.ts)
-  - [summary-directive.test.ts](../../tests/summary-directive.test.ts)
-  - [system-open.test.ts](../../tests/system-open.test.ts)
-  - [tag-search.test.ts](../../tests/tag-search.test.ts)
-  - [url.test.ts](../../tests/url.test.ts)
-  - [vault-prefs.test.ts](../../tests/vault-prefs.test.ts)
-  - [vendor-contract.test.ts](../../tests/vendor-contract.test.ts)
-  - [view-canvas-interaction.test.ts](../../tests/view-canvas-interaction.test.ts)
-  - [view-clipboard.test.ts](../../tests/view-clipboard.test.ts)
-  - [view-context-menu.test.ts](../../tests/view-context-menu.test.ts)
-  - [view-dnd.test.ts](../../tests/view-dnd.test.ts)
-  - [view-export.test.ts](../../tests/view-export.test.ts)
-  - [view-footnote.test.ts](../../tests/view-footnote.test.ts)
-  - [view-hotkeys.test.ts](../../tests/view-hotkeys.test.ts)
-  - [view-layout.test.ts](../../tests/view-layout.test.ts)
-  - [view-md-back-mode.test.ts](../../tests/view-md-back-mode.test.ts)
-  - [view-minimap.test.ts](../../tests/view-minimap.test.ts)
-  - [view-node-actions.test.ts](../../tests/view-node-actions.test.ts)
-  - [view-node-relation.test.ts](../../tests/view-node-relation.test.ts)
-  - [view-node-task.test.ts](../../tests/view-node-task.test.ts)
-  - [view-node-width.test.ts](../../tests/view-node-width.test.ts)
-  - [view-paste.test.ts](../../tests/view-paste.test.ts)
-  - [view-resize.test.ts](../../tests/view-resize.test.ts)
-  - [view-search.test.ts](../../tests/view-search.test.ts)
-  - [view-split-links.test.ts](../../tests/view-split-links.test.ts)
-  - [view-state.test.ts](../../tests/view-state.test.ts)
-  - [view-status.test.ts](../../tests/view-status.test.ts)
-  - [view-syntax.test.ts](../../tests/view-syntax.test.ts)
-  - [view-tag.test.ts](../../tests/view-tag.test.ts)
-  - [view-toolbar.test.ts](../../tests/view-toolbar.test.ts)
-  - [view-viewport.test.ts](../../tests/view-viewport.test.ts)
-  - [view-wikilink.test.ts](../../tests/view-wikilink.test.ts)
-  - [viewport.test.ts](../../tests/viewport.test.ts)
-  - [wiki-display.test.ts](../../tests/wiki-display.test.ts)
 
 ## 文件规模与豁免（超 300 行须登记；唯一登记处，行数流水见 docs/agents/line-count-log.md）
 
-> **口径**：行数一律按 `tests/agents-md-sync.test.ts` 的 `countSourceLines`（按 `\n` 切分、末尾换行不计行）；**不要**用 PowerShell 的 `Measure-Object -Line` 或 `wc -l`——口径不同会使登记值与实测对不上。
+> **口径**：行数一律按 `tests/contracts/agents-md-sync.test.ts` 的 `countSourceLines`（按 `\n` 切分、末尾换行不计行）；**不要**用 PowerShell 的 `Measure-Object -Line` 或 `wc -l`——口径不同会使登记值与实测对不上。
 >
-> **批次史**（历次实测读数 / 回填记录 / 理由流水）已迁至 `docs/agents/line-count-log.md`（2026-10-26 迁出，逐字保留）：**新批次记录追加到该文件**，本文件只保留下方终值表——勿再往本节追加流水（本文件每个会话整体进 Agent 上下文，只留结论、不留过程）。改动豁免文件后用 `npm run check:gates -- --fix-lines` 对账回填本表（**唯一登记处**；`docs/agents/architecture.md` 自 2026-11-09 起不再复制）；`npm run check:gates` 每次都静态核对「未登记超限文件数」（硬规则 10 的机器核对）。
+> **批次史**（历次实测读数 / 回填记录 / 理由流水）已迁至 `docs/agents/line-count-log.md`（2026-10-26 迁出，逐字保留）：**新批次记录追加到该文件**，本文件只保留下方终值表——勿再往本节追加流水（终值与历史分开维护，便于按需定位）。改动豁免文件后用 `npm run check:gates -- --fix-lines` 对账回填本表（**唯一登记处**；`docs/agents/architecture.md` 自 2026-11-09 起不再复制）；`npm run check:gates` 每次都静态核对「未登记超限文件数」（硬规则 10 的机器核对）。
 >
-> **现状**（2026-11-18 目录整理）：登记豁免 **47** 条，**未登记**超限文件数 **0**（只允许递减）。本批仅迁移路径，豁免理由与数量保持；历次规模变化见 [line-count-log.md](line-count-log.md)。
+> **现状**（2026-11-18 目录整理）：登记豁免 **47** 条，**未登记**超限文件数 **0**（只允许递减）。豁免数量保持，理由按当前职责校正；历次规模变化见 [line-count-log.md](line-count-log.md)。
 
 | 文件 | 行数 | 豁免理由 |
 |---|---|---|
@@ -382,7 +415,7 @@
 | `src/engine/mindmap-relations.ts` | 777 | 联系在引擎侧的**唯一**收口面：Markdown 边 → `associativeLineTargets` / `associativeLineText` 的映射（创建前与渲染后两时机共用同一份 `buildPlans`）、变化后补画（插件的 `renderAllLines` 绑在同一事件上但早于我们）、id 集合收集（生成新 id 避让冲突）、**引用集合收集**（`collectRelationTargets`，孤儿 `%%id%%` 回收的唯一判定面，K153）、**线色落地**（`associativeLineStyle[目标 uid].associativeLineColor`，渲染侧唯一的颜色写入面）、联系线命中判定（双击改标签的 capture 拦截）、**手绘锚定的画布收口**（`relationCanvasLayer` 取 `draw` 内容坐标层、`relationClientToContent` 反解指针、`relationNodeBox` 取节点盒）。这些都要访问 `mindMap.associativeLine` / `draw` / `el` / 节点 data 的引擎私有形态（硬规则 2），拆开就得在别处再开一个引擎触点。 |
 | `src/features/relations/view-node-summary.ts` | 419 | 概要的**全部编辑入口**：两条建入口（选中集合够用 → 按 `collectRuns` 直接建；否则 → 两次点选）、改文字、删。为什么一个文件：建 / 改 / 删共用同一套「概要节点 → 正文条目」认领逻辑（`entryOfSummary`）与同一套区间校验（`planSummaryRanges` / `canPlaceRun`），拆开会让三处各写一份反查。2026-11-02 增至 395：新增 `startSummaryPicking`（两次点选，起点 = 右键节点）与 `planPickedRun`（可反向取区间、四种失败各给一条提示）。 |
 | `src/features/relations/view-node-relation.ts` | 766 | 联系的**全部编辑入口**：建边（源/目标两行 + 手绘 `geo` 一次批量 raw 提交）、删边（目标再无入边时**一并回收它的 `%%id%%`**）、**线色（右键线「联系配色」，写 `%%rel%%` 的 `color=` 段）**、改标签、删节点清入边 + 回收它曾指向的孤儿 id（只改 data、并进删除那一步撤销；被删实例按身份排除——实例树滞后于数据树，K153）、点选模式与双击拦截。共用同一份「节点 → 新指令行 → raw」的合成（`rawWithState`）与「目标 id 显示名」的反查；拆开会让「谁负责改哪一行」跨文件漂移。 |
-| `src/engine/mindmap.ts` | 834 | 引擎防腐层**入口（barrel）**（2026-10-16 拆为 engine/ 层内 8 个子模块；收口点是**层**而非文件，vendor 私有形态仍只允许出现在 engine/ 层内）。2026-10-30：联系手绘锚定的画布收口（`relationCanvasLayer` / `relationClientToContent` / `relationNodeBox`）。以下为拆分前的单文件增长史：2026-10-12 增至 2023：导出收口 `exportMindMapPng` 泛化为 `exportMindMapImage`（PNG/SVG 双格式），格式类型引用 `core/constants` 的 `ExportImageFormat`。2026-10-13 增至 2178：`CreateMindMapOptions.readonly`（只读嵌入：引擎原生 readonly + 不注册交互插件）与 `enableViewDrag`（原生 `isDisableDrag`，关画布拖动），主题/resize 防腐入口 `applyThemeConfig` / `resizeMindMap`，以及嵌入「按宽度适配」量测与居中 `measureContentFitToWidth` / `centerContentAtScale`（后者由 `centerContentAtFullScale` 泛化而来）；同批自查把 `measureContentFitToWidth` 的返回值收敛为 `{ height, scale }`（不再回吐输入宽度——挂载点宽度由 CSS `width: 100%` 决定，回吐属无人消费的第二份真值）。**2026-10-14 增至 2657**：视口几何落地（`syncCanvasGeometry` + `flushPendingLayoutRender` 把 resize 编排的渲染提前启动 + `scheduleCenteringCorrection` 渲染落地后居中补正〔3 秒窗口内跟随、几何指纹收敛判据〕+ `centerContentByDataBox` 共享居中判定 + `resetZoom` 锚点改实时容器中心；见第十四批）。 |
+| `src/engine/mindmap.ts` | 834 | 引擎防腐层的**唯一对外入口（barrel）**，同时承接实例创建/销毁、主题配置、性能模式与生命周期编排。创建时的渲染监听、测量残渣清理、历史播种、主题刷新和销毁必须围绕同一实例收尾；各引擎能力实现已经分入层内子模块，vendor 私有形态仍限定在 engine 层。职责收口是层与入口契约，不按导出数量机械拆分。拆分前增长史及历次规模记录见 `line-count-log.md`。 |
 | `src/engine/mindmap-viewport.ts` | 984 | 画布几何与视口防腐面（2026-10-16 自 `mindmap.ts` 拆出）：实时容器几何同步、数据层/DOM 双口径内容盒测量、fit、居中与「渲染落地后居中补正」、缩放/平移、视口状态读写与签名。与 `math-jax` 同性质——就绪/几何口径只此一处，拆开会让该口径跨文件漂移。2026-10-25：新增「内容原尺寸」（`readContentSizeInLayout`）与「100% 下是否装不下」（`contentExceedsCanvasAtFullScale`）；同批把数据层「全树节点盒并集」委托给 `core/minimap-geometry.measureMiniMapBounds`（该并集只留一份实现）。 |
 | `src/engine/mindmap-nodes.ts` | 942 | 节点查询与工具 + 文本编辑防腐面（2026-10-16 自 `mindmap.ts` 拆出）：节点/DOM 反查、节点文本与图片尺寸、自绘内容重建、兄弟上/下移、`renderer.textEdit`/`node_dblclick` 收口。2026-11-11 增至 920：新增 `collectRenderNodeData`（渲染树节点 data 的文档序快照——**会话权威树没有 uid**，uid 由 `ensureUniqueUids` 补在建引擎前的克隆上，凡「按 uid 定位」的索引只能读引擎侧）与 `revealNodeByUid`（展开祖先 → 移到视口中心，**不选中**：按引擎三步自己组合、去掉 `active()`，避免高亮圈住表格 / chip；三件缺失才回退 `goTargetNode`；不写 data / 历史）。 |
 | `src/engine/mindmap-theme-presets.ts` | 375 | 外观预设的**唯一数据表**（只放数据、零分支）：边框预设（`THEME_STYLE_PRESETS`）、整篇配色五档 × 亮暗（`PALETTES`）、节点级填充 / 线条成对表（`NODE_COLORS`）+ 反查 `nodeLineColorOf`。2026-11-05 由 191 行增至 369：节点指令色改「直出」后，线条必须是**同色相深一档**，配对表与整篇色板放在同一文件才能保证「同一套色的两种用途」不各写一份色值（拆开即逼出第二份色板，改色必然漂移）；`nodeLineColorOf` 与 `PALETTES` 共用 `domain/color` 的 HSL 阶梯，同一把尺子。与 `i18n` / `constants` 同性质：拆分的唯一收益是行数。 |
@@ -394,27 +427,27 @@
 | `src/markdown/md-outline-lines.ts` | 421 | 逐行分类的唯一实现（围栏状态机 / 自闭合围栏 / setext 与分隔线 / 空列表项 / 有序编号，零依赖）；拆开会把「行 → 分类」与「树装配」割成两份缩进与围栏口径（K164）。2026-11-08 增至 322：有序编号 `orderedNumber` 随行记录（K170），只加字段不拆文件；同批把编号限制为**安全整数**（`orderedNumberOf`，超长编号写回会成 `1e+21.` 让整行退化成段落，K172） |
 | `src/core/minimap-geometry.ts` | 1503 | 小地图的**纯几何与绘制模型**（无 DOM、无引擎依赖）：面板尺寸（等比装入宽 220、宽 160–220、高上限＝画布高×0.6〔缺省 280，生产恒传比例值〕）、启用判据、标记提取（DFS + 抽样上限）、**按原图**的 SVG 拼装（节点方块 + 跟随画布的折线/曲线 + 配色清洗）、视口框投影、30s 节拍判定。六者共用同一套「内容盒 → 面板坐标」换算——拆开会让「图」与「框」各持一份变换（改一处必漂移），30s 节拍也就无处直测（2026-10-24，F12-M；同日曾试「密度块」抽象，用户判定太丑已回退，勿再引入）。**同日增至 743**：并入「布局固有连线形态」——`connectorModeForLayout`（布局 → 形态唯一映射）+ `fishboneConnectors`（骨干直段 + 斜脊折线，只依赖盒子几何、不复制引擎 `fishboneDeg` 三角换算）。放这一层而不是渲染层：脊线用的是同一套「内容盒 → 面板坐标」换算，且必须可直测。**2026-10-25 增至 1209**：连线形态从两态扩到五态（`branchH`/`busV`/`railLeft`/`chainRail`/`fishbone`），几何按画布逐段实测复刻（0.6/0.7 折点、左边界锚点、12px 轨距）；新增 `buildMiniMapLinks` 统一产出 `MiniMapLink`（直线 / 折点 / 多条折线三种端点描述），SVG 装配只剩「坐标映射 + 拼 path」一件事。**同日清理批**：`buildMiniMapMarks` 删掉恒真的根特判（根是 DFS 首访节点，`seen = 0` 使步长判定必保留它）。**2026-10-25 第三清理批**：删掉无人消费的 `MiniMapMeasure.firstLevel`（全量一级节点计数：算了、传了，生产侧没有读取方）；`MiniMapMark.parent` 的注释订正为「> `MINIMAP_MAX_MARKS` 的抽样可能抽掉父 ⇒ 该边画不出（`childrenIndex` / `branchLinks` 跳过）——是**可达路径**，不是防御」。 |
 | `src/core/i18n.ts` | 849 | 纯词条表（无逻辑分支）。2026-10-14 增至 563：节点上/下移 5 条（双语），含中心节点与首/末位拒绝提示。 |
-| `src/features/view/view-context-menu.ts` | 844 | 两个右键菜单（节点 / 画布空白）的**唯一实现**：条目按节点形态分流（链接双通道 / 图片 / 文字）与视图级外观菜单（布局 / 配色）同处一文件，拆开会让两份菜单的调用面分叉（同 `view-node-actions` 理由）。2026-10-27：二级菜单改宿主原生级联、「配色」按右键落点分叉（K146）、节点侧留右键按下时的选中快照。**2026-10-31 减至 530**：`addCascadingMenu` / `addCustomColorItem`（含 `setSubmenu` 私有触点）整体搬到 `ui/menu-submenu.ts`——联系线右键也要用同一套，留在本文件会让 `view-node-relation`（本文件依赖它的建边入口）反向 import 成环。完整理由与历次增长见 `docs/agents/architecture.md` |
+| `src/features/view/view-context-menu.ts` | 844 | 节点与空白画布右键菜单的**唯一装配面**：按落点形态分流链接/图片/文字动作与视图级外观项，共享右键时的选中快照、历史动作与分流规则。宿主级联菜单等通用 DOM 机制已移至 `ui/menu-submenu.ts`；本文件保留菜单语义与视图动作编排，继续拆分须避免复制落点/选中判据。行为依据见 K146/K154，历次增长与拆分流水见 `line-count-log.md`。 |
 | `src/features/editing/view-node-color.ts` | 475 | 节点配色的**全部写入入口**（2026-11-06 越线并登记；2026-11-09 增至 468）：右键节点「配色」与空白右键「按分支自动上色」两个入口共用同一套「原文合成 → 一次批量落地」、同一份**作用范围**定义（`nodeColorScope`：含子节点＝只写有色节点、靠继承；仅本节点＝再给直接子节点补哨兵阻断，K167）、「默认」的两种落地（上层还在染色 ⇒ 写 `%%none%%`；否则 ⇒ 删指令）与撤色后的无主哨兵回收。2026-11-09 追加**一次性的旧哨兵清理**（`collectColorSentinelSessions` / `applyColorSentinelCleanup` / `offerColorSentinelCleanup`，K175）：判「哪行是自身哨兵」与删除仍复用 `colorDirectiveOf` / `setColorDirective`，与上色两条入口同源。拆开就会让「这次改色到底写哪几行（带不带 `%%none%%`）」跨文件漂移——而那正是本批反复踩到的地方：色源与哨兵必须**同批**落地，否则一次改色要付两轮整树重渲（K149 ⑥ / K167 ③）。 |
 | `src/features/view/view-minimap.ts` | 797 | 小地图浮层的**单一关注点**：启用判据（通过即画首帧）→ 30s 节拍（仅约束后续换图）→ 无操作淡出 → 视口框本地投影 → 拖拽导航，是同一条不可分割的状态链（**五个布尔** enabled/ready/visible/dirty/hovering + 两个时间戳 + 一个定时器）；拆开会让「何时画、何时藏、何时跟手」跨文件失配。纯判定与几何已外置到 `core/minimap-geometry`，本文件只留副作用（2026-10-24，F12-M）。**同日增至 568**：切布局的引擎重排是**异步分片**（`setLayout` → `RESET_LAYOUT` → 80ms fit），在写入漏斗处立即取样只能拿到上一套布局、还会把 30s 刷新窗口消耗掉（实机：切布局小图最长 30s 不动）⇒ 新增 `drawAfterRender` 标记 + `drawWhenLanded` 补画点；「落地事件是否已产生新几何」的判据外置为 `core/minimap-geometry.sameMiniMapFrame`（纯函数、可直测）。**2026-10-25 补**：悬停保活（`hovering`）与滚轮转发两条浮层交互；判据/取图透传已测几何与画布尺寸。**清理批**：删掉 `reveal` / `wake(forceDraw)` 里重复的排帧调用（`applyFrame` 是唯一写入点且已排）。 |
 | `src/features/view/view.ts` | 2000 | 视图 Controller：**第 6 步拆分后的编排壳**（见文件头契约）。数学校准会话已外置为 `features/content/content-remeasure.ts`（2026-10-11）；自绘内容装配（`InlineContentOptions` 的五项绑定）外置为 `features/content/node-content-factory.ts`（2026-10-13，与代码块嵌入共用同一份装配）。**2026-10-21 增至 1149**：连线样式两态收敛（读取侧归一存量 `auto`/`direct`；`applyLineStyle` 写入侧同样归一，防旧词汇回写 `data.json`）。**同日再增至 1249**：边框 / 配色改为按文件记（`applyPalette`/`applyThemeStyle`），四项「按文件偏好」的缺省值收进 `resolveFilePreferences`（此前 themeStyle 在 load 处回落硬编码 `default`，导致「默认边框样式」对新建导图无效）。**2026-10-23 复测 1223**：读取侧四个 `resolve*()` 收敛为 `resolvePreference(key: PreferenceKey)`（与写入侧 `commitPreference` 对称，`MindMapViewContext` 接口面 −3）；`onEngineReady` 删掉两个死参，改由本类自行 `refreshToolbar()`。**2026-10-29 增至 1337**：逐文件布局移入文件属性——`loadMindMapFromFile` 读 `readDeclaredLayout`（种子值只兜缓存滞后，且**读完文档再复问一次**——`vault.read` 给 MetadataCache 追赶时间，勾选态与引擎创建因此对齐磁盘真值而非停在种子值），`applyLayout` 改为「排空正文 → `processFrontMatter` → 成功后才动画面」的独立实现，新增 `syncDeclaredLayout`（跟外部改写、幂等、不回写）；`resolvePreference` 收窄为三项、新增 `resolveLayout()`，`SESSION_FIELDS` / `IN_PLACE_REFRESH_KEYS` 去掉布局。**2026-11-02 增至 1513**：大图首帧提示（`showLargeMapRenderHint` / `clearRenderHint`，阈值 `LARGE_MAP_RENDER_HINT_NODES`，理由见 K161）+ `markLoaded` 传入 `doc.body`（撤销回加载态按原样正文还原，K160⑤）。**同日再增至 1565**：「加载基线」与「大图首帧提示」改为**在引擎就绪时消费**——`initMindMap` 在容器 0 尺寸（后台标签/折叠面板）时只挂 ResizeObserver 等待、`getDataSnapshot()` 为 null，原来那一版会把 `markLoaded` 的空守卫吞掉（基线缺失 ⇒ 此后每轮自动保存都不再算「纯浏览」，打开即重排全文），提示则会绑不上 `node_tree_render_end` 而挂到 15 s 兜底（不透明遮罩盖住画布）。故新增 `recordLoadedBaseline(file)` + `LoadSession.pendingBaseline` / `pendingRenderHint`，由 `onEngineReady` 补记/补建（设置刷新重建不写 pending，不会把未落盘编辑误标成基线）。 |
 | `src/services/engine-controller.ts` | 689 | **第 4 步从 view.ts 拆出**的引擎防腐收口：引擎实例生命周期（初始化代际锁/零尺寸等待）+ 全部引擎内部访问（`renderer.*`/`view.*`/`opt`）封装为显式方法；导出 SVG 后处理链经 `deps.exportSvgTransforms` 由组合根注入（K51：services 不依赖 features）。2026-10-13：主题写入与 resize 改走 `engine/mindmap` 的 `applyThemeConfig` / `resizeMindMap`（视图与代码块嵌入共用同一入口）。 |
 | `src/media/images-path.ts` | 758 | 图片引用处理的单一关注点（外部地址判定／路径解析与序列化／尺寸归一）。`schedulePersistSizeCache` 是**第三种调度语义**（纯延迟落盘、窗口不重置、首调不立即执行），刻意不用 `createDebouncer`/`createThrottler`。 |
 | `src/features/media/image-resize.ts` | 432 | 单一交互特性（图片拖拽调宽）：hover 手柄 → 拖拽会话 → 尺寸回写是一条不可分割的状态链。窗口级会话（监听 + rAF 合帧 + 幂等收尾）已收口到 `drag-session`，本文件只留业务回调；`capture: true` 是「手势独占」的显式参数 |
-| `src/features/content/view-footnote.ts` | 692 | 脚注交互**唯一入口**（视图 + 只读嵌入共用）：画布 capture 命中**外层** `sup.mindmap-node-footnote-ref`（不是内层 `a`，否则鼠标落在上标盒子行高 / padding 区域时静默失效）→ 点击 `revealNodeByUid` **只居中不选中**（导航而非选择，避免高亮圈住表格 / chip）/ 悬停浮层显示定义正文。索引从引擎渲染树现算（`collectRenderNodeData`），按 `node_tree_render_end` 失效；悬停调度按**元素身份**判重（同 id 可出现多次），渲染落地只收起浮层、**不清未决的 show**。三条实机缺陷（sup 命中 / 同 id 移动 / 渲染窗口吞 show）与未定义引用反馈由 `tests/view-footnote.test.ts` 的 DOM 桩直测钉死。**2026-11-11 第二批（用户视角打磨）**：浮层**可交互**（内部链接经宿主 `openLink` 打开、文字可选中、超长时浮层内滚动且滚轮不交给画布——`FOOTNOTE_PREVIEW_CLASS` 由 `view-viewport` 放行）；**编号后置**（`applyFootnoteLabels`：按首次引用顺序，构建期仍只写 id；**不写 `title` / `aria-label`**——前者弹浏览器原生提示、后者被 Obsidian 的全局 tooltip 委托读成黑框，鼠标停在徽标上会同时冒两个提示，语义改用不触发 tooltip 的 `role="doc-noteref"`）；**未定义弱化**（`is-unresolved` + 截断 id）；**汇总 chip**（纯定义节点渲染 **`脚注`**——刻意不报条数：`脚注 N` 会被读成「第 N 条脚注」；点击/悬停展开全部定义）。**点击不闪烁也不选中**（2026-11-11 实机裁决：定义行已折叠 / 剥离，跳过去看不到脚注正文，闪动与高亮圈住都只剩噪音；只保留「展开祖先 + 居中」）。K197 ⑨。 |
+| `src/features/content/view-footnote.ts` | 692 | 脚注交互**唯一入口**（视图 + 只读嵌入共用）：画布 capture 命中**外层** `sup.mindmap-node-footnote-ref`（不是内层 `a`，否则鼠标落在上标盒子行高 / padding 区域时静默失效）→ 点击 `revealNodeByUid` **只居中不选中**（导航而非选择，避免高亮圈住表格 / chip）/ 悬停浮层显示定义正文。索引从引擎渲染树现算（`collectRenderNodeData`），按 `node_tree_render_end` 失效；悬停调度按**元素身份**判重（同 id 可出现多次），渲染落地只收起浮层、**不清未决的 show**。三条实机缺陷（sup 命中 / 同 id 移动 / 渲染窗口吞 show）与未定义引用反馈由 `tests/features/content/view-footnote.test.ts` 的 DOM 桩直测钉死。**2026-11-11 第二批（用户视角打磨）**：浮层**可交互**（内部链接经宿主 `openLink` 打开、文字可选中、超长时浮层内滚动且滚轮不交给画布——`FOOTNOTE_PREVIEW_CLASS` 由 `view-viewport` 放行）；**编号后置**（`applyFootnoteLabels`：按首次引用顺序，构建期仍只写 id；**不写 `title` / `aria-label`**——前者弹浏览器原生提示、后者被 Obsidian 的全局 tooltip 委托读成黑框，鼠标停在徽标上会同时冒两个提示，语义改用不触发 tooltip 的 `role="doc-noteref"`）；**未定义弱化**（`is-unresolved` + 截断 id）；**汇总 chip**（纯定义节点渲染 **`脚注`**——刻意不报条数：`脚注 N` 会被读成「第 N 条脚注」；点击/悬停展开全部定义）。**点击不闪烁也不选中**（2026-11-11 实机裁决：定义行已折叠 / 剥离，跳过去看不到脚注正文，闪动与高亮圈住都只剩噪音；只保留「展开祖先 + 居中」）。K197 ⑨。 |
 | `src/features/editing/view-node-actions.ts` | 718 | 节点操作（链接/文本/删除）的**共用入口**——工具栏与右键菜单同调；图片操作已拆至 `view-image-actions.ts` 并由本文件 re-export（含 2026-10-13 收口的建图入口 `createImageChildNode`）。剪贴板（复制/剪切/粘贴）已于 2026-10-13 收口到 `features/editing/view-clipboard.ts`，此前的视图级 WeakMap 剪贴板（`copyNode`/`pasteNodeAsChild`）整体删除——勿在此重建第二份。2026-10-15 复测 881：新增 `planDocLink` / `planAttachmentLink`——**拖入文档 / 附件的载荷与提示唯一判定点**（一次判定给出 `{ target, link, data, notice }`，载荷与提示**结构上同源**），附件字段集另收口为私有 `attachmentFields`；此前文档**五处**、附件**三处**各写一份载荷或提示写法，且「未选中 / 文件夹拖入」两路**不查官方设置**（违反硬规则 5）。 |
 | `src/features/editing/view-dnd.ts` | 600 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配；2026-10-13 起未选中节点时的**图片**（库内拖入、以及「载荷全是图片」的系统拖入）在渲染根下新建图片节点（建图数据形态收口到 `view-image-actions.createImageChildNode`；含非图片的系统载荷仍要求先选中）。入库失败**不由本层二次提示**——入库通道（images-save）已逐条提示并返回 null，只留控制台计数痕迹。 |
 | `src/main.ts` | 609 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。2026-10-13 增至 426：`registerMarkdownCodeBlockProcessor` 注册 + 把设置窄化成 `MindmapEmbedConfig` 传 getter（features 不引 `settings`）。2026-10-14 复测 422（**减法**）：文件夹右键新建导图的调用点改传 settings（落点解析移入 `creation.ts`）。2026-10-28 复测 511（**减法**）：删除语言切换的全库属性键迁移（`propertyKeyMigration` 串行队列 + `refreshLanguageUi` 里的调用）。 |
 | `src/markdown/links-split.ts` | 500 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。 |
 | `src/core/constants.ts` | 1021 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件）+ 代码块判定（缩进行 / 围栏语言码白名单 / 已渲染标记类）。2026-10-12 复测 480：新增导出格式选项表与唯一的 `ExportImageFormat` 类型。2026-10-13 增至 501：`CODE_BLOCK_LANGUAGE`（存量笔记的接口）与 `CODE_BLOCK_MAX_NODES`（嵌入上限，与 `PERFORMANCE_NODE_THRESHOLD` 语义不同故不复用）。2026-10-14 增至 529：新增 `SaveLocation` 类型与 `SAVE_LOCATION_OPTIONS`（设置面板下拉与 `sanitizeSettings` 白名单共用）。**2026-10-21 增至 585**：连线样式两态收敛——`LINE_STYLE_OPTIONS` 砍至 `straight`/`curve`、新增 `DEFAULT_LINE_STYLE` 与 `normalizeLineStylePreference`（旧词汇 `auto`/`direct` 归一唯一实现）。 |
 | `src/settings.ts` | 662 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。2026-10-11 增至 398：校验器加「被回退/钳制键」的诊断出参 + `reportDroppedSettings` 汇总留痕（无痕退化治理，K33 同族）。2026-10-12 增至 422：新增「导出格式」设置项（`exportImageFormat`，类型引用 `ExportImageFormat`），并令 `pickFrom` 泛型化以返回选项 value 的联合类型。2026-10-14 增至 475：新增「新建导图的默认位置」四档设置（`saveLocation` / `saveFolder`，含 1.13 声明式 `type: 'folder'` 控件与 `visible` 条件项——切档后经 `refreshDomState()` 重算可见性〔2026-10-15 改：该官方入口（d.ts:9290，1.13.0 起）专为 `visible`/`disabled` 谓词变化而设、原地切 CSS 状态不重渲染；`update()` 只留给定义**结构**变化（语言切换属此类）〕）。 |
-| `src/features/content/node-inline-tokenize.ts` | 1725 | 段序列切分（**纯逻辑，无 DOM**，2026-10-16 自 `node-inline-content.ts` 拆出）：行内 token → 段序列（轻标记 / 围栏代码块 / 缩进代码 / 语言码规范化 / 数学 / 链接 / **表格块** / **引用块与标注**）+ 段缓存 + 接管判定 `resolveSelfDrawSource` + 截断 `clampSegments` + 预览 `inlineContentPreview` + 配色指令读写（`setColorDirective` / `colorDirectiveOf`）。2026-11-09 增至 1532：mermaid 判定 `isMermaidFence` / 段预算豁免 + **围栏块先于行内 token 切出**（`scanFenceBlocks`，修「围栏内含 URL 时被链接切碎、代码块退化成字面文本」）。2026-11-11 增至 1737：新增 `kind: 'quote'` 段与 `scanQuoteBlocks`（**最外层**块切分，顺序契约「引用 → 围栏 → 表格 → 行内」写在这里）、`QuoteContent` 模型、`isAtomicBlock`（表格 + 引用共用的原子截断判据）、`resolveCalloutIcon` 注入面——段型、扫描顺序与截断口径三者必须同处一文件，拆开即两处判「这块是不是引用」。2026-11-11 增至 1816：新增 `kind: 'footnote'` 段（`[^id]` 引用，渲染期识别、`(?!:)` 让定义行保持字面）；**段序列只承载 id**（定义正文属文档上下文，塞进来会破坏「同一原文 → 同一段」）；`pushPlain` 的合并判据补 `kind === 'text'`——否则徽标被紧随的正文吞并成普通文本（用例抓到，徽标整个消失）。 |
+| `src/features/content/node-inline-tokenize.ts` | 1725 | 节点原文到段序列的**唯一解析面（纯逻辑，无 DOM）**：块扫描顺序（引用 → 围栏 → 表格 → 行内）、段缓存、接管判定 `resolveSelfDrawSource`、原子截断 `clampSegments`、预览及配色指令读写保持同源。共享段模型与平台注入契约已移至 `core/node-content-types.ts`（K209）；UI 经模型与窄回调消费解析结果，不复制扫描、缓存或截断判据。段型不再要求与解析实现同文件，约束是只有一份解析口径。历史扩展与拆分见 `line-count-log.md`。 |
 | `src/features/navigation/view-wikilink.ts` | 449 | 链接交互**单一关注点**：**点击路径**的锚点识别（`findAnchorInNode` / `resolveAnchorLink`）与**悬停预览**（两级：锚点优先 + 节点级 `nodeLink` 三通道 + `hover-link` 事件）同在一处，还有中键 `auxclick`；把悬停拆出去会让「链接怎么取、锚点取哪个目标」出现第二份实现——正是本文件当初拆出（原在 view.ts）要消除的问题。 |
 | `src/domain/mindmap-property.ts` | 459 | 「本文件是不是导图、用哪种布局」的**唯一判据面**（2026-11-07 双键化 + 旧值兼容读口后越线）：归一（`normalizePropertyToken`）、双向值表、读写对称（`setMindMapEnabled/Layout/Disabled` 顺带收敛同名变体）、旧值兼容（`legacyLayoutIdOfPropertyValue` / `readLegacyLayout`）共用同一份数据——拆开必然让「读判据 / 写值 / 存量兼容」三处口径漂移，而这三处正是同一张表的三副面孔。2026-11-08 增至 427：三张以用户数据为键的查表改走 `createLookup`（`Object.create(null)`）——字面量查表会命中原型方法，`normalizeLayoutId('toString')` 曾返回函数（K172） |
 | `src/features/canvas/view-viewport.ts` | 414 | **画布手势的唯一接管面**（2026-10-26 滚轮平滑后越线）：注册面（画布祖先 capture + 非 passive）与让位链（`Ctrl/Cmd` 缩放优先、编辑中交引擎提交、指针不在画布内、连续输入小 delta、纯横向 delta）必须与「接管后怎么走」同处——Alt 横轴映射、rAF 指数趋近、收尾（mousedown / 缩放 / 引擎换代 / 到达画面边界）共用同一份平滑状态；拆开会把「该不该接管」与「接管了走多少」摊到两处，正是引擎那套「先 `stopPropagation` 再平移」当年把容器级监听变成死代码的翻版（K138 / K144）。 |
 | `src/platform/export-svg-postprocess.ts` | 369 | 导出 SVG 后处理**唯一收口**（2026-10-17 由 export-svg-style / export-css-vars / export-foreign-object-padding 三文件合并）：foreignObject 几何余量（K106）→ Obsidian CSS 变量注入（K99/K105）→ `--pele-*` 与通用变量白名单（K173），共用 `appendSvgStyle` 注入原语。三步共享同一条前提「导出克隆里没有插件样式表」，拆开会让变量白名单与几何余量各持一份 CSSOM 读取（同 `math-jax` 性质）。2026-11-09 越线（338 行）并登记。2026-11-11：几何余量的**横向 12px 改为左右各半**（`x -= 6`）——只加 width 会把自绘内容的右内边距压到 4px（实拍"节点边框右边比左边窄"，K106 ④-b）。 |
 | `src/platform/rendering/code/prism-code.ts` | 393 | 代码块语法高亮通道**单一落点**（全插件唯一 import `obsidian` 的代码高亮实现，`loadPrism`）：产品形态是「字面代码 → 异步 `Prism.tokenize` → token 元素（**不经 innerHTML**）→ 定稿（入产物缓存 + 通知重排）」；与数学通道的四点差异（tokenize 是同步纯函数，故**不搬**字体/flush/就绪判据/挂载补替换队列）必须成对阅读；token 颜色**探测宿主计算色后内联**（导出 SVG 无 app.css，K91/K99 口径）；主题切换走 `refreshPrismTokenColors`（清缓存 + 就地改色，不重建节点）。未登记语言 / `tokenize` 抛错 / 空产物一律保留字面（占位即回退）。 |
-| `src/platform/rendering/math/math-jax.ts` | 870 | 数学渲染通道**单一落点**（2026-10-16：导出 SVG 后处理链拆至 `math-jax-export.ts`——纯 DOM/CSSOM、不依赖渲染态；本文件保留渲染/就绪判据/登记面/缓存，三者因**环 + 共享可变态**不可分。全插件唯一 import `obsidian` 的数学实现）：产品形态是「字面占位 → 异步替换 → 就绪判据（**2026-10-15 v4 修正：本段字符的规则已落盘 +（可见字符）宽度 > 0**；索引三态——元素不存在 = 明确未 flush ⇒ 判未就绪／CSSOM 不可读 ⇒ 退回旧宽度判据 + 留痕；**零宽豁免双形态**：v3 空 `content` 规则／v4 零 `padding` 规则，按字符码查 `#MJX-CHTML-styles` 的 CSSOM 索引、**缓存键 =（样式表元素, 规则条数）**；判定序为「规则（免布局）→ 宽度（**可见字符零样式查询**）→ 仅零宽字符做 `::before` 查询」，见第十六批）→ 撤回字面 → 定稿（入缓存 + 通知重排）；**字体**（私有区码点，渐进渲染故不设重试）；**导出 SVG 后处理链**（样式注入 + `mjx-container` 高度钉定）。MathJax 3/4 两代规则形态均需兼容（K85 / K113）。读CHTML 规则表失败会**留痕告警**（留空索引 = K113 豁免整体失效，属无痕退化）。**刻意不加会话/代际守卫**——A2 元素按 uid 取用即删，旧 holder 写入不可见（结论见文件头）。2026-10-14 增至 1031：新增未定稿登记面（`unsettledMath`）与 `repairUnsettledMath` / `clearUnsettledMath` / `pruneDetachedUnsettledMath`——「放弃段」（挂载预算耗尽）可被症状修复，不再永久字面（第十批）。**2026-10-14 十一批增至 1062**：登记面条目携带 **owner（引擎实例）**，`pruneUnsettledMathOwnedBy` 取代 `pruneDetachedUnsettledMath`——按 `!isConnected` 判归属会误删新引擎**全部懒加载段**（预测量本体从不挂载，实机定案）。**2026-10-14 十二批增至 1065**：`clearUnsettledMath` 同族口径一并收敛为 `root.contains`（去掉「已脱离文档也算本视图」——多视图并存时会误清**其他宿主**的未挂载段），root 外的残留交给紧随的引擎销毁按归属清。**2026-10-15 增至 1204**：就绪判据 v4 修正（v4 字符为真实文本节点 ⇒「宽度 > 0」恒假阳 ⇒ flush 从不调度 ⇒ 官方样式表从未挂载；判据换锚「规则落盘 + 宽度」、索引三态、`charRuleKey` 类名优先兼收 v3 空文本形态，见第十五批）。**同日增至 1227**：判定序重构（可见字符零样式查询）+ `hasCharRule` + 共享 `EMPTY_CHAR_RULE_INDEX` + 告警文案常量 + `sheet` 类型收窄（第十六批，行为等价）。 |
+| `src/platform/rendering/math/math-jax.ts` | 870 | 数学渲染通道的**状态与就绪编排面**：字面占位、异步渲染/替换、flush、未定稿登记、产物缓存与按 owner 清理共享可变状态和落地时序；渲染就绪既要字符规则落盘，也要可见字符有宽度（兼容 MathJax 3/4，见 K85/K113）。字符规则判定与索引已在 `math-jax-char-rules.ts`，导出 DOM/CSSOM 后处理已在 `math-jax-export.ts`；本文件调用/转发这些能力，保留渲染生命周期，不能再把已拆出的规则索引或导出实现计作本文件职责。历次扩展与拆分见 `line-count-log.md`。 |
 | `src/links/links-tree.ts` | 455 | 树内引用更新**单一遍历实现**：rename / clear 两模式共享待匹配形态派生（资源地址 + [[链接]] 双载体、回收站退化、跨文件夹移动取新位置、非 .md 文档带扩展名）与写回规则；拆开会让「重命名改写」与「删除清理」两条路径的匹配口径漂移。`renamedMdLinkDest` 把 md 目标绕回 `parseWikilink` 是**安全**的（上游 `mdTargetRenamed` 已排除空串与含 `\|`/`#` 的目标），勿误改为「直接构造 parts」 |
 | `src/links/file-lookup.ts` | 376 | 全库文件索引（键形态 / 缓存新鲜度 / 增量补建）与**「新建引用路径形态」的唯一组合判定**（官方 `New link format` 三档 + basename 同名消歧 + `domain/wikilink.formatLinkPath` 拼接）。后者 2026-10-20 从 `features/editing/view-node-actions` 上收：文档链接与图片引用共用同一份——拆开会让「读设置 / 判同名 / 拼路径」在两处各写一遍（图片侧此前正是直接写 `file.path`，无视设置）。 |
 | `src/links/links-resolve.ts` | 353 | 「任意地址形态 → TFile」的**统一解析入口**：远程拒绝 → `obsidian://` → 资源地址 → 路径直查 → `file://` 剥离 → 官方 `getFirstLinkpathDest` → 索引兜底——形态路由的**分支顺序本身即契约**（新增规则只改这一处）；拆开会重新引入本文件当初拆出要收敛的「双轨并存、覆盖形态互有盲区」问题 |
@@ -436,7 +469,7 @@
     - [README.md](README.md)：按需阅读、权威边界与文档规模
     - [architecture.md](architecture.md)：模块职责、数据流与依赖层
     - [baseline-metrics.md](baseline-metrics.md)：可复现基线与静态指标
-    - [conventions.md](conventions.md)：关键约定 K1–K210，按编号读取
+    - [conventions.md](conventions.md)：关键约定 K1–K211，按编号读取
     - [line-count-log.md](line-count-log.md)：历次规模与验证记录，只追加
     - [testing.md](testing.md)：测试分层、CI 与验证流程
     - [process.md](process.md)：维护义务与发布流程

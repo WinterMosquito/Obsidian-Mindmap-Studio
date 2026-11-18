@@ -149,7 +149,7 @@ export interface LayoutOption {
  * `domain/mindmap-property.MINDMAP_LAYOUT_VALUES`——这里用 domain 导出的 id 联合
  * 做 `satisfies` 对齐，**不另建一份「值 → 布局」映射**（硬规则 5；方向只能是
  * core → domain）。表里写错 / 多出一个 id 在此编译失败；漏写一个 id 由
- * `tests/md-frontmatter-trigger.test.ts` 对 `MINDMAP_LAYOUT_IDS` 断言。
+ * `tests/domain/md-frontmatter-trigger.test.ts` 对 `MINDMAP_LAYOUT_IDS` 断言。
  */
 export const LAYOUT_OPTIONS = [
 	{ value: 'logicalStructure', label: 'layout.logical' },

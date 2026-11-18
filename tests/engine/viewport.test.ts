@@ -1,0 +1,800 @@
+/**
+ * 视口收口回归（src/engine/mindmap.ts 的三个防腐函数）。
+ *
+ * 为什么这样断言：
+ * - `centerContentAtFullScale`（打开时的默认视口）：需求是「100% 缩放 + **整体内容
+ *   包围盒**居中」，不是根节点居中（偏心的树会偏到一侧）、也不是 fit 全图（大图会被
+ *   压到文字不可读）。实现顺序固定为「先 `setScale(1, 画布中心)` 定比例 → 再按
+ *   包围盒平移」；顺序颠倒时平移量算的是旧比例下的坐标。包围盒有两路口径（K70
+ *   起）：**性能模式用数据层几何并集**（渲染树 left/top/width/height，零 DOM
+ *   装配——旧实现 forceLoadNode 全树**同步**装配进 DOM 是用户实测「多节点打开
+ *   卡顿」主因），常规模式走 `draw.rbox() − elRect`（DOM 精确）。本文件用
+ *   invocationCallOrder 与几何不变量（平移后包围盒中心 = 画布中心）把这两点都钉住；
+ * - `resetZoom`（工具栏「重置缩放」）：回到 100% 但**以画布中心为锚点**——引擎平移量
+ *   相对画布原点，只 `setScale(1)`（省略锚点）会让内容绕原点跳动（表现为「视图乱飘」）。
+ *   故断言 setScale 收到第二/三参，且不做任何节点居中；
+ * - `arrangeMindMap`（自动整理）：只走引擎 RESET_LAYOUT（清除自由拖拽位置，不触碰
+ *   children 顺序）；**默认保留视口**（2026-10-24 用户裁决：不 fit、不设比例、不平移），
+ *   只有 `{ fitView: true }`（切布局路径）才在延时后走 `fitMindMap` 适应画布。
+ *   K67 起另有渲染窗口守卫：引擎渲染期 `renderer.root` 会被临时置 null（异步布局回填），
+ *   此时执行 RESET_LAYOUT 会遍历 null 根并抛 TypeError（用户实测），故 root 缺失时
+ *   改为等待回填后执行（超上限放弃）——本文件钉住「延后执行」与「上限放弃」两条。
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { MindMap, MindMapNode } from '../../vendor/simple-mind-map.cjs';
+import {
+	HEAVY_FIT_NODE_THRESHOLD,
+	RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,
+	RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS,
+	RESET_LAYOUT_VIEWPORT_DELAY_MS,
+} from '../../src/core/constants';
+import {
+	arrangeMindMap,
+	centerContentAtFullScale,
+	contentExceedsCanvasAtFullScale,
+	fitMindMap,
+	isContentVisibleInCanvas,
+	measureNodesCanvasBox,
+	resetZoom,
+} from '../../src/engine/mindmap';
+
+// mindmap.ts 经 import 链加载真实 vendor bundle（顶层求值触碰 document.documentElement）；
+// 静态 import 先于模块体执行，故桩必须放进 vi.hoisted 才会先落地。
+vi.hoisted(() => {
+	(globalThis as { document?: unknown }).document ??= { documentElement: {} };
+});
+
+/**
+ * 引擎桩：画布 800×600；内容包围盒（页面坐标）x=110 y=220 200×100，
+ * 容器矩形 left=10 top=20 → 画布内包围盒 x=100 y=200 200×100。
+ */
+function makeMindMap(
+	options: {
+		openPerformance?: boolean;
+		hasDraw?: boolean;
+		hasElRect?: boolean;
+		/** 实时容器矩形（模拟首帧后布局 settle / 工具栏重建过的容器） */
+		liveRect?: { left: number; top: number; width: number; height: number };
+		/**
+		 * `draw.transform()` 的当前比例（默认 1 = 打开首帧后的真实状态）。
+		 * K70 起「比例已是 1」会跳过 `setScale`（vendor 的无条件
+		 * `view_data_change` emit 在性能模式下会白触发分片整树渲染）——
+		 * 需要断言 `setScale` 被调用的用例传 0.5。
+		 */
+		scale?: number;
+	} = {},
+) {
+	const {
+		openPerformance = false,
+		hasDraw = true,
+		hasElRect = true,
+		liveRect,
+		scale = 1,
+	} = options;
+	const setScale = vi.fn<(scale: number, cx?: number, cy?: number) => void>();
+	const fit = vi.fn<() => void>();
+	const moveNodeToCenter = vi.fn<() => void>();
+	const translateXY = vi.fn<(x: number, y: number) => void>();
+	const forceLoadNode = vi.fn<() => void>();
+	const execCommand = vi.fn<(...args: unknown[]) => void>();
+	const rbox = vi.fn(() => ({ x: 110, y: 220, width: 200, height: 100 }));
+	// draw.transform()：数据层盒换算「布局坐标 × scale + translate」用
+	// （引擎 getNodePosInClient 同口径），也是「比例是否已是 1」判据的来源
+	const drawTransform = vi.fn(() => ({
+		scaleX: scale,
+		scaleY: scale,
+		translateX: 0,
+		translateY: 0,
+	}));
+
+	const mindMap = {
+		width: 800,
+		height: 600,
+		execCommand,
+		opt: { openPerformance },
+		view: { setScale, fit, translateXY },
+		renderer: {
+			root: {
+				isRoot: true,
+				// 数据层几何（布局坐标系，K70 起性能模式的包围盒来源）。
+				// 与 rbox 的 DOM 盒**刻意取不同值**：两路口径的平移量不同
+				// （(170,160) vs (200,50)），用例可据此判定实际走的路径
+				left: 30,
+				top: 40,
+				width: 400,
+				height: 200,
+				children: [],
+			},
+			moveNodeToCenter,
+			forceLoadNode,
+		},
+		// 引擎中间态：draw / elRect 可能尚未就绪（measureContentBox 会返回 null）
+		...(hasDraw ? { draw: { rbox, transform: drawTransform } } : {}),
+		...(hasElRect ? { elRect: { left: 10, top: 20 } } : {}),
+		// 实时容器：首帧后容器尺寸/位置可能与引擎创建时的缓存不同
+		...(liveRect ? { el: { getBoundingClientRect: () => liveRect } } : {}),
+	} as unknown as MindMap;
+
+	return {
+		mindMap,
+		setScale,
+		fit,
+		moveNodeToCenter,
+		translateXY,
+		forceLoadNode,
+		execCommand,
+	};
+}
+
+/** 静默并捕获 console.error（防腐层的降级路径都只记日志、不抛） */
+function spyConsoleError() {
+	return vi.spyOn(console, 'error').mockImplementation(() => {});
+}
+
+afterEach(() => {
+	vi.useRealTimers();
+	vi.restoreAllMocks();
+});
+
+describe('resetZoom（回到 100%，以画布中心为锚点）', () => {
+	it('以画布中心为锚点缩放，且不居中任何节点（屏幕可见内容保持原位）', () => {
+		const { mindMap, setScale, moveNodeToCenter, translateXY, fit } = makeMindMap();
+
+		resetZoom(mindMap);
+
+		// 第二/三参即锚点：引擎按新比例反推平移，使锚点处画面不动
+		expect(setScale).toHaveBeenCalledExactlyOnceWith(1, 400, 300);
+		// 不居中节点、不平移、不 fit——用户要求的是「不改屏幕位置」
+		expect(moveNodeToCenter).not.toHaveBeenCalled();
+		expect(translateXY).not.toHaveBeenCalled();
+		expect(fit).not.toHaveBeenCalled();
+	});
+
+	it('引擎缺失 / view 尚未就绪时静默（工具栏在引擎未就绪时可点）', () => {
+		const { mindMap } = makeMindMap();
+		(mindMap as unknown as { view?: unknown }).view = undefined;
+
+		expect(() => resetZoom(null)).not.toThrow();
+		expect(() => resetZoom(mindMap)).not.toThrow();
+	});
+
+	it('引擎抛错时只记录日志，不向调用方传播', () => {
+		const errorSpy = spyConsoleError();
+		const { setScale, mindMap } = makeMindMap();
+		setScale.mockImplementation(() => {
+			throw new Error('引擎尚未就绪');
+		});
+
+		expect(() => resetZoom(mindMap)).not.toThrow();
+		expect(errorSpy).toHaveBeenCalledWith('重置缩放失败', expect.anything());
+	});
+});
+
+describe('centerContentAtFullScale（100% + 整体内容居中）', () => {
+	it('先以画布中心定 100%，再按包围盒平移到画布中心（不 fit 全图）', () => {
+		// 比例 0.5：需要真的执行 setScale（比例已是 1 时新实现跳过，见 K70）
+		const { mindMap, setScale, translateXY, fit } = makeMindMap({ scale: 0.5 });
+
+		centerContentAtFullScale(mindMap);
+
+		expect(setScale).toHaveBeenCalledExactlyOnceWith(1, 400, 300);
+		// 包围盒（画布坐标）= (110−10, 220−20, 200, 100) = (100, 200, 200, 100)
+		// 平移量 = ((800−200)/2 − 100, (600−100)/2 − 200) = (200, 50)
+		expect(translateXY).toHaveBeenCalledExactlyOnceWith(200, 50);
+		expect(fit).not.toHaveBeenCalled();
+
+		// 几何不变量：平移后包围盒中心恰好落在画布中心（而非根节点居中）
+		const [dx, dy] = translateXY.mock.calls[0]!;
+		expect(100 + 200 / 2 + dx).toBe(400);
+		expect(200 + 100 / 2 + dy).toBe(300);
+	});
+
+	it('顺序：先定比例再平移（平移量须与新比例同一坐标系）', () => {
+		const { mindMap, setScale, translateXY } = makeMindMap({ scale: 0.5 });
+
+		centerContentAtFullScale(mindMap);
+
+		expect(setScale.mock.invocationCallOrder[0]!).toBeLessThan(
+			translateXY.mock.invocationCallOrder[0]!,
+		);
+	});
+
+	it('性能模式：走数据层几何并集求包围盒，不装配全量 DOM（K70）', () => {
+		const { mindMap, forceLoadNode, setScale, translateXY } = makeMindMap({
+			openPerformance: true,
+		});
+
+		centerContentAtFullScale(mindMap);
+
+		// 旧实现先 forceLoadNode 把整树**同步**装配进 DOM（打开大图卡顿主因，
+		// 且其 emit 会同步重入本函数再装配一次）；新契约绝不触发它——
+		// 全树布局几何（left/top/width/height，与引擎裁剪判定 checkIsInClient
+		// 同源）直接求并集，视口外节点无需进 DOM。
+		expect(forceLoadNode).not.toHaveBeenCalled();
+		// 比例已是 1（打开首帧后的真实状态）：跳过 setScale（vendor 的无条件
+		// view_data_change emit 在性能模式下会白触发分片整树渲染，见 K70）
+		expect(setScale).not.toHaveBeenCalled();
+		// 数据层盒（布局坐标）x=30 y=40 400×200；scale=1、translate=(0,0)
+		// ⇒ 内容中心屏幕位置 (230,140)，平移量 = (400−230, 300−140) = (170,160)。
+		// 与 DOM 路径的 (200,50) 不同 ⇒ 断言值本身即证明走了数据层路径
+		expect(translateXY).toHaveBeenCalledExactlyOnceWith(170, 160);
+		// 几何不变量：内容中心 + 平移量 = 画布中心
+		const [dx, dy] = translateXY.mock.calls[0]!;
+		expect(230 + dx).toBe(400);
+		expect(140 + dy).toBe(300);
+	});
+
+	it('性能模式：已在目标态（比例 1 + 内容居中）时零调用——不发 view_data_change（K70）', () => {
+		const { mindMap, setScale, translateXY } = makeMindMap({
+			openPerformance: true,
+		});
+		// 数据层几何中心 = 画布中心 (400,300)：left=200 top=200 400×200
+		(
+			mindMap as unknown as { renderer: { root: Record<string, unknown> } }
+		).renderer.root = {
+			isRoot: true,
+			left: 200,
+			top: 200,
+			width: 400,
+			height: 200,
+			children: [],
+		};
+
+		centerContentAtFullScale(mindMap);
+
+		// vendor 的 setScale 无条件 emit view_data_change（性能模式下经 200ms
+		// 节流器触发分片整树渲染）——打开窗口内本函数被多次调用（首帧渲染
+		// 结束 / 150ms 兜底 / 图片回灌补居中），已在目标态时若不短路，每次
+		// 重复调用都白渲染一轮（500 节点 ≈ 2495 条属性空写，见 K58）
+		expect(setScale).not.toHaveBeenCalled();
+		expect(translateXY).not.toHaveBeenCalled();
+	});
+
+	it('性能模式：数据层几何不可得（引擎中间态）时回退 DOM 测量，仍不 forceLoadNode', () => {
+		const { mindMap, forceLoadNode, translateXY } = makeMindMap({
+			openPerformance: true,
+		});
+		// 抹掉渲染树几何（root 无 left/top/width/height）⇒ 数据层盒不可得
+		(
+			mindMap as unknown as { renderer: { root: Record<string, unknown> } }
+		).renderer.root = { isRoot: true };
+
+		centerContentAtFullScale(mindMap);
+
+		// 回退 DOM 测量：rbox(110,220,200,100) − elRect(10,20) ⇒ 平移 (200, 50)
+		expect(translateXY).toHaveBeenCalledExactlyOnceWith(200, 50);
+		expect(forceLoadNode).not.toHaveBeenCalled();
+	});
+
+	it('包围盒不可得（draw 缺失）：只设比例、不平移', () => {
+		const { mindMap, setScale, translateXY } = makeMindMap({ hasDraw: false });
+
+		centerContentAtFullScale(mindMap);
+
+		expect(setScale).toHaveBeenCalledExactlyOnceWith(1, 400, 300);
+		expect(translateXY).not.toHaveBeenCalled();
+	});
+
+	it('容器矩形不可得（elRect 缺失）：同样只设比例、不平移', () => {
+		// 比例 0.5：需要真的执行 setScale（比例已是 1 时新实现跳过，见 K70）
+		const { mindMap, setScale, translateXY } = makeMindMap({
+			hasElRect: false,
+			scale: 0.5,
+		});
+
+		centerContentAtFullScale(mindMap);
+
+		expect(setScale).toHaveBeenCalledExactlyOnceWith(1, 400, 300);
+		expect(translateXY).not.toHaveBeenCalled();
+	});
+
+	it('引擎抛错时降级为 fit 全图（至少让内容可见）', () => {
+		const errorSpy = spyConsoleError();
+		// 比例 0.5：保证走到 setScale 才有「引擎抛错」可注入（K70 起比例
+		// 已是 1 时跳过 setScale）
+		const { mindMap, setScale, translateXY, fit } = makeMindMap({ scale: 0.5 });
+		setScale.mockImplementation(() => {
+			throw new Error('引擎尚未就绪');
+		});
+
+		expect(() => centerContentAtFullScale(mindMap)).not.toThrow();
+
+		expect(errorSpy).toHaveBeenCalledWith('设置默认视口失败', expect.anything());
+		expect(translateXY).not.toHaveBeenCalled();
+		expect(fit).toHaveBeenCalledTimes(1);
+	});
+
+	it('引擎缺失时静默', () => {
+		expect(() => centerContentAtFullScale(null)).not.toThrow();
+	});
+
+	it('容器几何已变（首帧后布局 settle）：以实时容器为准，不用缓存 width/height', () => {
+		// 引擎创建时缓存 800×600 / 原点(10,20)；首帧后容器变为 800×520 且上移。
+		// 比例 0.5：需要真的执行 setScale 才能断言锚点用了实时中心（K70 起
+		// 比例已是 1 时跳过 setScale）
+		const { mindMap, setScale, translateXY } = makeMindMap({
+			liveRect: { left: 0, top: 40, width: 800, height: 520 },
+			scale: 0.5,
+		});
+
+		centerContentAtFullScale(mindMap);
+
+		// 缩放锚点 = 实时画布中心（缓存的 300 会让内容纵向偏移）
+		expect(setScale).toHaveBeenCalledExactlyOnceWith(1, 400, 260);
+		// 包围盒原点换算也走实时容器：y = 220−40 = 180
+		// 平移量 = ((800−200)/2 − 110, (520−100)/2 − 180) = (190, 30)
+		expect(translateXY).toHaveBeenCalledExactlyOnceWith(190, 30);
+	});
+
+	it('容器几何可得时先同步引擎几何（resize），再算视口', () => {
+		const resize = vi.fn<() => void>();
+		// 比例 0.5：保证 setScale 真的执行（比例已是 1 时新实现跳过，见 K70），
+		// 顺序断言才有对象可比较
+		const { mindMap, setScale } = makeMindMap({
+			liveRect: { left: 0, top: 0, width: 800, height: 600 },
+			scale: 0.5,
+		});
+		(mindMap as unknown as { resize?: () => void }).resize = resize;
+
+		centerContentAtFullScale(mindMap);
+
+		expect(resize).toHaveBeenCalledTimes(1);
+		// 必须先同步（重读容器、更新 SVG 尺寸），后写视口
+		expect(resize.mock.invocationCallOrder[0]!).toBeLessThan(
+			setScale.mock.invocationCallOrder[0]!,
+		);
+	});
+});
+
+describe('isContentVisibleInCanvas（保存视口恢复后的落界校验）', () => {
+	it('内容在画布内 → true；被保存视口推出画布 → false', () => {
+		const visible = makeMindMap({
+			liveRect: { left: 0, top: 0, width: 800, height: 600 },
+		});
+		expect(isContentVisibleInCanvas(visible.mindMap)).toBe(true);
+
+		const outside = makeMindMap({
+			liveRect: { left: 0, top: 0, width: 800, height: 600 },
+		});
+		(outside.mindMap as unknown as { draw: { rbox: unknown } }).draw.rbox = () => ({
+			x: 5000,
+			y: 5000,
+			width: 200,
+			height: 100,
+		});
+		expect(isContentVisibleInCanvas(outside.mindMap)).toBe(false);
+	});
+
+	it('NaN 包围盒（保存视口损坏）→ false（回退居中）', () => {
+		const broken = makeMindMap({
+			liveRect: { left: 0, top: 0, width: 800, height: 600 },
+		});
+		(broken.mindMap as unknown as { draw: { rbox: unknown } }).draw.rbox = () => ({
+			x: NaN,
+			y: NaN,
+			width: NaN,
+			height: NaN,
+		});
+		expect(isContentVisibleInCanvas(broken.mindMap)).toBe(false);
+	});
+
+	it('性能模式：改用数据层盒判定（护栏在性能模式下真正生效）', () => {
+		// 数据层盒（布局坐标 30,40 400×200）+ draw 变换（scale 1 / translate 0）
+		// ⇒ 画布坐标 30,40 400×200，与 800×600 的画布相交 → true
+		expect(
+			isContentVisibleInCanvas(makeMindMap({ openPerformance: true }).mindMap),
+		).toBe(true);
+
+		// 数据层盒被推到画布外 → false（此前性能模式恒 null，这条护栏不可达）
+		const outside = makeMindMap({ openPerformance: true });
+		const root = (
+			outside.mindMap as unknown as {
+				renderer: { root: Record<string, unknown> };
+			}
+		).renderer.root;
+		root.left = 9000;
+		root.top = 9000;
+		expect(isContentVisibleInCanvas(outside.mindMap)).toBe(false);
+
+		// 变换不可得（引擎中间态）→ null：fail-open，不误伤合法视口恢复
+		expect(
+			isContentVisibleInCanvas(makeMindMap({ openPerformance: true, hasDraw: false }).mindMap),
+		).toBeNull();
+	});
+
+	it('引擎结构不可得 → null（fail-open，不误伤合法视口恢复）', () => {
+		expect(isContentVisibleInCanvas(makeMindMap({ hasDraw: false }).mindMap)).toBeNull();
+		expect(isContentVisibleInCanvas(null)).toBeNull();
+	});
+});
+
+describe('arrangeMindMap（清自定义坐标；默认保留视口）', () => {
+	it('默认只走 RESET_LAYOUT：不 fit、不设比例、不平移', () => {
+		vi.useFakeTimers();
+		const { mindMap, execCommand, setScale, fit, translateXY } = makeMindMap();
+
+		expect(arrangeMindMap(mindMap)).toBe(true);
+		// 断言字面量：常量表键名与引擎命令名必须一致（拼错时此处即刻失败）
+		expect(execCommand).toHaveBeenCalledExactlyOnceWith('RESET_LAYOUT');
+
+		// 保留视口：连延时窗口过后也不应有任何 fit / 变换写入
+		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS);
+		expect(fit).not.toHaveBeenCalled();
+		expect(setScale).not.toHaveBeenCalled();
+		expect(translateXY).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('fitView: true（切布局路径）：延时后 fit 全图，边界前不触发', () => {
+		vi.useFakeTimers();
+		const { mindMap, execCommand, setScale, fit, translateXY } =
+			makeMindMap();
+
+		expect(arrangeMindMap(mindMap, { fitView: true })).toBe(true);
+		expect(execCommand).toHaveBeenCalledExactlyOnceWith('RESET_LAYOUT');
+
+		// 延时结束前不调整视口：等引擎完成 reflow，否则按旧布局算缩放
+		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS - 1);
+		expect(fit).not.toHaveBeenCalled();
+
+		vi.advanceTimersByTime(1);
+		expect(fit).toHaveBeenCalledTimes(1);
+		// 适应画布即引擎 fit：不单独设比例、不平移
+		expect(setScale).not.toHaveBeenCalled();
+		expect(translateXY).not.toHaveBeenCalled();
+	});
+
+	it('渲染窗口期（root 暂缺）：延后到回填后再执行（fitView 一路透传）', () => {
+		vi.useFakeTimers();
+		const { mindMap, execCommand, fit } = makeMindMap();
+		const renderer = (mindMap as unknown as { renderer: { root: unknown } })
+			.renderer;
+		renderer.root = null;
+
+		expect(arrangeMindMap(mindMap, { fitView: true })).toBe(true);
+		// 窗口期内立即执行会遍历 null 根并在回调首行抛 TypeError（见 K67）
+		expect(execCommand).not.toHaveBeenCalled();
+
+		// 仍缺失：持续等待（未到上限既不执行也不放弃）
+		vi.advanceTimersByTime(RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS * 3);
+		expect(execCommand).not.toHaveBeenCalled();
+
+		// 渲染结束、root 回填 → 下一个轮询点执行命令
+		renderer.root = { isRoot: true };
+		vi.advanceTimersByTime(RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS);
+		expect(execCommand).toHaveBeenCalledExactlyOnceWith('RESET_LAYOUT');
+
+		// fit 仍按原延时（等引擎 reflow）
+		expect(fit).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS);
+		expect(fit).toHaveBeenCalledTimes(1);
+	});
+
+	it('渲染根在等待上限内未回填：放弃、只记日志、不执行命令', () => {
+		vi.useFakeTimers();
+		const errorSpy = spyConsoleError();
+		const { mindMap, execCommand, fit } = makeMindMap();
+		(mindMap as unknown as { renderer: { root: unknown } }).renderer.root = null;
+
+		expect(arrangeMindMap(mindMap, { fitView: true })).toBe(true);
+
+		vi.advanceTimersByTime(
+			RESET_LAYOUT_ROOT_WAIT_TIMEOUT_MS + RESET_LAYOUT_ROOT_WAIT_INTERVAL_MS,
+		);
+
+		expect(execCommand).not.toHaveBeenCalled();
+		expect(fit).not.toHaveBeenCalled();
+		expect(errorSpy).toHaveBeenCalledWith(
+			'自动整理失败：渲染根在等待上限内未回填',
+		);
+		// 等待链已终止：不再排定时器
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('命令抛错时返回 false、不排定时器、不抛异常', () => {
+		vi.useFakeTimers();
+		const errorSpy = spyConsoleError();
+		const { mindMap, execCommand, fit } = makeMindMap();
+		execCommand.mockImplementation(() => {
+			throw new Error('命令未注册');
+		});
+
+		expect(arrangeMindMap(mindMap)).toBe(false);
+		expect(errorSpy).toHaveBeenCalledWith('自动整理失败', expect.anything());
+		expect(vi.getTimerCount()).toBe(0);
+
+		vi.advanceTimersByTime(RESET_LAYOUT_VIEWPORT_DELAY_MS);
+		expect(fit).not.toHaveBeenCalled();
+	});
+
+	it('引擎缺失 / 无 execCommand 时返回 false', () => {
+		expect(arrangeMindMap(null)).toBe(false);
+		expect(arrangeMindMap({} as unknown as MindMap)).toBe(false);
+	});
+});
+
+/**
+ * 大图 fit 的比例下限（2026-10-17 产品裁决，`engine/mindmap-viewport`）。
+ *
+ * 为什么必须钉住：真 fit 对大图会算出 0.03 量级（文字 < 1px，看等于没看），且
+ * 「整树可见」会强制解除剪枝、把数千节点一次装配进 DOM。下限只对
+ * **> `HEAVY_FIT_NODE_THRESHOLD`** 生效——阈值以下（1–2k，亚秒级）必须保持真 fit，
+ * 否则「适应画布」会变成「只显示中心一块」，属功能回退。
+ */
+describe('fitMindMap · 大图比例下限（LARGE_MAP_MIN_FIT_SCALE）', () => {
+	/**
+	 * 宽树桩：画布 800×600、内容盒 20000×20000 ⇒ 真 fit 比例 0.03（低于下限 0.1）。
+	 * 节点数由 children 数量控制（`countMindMapNodes` 遍历渲染树）。
+	 */
+	function makeWideMindMap(nodeCount: number) {
+		const setScale = vi.fn<(scale: number) => void>();
+		const translateXY = vi.fn<(x: number, y: number) => void>();
+		const children = Array.from({ length: nodeCount - 1 }, () => ({
+			left: 0,
+			top: 0,
+			width: 1,
+			height: 1,
+			children: [],
+		}));
+		const mindMap = {
+			width: 800,
+			height: 600,
+			opt: { openPerformance: true, fitPadding: 0 },
+			view: { setScale, translateXY, fit: vi.fn() },
+			draw: {
+				transform: () => ({
+					scaleX: 1,
+					scaleY: 1,
+					translateX: 0,
+					translateY: 0,
+				}),
+			},
+			renderer: {
+				root: { left: 0, top: 0, width: 20000, height: 20000, children },
+				forceLoadNode: vi.fn(),
+			},
+		} as unknown as MindMap;
+		return { mindMap, setScale, translateXY };
+	}
+
+	it('超过阈值（阈值 + 1）：比例抬到可读下限 0.1，并回吐 clamped', () => {
+		vi.useFakeTimers();
+		const { mindMap, setScale } = makeWideMindMap(HEAVY_FIT_NODE_THRESHOLD + 1);
+
+		expect(fitMindMap(mindMap)).toBe('clamped');
+
+		expect(setScale).toHaveBeenCalledTimes(1);
+		expect(setScale).toHaveBeenCalledWith(0.1);
+	});
+
+	it('恰好等于阈值：不抬比例（真 fit 的 0.03 原样保留），回吐 fit', () => {
+		vi.useFakeTimers();
+		const { mindMap, setScale } = makeWideMindMap(HEAVY_FIT_NODE_THRESHOLD);
+
+		expect(fitMindMap(mindMap)).toBe('fit');
+
+		expect(setScale).toHaveBeenCalledTimes(1);
+		expect(setScale.mock.calls[0]?.[0]).toBeCloseTo(0.03, 6);
+	});
+});
+
+/**
+ * 小地图启用判据（`contentExceedsCanvasAtFullScale`）：100% 下内容装不装得下。
+ *
+ * 两条契约：
+ * 1. **不调 resize**：本函数在 `node_tree_render_end` 上被调用，而
+ *    `syncCanvasGeometry` 会调引擎 `resize()`，vendor 的 `resize()` 又无条件
+ *    `emit(resize)` —— 实机实测构成 1 次/秒的自激循环（静止 20s 内 22 次），
+ *    小地图永远等不到「空闲 30s」，淡出失效。
+ * 2. **只看全量节点盒**（`measureMiniMapBounds`）：与缩略图映射同源。rbox
+ *    不参与——常规模式它含连线与外扩边距，性能模式只覆盖已装配子集，两种口径
+ *    都会让「判据说装不下、缩略图却大片留白」（2026-10-24 二轮修）。
+ */
+describe('contentExceedsCanvasAtFullScale（小地图自动启用判据）', () => {
+	/** 画布 800×600；内容几何由渲染树给出，rbox 只用于反证「不参与判定」 */
+	function makeStub(options: {
+		openPerformance: boolean;
+		dataWidth: number;
+		rboxWidth?: number;
+	}) {
+		const { openPerformance, dataWidth, rboxWidth = dataWidth } = options;
+		const resize = vi.fn<() => void>();
+		const mindMap = {
+			width: 800,
+			height: 600,
+			resize,
+			opt: { openPerformance },
+			el: {
+				getBoundingClientRect: () => ({
+					left: 0,
+					top: 0,
+					width: 800,
+					height: 600,
+				}),
+			},
+			elRect: { left: 0, top: 0 },
+			draw: {
+				transform: () => ({
+					scaleX: 1,
+					scaleY: 1,
+					translateX: 0,
+					translateY: 0,
+				}),
+				rbox: () => ({ x: 0, y: 0, width: rboxWidth, height: 200 }),
+			},
+			renderer: {
+				root: {
+					isRoot: true,
+					left: 0,
+					top: 0,
+					width: dataWidth,
+					height: 200,
+					children: [],
+				},
+			},
+		} as unknown as MindMap;
+		return { mindMap, resize };
+	}
+
+	it('节点盒超出画布宽 → true，且不触发引擎 resize', () => {
+		const { mindMap, resize } = makeStub({
+			openPerformance: true,
+			dataWidth: 1200,
+		});
+
+		expect(contentExceedsCanvasAtFullScale(mindMap)).toBe(true);
+		expect(resize).not.toHaveBeenCalled();
+	});
+
+	it('节点盒装得下 → false', () => {
+		const { mindMap, resize } = makeStub({
+			openPerformance: true,
+			dataWidth: 600,
+		});
+
+		expect(contentExceedsCanvasAtFullScale(mindMap)).toBe(false);
+		expect(resize).not.toHaveBeenCalled();
+	});
+
+	it('rbox 不参与判定（含连线/外扩的 9000 宽不得把结果翻成 true）', () => {
+		const { mindMap } = makeStub({
+			openPerformance: false,
+			dataWidth: 600,
+			rboxWidth: 9000,
+		});
+
+		expect(contentExceedsCanvasAtFullScale(mindMap)).toBe(false);
+	});
+
+	it('引擎缺失 / 渲染树不可用 → null（调用方按不显示处理）', () => {
+		expect(contentExceedsCanvasAtFullScale(null)).toBeNull();
+		const { mindMap } = makeStub({ openPerformance: false, dataWidth: 0 });
+		(mindMap as unknown as { renderer?: unknown }).renderer = undefined;
+		expect(contentExceedsCanvasAtFullScale(mindMap)).toBeNull();
+	});
+
+	it('传入已测好的全树几何时按它判定（判据与取图共用一份测量）', () => {
+		const { mindMap } = makeStub({ openPerformance: true, dataWidth: 600 });
+
+		expect(
+			contentExceedsCanvasAtFullScale(mindMap, {
+				bounds: { x: 0, y: 0, width: 5000, height: 200 },
+				total: 2,
+			}),
+		).toBe(true);
+		// 显式 null 不等于「已知装得下」：退回自测（节点盒 600 宽 ⇒ false）
+		expect(contentExceedsCanvasAtFullScale(mindMap, null)).toBe(false);
+	});
+
+	it('传入画布尺寸时不再读实时矩形（与窄画布门禁 / 取图共用一次读数）', () => {
+		const { mindMap } = makeStub({ openPerformance: true, dataWidth: 600 });
+		const el = (
+			mindMap as unknown as { el: { getBoundingClientRect: () => unknown } }
+		).el;
+		const rect = vi.spyOn(el, 'getBoundingClientRect');
+
+		expect(
+			contentExceedsCanvasAtFullScale(mindMap, null, {
+				width: 200,
+				height: 200,
+			}),
+		).toBe(true);
+		expect(rect).not.toHaveBeenCalled();
+	});
+});
+
+describe('measureNodesCanvasBox（选区包围盒：布局几何，不依赖 DOM）', () => {
+	/** 只提供 `getDrawTransform` 需要的变换读数 */
+	function makeGeometryMap(
+		transform: {
+			scaleX: number;
+			scaleY: number;
+			translateX: number;
+			translateY: number;
+		} = { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0 },
+	) {
+		return {
+			view: { getTransformData: () => ({ transform }) },
+		} as unknown as MindMap;
+	}
+
+	function node(
+		left: unknown,
+		top: unknown,
+		width: unknown,
+		height: unknown,
+	): MindMapNode {
+		return { left, top, width, height } as unknown as MindMapNode;
+	}
+
+	it('恒等变换：并集 = 各节点盒的并集（画布局部坐标）', () => {
+		const mindMap = makeGeometryMap();
+		const box = measureNodesCanvasBox(mindMap, [
+			node(100, 50, 100, 50),
+			node(300, 150, 100, 50),
+		]);
+
+		expect(box).toEqual({ left: 100, top: 50, right: 400, bottom: 200 });
+	});
+
+	it('缩放/平移后按 scale + translate 投影（与 projectViewportBox 同口径）', () => {
+		const mindMap = makeGeometryMap({
+			scaleX: 2,
+			scaleY: 2,
+			translateX: -100,
+			translateY: -50,
+		});
+		const box = measureNodesCanvasBox(mindMap, [node(100, 50, 100, 50)]);
+
+		// x1 = 100×2−100 = 100；x2 = 200×2−100 = 300；y 同理 50 → 150
+		expect(box).toEqual({ left: 100, top: 50, right: 300, bottom: 150 });
+	});
+
+	it('视口外节点同样参与：几何在性能模式摘 DOM 后仍完整（大选区不被裁）', () => {
+		const mindMap = makeGeometryMap();
+		const box = measureNodesCanvasBox(mindMap, [
+			node(0, 0, 10, 10),
+			// 远在视口外（旧 DOM 口径会因 removeSelf 拿不到包围盒而漏掉）
+			node(10_000, 0, 100, 50),
+		]);
+
+		expect(box).toEqual({ left: 0, top: 0, right: 10_100, bottom: 50 });
+	});
+
+	it('缺几何 / 尺寸非正 / 非数字：逐条跳过；全部无效 → null', () => {
+		const mindMap = makeGeometryMap();
+
+		expect(
+			measureNodesCanvasBox(mindMap, [
+				node(undefined, undefined, undefined, undefined),
+				node(0, 0, 0, 50),
+				node('x', 0, 10, 10),
+				node(10, 20, 30, 40),
+			]),
+		).toEqual({ left: 10, top: 20, right: 40, bottom: 60 });
+		expect(
+			measureNodesCanvasBox(mindMap, [
+				node(undefined, undefined, undefined, undefined),
+				node(0, 0, 0, 0),
+			]),
+		).toBeNull();
+		expect(measureNodesCanvasBox(mindMap, [])).toBeNull();
+	});
+
+	it('变换读不到（引擎中间态）按恒等处理，不抛错', () => {
+		const mindMap = {
+			view: {
+				getTransformData: () => {
+					throw new Error('引擎中间态');
+				},
+			},
+		} as unknown as MindMap;
+
+		expect(measureNodesCanvasBox(mindMap, [node(10, 20, 30, 40)])).toEqual({
+			left: 10,
+			top: 20,
+			right: 40,
+			bottom: 60,
+		});
+	});
+});

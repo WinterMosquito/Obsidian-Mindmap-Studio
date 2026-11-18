@@ -67,9 +67,9 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 
 **已知缺口：小地图没有视觉门禁**（2026-10-24 登记；判定为「不需要常驻补」，理由见下）。
 `features/view/view-minimap`、`core/minimap-geometry` 与引擎读取面已由
-`tests/view-minimap.test.ts`（**22** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
-`tests/minimap-geometry.test.ts`（**69** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
-`tests/engine-minimap-capture.test.ts`（**15** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
+`tests/features/view/view-minimap.test.ts`（**22** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
+`tests/core/minimap-geometry.test.ts`（**69** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
+`tests/engine/engine-minimap-capture.test.ts`（**15** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
 **肉眼一眼可见**的风险：CSS 级联（面板定位/层级/pointer-events/过渡）与 `<img>` 对
 data-URL SVG 的解码。往 `verify:visual` 加场景需要把 features 层也 bundle 进页面并补
 Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— 投入产出比不划算。
@@ -163,7 +163,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
   `CHROME_PATH` 指定浏览器，路径不存在时自动回落到平台默认安装位置）。
 - vitest 配置 `vitest.config.ts`：`obsidian` → `tests/mocks/obsidian.ts` alias（包仅有类型声明，无运行时 JS）。
   coverage 含 `src/**`（排除 `core/i18n`、`core/constants` 纯文案与常量表），vendor 为预打包产物不纳入。
-- **有 DOM 副作用的模块怎么测（fake DOM 手法，`tests/view-minimap.test.ts` 为范式）**：环境是
+- **有 DOM 副作用的模块怎么测（fake DOM 手法，`tests/features/view/view-minimap.test.ts` 为范式）**：环境是
   `node`、**没有 jsdom**（引入即触发依赖审批），故不要为了测一个会话状态机去装 DOM 库。
   做法是跑**真实模块** + 最小替身：`FakeEl` 只实现模块实际调用的 Obsidian DOM 子集
   （`createDiv` / `createEl` / `addClass` / `removeClass` / `setAttribute` / `removeAttribute` /
@@ -221,7 +221,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 ## 文档契约测试（`agents-md-sync` / `docs-standard`）
 
 文档不是「写完就算」：**它的关键不变量由测试兜住**，漏做是红灯，不靠自觉。六条契约在
-`tests/agents-md-sync.test.ts`：
+`tests/contracts/agents-md-sync.test.ts`：
 
 1. **源文件登记**：`src/**` 与 `tests/**` 每个 `.ts` 的 basename 都要以**独立 token** 出现在
    `docs/agents/index.md` 的代码结构清单里（按 `[^\w.-]+` 切词——`tree.ts` 不会被 `links-tree.ts` 误命中）。
@@ -238,8 +238,8 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 6. **豁免表行数**：`index.md` 登记的行数与实测偏差不得超过 `min(登记值 +15%, 登记值 +50 行)`
    ——文件改大/缩小后忘回填会红灯。精确回填跑 `npm run check:gates -- --fix-lines`（`docs/agents/index.md` 唯一那张表；`architecture.md` 自 2026-11-09 起不再复制）。
 
-另两条独立契约：`tests/docs-standard.test.ts`（标准文档引用的符号真实存在 ＋ 附录版本指针
-== `manifest.version`）、`tests/module-boundaries.test.ts`（依赖图 / 组内成环 / 新组未登记）。
+另两条独立契约：`tests/contracts/docs-standard.test.ts`（标准文档引用的符号真实存在 ＋ 附录版本指针
+== `manifest.version`）、`tests/contracts/module-boundaries.test.ts`（依赖图 / 组内成环 / 新组未登记）。
 
 **改这些判据时**：口径写进**测试文件头注释**（为什么这样写、换一种写法会误伤什么），别只写进
 提交信息——那段注释才是下一个人（或 agent）的上下文。
@@ -264,3 +264,5 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 **节点内容第三批（K209）**：`node-content-components.test.ts` 直测组件的递归回调、缓存同步、占位归属、任务基线/勾色、脚注 id 与锚点契约；它与 `node-inline-content.test.ts` 共用 `tests/helpers/node-content-dom.ts`，装配回归仍从既有入口运行。`math-placeholder.test.ts` 的构建消费方改指 `content-math.ts`，占位模板仍只有一份。`verify:visual` 复用 Chrome 驱动执行 `scripts/visual-node-content.mjs` 的独立比较页：用 Git/tar 从 HEAD 提取完整 src 快照后分别打包（避免基线读取当前已改组件），将 HEAD 与当前的 DOM/内联样式/测量键、XML 导出序列化、尺寸和注入调用逐项比较，并检查输入树未修改。图像/公式/代码的实际异步平台路径仍由原探针覆盖；实机 Obsidian 的主题、IME、悬停与编辑手感仍留人工验收。
 
 **目录与分层索引（K210）**：`agents-md-sync.test.ts` 从「代码结构索引」的 bullet 链接解析完整 `src/`、`tests/` 路径，双向检查漏登、陈旧与重复，并校验「参考文档」的具体链接；解析用例覆盖嵌套目录、同名文件、旧目录与段落隔离。`check-gates.test.ts` 覆盖迁移后的内容、编辑、画布与平台渲染触发面。`scripts/visual-node-content.mjs` 依据 HEAD 独立快照实际存在的旧/新入口生成比较页，入口不存在即报错，不回落当前源码；临时快照测试验证两种结构与缺失失败。模块边界仍由同一一级目录矩阵校验。
+
+**测试目录对齐（K211）**：模块测试按 `src` 一级组与能力子目录归档，工程契约在 `tests/contracts/`；根目录保留组合入口测试和 `setup.ts`，共享 `helpers/`、`mocks/` 与 `fixtures/` 不移动。定位方式是「被测源码目录 → 同目录测试组」，文件名与既有断言保持。Vitest 的 `tests/**/*.test.ts`、tsc 的 `tests/**/*.ts` 和宿主 alias/setup 位置已支持递归，不改匹配范围；单文件命令使用索引中的真实路径。依赖矩阵仍只约束 src，测试可组合多个模块验证行为。目录迁移校验既有测试总数与 baseline 相等，并确认根目录、Markdown 语料、CSS 隔离构建和真实 vendor 加载仍指向原文件。

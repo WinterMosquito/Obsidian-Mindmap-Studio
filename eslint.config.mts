@@ -77,7 +77,7 @@ const OFFICIAL_RESTRICTED_IMPORT_PATTERNS = [
 
 /* —— 模块依赖矩阵（K51）机械强制 ——
    **矩阵本体不在此文件**：唯一定义在 scripts/module-boundaries.mjs，由本文件
-   （生成 zone 块）与 tests/module-boundaries.test.ts（校验解析后的真实依赖图）
+   （生成 zone 块）与 tests/contracts/module-boundaries.test.ts（校验解析后的真实依赖图）
    共同消费——两处各写一份必然漂移（硬规则 5）。
 
    本规则只能看**说明符形态**：组内相对引用（`./x`）不受矩阵限制，故组内成环

@@ -1,5 +1,7 @@
 {
 	"compilerOptions": {
+		// TypeScript 只检查类型，产物由 esbuild 输出；也避免编辑器对 .mjs 报 TS5055。
+		"noEmit": true,
 		"inlineSourceMap": true,
 		"inlineSources": true,
 		"module": "ESNext",

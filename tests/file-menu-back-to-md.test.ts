@@ -7,7 +7,7 @@
  *   且**不许**顶掉无关标签页。
  *
  * 建实例方式：`Object.create(原型)` 不跑构造器（真实例要完整宿主面与 App），与
- * `tests/view-md-back-mode.test.ts` 同款处置；引擎防腐面整体桩掉（顶层会加载
+ * `tests/features/view/view-md-back-mode.test.ts` 同款处置；引擎防腐面整体桩掉（顶层会加载
  * vendor bundle，Node 环境不可加载）。`Menu` 桩须自建——官方 `Menu` 与
  * `tests/mocks/obsidian.ts` 的桩都不保留 `addItem` 回调，无法断言菜单项与点击。
  */

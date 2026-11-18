@@ -265,7 +265,7 @@ const SCENARIOS = [
 		data: {
 			// 2026-09-27（G4）：数学段必须被自绘接管（引擎 SVG 文本恒为字面）。
 			// 单行 `$$…$$` 渲染为 display 数学；无头页没有真 MathJax（替换链路由
-			// tests/math-jax.test.ts 的假件与实机 CDP 断言覆盖），此处锁定
+			// tests/platform/rendering/math/math-jax.test.ts 的假件与实机 CDP 断言覆盖），此处锁定
 			// 「识别 → 占位（与原文定界符同形）→ 接管」三段确定性行为。
 			text: '方程 $E=mc^2$、$x$ 与 $$y^2$$',
 			mdDerivedText: '方程 $E=mc^2$、$x$ 与 $$y^2$$',
@@ -280,10 +280,10 @@ const SCENARIOS = [
 			// 2026-09-28：围栏代码块必须被自绘接管（引擎 SVG 文本恒为字面围栏）。
 			// 无头页锁定「识别 → 结构（.tmm-codeblock + pre/code + 复制按钮）→
 			// 原文保真（信息行剥离、缩进保留）」；复制写剪贴板链路由
-			// tests/node-codeblock.test.ts 与视图层委托覆盖，此处不涉及剪贴板。
+			// tests/features/content/node-codeblock.test.ts 与视图层委托覆盖，此处不涉及剪贴板。
 			// 2026-10-06：新增语言类与「无运行时则停在字面」的断言（Prism 高亮需要
 			// Obsidian 的 loadPrism，头less 拿不到——token 元素本身由
-			// tests/prism-code.test.ts 的桩面覆盖）。
+			// tests/platform/rendering/code/prism-code.test.ts 的桩面覆盖）。
 			text: '示例\n```js\nconst a = 1;\n  echo hi\n```',
 			mdDerivedText: '示例\n```js\nconst a = 1;\n  echo hi\n```',
 			mdRaw: '示例\n```js\nconst a = 1;\n  echo hi\n```',
@@ -657,7 +657,7 @@ for (const { name, data } of scenarios) {
 }
 
 // —— mindmap 代码块嵌入探针（features/mindmap-codeblock，2026-10-13）——
-// 五条契约只有真实 DOM 能验（单测只覆盖纯判据，见 tests/mindmap-codeblock.test.ts）：
+// 五条契约只有真实 DOM 能验（单测只覆盖纯判据，见 tests/features/mindmap-codeblock.test.ts）：
 // ① 只读引擎**真建起来了**（.smm-node 出现 ⇒ 解析 → 图片/uid → 引擎装配整链通）；
 // ② 普通滚轮**不**被 preventDefault——引擎 Event.onMousewheel 无条件
 //    preventDefault（vendor upstream core/event/Event.js:148-150），嵌入若不拦，
@@ -1529,7 +1529,7 @@ window.setTimeout(() => {
 // 这一步验证的是「单测覆盖不到」的引擎运行时装配：HTML 是否真进了 foreignObject、
 // 引擎是否按离屏克隆测出了尺寸、以及节点内锚点点击后 event.target 是否就是锚点
 // （= view-wikilink.findAnchorInNode 的两个前置判据；其后的跳转分流已由
-// tests/view-wikilink.test.ts 覆盖）。
+// tests/features/navigation/view-wikilink.test.ts 覆盖）。
 const inlineProbe = document.createElement('pre');
 inlineProbe.id = 'inline-probe';
 document.body.appendChild(inlineProbe);
@@ -5580,7 +5580,7 @@ function checkInline(dom) {
 		);
 	}
 	// 行内数学（2026-09-27）：数学段必须被自绘接管（引擎 SVG 文本恒为字面 `$…$`），
-	// 且定界符回填进占位文本。MathJax 替换链路由 tests/math-jax.test.ts（假件）
+	// 且定界符回填进占位文本。MathJax 替换链路由 tests/platform/rendering/math/math-jax.test.ts（假件）
 	// 与实机 CDP 断言覆盖——无头页没有真 MathJax，不在此断言替换产物。
 	if (probe.mathInForeignObject !== true) {
 		failures.push(

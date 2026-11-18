@@ -16,7 +16,7 @@
  *   都是 vitest 用例，已在 `npm test` 内，不单列（避免双跑）。
  *
  * **豁免表行数对账**（附带静态核对，每次都跑）：
- * - 行数漂移：登记值 vs 实测（口径 = `tests/agents-md-sync.test.ts` 的
+ * - 行数漂移：登记值 vs 实测（口径 = `tests/contracts/agents-md-sync.test.ts` 的
  *   `countSourceLines`；`--fix-lines` 回填 `docs/agents/index.md` 的**唯一**豁免表。
  *   `docs/agents/architecture.md` 自 2026-11-09 起不再复制该表——两张表并行时只有
  *   一张受门禁，另一张必然漂移（实测同一文件曾出现 1121 / 1280 两个读数）；
@@ -85,7 +85,7 @@ if (flags.includes('--help') || flags.includes('-h')) {
 	process.exit(0);
 }
 
-/** 行数口径与 tests/agents-md-sync.test.ts 的 countSourceLines 一致（末尾换行不计行） */
+/** 行数口径与 tests/contracts/agents-md-sync.test.ts 的 countSourceLines 一致（末尾换行不计行） */
 function countSourceLines(absPath) {
 	try {
 		const lines = readFileSync(absPath, 'utf8').split('\n');
@@ -411,7 +411,7 @@ function main() {
 	console.log('实机验证（人工/AI）：obsidian reload（重载库）→ 装新 main.js → obsidian dev:errors');
 }
 
-// 只在**直接执行**时跑门禁：被 `tests/check-gates.test.ts` import 时仅提供纯函数
+// 只在**直接执行**时跑门禁：被 `tests/contracts/check-gates.test.ts` import 时仅提供纯函数
 // （buildPlan / parseExemptionRows），否则一 import 就会真跑 npm 链。
 if (
 	process.argv[1] &&

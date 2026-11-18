@@ -5,7 +5,7 @@
  * 私有触点、无法级联时的回退、独占弹出与颜色弹窗的调用形态都只在这里写一遍。
  * 放 `ui/` 而不是 `features/`：`features/relations/view-node-relation` 也要用它，而
  * `features/view/view-context-menu` 反过来依赖 `view-node-relation`（建边入口）——
- * 留在上层会成环（`tests/module-boundaries.test.ts` 断言组内无环）。
+ * 留在上层会成环（`tests/contracts/module-boundaries.test.ts` 断言组内无环）。
  */
 import {
 	Menu,

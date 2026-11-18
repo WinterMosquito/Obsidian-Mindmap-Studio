@@ -766,7 +766,7 @@ export function buildInlineSegments(raw: string): readonly InlineSegment[] {
  * 存在的理由：缓存是**长会话内存**的一个观测点——编辑弹窗的实时预览会以
  * 「每个键入一个新键」冲刷它（见上方 LRU 注释），结构不变式是
  * 「条目数 ≤ `SEGMENT_CACHE_MAX` 且键字符总量 ≤ `SEGMENT_CACHE_MAX_CHARS`」。
- * 该不变式原本只能靠代码审查，现由单测（`tests/node-inline-content.test.ts`
+ * 该不变式原本只能靠代码审查，现由单测（`tests/features/content/node-inline-content.test.ts`
  * 的「规模封顶」「字符预算封顶」例）与 `verify:visual --perf` 的负载块在
  * **真实渲染路径**上直接读。生产代码不读它。
  */

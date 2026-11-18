@@ -16,7 +16,7 @@
  *
  * 需要人工补的两步（本脚本刻意不代劳）：`docs/release-notes-<版本>.md`（release.yml 的
  * tag 门禁硬校验其存在）与 `docs/markdown-mindmap-standard.md` 附录的 manifest 版本指针
- * （`tests/docs-standard.test.ts` 硬校验其等于 `manifest.version`）。
+ * （`tests/contracts/docs-standard.test.ts` 硬校验其等于 `manifest.version`）。
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';

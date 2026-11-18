@@ -371,7 +371,7 @@ function createHandleEl(canvasEl: HTMLElement, view: MindMapViewContext): HTMLDi
  * 绑引擎侧事件：图片 hover 显隐手柄、节点拖拽期间隐藏。
  *
  * 注册顺序（`node_img_mouseenter` → `node_img_mouseleave` → `node_dragging`）是
- * `tests/feature-teardown.test.ts` 的观测面，也是「hover 驱动、无命中测试轮询」
+ * `tests/features/media/feature-teardown.test.ts` 的观测面，也是「hover 驱动、无命中测试轮询」
  * 这一形态的来源——调整顺序属于行为变更，不是重排。
  */
 function bindImageHoverEvents(view: MindMapViewContext, mindMap: MindMap): void {

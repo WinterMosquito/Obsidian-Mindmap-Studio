@@ -25,7 +25,7 @@
  * 幂等：迁移后文件已有合法布局键，`legacyMigrationPlanOf` 的幂等闸直接返回 null；
  * 不存「已迁移」标记，0.4.0 删除本文件后无任何残留状态。按项目约定，**大版本更新
  * 时删去迁移逻辑**：0.4.0 删除本文件、`main.ts` 的调用、
- * `tests/legacy-mindmap-migration.test.ts` 与 `AGENTS.md` 两处清单
+ * `tests/platform/workspace/legacy-mindmap-migration.test.ts` 与 `AGENTS.md` 两处清单
  * （见 `docs/agents/process.md`「迁移逻辑的生命周期」）。
  */
 import type { App } from 'obsidian';

@@ -157,7 +157,7 @@ const HISTORY_MIN_COUNT = 30;
  * ≥2731 节点落入下限 30 条（地板之上不再封顶——要完全封顶需引擎只存 diff，
  * 属 vendor 内部；见 K66）。
  *
- * 导出供 `--perf` 内存轮断言「预算确实应用」与 `tests/engine-history-limit.test.ts`
+ * 导出供 `--perf` 内存轮断言「预算确实应用」与 `tests/engine/engine-history-limit.test.ts`
  * 使用；生产路径经 `createMindMap`（创建期）与 `syncHistoryLimit`（会话内）调用。
  */
 export function resolveHistoryLimit(nodeCount: number): number {
