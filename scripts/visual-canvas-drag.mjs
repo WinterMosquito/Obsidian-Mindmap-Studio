@@ -33,6 +33,7 @@ async function make(extra = {}) {
   try {
     for (const enabled of [true, false]) for (const scale of [0.5, 1, 2.35]) for (const modifier of ['plain', 'ctrlKey', 'metaKey']) {
       const { map, holder, dispose } = await make();
+      assert(map.opt.dragCanvasWithModifier === false, 'unspecified engine option defaults to plain-drag pan');
       const identity = map.renderer.root;
       const original = tree(map), history = map.command.history.length;
       let dataChanges = 0; map.on('data_change', () => dataChanges++);
@@ -92,7 +93,7 @@ async function make(extra = {}) {
       dispose();
     }
     // 模式与热键变化不改变已经开始的手势。
-    const { map, holder, dispose } = await make();
+    const { map, holder, dispose } = await make({ dragCanvasWithModifier: true });
     const rect = holder.getBoundingClientRect(), from = { clientX: rect.left + 20, clientY: rect.top + 20 }, to = { clientX: from.clientX + 40, clientY: from.clientY + 30 };
     let before = view(map); gesture(map, map.svg.node, from, to);
     applyCanvasDragMode(map, false);

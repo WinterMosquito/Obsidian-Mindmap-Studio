@@ -27,6 +27,7 @@ type PrefixFn = (
 
 /** 构造时捕获引擎收到的 createNodePrefixContent（vi.hoisted 供 vi.mock 工厂引用） */
 const captured = vi.hoisted(() => ({
+	dragCanvasWithModifier: undefined as boolean | undefined,
 	prefix: undefined as
 		| ((node: MindMapNode) => { el: unknown; width: number; height: number } | null)
 		| undefined,
@@ -36,11 +37,13 @@ vi.mock('../../vendor/simple-mind-map.cjs', () => ({
 	MindMap: class {
 		resize = (): void => {};
 		constructor(options: {
+			dragCanvasWithModifier?: boolean;
 			createNodePrefixContent?: (
 				node: MindMapNode,
 			) => { el: unknown; width: number; height: number } | null;
 		}) {
 			captured.prefix = options.createNodePrefixContent;
+			captured.dragCanvasWithModifier = options.dragCanvasWithModifier;
 		}
 		addPlugin(): void {}
 		updateConfig(): void {}
@@ -147,20 +150,31 @@ const BASE_OPTIONS: CreateMindMapOptions = {
 };
 
 /** 以指定画布文档桩创建引擎，并取出被捕获的 createNodePrefixContent */
-function buildPrefix(canvasDoc: FakeDoc): PrefixFn {
+function buildPrefix(canvasDoc: FakeDoc, options = BASE_OPTIONS): PrefixFn {
 	captured.prefix = undefined;
 	const canvasEl = { ownerDocument: canvasDoc } as unknown as HTMLElement;
 	const tree = {
 		data: { text: 'root' },
 		children: [],
 	} as unknown as MindMapTreeNode;
-	createMindMap(canvasEl, tree, BASE_OPTIONS);
+	createMindMap(canvasEl, tree, options);
 	const prefix = captured.prefix;
 	if (!prefix) {
 		throw new Error('createMindMap 未注入 createNodePrefixContent');
 	}
 	return prefix;
 }
+
+describe('引擎创建的画布拖拽默认值（K216）', () => {
+	it.each([undefined, false, true])('未传或显式 %s：缺省 false，显式偏好保留', value => {
+		buildPrefix(makeDocStub(CANVAS_LABEL, canvasLog), value === undefined ? BASE_OPTIONS : { ...BASE_OPTIONS, dragCanvasWithModifier: value });
+		expect(captured.dragCanvasWithModifier).toBe(value ?? false);
+	});
+	it('只读嵌入仍不注入交互手势配置', () => {
+		buildPrefix(makeDocStub(CANVAS_LABEL, canvasLog), { ...BASE_OPTIONS, readonly: true, enableViewDrag: false, dragCanvasWithModifier: true });
+		expect(captured.dragCanvasWithModifier).toBeUndefined();
+	});
+});
 
 describe('双链文档图标：由画布 document 构造（popout 兼容）', () => {
 	it('图标 SVG 全部走 el.ownerDocument，不触碰全局 document', () => {

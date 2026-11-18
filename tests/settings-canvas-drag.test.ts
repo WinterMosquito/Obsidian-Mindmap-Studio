@@ -5,18 +5,20 @@ import { t } from '../src/core/i18n';
 import { DEFAULT_SETTINGS, diffLiveRefreshKeys, MindMapStudioSettingTab, sanitizeSettings } from '../src/settings';
 
 describe('画布热键拖拽设置', () => {
-	it('缺省开启，合法 false 可保存；坏值回退并留痕，加载不修改输入', () => {
-		expect(DEFAULT_SETTINGS.dragCanvasWithModifier).toBe(true);
-		const raw = Object.freeze({ dragCanvasWithModifier: false });
-		expect(sanitizeSettings(raw).dragCanvasWithModifier).toBe(false);
-		expect(sanitizeSettings(JSON.parse(JSON.stringify(raw)) as Record<string, unknown>).dragCanvasWithModifier).toBe(false);
+	it('缺省关闭，显式 true/false 均可保存；坏值回退并留痕，加载不修改输入', () => {
+		expect(DEFAULT_SETTINGS.dragCanvasWithModifier).toBe(false);
+		for (const value of [true, false]) {
+			const raw = Object.freeze({ dragCanvasWithModifier: value });
+			expect(sanitizeSettings(raw).dragCanvasWithModifier).toBe(value);
+			expect(sanitizeSettings(JSON.parse(JSON.stringify(raw)) as Record<string, unknown>).dragCanvasWithModifier).toBe(value);
+		}
 		for (const value of ['false', 'true', 0, 1, null, {}, []]) {
 			const report = { dropped: [] as string[] };
-			expect(sanitizeSettings({ dragCanvasWithModifier: value }, report).dragCanvasWithModifier).toBe(true);
+			expect(sanitizeSettings({ dragCanvasWithModifier: value }, report).dragCanvasWithModifier).toBe(false);
 			expect(report.dropped).toEqual(['dragCanvasWithModifier']);
 		}
 		const report = { dropped: [] as string[] };
-		expect(sanitizeSettings({}, report).dragCanvasWithModifier).toBe(true);
+		expect(sanitizeSettings({}, report).dragCanvasWithModifier).toBe(false);
 		expect(report.dropped).toEqual([]);
 	});
 
@@ -37,8 +39,8 @@ describe('画布热键拖拽设置', () => {
 		}
 		expect(t('zh', 'settings.dragCanvasWithModifier')).toBe('基于热键拖拽(若不开启则按住鼠标拖拽时移动导图)');
 		const previous = { ...host.settings };
-		tab.setControlValue('dragCanvasWithModifier', false);
-		expect(host.settings.dragCanvasWithModifier).toBe(false);
+		tab.setControlValue('dragCanvasWithModifier', true);
+		expect(host.settings.dragCanvasWithModifier).toBe(true);
 		expect([...diffLiveRefreshKeys(previous, host.settings)]).toEqual(['dragCanvasWithModifier']);
 		expect(persist).toHaveBeenCalledOnce();
 		expect(refresh).toHaveBeenCalledOnce();

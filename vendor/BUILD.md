@@ -662,6 +662,6 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
 
 **补丁 19｜`patches/canvas-drag.js` / `canvas-drag-transform.mjs` · 画布热键拖拽（K216）**
 
-原生 `useLeftKeySelectionRightKeyDrag` 只交换左/右键，View 仍拒绝 Ctrl/Meta，Select 又无条件将修饰键当框选，无法实现 Cmd/Ctrl 左拖平移且保留右键菜单。构建期 esbuild onLoad 通过唯一精确锚点改 Event/View/Select/Drag 判据（锚点漂移立即构建失败）；不改 upstream、不复制事件绑定、框选、平移或节点落点循环。`dragCanvasWithModifier` 为 boolean 时在空白 mousedown 决定 pan/select 并锁定至 mouseup；设置未指定仍保留上游语义。节点/输入起手排除画布（中键仍放行），开启时 Mod 节点拖动不建立 Drag。主视图默认开启、运行时 updateConfig，readonly 嵌入不注入此选项且不注册交互插件。两档开关均保留右键框选、中键平移与滚轮缩放。
+原生 `useLeftKeySelectionRightKeyDrag` 只交换左/右键，View 仍拒绝 Ctrl/Meta，Select 又无条件将修饰键当框选，无法实现 Cmd/Ctrl 左拖平移且保留右键菜单。构建期 esbuild onLoad 通过唯一精确锚点改 Event/View/Select/Drag 判据（锚点漂移立即构建失败）；不改 upstream、不复制事件绑定、框选、平移或节点落点循环。`dragCanvasWithModifier` 为 boolean 时在空白 mousedown 决定 pan/select 并锁定至 mouseup；设置未指定仍保留上游语义。节点/输入起手排除画布（中键仍放行），开启时 Mod 节点拖动不建立 Drag。主视图及引擎创建选项缺省关闭（空白左拖平移、Cmd/Ctrl 左拖框选），显式偏好保留、运行时 updateConfig；readonly 嵌入不注入此选项且不注册交互插件。两档开关均保留右键框选、中键平移与滚轮缩放。
 
 打包面实际使用 svg.js 3.2.0 / deepmerge 1.5.2 / eventemitter3 4.0.7 / uuid 9.0.1；禁用补丁重建得到原基线 sha256 `3c9449a2545e23dd027c7acba18c8ef903a36243c1930fb5b0ee70919603ab00`，证明第三方依赖没有额外漂移。补丁新身份见本文顶部；回归 engine-canvas-drag、settings-canvas-drag 和独立 Chrome canvas-drag 页面，现有六布局结构拖动/撤销探针继续运行。

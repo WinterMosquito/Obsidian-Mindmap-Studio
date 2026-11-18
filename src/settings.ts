@@ -142,7 +142,7 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	autoSplitMixedLinks: false,
 	exportScale: 2,
 	enableDrag: true,
-	dragCanvasWithModifier: true,
+	dragCanvasWithModifier: false,
 	exportImageFormat: 'png',
 	language: 'zh',
 };
