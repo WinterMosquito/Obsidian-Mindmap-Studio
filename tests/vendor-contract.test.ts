@@ -80,7 +80,7 @@ const mindMapPrototype = (vendor.MindMap as { prototype: Record<string, unknown>
  * 产物而不是内容改动，两者在上游行为上等价，故不作为漂移处理。
  */
 const EXPECTED_BUNDLE_SHA256 =
-	'2d5c69e330dcdc95c56e14092d5de8f63c584957f88621da8d72badff3e70433';
+	'3c9449a2545e23dd027c7acba18c8ef903a36243c1930fb5b0ee70919603ab00';
 const bundleSha256 = createHash('sha256')
 	.update(readFileSync(BUNDLE_PATH, 'utf8').replace(/\r\n/g, '\n'), 'utf8')
 	.digest('hex');

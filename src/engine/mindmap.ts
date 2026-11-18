@@ -397,7 +397,8 @@ export function createMindMap(
 				defaultInsertBelowSecondLevelNodeText: '',
 				openPerformance: performanceEnabled,
 				performanceConfig: { ...PERFORMANCE_CONFIG },
-				enableFreeDrag: options.enableDrag,
+				// 拖动只改变层级/顺序：没有有效落点时回原位，不留下未持久化的自由坐标。
+				enableFreeDrag: false,
 				readonly: isReadonly,
 				// 画布拖动（视图平移）：嵌入置 false（见 CreateMindMapOptions.enableViewDrag）
 				isDisableDrag: options.enableViewDrag === false,

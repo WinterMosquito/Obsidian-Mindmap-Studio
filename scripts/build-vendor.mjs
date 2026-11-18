@@ -37,6 +37,7 @@ const ENTRY = [
 	// ESM 求值按 import 声明顺序深度优先；引擎模块顶层只定义类，元素创建在运行时，
 	// 故此处只需保证 patch 在 bundle 任何求值之前完成原型包装。
 	"import './vendor/patches/svg-attr-shortcircuit.js';",
+	"import './vendor/patches/structural-drag.js';",
 	"export { default as MindMap } from './vendor/upstream/index.js';",
 	"export { default as DoExport } from './vendor/upstream/src/plugins/Export.js';",
 	"export { default as Select } from './vendor/upstream/src/plugins/Select.js';",
