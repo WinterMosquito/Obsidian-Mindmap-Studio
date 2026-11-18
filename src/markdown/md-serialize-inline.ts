@@ -249,15 +249,3 @@ export function imageVaultPath(data: MdNodeData, app: App | null): string | null
 	}
 	return image;
 }
-
-/**
- * 图片的「文件名显示名」（历史兼容：旧版本解析曾把文件名回退为纯图节点
- * 文本，经「插入/更换图片」同步的遗留数据仍可能命中；现行解析不再产生）。
- */
-export function imageSelfText(data: MdNodeData): string | null {
-	const target = data.mdImageTarget;
-	if (!target) {
-		return null;
-	}
-	return target.split('/').pop() ?? null;
-}

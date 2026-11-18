@@ -156,9 +156,7 @@ describe('手动「以思维导图打开」→ 升级声明（键名与语言无
 		});
 	});
 
-	it('旧布局值（如 `Mindmap: Timeline`）：搬进布局键，不重置成种子值', async () => {
-		// 2026-11-07 起 `Mindmap` 只作开关；旧值写在启用键里的布局==用户已做的选择，
-		// 升级时按 `readLegacyLayout` 接住（种子值只兜「本来就没有布局」）
+	it('旧启用值不再携带布局，手动打开时使用种子布局', async () => {
 		const { app, store, writes } = makeApp(
 			{ Mindmap: 'Timeline', mindmap: 'Timeline' },
 			null,
@@ -172,16 +170,15 @@ describe('手动「以思维导图打开」→ 升级声明（键名与语言无
 		);
 		expect(writes[0]).toEqual({
 			Mindmap: 'Mindmap',
-			'Mindmap Layout': 'timeline',
+			'Mindmap Layout': 'logical',
 		});
 		expect(store.frontmatter).toEqual({
 			Mindmap: 'Mindmap',
-			'Mindmap Layout': 'timeline',
+			'Mindmap Layout': 'logical',
 		});
 	});
 
-	it('布局键里是旧写法：归一成 kebab，不重置成种子值', async () => {
-		// 迁移会处理它，但「先手动打开、迁移还没跑到」的窗口里不能拿种子值覆盖
+	it('布局键里的旧名称无效，手动打开时使用种子布局', async () => {
 		const { app, store, writes } = makeApp(
 			{ Mindmap: 'Mindmap', 'Mindmap Layout': 'LogicalStructure' },
 			null,
@@ -195,11 +192,11 @@ describe('手动「以思维导图打开」→ 升级声明（键名与语言无
 		);
 		expect(writes[0]).toEqual({
 			Mindmap: 'Mindmap',
-			'Mindmap Layout': 'logical',
+			'Mindmap Layout': 'fishbone',
 		});
 		expect(store.frontmatter).toEqual({
 			Mindmap: 'Mindmap',
-			'Mindmap Layout': 'logical',
+			'Mindmap Layout': 'fishbone',
 		});
 	});
 

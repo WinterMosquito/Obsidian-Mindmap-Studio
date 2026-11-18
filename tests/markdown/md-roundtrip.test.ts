@@ -944,17 +944,15 @@ describe('编辑合成', () => {
 		expect(serializeMdBody(tree, null)).toBe('- [[新目标]]');
 	});
 
-	it('纯 token 节点（文本 == 图片文件名）换图后只输出新 token', () => {
-		// 历史兼容路径：旧版解析曾把文件名回退为纯图节点文本（imageSelfText 分支）；
-		// 「插入/更换图片」会同步文本为新文件名，故此处 text 与 mdImageTarget 末段同名。
+	it('图片文件名作为显式文本时保留，不再当作图片自身显示名', () => {
 		const { tree, data } = firstChild('- ![[a.png]]\n');
 		Object.assign(data, {
 			text: 'b.png',
 			image: 'assets/b.png',
 			mdImageTarget: 'assets/b.png',
 		});
-		expect(serializeMdBody(tree, null), '旧文件名不冗余重复输出').toBe(
-			'- ![[assets/b.png]]',
+		expect(serializeMdBody(tree, null), '显式说明文本保留').toBe(
+			'- b.png ![[assets/b.png]]',
 		);
 	});
 });
@@ -2394,11 +2392,11 @@ describe('视图状态（ViewStateStore）', () => {
 		const store = new ViewStateStore(() => {}, 999999);
 		store.hydrate({
 			viewState: {
-				[path]: { lineStyle: 'curve', palette: 'mint' },
+				[path]: { lineStyle: 'curve', palette: 'teal' },
 			},
 		});
 		expect(store.getLineStyle(path)).toBe('curve');
-		expect(store.getPalette(path)).toBe('mint');
+		expect(store.getPalette(path)).toBe('teal');
 		expect(store.getView(path), '未存的字段为 undefined').toBeUndefined();
 	});
 
@@ -2410,7 +2408,7 @@ describe('视图状态（ViewStateStore）', () => {
 		expect(store.getLineStyle(path), '不生效').toBeUndefined();
 		// 误用形态 2：单个 PathState（顶层含偏好键）→ 额外给防御告警
 		const other = new ViewStateStore(() => {}, 999999);
-		other.hydrate({ palette: 'mint' });
+		other.hydrate({ palette: 'teal' });
 		expect(other.getPalette(path)).toBeUndefined();
 		expect(warn).toHaveBeenCalledWith(
 			expect.stringContaining('疑似收到 viewState 子对象'),
@@ -2425,7 +2423,7 @@ describe('视图状态（ViewStateStore）', () => {
 				'dropped-string.mindmap.md': 'not-an-object',
 				'dropped-null.mindmap.md': null,
 				'dropped-unknown.mindmap.md': { foo: 1 },
-				'kept-palette.mindmap.md': { palette: 'mint' },
+				'kept-palette.mindmap.md': { palette: 'teal' },
 				'kept-linestyle.mindmap.md': { lineStyle: 'curve' },
 				// 视口形状取引擎 `getTransformData()` 的真实形态（{transform, state}
 				// 且 state 含有限 scale/x/y）——2026-10-15 起 hydrate 对 `view` 增设
@@ -2455,19 +2453,17 @@ describe('视图状态（ViewStateStore）', () => {
 			store.getLineStyle('kept-linestyle.mindmap.md'),
 			'重新 hydrate 会清空旧状态',
 		).toBeUndefined();
-		expect(store.serialize()['bad-value.mindmap.md'], '条目本身仍保留（形状合法）').toEqual({
-			palette: 42,
-		});
+		expect(store.serialize()['bad-value.mindmap.md'], '只有非法偏好的条目不保留').toBeUndefined();
 	});
 
 	it('setPalette/setLineStyle/setView 是补丁式合并，serialize 输出完整映射', () => {
 		const store = new ViewStateStore(() => {}, 999999);
-		store.setPalette(path, 'forest');
+		store.setPalette(path, 'green');
 		store.setLineStyle(path, 'curve');
 		store.setView(path, { transform: { scale: 2 } });
 		expect(store.serialize()).toEqual({
 			[path]: {
-				palette: 'forest',
+				palette: 'green',
 				lineStyle: 'curve',
 				view: { transform: { scale: 2 } },
 			},
@@ -2477,10 +2473,10 @@ describe('视图状态（ViewStateStore）', () => {
 
 	it('renameKey 迁移状态键；removeKey 清理状态键', () => {
 		const store = new ViewStateStore(() => {}, 999999);
-		store.setPalette('old.mindmap.md', 'mint');
+		store.setPalette('old.mindmap.md', 'teal');
 		store.renameKey('old.mindmap.md', 'new.mindmap.md');
 		expect(store.getPalette('old.mindmap.md')).toBeUndefined();
-		expect(store.getPalette('new.mindmap.md')).toBe('mint');
+		expect(store.getPalette('new.mindmap.md')).toBe('teal');
 		// 不存在的键：renameKey/removeKey 都是 no-op
 		store.renameKey('missing.mindmap.md', 'other.mindmap.md');
 		expect(store.serialize()['other.mindmap.md']).toBeUndefined();
@@ -2495,26 +2491,19 @@ describe('视图状态（ViewStateStore）', () => {
 			writes.push(state);
 			return Promise.resolve();
 		}, 999999);
-		store.setPalette(path, 'slate');
+		store.setPalette(path, 'grey');
 		const pending = store.flushNow();
 		expect(pending, '有未决变更 → 返回 Promise（卸载路径可持有在途写盘）').toBeInstanceOf(
 			Promise,
 		);
 		await pending;
 		expect(writes, 'persist 收到完整序列化状态').toEqual([
-			{ [path]: { palette: 'slate' } },
+			{ [path]: { palette: 'grey' } },
 		]);
 		expect(store.flushNow(), '无未决变更 → undefined').toBeUndefined();
 	});
 
-	it('旧版的 viewState[*].layout 在 hydrate 时被剔除（布局已改存文件属性）', () => {
-		const store = new ViewStateStore(() => {}, 999999);
-		const cleaned = store.hydrate({
-			viewState: { [path]: { layout: 'fishbone', lineStyle: 'curve' } },
-		});
-		expect(cleaned, '有残留 → 调用方补一次写盘').toBe(true);
-		expect(store.serialize()).toEqual({ [path]: { lineStyle: 'curve' } });
-	});
+
 });
 
 // ---------------------------------------------------------------------------

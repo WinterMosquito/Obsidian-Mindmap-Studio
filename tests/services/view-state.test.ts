@@ -50,7 +50,7 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 		const store = new ViewStateStore(() => {});
 		store.hydrate({
 			viewState: {
-				[PATH_A]: { palette: 'mint', view: VIEW },
+				[PATH_A]: { palette: 'teal', view: VIEW },
 				[PATH_B]: { lineStyle: 'curve' },
 			},
 			// 顶层设置键不属于视图状态
@@ -58,13 +58,13 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 			autoSave: true,
 		});
 
-		expect(store.getPalette(PATH_A)).toBe('mint');
+		expect(store.getPalette(PATH_A)).toBe('teal');
 		expect(store.getView(PATH_A)).toEqual(VIEW);
 		expect(store.getLineStyle(PATH_B)).toBe('curve');
 		// 设置键不进入视图状态映射
 		expect(store.getPreference('language', 'palette')).toBeUndefined();
 		expect(store.serialize()).toEqual({
-			[PATH_A]: { palette: 'mint', view: VIEW },
+			[PATH_A]: { palette: 'teal', view: VIEW },
 			[PATH_B]: { lineStyle: 'curve' },
 		});
 		expect(console.warn).not.toHaveBeenCalled();
@@ -77,15 +77,15 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 				// state 缺失 / 非对象 / scale 非有限数：前两者会让
 				// setTransformData 抛（Object.keys(undefined)），第三者恢复不出视口
 				'missing-state.mindmap.md': {
-					palette: 'mint',
+					palette: 'teal',
 					view: { transform: { scaleX: 1 } },
 				},
 				'scalar-state.mindmap.md': {
-					palette: 'mint',
+					palette: 'teal',
 					view: { state: 'x' },
 				},
 				'array-state.mindmap.md': {
-					palette: 'mint',
+					palette: 'teal',
 					view: { state: [] },
 				},
 				'nan-scale.mindmap.md': {
@@ -93,7 +93,7 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 					view: { state: { scale: Number.NaN, x: 0, y: 0 } },
 				},
 				'string-scale.mindmap.md': {
-					palette: 'mint',
+					palette: 'teal',
 					view: { state: { scale: '1', x: 0, y: 0 } },
 				},
 			},
@@ -109,8 +109,8 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 			expect(store.getView(path), `${path} 的视口应被丢弃`).toBeUndefined();
 		}
 		// 同条目的其它状态仍然生效
-		expect(store.getPalette('missing-state.mindmap.md')).toBe('mint');
-		expect(store.getPalette('scalar-state.mindmap.md')).toBe('mint');
+		expect(store.getPalette('missing-state.mindmap.md')).toBe('teal');
+		expect(store.getPalette('scalar-state.mindmap.md')).toBe('teal');
 		expect(store.getLineStyle('nan-scale.mindmap.md')).toBe('curve');
 	});
 
@@ -134,20 +134,19 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 				'null.mindmap.md': null,
 				'num.mindmap.md': 42,
 				'str.mindmap.md': 'layout',
-				[PATH_A]: { palette: 'forest' },
+				[PATH_A]: { palette: 'green' },
 			},
 		});
 
 		expect(store.serialize()).toEqual({
-			[PATH_A]: { palette: 'forest' },
+			[PATH_A]: { palette: 'green' },
 		});
 	});
 
-	it('条目内字段类型仍由 getter 兜底：lineStyle 非字符串视为未设置', () => {
+	it('非字符串偏好在加载时被丢弃', () => {
 		const store = new ViewStateStore(() => {});
 		store.hydrate({ viewState: { [PATH_A]: { lineStyle: 42 } } });
-		// 条目本身有效（含 lineStyle 键）故被保留，但 getter 不返回非字符串
-		expect(store.serialize()).toEqual({ [PATH_A]: { lineStyle: 42 } });
+		expect(store.serialize()).toEqual({});
 		expect(store.getLineStyle(PATH_A)).toBeUndefined();
 	});
 
@@ -179,7 +178,7 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 		const store = new ViewStateStore(() => {});
 		// 形如 { palette, view } 的单条状态被误当作完整 data.json：静默不加载
 		// 会让"重启后视口丢失"极难定位，必须留可观测提示
-		store.hydrate({ palette: 'mint', view: { transform: { scale: 1 } } });
+		store.hydrate({ palette: 'teal', view: { transform: { scale: 1 } } });
 		expect(store.serialize()).toEqual({});
 		expect(console.warn).toHaveBeenCalledTimes(1);
 		expect(console.warn).toHaveBeenCalledWith(
@@ -189,19 +188,19 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 
 	it('按路径为键的映射（不是完整 data.json）静默不加载，不误报提示', () => {
 		const store = new ViewStateStore(() => {});
-		store.hydrate({ [PATH_A]: { palette: 'mint' } });
+		store.hydrate({ [PATH_A]: { palette: 'teal' } });
 		expect(store.serialize()).toEqual({});
 		expect(console.warn).not.toHaveBeenCalled();
 	});
 
 	it('hydrate 幂等：重复载入先清空旧映射，不残留上一份数据', () => {
 		const store = new ViewStateStore(() => {});
-		store.hydrate({ viewState: { [PATH_A]: { palette: 'mint' } } });
-		store.hydrate({ viewState: { [PATH_B]: { palette: 'amber' } } });
+		store.hydrate({ viewState: { [PATH_A]: { palette: 'teal' } } });
+		store.hydrate({ viewState: { [PATH_B]: { palette: 'orange' } } });
 
 		expect(store.getPalette(PATH_A)).toBeUndefined();
-		expect(store.getPalette(PATH_B)).toBe('amber');
-		expect(store.serialize()).toEqual({ [PATH_B]: { palette: 'amber' } });
+		expect(store.getPalette(PATH_B)).toBe('orange');
+		expect(store.serialize()).toEqual({ [PATH_B]: { palette: 'orange' } });
 	});
 
 	it('lineStyle 是已知字段：条目被接受，getter 只返回字符串', () => {
@@ -217,77 +216,37 @@ describe('ViewStateStore.hydrate（形状校验）', () => {
 		expect(store.getLineStyle(PATH_B)).toBeUndefined();
 		expect(store.serialize()).toEqual({
 			[PATH_A]: { lineStyle: 'direct' },
-			[PATH_B]: { lineStyle: 7 },
 		});
 	});
 });
 
-describe('ViewStateStore.hydrate（逐文件布局的清理，2026-10-29）', () => {
-	it('剔除残留的 layout 键，同条目的其余字段原样保留，并报告「有清理」', () => {
-		const store = new ViewStateStore(() => {});
-		const cleaned = store.hydrate({
-			viewState: {
-				[PATH_A]: {
-					layout: 'mindMap',
-					lineStyle: 'curve',
-					palette: 'mint',
-					themeStyle: 'borderless',
-					view: VIEW,
-				},
-			},
-		});
-
-		expect(cleaned).toBe(true);
+describe('ViewStateStore.hydrate（当前字段投影）', () => {
+	it('只读取当前偏好和视口，不修改输入，也不排写盘', () => {
+		const persist = vi.fn();
+		const store = new ViewStateStore(persist);
+		const state = Object.freeze({ layout: 'mindMap', extra: true, lineStyle: 'curve', palette: 'teal', themeStyle: 'borderless', view: VIEW });
+		store.hydrate({ viewState: { [PATH_A]: state } });
 		expect(store.serialize()).toEqual({
-			[PATH_A]: {
-				lineStyle: 'curve',
-				palette: 'mint',
-				themeStyle: 'borderless',
-				view: VIEW,
-			},
+			[PATH_A]: { lineStyle: 'curve', palette: 'teal', themeStyle: 'borderless', view: VIEW },
 		});
+		expect(state.layout).toBe('mindMap');
+		expect(persist).not.toHaveBeenCalled();
 	});
 
-	it('只剩 layout 的条目被整条丢弃（不留空壳键）', () => {
+	it('未知字段和非字符串偏好不进入视图状态', () => {
 		const store = new ViewStateStore(() => {});
-		const cleaned = store.hydrate({
-			viewState: {
-				'only-layout.mindmap.md': { layout: 'fishbone' },
-				[PATH_A]: { layout: 'timeline', palette: 'slate' },
-			},
-		});
-
-		expect(cleaned).toBe(true);
-		expect(store.serialize()).toEqual({ [PATH_A]: { palette: 'slate' } });
+		store.hydrate({ viewState: {
+			'unknown.mindmap.md': { layout: 'fishbone', anything: true },
+			[PATH_A]: { lineStyle: 7, themeStyle: 'default', view: VIEW },
+		} });
+		expect(store.serialize()).toEqual({ [PATH_A]: { themeStyle: 'default', view: VIEW } });
 	});
 
-	it('没有残留时不报告清理（启动路径据此不写盘，幂等）', () => {
+	it('重新加载当前字段保持结果一致', () => {
 		const store = new ViewStateStore(() => {});
-		expect(
-			store.hydrate({ viewState: { [PATH_A]: { lineStyle: 'curve' } } }),
-		).toBe(false);
-		// 已清理过的数据再 hydrate 一次同样不报告
-		const once = new ViewStateStore(() => {});
-		once.hydrate({ viewState: { [PATH_A]: { layout: 'mindMap', palette: 'mint' } } });
-		expect(once.hydrate({ viewState: once.serialize() })).toBe(false);
-		expect(once.serialize()).toEqual({ [PATH_A]: { palette: 'mint' } });
-	});
-
-	it('布局清理不牵连 view 与三项偏好（逐字段独立）', () => {
-		const store = new ViewStateStore(() => {});
-		store.hydrate({
-			viewState: {
-				[PATH_A]: { layout: 'catalogOrganization', view: VIEW },
-				[PATH_B]: { layout: 'fishbone', themeStyle: 'default' },
-			},
-		});
-
-		expect(store.getView(PATH_A)).toEqual(VIEW);
-		expect(store.getThemeStyle(PATH_B)).toBe('default');
-		expect(store.serialize()).toEqual({
-			[PATH_A]: { view: VIEW },
-			[PATH_B]: { themeStyle: 'default' },
-		});
+		store.hydrate({ viewState: { [PATH_A]: { palette: 'teal' } } });
+		store.hydrate({ viewState: store.serialize() });
+		expect(store.serialize()).toEqual({ [PATH_A]: { palette: 'teal' } });
 	});
 });
 
@@ -303,22 +262,22 @@ describe('ViewStateStore 连线样式（按文件补丁式存取）', () => {
 		const persist = vi.fn();
 		const store = new ViewStateStore(persist, 100);
 		store.setLineStyle(PATH_A, 'direct');
-		store.setPalette(PATH_A, 'mint');
+		store.setPalette(PATH_A, 'teal');
 
 		expect(store.getLineStyle(PATH_A)).toBe('direct');
-		expect(store.getPalette(PATH_A)).toBe('mint');
+		expect(store.getPalette(PATH_A)).toBe('teal');
 
 		await vi.advanceTimersByTimeAsync(100);
 
 		expect(persist).toHaveBeenCalledTimes(1);
 		expect(persist).toHaveBeenCalledWith({
-			[PATH_A]: { lineStyle: 'direct', palette: 'mint' },
+			[PATH_A]: { lineStyle: 'direct', palette: 'teal' },
 		});
 	});
 
 	it('未设置过 lineStyle 的文件返回 undefined（调用方回落全局默认）', () => {
 		const store = new ViewStateStore(() => {});
-		store.setPalette(PATH_A, 'mint');
+		store.setPalette(PATH_A, 'teal');
 		expect(store.getLineStyle(PATH_A)).toBeUndefined();
 	});
 });
@@ -327,12 +286,12 @@ describe('ViewStateStore 配色（按文件记，非全局设置）', () => {
 	it('setPalette / getPalette 按路径读写，与连线共存于同一条目', () => {
 		const store = new ViewStateStore(() => {});
 		store.setLineStyle(PATH_A, 'curve');
-		store.setPalette(PATH_A, 'mint');
+		store.setPalette(PATH_A, 'teal');
 
-		expect(store.getPalette(PATH_A)).toBe('mint');
+		expect(store.getPalette(PATH_A)).toBe('teal');
 		expect(store.getPalette(PATH_B)).toBeUndefined();
 		expect(store.serialize()).toEqual({
-			[PATH_A]: { lineStyle: 'curve', palette: 'mint' },
+			[PATH_A]: { lineStyle: 'curve', palette: 'teal' },
 		});
 	});
 
@@ -340,12 +299,12 @@ describe('ViewStateStore 配色（按文件记，非全局设置）', () => {
 		const store = new ViewStateStore(() => {});
 		store.hydrate({
 			viewState: {
-				[PATH_A]: { palette: 'forest' },
+				[PATH_A]: { palette: 'green' },
 				[PATH_B]: { palette: 7 },
 			},
 		});
 
-		expect(store.getPalette(PATH_A)).toBe('forest');
+		expect(store.getPalette(PATH_A)).toBe('green');
 		// 条目本身有效（含 palette 键）故被保留，坏值由 getter 兜底
 		expect(store.getPalette(PATH_B)).toBeUndefined();
 	});
@@ -355,7 +314,7 @@ describe('resolveFilePreferences（按文件偏好 + 全局默认的合成）', 
 	const defaults = {
 		lineStyle: 'curve',
 		themeStyle: 'borderless',
-		palette: 'mint',
+		palette: 'teal',
 	};
 
 	it('文件无任何记录：三项全部取默认（新建导图遵循设置）', () => {
@@ -364,13 +323,13 @@ describe('resolveFilePreferences（按文件偏好 + 全局默认的合成）', 
 
 	it('文件记过的维度取记录、未记过的取默认（逐维独立，不互相牵连）', () => {
 		const out = resolveFilePreferences({
-			saved: { themeStyle: 'default', palette: 'slate' },
+			saved: { themeStyle: 'default', palette: 'grey' },
 			defaults,
 		});
 		expect(out).toEqual({
 			lineStyle: 'curve',
 			themeStyle: 'default',
-			palette: 'slate',
+			palette: 'grey',
 		});
 	});
 
@@ -395,13 +354,13 @@ describe('ViewStateStore 主题（按文件记，非全局设置）', () => {
 	it('setThemeStyle / getThemeStyle 按路径读写，与连线/配色共存于同一条目', () => {
 		const store = new ViewStateStore(() => {});
 		store.setLineStyle(PATH_A, 'curve');
-		store.setPalette(PATH_A, 'mint');
+		store.setPalette(PATH_A, 'teal');
 		store.setThemeStyle(PATH_A, 'borderless');
 
 		expect(store.getThemeStyle(PATH_A)).toBe('borderless');
 		expect(store.getThemeStyle(PATH_B)).toBeUndefined();
 		expect(store.serialize()).toEqual({
-			[PATH_A]: { lineStyle: 'curve', palette: 'mint', themeStyle: 'borderless' },
+			[PATH_A]: { lineStyle: 'curve', palette: 'teal', themeStyle: 'borderless' },
 		});
 	});
 
@@ -483,18 +442,18 @@ describe('ViewStateStore 变更与防抖写盘', () => {
 	it('renameKey 迁移状态键并排空写盘；无该键时既不动映射也不写盘', async () => {
 		const persist = vi.fn();
 		const store = new ViewStateStore(persist, 100);
-		store.hydrate({ viewState: { [PATH_A]: { palette: 'mint' } } });
+		store.hydrate({ viewState: { [PATH_A]: { palette: 'teal' } } });
 
 		store.renameKey('missing.mindmap.md', 'other.mindmap.md');
 		store.renameKey(PATH_A, PATH_B);
 
 		expect(store.getPalette(PATH_A)).toBeUndefined();
-		expect(store.getPalette(PATH_B)).toBe('mint');
+		expect(store.getPalette(PATH_B)).toBe('teal');
 
 		await vi.advanceTimersByTimeAsync(100);
 		// 无该键的 rename 不触发排空；有该键的触发一次
 		expect(persist).toHaveBeenCalledTimes(1);
-		expect(persist).toHaveBeenCalledWith({ [PATH_B]: { palette: 'mint' } });
+		expect(persist).toHaveBeenCalledWith({ [PATH_B]: { palette: 'teal' } });
 	});
 
 	it('removeKey 删除已有键后 persist 不含该键；无该键时不写盘', async () => {
@@ -502,7 +461,7 @@ describe('ViewStateStore 变更与防抖写盘', () => {
 		const store = new ViewStateStore(persist, 100);
 		store.hydrate({
 			viewState: {
-				[PATH_A]: { palette: 'mint' },
+				[PATH_A]: { palette: 'teal' },
 				[PATH_B]: { lineStyle: 'curve' },
 			},
 		});
@@ -529,14 +488,14 @@ describe('ViewStateStore 只写变化（2026-11-11）', () => {
 	it('写入与已有条目逐字相同的值：不排写盘（对象新建但内容相同）', async () => {
 		const persist = vi.fn();
 		const store = new ViewStateStore(persist, 100);
-		store.hydrate({ viewState: { [PATH_A]: { view: VIEW, palette: 'mint' } } });
+		store.hydrate({ viewState: { [PATH_A]: { view: VIEW, palette: 'teal' } } });
 
 		// 引擎每次 getTransformData 都新建对象：内容相同即视为没变化
 		store.setView(PATH_A, {
 			transform: { ...VIEW.transform },
 			state: { ...VIEW.state },
 		});
-		store.setPalette(PATH_A, 'mint');
+		store.setPalette(PATH_A, 'teal');
 
 		await vi.advanceTimersByTimeAsync(100);
 		expect(persist).not.toHaveBeenCalled();
@@ -603,8 +562,8 @@ describe('ViewStateStore.pruneMissingPaths（启动期清理离线删除的残�
 		const store = new ViewStateStore(persist, 100);
 		store.hydrate({
 			viewState: {
-				[PATH_A]: { palette: 'mint' },
-				'gone.mindmap.md': { palette: 'amber' },
+				[PATH_A]: { palette: 'teal' },
+				'gone.mindmap.md': { palette: 'orange' },
 				[PATH_B]: { lineStyle: 'curve' },
 			},
 		});
@@ -613,12 +572,12 @@ describe('ViewStateStore.pruneMissingPaths（启动期清理离线删除的残�
 
 		expect(removed).toEqual(['gone.mindmap.md']);
 		expect(store.getPalette('gone.mindmap.md')).toBeUndefined();
-		expect(store.getPalette(PATH_A)).toBe('mint');
+		expect(store.getPalette(PATH_A)).toBe('teal');
 
 		await vi.advanceTimersByTimeAsync(100);
 		expect(persist).toHaveBeenCalledTimes(1);
 		expect(persist).toHaveBeenCalledWith({
-			[PATH_A]: { palette: 'mint' },
+			[PATH_A]: { palette: 'teal' },
 			[PATH_B]: { lineStyle: 'curve' },
 		});
 	});
@@ -626,7 +585,7 @@ describe('ViewStateStore.pruneMissingPaths（启动期清理离线删除的残�
 	it('全部仍存在：不剔除、不写盘', async () => {
 		const persist = vi.fn();
 		const store = new ViewStateStore(persist, 100);
-		store.hydrate({ viewState: { [PATH_A]: { palette: 'mint' } } });
+		store.hydrate({ viewState: { [PATH_A]: { palette: 'teal' } } });
 
 		expect(store.pruneMissingPaths(() => true)).toEqual([]);
 
@@ -669,16 +628,16 @@ describe('ViewStateStore.flushNow（立即排空）', () => {
 	it('有未决变更：立即写盘并保留内存状态，原防抖不再重复触发', async () => {
 		const persist = vi.fn();
 		const store = new ViewStateStore(persist, VIEW_STATE_PERSIST_MS);
-		store.setPalette(PATH_A, 'mint');
+		store.setPalette(PATH_A, 'teal');
 
 		const flushing = store.flushNow();
 
 		// 同步即写盘（不等防抖窗口）
 		expect(persist).toHaveBeenCalledTimes(1);
-		expect(persist).toHaveBeenCalledWith({ [PATH_A]: { palette: 'mint' } });
+		expect(persist).toHaveBeenCalledWith({ [PATH_A]: { palette: 'teal' } });
 		await expect(flushing).resolves.toBeUndefined();
 		// 内存状态不因排空而清空（写盘只是落盘动作）
-		expect(store.getPalette(PATH_A)).toBe('mint');
+		expect(store.getPalette(PATH_A)).toBe('teal');
 
 		await vi.advanceTimersByTimeAsync(VIEW_STATE_PERSIST_MS * 2);
 		expect(persist).toHaveBeenCalledTimes(1); // 防抖已被取消
@@ -692,7 +651,7 @@ describe('ViewStateStore.flushNow（立即排空）', () => {
 		expect(persist).not.toHaveBeenCalled();
 
 		// 已排空后再次调用同样无未决
-		store.setPalette(PATH_A, 'mint');
+		store.setPalette(PATH_A, 'teal');
 		await store.flushNow();
 		expect(store.flushNow()).toBeUndefined();
 		expect(persist).toHaveBeenCalledTimes(1);
@@ -707,7 +666,7 @@ describe('ViewStateStore.flushNow（立即排空）', () => {
 				}),
 		);
 		const store = new ViewStateStore(persist, VIEW_STATE_PERSIST_MS);
-		store.setPalette(PATH_A, 'mint');
+		store.setPalette(PATH_A, 'teal');
 
 		const flushing = store.flushNow();
 		expect(flushing).toBeInstanceOf(Promise);
@@ -724,14 +683,14 @@ describe('ViewStateStore.flushNow（立即排空）', () => {
 		releaseWrite?.();
 		await flushing;
 		expect(settled).toBe(true);
-		expect(persist).toHaveBeenCalledWith({ [PATH_A]: { palette: 'mint' } });
+		expect(persist).toHaveBeenCalledWith({ [PATH_A]: { palette: 'teal' } });
 	});
 
 	it('透传的 Promise 拒绝也返回给调用方（写盘器的拒绝不经此处吞掉）', async () => {
 		const boom = new Error('disk unavailable');
 		const persist = vi.fn(() => Promise.reject(boom));
 		const store = new ViewStateStore(persist, VIEW_STATE_PERSIST_MS);
-		store.setPalette(PATH_A, 'mint');
+		store.setPalette(PATH_A, 'teal');
 
 		await expect(store.flushNow()).rejects.toBe(boom);
 	});

@@ -326,12 +326,12 @@ describe('getThemeConfig（配色：色相方案，与明暗 / 边框三维正�
 	 * （否则用户以为配色丢了）。
 	 */
 	it('旧配色 id 读兼容：六个别名逐一映射到新 id，脏值仍回落 default', () => {
-		expect(normalizePalette('mint')).toBe('teal');
-		expect(normalizePalette('amber')).toBe('orange');
-		expect(normalizePalette('rose')).toBe('crimson');
-		expect(normalizePalette('wisteria')).toBe('purple');
-		expect(normalizePalette('forest')).toBe('green');
-		expect(normalizePalette('slate')).toBe('grey');
+		expect(normalizePalette('teal')).toBe('teal');
+		expect(normalizePalette('orange')).toBe('orange');
+		expect(normalizePalette('crimson')).toBe('crimson');
+		expect(normalizePalette('purple')).toBe('purple');
+		expect(normalizePalette('green')).toBe('green');
+		expect(normalizePalette('grey')).toBe('grey');
 		// 新 id 原样、未知值回退
 		expect(normalizePalette('teal')).toBe('teal');
 		expect(normalizePalette('nope')).toBe('default');

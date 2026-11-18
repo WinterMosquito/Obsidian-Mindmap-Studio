@@ -19,7 +19,6 @@ import {
 	isMindMapPropertyKey,
 	layoutIdOfPropertyValue,
 	layoutPropertyValue,
-	legacyLayoutIdOfPropertyValue,
 	MINDMAP_DEFAULT_LAYOUT_VALUE,
 	MINDMAP_DISABLED_VALUE,
 	MINDMAP_ENABLED_VALUE,
@@ -28,8 +27,6 @@ import {
 	MINDMAP_LAYOUT_VALUES,
 	MINDMAP_PROPERTY_KEY,
 	normalizeLayoutId,
-	readLegacyLayout,
-	readLegacyMindMapLayout,
 	readMindMapLayout,
 	setMindMapDisabled,
 	setMindMapEnabled,
@@ -206,7 +203,6 @@ describe('layoutIdOfPropertyValue / normalizeLayoutId / layoutPropertyValue', ()
 		const protoKeys = ['constructor', 'toString', '__proto__', 'valueOf'];
 		for (const key of protoKeys) {
 			expect(layoutIdOfPropertyValue(key), key).toBeNull();
-			expect(legacyLayoutIdOfPropertyValue(key), key).toBeNull();
 			expect(normalizeLayoutId(key), key).toBeNull();
 			expect(layoutPropertyValue(key), key).toBe(MINDMAP_DEFAULT_LAYOUT_VALUE);
 			expect(
@@ -236,58 +232,13 @@ describe('layoutIdOfPropertyValue / normalizeLayoutId / layoutPropertyValue', ()
 	});
 });
 
-describe('旧值兼容读口（嵌入指令 / 升级入口）', () => {
-	it('legacyLayoutIdOfPropertyValue：新 kebab 与旧 PascalCase / 连字符都认', () => {
-		expect(legacyLayoutIdOfPropertyValue('logical')).toBe('logicalStructure');
-		expect(legacyLayoutIdOfPropertyValue('LogicalStructure')).toBe(
-			'logicalStructure',
-		);
-		expect(legacyLayoutIdOfPropertyValue('logical-structure')).toBe(
-			'logicalStructure',
-		);
-		expect(legacyLayoutIdOfPropertyValue('catalog organization')).toBe(
-			'catalogOrganization',
-		);
-		expect(legacyLayoutIdOfPropertyValue('Fishbone')).toBe('fishbone');
-		// 未知值仍 fail-closed（嵌入指令据此报 invalidValue）
-		expect(legacyLayoutIdOfPropertyValue('%%备注%%')).toBeNull();
-		expect(legacyLayoutIdOfPropertyValue(null)).toBeNull();
-	});
-
-	it('readLegacyLayout：启用键里的旧布局值 → 引擎 id（排除启用值 Mindmap）', () => {
-		expect(readLegacyLayout({ Mindmap: 'Timeline' })).toBe('timeline');
-		expect(readLegacyLayout({ mindmap: 'OrganizationStructure' })).toBe(
-			'organizationStructure',
-		);
-		// `Mindmap` 是新契约的开关，不承载布局（旧契约下它才是思维导图布局，
-		// 那一层语义只归启动迁移判）
-		expect(readLegacyLayout({ Mindmap: 'Mindmap' })).toBeNull();
-		expect(readLegacyLayout({ Mindmap: 'Markdown' })).toBeNull();
-		expect(readLegacyLayout({ Mindmap: '笔记' })).toBeNull();
-		expect(readLegacyLayout({})).toBeNull();
-		expect(readLegacyLayout(null)).toBeNull();
-	});
-
-	it('readLegacyMindMapLayout：布局键里的旧写法 → 引擎 id（认不出则 null）', () => {
-		expect(
-			readLegacyMindMapLayout({ 'Mindmap Layout': 'LogicalStructure' }),
-		).toBe('logicalStructure');
-		expect(
-			readLegacyMindMapLayout({ 'mindmap-layout': 'catalog organization' }),
-		).toBe('catalogOrganization');
-		// 新写法同样能读（升级入口只在本读口为 null 时才写种子值，
-		// 故这里不能因为「已经是 kebab」就返回 null）
-		expect(readLegacyMindMapLayout({ 'Mindmap Layout': 'timeline' })).toBe(
-			'timeline',
-		);
-		// 认不出 / 无键 / 空值：保持原样，交给读侧 fail-closed
-		expect(
-			readLegacyMindMapLayout({ 'Mindmap Layout': 'toString' }),
-		).toBeNull();
-		expect(readLegacyMindMapLayout({ 'Mindmap Layout': '' })).toBeNull();
-		expect(readLegacyMindMapLayout({ Mindmap: 'Timeline' })).toBeNull();
-		expect(readLegacyMindMapLayout(null)).toBeNull();
-	});
+describe('当前布局格式', () => {
+	it.each(['LogicalStructure', 'logical-structure', 'OrganizationStructure', 'CatalogOrganization'])(
+		'文件属性不再识别旧名称 %s', (value) => {
+			expect(layoutIdOfPropertyValue(value)).toBeNull();
+			expect(readMindMapLayout({ 'Mindmap Layout': value })).toBeNull();
+		},
+	);
 });
 
 describe('键名谓词', () => {

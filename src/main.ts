@@ -47,11 +47,6 @@ import type { StatusBarService } from './services/status-bar';
 import { updateStatusBar } from './features/view/view-status';
 import { pruneViewSwitchNoise } from './platform/workspace/nav-history';
 import { MindMapAutoOpener } from './platform/workspace/mindmap-auto-open';
-// 【0.4.0 删除】一次性迁移：旧属性值 → Mindmap + Mindmap Layout
-import {
-	LEGACY_MIGRATION_DELAY_MS,
-	migrateLegacyMindmapProperties,
-} from './platform/workspace/legacy-mindmap-migration';
 
 export default class MindMapStudioPlugin extends Plugin {
 	override settings!: MindMapStudioSettings;
@@ -311,21 +306,6 @@ export default class MindMapStudioPlugin extends Plugin {
 				return;
 			}
 			opener.scheduleStartupRestore();
-			// 【一次性迁移，0.4.0 删除】旧属性值 → `Mindmap: Mindmap` +
-			// `Mindmap Layout: <kebab>`。延迟执行，避开启动恢复的 I/O；失败只留痕
-			// （下次启动重试），不打断启动。迁移后文件不再命中，无「已迁移」标记。
-			window.setTimeout(() => {
-				if (this.unloaded) {
-					return;
-				}
-				void migrateLegacyMindmapProperties(this.app).then((count) => {
-					if (count > 0) {
-						console.debug(
-							`已迁移 ${count} 个旧格式导图属性（0.4.0 将删除迁移逻辑）`,
-						);
-					}
-				});
-			}, LEGACY_MIGRATION_DELAY_MS);
 		});
 	}
 
@@ -482,15 +462,8 @@ export default class MindMapStudioPlugin extends Plugin {
 		const raw = data as Record<string, unknown>;
 		// hydrate 期望收到「整个 data.json 对象」（内部读取 data['viewState']），
 		// 而非视图状态对象本身；传错会导致 viewState 映射从未载入，重启后视口丢失。
-		const cleanedViewState = this.viewState.hydrate(raw);
+		this.viewState.hydrate(raw);
 		delete raw.viewState;
-		// 旧版把逐文件布局记在 `viewState[*].layout`；布局现在只存在于文件属性，
-		// 残留键已在 hydrate 里剔除。**只在确实有残留时**补一次写盘：写盘是整棵
-		// viewState 替换（合并写按顶层键覆盖），无残留时写会把启动变成一次多余的
-		// 磁盘 IO。幂等：清理后第二次启动 `cleanedViewState` 为 false。
-		if (cleanedViewState) {
-			void this.dataWriter.write({ viewState: this.viewState.serialize() });
-		}
 		// 坏值静默回退会让用户看到「设置没生效」——汇总留痕一次（进程内）
 		const report: SettingsSanitizeReport = { dropped: [] };
 		this.settings = sanitizeSettings(raw, report);

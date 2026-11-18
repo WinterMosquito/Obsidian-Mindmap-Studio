@@ -16,6 +16,9 @@ import { describe, expect, it } from 'vitest';
 import {
 	canOpenInObsidian,
 	DEFAULT_LINE_STYLE,
+	DEFAULT_PALETTE,
+	normalizePalette,
+	PALETTE_OPTIONS,
 	LINE_STYLE_OPTIONS,
 	normalizeLineStylePreference,
 	shouldEnablePerformanceMode,
@@ -125,5 +128,16 @@ describe('连线样式选项（两态：折线在上、默认折线）', () => {
 		}
 		expect(normalizeLineStylePreference('curve')).toBe('curve');
 		expect(normalizeLineStylePreference('straight')).toBe('straight');
+	});
+});
+
+describe('配色名称只使用当前值域', () => {
+	it.each(['mint', 'amber', 'rose', 'wisteria', 'forest', 'slate'])(
+		'旧配色 %s 不再映射到新名称', (value) => {
+			expect(normalizePalette(value)).toBe(DEFAULT_PALETTE);
+		},
+	);
+	it.each(PALETTE_OPTIONS)('当前配色 $value 原样保留', ({ value }) => {
+		expect(normalizePalette(value)).toBe(value);
 	});
 });

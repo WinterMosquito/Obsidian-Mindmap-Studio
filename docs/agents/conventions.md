@@ -1,7 +1,9 @@
-# 关键约定 K1–K212（详录）
+# 关键约定 K1–K213（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
+
+> 历史数据兼容的旧裁决（含 K187）已由 K213 取代；旧条目保留决策历史，当前实现见 decisions.md。
 
 ## 关键约定
 
@@ -2254,3 +2256,5 @@
 - [K211] **测试按主要被测职责对齐源码目录，公共测试资源独立保留**：`tests/{domain,core,links,markdown,media,engine,platform,ui,services,features}/` 跟随源码模块与能力子目录，保留现有测试文件名与断言，不强求一源文件一测试。创建、文件菜单、语言刷新与设置的组合入口测试留在根目录；`tests/contracts/` 集中索引、文档、模块边界、vendor、构建、门禁和许可证解析校验。`setup.ts`、`helpers/`、`mocks/`、`fixtures/` 保持独立位置，Vitest 与 tsc 的递归匹配沿用。迁移必须校正静态/动态/type import、vi.mock/importActual、真实 vendor createRequire、相对 URL、从测试目录推算的仓库根与 fixture 位置；不通过删断言或换假件绕开路径错误。分层索引同步所有精确路径，当前开发文档与工具提示同步命令，历史发布说明与账本保留当时路径。
 
 - [K212] **显式加载的工具配置归 config，执行脚本归 scripts**：esbuild、Stylelint、Knip 配置集中于 `config/`，版本同步脚本在 `scripts/version-bump.mjs`；tsconfig、ESLint、Vitest 与 npm/编辑器约定入口留根目录以保自动发现。npm 命令显式指定迁移后的路径。esbuild 输入/输出相对配置目录，`absWorkingDir` 固定该目录，根产物文件名与 dev watch 行为保持；版本脚本 ROOT 取自身目录的上一级，不依赖 cwd。Stylelint ignoreFiles 相对 config 指向根目录 coverage/node_modules；Knip 扫描范围仍以工作区根为基准，显式登记 esbuild/Stylelint 配置，使配置依赖和生产入口继续被分析。工具配置变化必须触发相应门禁：CSS 检查配置 → lint:css；Knip/构建入口/package.json → check:dead-code；esbuild → 原视觉验证。迁移验证用真实隔离构建/watch、Stylelint 忽略与版本同步/幂等/非法版本回归，不在工作区执行 npm version，也不改发布版本。工具文件清单在 index 分层 bullet，历史记录保持当时路径。
+
+- [K213] **允许破坏性演进，仅实现当前数据契约**：用户明确授权移除历史数据兼容，准备后续独立品牌。删除启动旧属性迁移模块及调用/测试，删除旧布局值表与三个旧读口；属性与嵌入统一读取当前短 id，内部引擎 id 转换继续使用现值表。删除旧配色 id 映射，旧名称回退默认；数值设置只收有限 number。视图加载只投影 lineStyle/palette/themeStyle 字符串与可用 view，不变更输入、不返回迁移标志、不排启动写盘；未知字段不进入当前状态。删除图片文件名显示名的特殊兜底，显式同名文本按说明保留。旧 Markdown 不自动接管/迁移，手动打开只保留当前合法布局，否则取种子值；旧嵌入名称按非法指令处理。本文历史 K187 与旧兼容说明只留历史，不再作为实现要求。新格式文件的编辑、Markdown 保真、自动保存/并发/撤销与宿主适配保持；此批不更名、不切存储格式、不自动修改发布版本，也不代替用户批量改写历史库。

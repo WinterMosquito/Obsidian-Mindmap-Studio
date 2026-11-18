@@ -78,7 +78,7 @@ import {
 	measureContentFitToWidth,
 	resizeMindMap,
 } from '../engine/mindmap';
-import { legacyLayoutIdOfPropertyValue } from '../domain/mindmap-property';
+import { layoutIdOfPropertyValue } from '../domain/mindmap-property';
 import { parseMdOutline } from '../markdown/md-outline';
 import { ensureUniqueUids } from '../markdown/markdown';
 import {
@@ -217,9 +217,7 @@ export function parseEmbedLayoutDirective(source: string): {
 	if (raw === '') {
 		return { source, layoutId: null };
 	}
-	// 旧值兼容：正文里的 `%%layout: LogicalStructure%%` 无人代迁（迁移只改 frontmatter），
-	// 旧 PascalCase / 连字符写法继续认，免得存量嵌入块静默回落到默认布局。
-	const layoutId = legacyLayoutIdOfPropertyValue(raw);
+	const layoutId = layoutIdOfPropertyValue(raw);
 	// 只删指令行本身：其前的空行是用户排版，保留
 	const rest = [...lines.slice(0, index), ...lines.slice(index + 1)];
 	const stripped = rest.join('\n');

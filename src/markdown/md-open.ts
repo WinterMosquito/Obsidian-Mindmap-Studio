@@ -23,8 +23,6 @@ import { type Language } from '../core/i18n';
 import {
 	isMindMapDisabled,
 	isMindMapEnabled,
-	readLegacyLayout,
-	readLegacyMindMapLayout,
 	readMindMapLayout,
 	setMindMapDisabled,
 	setMindMapEnabled,
@@ -151,11 +149,8 @@ async function downgradeMindMapProperty(
  * 把文件提升为「启用插件」（**持久升级**）：手动把任一篇普通笔记开为导图后的
  * 副作用——让它在 frontmatter 里正式成为导图，下次自动打开。
  *
- * 写 `Mindmap: Mindmap`；**布局键缺失或非法时**才补布局，取值顺序：① 旧契约写在
- * 启用键里的布局值（`Mindmap: Timeline`，见 `readLegacyLayout`）；② 布局键里的
- * 旧写法（`Mindmap Layout: LogicalStructure`，见 `readLegacyMindMapLayout`）；
- * ③ 种子值（设置「默认布局」对应的引擎 id，由调用方传入——`md-open` 不引
- * settings）。已有合法布局原样保留：升级动作不能把用户已选的布局重置成默认值。
+ * 写 `Mindmap: Mindmap`；布局键缺失或非法时写入设置提供的种子布局。
+ * 已有合法布局原样保留；旧启用值或布局名称不再转换。
  *
  * 走官方 `processFrontMatter`，键名与语言无关。**已启用且布局合法时不改写**
  * （免每次打开重序列化 YAML）；回调内再做一次权威判据兜住缓存滞后。
@@ -175,19 +170,10 @@ async function upgradeMindMapProperty(
 		await app.fileManager.processFrontMatter(
 			file,
 			(frontmatter: Record<string, unknown>) => {
-				// 旧布局值有两个落点，都必须在写之前读：
-				// ① 旧契约把布局写在启用键里（`Mindmap: Timeline`）——启动迁移会搬走它，
-				//    但迁移尚未跑到时（刚同步进来的文件）不能把用户的布局选择换成种子值，
-				//    且 `setMindMapEnabled` 会覆盖这一格；
-				// ② 手改成布局键却还是旧写法（`Mindmap Layout: LogicalStructure`）——
-				//    `readMindMapLayout` 只认 kebab，不接住同样会被种子值覆盖。
-				const legacy =
-					readLegacyLayout(frontmatter) ??
-					readLegacyMindMapLayout(frontmatter);
 				setMindMapEnabled(frontmatter);
 				// 保留文件已声明的布局；缺失/非法才落旧值/种子值
 				if (readMindMapLayout(frontmatter) === null) {
-					setMindMapLayout(frontmatter, legacy ?? seedLayout);
+					setMindMapLayout(frontmatter, seedLayout);
 				}
 			},
 		);

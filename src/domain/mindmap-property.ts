@@ -18,16 +18,8 @@
  * 写侧恒写标准键名（`Mindmap` / `Mindmap Layout`）与标准值（`Mindmap` / kebab id），
  * 与界面语言完全无关。
  *
- * 判据与写法分离：所有「值 → 布局 id」的判定只在 `layoutIdOfPropertyValue`
- * （新契约，只认 kebab）与其旧值兼容版 `legacyLayoutIdOfPropertyValue` 两处，且共用
- * 同一张反向表——视图与嵌入指令按「数据是新写的还是存量旧值」各取其一（硬规则 5）。
- *
- * 旧值读口只有三个消费面，全部是「读已经写进用户数据里的旧值」：
- * - 嵌入指令 `%%layout: LogicalStructure%%`（正文里的指令，迁移不碰正文）；
- * - 启动迁移（`platform/workspace/legacy-mindmap-migration`，旧属性块 → 新契约）；
- * - 「以导图打开」的升级入口（`markdown/md-open`，手动把普通笔记开为导图）。
- * 新契约的属性读侧（`isMindMapEnabled` / `readMindMapLayout`）**绝不**认旧值：
- * 文件里只允许出现 kebab，放宽会让脏值在文件里长期有效（2026-11-08 起）。
+ * 文件属性与嵌入指令统一经 `layoutIdOfPropertyValue` 读取当前短 id。
+ * 不读取或迁移历史布局名称；内部引擎 id 的转换仍由 `normalizeLayoutId` 负责。
  */
 
 /** 启用信号键名（唯一键；比对时大小写/分隔符不敏感） */
@@ -88,16 +80,7 @@ function normalizePropertyToken(value: string): string {
 	return value.trim().toLowerCase().replace(/[-_\s]/g, '');
 }
 
-/**
- * **无原型**查表（`Object.create(null)`）。
- *
- * 下面三张表的键都直接来自用户数据（属性值 / 归一后的 token），而对象字面量会继承
- * `Object.prototype`：`constructor` / `toString` / `valueOf` 这类键会「查到」原型方法，
- * 于是 `normalizeLayoutId('toString')` 把一个函数当成布局 id 返回、`Mindmap Layout:
- * constructor` 也能读出「合法布局」。这与本文件「未知值一律 null（fail-closed）」的
- * 契约相反，且脏值会一路传进引擎与 `processFrontMatter` 的写入值。
- * 故**凡以用户数据为键的表**都在此构造，读侧才有资格只说 `?? null`。
- */
+/** 用户输入作键时使用无原型表，防止 constructor/toString 命中继承属性。 */
 function createLookup<T>(
 	entries: Iterable<readonly [string, T]>,
 ): Readonly<Record<string, T>> {
@@ -121,23 +104,6 @@ const LAYOUT_ID_BY_TOKEN: Readonly<Record<string, MindMapLayoutId>> = createLook
 	),
 );
 
-/**
- * 旧契约布局值（≤0.3.x 的 `Mindmap: <PascalCase>`）→ 引擎 id。
- *
- * 键是归一后的 token，故 `LogicalStructure` / `logical-structure` / `logical structure`
- * 命中同一项。`Timeline` / `Fishbone` / `Mindmap` 归一后与新 kebab 值同形，不必登记。
- *
- * **只服务「读旧数据」的两个入口**（新契约的属性读侧一律只认 kebab）：
- * - 嵌入指令 `%%layout: LogicalStructure%%`——写在正文里，迁移不碰它；
- * - 「以导图打开」的升级入口（`Mindmap: Timeline` 里的旧布局值）。
- */
-const LEGACY_LAYOUT_ID_BY_TOKEN: Readonly<Record<string, MindMapLayoutId>> =
-	createLookup<MindMapLayoutId>([
-		['logicalstructure', 'logicalStructure'],
-		['organizationstructure', 'organizationStructure'],
-		['catalogorganization', 'catalogOrganization'],
-	]);
-
 /** 是否为启用信号键名（`Mindmap`，大小写/分隔符不敏感；不看值） */
 export function isMindMapPropertyKey(key: string): boolean {
 	return normalizePropertyToken(key) === NORMALIZED_PROPERTY_KEY;
@@ -160,11 +126,6 @@ function firstPropertyValue(value: unknown): string | null {
 	// 免得 `any` 顺着首项渗进后续判定（lint 的 no-unsafe-assignment 也会拦）
 	const items = Array.isArray(value) ? (value as unknown[]) : [value];
 	const first: unknown = items[0];
-	// 标量按字符串处理（YAML 的 42 / true 也走同一条归一）；
-	// 对象 / 嵌套数组不是有意义的属性值 ⇒ 视同无值（fail-closed）
-	if (typeof first === 'number' || typeof first === 'boolean') {
-		return String(first);
-	}
 	if (typeof first !== 'string') {
 		return null;
 	}
@@ -184,8 +145,7 @@ function findKey(
  * 属性值 → 引擎 layout id；未知值与无值都返回 `null`（fail-closed）。
  *
  * **只收新契约的 kebab 值**：文件属性里的布局键由插件写入，恒为 kebab；读侧放宽会让
- * 脏值（旧 PascalCase）在文件里长期有效。需要认旧写法的两个入口走
- * `legacyLayoutIdOfPropertyValue`。
+ * 未知值在文件里长期有效；内部引擎 id 只在调用入口转换。
  */
 export function layoutIdOfPropertyValue(value: unknown): MindMapLayoutId | null {
 	const first = firstPropertyValue(value);
@@ -193,24 +153,6 @@ export function layoutIdOfPropertyValue(value: unknown): MindMapLayoutId | null 
 		return null;
 	}
 	return LAYOUT_ID_BY_TOKEN[normalizePropertyToken(first)] ?? null;
-}
-
-/**
- * 旧值兼容的「值 → 布局 id」：在 kebab 之外再认旧契约的 PascalCase / 连字符写法。
- *
- * 两个消费面都是**读已经写进用户数据里的旧值**，不产出新写法的依据：
- * - 嵌入指令 `%%layout: LogicalStructure%%`（正文里的指令，一次性迁移不碰正文）；
- * - 「以导图打开」的升级入口（`Mindmap: Timeline` 这类旧声明里的布局值）。
- */
-export function legacyLayoutIdOfPropertyValue(
-	value: unknown,
-): MindMapLayoutId | null {
-	const first = firstPropertyValue(value);
-	if (first === null) {
-		return null;
-	}
-	const token = normalizePropertyToken(first);
-	return LEGACY_LAYOUT_ID_BY_TOKEN[token] ?? LAYOUT_ID_BY_TOKEN[token] ?? null;
 }
 
 /**
@@ -305,57 +247,6 @@ export function readMindMapLayout(
 		return null;
 	}
 	return layoutIdOfPropertyValue(record[key]);
-}
-
-/**
- * 旧契约的布局声明：`Mindmap: Timeline` 这类写在**启用键**里的旧布局值 → 引擎 id。
- *
- * 只服务「以导图打开」的升级入口——迁移跑过之后旧值就不在文件里了。
- * **排除启用值 `Mindmap` 本身**：它的归一口径与 kebab `mindmap` 同形，但在新契约里
- * 是开关、不承载布局；「旧契约下它就是思维导图布局」这件事只归迁移侧判（那里的
- * 幂等闸保证「已是新契约的文件必定已有布局键」）。
- */
-export function readLegacyLayout(frontmatter: unknown): MindMapLayoutId | null {
-	if (!frontmatter || typeof frontmatter !== 'object') {
-		return null;
-	}
-	const record = frontmatter as Record<string, unknown>;
-	const key = findKey(record, isMindMapPropertyKey);
-	if (key === undefined) {
-		return null;
-	}
-	const first = firstPropertyValue(record[key]);
-	if (first === null || normalizePropertyToken(first) === NORMALIZED_ENABLED_VALUE) {
-		return null;
-	}
-	// kebab 也算：旧文件里手写成 `Mindmap: logical` 的布局值同样是「写错了键」，
-	// 升级时应搬进布局键而不是被丢成种子值。
-	return legacyLayoutIdOfPropertyValue(first);
-}
-
-/**
- * **布局键**里的旧写法（`Mindmap Layout: LogicalStructure`）→ 引擎 id。
- *
- * 与 `readMindMapLayout` 的分工：那个是新契约的读口（只认 kebab，见上方头注释），
- * 本函数只服务「把已有文件改写进新契约」的两处：
- * - 启动迁移：手改成新键却没换值的文件，值归一成 kebab（否则读侧 fail-closed
- *   会让用户选过的布局静默回落到默认布局）；
- * - 「以导图打开」的升级入口：迁移尚未跑到时不能拿种子值覆盖用户旧选择。
- *
- * 认不出的值返回 `null`——调用方**保持原样**（`toString` / 手写中文都不改写）。
- */
-export function readLegacyMindMapLayout(
-	frontmatter: unknown,
-): MindMapLayoutId | null {
-	if (!frontmatter || typeof frontmatter !== 'object') {
-		return null;
-	}
-	const record = frontmatter as Record<string, unknown>;
-	const key = findKey(record, isMindMapLayoutKey);
-	if (key === undefined) {
-		return null;
-	}
-	return legacyLayoutIdOfPropertyValue(record[key]);
 }
 
 /**

@@ -43,7 +43,6 @@ import {
 } from './md-serialize-anchors';
 import {
 	hasImageMeta,
-	imageSelfText,
 	imageVaultPath,
 	rawHasImageFeature,
 	rawImageMatches,
@@ -620,9 +619,9 @@ function composeFirstLine(data: MdNodeData, app: App | null): string {
 }
 
 /**
- * 纯 token 节点判定：节点文本**恰为**其链接/图片自身的显示名（不含换行）。
+ * 纯 token 节点判定：节点文本**恰为**其链接自身的显示名（不含换行）。
  *
- * 语义：这类节点的「文本」不是描述文字，而是 token 的可见名——换图/换链后只写
+ * 语义：这类节点的「文本」不是描述文字，而是 token 的可见名——换链后只写
  * 新 token（不重复输出旧名）；编辑它等于**改别名**（K6，回写见
  * domain/wiki-display.editedWikilinkAlias）。编辑弹窗据此选模式：别名模式 vs
  * 原文模式（见 view-node-actions.editNodeText）——**两个判定必须同源**，
@@ -633,8 +632,7 @@ export function isPureLinkNode(data: MdNodeData): boolean {
 	return (
 		!text.includes('\n') &&
 		text.trim() !== '' &&
-		(nodeLinkDisplay(data) === text.trim() ||
-			imageSelfText(data) === text.trim())
+		nodeLinkDisplay(data) === text.trim()
 	);
 }
 

@@ -144,20 +144,13 @@ describe('parseEmbedLayoutDirective（块体首行布局指令）', () => {
 		).toBe('fishbone');
 	});
 
-	it('旧契约值（正文指令无人代迁）：PascalCase / 连字符写法继续认', () => {
-		// 一次性迁移只改 frontmatter，正文里的 `%%layout: …%%` 必须自己兜住
-		expect(
-			parseEmbedLayoutDirective('%%LAYOUT: logical-structure%%\n# A').layoutId,
-		).toBe('logicalStructure');
-		expect(
-			parseEmbedLayoutDirective('%%layout: OrganizationStructure%%\n# A')
-				.layoutId,
-		).toBe('organizationStructure');
-		expect(
-			parseEmbedLayoutDirective('%%layout: CatalogOrganization%%\n# A')
-				.layoutId,
-		).toBe('catalogOrganization');
-	});
+	it.each(['logical-structure', 'OrganizationStructure', 'CatalogOrganization'])(
+		'旧布局指令 %s 被判为非法，交给默认布局', (value) => {
+			expect(parseEmbedLayoutDirective(`%%layout: ${value}%%\n# A`)).toEqual({
+				source: '# A', layoutId: null, invalidValue: value,
+			});
+		},
+	);
 
 	it('允许指令前有空行，且空行原样保留（只删指令行本身）', () => {
 		expect(
@@ -449,7 +442,7 @@ describe('跨文件契约', () => {
 			layout: 'logicalStructure',
 			lineStyle: 'auto',
 			themeStyle: 'borderless',
-			palette: 'amber',
+			palette: 'orange',
 		});
 
 		expect(calls).toEqual([
@@ -458,7 +451,7 @@ describe('跨文件契约', () => {
 				'logicalStructure',
 				'auto',
 				'borderless',
-				'amber',
+				'orange',
 			),
 		]);
 	});

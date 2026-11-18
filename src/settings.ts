@@ -59,8 +59,7 @@ export interface MindMapStudioSettings {
 	 */
 	defaultLayout: string;
 	/**
-	 * 默认连线样式：`straight`（折线）/ `curve`（曲线）；旧 `auto` / `direct`
-	 * 在读取侧归一为折线（见 `core/constants.normalizeLineStylePreference`）。
+	 * 默认连线样式：`straight`（折线）/ `curve`（曲线）；非法值回退折线。
 	 */
 	defaultLineStyle: string;
 	/** 主题（明暗配色）：default＝跟随 Obsidian / light / dark */
@@ -121,7 +120,7 @@ export interface MindMapStudioSettings {
 export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	defaultLayout: 'logicalStructure',
 	// 折线（正交折线）：2026-10-21 用户裁决——连线样式收敛为折线/曲线两态，
-	// 新建默认折线；存量的 auto/direct 在读取侧归一为折线（见 constants 归一函数）
+	// 新建默认折线；非法值在读取侧回退为折线（见 constants 归一函数）
 	defaultLineStyle: DEFAULT_LINE_STYLE,
 	defaultTheme: 'default',
 	// 新建导图默认**有边框**（2026-11-05 改回：字号 / 内边距调整后，无边框档
@@ -203,28 +202,13 @@ export function sanitizeSettings(
 		}
 		return undefined;
 	};
-	/**
-	 * 数值候选：数字原型，或**非空白**数字字符串（历史 data.json 的 `"2"` / `" 3 "`）；
-	 * 其余一律 NaN（由调用方判定回退）。拆出来是为了让 `pickNumber` 只表达
-	 * 「缺失 → 跳过、非有限 → 留痕回退」这一层语义。
-	 */
-	const toNumber = (value: unknown): number => {
-		if (typeof value === 'number') {
-			return value;
-		}
-		if (typeof value === 'string' && value.trim() !== '') {
-			return Number(value);
-		}
-		return Number.NaN;
-	};
 	const pickNumber = (key: keyof MindMapStudioSettings): number | undefined => {
 		const value = raw[key];
 		if (value === undefined) {
 			return undefined;
 		}
-		const num = toNumber(value);
-		if (Number.isFinite(num)) {
-			return num;
+		if (typeof value === 'number' && Number.isFinite(value)) {
+			return value;
 		}
 		drop(key);
 		return undefined;

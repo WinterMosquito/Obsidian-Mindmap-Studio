@@ -167,7 +167,7 @@ export const LAYOUT_OPTIONS = [
  * - `auto`（随布局）下线：默认值已固定为折线，「跟随布局」不再有信息量；
  * - `direct`（直连）下线：与折线的观感差异不足以再占一个用户选项。
  *
- * 存量 `data.json` 里的 auto / direct / 未知值由 `normalizeLineStylePreference`
+ * 非法值由 `normalizeLineStylePreference`
  * 在**读取侧**归一为折线（不批量改写用户数据，下一次切换样式时自然落盘）。
  *
  * 固定直线布局（目录组织图 / 时间轴 / 鱼骨图）由布局类自行绘制直线、`lineStyle`
@@ -191,7 +191,7 @@ export const LINE_STYLE_OPTIONS: LineStyleOption[] = [
 ];
 
 /**
- * 存量 / 脏值归一：只有 `curve` 保留，其余（`auto` / `direct` / 未知 / 空串 /
+ * 值域归一：只有 `curve` 保留，其余（未知 / 空串 /
  * 非字符串）一律折线——与默认值同源，避免「默认折线、脏值却回曲线」的第二份口径。
  */
 export function normalizeLineStylePreference(value: unknown): LineStylePreference {
@@ -344,22 +344,6 @@ export type PaletteId = (typeof PALETTE_OPTIONS)[number]['value'];
 export const DEFAULT_PALETTE: PaletteId = 'default';
 
 /**
- * 旧配色 id → 现 id（2026-11-05 由「植物 / 物品名」改为直白的颜色名）。
- *
- * **只做读兼容**：存量 `data.json` 里的 `palette` 字段仍认这些值（打开即按
- * 对应新配色渲染），任何一次显式切换都会把新 id 写回去。不带这个映射，
- * 老文件会静默回落成 `default`（用户以为配色丢了）。
- */
-const LEGACY_PALETTE_IDS: Readonly<Record<string, PaletteId>> = {
-	mint: 'teal',
-	amber: 'orange',
-	rose: 'crimson',
-	wisteria: 'purple',
-	forest: 'green',
-	slate: 'grey',
-};
-
-/**
  * 脏值归一（渲染侧兜底）：未知 id / 手改 data.json / 空串 / 非字符串
  * 一律回退默认配色——与 `normalizeThemeStyle` 同口径。
  *
@@ -369,12 +353,6 @@ const LEGACY_PALETTE_IDS: Readonly<Record<string, PaletteId>> = {
  * 不先经本函数，否则自定义值会被压回 `default`）。
  */
 export function normalizePalette(value: unknown): PaletteId {
-	if (typeof value === 'string') {
-		const legacy = LEGACY_PALETTE_IDS[value];
-		if (legacy) {
-			return legacy;
-		}
-	}
 	return pickOption(value, PALETTE_OPTIONS, DEFAULT_PALETTE);
 }
 
