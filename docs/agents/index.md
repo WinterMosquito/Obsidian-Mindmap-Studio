@@ -412,6 +412,7 @@
   - [check-gates.d.mts](../../scripts/check-gates.d.mts)
   - [check-gates.mjs](../../scripts/check-gates.mjs)
   - [check-release-metadata.mjs](../../scripts/check-release-metadata.mjs)
+  - [chrome-page.mjs](../../scripts/chrome-page.mjs)
   - [gen-perf-fixture.mjs](../../scripts/gen-perf-fixture.mjs)
   - [module-boundaries.mjs](../../scripts/module-boundaries.mjs)
   - [plain-text-parser.mjs](../../scripts/plain-text-parser.mjs)
@@ -459,7 +460,7 @@
 | `src/markdown/md-serialize.ts` | 1072 | 逐字回写 与 合成回写 的判定/合成必须共享同一份「节点是否被编辑」上下文（`rawOk` 一族谓词），拆分会把它切成跨文件的隐式协议。**2026-11-08 增至 997**：「跟随兄弟风格」改为按**位置**判（`SerializeFrame.lastWasList`，层首仍看整层）——只看整层会让混排组里排在标题之后的新建节点写出列表项、重开被读成该标题的子节点（K172）。嵌入拼写走 `domain/wikilink.formatEmbedWikilink`，注意 `embedLabelSuffix` 返回值**带前导 `\|`** 需去前缀。2026-10-12 增至 1189：无显示名段（首图 / icon-only URL）的**锚点插入点**反查（`anchorInsertPoint` / `insertionForm`）与替换型 slot 共用同一遍行内拼装，拆开会让「文本定位」与「锚点定位」各持一份区间占用判定。2026-10-13 到 1191：`serializeMdBody` 内的 `nodeLines` 去掉遮蔽外层入参的冗余 `app` 形参 |
 | `src/markdown/md-outline.ts` | 926 | 大纲 ↔ 节点树 的单一往返实现：解析与生成共用同一套层级/标记规则。2026-10-12 增至 1108：首图与 icon-only URL 也登记台账段并附**上下文锚点**（`tokenAnchors`）——不登记则合成只能尾插，图片被搬到行尾 |
 | `src/markdown/md-outline-lines.ts` | 421 | 逐行分类的唯一实现（围栏状态机 / 自闭合围栏 / setext 与分隔线 / 空列表项 / 有序编号，零依赖）；拆开会把「行 → 分类」与「树装配」割成两份缩进与围栏口径（K164）。2026-11-08 增至 322：有序编号 `orderedNumber` 随行记录（K170），只加字段不拆文件；同批把编号限制为**安全整数**（`orderedNumberOf`，超长编号写回会成 `1e+21.` 让整行退化成段落，K172） |
-| `src/core/minimap-geometry.ts` | 1512 | 小地图纯几何与 SVG 模型的唯一实现：全树内容盒、节点抽样/墨色、布局五态连线、等比面板映射、视口框投影与浮层节拍共享同一坐标系。K215 只增加可用侧栏尺寸参数，SVG、框和拖动仍共用 miniMapScale，不复制几何/连线/导航算法。浮层维持宽 160–220、高度按画布封顶；侧栏使用整个承载区并等比居中。 |
+| `src/core/minimap-geometry.ts` | 1562 | 小地图纯几何与 SVG 模型的唯一实现：全树内容盒、节点抽样/墨色、布局五态连线、等比面板映射、视口框投影与浮层节拍共享同一坐标系。K215 只增加可用侧栏尺寸参数，SVG、框和拖动仍共用 miniMapScale，不复制几何/连线/导航算法。浮层维持宽 160–220、高度按画布封顶；侧栏以完整承载区和 12px 单源 inset 等比居中，实际连线外扩与全树节点共用一份绘制 bounds；最小像素标记须保留边缘空白。 |
 | `src/core/i18n.ts` | 857 | 纯词条表（无逻辑分支）。2026-10-14 增至 563：节点上/下移 5 条（双语），含中心节点与首/末位拒绝提示。 |
 | `src/features/view/view-context-menu.ts` | 844 | 节点与空白画布右键菜单的**唯一装配面**：按落点形态分流链接/图片/文字动作与视图级外观项，共享右键时的选中快照、历史动作与分流规则。宿主级联菜单等通用 DOM 机制已移至 `ui/menu-submenu.ts`；本文件保留菜单语义与视图动作编排，继续拆分须避免复制落点/选中判据。行为依据见 K146/K154，历次增长与拆分流水见 `line-count-log.md`。 |
 | `src/features/editing/view-node-color.ts` | 475 | 节点配色的**全部写入入口**（2026-11-06 越线并登记；2026-11-09 增至 468）：右键节点「配色」与空白右键「按分支自动上色」两个入口共用同一套「原文合成 → 一次批量落地」、同一份**作用范围**定义（`nodeColorScope`：含子节点＝只写有色节点、靠继承；仅本节点＝再给直接子节点补哨兵阻断，K167）、「默认」的两种落地（上层还在染色 ⇒ 写 `%%none%%`；否则 ⇒ 删指令）与撤色后的无主哨兵回收。2026-11-09 追加**一次性的旧哨兵清理**（`collectColorSentinelSessions` / `applyColorSentinelCleanup` / `offerColorSentinelCleanup`，K175）：判「哪行是自身哨兵」与删除仍复用 `colorDirectiveOf` / `setColorDirective`，与上色两条入口同源。拆开就会让「这次改色到底写哪几行（带不带 `%%none%%`）」跨文件漂移——而那正是本批反复踩到的地方：色源与哨兵必须**同批**落地，否则一次改色要付两轮整树重渲（K149 ⑥ / K167 ③）。 |

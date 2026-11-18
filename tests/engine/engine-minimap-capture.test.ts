@@ -98,6 +98,23 @@ function countOf(svg: string, pattern: RegExp): number {
 	return svg.match(pattern)?.length ?? 0;
 }
 
+describe('K215 sidebar drawing bounds', () => {
+	it('完整目录轨线与全树节点使用同一 padded frame，不按节点盒裁掉左侧轨线', () => {
+		const map = makeEngine({ layout: 'catalogOrganization', root: {
+			left: 0, top: 0, width: 100, height: 40, children: [{
+				left: 100, top: 80, width: 80, height: 30, children: [{
+					left: 0, top: 150, width: 30, height: 20,
+				}],
+			}],
+		} });
+		const frame = captureMiniMap(map, undefined, undefined, { width: 528, height: 1138 })!;
+		expect(frame.panel).toEqual({ width: 528, height: 1138, inset: 12 });
+		expect(frame.content.x).toBe(-12);
+		expect(frame.content.x + frame.content.width).toBe(180);
+		expect(svgOf(frame.image)).toContain('viewBox="0 0 528 1138"');
+	});
+});
+
 describe('captureMiniMap：一帧缩略图的读取面', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();

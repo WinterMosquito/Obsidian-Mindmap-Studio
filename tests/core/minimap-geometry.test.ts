@@ -21,6 +21,8 @@ import {
 	fishboneConnectors,
 	measureMiniMapBounds,
 	miniMapScale,
+	miniMapDrawingBounds,
+	buildMiniMapFrameLinks,
 	MINIMAP_FALLBACK_COLORS,
 	nextMiniMapDeadline,
 	projectViewportBox,
@@ -35,7 +37,7 @@ import { MINIMAP_LINK_MAX_DEPTH, MINIMAP_MAX_MARKS } from '../../src/core/consta
 describe('computeMiniMapSize：宽度随比例收窄、高度随比例', () => {
 	it('侧栏使用完整可用面板，SVG/投影/导航仍沿用等比坐标系', () => {
 		expect(computeMiniMapSize({ width: 1000, height: 500 }, 280, { width: 360.8, height: 420.2 }))
-			.toEqual({ width: 360, height: 420 });
+			.toEqual({ width: 360, height: 420, inset: 12 });
 	});
 	it.each([0, -1, Infinity, NaN])('侧栏退化尺寸 %s 不生成半张图', (width) => {
 		expect(computeMiniMapSize({ width: 1000, height: 500 }, 280, { width, height: 420 })).toBeNull();
@@ -93,6 +95,55 @@ describe('computeMiniMapSize：宽度随比例收窄、高度随比例', () => {
 	it('内容尺寸不可得 → null（调用方保持上一帧）', () => {
 		expect(computeMiniMapSize({ width: 0, height: 100 })).toBeNull();
 		expect(computeMiniMapSize({ width: 100, height: 0 })).toBeNull();
+	});
+});
+
+describe('K215 侧栏完整绘图区', () => {
+	it('节点盒以外的连线/折点纳入同一内容盒，保留未抽样的全树边界', () => {
+		expect(miniMapDrawingBounds({ x: 0, y: 0, width: 100, height: 100 }, [], [
+			{ from: { x: 0, y: 0 }, to: { x: 50, y: 50 }, elbow: { axis: 'h', at: -12 }, tier: 1 },
+			{ from: { x: 0, y: 0 }, to: { x: 50, y: 50 }, elbow: { axis: 'v', at: 130 }, tier: 1 },
+			{ from: { x: 0, y: 0 }, to: { x: 50, y: 50 }, polyline: [{ x: 120, y: -10 }], tier: 2 },
+		])).toEqual({ x: -12, y: -10, width: 132, height: 140 });
+	});
+
+	it('测量值陈旧时仍将当前实际绘制的边缘节点纳入内容盒', () => {
+		expect(miniMapDrawingBounds({ x: 0, y: 0, width: 100, height: 100 }, [
+			{ x: 300, y: 200, width: 50, height: 40 },
+		], [])).toEqual({ x: 0, y: 0, width: 350, height: 240 });
+	});
+
+	it('边距同时作用于SVG、视口投影及拖动比例，不能只给图片CSS加padding', () => {
+		const panel = { width: 528, height: 900, inset: 12 };
+		expect(miniMapScale({ width: 1000, height: 1000 }, panel)).toBe(0.504);
+		const box = projectViewportBox({
+			content: { x: 0, y: 0, width: 1000, height: 1000 }, panel,
+			canvas: { width: 400, height: 400 },
+			transform: { scaleX: 2, scaleY: 2, translateX: -200, translateY: -400 },
+		})!;
+		expect(box.x).toBeCloseTo(62.4);
+		expect(box.y).toBeCloseTo(298.8);
+		expect(box.width).toBeCloseTo(100.8);
+		expect(box.height).toBeCloseTo(100.8);
+	});
+
+	it.each([[1_000_001, 1], [1, 1_000_001], [100, 40]])('极端尺寸 %s×%s 的所有实际节点方块均有边缘空白', (width, height) => {
+		const content = { x: 0, y: 0, width, height };
+		const marks: MiniMapMark[] = [
+			{ x: 0, y: 0, width: Math.min(width, 100), height: Math.min(height, 40), root: true },
+			{ x: width - 1, y: height - 1, width: 1, height: 1, parent: 0, depth: 1 },
+		];
+		const panel = computeMiniMapSize(content, 280, { width: 528, height: 900 })!;
+		const links = buildMiniMapFrameLinks(marks, 'branchH', 'all');
+		const bounds = miniMapDrawingBounds(content, marks, links);
+		const svg = buildMiniMapSvg(bounds, marks, panel, MINIMAP_FALLBACK_COLORS, 'straight', 'branchH', 'all', links);
+		for (const match of svg.matchAll(/<rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.-]+)" height="([\d.-]+)"/g)) {
+			const [x, y, w, h] = match.slice(1).map(Number);
+			expect(x).toBeGreaterThanOrEqual(10);
+			expect(y).toBeGreaterThanOrEqual(10);
+			expect(x! + w!).toBeLessThanOrEqual(518);
+			expect(y! + h!).toBeLessThanOrEqual(890);
+		}
 	});
 });
 

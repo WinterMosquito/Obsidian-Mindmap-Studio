@@ -245,10 +245,12 @@
 .mindmap-outline-content > :not(.mindmap-sidebar-mount) {
   display: none;
 }
-.mindmap-outline-content {
+.workspace-leaf-content.mindmap-outline-host .view-content.mindmap-outline-content {
   position: relative;
   padding: 0;
   overflow: hidden;
+  box-sizing: border-box;
+  min-width: 0;
 }
 .mindmap-sidebar-mount {
   position: absolute;
@@ -256,10 +258,26 @@
 }
 .mindmap-minimap.is-docked {
   inset: 0;
+  inset-inline: 0;
+  inset-block: 0;
   opacity: 1;
   border-radius: 2px;
   box-shadow: none;
   transition: none;
+}
+.mindmap-minimap.is-docked .mindmap-minimap-img {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-sizing: border-box;
+  object-fit: fill;
 }
 .mindmap-canvas-container::-webkit-scrollbar {
   width: 8px;
