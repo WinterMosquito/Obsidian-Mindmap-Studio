@@ -11,7 +11,7 @@
 | 必须遵守的开发规则与检查入口 | 根目录 `AGENTS.md` |
 | 具体实现约定与功能决策 | `decisions.md`（按场景/模块/K 编号定位） |
 | 文件清单、规模终值和文档入口 | 本文件对应段落 |
-| 决策依据和历史 | `conventions.md`（只读相关 K 条目） |
+| 约定摘要与边界 | `conventions.md`（按主题或 K 编号定位） |
 | 维护义务与发版流程 | `process.md` |
 
 ## 代码结构索引
@@ -492,13 +492,14 @@
 - **docs/**
   - [markdown-mindmap-standard.md](../markdown-mindmap-standard.md)：Markdown ↔ 思维导图映射规则（权威标准）
   - [markdown-mindmap-history.md](../markdown-mindmap-history.md)：标准文档的历史修订存档
+  - [version-commits.md](../version-commits.md)：各版本需求完成点、base/feat 与本地 v 标签映射（JSON 见文档链接）
   - **agents/**
     - [index.md](index.md)：文件、测试、文档清单与规模豁免的唯一登记处
     - [decisions.md](decisions.md)：实现决策，按场景定位
     - [README.md](README.md)：按需阅读、权威边界与文档规模
     - [architecture.md](architecture.md)：模块职责、数据流与依赖层
     - [baseline-metrics.md](baseline-metrics.md)：可复现基线与静态指标
-    - [conventions.md](conventions.md)：关键约定 K1–K213，按编号读取
+    - [conventions.md](conventions.md)：关键约定 K1–K214，按主题及编号读取分层摘要
     - [line-count-log.md](line-count-log.md)：历次规模与验证记录，只追加
     - [testing.md](testing.md)：测试分层、CI 与验证流程
     - [process.md](process.md)：维护义务与发布流程
@@ -507,7 +508,7 @@
 | 我要查 | 去哪 |
 |---|---|
 | 某个模块归哪层、能依赖什么 | `docs/agents/architecture.md` |
-| 「为什么这里要这么写」（含历史踩坑） | `docs/agents/conventions.md`（按 K 编号搜） |
+| 约定的目的与关键边界 | `docs/agents/conventions.md`（按主题或 K 编号找摘要） |
 | 豁免表的历次行数读数 / 批次流水 | `docs/agents/line-count-log.md` |
 | 某个测试该加在哪一层、CI 怎么跑 | `docs/agents/testing.md` |
 | 改 Markdown 映射规则的权威定义 | `docs/markdown-mindmap-standard.md` |
