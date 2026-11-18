@@ -6,7 +6,7 @@
  *   **语言活引用**——语言切换后无需重建服务，下一次写入即用新语言（设置面板
  *   保存后立即生效的语义）；
  * - `commands.ts`：`refreshCommandLabels`（命令面板注册时缓存 name，须按 id
- *   先移除再重注册；丝带图标无移除 API，就地更新 aria-label）。
+ *   先移除再重注册，创建入口不注册丝带图标）。
  *
  * 为什么断言精确字符串而不是「包含数字」：文案本身就是行为契约（`1 node` /
  * `3 nodes` 是两把不同的 key，中文两键同文），只断言包含数字时把单复数写错、
@@ -21,7 +21,6 @@ import {
 } from '../src/core/i18n';
 import { ElementStatusBarService } from '../src/services/status-bar';
 import {
-	addMindMapRibbonIcon,
 	refreshCommandLabels,
 	registerCommands,
 } from '../src/commands';
@@ -218,13 +217,7 @@ interface CommandRecord {
 function makeCommandHost(lang: Language) {
 	const commands = new Map<string, CommandRecord>();
 	const ops: string[] = [];
-	const ribbon: { icon: string; title: string }[] = [];
-	const ribbonEl = {
-		attrs: {} as Record<string, string>,
-		setAttribute(key: string, value: string): void {
-			this.attrs[key] = value;
-		},
-	};
+	const addRibbonIcon = vi.fn();
 	const settings = { language: lang };
 	const plugin = {
 		settings,
@@ -238,17 +231,13 @@ function makeCommandHost(lang: Language) {
 			ops.push(`remove:${id}`);
 			commands.delete(id);
 		},
-		addRibbonIcon: (icon: string, title: string): typeof ribbonEl => {
-			ribbon.push({ icon, title });
-			return ribbonEl;
-		},
+		addRibbonIcon,
 	};
 	return {
 		plugin: plugin as unknown as Parameters<typeof registerCommands>[0],
 		commands,
 		ops,
-		ribbon,
-		ribbonEl,
+		addRibbonIcon,
 		settings,
 	};
 }
@@ -263,10 +252,7 @@ describe('commands.refreshCommandLabels（语言变更后的用户入口刷新�
 		);
 
 		host.settings.language = 'en';
-		refreshCommandLabels(
-			host.plugin,
-			host.ribbonEl as unknown as HTMLElement,
-		);
+		refreshCommandLabels(host.plugin);
 
 		// 数量不变（先按 id 移除再注册，不产生重复条目）
 		expect(host.commands.size).toBe(COMMAND_IDS.length);
@@ -287,10 +273,7 @@ describe('commands.refreshCommandLabels（语言变更后的用户入口刷新�
 		registerCommands(host.plugin);
 		host.ops.length = 0;
 
-		refreshCommandLabels(
-			host.plugin,
-			host.ribbonEl as unknown as HTMLElement,
-		);
+		refreshCommandLabels(host.plugin);
 
 		const removals = host.ops.filter((op) => op.startsWith('remove:'));
 		const additions = host.ops.filter((op) => op.startsWith('add:'));
@@ -300,28 +283,13 @@ describe('commands.refreshCommandLabels（语言变更后的用户入口刷新�
 		expect(host.ops.indexOf('add:create-new-mindmap')).toBe(COMMAND_IDS.length);
 	});
 
-	it('丝带提示就地更新为当前语言（官方无移除 API：不新增图标）', () => {
+	it('注册及语言切换均不创建丝带按钮，保留两个新建命令', () => {
 		const host = makeCommandHost('zh');
-		const el = addMindMapRibbonIcon(host.plugin);
-		expect(host.ribbon).toEqual([
-			{ icon: 'network', title: t('zh', 'command.createMindMap') },
-		]);
-		expect(el).toBe(host.ribbonEl);
-
-		host.settings.language = 'en';
-		refreshCommandLabels(host.plugin, host.ribbonEl as unknown as HTMLElement);
-
-		expect(host.ribbonEl.attrs['aria-label']).toBe(
-			t('en', 'command.createMindMap'),
-		);
-		// 元素复用，不重复创建图标
-		expect(host.ribbon).toHaveLength(1);
-	});
-
-	it('丝带元素缺失（图标创建失败/未就绪）时不抛异常', () => {
-		const host = makeCommandHost('en');
 		registerCommands(host.plugin);
-		expect(() => refreshCommandLabels(host.plugin, null)).not.toThrow();
-		expect(host.commands.size).toBe(COMMAND_IDS.length);
+		host.settings.language = 'en';
+		refreshCommandLabels(host.plugin);
+		expect(host.addRibbonIcon).not.toHaveBeenCalled();
+		expect(host.commands.has('create-new-mindmap')).toBe(true);
+		expect(host.commands.has('create-mindmap-here')).toBe(true);
 	});
 });

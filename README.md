@@ -107,7 +107,7 @@ MindMap Studio is a **rendering layer**, not a file-format converter. It reads a
 ## 📖 Usage
 
 ### 1) Create & open a mind map
-- Run **Create new mind map** (command palette or ribbon) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-10-13.md` file is created and opens in the mind-map view. **New maps contain only the central node named after the file, with no example branches**; select it and press `Tab` to add your first branch. The folder follows the **Default location for new mind maps** setting — by default Obsidian's own "Default location for new notes". You can also **right-click any folder → Create new mind map** to create it right there.
+- Run **Create new mind map** (command palette) → a naming dialog appears (default = prefix + date; duplicates get a numeric suffix) → the `MindMap2026-10-13.md` file is created and opens in the mind-map view. **New maps contain only the central node named after the file, with no example branches**; select it and press `Tab` to add your first branch. The folder follows the **Default location for new mind maps** setting — by default Obsidian's own "Default location for new notes". You can also **right-click any folder → Create new mind map** to create it right there.
 - **Turn any note into a mind map**: add `Mindmap: Mindmap` to its frontmatter (the key is case-insensitive) and the note opens as a mind map as soon as it is opened. **The layout is a second key**, `Mindmap Layout`:
 
   | `Mindmap` value | Meaning |

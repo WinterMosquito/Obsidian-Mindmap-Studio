@@ -113,6 +113,7 @@ type GlobalWithDocument = { document?: FakeDocument };
 
 /** 取最近创建的弹窗（一个 it 内可能开多个） */
 interface ModalStub {
+	readonly modalEl: StubElNode;
 	readonly contentEl: StubElNode;
 	readonly titleEl: StubElNode;
 	readonly openCalls: number;
@@ -414,6 +415,7 @@ vi.mock('obsidian', async (importOriginal) => {
 	 * onClose 用访问器实现——赋值次数即「是否被覆写」的断言依据。
 	 */
 	class MockModal implements ModalStub {
+		readonly modalEl: StubElNode;
 		readonly contentEl: StubElNode;
 		readonly titleEl: StubElNode;
 		openCalls = 0;
@@ -432,6 +434,7 @@ vi.mock('obsidian', async (importOriginal) => {
 		}
 
 		constructor(_app: unknown) {
+			this.modalEl = createStubElement('div');
 			this.contentEl = createStubElement('div');
 			this.titleEl = createStubElement('h2');
 			modalStubs.push(this);
@@ -683,6 +686,7 @@ describe('openNameInputModal（新建文件名称输入弹窗）', () => {
 		const harness = openName('思维导图2026-08-21', '笔记/子目录');
 
 		expect(harness.modal.openCalls).toBe(1);
+		expect(harness.modal.modalEl.classes).toEqual(['mindmap-name-modal']);
 		expect(harness.modal.titleEl.text).toBe(t('zh', 'command.createMindMap'));
 		expect(harness.root.classes).toEqual(['mindmap-name-editor']);
 
@@ -692,7 +696,7 @@ describe('openNameInputModal（新建文件名称输入弹窗）', () => {
 		expect(harness.hint.classes).toEqual(['mindmap-modal-muted-hint']);
 
 		expect(harness.input.tagName).toBe('input');
-		expect(harness.input.classes).toEqual(['mindmap-modal-input']);
+		expect(harness.input.classes).toEqual(['mindmap-name-input']);
 		expect(harness.input.attrs).toEqual({
 			type: 'text',
 			value: '思维导图2026-08-21',

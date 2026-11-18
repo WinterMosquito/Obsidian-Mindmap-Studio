@@ -4,9 +4,11 @@ import { join } from 'node:path';
 export function buildUiEntrySource(root, baselineCss, currentCss) {
 	const toolbar = join(root, 'src/ui/toolbar/toolbar.ts').replaceAll('\\', '/');
 	const search = join(root, 'src/ui/search/search-bar.ts').replaceAll('\\', '/');
+	const nameModal = join(root, 'src/ui/modal-name.ts').replaceAll('\\', '/');
 	return `
 import { Toolbar } from ${JSON.stringify(toolbar)};
 import { SearchBar } from ${JSON.stringify(search)};
+import { openNameInputModal } from ${JSON.stringify(nameModal)};
 // 仅补宿主公开 DOM 扩展；不替换组件逻辑。
 HTMLElement.prototype.createEl = function(tag, info = {}) {
 	const el = document.createElement(tag);
@@ -18,7 +20,7 @@ HTMLElement.prototype.createEl = function(tag, info = {}) {
 HTMLElement.prototype.createDiv = function(info) { return this.createEl('div', info); };
 HTMLElement.prototype.createSpan = function(info) { return this.createEl('span', info); };
 HTMLElement.prototype.empty = function() { this.replaceChildren(); };
-HTMLElement.prototype.addClass = function(name) { this.classList.add(name); };
+HTMLElement.prototype.addClass = function(...names) { this.classList.add(...names); };
 HTMLElement.prototype.removeClass = function(name) { this.classList.remove(name); };
 HTMLElement.prototype.toggleClass = function(name, enabled) { this.classList.toggle(name, enabled); };
 HTMLElement.prototype.setText = function(text) { this.textContent = text; };
@@ -107,11 +109,50 @@ const assert = (value, label) => { if (!value) throw new Error(label); };
 			compared += elements.length;
 			frame.remove();
 		}
+		// 创建弹窗使用真实表单代码，宿主 Modal/按钮只补公开 DOM 装配与关闭契约。
+		let modals = 0;
+		for (const width of [360, 1200]) for (const dark of [false, true]) {
+			const frame = document.createElement('iframe');
+			frame.style.cssText = 'width:' + width + 'px;height:320px;border:0';
+			document.body.appendChild(frame);
+			const doc = frame.contentDocument;
+			for (const key of ['createEl', 'createDiv', 'addClass', 'setText']) {
+				frame.contentWindow.HTMLElement.prototype[key] = HTMLElement.prototype[key];
+			}
+			const native = doc.createElement('style');
+			native.textContent = ':root{--radius-m:' + (dark ? 6 : 8) + 'px;--modal-radius:12px;--input-radius:' + (dark ? 3 : 5) + 'px;--input-height:30px;--font-ui-small:13px;--size-4-3:12px;--size-4-4:16px;--background-primary:' + (dark ? '#181818' : '#fff') + ';--text-normal:' + (dark ? '#eee' : '#222') + ';--text-muted:#888;}body{margin:0}.modal{box-sizing:border-box;border-radius:var(--modal-radius);padding:16px;width:min(420px,calc(100vw - 32px));background:var(--background-primary);color:var(--text-normal)}input[type=text]{box-sizing:border-box;height:var(--input-height);border-radius:var(--input-radius);font-size:14px;border:1px solid #888;padding:4px 8px}input[type=text]:focus{outline:2px solid #58a}button{border-radius:var(--input-radius)}';
+			doc.head.appendChild(native);
+			const pluginStyle = doc.createElement('style');
+			pluginStyle.textContent = newCss;
+			doc.head.appendChild(pluginStyle);
+			const result = openNameInputModal({ document: doc }, '思维导图2026-11-18', '/', dark ? 'en' : 'zh');
+			const modal = doc.querySelector('.mindmap-name-modal');
+			const input = modal.querySelector('input');
+			const buttons = [...modal.querySelectorAll('button')];
+			const computed = el => frame.contentWindow.getComputedStyle(el);
+			assert(computed(modal).borderTopLeftRadius === (dark ? '6px' : '8px'), '弹窗圆角随宿主中号变量变化');
+			assert(computed(input).borderTopLeftRadius === (dark ? '3px' : '5px'), '输入框继承宿主圆角');
+			assert(input.getBoundingClientRect().width <= modal.getBoundingClientRect().width - 32, '窄窗输入框不溢出');
+			assert(buttons.length === 2 && buttons[1].classList.contains('mod-cta'), '原生取消/创建按钮');
+			input.value = '   ';
+			input.dispatchEvent(new frame.contentWindow.Event('input'));
+			assert(buttons[1].disabled, '空名禁用创建');
+			input.value = '知识体系';
+			input.dispatchEvent(new frame.contentWindow.Event('input'));
+			assert(!buttons[1].disabled, '有效名字恢复创建');
+			input.dispatchEvent(new frame.contentWindow.KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
+			assert(await result === '知识体系' && !doc.querySelector('.mindmap-name-modal'), 'Enter 完成一次并关闭');
+			const cancelled = openNameInputModal({ document: doc }, '取消测试', '/', 'zh');
+			doc.querySelector('input').dispatchEvent(new frame.contentWindow.KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+			assert(await cancelled === null, 'Escape 取消');
+			modals++;
+			frame.remove();
+		}
 		bar.dispose(); hud.dispose();
 		oldInput.dispatchEvent(new Event('input'));
 		assert(inputs === 1 && buttons.every(b => b.onclick === null), '销毁解绑真实监听与按钮');
 		shell.remove();
-		probe.textContent = JSON.stringify({ ok: true, compared });
+		probe.textContent = JSON.stringify({ ok: true, compared, modals });
 	} catch (error) { probe.textContent = JSON.stringify({ error: error.stack || String(error) }); }
 })();
 `;
@@ -119,6 +160,30 @@ const assert = (value, label) => { if (!value) throw new Error(label); };
 
 /** 最小 Obsidian 呈现替身：生成带尺寸的 SVG，tooltip 写官方属性。 */
 export const UI_SHIM_SOURCE = `
+export class App {}
+export class TFile {}
+export class AbstractInputSuggest {}
+export class Modal {
+	constructor(app) {
+		this.containerEl = app.document.createElement('div');
+		this.modalEl = this.containerEl.createDiv('modal');
+		this.titleEl = this.modalEl.createDiv('modal-title');
+		this.contentEl = this.modalEl.createDiv('modal-content');
+	}
+	setCloseCallback(callback) { this.closeCallback = callback; }
+	open() {
+		this.modalEl.ownerDocument.body.appendChild(this.containerEl);
+		this.modalEl.querySelector('input')?.focus();
+	}
+	close() { this.closeCallback?.(); this.containerEl.remove(); }
+}
+export class ButtonComponent {
+	constructor(parent) { this.buttonEl = parent.createEl('button'); }
+	setButtonText(text) { this.buttonEl.textContent = text; return this; }
+	setCta() { this.buttonEl.classList.add('mod-cta'); return this; }
+	setDisabled(disabled) { this.buttonEl.disabled = disabled; return this; }
+	onClick(callback) { this.buttonEl.addEventListener('click', callback); return this; }
+}
 export function setIcon(el, id) {
 	const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.setAttribute('width', '24'); svg.setAttribute('height', '24');

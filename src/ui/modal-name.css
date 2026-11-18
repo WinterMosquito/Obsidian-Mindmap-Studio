@@ -1,0 +1,17 @@
+/* 小型创建弹窗使用宿主中号圆角；背景、边框、阴影与控件沿用官方 Modal。 */
+.modal.mindmap-name-modal {
+  --modal-radius: var(--radius-m);
+}
+
+.mindmap-name-editor .mindmap-modal-muted-hint {
+  font-size: var(--font-ui-small);
+  margin-bottom: var(--size-4-3);
+}
+
+.mindmap-name-editor .mindmap-name-input {
+  width: 100%;
+}
+
+.mindmap-name-editor .mindmap-modal-action-row--mt {
+  margin-top: var(--size-4-4);
+}

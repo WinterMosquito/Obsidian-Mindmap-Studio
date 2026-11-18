@@ -166,6 +166,7 @@
     - [modal-common.ts](../../src/ui/modal-common.ts)
     - [modal-image.ts](../../src/ui/modal-image.ts)
     - [modal-link.ts](../../src/ui/modal-link.ts)
+    - [modal-name.css](../../src/ui/modal-name.css)
     - [modal-name.ts](../../src/ui/modal-name.ts)
     - [modal-relation-label.ts](../../src/ui/modal-relation-label.ts)
     - [modal-summary-text.ts](../../src/ui/modal-summary-text.ts)
@@ -472,7 +473,7 @@
 | `src/features/content/view-footnote.ts` | 692 | 脚注交互**唯一入口**（视图 + 只读嵌入共用）：画布 capture 命中**外层** `sup.mindmap-node-footnote-ref`（不是内层 `a`，否则鼠标落在上标盒子行高 / padding 区域时静默失效）→ 点击 `revealNodeByUid` **只居中不选中**（导航而非选择，避免高亮圈住表格 / chip）/ 悬停浮层显示定义正文。索引从引擎渲染树现算（`collectRenderNodeData`），按 `node_tree_render_end` 失效；悬停调度按**元素身份**判重（同 id 可出现多次），渲染落地只收起浮层、**不清未决的 show**。三条实机缺陷（sup 命中 / 同 id 移动 / 渲染窗口吞 show）与未定义引用反馈由 `tests/features/content/view-footnote.test.ts` 的 DOM 桩直测钉死。**2026-11-11 第二批（用户视角打磨）**：浮层**可交互**（内部链接经宿主 `openLink` 打开、文字可选中、超长时浮层内滚动且滚轮不交给画布——`FOOTNOTE_PREVIEW_CLASS` 由 `view-viewport` 放行）；**编号后置**（`applyFootnoteLabels`：按首次引用顺序，构建期仍只写 id；**不写 `title` / `aria-label`**——前者弹浏览器原生提示、后者被 Obsidian 的全局 tooltip 委托读成黑框，鼠标停在徽标上会同时冒两个提示，语义改用不触发 tooltip 的 `role="doc-noteref"`）；**未定义弱化**（`is-unresolved` + 截断 id）；**汇总 chip**（纯定义节点渲染 **`脚注`**——刻意不报条数：`脚注 N` 会被读成「第 N 条脚注」；点击/悬停展开全部定义）。**点击不闪烁也不选中**（2026-11-11 实机裁决：定义行已折叠 / 剥离，跳过去看不到脚注正文，闪动与高亮圈住都只剩噪音；只保留「展开祖先 + 居中」）。K197 ⑨。 |
 | `src/features/editing/view-node-actions.ts` | 718 | 节点操作（链接/文本/删除）的**共用入口**——工具栏与右键菜单同调；图片操作已拆至 `view-image-actions.ts` 并由本文件 re-export（含 2026-10-13 收口的建图入口 `createImageChildNode`）。剪贴板（复制/剪切/粘贴）已于 2026-10-13 收口到 `features/editing/view-clipboard.ts`，此前的视图级 WeakMap 剪贴板（`copyNode`/`pasteNodeAsChild`）整体删除——勿在此重建第二份。2026-10-15 复测 881：新增 `planDocLink` / `planAttachmentLink`——**拖入文档 / 附件的载荷与提示唯一判定点**（一次判定给出 `{ target, link, data, notice }`，载荷与提示**结构上同源**），附件字段集另收口为私有 `attachmentFields`；此前文档**五处**、附件**三处**各写一份载荷或提示写法，且「未选中 / 文件夹拖入」两路**不查官方设置**（违反硬规则 5）。 |
 | `src/features/editing/view-dnd.ts` | 600 | **从 view.ts 拆出**的画布拖入分发（库内文件／外部图片导入）：单一关注点＝拖入内容的类型分发与落点装配；2026-10-13 起未选中节点时的**图片**（库内拖入、以及「载荷全是图片」的系统拖入）在渲染根下新建图片节点（建图数据形态收口到 `view-image-actions.createImageChildNode`；含非图片的系统载荷仍要求先选中）。入库失败**不由本层二次提示**——入库通道（images-save）已逐条提示并返回 null，只留控制台计数痕迹。 |
-| `src/main.ts` | 595 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。2026-10-13 增至 426：`registerMarkdownCodeBlockProcessor` 注册 + 把设置窄化成 `MindmapEmbedConfig` 传 getter（features 不引 `settings`）。2026-10-14 复测 422（**减法**）：文件夹右键新建导图的调用点改传 settings（落点解析移入 `creation.ts`）。2026-10-28 复测 511（**减法**）：删除语言切换的全库属性键迁移（`propertyKeyMigration` 串行队列 + `refreshLanguageUi` 里的调用）。 |
+| `src/main.ts` | 591 | 官方模板规定的插件入口类（`Plugin`）：`onload`/`onunload` 的装配与生命周期编排。2026-10-13 增至 426：`registerMarkdownCodeBlockProcessor` 注册 + 把设置窄化成 `MindmapEmbedConfig` 传 getter（features 不引 `settings`）。2026-10-14 复测 422（**减法**）：文件夹右键新建导图的调用点改传 settings（落点解析移入 `creation.ts`）。2026-10-28 复测 511（**减法**）：删除语言切换的全库属性键迁移（`propertyKeyMigration` 串行队列 + `refreshLanguageUi` 里的调用）。 |
 | `src/markdown/links-split.ts` | 500 | 混排双链拆分（规则/计划/写回）的单一往返实现：`SplitLinkPlan` 是计划生成（`planSplitLinks`）与视图层写回（`applySplitLinkPlan` / `splitAllLinksInTree`）共用的内部协议，两侧共享同一套「适用节点／待抽 token／空白归并」不变式（文件头契约，含幂等与资源地址兜底）；拆开会让拆分规则与写回定位漂移。 |
 | `src/core/constants.ts` | 1001 | 纯清单集中表：标记函数唯一实现 + 布局/连线/主题选项表 + **渲染能力**清单（可渲染标签页 / 可渲染图片 / 可嵌入附件）+ 代码块判定（缩进行 / 围栏语言码白名单 / 已渲染标记类）。2026-10-12 复测 480：新增导出格式选项表与唯一的 `ExportImageFormat` 类型。2026-10-13 增至 501：`CODE_BLOCK_LANGUAGE`（存量笔记的接口）与 `CODE_BLOCK_MAX_NODES`（嵌入上限，与 `PERFORMANCE_NODE_THRESHOLD` 语义不同故不复用）。2026-10-14 增至 529：新增 `SaveLocation` 类型与 `SAVE_LOCATION_OPTIONS`（设置面板下拉与 `sanitizeSettings` 白名单共用）。**2026-10-21 增至 585**：连线样式两态收敛——`LINE_STYLE_OPTIONS` 砍至 `straight`/`curve`、新增 `DEFAULT_LINE_STYLE` 与 `normalizeLineStylePreference`（旧词汇 `auto`/`direct` 归一唯一实现）。 |
 | `src/settings.ts` | 657 | 设置字段的「接口 → 默认值 → `sanitizeSettings` 校验 → 声明式面板项」四者一一对应、单文件闭环：新增设置项＝单文件同步四处即闭合；拆开（如面板独立）会让四份清单跨文件漂移。2026-10-11 增至 398：校验器加「被回退/钳制键」的诊断出参 + `reportDroppedSettings` 汇总留痕（无痕退化治理，K33 同族）。2026-10-12 增至 422：新增「导出格式」设置项（`exportImageFormat`，类型引用 `ExportImageFormat`），并令 `pickFrom` 泛型化以返回选项 value 的联合类型。2026-10-14 增至 475：新增「新建导图的默认位置」四档设置（`saveLocation` / `saveFolder`，含 1.13 声明式 `type: 'folder'` 控件与 `visible` 条件项——切档后经 `refreshDomState()` 重算可见性〔2026-10-15 改：该官方入口（d.ts:9290，1.13.0 起）专为 `visible`/`disabled` 谓词变化而设、原地切 CSS 状态不重渲染；`update()` 只留给定义**结构**变化（语言切换属此类）〕）。 |
@@ -505,7 +506,7 @@
     - [README.md](README.md)：按需阅读、权威边界与文档规模
     - [architecture.md](architecture.md)：模块职责、数据流与依赖层
     - [baseline-metrics.md](baseline-metrics.md)：可复现基线与静态指标
-    - [conventions.md](conventions.md)：关键约定 K1–K216，按主题及编号读取分层摘要
+    - [conventions.md](conventions.md)：关键约定 K1–K217，按主题及编号读取分层摘要
     - [line-count-log.md](line-count-log.md)：历次规模与验证记录，只追加
     - [testing.md](testing.md)：测试分层、CI 与验证流程
     - [process.md](process.md)：维护义务与发布流程

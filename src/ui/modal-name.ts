@@ -3,6 +3,7 @@
  * 创建时允许用户直接修改文件名（预填默认名，全选便于改写）。
  * 空白名称无意义：确认按钮随输入实时置灰（Enter 路径由 confirm 内守卫兜住，
  * 只重新聚焦、不关闭），避免「点击确定无反应」的死按钮。
+ * 外框用宿主中号圆角，输入框与按钮沿用官方样式；局部尺寸见 modal-name.css。
  * @returns 输入的名称（已去除首尾空白）；取消返回 null
  * 从 modals.ts 拆出。
  */
@@ -20,13 +21,14 @@ export function openNameInputModal(
 		app,
 		title: t(lang, 'command.createMindMap'),
 		rootCls: 'mindmap-name-editor',
-		build: ({ root, submit }) => {
+		build: ({ root, modal, submit }) => {
+			modal.modalEl.addClass('mindmap-name-modal');
 			const hint = root.createDiv();
 			hint.setText(`${t(lang, 'modal.name.folder')}${folderPath || '/'}`);
 			hint.addClass('mindmap-modal-muted-hint');
 
 			const input = root.createEl('input', {
-				cls: 'mindmap-modal-input',
+				cls: 'mindmap-name-input',
 				attr: { type: 'text', value: defaultValue, spellcheck: 'false' },
 			});
 			input.focus();

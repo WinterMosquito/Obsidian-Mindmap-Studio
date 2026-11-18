@@ -7,6 +7,7 @@
 
 | 场景 | 选择 | 说明 |
 |---|---|---|
+| 创建入口与命名弹窗（K217） | `commands.registerCommands` / `main.onload` + `ui/modal-name.ts` / `ui/modal-name.css` | 新建保留命令面板与文件夹右键，删除丝带注册与相应语言刷新分支，命令 ID 不变。使用官方 `Modal.modalEl` 加专属类，将 `--modal-radius` 局部设为宿主 `--radius-m`；名称输入只设宽度，圆角、字体、边框、聚焦反馈和按钮由宿主提供。提示和动作间距使用宿主变量；空名禁用、Enter 提交、Esc/遮罩取消及创建落点保持既有流程。 |
 | 纯逻辑（无 obsidian / 引擎依赖） | `domain/` | lint 强制零依赖 |
 | 通用机制（常量/文案/错误/并发/事件/持久化） | `core/` | 各一份，不分模块重复 |
 | Obsidian 平台集成 | `platform/` | — |

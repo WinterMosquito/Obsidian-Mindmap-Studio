@@ -282,3 +282,5 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 画布热键拖拽（K216）：`settings-canvas-drag.test.ts` 锁定默认关闭、显式 true/false 持久化/加载、坏值归一、双语原名、声明式控件和差集刷新；`engine-canvas-drag.test.ts` 直测互斥判据与真实 vendor 的 Mod 节点起手；`mindmap-wiki-icon.test.ts` 的现有引擎构造捕获桩验证未传选项默认 false、显式 true/false 保留及只读配置省略；`view-canvas-interaction.test.ts` 验证原地设置应用不重建或投影会话快照。`verify:visual` 的 `visual-canvas-drag.mjs` 使用独立页面/Chrome profile，在真实浏览器派发 DOM 鼠标手势，覆盖两档设置 × plain/Ctrl/Meta × 0.5/1/2.35 缩放、真实选区与平移、中键/右键/菜单/滚轮、节点/输入起手、中途切换与独立 Window、只读嵌入，并断言画布操作无 data_change/内容历史。该页与原结构拖动探针隔离；Obsidian 实机鼠标/触控板手感、平台原生 Ctrl 点击菜单及完整 popout 生命周期仍需人工验收。
 
 侧栏承载、view-minimap 或 visual-minimap-sidebar 探针变化会触发真实视觉门禁，触发面由 check-gates 与其契约测试共同维护。组合版本同时运行侧栏与热键拖拽两份独立浏览器页面，不因合并而遗漏其中一项。
+
+创建入口与命名弹窗（K217）：`language-refresh.test.ts` 验证命令注册/语言刷新不注册丝带按钮且保留两个创建命令，既有 ID/语言刷新顺序继续直测；`modal-input.test.ts` 与 `creation-folder.test.ts` 保留空名、确认、取消及落点回归。`verify:visual` 的 `visual-ui.mjs` 页使用真实命名表单代码与官方 Modal/按钮的最小 DOM 替身，覆盖窄宽 × 明暗四组，验证中号弹窗圆角、宿主输入圆角、输入宽度、空名禁用及 Enter/Esc。替身不证明实际 Obsidian 已重载，主题和操作手感留实机验收。

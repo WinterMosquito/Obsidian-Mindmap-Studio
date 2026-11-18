@@ -30,7 +30,6 @@ import {
 	setViewSwitchDoneHook,
 } from './markdown/md-open';
 import {
-	addMindMapRibbonIcon,
 	refreshCommandLabels,
 	registerCommands,
 } from './commands';
@@ -58,8 +57,6 @@ export default class MindMapStudioPlugin extends Plugin {
 	 * 非 EventRef），布局就绪前禁用插件时回调仍会执行——须自行判定。
 	 */
 	private unloaded = false;
-	/** 丝带图标元素（官方无移除 API；语言变更时就地更新提示文案） */
-	ribbonEl: HTMLElement | null = null;
 	/**
 	 * 状态栏服务（节点计数展示/清空）：DOM 与 i18n 格式化归插件层，
 	 * 视图侧只广播计数；元素/语言经惰性取值器获取，onunload 后静默。
@@ -192,9 +189,8 @@ export default class MindMapStudioPlugin extends Plugin {
 			defaultMod: false,
 		});
 
-		// 命令面板命令与丝带图标（用户入口）
+		// 命令面板入口；文件夹右键入口在下方的 file-menu 监听中注册。
 		registerCommands(this);
-		this.ribbonEl = addMindMapRibbonIcon(this);
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.refreshStatusBarLabel();
@@ -546,15 +542,15 @@ export default class MindMapStudioPlugin extends Plugin {
 	}
 
 	/**
-	 * 语言变更后刷新用户入口文案：命令面板（注册时缓存 name）与丝带提示
-	 * 重注册/更新，状态栏与已打开视图的搜索栏就地刷新。
+	 * 语言变更后刷新用户入口文案：命令面板重注册，
+	 * 状态栏与已打开视图的搜索栏就地刷新。
 	 * 视图工具栏已由 applySettingsToViews（language 属 LIVE_REFRESH 键）重建。
 	 *
 	 * **不触碰任何文件**：导图声明键恒为标准键 `Mindmap`，与界面语言无关
 	 * （2026-10-28 单键化，全库键名迁移已删除）。
 	 */
 	refreshLanguageUi(): void {
-		refreshCommandLabels(this, this.ribbonEl);
+		refreshCommandLabels(this);
 		this.refreshStatusBarLabel();
 		this.forEachMindMapView((view) => {
 			view.refreshSearchBarLabels();
