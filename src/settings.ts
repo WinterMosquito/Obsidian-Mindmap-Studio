@@ -338,7 +338,7 @@ const LIVE_REFRESH_SETTING_KEYS = [
 	'enableDrag',
 	'language',
 	// 作用范围切换要当场看到连接线变化；视图走原地重算（见
-	// features/view.applySettingsChange），不重建引擎
+	// features/view/view.applySettingsChange），不重建引擎
 	'nodeColorScope',
 ] as const satisfies readonly (keyof MindMapStudioSettings)[];
 
@@ -361,7 +361,7 @@ function isLiveRefreshKey(key: string): key is LiveRefreshSettingKey {
  * **重建引擎 + 全量重渲染**，而其中多数键**根本不影响已打开的图**——默认连线样式在文件
  * 加载时已定为「文件显式选择 ?? 默认值」，之后再改默认值不会改变已打开的图；主题则有
  * 引擎的原地通道（`setThemeConfig`）。算出差集后，视图只做真会改变渲染的事
- * （`features/view.applySettingsChange`）。
+ * （`features/view/view.applySettingsChange`）。
  *
  * `defaultLayout` **不在本表**（2026-10-29）：它是新建文件的种子值，逐文件布局只存在
  * 于文件属性，改了它对任何已打开/已存在文件都无影响。

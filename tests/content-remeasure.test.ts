@@ -1,5 +1,5 @@
 /**
- * 自绘内容「定稿 → 尺寸同步」会话（features/content-remeasure.ts）单元回归。
+ * 自绘内容「定稿 → 尺寸同步」会话（features/content/content-remeasure.ts）单元回归。
  *
  * 背景（2026-10-11 外置）：该会话此前内联在 view.ts（约 200 行，6 字段 + 5 方法），
  * 只靠 `verify:visual` 的 inline 探针间接覆盖——本文件把它从 view 拆出后**首次直测**。
@@ -17,7 +17,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
-import { ContentRemeasureSession } from '../src/features/content-remeasure';
+import { ContentRemeasureSession } from '../src/features/content/content-remeasure';
 
 const engine = vi.hoisted(() => ({
 	resolveNodesByDoms: vi.fn(),
@@ -40,7 +40,7 @@ const platform = vi.hoisted(() => ({
 	pruneUnsettledMathOwnedBy: vi.fn(),
 }));
 
-vi.mock('../src/platform/math-jax', () => ({
+vi.mock('../src/platform/rendering/math/math-jax', () => ({
 	repairUnsettledMath: platform.repairUnsettledMath,
 	clearUnsettledMath: platform.clearUnsettledMath,
 	pruneUnsettledMathOwnedBy: platform.pruneUnsettledMathOwnedBy,

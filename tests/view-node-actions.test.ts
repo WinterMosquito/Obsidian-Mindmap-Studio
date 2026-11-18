@@ -26,7 +26,7 @@ import type { App } from 'obsidian';
 import { TFile } from 'obsidian';
 import { t, type Language, type TranslationKey } from '../src/core/i18n';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapViewContext } from '../src/features/view-context';
+import type { MindMapViewContext } from '../src/features/view/view-context';
 import {
 	addImageToActiveNode,
 	addLinkToActiveNode,
@@ -41,11 +41,11 @@ import {
 	moveNodeUp,
 	removeNodeImage,
 	removeNodeText,
-} from '../src/features/view-node-actions';
+} from '../src/features/editing/view-node-actions';
 import {
 	insertChildNodeWithData,
 	requireActiveNode,
-} from '../src/features/view-common';
+} from '../src/features/view/view-common';
 
 const {
 	noticeCalls,
@@ -158,7 +158,7 @@ vi.mock('../src/ui/modal-text', () => ({
 // 内联编辑器（自绘节点的主编辑入口）非本文件关注点：仅桩掉导入面，
 // 原文模式的写回经 applyRawMock 断言（编辑器内部行为由
 // tests/node-inline-editor.test.ts 覆盖）
-vi.mock('../src/features/node-inline-editor', () => ({
+vi.mock('../src/features/editing/node-inline-editor', () => ({
 	isAnyNodeEditing: vi.fn(() => false),
 	isInlineNodeEditing: vi.fn(() => false),
 	resolveInlineEditKey: vi.fn(() => 'none'),
@@ -166,7 +166,7 @@ vi.mock('../src/features/node-inline-editor', () => ({
 	closeInlineEditor: vi.fn(),
 }));
 
-vi.mock('../src/features/node-content-write', () => ({
+vi.mock('../src/features/content/node-content-write', () => ({
 	applyRawNodeContent: (...args: unknown[]): void => applyRawMock(...args),
 }));
 

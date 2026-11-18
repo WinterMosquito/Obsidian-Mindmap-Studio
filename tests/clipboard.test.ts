@@ -1,7 +1,7 @@
 /**
- * 系统剪贴板 IO 收口（`platform/clipboard`）的语义回归。
+ * 系统剪贴板 IO 收口（`platform/system/clipboard`）的语义回归。
  *
- * 为什么需要直测：唯一消费方（`features/view-clipboard`）把它整模块 mock 掉，
+ * 为什么需要直测：唯一消费方（`features/editing/view-clipboard`）把它整模块 mock 掉，
  * 于是三条**失败语义**此前只验证了 mock 自己——
  * - 成功回 `true`／写失败**留痕一次**并回 `false`（**不抛**，由调用方提示）；
  * - 读失败／`navigator.clipboard` 不可用回 `null`（与「剪贴板为空」区分）；
@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	readClipboardText,
 	writeClipboardText,
-} from '../src/platform/clipboard';
+} from '../src/platform/system/clipboard';
 
 /** 属主文档桩：只提供 `defaultView.navigator.clipboard.writeText` 这一条链 */
 function ownerDocumentWith(writeText: (text: string) => Promise<void>): Document {

@@ -7,7 +7,7 @@
  * 故每个分支都写死位移与宽高数值，回归时改动会立刻暴露。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { computeResizedSize } from '../src/features/image-resize';
+import { computeResizedSize } from '../src/features/media/image-resize';
 
 // 特性模块经 import 链加载 vendor bundle（bundle 顶层求值触碰
 // document.documentElement），与 vendor-contract.test.ts 同款桩。

@@ -1,5 +1,5 @@
 /**
- * 布局跟随的**编排契约**（`features/view.ts` 的 `applyLayout` / `syncDeclaredLayout`）。
+ * 布局跟随的**编排契约**（`features/view/view.ts` 的 `applyLayout` / `syncDeclaredLayout`）。
  *
  * 为什么用源码契约而不是直测：`MindMapView` 继承 Obsidian 的 `FileView`，实例化需要
  * 完整 workspace / leaf / 引擎，单测里跑不起来（与 `mindmap-codeblock.test.ts` 对
@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const VIEW_SOURCE = readFileSync(
-	new URL('../src/features/view.ts', import.meta.url),
+	new URL('../src/features/view/view.ts', import.meta.url),
 	'utf8',
 );
 

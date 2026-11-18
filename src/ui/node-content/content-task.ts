@@ -6,7 +6,7 @@ import { t } from '../../core/i18n';
 import { THEME_LINK_COLOR } from './content-common.styles';
 
 /**
- * 任务复选框：状态由 `data.mdTask` 决定，点击切换由 `features/view-node-task`
+ * 任务复选框：状态由 `data.mdTask` 决定，点击切换由 `features/content/view-node-task`
  * 在画布 capture 阶段接管（本函数只负责画，不绑事件——节点会随渲染重建，
  * 逐元素绑监听必然泄漏）。
  */

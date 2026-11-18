@@ -1,7 +1,7 @@
 /**
  * `captureMiniMap` / `measureMiniMapContent`（小地图的引擎读取面）回归。
  *
- * 为什么必须有这一层直测：`features/view-minimap` 的会话测试把这两个函数整体
+ * 为什么必须有这一层直测：`features/view/view-minimap` 的会话测试把这两个函数整体
  * mock 掉了（它断言的是「何时画、何时藏」），于是「主题色从哪读、缺失回落什么、
  * lineStyle 未知怎么办、鱼骨族怎么分派、面板高度上限怎么传、异常怎么收场」
  * 六件事**没有任何用例覆盖**——而它们全是 `unknown` 收窄与回落判定，最容易在

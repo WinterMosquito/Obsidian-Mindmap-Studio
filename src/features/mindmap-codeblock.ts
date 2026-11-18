@@ -15,9 +15,9 @@
  * | 图片地址 / 尺寸盒 | `media/images-path`（地址解析 + 默认尺寸） |
  * | uid 去重 | `markdown/markdown.ensureUniqueUids` |
  * | 引擎实例 | `engine/mindmap.createMindMap`（`readonly: true`，不注册交互插件） |
- * | 自绘节点内容（数学/代码块/链接） | `features/node-content-factory` + `node-inline-content` |
- * | 定稿尺寸同步 | `features/content-remeasure`（本嵌入自持一个会话） |
- * | 链接跳转 / 未解析弱化 | `features/view-link-navigator`（宿主面 `MindMapLinkHost`） |
+ * | 自绘节点内容（数学/代码块/链接） | `features/content/node-content-factory` + `node-inline-content` |
+ * | 定稿尺寸同步 | `features/content/content-remeasure`（本嵌入自持一个会话） |
+ * | 链接跳转 / 未解析弱化 | `features/navigation/view-link-navigator`（宿主面 `MindMapLinkHost`） |
  * | 主题换肤 | `engine/mindmap.applyThemeConfig` |
  * | 事件登记与清理 | `core/event-binder.EventBinder` |
  *
@@ -85,19 +85,19 @@ import {
 	ensureDefaultImageSizes,
 	walkResolveImagePaths,
 } from '../media/images-path';
-import { refreshPrismTokenColors } from '../platform/prism-code';
-import { ContentRemeasureSession } from './content-remeasure';
-import { registerCodeBlockInteractions } from './node-codeblock';
-import { createInlineContentOptions } from './node-content-factory';
+import { refreshPrismTokenColors } from '../platform/rendering/code/prism-code';
+import { ContentRemeasureSession } from './content/content-remeasure';
+import { registerCodeBlockInteractions } from './content/node-codeblock';
+import { createInlineContentOptions } from './content/node-content-factory';
 import {
 	buildInlineNodeContent,
 	type InlineContentOptions,
-} from './node-inline-content';
-import { colorDirectiveOf } from './node-inline-tokenize';
-import { isResolvedWikiLinkpath, openHyperlink } from './view-link-navigator';
-import { registerTagClicks } from './view-tag';
-import { setupFootnoteInteractions } from './view-footnote';
-import type { HyperlinkOpenMode, MindMapLinkHost } from './view-context';
+} from './content/node-inline-content';
+import { colorDirectiveOf } from './content/node-inline-tokenize';
+import { isResolvedWikiLinkpath, openHyperlink } from './navigation/view-link-navigator';
+import { registerTagClicks } from './content/view-tag';
+import { setupFootnoteInteractions } from './content/view-footnote';
+import type { HyperlinkOpenMode, MindMapLinkHost } from './view/view-context';
 import type { MindMap, MindMapTreeNode } from '../core/engine-types';
 
 /** 外层容器类名（styles.css 的尺寸规则与 verify:visual 断言共用） */

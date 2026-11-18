@@ -1,5 +1,5 @@
 /**
- * 画布视口手势回归（`features/view-viewport.ts`）。
+ * 画布视口手势回归（`features/canvas/view-viewport.ts`）。
  *
  * 为什么这样断言：
  * - **不得重复实现引擎已负责的手势**：滚轮与中键拖由引擎实现（vendor：
@@ -25,7 +25,7 @@ import {
 	setupViewportGestures,
 	zoomToSelection,
 	type ViewportContext,
-} from '../src/features/view-viewport';
+} from '../src/features/canvas/view-viewport';
 
 const mocks = vi.hoisted(() => ({
 	fitMindMap: vi.fn(),
@@ -61,7 +61,7 @@ vi.mock('../src/engine/mindmap', () => ({
 	countMindMapNodes: mocks.countMindMapNodes,
 }));
 
-vi.mock('../src/features/node-inline-editor', () => ({
+vi.mock('../src/features/editing/node-inline-editor', () => ({
 	isAnyNodeEditing: mocks.isAnyNodeEditing,
 }));
 

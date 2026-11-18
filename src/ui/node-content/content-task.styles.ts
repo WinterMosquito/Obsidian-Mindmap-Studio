@@ -2,7 +2,7 @@
 
 
 /**
- * 任务复选框的类名（**交互契约**：`features/view-node-task` 用它在画布 capture
+ * 任务复选框的类名（**交互契约**：`features/content/view-node-task` 用它在画布 capture
  * 阶段命中点击目标；改这里必须同步改那边，两处都不许写字面量）。
  */
 export const NODE_TASK_CLASS = 'mindmap-node-task';

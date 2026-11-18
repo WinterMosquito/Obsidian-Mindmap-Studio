@@ -1,5 +1,5 @@
 /**
- * 标签搜索私有触点（`platform/tag-search`）回归。
+ * 标签搜索私有触点（`platform/workspace/tag-search`）回归。
  *
  * 两件事：
  * - 命中官方搜索插件时，查询串必须是 `tag:#名称`（`#` 只补一次）；
@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 /** 每个用例重新加载模块：`reportedMissing` 是模块级会话标记 */
 async function loadModule() {
 	vi.resetModules();
-	return import('../src/platform/tag-search');
+	return import('../src/platform/workspace/tag-search');
 }
 
 describe('openTagSearch（私有触点）', () => {

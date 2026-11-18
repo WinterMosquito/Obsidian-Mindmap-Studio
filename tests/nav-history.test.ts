@@ -1,5 +1,5 @@
 /**
- * 导航历史卫生回归（K111，platform/nav-history）。
+ * 导航历史卫生回归（K111，platform/workspace/nav-history）。
  *
  * 背景：打开 .mindmap.md 会在 leaf 历史里留下「同文件 markdown 中间态」，
  * 侧键后退落在它上面后被偏好恢复逻辑切回导图（净效果零）。修复＝视图切换
@@ -22,7 +22,7 @@ import {
 import {
 	pruneHistoryStack,
 	pruneViewSwitchNoise,
-} from '../src/platform/nav-history';
+} from '../src/platform/workspace/nav-history';
 
 /** 历史条目桩：{state:{type,state:{file}}} 最小形态（与 Navigation 记录同构） */
 function entry(file: string, type: string): unknown {

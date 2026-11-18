@@ -11,7 +11,7 @@
  *
  * 渲染承载（B3 显式切换）：命中的文件仍是普通 Markdown（默认用 Obsidian
  * markdown 视图打开）；插件在它出现于 markdown 视图时自动切到本插件的导图视图
- * （时机在 platform/mindmap-auto-open），用户可经「以 Markdown 打开」把它**持久
+ * （时机在 platform/workspace/mindmap-auto-open），用户可经「以 Markdown 打开」把它**持久
  * 降级**（把 `Mindmap` 改写为默认值 `Markdown`，布局键原样保留）。
  *
  * 打开方式不再存 data.json：文件本身就是声明，没有第二份状态可失配。
@@ -32,7 +32,7 @@ import {
 } from '../domain/mindmap-property';
 
 /**
- * 视图切换落定钩子（由组合根注入「导航历史卫生」，见 platform/nav-history，K111）：
+ * 视图切换落定钩子（由组合根注入「导航历史卫生」，见 platform/workspace/nav-history，K111）：
  * 打开 / 切回是**视图切换**而非导航点——把 leaf 历史里同文件的跨视图冗余条目
  * 收敛掉；否则侧键后退会落在「同文件旧视图态」上又被声明驱动逻辑切回，
  * 净效果为零（用户实测：导图视图下侧键后退无反应）。
@@ -233,7 +233,7 @@ const SWITCH_PENDING_TIMEOUT_MS = 3000;
 /**
  * 把当前 leaf 切换到导图视图（记录进入前的编辑/阅读模式，供返回）。
  *
- * 纯视图切换、不写文件——声明驱动自动打开（platform/mindmap-auto-open）与
+ * 纯视图切换、不写文件——声明驱动自动打开（platform/workspace/mindmap-auto-open）与
  * 已声明文件的入口走这里；手动把普通笔记开为导图需先经 `declareAndOpenAsMindMap`
  * 把声明落盘。
  */

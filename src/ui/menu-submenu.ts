@@ -3,8 +3,8 @@
  *
  * 四处菜单共用（布局 / 整篇配色 / 节点配色 / 联系线配色）：父项外观、原生级联的
  * 私有触点、无法级联时的回退、独占弹出与颜色弹窗的调用形态都只在这里写一遍。
- * 放 `ui/` 而不是 `features/`：`features/view-node-relation` 也要用它，而
- * `features/view-context-menu` 反过来依赖 `view-node-relation`（建边入口）——
+ * 放 `ui/` 而不是 `features/`：`features/relations/view-node-relation` 也要用它，而
+ * `features/view/view-context-menu` 反过来依赖 `view-node-relation`（建边入口）——
  * 留在上层会成环（`tests/module-boundaries.test.ts` 断言组内无环）。
  */
 import {

@@ -33,8 +33,8 @@ import type { Language, TranslationKey } from '../src/core/i18n';
 import { t } from '../src/core/i18n';
 import { formatWikilink } from '../src/domain/wikilink';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapViewContext } from '../src/features/view-context';
-import { setupDragAndDrop } from '../src/features/view-dnd';
+import type { MindMapViewContext } from '../src/features/view/view-context';
+import { setupDragAndDrop } from '../src/features/editing/view-dnd';
 
 const h = vi.hoisted(() => ({
 	/** Notice 文案（按调用顺序） */
@@ -114,9 +114,9 @@ vi.mock('../src/engine/mindmap', () => ({
 
 // 节点挂载动作（图片/附件/文档双链）以桩替换：本文件只验证「分发到哪个函数、
 // 入参是什么」，三者内部写数据的形态由 view-node-actions 自己的用例覆盖。
-vi.mock('../src/features/view-node-actions', async (importOriginal) => {
+vi.mock('../src/features/editing/view-node-actions', async (importOriginal) => {
 	const actual =
-		await importOriginal<typeof import('../src/features/view-node-actions')>();
+		await importOriginal<typeof import('../src/features/editing/view-node-actions')>();
 	return {
 		// 载荷与提示的计划用**真实现**：本文件要验「形态跟随官方设置」的真实分支
 		// （wiki / md 两形态），桩掉就等于不测；计划里载荷与提示同源，故拖入提示
@@ -416,7 +416,7 @@ function makeHarness(
 	const getResourcePath = vi.fn<(file: TFile) => string>(
 		(file) => `app://vault/${file.path}`,
 	);
-	// `vault.getConfig` 是内部接口（读取收口在 platform/vault-prefs.readVaultConfig，
+	// `vault.getConfig` 是内部接口（读取收口在 platform/workspace/vault-prefs.readVaultConfig，
 	// 读失败 / 缺键一律按官方默认）：桩出来才能测「写入形态跟随官方偏好」的两分支
 	const getConfig = vi.fn<(key: string) => unknown>(
 		(key) => options.vaultConfig?.[key],

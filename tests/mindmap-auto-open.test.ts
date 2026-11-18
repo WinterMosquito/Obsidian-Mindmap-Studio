@@ -1,5 +1,5 @@
 /**
- * 声明驱动自动打开回归（platform/mindmap-auto-open.ts）。
+ * 声明驱动自动打开回归（platform/workspace/mindmap-auto-open.ts）。
  *
  * 三条入口：
  * - `file-open`（互补兜底）→ `activateDeclaredLeaves` 全叶子扫描；
@@ -31,7 +31,7 @@ import {
 	CORE_VIEW_TYPE,
 	VIEW_TYPE,
 } from '../src/core/constants';
-import { MindMapAutoOpener } from '../src/platform/mindmap-auto-open';
+import { MindMapAutoOpener } from '../src/platform/workspace/mindmap-auto-open';
 
 /** openAsMindMap 的 spy（vi.hoisted 保证先于 mock 工厂可用） */
 const openAsMindMapMock = vi.hoisted(() =>

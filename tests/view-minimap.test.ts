@@ -1,5 +1,5 @@
 /**
- * 小地图会话级回归（`features/view-minimap`）：状态机 + DOM 副作用的唯一测试面。
+ * 小地图会话级回归（`features/view/view-minimap`）：状态机 + DOM 副作用的唯一测试面。
  *
  * 为什么要有这一层：`core/minimap-geometry` 的纯几何已被直测，但「何时画、何时
  * 藏、切布局为什么推迟、拖拽会不会动框、销毁是否清干净」全在会话状态机里——
@@ -21,13 +21,13 @@
  *    矩形——否则平移/缩放期间形成「写样式 → 强制布局读矩形」的抖动（2026-11-04）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MiniMapContext } from '../src/features/view-minimap';
+import type { MiniMapContext } from '../src/features/view/view-minimap';
 import {
 	refreshMiniMap,
 	refreshMiniMapAfterRender,
 	setupMiniMap,
 	teardownMiniMap,
-} from '../src/features/view-minimap';
+} from '../src/features/view/view-minimap';
 
 const mocks = vi.hoisted(() => ({
 	captureMiniMap: vi.fn<

@@ -2,7 +2,7 @@
  * 节点配色指令（`%%#hex%%`）回归。
  *
  * 三段口径分别锁在这里：
- * 1. **解析**（`features/node-inline-tokenize.colorDirectiveOf`）：只认注释段里的
+ * 1. **解析**（`features/content/node-inline-tokenize.colorDirectiveOf`）：只认注释段里的
  *    三/六位十六进制色；围栏代码 / 行内代码 / 数学里的同形态不是指令；非法值
  *    仍按普通注释（渲染期隐藏，2026-10-27 用户裁决）；
  * 2. **继承**（`domain/color.walkColorDirectives`）：就近覆盖——自身指令优先，
@@ -39,7 +39,7 @@ import { NODE_COLORS } from '../src/engine/mindmap-theme-presets';
 import {
 	colorDirectiveOf,
 	setColorDirective,
-} from '../src/features/node-inline-tokenize';
+} from '../src/features/content/node-inline-tokenize';
 import {
 	applyColorDirectivesToTree,
 	applyLiveColorDirectives,

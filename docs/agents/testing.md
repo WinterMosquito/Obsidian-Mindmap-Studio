@@ -66,7 +66,7 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 浏览器缺失仍然直接失败（`--require-chrome`），不静默跳过。
 
 **已知缺口：小地图没有视觉门禁**（2026-10-24 登记；判定为「不需要常驻补」，理由见下）。
-`features/view-minimap`、`core/minimap-geometry` 与引擎读取面已由
+`features/view/view-minimap`、`core/minimap-geometry` 与引擎读取面已由
 `tests/view-minimap.test.ts`（**22** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
 `tests/minimap-geometry.test.ts`（**69** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
 `tests/engine-minimap-capture.test.ts`（**15** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
@@ -82,7 +82,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 > **obsidian 替身必须与源码的具名导入同步**：`verify:visual` 把真实 `src/**` 打进浏览器，
 > 任何模块新增 `import { x } from 'obsidian'` 都要在 `scripts/verify-visual.mjs` 的
 > `OBSIDIAN_SHIM_SOURCE` 补同名导出，否则会停在构建阶段 `No matching export … for import "x"`
-> （2026-10-23 因 `platform/math-jax-fonts.ts` 新增 `requestUrl` 踩到；同期 `tests/mocks/obsidian.ts` 也要补）。
+> （2026-10-23 因 `platform/rendering/math/math-jax-fonts.ts` 新增 `requestUrl` 踩到；同期 `tests/mocks/obsidian.ts` 也要补）。
 - `verify:visual`：把 `src/engine/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
   `styles.css` 在无头 Chrome 里渲染 **16 个场景**（plain / doc / url / empty / attach / docnode / long / inline / markup / syntax / math / codeblock / paragraph / table / callout / hugeline；2026-11-11 加 `callout`，逐项 ✓）并断言 `--dump-dom`——三类链接图标分流与
   图标尺寸（18×18）、回形针标题、画布铺满容器、节点测宽随文本（不被容器拉平）、
@@ -262,3 +262,5 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 
 
 **节点内容第三批（K209）**：`node-content-components.test.ts` 直测组件的递归回调、缓存同步、占位归属、任务基线/勾色、脚注 id 与锚点契约；它与 `node-inline-content.test.ts` 共用 `tests/helpers/node-content-dom.ts`，装配回归仍从既有入口运行。`math-placeholder.test.ts` 的构建消费方改指 `content-math.ts`，占位模板仍只有一份。`verify:visual` 复用 Chrome 驱动执行 `scripts/visual-node-content.mjs` 的独立比较页：用 Git/tar 从 HEAD 提取完整 src 快照后分别打包（避免基线读取当前已改组件），将 HEAD 与当前的 DOM/内联样式/测量键、XML 导出序列化、尺寸和注入调用逐项比较，并检查输入树未修改。图像/公式/代码的实际异步平台路径仍由原探针覆盖；实机 Obsidian 的主题、IME、悬停与编辑手感仍留人工验收。
+
+**目录与分层索引（K210）**：`agents-md-sync.test.ts` 从「代码结构索引」的 bullet 链接解析完整 `src/`、`tests/` 路径，双向检查漏登、陈旧与重复，并校验「参考文档」的具体链接；解析用例覆盖嵌套目录、同名文件、旧目录与段落隔离。`check-gates.test.ts` 覆盖迁移后的内容、编辑、画布与平台渲染触发面。`scripts/visual-node-content.mjs` 依据 HEAD 独立快照实际存在的旧/新入口生成比较页，入口不存在即报错，不回落当前源码；临时快照测试验证两种结构与缺失失败。模块边界仍由同一一级目录矩阵校验。

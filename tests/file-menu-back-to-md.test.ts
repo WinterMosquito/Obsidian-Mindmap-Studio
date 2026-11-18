@@ -14,7 +14,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TFile, type App, type Menu, type WorkspaceLeaf } from 'obsidian';
 import MindMapStudioPlugin from '../src/main';
-import { MindMapView } from '../src/features/view';
+import { MindMapView } from '../src/features/view/view';
 import type { MindMapStudioSettings } from '../src/settings';
 
 vi.mock('../src/engine/mindmap', () => ({}));

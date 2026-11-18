@@ -14,7 +14,7 @@ import { CODE_COPY_CLASS, CODE_COPY_BUTTON_STYLES } from './content-copy.styles'
  * 后者是 async）。
  *
  * 产物形态：注入面给的是**已解析好的 `<svg>` 根元素**（解析在平台层，见
- * `platform/mermaid.renderMermaidNode`——本模块不碰字符串→DOM，也就不存在
+ * `platform/rendering/mermaid.renderMermaidNode`——本模块不碰字符串→DOM，也就不存在
  * `innerHTML` 注入面）。跨文档 append 由 DOM 自动 adopt，故 popout 的
  * `doc` 与主窗口解析出的元素可以直接混用。
  */
@@ -42,7 +42,7 @@ export function buildMermaidElement(
  * SVG `<a href rel="noopener">`。只给锚点放行命中，图其余部分仍是
  * `pointer-events:none`（拖拽 / 双击交回引擎）。
  *
- * 点击的**接管**不在本模块：`features/view-wikilink` 在引擎 `node_click` 上识别
+ * 点击的**接管**不在本模块：`features/navigation/view-wikilink` 在引擎 `node_click` 上识别
  * `.tmm-mermaid a[href]` 并走 `openHyperlink`（阻止默认导航——裸 `<a href>` 在
  * Electron 里会把整个窗口导航走）。
  */
@@ -68,7 +68,7 @@ type SGElementLike = { style: Partial<CSSStyleDeclaration> };
 
 /**
  * 图容器的**复制源码**按钮（P2，2026-11-09）：复用代码块的按钮类名与
- * `data-code` 契约——点击委托（`features/node-codeblock`）因此**零改动**即可命中，
+ * `data-code` 契约——点击委托（`features/content/node-codeblock`）因此**零改动**即可命中，
  * 导出隐身（`hideCopyButtonsInExportSvg`）与 ✓ 反馈也一并复用。
  *
  * 文案单独一条 i18n（复制的是**源码**，不是渲染产物）。

@@ -156,7 +156,7 @@ describe('vendor 契约：MindMap 原型面（d.cts 声明 ↔ bundle 运行时�
 });
 
 describe('vendor 契约：画布导航手势（由引擎实现，插件不得重复实现）', () => {
-	// 为什么钉死：features/view-viewport.ts 只补「抑制中键自动滚动」与 Shift+1/2，
+	// 为什么钉死：features/canvas/view-viewport.ts 只补「抑制中键自动滚动」与 Shift+1/2，
 	// 滚轮平移/缩放与中键拖平移**全部依赖引擎**。若升级后引擎丢了这些行为，
 	// 插件侧的手势会整体失效（而不是降级），必须在契约层先失败。
 	it('滚轮：默认平移 + Ctrl/Cmd 以指针为锚缩放（createMindMap 已显式钉住两者）', () => {
@@ -306,7 +306,7 @@ describe('vendor 契约：防腐层触碰的引擎内部字段', () => {
 		// features/drag-target.ts（拖拽换父辅助）于 2026-10-11 移除——插件不再触碰
 		// 这些内部形态，令牌留在清单里会声明一份并不存在的依赖（见 K23 / K118）。
 		// 拖拽换父本身不受影响：引擎原生判定（指针落在目标矩形内）照旧工作。
-		// 图片展示尺寸（setNodeImageSize / features/image-resize.ts 拖拽调宽）
+		// 图片展示尺寸（setNodeImageSize / features/media/image-resize.ts 拖拽调宽）
 		'imageSize',
 		'getImgShowSize',
 	];

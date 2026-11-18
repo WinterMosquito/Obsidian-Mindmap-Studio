@@ -1,5 +1,5 @@
 /**
- * 节点宽度收尾回归（features/view-node-width.ts）。
+ * 节点宽度收尾回归（features/canvas/view-node-width.ts）。
  *
  * 为什么钉死这一条：自绘（富）节点的宽高**全部来自内容元素的离屏测宽**，而引擎
  * 「拖左右边框改宽」结束时只 `setData({ customTextWidth })` + `render()`，
@@ -10,11 +10,11 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapViewContext } from '../src/features/view-context';
+import type { MindMapViewContext } from '../src/features/view/view-context';
 import {
 	gateNodeWidthHandles,
 	setupNodeWidthRefresh,
-} from '../src/features/view-node-width';
+} from '../src/features/canvas/view-node-width';
 
 const mocks = vi.hoisted(() => ({
 	refreshNodeCustomContent: vi.fn<

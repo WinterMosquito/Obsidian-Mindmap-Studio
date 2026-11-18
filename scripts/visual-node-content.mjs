@@ -1,9 +1,17 @@
 /** 在同一个真实浏览器文档里比较 HEAD 与当前渲染器的 DOM、尺寸和注入调用。 */
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+/** @param {string} root @param {string} baselineRoot */
 export function buildNodeContentCompareSource(root, baselineRoot) {
-	const current = join(root, 'src/features/node-inline-html.ts').replaceAll('\\', '/');
-	const baseline = join(baselineRoot, 'src/features/node-inline-html.ts').replaceAll('\\', '/');
+	const current = join(root, 'src/features/content/node-inline-html.ts').replaceAll('\\', '/');
+	// 两侧独立解析：HEAD 快照可能仍使用迁移前的平铺路径。
+	const baselineFile = [
+		'src/features/content/node-inline-html.ts',
+		'src/features/node-inline-html.ts',
+	].map(file => join(baselineRoot, file)).find(file => existsSync(file));
+	if (!baselineFile) throw new Error(`HEAD 快照缺少节点内容入口：${baselineRoot}`);
+	const baseline = baselineFile.replaceAll('\\', '/');
 	const raws = [
 		'', '普通中文节点', 'React / : ? 技术体系', '长文本'.repeat(220),
 		'[[目录/笔记|别名]] 与 [站点](https://example.com)',

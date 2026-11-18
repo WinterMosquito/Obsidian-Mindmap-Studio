@@ -18,7 +18,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { MarkdownView, TFile } from 'obsidian';
-import { MindMapView } from '../src/features/view';
+import { MindMapView } from '../src/features/view/view';
 import { openAsMindMap } from '../src/markdown/md-open';
 
 /**

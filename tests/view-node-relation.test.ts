@@ -19,17 +19,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { t } from '../src/core/i18n';
 import type { MindMapNode } from '../src/core/engine-types';
-import type { MindMapViewContext } from '../src/features/view-context';
+import type { MindMapViewContext } from '../src/features/view/view-context';
 import {
 	removeActiveRelationLine,
 	schedulePersistRelationGeometry,
 	setupRelationInteractions,
 	startRelationPicking,
 	stripInboundRelations,
-} from '../src/features/view-node-relation';
-import { nodeColorOptions } from '../src/features/view-node-color';
+} from '../src/features/relations/view-node-relation';
+import { nodeColorOptions } from '../src/features/editing/view-node-color';
 // 点选会话是共享设施（联系 / 概要共用）：取消入口在 node-pick，不在联系模块
-import { cancelNodePick, setupNodePick } from '../src/features/node-pick';
+import { cancelNodePick, setupNodePick } from '../src/features/relations/node-pick';
 
 /** 级联子菜单桩（`setSubmenu()` 的返回值；结构见 FakeMenuClass） */
 interface SubmenuStub {
@@ -183,7 +183,7 @@ vi.mock('../src/engine/mindmap', () => ({
 }));
 
 // 原文提交通道（真实实现在 node-content-write）：只验证写进去的原文
-vi.mock('../src/features/node-content-write', () => ({
+vi.mock('../src/features/content/node-content-write', () => ({
 	// 联系只走批量通道；单项版是 view-node-color 的依赖面，同样要给出来
 	applyRawNodeContent: vi.fn(),
 	applyRawNodeContents: mocks.applyRawNodeContents,
@@ -522,7 +522,7 @@ describe('点选模式（「联系」→ 点目标节点）', () => {
 		const { view } = makeView();
 		startRelationPicking(view, sourceNode());
 
-		// 点选会话由共享设施 `features/node-pick` 统一持有：重建时由它清理
+		// 点选会话由共享设施 `features/relations/node-pick` 统一持有：重建时由它清理
 		// （联系侧不再各自维护 pending，见 view-node-relation 的模块头）
 		setupNodePick(view);
 

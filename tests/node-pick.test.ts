@@ -1,5 +1,5 @@
 /**
- * 共享落点会话（`features/node-pick`）：联系的「点目标节点」与概要的
+ * 共享落点会话（`features/relations/node-pick`）：联系的「点目标节点」与概要的
  * 「起点 → 终点」两步都跑在它上面。
  *
  * 这一层唯一的职责是**会话唯一性**与**取消收敛**，所以用例也只锁这两件事：
@@ -17,8 +17,8 @@ import {
 	handleNodePickClick,
 	setupNodePick,
 	startNodePick,
-} from '../src/features/node-pick';
-import type { ViewNodeEditContext } from '../src/features/view-context';
+} from '../src/features/relations/node-pick';
+import type { ViewNodeEditContext } from '../src/features/view/view-context';
 
 /** 引擎事件桩：记录注册的引擎监听，供用例手动触发 */
 function makeHost(withEngine = true) {

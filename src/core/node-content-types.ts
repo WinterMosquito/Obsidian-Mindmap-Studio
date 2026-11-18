@@ -32,7 +32,7 @@ export interface InlineContentOptions {
 	isResolvedLink?: (linkpath: string) => boolean;
 	/**
 	 * 数学（行内 `$…$` / 单行块级 `$$…$$`）的**异步渲染**注入
-	 * （生产实现 = `platform/math-jax`）。
+	 * （生产实现 = `platform/rendering/math/math-jax`）。
 	 *
 	 * 本模块保持零 Obsidian 依赖（`loadMathJax` 不可在无运行时打包），故数学
 	 * 渲染作为能力注入：`buildMathElement` 先写**字面占位**（行内 `$…$` /
@@ -44,7 +44,7 @@ export interface InlineContentOptions {
 	 *
 	 * `owner` = 构建该段的**引擎实例**（不透明 token，由 `engine/mindmap` 注入，
 	 * 本模块原样透传）——平台侧据此登记归属，引擎销毁时精确清理未定稿段
-	 * （`platform/math-jax` 的 `pruneUnsettledMathOwnedBy`，语义见那里的
+	 * （`platform/rendering/math/math-jax` 的 `pruneUnsettledMathOwnedBy`，语义见那里的
 	 * `unsettledMath`）。
 	 */
 	renderMath?: (
@@ -60,12 +60,12 @@ export interface InlineContentOptions {
 	 * 命中时 `buildMathElement` **同步**放置产物、**不走** `renderMath`——引擎随后
 	 * 的离屏测量直接量到**真实宽高**，消除「按字面占位测量 → 替换后溢出」的窗口；
 	 * 且重建路径不再触发异步替换（无重排循环）。注入实现见
-	 * `platform/math-jax.getRenderedMathNode`（本模块不 import 该层）。
+	 * `platform/rendering/math/math-jax.getRenderedMathNode`（本模块不 import 该层）。
 	 */
 	getCachedMath?: (tex: string, display: boolean) => Node | null;
 	/**
 	 * **代码块 Prism 高亮**的注入（同 `renderMath` 的注入式纪律：生产实现 =
-	 * `platform/prism-code`，那里是唯一 import `obsidian` 的代码高亮实现）。
+	 * `platform/rendering/code/prism-code`，那里是唯一 import `obsidian` 的代码高亮实现）。
 	 *
 	 * 本模块先写**字面代码**（信息行已剥、缩进/空行逐字），实现方在`loadPrism()`
 	 * 就绪后把 holder 的子节点换成 token 元素。`lang` 已规范化为语言 id（空串 =
@@ -87,11 +87,11 @@ export interface InlineContentOptions {
 	 * 命中时 `buildCodeBlockElement` **同步**放置 token、不走 `renderCode`——引擎随后的
 	 * 离屏测量直接量到真实宽高（消除「按字面测量 → 替换后溢出」的窗口），且重建
 	 * 路径不再触发异步替换（无重排循环）。注入实现见
-	 * `platform/prism-code.getRenderedCodeNodes`（本模块不 import 该层）。
+	 * `platform/rendering/code/prism-code.getRenderedCodeNodes`（本模块不 import 该层）。
 	 */
 	getCachedCode?: (code: string, lang: string) => readonly Node[] | null;
 	/**
-	 * **mermaid 图渲染**的注入（生产实现 = `platform/mermaid`；本模块不 import 该层）。
+	 * **mermaid 图渲染**的注入（生产实现 = `platform/rendering/mermaid`；本模块不 import 该层）。
 	 *
 	 * 与 `renderCode` 的两点差别（照抄它的纪律前必读）：
 	 * - **同步**：Pele 是纯字符串渲染（不等字体、不挂载），产物直接进 DOM——
@@ -103,7 +103,7 @@ export interface InlineContentOptions {
 	 */
 	renderMermaid?: (source: string) => Node | null;
 	/**
-	 * **标注图标**的注入（生产实现 = `platform/callout-icon`，内部转调宿主
+	 * **标注图标**的注入（生产实现 = `platform/rendering/callout-icon`，内部转调宿主
 	 * `getIcon`；本模块与 `node-inline-html` 都不 import obsidian）。
 	 *
 	 * 入参是图标 **id**（`domain/callout.calloutVisualOf().icon` 给出的官方取值，
@@ -209,7 +209,7 @@ export interface InlineSegment {
 	 * 空串有两种含义，**都不高亮**、都保留字面：① 无信息行（``` ``` ``` /缩进式
 	 * 代码块）；② 信息行给了 Prism 未登记的语言码（用户可写任意语言码）。
 	 * 该字段进 `<code class="language-…">`（宿主/主题选择器口径）并传给
-	 * `platform/prism-code` 查语法。
+	 * `platform/rendering/code/prism-code` 查语法。
 	 */
 	lang?: string;
 	/**

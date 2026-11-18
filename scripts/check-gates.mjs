@@ -59,13 +59,16 @@ const VISUAL_MATCHERS = [
 	'src/ui/node-content/',
 	'src/core/node-content-types.ts',
 	'src/domain/node-edit-key.ts',
-	'src/features/view-toolbar.ts',
-	'src/features/view-search.ts',
-	'src/features/node-',
+	'src/features/view/view-toolbar.ts',
+	'src/features/view/view-search.ts',
+	'src/features/content/',
+	'src/features/editing/',
+	'src/features/canvas/',
+	'src/features/media/',
+	'src/features/relations/node-pick.ts',
 	'src/features/mindmap-codeblock.ts',
 	'src/domain/pipe-table.ts',
-	'src/platform/prism-code.ts',
-	'src/platform/math-jax',
+	'src/platform/rendering/',
 ];
 
 const flags = process.argv.slice(2);

@@ -4,7 +4,7 @@
  *
  * 为什么需要它（补齐三处结构性盲区）：
  * 1. **组内成环**——`eslint` 的 `no-restricted-imports` 只看跨组说明符，
- *    `features/view.ts ↔ features/view-node-actions.ts` 这类同组环永远绿。
+ *    `features/view/view.ts ↔ features/editing/view-node-actions.ts` 这类同组环永远绿。
  *    K51 明文要求「组内不得成环」，此前无人执行。
  * 2. **深层路径绕过**——边界模式按其字面量形态匹配（`../engine`）。若某组
  *    新增子目录（`src/a/sub/x.ts` 写作 `../../engine/x`），说明符形态变了，

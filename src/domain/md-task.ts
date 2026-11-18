@@ -18,7 +18,7 @@
  *
  * ## 为什么单独成文件
  * 解析侧（`markdown/md-outline`）、原文写回侧（`markdown/md-line-write`）、
- * 拆分回写侧（`markdown/links-split`）与交互侧（`features/view-node-task`）都要
+ * 拆分回写侧（`markdown/links-split`）与交互侧（`features/content/view-node-task`）都要
  * 用同一套判定与合成；散落在四处必然漂移（硬规则 5）。
  */
 

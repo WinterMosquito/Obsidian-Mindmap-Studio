@@ -8,7 +8,7 @@ import { t } from '../../core/i18n';
  * 纯定义节点 → 汇总 chip（`span.mindmap-node-footnote-summary[data-footnote-ids]`）。
  *
  * 文案只报条数（`脚注 3`），不把定义正文或长 id 铺回节点——那正是要隐藏的东西。
- * 点击/悬停展开全部定义由 `features/view-footnote` 承接（本模块零监听）。
+ * 点击/悬停展开全部定义由 `features/content/view-footnote` 承接（本模块零监听）。
  */
 export function buildFootnoteSummary(
 	doc: InlineContentDocument,
@@ -34,7 +34,7 @@ export function buildFootnoteSummary(
  *
  * **不在此处解析定义正文**：段序列按原文寻址缓存，正文属于文档上下文，只能在
  * 交互发生时现查（见 `InlineSegment.footnote`）。悬停预览与点击跳转都在
- * `features/view-footnote`，本函数只产出可命中的 DOM。
+ * `features/content/view-footnote`，本函数只产出可命中的 DOM。
  */
 export function buildFootnoteRef(
 	doc: InlineContentDocument,

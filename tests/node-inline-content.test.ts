@@ -33,10 +33,10 @@ import {
 	NODE_INLINE_CONTENT_CLASS,
 	QUOTE_BLOCK_CLASS,
 	segmentCacheStats,
-} from '../src/features/node-inline-content';
+} from '../src/features/content/node-inline-content';
 import { CODE_BLOCK_MAX_HEIGHT_PX } from '../src/core/constants';
 import { nodeContentTones } from '../src/domain/color';
-import type { InlineSegment } from '../src/features/node-inline-content';
+import type { InlineSegment } from '../src/features/content/node-inline-content';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
 
 describe('buildInlineSegments（行内原文 → 段序列）', () => {
@@ -477,7 +477,7 @@ describe('轻标记扩展（显示层，不回写）', () => {
 		expect(buildInlineSegments('```<script>\nx\n```')[0]?.lang).toBeUndefined();
 		// `__proto__` 连白名单都进不去（首字符必须字母）；
 		// `constructor` 能进白名单（首字符是字母），但**不会**被当成语法 ——
-		// 第二道防线是 `platform/prism-code` 的 hasOwnProperty 守卫
+		// 第二道防线是 `platform/rendering/code/prism-code` 的 hasOwnProperty 守卫
 		expect(buildInlineSegments('```__proto__\nx\n```')[0]?.lang).toBeUndefined();
 		expect(buildInlineSegments('```constructor\nx\n```')[0]?.lang).toBe(
 			'constructor',
@@ -1727,7 +1727,7 @@ describe('渲染期缓存与超长回落（性能收口）', () => {
 
 	it('超长 mermaid 节点：图**不参与截断预算**（整段进渲染通道，源码不丢）', () => {
 		// 图不能被切一半：源码超 MAX_INLINE_CONTENT_CHARS 时仍整段交给渲染通道；
-		// 体积门限在 platform/mermaid（超限是**整张回退成代码块**，不是画半张）
+		// 体积门限在 platform/rendering/mermaid（超限是**整张回退成代码块**，不是画半张）
 		const body = `flowchart LR\n${Array.from(
 			{ length: 200 },
 			(_, i) => `  N${i}-->N${i + 1}`,

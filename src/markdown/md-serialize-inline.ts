@@ -205,7 +205,7 @@ export function renderImage(data: MdNodeData, app: App | null): string | null {
 		return `![${alt}${imageSizeSuffix(data)}](${isExternalImageRef(image) ? image : target})`;
 	}
 	// **库内图片的 md 形态**：官方「使用 \[\[Wikilinks\]\]」关闭时新建的图写
-	// `![alt|尺寸](路径)`（该设置同时管 links 与 images，见 platform/vault-prefs）。
+	// `![alt|尺寸](路径)`（该设置同时管 links 与 images，见 platform/workspace/vault-prefs）。
 	// 形态由解析期记录 / 新建时按设置写入（md-meta.mdImageStyle），缺省按 wiki。
 	if (data.mdImageStyle === 'md') {
 		return `![${alt}${imageSizeSuffix(data)}](${target || image})`;

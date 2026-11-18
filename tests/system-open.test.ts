@@ -1,5 +1,5 @@
 /**
- * `shell.openPath` 结果面化（`src/platform/system-open.ts` 的 `surfaceOpenResult`）直测。
+ * `shell.openPath` 结果面化（`src/platform/system/system-open.ts` 的 `surfaceOpenResult`）直测。
  *
  * 为什么必须直测：Electron 的 `shell.openPath` **从不 reject 表示失败**，而是
  * resolve 一个错误消息串（成功为空串、失败为非空）。原实现 `void shell.openPath(...)`
@@ -14,7 +14,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Notice } from 'obsidian';
 import { t } from '../src/core/i18n';
-import { surfaceOpenResult } from '../src/platform/system-open';
+import { surfaceOpenResult } from '../src/platform/system/system-open';
 
 const h = vi.hoisted(() => ({
 	/** Notice 文案（按调用顺序） */

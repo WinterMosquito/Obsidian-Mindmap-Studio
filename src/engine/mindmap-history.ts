@@ -11,7 +11,7 @@ import { countTreeNodes, getRenderRoot } from './mindmap-nodes';
  *
  * ## 为什么需要它
  * 引擎只在命令收尾自动 `addHistory()`（`Command.exec` 对非白名单命令，见 K26b）；
- * 插件侧的「原文写回」通道（`features/node-inline-editor.applyRawNodeContent`：
+ * 插件侧的「原文写回」通道（`features/editing/node-inline-editor.applyRawNodeContent`：
  * 内联编辑 / 节点配色 / 任务勾选）直接改 data 后 `render()`，**不产生历史**——
  * 撤销会跳过这些改动、直接回到更早的快照（用户感知为「一次撤销丢一堆编辑」）。
  * 故该通道收尾必须显式记一条。

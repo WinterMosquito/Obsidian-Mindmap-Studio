@@ -24,7 +24,7 @@
  *
  * 旧值读口只有三个消费面，全部是「读已经写进用户数据里的旧值」：
  * - 嵌入指令 `%%layout: LogicalStructure%%`（正文里的指令，迁移不碰正文）；
- * - 启动迁移（`platform/legacy-mindmap-migration`，旧属性块 → 新契约）；
+ * - 启动迁移（`platform/workspace/legacy-mindmap-migration`，旧属性块 → 新契约）；
  * - 「以导图打开」的升级入口（`markdown/md-open`，手动把普通笔记开为导图）。
  * 新契约的属性读侧（`isMindMapEnabled` / `readMindMapLayout`）**绝不**认旧值：
  * 文件里只允许出现 kebab，放宽会让脏值在文件里长期有效（2026-11-08 起）。

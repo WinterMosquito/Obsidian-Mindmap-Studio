@@ -1,7 +1,7 @@
 /** 节点内容 copy.styles：DOM/样式内聚，保持原输出与导出保真。 */
 
 
-/** 代码块复制按钮类名（视图层点击委托的选择器，见 features/node-codeblock.ts） */
+/** 代码块复制按钮类名（视图层点击委托的选择器，见 features/content/node-codeblock.ts） */
 export const CODE_COPY_CLASS = 'tmm-code-copy';
 
 /**

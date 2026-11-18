@@ -33,8 +33,8 @@ import {
 	buildInlineNodeContent,
 	NODE_INLINE_CONTENT_CLASS,
 	NODE_TASK_CLASS,
-} from '../src/features/node-inline-html';
-import { setupNodeTaskInteraction } from '../src/features/view-node-task';
+} from '../src/features/content/node-inline-html';
+import { setupNodeTaskInteraction } from '../src/features/content/view-node-task';
 import { toggleTaskToken } from '../src/domain/md-task';
 import { nodeContentTones } from '../src/domain/color';
 

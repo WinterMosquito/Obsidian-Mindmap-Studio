@@ -24,7 +24,7 @@ import {
 	searchNext,
 	searchPrev,
 	updateSearchCount,
-} from '../src/features/view-search';
+} from '../src/features/view/view-search';
 
 /** view-search 的窄访问面（模块未导出类型，从函数签名取） */
 type SearchViewContext = Parameters<typeof buildSearchBar>[0];
@@ -66,7 +66,7 @@ vi.mock('../src/engine/mindmap', () => ({
 	searchNextInMindMap: searchMocks.searchNextInMindMap,
 }));
 
-/** 防抖窗口（与 src/features/view-search.ts 的 SEARCH_DEBOUNCE_MS 一致） */
+/** 防抖窗口（与 src/features/view/view-search.ts 的 SEARCH_DEBOUNCE_MS 一致） */
 const SEARCH_DEBOUNCE_MS = 180;
 /** 打开搜索栏后的聚焦延迟（SEARCH_FOCUS_DELAY_MS） */
 const SEARCH_FOCUS_DELAY_MS = 50;

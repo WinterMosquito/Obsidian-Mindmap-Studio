@@ -78,7 +78,7 @@ export const CALLOUT_TITLE_STYLES: Partial<CSSStyleDeclaration> = {
 };
 
 /**
- * 图标容器：**不设固定尺寸**——尺寸由 `platform/callout-icon` 写在 `<svg>` 的
+ * 图标容器：**不设固定尺寸**——尺寸由 `platform/rendering/callout-icon` 写在 `<svg>` 的
  * 宽高上（图标来源唯一，这里再钳一次会让宽高出现第二处真相）；只负责不压缩、
  * 与首行文字对齐。
  */

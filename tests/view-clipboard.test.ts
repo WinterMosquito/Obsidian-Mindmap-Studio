@@ -17,7 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { t, type TranslationKey } from '../src/core/i18n';
-import type { PasteClipboardHost } from '../src/features/view-common';
+import type { PasteClipboardHost } from '../src/features/view/view-common';
 import type { MindMapNode, MindMapTreeNode } from '../vendor/simple-mind-map.cjs';
 // 被测模块（vi.mock 由 vitest 提升到 import 之前，故此处导入即拿到桩）
 import {
@@ -26,7 +26,7 @@ import {
 	handleClipboardShortcut,
 	pasteClipboardIntoNode,
 	pasteFromClipboardEvent,
-} from '../src/features/view-clipboard';
+} from '../src/features/editing/view-clipboard';
 
 const {
 	noticeCalls,
@@ -76,12 +76,12 @@ vi.mock('../src/engine/mindmap', () => ({
 	insertSubtreesAsChildren: insertSubtreesAsChildrenMock,
 }));
 
-vi.mock('../src/platform/clipboard', () => ({
+vi.mock('../src/platform/system/clipboard', () => ({
 	writeClipboardText: writeClipboardTextMock,
 	readClipboardText: readClipboardTextMock,
 }));
 
-vi.mock('../src/features/node-inline-editor', () => ({
+vi.mock('../src/features/editing/node-inline-editor', () => ({
 	isAnyNodeEditing: isAnyNodeEditingMock,
 }));
 

@@ -1,5 +1,5 @@
 /**
- * 窗口级拖拽会话原语（`src/features/drag-session.ts`）的直测。
+ * 窗口级拖拽会话原语（`src/features/canvas/drag-session.ts`）的直测。
  *
  * 为什么必须直测（2026-10-07）：本原语是 `image-resize`（拖宽手势）的会话
  * 生命周期实现（历史上 `drag-target` 拖拽换父辅助共用同一原语，该功能已移除），
@@ -14,7 +14,7 @@
  * 不依赖 jsdom：环境是 node（vitest.config.ts 固定），故用最小假 Window。
  */
 import { describe, expect, it } from 'vitest';
-import { startWindowDragSession } from '../src/features/drag-session';
+import { startWindowDragSession } from '../src/features/canvas/drag-session';
 
 /** 假 Window：只实现本原语用到的事件与 rAF 面，附调用记录供断言 */
 interface FakeWin {

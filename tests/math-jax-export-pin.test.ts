@@ -14,7 +14,7 @@
  *   取克隆的 `ownerDocument`（popout 兼容）。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { pinMathContainerHeightsInExportSvg } from '../src/platform/math-jax';
+import { pinMathContainerHeightsInExportSvg } from '../src/platform/rendering/math/math-jax';
 
 // vi.mock 经 vitest 提升至文件顶部，先于被测模块的依赖解析生效
 vi.mock('obsidian', () => ({

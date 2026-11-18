@@ -42,10 +42,10 @@ describe('sanitizeSettings（类型与取值校验）', () => {
 	/**
 	 * 减法护栏（2026-10-09）：下面四项是**已移除**、不是「暂时不暴露」——
 	 * 重新加回等于把产品决策改回去，必须是有意识的动作（并同步 README 与 K 条目）：
-	 * - `autoUpdateLinks` → 改读**官方设置**（`platform/vault-prefs`）；
+	 * - `autoUpdateLinks` → 改读**官方设置**（`platform/workspace/vault-prefs`）；
 	 * - `performanceMode` / `performanceThreshold` → **常开 + 常量阈值**
 	 *   （`core/constants.PERFORMANCE_NODE_THRESHOLD`）；
-	 * - `selfDrawPlainNodes` → 纯文本节点**常开自绘**（`features/node-inline-content`）。
+	 * - `selfDrawPlainNodes` → 纯文本节点**常开自绘**（`features/content/node-inline-content`）。
 	 * 另锁一条**产品决策型默认值**：`autoSplitMixedLinks` 默认**关**（自动拆分改写
 	 * 用户文件结构，须用户显式开启；批量场景另有显式命令）。
 	 */

@@ -1,5 +1,5 @@
 /**
- * 节点内联编辑器回归（features/node-inline-editor）。
+ * 节点内联编辑器回归（features/editing/node-inline-editor）。
  *
  * 覆盖：
  * - `resolveInlineEditKey` 纯函数判定表（2026-09-28 裁决）：`Enter`/`Mod+Enter`/
@@ -18,7 +18,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { ViewNodeEditContext } from '../src/features/view-context';
+import type { ViewNodeEditContext } from '../src/features/view/view-context';
 
 const {
 	getNodeGroupElMock,
@@ -79,7 +79,7 @@ import {
 	isInlineNodeEditing,
 	openNodeInlineEditor,
 	resolveInlineEditKey,
-} from '../src/features/node-inline-editor';
+} from '../src/features/editing/node-inline-editor';
 
 import { makeDocStub, lastEl, type DocStub } from './helpers/node-editor-dom';
 

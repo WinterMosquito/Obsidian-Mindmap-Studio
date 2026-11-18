@@ -1,5 +1,5 @@
 /**
- * view-paste 回归：画布/窗口粘贴图片的分发与回显（features/view-paste）。
+ * view-paste 回归：画布/窗口粘贴图片的分发与回显（features/editing/view-paste）。
  *
  * 覆盖：
  * - `setupPasteHandler`：容器 paste 监听注册；
@@ -21,7 +21,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { t, type Language } from '../src/core/i18n';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
-import type { MindMapViewContext } from '../src/features/view-context';
+import type { MindMapViewContext } from '../src/features/view/view-context';
 
 const {
 	noticeCalls,
@@ -71,14 +71,14 @@ vi.mock('../src/media/images-save', () => ({
 	saveImageToVault: saveImageMock,
 }));
 
-vi.mock('../src/features/view-node-actions', () => ({
+vi.mock('../src/features/editing/view-node-actions', () => ({
 	applyNodeImage: applyImageMock,
 	createImageChildNode: createImageChildNodeMock,
 }));
 
 vi.mock('../src/core/errors', () => ({ notifyError: notifyErrorMock }));
 
-import { handleWindowPaste, setupPasteHandler } from '../src/features/view-paste';
+import { handleWindowPaste, setupPasteHandler } from '../src/features/editing/view-paste';
 
 /** 排空 microtask 队列（粘贴处理是 void 调用的异步链） */
 async function flushAsync(): Promise<void> {

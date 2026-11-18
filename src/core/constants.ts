@@ -41,8 +41,8 @@ export const CODE_BLOCK_MAX_NODES = 500;
 /**
  * 数学段 holder 的**已渲染标记类**。
  *
- * 单一来源：`platform/math-jax` 的异步替换路径与
- * `features/node-inline-content` 的**缓存命中同步放置路径**必须同口径——
+ * 单一来源：`platform/rendering/math/math-jax` 的异步替换路径与
+ * `features/content/node-inline-content` 的**缓存命中同步放置路径**必须同口径——
  * 两条路径都代表"已渲染"，主题、调试定位与断言选择器才有唯一依据
  * （此前两处各写字面值，值相同但无约束）。
  */
@@ -61,8 +61,8 @@ export const MATH_RENDERED_HOLDER_CLASS = 'mindmap-inline-math';
 /**
  * 代码块 `<code>` 的**已高亮标记类**。
  *
- * 与 `MATH_RENDERED_HOLDER_CLASS` 同款纪律（单一来源）：`platform/prism-code` 的
- * 异步高亮路径与 `features/node-inline-content` 的**缓存命中同步放置路径**都写它，
+ * 与 `MATH_RENDERED_HOLDER_CLASS` 同款纪律（单一来源）：`platform/rendering/code/prism-code` 的
+ * 异步高亮路径与 `features/content/node-inline-content` 的**缓存命中同步放置路径**都写它，
  * 两条路径都代表"已高亮"——主题、调试定位与断言选择器才有唯一依据。
  *
  * 只表示"子节点已是 token 元素"；**不代表有颜色**——语言未登记时高亮整体跳过，
@@ -74,7 +74,7 @@ export const CODE_RENDERED_CLASS = 'tmm-code-hl';
  * Prism token 元素的类名（token 类型类由 Prism 决定，此处只固定**基类**）。
  *
  * 主题色由宿主 `app.css` 的 `.token.<类型>` 规则给出（与阅读视图同源）；本插件
- * 另在 `platform/prism-code` 探测其计算色并**内联**到每个 token 元素上，使屏上与
+ * 另在 `platform/rendering/code/prism-code` 探测其计算色并**内联**到每个 token 元素上，使屏上与
  * 导出 SVG（不含 styles.css）同色。
  */
 export const PRISM_TOKEN_CLASS = 'token';
@@ -319,7 +319,7 @@ export interface PaletteOption {
  * `data.json` 的 `viewState[<路径>].palette`，由**空白处右键**的「配色」级联切换
  *（与连线样式同一种「按文件记忆」形态；**布局不在这套里**——它写在文件属性）。
  * 节点右键的「配色」是另一层语义
- *（写正文 `%%#hex%%`，见 `features/view-node-color`），本表只供整篇菜单与白名单
+ *（写正文 `%%#hex%%`，见 `features/editing/view-node-color`），本表只供整篇菜单与白名单
  * 使用，不进 `MindMapStudioSettings`。
  */
 export const PALETTE_OPTIONS = [
@@ -452,7 +452,7 @@ export const DEFAULT_NODE_COLOR_SCOPE: NodeColorScope = 'subtree';
  * 作用范围是否**只覆盖选中节点本体**（全仓唯一判定，勿在 features / engine 另写
  * `scope === 'node'`）。
  *
- * 两个消费面共用：写入侧据此补哨兵（`features/view-node-color`），渲染侧据此
+ * 两个消费面共用：写入侧据此补哨兵（`features/editing/view-node-color`），渲染侧据此
  * 决定连接线是否跟着节点色（`engine/mindmap-colors` 的 `colorLine`）。
  */
 export function isNodeOnlyColorScope(scope: NodeColorScope): boolean {
@@ -567,9 +567,9 @@ export function isIndentedCodeLine(rawLine: string): boolean {
  * - 只放行 `[A-Za-z][A-Za-z0-9+#._-]*`（覆盖 `js`/`ts`/`csharp`/`objectivec`/`c++`/
  *   `f#`/`meson.build` 一类），一律小写（Prism 语法键为小写）；
  * - 其余（含空串、`__proto__`、`constructor`、含空格/引号/尖括号者）→ 空串 =
- *   不高亮（调用方保留字面显示，见`platform/prism-code` 的语法查找守卫）。
+ *   不高亮（调用方保留字面显示，见`platform/rendering/code/prism-code` 的语法查找守卫）。
  *
- * 收口在 core：`features/node-inline-content`（建类名）与 `platform/prism-code`
+ * 收口在 core：`features/content/node-inline-content`（建类名）与 `platform/rendering/code/prism-code`
  * （查语法）必须同一口径，分写会漂移。
  */
 export function normalizeFenceLanguage(info: string): string {
@@ -633,7 +633,7 @@ export const EXPORT_SCALE_MAX = 4;
 const PERFORMANCE_NODE_THRESHOLD = 500;
 
 /**
- * 首帧渲染提示的节点数阈值（`features/view` 的大图骨架）。
+ * 首帧渲染提示的节点数阈值（`features/view/view` 的大图骨架）。
  *
  * 实测（2026-11-02，Obsidian 1.14.4 / 本机）：502 节点首帧 ≈ 50–100 ms（无感），
  * 5000 节点**单次同步任务 2.0–2.4 s**（`_render` 内部布局 + 节点渲染，插件自身
@@ -682,7 +682,7 @@ export const RENDER_ASYNC_NODE_THRESHOLD = 1000;
  * 「适应画布」的大图阈值（2026-10-17 实机读数 + 产品裁决）：节点数超过它**且**
  * 真 fit 比例低于可读下限时，fit 抬到下限并给一句提示（判据与提示各在一处：
  * `engine/mindmap-viewport.LARGE_MAP_MIN_FIT_SCALE` 决定是否钳制并回吐
- * `clamped`，`features/view-viewport.fitToScreen` 只负责转述）。
+ * `clamped`，`features/canvas/view-viewport.fitToScreen` 只负责转述）。
  *
  * 依据：fit 的目标是「整树可见」，而剪枝（`pruneSubtreeEnabled`）在全部可见时
  * 必然解除 ⇒ 整树一次性装配进 DOM。实测 500 节点 0.55s、1000 节点 0.94s、
@@ -751,7 +751,7 @@ const OBSIDIAN_RENDER_EXTENSIONS: ReadonlySet<string> = new Set([
 /**
  * 判断某扩展名能否在 Obsidian 标签页中直接打开（可渲染、不出现空白标签页）。
  * 其余一律交系统默认应用（音视频如此，zip/docx 等也如此——2026-09-15 统一，
- * 见 `platform/system-open` 与 `view-link-navigator.openResolvedTarget`）。
+ * 见 `platform/system/system-open` 与 `view-link-navigator.openResolvedTarget`）。
  */
 export function canOpenInObsidian(extension: string): boolean {
 	return OBSIDIAN_RENDER_EXTENSIONS.has(extension.toLowerCase());
@@ -848,7 +848,7 @@ export const VIEW_STATE_PERSIST_MS = 600;
  * 「声明为导图的文件自动切到导图视图」的**全量扫描防抖窗口**（毫秒）。
  * 启动恢复 / 批量开标签会连发多次 `file-open`，而每次全量扫描都要遍历全部
  * markdown 叶子并逐叶读 frontmatter 判据——整个突发只扫一次
- * （见 `platform/mindmap-auto-open`）。**集中在此**：实现与测试同源，
+ * （见 `platform/workspace/mindmap-auto-open`）。**集中在此**：实现与测试同源，
  * 避免两处各写一个裸 50（常量一改测试就静默失真）。
  */
 export const AUTO_OPEN_SCAN_DEBOUNCE_MS = 50;
@@ -936,7 +936,7 @@ export const HOVER_LINK_EVENT = 'hover-link';
 /**
  * 脚注悬浮预览层（浮层）的类名——**跨模块契约**。
  *
- * 生产方 `features/view-footnote`（懒建时设类名），消费方 `features/view-viewport`
+ * 生产方 `features/content/view-footnote`（懒建时设类名），消费方 `features/canvas/view-viewport`
  * （滚轮手势要放行浮层内的滚动，否则「想滚脚注、结果图缩了/图跑了」）。
  * 放 `core` 而不是任一侧：两边都不该为八行判定新增跨组依赖（K150 ⑧ 的教训）。
  */

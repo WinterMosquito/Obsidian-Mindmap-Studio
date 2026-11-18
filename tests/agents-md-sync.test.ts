@@ -1,23 +1,7 @@
 /**
- * 开发文档同步契约：入口链接 + index.md 文件登记完备性 + 豁免表行数漂移。
- *
- * 契约一（登记完备性）：把「新增/重命名/删除源文件必须同步 docs/agents/index.md」
- * 从口头约定变成红灯：
- * 断言 src/ 与 tests/ 下每个 .ts 文件的 basename 都以**独立 token** 形式
- * 出现在 docs/agents/index.md 中（对应「代码结构」的 src 清单与 tests 清单）。
- * 漏登记（或文件删除后文档未清理）时，本测试失败并列出具体文件名。
- *
- * 匹配口径：按 `[^\w.-]+` 切分 docs/agents/index.md 得到 token 集合，用 basename
- * 精确命中——故 `tree.ts` 不会被 `links-tree.ts` 这类粘连子串误命中
- * （朴素 includes 会误判，本文件刻意不用）。
- *
- * 契约二（行数漂移，**双向**）：「文件规模与豁免」表的登记行数与实测的偏差
- * 不得超 min(+15%, +50 行)——拦截「快照整体失真」（2026-10-02 修复前 15 个
- * 文件偏离最多 204 行，债务指标已失去度量意义），而非拦截正常演进。
- *
- * 2026-10-16 补**偏小一侧**：原判定只查 `actual > limit`，于是**陈旧偏高的
- * 登记值永不报警**——拆分后 `engine/mindmap.ts` 实测 712 行却仍登记 2911，
- * 门禁全程绿灯（靠人工核对全表才发现）。现两侧同判。
+ * 开发文档同步契约：入口链接、分层 bullet 的完整路径登记、文档存在性与豁免漂移。
+ * 只解析指定索引段的文件链接；同名文件、旧目录或其它段的提及不能替代登记。
+ * 豁免表的行数双向偏差不得超 min(15%, 50 行)。K 区间与交叉引用同步检查。
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -26,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AGENTS_SOURCE = readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8');
 const INDEX_SOURCE = readFileSync(path.join(ROOT, 'docs/agents/index.md'), 'utf8');
-const INDEX_TOKENS = new Set(INDEX_SOURCE.split(/[^\w.-]+/));
+
 
 /** 递归收集目录下全部 .ts 文件（返回相对 ROOT 的 posix 路径） */
 function collectTsFiles(dir: string): string[] {
@@ -44,9 +28,35 @@ function collectTsFiles(dir: string): string[] {
 	return files;
 }
 
-/** 文件是否已登记：basename 作为独立 token 出现在 docs/agents/index.md 中 */
+/** 只收指定二级标题内的 bullet 文件链接，目标按 index.md 所在目录解析。 */
+function collectIndexedPaths(source: string, heading: string): string[] {
+	const paths: string[] = [];
+	let active = false;
+	let fenced = false;
+	for (const line of source.split('\n')) {
+		if (/^```/.test(line.trim())) {
+			fenced = !fenced;
+			continue;
+		}
+		if (fenced) continue;
+		if (line.startsWith('## ')) {
+			active = line === `## ${heading}`;
+			continue;
+		}
+		if (!active) continue;
+		const match = /^\s*- \[[^\]]+\]\(([^)]+)\)/.exec(line);
+		const target = match?.[1];
+		if (target === undefined || target.includes('<')) continue;
+		paths.push(path.posix.normalize(path.posix.join('docs/agents', target)));
+	}
+	return paths;
+}
+
+const CODE_PATHS = collectIndexedPaths(INDEX_SOURCE, '代码结构索引');
+const REGISTERED_PATHS = new Set(CODE_PATHS);
+
 function isRegistered(relPath: string): boolean {
-	return INDEX_TOKENS.has(path.posix.basename(relPath));
+	return REGISTERED_PATHS.has(relPath);
 }
 
 /**
@@ -84,42 +94,11 @@ function countSourceLines(absPath: string): number | null {
 	}
 }
 
-/**
- * docs/agents/index.md「代码结构」段 `docs/` 清单里登记的**具体**文档名。
- *
- * 口径：逐行读 `docs/` 段内形如 `  name.md  # 说明` 的条目（缩进两格），
- * 遇到第一个不匹配的条目即视为段结束（保守停止，不跨段误抓）。
- * `release-notes-<tag>.md` 这类**模式行**含 `<`，按设计跳过——它不是具体文件。
- *
- * 为什么需要它：src/ 与 tests/ 的登记完备性由文件登记断言覆盖，但 docs/ 不在
- * 任何既有断言的检查面内——2026-10-02 的审计发现 docs/agents/index.md 登记了一个
- * **并不存在**的 `docs/engine-upstream-patch-proposal.md`（且源码注释引用它），
- * 既有护栏在结构上抓不到，故补此条。
- *
- * 2026-10-04：字符类加 `/`（`[\w./-]+`），使**子目录**条目（`agents/architecture.md`
- * 等）也纳入校验。此前 `[\w.-]+` 不匹配斜杠，`docs/agents/` 下的 4 份详录虽在
- * `docs/` 段登记，却因「不匹配即 break」而**永远不会被检查**——索引指向
- * 不存在的详录文件同样抓不到。改动只放宽正则的**匹配范围**（覆盖更广），
- * 不放宽判定标准：`docExists` 仍逐一验证文件真实存在。
- */
-function collectDeclaredDocs(): string[] {
-	const lines = INDEX_SOURCE.split('\n');
-	const start = lines.findIndex((line) => line.trim() === 'docs/');
-	const names: string[] = [];
-	if (start < 0) {
-		return names;
-	}
-	for (let i = start + 1; i < lines.length; i++) {
-		const match = /^\s\s([\w./-]+\.md)\s+#/.exec(lines[i] ?? '');
-		const name = match?.[1];
-		if (name === undefined) {
-			break;
-		}
-		if (!name.includes('<')) {
-			names.push(name);
-		}
-	}
-	return names;
+/** 参考文档段内的具体链接；保留 docs/ 相对名称供存在性检查使用。 */
+function collectDeclaredDocs(source = INDEX_SOURCE): string[] {
+	return collectIndexedPaths(source, '参考文档')
+		.filter((file) => file.startsWith('docs/') && file.endsWith('.md'))
+		.map((file) => file.slice('docs/'.length));
 }
 
 /** docs 下的文件是否真实存在（用 readFileSync 探测，避免引入新的 import） */
@@ -247,13 +226,50 @@ describe('AGENTS.md 同步契约：K 编号（区间声明与交叉引用）', (
 	});
 });
 
+describe('分层索引链接解析', () => {
+	it('嵌套 bullet 与同名文件按完整目标路径区分，标题与说明不代替登记', () => {
+		const source = [
+			'## 代码结构索引', '- **src/**', '  - **features/**',
+			'    - [view.ts](../../src/features/view/view.ts)：主视图',
+			'    - [view.ts](../../src/ui/view.ts)',
+			'    - `src/features/view.ts`',
+			'## 参考文档', '- [other.ts](../../src/other.ts)',
+		].join('\n');
+		const declared = collectIndexedPaths(source, '代码结构索引');
+		expect(declared).toEqual(['src/features/view/view.ts', 'src/ui/view.ts']);
+		expect(declared).not.toContain('src/features/view.ts');
+	});
+
+	it('旧目录链接保留旧目标，不会登记迁移后的同名文件', () => {
+		const declared = collectIndexedPaths(
+			'## 代码结构索引\n- [view.ts](../../src/features/view.ts)', '代码结构索引',
+		);
+		expect(declared).toEqual(['src/features/view.ts']);
+		expect(declared).not.toContain('src/features/view/view.ts');
+	});
+
+	it('参考文档收集嵌套链接，跳过模式条目、代码示例与其它段链接', () => {
+		const source = [
+			'## 代码结构索引', '- [wrong.md](wrong.md)',
+			'## 参考文档', '- **docs/**',
+			'  - [standard.md](../standard.md)', '  - **agents/**',
+			'    - [index.md](index.md)', '    - [decisions.md](./decisions.md)',
+			'  - `release-notes-<tag>.md`',
+			'```md', '- [example.md](example.md)', '```',
+			'## 其它', '- [ignored.md](ignored.md)',
+		].join('\n');
+		expect(collectDeclaredDocs(source)).toEqual(['standard.md', 'agents/index.md', 'agents/decisions.md']);
+		expect(collectDeclaredDocs('## 其它\n- [index.md](index.md)')).toEqual([]);
+	});
+});
+
 describe('AGENTS.md 同步契约：代码文件登记完备性', () => {
 	it('开发入口能定位唯一索引，索引清单也登记自身与决策表', () => {
 		expect(AGENTS_SOURCE).toContain('[docs/agents/index.md](docs/agents/index.md)');
 		expect(collectDeclaredDocs()).toEqual(expect.arrayContaining(['agents/index.md', 'agents/decisions.md']));
 	});
 
-	it('src/ 下每个 TS 文件的文件名都在 docs/agents/index.md 中被提及', () => {
+	it('src/ 下每个 TS 文件的完整路径都在 docs/agents/index.md 中被登记', () => {
 		const files = collectTsFiles('src');
 		expect(files.length).toBeGreaterThan(0);
 		const missing = files.filter((file) => !isRegistered(file));
@@ -263,7 +279,7 @@ describe('AGENTS.md 同步契约：代码文件登记完备性', () => {
 		).toEqual([]);
 	});
 
-	it('tests/ 下每个 TS 文件的文件名都在 docs/agents/index.md 中被提及', () => {
+	it('tests/ 下每个 TS 文件的完整路径都在 docs/agents/index.md 中被登记', () => {
 		const files = collectTsFiles('tests');
 		expect(files.length).toBeGreaterThan(0);
 		const missing = files.filter((file) => !isRegistered(file));
@@ -271,6 +287,13 @@ describe('AGENTS.md 同步契约：代码文件登记完备性', () => {
 			missing,
 			`以下文件未在 docs/agents/index.md 登记（请同步「代码结构」tests 清单）：\n${missing.join('\n')}`,
 		).toEqual([]);
+	});
+
+	it('代码清单没有陈旧或重复路径（只提及相同 basename 不算登记）', () => {
+		const actual = new Set([...collectTsFiles('src'), ...collectTsFiles('tests')]);
+		const declared = CODE_PATHS.filter((file) => file.endsWith('.ts'));
+		expect(declared.filter((file) => !actual.has(file))).toEqual([]);
+		expect(declared.filter((file, index) => declared.indexOf(file) !== index)).toEqual([]);
 	});
 
 	/**
@@ -327,7 +350,7 @@ describe('AGENTS.md 同步契约：代码文件登记完备性', () => {
 		const missing = declared.filter((name) => !docExists(name));
 		expect(
 			missing,
-			`以下文档在 docs/agents/index.md「代码结构」docs 清单中登记，但 docs/ 下不存在：\n${missing.join('\n')}\n` +
+			`以下文档在 docs/agents/index.md「参考文档」清单中登记，但 docs/ 下不存在：\n${missing.join('\n')}\n` +
 				'（若该文档确已废弃，请连同源码中的引用一并删除登记；' +
 				'`release-notes-<tag>.md` 属模式行，不参与本检查）',
 		).toEqual([]);

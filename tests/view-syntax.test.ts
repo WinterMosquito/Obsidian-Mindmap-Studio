@@ -16,12 +16,12 @@
 import { Notice } from 'obsidian';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { t } from '../src/core/i18n';
-import type { MindMapViewContext } from '../src/features/view-context';
+import type { MindMapViewContext } from '../src/features/view/view-context';
 import {
 	applyDocumentSyntax,
 	resolveDocumentSyntax,
 	runSyntaxGuard,
-} from '../src/features/view-syntax';
+} from '../src/features/editing/view-syntax';
 import { parseMdOutline } from '../src/markdown/md-outline';
 
 const { execCommandMock, replaceDataMock, renderRootRef, ENGINE } = vi.hoisted(

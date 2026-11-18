@@ -24,12 +24,12 @@ import {
 	FOOTNOTE_IDS_ATTR,
 	FOOTNOTE_REF_CLASS,
 	FOOTNOTE_SUMMARY_CLASS,
-} from '../src/features/node-inline-content';
+} from '../src/features/content/node-inline-content';
 import {
 	collectFootnoteReferenceIds,
 	setupFootnoteInteractions,
 	type FootnoteInteractionDeps,
-} from '../src/features/view-footnote';
+} from '../src/features/content/view-footnote';
 
 const engine = vi.hoisted(() => ({
 	collectRenderNodeData: vi.fn(),

@@ -5,7 +5,7 @@
  * - onload: 设置载入、注册视图/扩展名/事件监听/设置面板；
  *   「声明为导图 ⇒ 自动切导图视图」的时机与启动恢复委托给 mindmap-auto-open.ts；
  * - onunload: 排空未落盘的视图状态后清理。
- * 业务逻辑分别位于 settings.ts / commands.ts / creation.ts / features/view.ts /
+ * 业务逻辑分别位于 settings.ts / commands.ts / creation.ts / features/view/view.ts /
  * mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
  */
 import { Menu, Plugin, TFile, TFolder } from 'obsidian';
@@ -19,8 +19,8 @@ import {
 	sanitizeSettings,
 	type SettingsSanitizeReport,
 } from './settings';
-import { MindMapView } from './features/view';
-import { offerColorSentinelCleanup } from './features/view-node-color';
+import { MindMapView } from './features/view/view';
+import { offerColorSentinelCleanup } from './features/editing/view-node-color';
 import { MindmapEmbedRenderChild } from './features/mindmap-codeblock';
 import { createNewMindMap } from './creation';
 import {
@@ -35,7 +35,7 @@ import {
 	registerCommands,
 } from './commands';
 import { t } from './core/i18n';
-import { VaultSyncService } from './platform/vault-sync';
+import { VaultSyncService } from './platform/workspace/vault-sync';
 import { fileLookupIndex } from './links/file-lookup';
 import { setImageSizeCacheStore } from './media/images-path';
 import { ViewStateStore } from './services/view-state';
@@ -44,14 +44,14 @@ import { notifyError } from './core/errors';
 import { PluginDataWriter } from './core/persistence';
 import { ElementStatusBarService } from './services/status-bar';
 import type { StatusBarService } from './services/status-bar';
-import { updateStatusBar } from './features/view-status';
-import { pruneViewSwitchNoise } from './platform/nav-history';
-import { MindMapAutoOpener } from './platform/mindmap-auto-open';
+import { updateStatusBar } from './features/view/view-status';
+import { pruneViewSwitchNoise } from './platform/workspace/nav-history';
+import { MindMapAutoOpener } from './platform/workspace/mindmap-auto-open';
 // 【0.4.0 删除】一次性迁移：旧属性值 → Mindmap + Mindmap Layout
 import {
 	LEGACY_MIGRATION_DELAY_MS,
 	migrateLegacyMindmapProperties,
-} from './platform/legacy-mindmap-migration';
+} from './platform/workspace/legacy-mindmap-migration';
 
 export default class MindMapStudioPlugin extends Plugin {
 	override settings!: MindMapStudioSettings;

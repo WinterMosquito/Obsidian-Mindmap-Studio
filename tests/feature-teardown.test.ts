@@ -14,11 +14,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap, MindMapNode } from '../vendor/simple-mind-map.cjs';
 import { ENGINE_COMMANDS } from '../src/engine/mindmap';
-import type { MindMapViewContext } from '../src/features/view-context';
+import type { MindMapViewContext } from '../src/features/view/view-context';
 import {
 	setupImageResize,
 	teardownImageResize,
-} from '../src/features/image-resize';
+} from '../src/features/media/image-resize';
 
 // 本模块经 import 链加载 vendor bundle（顶层求值触碰 document.documentElement）
 vi.hoisted(() => {
@@ -118,7 +118,7 @@ function makeView(binder: EngineBinderStub, win: unknown, mindMap = {} as MindMa
 
 /**
  * SVG <image> 桩：生产侧按**标签名**判定真伪（`engine/mindmap-nodes.isNodeImageElement`，
- * 见 `src/features/image-resize.ts` 的跨 realm 说明），故这里必须带 `tagName`。
+ * 见 `src/features/media/image-resize.ts` 的跨 realm 说明），故这里必须带 `tagName`。
  */
 class FakeSvgImageElement {
 	/** 标签名：生产的判定通道（不再是 instanceof，无需 stub 全局构造器） */

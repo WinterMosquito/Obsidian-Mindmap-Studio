@@ -259,7 +259,7 @@ export function isCalloutHeaderLine(line: string): boolean {
  * 一行（**已剥掉 `>` 前缀**）→ 标注头部；不是标注首行则 null。
  *
  * 判定只看这一行：块的分组、`>` 前缀剥离与"首行才算头部"由调用方
- * （`features/node-inline-tokenize.scanQuoteBlocks`）负责。
+ * （`features/content/node-inline-tokenize.scanQuoteBlocks`）负责。
  * 标题在此**定稿**（见 `CalloutHeader.title`）。
  */
 export function parseCalloutHeader(line: string): CalloutHeader | null {

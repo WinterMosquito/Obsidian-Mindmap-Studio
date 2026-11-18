@@ -4,7 +4,7 @@
  *
  * ## 为什么合并
  * 三者是链上**必须按序**的前两步及其共用 `<style>` 注入原语：几何先落地、
- * CSS 变量随后注入。该顺序此前只存在于 `features/view.ts` 的数组字面量里，
+ * CSS 变量随后注入。该顺序此前只存在于 `features/view/view.ts` 的数组字面量里，
  * 合并后由 `postProcessExportSvg` 一处保证。
  *
  * ## 为什么不是「全链一个函数」
@@ -74,7 +74,7 @@ function svgRootOf(svgElement: unknown): Element | null {
  * 背景：自绘节点内容大量使用文档级 CSS 变量——正文/代码字体
  * `var(--font-interface, sans-serif)` / `var(--font-monospace, monospace)`、
  * 代码背景 `var(--code-background, …)`、链接三态色 `var(--link-color, …)`、
- * 勾色 `var(--text-on-accent, …)` 等（来源 `features/node-inline-html` 的样式表）。
+ * 勾色 `var(--text-on-accent, …)` 等（来源 `features/content/node-inline-html` 的样式表）。
  *
  * **屏幕上**这些变量由 Obsidian 在宿主元素上定义，渲染正确；**导出时**引擎克隆
  * SVG 后处于独立渲染环境（序列化 → data URL → `<img>` 解码），文档级样式表不在
@@ -321,8 +321,8 @@ export function padForeignObjectsForExport(svgElement: unknown): unknown {
 	// 直接调用 + 异常兜底（形态不符 → TypeError → 原样返回）。勿改回
 	// `typeof root.querySelectorAll !== 'function'` 这类**方法引用**形态：
 	// 它会命中 DOM lib 的 deprecated 重载签名（HTMLElementDeprecatedTagNameMap），
-	// 触发 no-deprecated 告警；try/catch 写法与 platform/math-jax /
-	// features/node-codeblock 的查询形态同款（lib 无 DOM.Iterable，须 Array.from）。
+	// 触发 no-deprecated 告警；try/catch 写法与 platform/rendering/math/math-jax /
+	// features/content/node-codeblock 的查询形态同款（lib 无 DOM.Iterable，须 Array.from）。
 	let foreignObjects: Element[];
 	try {
 		foreignObjects = Array.from(root.querySelectorAll('foreignObject'));

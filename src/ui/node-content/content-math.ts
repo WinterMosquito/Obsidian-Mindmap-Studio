@@ -11,7 +11,7 @@ const MATH_SEGMENT_CLASS = 'mindmap-node-inline-math';
  * 数学段（行内 `$…$` / 单行块级 `$$…$$`）：先写**与原文同形的字面占位**——
  * 占位即回退态，MathJax 不可用、渲染抛错、导出快照（离屏文档）时都停在这份
  * 字面显示，与「未闭合标记按字面」同一条安全口径。渲染由注入的
- * `options.renderMath` 异步完成（生产实现见 `platform/math-jax`；本模块不
+ * `options.renderMath` 异步完成（生产实现见 `platform/rendering/math/math-jax`；本模块不
  * import Obsidian，保持无运行时可打包/可单测）。
  *
  * `owner` = 构建该段的引擎实例（不透明 token；只透传给 `renderMath` 供平台侧

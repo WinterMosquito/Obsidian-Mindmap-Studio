@@ -12,7 +12,7 @@
  * - 覆盖：三类图标的分流与存在性、图标尺寸（18×18，防 `foreignObject` 里
  *   0×0 不可见的旧故障）、回形针标题、画布铺满容器、节点测宽随文本变化
  *   （不被容器宽度拉平）；
- * - 覆盖（方案 B 原型，`features/node-inline-content.ts`）：自绘节点内联内容是否
+ * - 覆盖（方案 B 原型，`features/content/node-inline-content.ts`）：自绘节点内联内容是否
  *   真的进入 foreignObject、离屏克隆测宽是否与渲染宽度同源、以及**点击命中契约**
  *   ——合成的 click 事件经引擎 `node_click` 派发后，`event.target` 必须就是锚点本体
  *   且落在节点 group 内（= view-wikilink.findAnchorInNode 的两个前置判据），
@@ -308,7 +308,7 @@ const SCENARIOS = [
 		label: '表格：GFM 管道表自绘为内联样式 <table>（表宽不撑爆节点）',
 		data: {
 			// 2026-10-14：plain 多行节点里的表格块独立成段（识别在 domain/pipe-table，
-			// 装配在 features/node-inline-content），产出 table/thead/tbody，样式
+			// 装配在 features/content/node-inline-content），产出 table/thead/tbody，样式
 			// **全内联**（导出 SVG 不含 styles.css）。第二列分隔行写 `---:` ⇒ 该列
 			// 对齐必须落到内联 text-align（本场景是「对齐不是摆设」的锁定用例）
 			text: '上文\n| 名称 | 数量 |\n| --- | ---: |\n| 甲 | 2 |\n下文',
@@ -430,7 +430,7 @@ function findChrome() {
 /**
  * `obsidian` 的最小垫片（仅在无头验证页里使用）。
  *
- * 为什么需要：本页要加载的模块图包含 `features/view-wikilink.ts`（探针用它的
+ * 为什么需要：本页要加载的模块图包含 `features/navigation/view-wikilink.ts`（探针用它的
  * `ensureOffsetSize`），而它现在会经 `view-link-navigator.ts` 触达 `obsidian`
  * 的运行时导出（Notice / Platform / normalizePath…）。obsidian 包只发布类型、
  * 没有 JS，故打包时会报「Could not resolve "obsidian"」。
@@ -520,7 +520,7 @@ export function normalizePath(p) {
 	return String(p).replace(/\\\\/g, '/');
 }
 export function setIcon() {}
-// 标注图标（platform/callout-icon 的具名导入）：垫片返回 null = 宿主没有这个图标，
+// 标注图标（platform/rendering/callout-icon 的具名导入）：垫片返回 null = 宿主没有这个图标，
 // 即**生产环境的降级路径**（图标缺失 ⇒ 省略图标、保留标题与类型色）。探针因此
 // 断言的是"无图标时盒子仍成立"，图标本身的取用由 platform 层直连宿主 getIcon。
 export function getIcon() {
@@ -546,21 +546,17 @@ export function requestUrl() {
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
 function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps = 'edit' } = {}) {
 	const mindmapModule = join(ROOT, 'src', 'engine', 'mindmap.ts').replaceAll('\\', '/');
-	const wikilinkModule = join(ROOT, 'src', 'features', 'view-wikilink.ts').replaceAll(
+	const wikilinkModule = join(ROOT, 'src', 'features', 'navigation', 'view-wikilink.ts').replaceAll(
 		'\\',
 		'/',
 	);
 	const inlineContentModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-inline-content.ts',
+		'src', 'features', 'content', 'node-inline-content.ts',
 	).replaceAll('\\', '/');
 	const nodeWidthModule = join(
 		ROOT,
-		'src',
-		'features',
-		'view-node-width.ts',
+		'src', 'features', 'canvas', 'view-node-width.ts',
 	).replaceAll('\\', '/');
 	const imagesPathModule = join(ROOT, 'src', 'media', 'images-path.ts').replaceAll(
 		'\\',
@@ -568,15 +564,11 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 	);
 	const codeblockModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-codeblock.ts',
+		'src', 'features', 'content', 'node-codeblock.ts',
 	).replaceAll('\\', '/');
 	const inlineEditorModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-inline-editor.ts',
+		'src', 'features', 'editing', 'node-inline-editor.ts',
 	).replaceAll('\\', '/');
 	// 导出 SVG 后处理链的模块（与生产 view.ts 的 exportSvgTransforms 同源同序）
 	const exportPostprocessModule = join(
@@ -585,7 +577,7 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		'platform',
 		'export-svg-postprocess.ts',
 	).replaceAll('\\', '/');
-	const mathJaxModule = join(ROOT, 'src', 'platform', 'math-jax.ts').replaceAll(
+	const mathJaxModule = join(ROOT, 'src', 'platform', 'rendering', 'math', 'math-jax.ts').replaceAll(
 		'\\',
 		'/',
 	);
@@ -2096,7 +2088,7 @@ window.setTimeout(() => {
 				: -1,
 			codeInlineMask: codeCopyButton ? codeCopyButton.style.maskImage : null,
 			// 语言类契约（2026-10-06）：围栏信息行必须落到 code.language-js
-			// ——它既是宿主主题/Prism 的选择器口径，也是 platform/prism-code 查语法的
+			// ——它既是宿主主题/Prism 的选择器口径，也是 platform/rendering/code/prism-code 查语法的
 			// 依据。无头页**没有 Obsidian 运行时**（loadPrism 不可用），故这里断言的是
 			// 高亮**前**的字面形态：类名已就位、代码仍是字面（占位即回退，不空白）。
 			codeLanguageClass: codeBlock
@@ -2281,7 +2273,7 @@ window.setTimeout(() => {
 // 引擎的 checkEnableDragModifyNodeWidth() 只看全局开关（本插件恒开），于是
 // 纯文本 / 含图节点上也会出现左右边框手柄，而引擎的 SVG 文本路径不认
 // customTextWidth（拖了毫无反应＝死手柄，用户实测 2026-09-16）。插件侧给该判定
-// 加了「且会被自绘接管」这一层（features/view-node-width.gateNodeWidthHandles）。
+// 加了「且会被自绘接管」这一层（features/canvas/view-node-width.gateNodeWidthHandles）。
 // 手柄是激活时懒创建的无类名透明 rect（inline cursor: ew-resize），故按此计数。
 const handleProbe = document.createElement('pre');
 handleProbe.id = 'handle-probe';
@@ -6609,11 +6601,9 @@ function buildBenchEntrySource() {
 	const mindmapModule = join(ROOT, 'src', 'engine', 'mindmap.ts').replaceAll('\\', '/');
 	const inlineContentModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-inline-content.ts',
+		'src', 'features', 'content', 'node-inline-content.ts',
 	).replaceAll('\\', '/');
-	const nodeWidthModule = join(ROOT, 'src', 'features', 'view-node-width.ts').replaceAll(
+	const nodeWidthModule = join(ROOT, 'src', 'features', 'canvas', 'view-node-width.ts').replaceAll(
 		'\\',
 		'/',
 	);

@@ -22,7 +22,7 @@ import {
 	VIEW_STATE_PERSIST_MS,
 } from '../src/core/constants';
 
-// main 的导入链（features/view → mindmap）在模块顶层触碰 document，
+// main 的导入链（features/view/view → mindmap）在模块顶层触碰 document，
 // Node 环境需最小桩；vi.hoisted 保证桩早于 import 求值建立。
 vi.hoisted(() => {
 	(globalThis as { document?: unknown }).document ??= { documentElement: {} };

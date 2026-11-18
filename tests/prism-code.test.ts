@@ -1,5 +1,5 @@
 /**
- * 代码块 Prism 高亮（platform/prism-code）单元回归。
+ * 代码块 Prism 高亮（platform/rendering/code/prism-code）单元回归。
  *
  * 官方口径依据（Phase 1 调研）：Obsidian 帮助「Basic formatting syntax §Code blocks」
  * 明写阅读视图用 **Prism**、Source / Live Preview 不用⇒ 导图节点（阅读视图同级展示面）
@@ -176,7 +176,7 @@ function token(type: string, content: unknown, alias?: string | string[]) {
 /** 逐例重置模块级状态（两张缓存 + 告警去重标记） */
 async function freshModule() {
 	vi.resetModules();
-	return import('../src/platform/prism-code');
+	return import('../src/platform/rendering/code/prism-code');
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * 代码块复制交互（features/node-codeblock）单元回归。
+ * 代码块复制交互（features/content/node-codeblock）单元回归。
  *
  * 覆盖 `resolveCodeCopyTarget`（纯函数）的四态：命中 / 非按钮目标 / 非元素目标 /
  * 按钮在而 `<code>` 缺失（异常形态）。
@@ -17,11 +17,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	CODE_BLOCK_CLASS,
 	CODE_COPY_CLASS,
-} from '../src/features/node-inline-content';
+} from '../src/features/content/node-inline-content';
 import {
 	hideCopyButtonsInExportSvg,
 	resolveCodeCopyTarget,
-} from '../src/features/node-codeblock';
+} from '../src/features/content/node-codeblock';
 
 /** Element / HTMLElement 的公共桩类（stubGlobal 后 instanceof 判定成立） */
 class StubElement {}

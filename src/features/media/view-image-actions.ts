@@ -1,0 +1,256 @@
+/**
+ * 节点图片操作（从 view-node-actions.ts 拆分）：
+ * 增删节点图片 + 引用归一 + 拖拽/粘贴路径共享入口。
+ * 被 view-toolbar.ts / view-context-menu.ts / view-dnd.ts / view-paste.ts 共用。
+ */
+import { App, TFile } from 'obsidian';
+import { ENGINE_COMMANDS, getNodeDataString } from '../../engine/mindmap';
+import {
+	createNaturalSizeSetNodeImageOptions,
+	createSetNodeImageOptions,
+} from '../../media/images-path';
+import { resolvePathToFile } from '../../links/links-resolve';
+import { newReferencePath } from '../../links/file-lookup';
+import { openImageEditorModal } from '../../ui/modal-image';
+import { saveImageToVault } from '../../media/images-save';
+import {
+	preferredLinkPathFormat,
+	prefersMarkdownLinks,
+} from '../../platform/workspace/vault-prefs';
+import { notifyError } from '../../core/errors';
+import {
+	isAppResourceUrl,
+	isExternalImageRef,
+} from '../../domain/url';
+import { readNodeDataString, type MdNodeData } from '../../core/node-data';
+import type { MindMapNode } from '../../core/engine-types';
+import type { MindMapViewContext } from '../view/view-context';
+import { insertChildNodeWithData, requireActiveNode } from '../view/view-common';
+
+/** 单独移除节点图片（不影响节点与其他数据） */
+export function removeNodeImage(view: MindMapViewContext, node: MindMapNode): void {
+	view.mindMap?.execCommand(
+		ENGINE_COMMANDS.SET_NODE_IMAGE,
+		node,
+		createSetNodeImageOptions(null),
+	);
+	// 同步清掉 md 回写元数据（数据卫生：不让「该节点有过图」的残留字段误导
+	// 后续读取）。防复活判定已两路覆盖、不依赖这里——字段残留走 hasImageMeta、
+	// 全清走首行图片语法（见 md-serialize.rawOk）
+	const data = node.getData() as MdNodeData;
+	delete data.mdImageTarget;
+	delete data.mdImageWidth;
+	delete data.mdImageHeight;
+	delete data.mdImageAlt;
+	// 语法形态一并清：留着会让「后续新图」沿用已被删除图片的旧形态
+	delete data.mdImageStyle;
+	// 同步清掉自动校正标记：留着会让「本节点后续新图」的尺寸也不回写
+	delete data.mdImageAutoSize;
+	view.scheduleSave();
+}
+
+/**
+ * 插入图片：统一固定尺寸；支持本地文件/剪贴板/URL。
+ *
+ * 自兜错误：由工具栏/右键菜单以 `void addImageToActiveNode(view)` 调用，
+ * 失败在此转成用户可见提示（与 view-paste / view-export 同一约定）。
+ */
+export async function addImageToActiveNode(
+	view: MindMapViewContext,
+): Promise<void> {
+	try {
+		await performAddImage(view);
+	} catch (error) {
+		console.error('插入图片失败', error);
+		notifyError(view.lang, 'common.insertImageFailed', error);
+	}
+}
+
+/** 插入图片主体（异常由 addImageToActiveNode 统一兜住） */
+async function performAddImage(view: MindMapViewContext): Promise<void> {
+	const node = requireActiveNode(view);
+	if (!node) return;
+	const engine = view.mindMap;
+	const current = getNodeDataString(node, 'image');
+	const result = await openImageEditorModal(
+		view.app,
+		current,
+		(file, maxSizeMB, nameOverride) =>
+			saveImageToVault({
+				app: view.app,
+				sourcePath: view.file?.path ?? '',
+				file,
+				maxSizeMB,
+				filename: nameOverride,
+				lang: view.lang,
+			}),
+		view.lang,
+	);
+	if (result === null) return;
+	// 弹窗期间可能换文件/重建引擎：旧节点不在新树上，继续写入会静默丢失
+	if (view.mindMap !== engine) return;
+	await applyNodeImage(view, node, result);
+}
+
+/**
+ * 以统一高度、按图片原始比例设置节点图片：
+ * 先探测图片原始尺寸，再以 custom:true 精确指定展示尺寸。
+ *
+ * 引用归一（与 Obsidian 图片引用语义对齐）：
+ * - 库内路径（联想/手动输入/选择本地保存后）→ 显示用资源地址（app://），
+ *   同时记录 mdImageTarget=库内路径（保存回写 ![[路径]]）；
+ * - 已是 app://（拖入/粘贴）→ 反查库内路径记录 mdImageTarget；
+ * - 外链（http/data/blob/file）→ 原样显示，无 md 回写目标。
+ */
+export async function applyNodeImage(
+	view: MindMapViewContext,
+	node: MindMapNode,
+	url: string,
+): Promise<void> {
+	const style = imageMdStyle(view.app);
+	const { display, mdTarget } = normalizeImageReference(
+		url,
+		view.app,
+		view.file?.path ?? '',
+		style,
+	);
+	const engine = view.mindMap;
+	if (!engine) return;
+	const options = await createNaturalSizeSetNodeImageOptions(display);
+	// 探测尺寸期间可能换文件/重建引擎：旧节点已不在新树上
+	if (view.mindMap !== engine) return;
+	engine.execCommand(ENGINE_COMMANDS.SET_NODE_IMAGE, node, options);
+	// 记录/清除 md 回写目标（引擎不识别该字段，仅序列化用）
+	const data = node.getData() as MdNodeData;
+	const oldTarget = data.mdImageTarget ?? '';
+	const text = readNodeDataString(data, 'text');
+	// 纯图节点的占位文本（旧图文件名）随换图同步，避免回写残留旧名
+	const oldName = oldTarget.split('/').pop() ?? '';
+	if (oldName && text === oldName) {
+		data.text = mdTarget ? (mdTarget.split('/').pop() ?? '') : '';
+		data.mdDerivedText = data.text;
+	}
+	if (mdTarget) {
+		data.mdImageTarget = mdTarget;
+		data.mdImageStyle = style;
+	} else {
+		delete data.mdImageTarget;
+		delete data.mdImageStyle;
+	}
+	// 插入/更换是用户意图：清除「加载期自动校正」标记，本次尺寸照旧回写
+	delete data.mdImageAutoSize;
+	view.scheduleSave();
+}
+
+/**
+ * 在指定父节点下新建**纯图节点**承载图片（图片独占节点语义：无文本）。
+ *
+ * 「图片贴入导图」的**唯一落点实现**（2026-10-13 收口，此前 view-dnd 的私有
+ * `insertImageChildNode` 与本文件的建图逻辑各持一份）：拖入多图时其余各占一个
+ * 子节点、拖入/粘贴**未选中节点**时挂到渲染根下（两者由调用方选好 parent）。
+ *
+ * 初始数据**一次给全**（引擎没有按插入结果取回节点的公开途径，见
+ * view-common.insertChildNodeWithData 文件头）。图片三字段与引擎 SET_NODE_IMAGE
+ * 命令的写入面一致（vendor `setNodeImage` 实测：
+ * `{image, imageTitle, imageSize:{width,height,custom}}`）——**imageSize 缺失
+ * 会让 createImgNode → getImgShowSize 解构 TypeError、该节点渲染链中断**
+ * （见 images-path.ensureDefaultImageSizes），故尺寸必须随插入带上。
+ *
+ * md 回写字段与 applyNodeImage 同口径：`mdImageTarget` 取库内路径，
+ * `mdImageStyle` 走 `imageMdStyle`（官方「Use \[\[Wikilinks\]\]」同时管 links
+ * 与 images）——图片的写入形态只有这一份判定，勿在别处另定。
+ *
+ * @returns 是否插入成功；探测尺寸期间引擎换代（父节点已不在新树上）返回 false
+ */
+export async function createImageChildNode(
+	view: MindMapViewContext,
+	parent: MindMapNode,
+	file: TFile,
+): Promise<boolean> {
+	const engine = view.mindMap;
+	if (!engine) {
+		return false;
+	}
+	const options = await createNaturalSizeSetNodeImageOptions(
+		view.app.vault.getResourcePath(file),
+	);
+	// 探测尺寸期间可能换文件/重建引擎：父节点已不在新树上，写入会静默丢失
+	if (view.mindMap !== engine) {
+		return false;
+	}
+	const style = imageMdStyle(view.app);
+	const inserted = insertChildNodeWithData(view, parent, {
+		text: '',
+		image: options.url,
+		imageTitle: options.title,
+		imageSize: {
+			width: options.width,
+			height: options.height,
+			custom: options.custom,
+		},
+		mdImageTarget: imageMdTarget(file, view.app, view.file?.path ?? '', style),
+		mdImageStyle: style,
+	});
+	if (inserted) {
+		view.scheduleSave();
+	}
+	return inserted;
+}
+
+/**
+ * 图片回写**形态**：跟随官方设置「Use \[\[Wikilinks\]\]」（该设置同时管 links
+ * 与 images）——关闭 → `![alt](路径)`（'md'），开启（默认）→ `![[路径]]`
+ * （'wiki'）。仅**新建/换图**时按设置取：既有图的形态由解析期记录、不改写。
+ *
+ * 图片的形态只有这一份判定：`applyNodeImage`（换图）与 `createImageChildNode`
+ * （新建纯图节点）同口径，另写一份必然漂移（AGENTS.md 硬规则 5）。
+ */
+function imageMdStyle(app: App): 'md' | 'wiki' {
+	return prefersMarkdownLinks(app) ? 'md' : 'wiki';
+}
+
+/**
+ * 图片引用的**回写目标**（仅新建/换图时决定写什么；既有引用由 `mdImageTarget`
+ * 原样保留，见 `md-serialize` 的合成回写口径）。
+ *
+ * - wiki 形态：跟随官方「New link format」——最短**唯一**路径（同名文件退化为
+ *   完整路径）、相对路径或绝对路径；实现只有 `links/file-lookup.newReferencePath`
+ *   一份，与文档链接共用；
+ * - md 形态：`![alt](路径)` 的目标由笔记位置解析，写完整库内路径（既有口径，
+ *   官方帮助未对该形态的路径写法单列，不做未经核实的改写）。
+ *
+ * 图片必须带扩展名（Obsidian 对非 `.md` 嵌入的解析规则），故不省略 `.md`。
+ */
+function imageMdTarget(
+	file: TFile,
+	app: App,
+	sourcePath: string,
+	style: 'md' | 'wiki',
+): string {
+	return style === 'md'
+		? file.path
+		: newReferencePath(app, file, sourcePath, preferredLinkPathFormat(app));
+}
+
+/** 引用归一：显示地址 + md 回写目标 */
+function normalizeImageReference(
+	url: string,
+	app: App,
+	sourcePath: string,
+	style: 'md' | 'wiki',
+): { display: string; mdTarget: string | null } {
+	if (!url) return { display: '', mdTarget: null };
+	if (isAppResourceUrl(url)) {
+		const file = resolvePathToFile(url, app);
+		return {
+			display: url,
+			mdTarget: file ? imageMdTarget(file, app, sourcePath, style) : null,
+		};
+	}
+	if (isExternalImageRef(url)) return { display: url, mdTarget: null };
+	const file = resolvePathToFile(url, app);
+	return {
+		display: file ? app.vault.getResourcePath(file) : url,
+		mdTarget: file ? imageMdTarget(file, app, sourcePath, style) : url.trim(),
+	};
+}

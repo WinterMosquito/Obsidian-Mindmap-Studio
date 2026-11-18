@@ -21,11 +21,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMap } from '../vendor/simple-mind-map.cjs';
 import type { Language } from '../src/core/i18n';
 import { ElementStatusBarService } from '../src/services/status-bar';
-import type { MindMapViewContext } from '../src/features/view-context';
+import type { MindMapViewContext } from '../src/features/view/view-context';
 import {
 	cancelStatusBarUpdate,
 	updateStatusBar,
-} from '../src/features/view-status';
+} from '../src/features/view/view-status';
 
 const { countMindMapNodesMock } = vi.hoisted(() => ({
 	// 唯一计数入口（`engine/mindmap.countMindMapNodes`）：桩它即同时覆盖
@@ -37,7 +37,7 @@ vi.mock('../src/engine/mindmap', () => ({
 	countMindMapNodes: countMindMapNodesMock,
 }));
 
-/** 节流窗口（与 src/features/view-status.ts 的 STATUS_BAR_THROTTLE_MS 一致） */
+/** 节流窗口（与 src/features/view/view-status.ts 的 STATUS_BAR_THROTTLE_MS 一致） */
 const THROTTLE_MS = 300;
 
 /** fake timers 的起点：设为真实纪元毫秒，使节流器 lastRunAt=0 的首调用语义与运行时一致 */

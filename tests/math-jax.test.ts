@@ -1,5 +1,5 @@
 /**
- * 行内数学渲染（platform/math-jax）单元回归。
+ * 行内数学渲染（platform/rendering/math/math-jax）单元回归。
  *
  * 背景（2026-09-27 实机取证 + S0.5 双环境实测）：Obsidian 1.13.7 经 loadMathJax
  * 注入的 MathJax 3.2.2 是 CHTML 组件——只有 `tex2chtml`、**没有 `tex2svg`**；
@@ -200,9 +200,9 @@ function fakeRendered(name: string, style?: Record<string, string>): Node {
 }
 
 /** 逐例重新加载模块：重置「告警去重」模块级状态 */
-async function loadModule(): Promise<typeof import('../src/platform/math-jax')> {
+async function loadModule(): Promise<typeof import('../src/platform/rendering/math/math-jax')> {
 	vi.resetModules();
-	return await import('../src/platform/math-jax');
+	return await import('../src/platform/rendering/math/math-jax');
 }
 
 /**
@@ -1021,7 +1021,7 @@ describe('injectMathStylesIntoExportSvg（导出 SVG 后处理 · 方案 B）', 
 			};
 		});
 		const { injectMathStylesIntoExportSvg, primeExportMathFonts } = await import(
-			'../src/platform/math-jax'
+			'../src/platform/rendering/math/math-jax'
 		);
 		expect(await primeExportMathFonts()).toBe(true);
 

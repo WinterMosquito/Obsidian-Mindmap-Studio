@@ -1,5 +1,5 @@
 /**
- * 导出 SVG 的 MathJax **字体按需内联**（platform/math-jax-fonts）单元回归。
+ * 导出 SVG 的 MathJax **字体按需内联**（platform/rendering/math/math-jax-fonts）单元回归。
  *
  * 背景（2026-10-23 实机取证）：导出上下文（`<img>` 解码）禁用 `app://` 外部字体，
  * MathJax 的 stretchy 结构（矩阵竖线 / 根号 / 分式线 / 大括号）整片消失。
@@ -50,7 +50,7 @@ function rootWithClasses(classes: string[]): Element {
 
 describe('parseFontFaceSources', () => {
 	it('解析 family 与 url（注释序号 / 引号 / 无引号三种形态）', async () => {
-		const { parseFontFaceSources } = await import('../src/platform/math-jax-fonts');
+		const { parseFontFaceSources } = await import('../src/platform/rendering/math/math-jax-fonts');
 		const faces = parseFontFaceSources(CSS_FIXTURE);
 		expect(faces).toHaveLength(3);
 		expect(faces[0]).toEqual({
@@ -62,7 +62,7 @@ describe('parseFontFaceSources', () => {
 	});
 
 	it('形态不符（缺 family / 缺 url）的块被忽略', async () => {
-		const { parseFontFaceSources } = await import('../src/platform/math-jax-fonts');
+		const { parseFontFaceSources } = await import('../src/platform/rendering/math/math-jax-fonts');
 		expect(parseFontFaceSources('@font-face { src: url("/x.woff2"); }')).toEqual(
 			[],
 		);
@@ -73,7 +73,7 @@ describe('parseFontFaceSources', () => {
 describe('collectUsedMathFontFamilies', () => {
 	it('token 精确匹配，并恒加 ZERO / BRK', async () => {
 		const { collectUsedMathFontFamilies } = await import(
-			'../src/platform/math-jax-fonts'
+			'../src/platform/rendering/math/math-jax-fonts'
 		);
 		const faces = [
 			{ family: 'MJX-TEX-N', url: '/n' },
@@ -96,7 +96,7 @@ describe('collectUsedMathFontFamilies', () => {
 
 	it('不做前缀误配（TEX-N 不因 TEX-S3 之类出现而放行）', async () => {
 		const { collectUsedMathFontFamilies } = await import(
-			'../src/platform/math-jax-fonts'
+			'../src/platform/rendering/math/math-jax-fonts'
 		);
 		const used = collectUsedMathFontFamilies(new Set(['TEX-SO']), [
 			{ family: 'MJX-TEX-N', url: '/n' },
@@ -107,7 +107,7 @@ describe('collectUsedMathFontFamilies', () => {
 
 describe('inlineMathFontFaces', () => {
 	it('用到的族替换成 data URI，未用到的整块删除，其余规则原样', async () => {
-		const { inlineMathFontFaces } = await import('../src/platform/math-jax-fonts');
+		const { inlineMathFontFaces } = await import('../src/platform/rendering/math/math-jax-fonts');
 		const out = inlineMathFontFaces(
 			CSS_FIXTURE,
 			new Map([
@@ -125,7 +125,7 @@ describe('inlineMathFontFaces', () => {
 	});
 
 	it('缺 base64 的族整块删除（不留必然失败的请求）', async () => {
-		const { inlineMathFontFaces } = await import('../src/platform/math-jax-fonts');
+		const { inlineMathFontFaces } = await import('../src/platform/rendering/math/math-jax-fonts');
 		const out = inlineMathFontFaces(
 			CSS_FIXTURE,
 			new Map(),
@@ -138,7 +138,7 @@ describe('inlineMathFontFaces', () => {
 
 describe('collectClassTokens / withInlinedMathFonts', () => {
 	it('class 按空白切分为 token；查询异常返回空集合', async () => {
-		const { collectClassTokens } = await import('../src/platform/math-jax-fonts');
+		const { collectClassTokens } = await import('../src/platform/rendering/math/math-jax-fonts');
 		expect(
 			[...collectClassTokens(rootWithClasses(['TEX-N mjx-c7B', 'TEX-S3']))].sort(),
 		).toEqual(['TEX-N', 'TEX-S3', 'mjx-c7B']);
@@ -151,7 +151,7 @@ describe('collectClassTokens / withInlinedMathFonts', () => {
 	});
 
 	it('快照缺失 → null（调用方回退）；快照就绪 → 返回内联后的 CSS', async () => {
-		const fonts = await import('../src/platform/math-jax-fonts');
+		const fonts = await import('../src/platform/rendering/math/math-jax-fonts');
 		expect(
 			fonts.withInlinedMathFonts(CSS_FIXTURE, rootWithClasses(['TEX-N']), null),
 		).toBeNull();
@@ -169,7 +169,7 @@ describe('collectClassTokens / withInlinedMathFonts', () => {
 	});
 
 	it('无任何命中字体 → null（不注入空壳样式）', async () => {
-		const fonts = await import('../src/platform/math-jax-fonts');
+		const fonts = await import('../src/platform/rendering/math/math-jax-fonts');
 		const snapshot = {
 			faces: [{ family: 'MJX-TEX-N', url: `${dir}mjx-tex-n.woff2` }],
 			base64ByUrl: new Map([[`${dir}mjx-tex-n.woff2`, 'AAA']]),
@@ -183,7 +183,7 @@ describe('collectClassTokens / withInlinedMathFonts', () => {
 describe('primeMathJaxFonts（预取与失败缓存）', () => {
 	/** 逐例取新模块实例：snapshot / failedCss / priming 都是模块级状态 */
 	async function freshFonts(): Promise<
-		typeof import('../src/platform/math-jax-fonts')
+		typeof import('../src/platform/rendering/math/math-jax-fonts')
 	> {
 		requestUrlMock.mockReset();
 		requestUrlMock.mockResolvedValue({
@@ -191,7 +191,7 @@ describe('primeMathJaxFonts（预取与失败缓存）', () => {
 			arrayBuffer: new ArrayBuffer(0),
 		});
 		vi.resetModules();
-		return await import('../src/platform/math-jax-fonts');
+		return await import('../src/platform/rendering/math/math-jax-fonts');
 	}
 
 	afterEach(() => {

@@ -280,7 +280,7 @@ export default defineConfig(
 		// globals 里）。此前能通过 lint 只是因为 `isDesktopOnly: true` 让官方规则
 		// 顺带带进了 `globals.node`——那次注入挂在 manifest 读取上（cwd 相对，
 		// 见 K43），属「配置承重」。这里显式声明，与本插件是否桌面限定解耦。
-		files: ['src/platform/system-open.ts'],
+		files: ['src/platform/system/system-open.ts'],
 		languageOptions: { globals: { require: 'readonly' } },
 	},
 	{

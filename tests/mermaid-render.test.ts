@@ -1,5 +1,5 @@
 /**
- * `platform/mermaid` 直测：**内嵌 Pele** 的同步渲染 + 内容寻址缓存 + 回退口径。
+ * `platform/rendering/mermaid` 直测：**内嵌 Pele** 的同步渲染 + 内容寻址缓存 + 回退口径。
  *
  * 为什么能在 node 环境直测：Pele 是纯字符串渲染器，不依赖 DOM（无 `document`
  * 时按缺省字体度量出图）。⚠ 由此**不能锁字面产物**——应用内（有 CSS 字体）与
@@ -7,7 +7,7 @@
  * 与行为；字面金样由 `verify:visual` 负责。
  *
  * 覆盖的回退面是本模块唯一的失败语义：语法错误 / 未注册类型 / 超限 → null，
- * 调用方（`features/node-inline-html`）据此回落普通代码块，源码不丢。
+ * 调用方（`features/content/node-inline-html`）据此回落普通代码块，源码不丢。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -15,7 +15,7 @@ import {
 	clearMermaidCache,
 	mermaidCacheSize,
 	renderMermaidSvg,
-} from '../src/platform/mermaid';
+} from '../src/platform/rendering/mermaid';
 
 /** 最小可渲染源码（Pele 的 flowchart 语法） */
 const FLOW = 'flowchart LR\n  A[Pele] --> B[SVG]';
@@ -23,7 +23,7 @@ const FLOW = 'flowchart LR\n  A[Pele] --> B[SVG]';
 /** 另一张图：用于验证「不同源码是不同缓存条目」 */
 const SEQUENCE = 'sequenceDiagram\n  A->>B: hi';
 
-describe('platform/mermaid（内嵌 Pele 同步渲染）', () => {
+describe('platform/rendering/mermaid（内嵌 Pele 同步渲染）', () => {
 	beforeEach(() => {
 		clearMermaidCache();
 		// 失败留痕走 console.warn（createWarnOnce）：单测里静音，避免污染输出

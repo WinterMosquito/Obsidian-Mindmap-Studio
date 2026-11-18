@@ -16,7 +16,7 @@ import { THEME_LINK_COLOR } from './content-common.styles';
  *
  * 用 `<a>` 但**不写 href**：既有 `ANCHOR_SELECTOR`
  * （`a.internal-link, a.external-link, a[href]`）因此不会命中它，链接的三条
- * 通道（点击 / 悬停预览 / 中键）零改动；标签点击由 `features/view-tag` 的
+ * 通道（点击 / 悬停预览 / 中键）零改动；标签点击由 `features/content/view-tag` 的
  * `a.tag[data-tag]` 分支单独接管（唯一入口，文件视图与只读嵌入共用）。
  */
 export const TAG_STYLES: Partial<CSSStyleDeclaration> = {

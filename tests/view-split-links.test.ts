@@ -13,13 +13,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
-import type { MindMapViewContext } from '../src/features/view-context';
+import type { MindMapViewContext } from '../src/features/view/view-context';
 import {
 	autoSplitNode,
 	captureAutoSplitCandidate,
 	runAutoSplitCheck,
 	splitAllLinks,
-} from '../src/features/view-split-links';
+} from '../src/features/navigation/view-split-links';
 import { parseMdOutline } from '../src/markdown/md-outline';
 
 const {

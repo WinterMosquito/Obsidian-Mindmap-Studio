@@ -309,7 +309,7 @@
   pointer-events: auto;
 }
 
-/* ========== 节点内联内容（方案 B：features/node-inline-content.ts 自绘） ==========
+/* ========== 节点内联内容（方案 B：features/content/node-inline-content.ts 自绘） ==========
    布局 / 排版 / 配色 / 轻标记样式**全部内联在元素上**（该模块 CONTENT_STYLES 一族
    常量，唯一来源）：引擎导出 PNG/SVG 只注入自身 CSS 与 header/footer 的 cssText，
    插件 styles.css 不在导出图里生效——属性一旦只写在类规则里，导出图就会掉样式

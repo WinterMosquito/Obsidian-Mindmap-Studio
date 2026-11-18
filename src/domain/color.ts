@@ -1,7 +1,7 @@
 /**
  * 颜色值解析、换算、亮度计算与继承遍历（纯逻辑，零依赖）。
  *
- * 服务对象：节点配色指令 `%%#89CFF0%%`（`features/node-inline-tokenize` 解析、
+ * 服务对象：节点配色指令 `%%#89CFF0%%`（`features/content/node-inline-tokenize` 解析、
  * `engine/mindmap-colors` 落地）、「自定义」入口的人类输入（`parseColorInput`）、
  * 自定义整篇配色（`engine/mindmap-palette.deriveCustomPalette` 用 `mixHex` 派生
  * 五档）、**节点色阶**（`nodeColorScale`：指令色 → 填充 / 文字；结构线另有出处，
@@ -19,7 +19,7 @@ const HEX_COLOR_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
  * 没有它，彩色子树里的单个节点无法脱色：删指令＝无事发生（父色照旧继承）。落地上
  * 读到它就是「无自定义颜色」（删四个样式键、回落主题），后代拿到的是 null。
  *
- * 归一在 `features/node-inline-tokenize`（外壳空白与大小写宽容：`%% None %%`），
+ * 归一在 `features/content/node-inline-tokenize`（外壳空白与大小写宽容：`%% None %%`），
  * 但必须**裸**写——`%%#none%%` 不是指令（仍按普通注释隐藏）。
  */
 export const COLOR_DIRECTIVE_NONE = 'none';
@@ -59,7 +59,7 @@ export function normalizeHexColor(value: string): string | null {
  * 配色指令的**取值判据**（行内与整行两种形态共用）：`#rgb` / `#rrggbb` / 裸 `none`。
  * 返回归一值或 null；非法值（`%%备注%%` / `%%#12%%` / 4·8 位 alpha）一律 null。
  *
- * 行内解析在 `features/node-inline-tokenize.colorDirectiveRanges`，整行判定在
+ * 行内解析在 `features/content/node-inline-tokenize.colorDirectiveRanges`，整行判定在
  * {@link isColorDirectiveLine}——两处共用本函数，值域不会分叉。
  */
 export function colorDirectiveValueOf(body: string): string | null {
@@ -435,7 +435,7 @@ function tableLineTone(background: string, ink: string): string {
  *
  * 键是**归一后**的 `#rrggbb`（`#89CFF0` / `#89cff0` / `#8cf` 共用一条）：节点填充
  * 只有「整篇配色五档 + 节点级主色混白」少数几种，命中率接近 100%。
- * 条目数上限防御脏数据；LRU 提升与 `features/node-inline-tokenize` 的段缓存同口径。
+ * 条目数上限防御脏数据；LRU 提升与 `features/content/node-inline-tokenize` 的段缓存同口径。
  */
 const CONTENT_TONES_CACHE_MAX = 64;
 const contentTonesCache = new Map<string, NodeContentTones>();
@@ -530,7 +530,7 @@ export function walkColorDirectives<T extends { children?: readonly T[] | null }
  *
  * 与 `walkColorDirectives` 同口径（哨兵折 null 并**终止**），只是不遍历子树。
  * 用途单一：判断「这个节点此刻会不会吃到祖先色」＝「默认」要不要落哨兵
- * （`features/view-node-color.applyNodeColor`）。
+ * （`features/editing/view-node-color.applyNodeColor`）。
  */
 export function inheritedColorOf<T extends { parent?: T | null }>(
 	node: T,

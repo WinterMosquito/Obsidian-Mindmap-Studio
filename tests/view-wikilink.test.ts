@@ -36,12 +36,12 @@ import type { MindMapNode } from '../vendor/simple-mind-map.cjs';
 import type {
 	HyperlinkOpenMode,
 	MindMapViewContext,
-} from '../src/features/view-context';
+} from '../src/features/view/view-context';
 import {
 	ensureOffsetSize,
 	registerWikilinkInteractions,
-} from '../src/features/view-wikilink';
-import { MERMAID_BLOCK_CLASS } from '../src/features/node-inline-content';
+} from '../src/features/navigation/view-wikilink';
+import { MERMAID_BLOCK_CLASS } from '../src/features/content/node-inline-content';
 
 /** 节点 group 元素注入点：mock 工厂经 vi.hoisted 暴露，spy 可在每个用例里改返回值 */
 const { getNodeGroupElMock } = vi.hoisted(() => ({

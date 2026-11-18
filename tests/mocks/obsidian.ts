@@ -15,13 +15,13 @@
 export class App {}
 export class TFile {}
 /**
- * loadMathJax 桩：仅保证模块图可链接（platform/math-jax 具名导入）。
+ * loadMathJax 桩：仅保证模块图可链接（platform/rendering/math/math-jax 具名导入）。
  * 真实语义（注入 MathJax 到主窗口）属交互行为，由各测试局部 vi.mock 覆写。
  */
 export async function loadMathJax(): Promise<void> {}
 
 /**
- * 官方 HTTP 原语替身（platform/math-jax-fonts 读字体用）：
+ * 官方 HTTP 原语替身（platform/rendering/math/math-jax-fonts 读字体用）：
  * 单测只测纯函数，预取路径不在覆盖面，故返回「空数组」即可（调用方会回退）。
  */
 export async function requestUrl(
@@ -30,7 +30,7 @@ export async function requestUrl(
 	return { status: 404, arrayBuffer: new ArrayBuffer(0) };
 }
 /**
- * loadPrism 桩：仅保证模块图可链接（platform/prism-code 具名导入）。
+ * loadPrism 桩：仅保证模块图可链接（platform/rendering/code/prism-code 具名导入）。
  * 真实语义（把 Prism 注入 window）属交互行为，由 prism-code.test.ts 局部
  * vi.mock + window.Prism 假件覆写。
  */
@@ -284,8 +284,8 @@ export function setIcon(_parent: unknown, _iconId: string): void {}
  * getIcon 桩：官方返回已注册的 `<svg>` 模板，单测环境没有图标注册表 ⇒ 返回 null。
  *
  * 这正是生产环境的**降级路径**（图标缺失 ⇒ 标注省略图标、保留标题与类型色），
- * 故不需要假 SVG；`platform/callout-icon` 对 null 与异常都有分支。
- * 必须有这个导出：缺它时任何间接 import `platform/callout-icon` 的用例都会在
+ * 故不需要假 SVG；`platform/rendering/callout-icon` 对 null 与异常都有分支。
+ * 必须有这个导出：缺它时任何间接 import `platform/rendering/callout-icon` 的用例都会在
  * **模块解析期**整文件失败（ESM 具名导出缺失），而不是断言失败——难定位。
  */
 export function getIcon(_iconId: string): SVGSVGElement | null {

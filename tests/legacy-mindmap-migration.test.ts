@@ -1,5 +1,5 @@
 /**
- * 【一次性迁移，0.4.0 删除】`platform/legacy-mindmap-migration.ts` 的直测。
+ * 【一次性迁移，0.4.0 删除】`platform/workspace/legacy-mindmap-migration.ts` 的直测。
  *
  * 锁四件事：
  * ① 旧六值全部迁移（`LogicalStructure` / `OrganizationStructure` /
@@ -16,7 +16,7 @@ import type { App } from 'obsidian';
 import {
 	legacyMigrationPlanOf,
 	migrateLegacyMindmapProperties,
-} from '../src/platform/legacy-mindmap-migration';
+} from '../src/platform/workspace/legacy-mindmap-migration';
 
 function fileStub(path: string): TFile {
 	return Object.assign(new TFile(), { path, extension: 'md' });

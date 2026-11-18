@@ -14,15 +14,15 @@ import { CODE_RENDERED_CLASS } from '../../core/constants';
  *
  * **三处分工，勿混**（K115）：本模块只产 DOM、**零监听**——显隐（悬停才出现）在
  * `styles.css` 的 `@media (hover:hover){ .tmm-codeblock:not(:hover) > .tmm-code-copy }`；
- * 点击（经引擎 `node_click` 委托）在 `features/node-codeblock.ts`；本表只管外观。
+ * 点击（经引擎 `node_click` 委托）在 `features/content/node-codeblock.ts`；本表只管外观。
  * 此前此处的「悬停显隐」注释指向 `CODE_COPY_BUTTON_STYLES`，而该表并无任何 hover
  * 属性，属**悬空注释**（设计过但从未实现，K115 落地）。
  *
  * 「轻量」= **纯同步 DOM**：底色/等宽/滚动（样式见 CODE_BLOCK_*），**高亮不在
  * 本函数**——先写与原文同形的字面代码（占位即回退态），token 元素由注入的
  * `renderCode` 异步替换（同 buildMathElement 的字面占位纪律），生产实现见
- * `platform/prism-code`。**点击行为也不在本函数**——视图层经引擎 `node_click`
- * 委托命中选择器（features/node-codeblock.ts），本模块保持零 Obsidian 依赖、
+ * `platform/rendering/code/prism-code`。**点击行为也不在本函数**——视图层经引擎 `node_click`
+ * 委托命中选择器（features/content/node-codeblock.ts），本模块保持零 Obsidian 依赖、
  * 零监听、可单测。
  * 复制内容 = `segment.text`（信息行已在 splitFenceInfo 剥离）。
  */
@@ -66,7 +66,7 @@ export function buildCodeBlockElement(
 
 /**
  * `<code>` 的 **token 元素放置**：产物缓存命中 → **同步**放置；未命中且有语言码
- * → 交给注入的 `renderCode` 异步高亮（生产实现 `platform/prism-code`）。
+ * → 交给注入的 `renderCode` 异步高亮（生产实现 `platform/rendering/code/prism-code`）。
  *
  * 与 `buildMathElement` 的缓存命中路径同款纪律（理由见其注释）：引擎的离屏测量
  * 是**同步**的、缓存键是 `outerHTML`，同步放置 token 才能让引擎量到真实宽高，

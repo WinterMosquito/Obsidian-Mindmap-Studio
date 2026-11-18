@@ -12,7 +12,7 @@ export const CODE_BLOCK_CLASS = 'tmm-codeblock';
  *
  * 视觉口径＝对齐 Obsidian 阅读视图：等宽 + 代码底色（主题变量 + 字面量兜底，
  * 导出无色上下文时仍可读）+ 圆角 + 内边距；**语法高亮不在本表**——token 的
- * 颜色由 `platform/prism-code` 探测宿主主题后**内联到每个 token 元素**（导出
+ * 颜色由 `platform/rendering/code/prism-code` 探测宿主主题后**内联到每个 token 元素**（导出
  * SVG 无 app.css，内联是唯一 WYSIWYG 口径）。滚动与上限见
  * CODE_BLOCK_PRE_STYLES / CODE_BLOCK_MAX_HEIGHT_PX。
  */

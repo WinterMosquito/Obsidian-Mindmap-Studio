@@ -539,7 +539,7 @@ export function imageSizeKey(data: Record<string, unknown>): string {
  * - 地址 + 参数都相同才复用：外部换图 / 新增图片仍停在默认盒这一安全终态；
  * - 无命中**原样返回**（零拷贝），命中才深拷贝（派生字段不回灌会话树）。
  *
- * 唯一用途：`features/view.MindMapView.applySnapshot` 在 `applySessionSnapshot`
+ * 唯一用途：`features/view/view.MindMapView.applySnapshot` 在 `applySessionSnapshot`
  * 前过一道；调用方负责从 `getRenderRoot()` 收集 `known`。
  */
 export function reuseKnownImageSizes(
@@ -624,7 +624,7 @@ export interface ImageSizeCorrection {
  * 不是用户意图）。
  *
  * 拆出「探测」与「写回」两步是为了**加载路径**：探测不再串行挡在首帧前
- * （见 `features/view.ts` 的加载序列），首帧先用默认尺寸出画，探测完成后
+ * （见 `features/view/view.ts` 的加载序列），首帧先用默认尺寸出画，探测完成后
  * 经 `applyImageSizeCorrectionsToEngine` 回灌并重渲染一次。
  */
 export async function collectImageSizeCorrections(
@@ -748,7 +748,7 @@ export function applyImageSizeCorrectionsToTree(
  * 节点保持现值。
  *
  * 探测 + 写回两步的组合（探测实现见 `collectImageSizeCorrections`）；
- * **加载路径**请改用两步式（首帧不等待探测），见 `features/view.ts`。
+ * **加载路径**请改用两步式（首帧不等待探测），见 `features/view/view.ts`。
  */
 export async function walkImageSizeCorrections(
 	tree: MindMapTreeNode,

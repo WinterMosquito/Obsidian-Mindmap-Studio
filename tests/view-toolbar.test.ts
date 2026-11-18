@@ -27,8 +27,8 @@ import {
 	disposeToolbar,
 	syncHistoryButtons,
 	refreshToolbar,
-} from '../src/features/view-toolbar';
-import type { MindMapViewContext } from '../src/features/view-context';
+} from '../src/features/view/view-toolbar';
+import type { MindMapViewContext } from '../src/features/view/view-context';
 
 const engineMocks = vi.hoisted(() => ({
 	arrangeMindMap: vi.fn<(mindMap: unknown) => boolean>(),
@@ -95,7 +95,7 @@ vi.mock('../src/features/view-export', () => ({
 	exportImage: siblingMocks.exportImage,
 }));
 
-vi.mock('../src/features/view-minimap', () => ({
+vi.mock('../src/features/view/view-minimap', () => ({
 	refreshMiniMapAfterRender: minimapMocks.refreshMiniMapAfterRender,
 }));
 

@@ -1,5 +1,5 @@
 /* 工具栏：只剩右缘竖排一组（2026-10-22 第三版；顶部居中 / 底栏左下两版已移除），
-   见 ui/toolbar/toolbar.ts 与 features/view-toolbar.ts。本元素只是**穿透层**：不占布局高度、不拦截画布事件；
+   见 ui/toolbar/toolbar.ts 与 features/view/view-toolbar.ts。本元素只是**穿透层**：不占布局高度、不拦截画布事件；
    子容器 `.mindmap-hud` 自己 pointer-events:auto。 */
 .mindmap-toolbar {
   position: absolute;

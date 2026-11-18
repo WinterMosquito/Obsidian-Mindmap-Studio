@@ -4,7 +4,7 @@
  *
  * 从 `services/engine-controller.ts` 拆出（2026-10-22，纯搬移，零行为改动）。
  * 只有类型、没有运行时代码——放在控制器旁边而不是塞进控制器本体，是因为这份契约
- * 的**读者是 `features/view.ts`**（它 implements 自己那侧的装配）：改这里等于改
+ * 的**读者是 `features/view/view.ts`**（它 implements 自己那侧的装配）：改这里等于改
  * 视图与控制器之间的接口面，与控制器内部实现（800 行状态编排）不是一回事。
  *
  * `engine-controller.ts` 仍对外转出 `EngineControllerDeps`，既有 import 路径不变。
@@ -50,7 +50,7 @@ export interface EngineControllerDeps {
 	/**
 	 * 快捷键前置钩子（剪贴板三键回收）：返回 `true` 即取消该快捷键的引擎行为。
 	 *
-	 * 由组合根注入（实现落 `features/view-clipboard`）——services 不依赖
+	 * 由组合根注入（实现落 `features/editing/view-clipboard`）——services 不依赖
 	 * features（K51 依赖矩阵），与 `exportSvgTransforms` 同款注入口径。
 	 * 缺省 / null ⇒ 引擎快捷键行为不变（只读嵌入与视觉探针不传）。
 	 */
@@ -78,8 +78,8 @@ export interface EngineControllerDeps {
 	 * 导出 SVG 后处理链（组合根按序注入）：引擎导出 PNG/SVG/PDF 时对**克隆的**
 	 * SVG 依次调用（前一项返回值即后一项入参）。
 	 *
-	 * 为什么注入而非本层 import：后处理项分居两层——`platform/math-jax`
-	 * （MathJax 字形样式注入，在 services 许可集内）与 `features/node-codeblock`
+	 * 为什么注入而非本层 import：后处理项分居两层——`platform/rendering/math/math-jax`
+	 * （MathJax 字形样式注入，在 services 许可集内）与 `features/content/node-codeblock`
 	 * （复制按钮隐身，**不在** services 许可集内，K51 依赖矩阵）。故由组合根
 	 * 装配后注入，本控制器只负责按序应用；缺省/空链 = 不注册导出钩子。
 	 */
@@ -107,7 +107,7 @@ export interface EngineControllerDeps {
 	onEngineReady(): void;
 	/**
 	 * 引擎实例**即将销毁**（destroyInstance 的唯一通知点）：宿主据此按引擎
-	 * 归属清理插件侧登记（未定稿数学段的登记面，见 platform/math-jax 的
+	 * 归属清理插件侧登记（未定稿数学段的登记面，见 platform/rendering/math/math-jax 的
 	 * `unsettledMath` / `pruneUnsettledMathOwnedBy`）。
 	 *
 	 * 为什么经回调上抛而非本层直接清：登记面的清理收口在 features 的

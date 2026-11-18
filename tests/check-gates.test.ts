@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildPlan, parseExemptionRows } from '../scripts/check-gates.mjs';
 import type { ExemptionRow, GatesPlan } from '../scripts/check-gates.mjs';
+import { buildNodeContentCompareSource } from '../scripts/visual-node-content.mjs';
 
 const labelsOf = (plan: GatesPlan): string[] =>
 	plan.gates.map((gate) => gate.label);
@@ -80,13 +81,13 @@ describe('buildPlan（变更集 → 门禁清单）', () => {
 	});
 
 	it('自绘判据 / 节点渲染 / 探针 → 加跑 verify:visual，理由带上命中文件', () => {
-		const plan = buildPlan(['src/features/node-inline-content.ts']);
+		const plan = buildPlan(['src/features/content/node-inline-content.ts']);
 		const gate = plan.gates.find((item) =>
 			item.label.startsWith('npm run verify:visual'),
 		);
 
 		expect(gate).toBeDefined();
-		expect(gate?.why).toContain('src/features/node-inline-content.ts');
+		expect(gate?.why).toContain('src/features/content/node-inline-content.ts');
 	});
 
 	it('发布元数据 → 加跑 check:release（README / manifest / versions / LICENSE / release-notes）', () => {
@@ -169,9 +170,54 @@ describe('组件 CSS 与构建门禁', () => {
 			expect(labels).toContain('npm run verify:visual -- --require-chrome');
 		},
 	);
-	it.each(['src/ui/toolbar/toolbar.ts', 'src/ui/search/search-bar.ts', 'src/features/view-toolbar.ts', 'src/features/view-search.ts', 'scripts/visual-ui.mjs', 'src/ui/node-editor/node-editor.ts', 'src/ui/node-editor/node-editor.styles.ts', 'src/domain/node-edit-key.ts', 'src/ui/node-content/content-quote.ts', 'src/ui/node-content/content-code.styles.ts', 'src/core/node-content-types.ts', 'scripts/visual-node-content.mjs'])(
+	it.each(['src/ui/toolbar/toolbar.ts', 'src/ui/search/search-bar.ts', 'src/features/view/view-toolbar.ts', 'src/features/view/view-search.ts', 'scripts/visual-ui.mjs', 'src/ui/node-editor/node-editor.ts', 'src/ui/node-editor/node-editor.styles.ts', 'src/domain/node-edit-key.ts', 'src/ui/node-content/content-quote.ts', 'src/ui/node-content/content-code.styles.ts', 'src/core/node-content-types.ts', 'scripts/visual-node-content.mjs'])(
 		'%s 触发组件 DOM 验证', (file) => {
 			expect(labelsOf(buildPlan([file]))).toContain('npm run verify:visual -- --require-chrome');
 		},
 	);
+});
+
+
+describe('能力子目录的视觉门禁', () => {
+	it.each([
+		'src/features/content/node-inline-html.ts',
+		'src/features/content/content-remeasure.ts',
+		'src/features/editing/node-inline-editor.ts',
+		'src/features/canvas/drag-session.ts',
+		'src/features/media/image-resize.ts',
+		'src/features/relations/node-pick.ts',
+		'src/platform/rendering/mermaid.ts',
+		'src/platform/rendering/callout-icon.ts',
+		'src/platform/rendering/code/prism-code-color-probe.ts',
+		'src/platform/rendering/math/math-jax-export.ts',
+	])('%s 不因迁移漏跑视觉验证', (file) => {
+		expect(labelsOf(buildPlan([file]))).toContain('npm run verify:visual -- --require-chrome');
+	});
+});
+
+describe('视觉比较的独立 HEAD 快照', () => {
+	it.each(['src/features/node-inline-html.ts', 'src/features/content/node-inline-html.ts'])(
+		'HEAD 使用 %s 时仍导入基线快照', (entry) => {
+			const fixture = mkdtempSync(join(tmpdir(), 'mindmap-content-baseline-'));
+			try {
+				const baseline = join(fixture, 'baseline');
+				const target = join(baseline, entry);
+				mkdirSync(join(target, '..'), { recursive: true });
+				writeFileSync(target, '// independent snapshot');
+				const source = buildNodeContentCompareSource(join(fixture, 'current'), baseline);
+				expect(source).toContain(`import * as before from ${JSON.stringify(target.replaceAll('\\', '/'))}`);
+				expect(source).toContain('/current/src/features/content/node-inline-html.ts');
+			} finally {
+				rmSync(fixture, { recursive: true, force: true });
+			}
+		},
+	);
+	it('快照入口缺失立即失败，不用当前源码代替基线', () => {
+		const fixture = mkdtempSync(join(tmpdir(), 'mindmap-content-baseline-missing-'));
+		try {
+			expect(() => buildNodeContentCompareSource(fixture, join(fixture, 'missing'))).toThrow('HEAD 快照缺少节点内容入口');
+		} finally {
+			rmSync(fixture, { recursive: true, force: true });
+		}
+	});
 });

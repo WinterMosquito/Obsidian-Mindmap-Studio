@@ -2,7 +2,7 @@
 import { THEME_LINK_COLOR } from './content-common.styles';
 
 /**
- * 脚注引用徽标的类名与 id 属性名（**交互契约**：`features/view-footnote` 按
+ * 脚注引用徽标的类名与 id 属性名（**交互契约**：`features/content/view-footnote` 按
  * `[data-footnote-id]` 命中点击/悬停目标，两处共用这两个常量）。
  *
  * 徽标结构与 Obsidian 阅读视图的 `sup > a.footnote-ref` 同形但**刻意不共用类名**：
@@ -17,7 +17,7 @@ export const FOOTNOTE_ID_ATTR = 'data-footnote-id';
 
 /**
  * 「纯定义节点」汇总 chip 的类名与 id 列表属性（**交互契约**：
- * `features/view-footnote` 按类名命中、按 `data-footnote-ids` 展开全部定义）。
+ * `features/content/view-footnote` 按类名命中、按 `data-footnote-ids` 展开全部定义）。
  *
  * 定义行不再铺在节点里（2026-11-11）：整节点只有定义时，接管一个 chip 而不是
  * 空内容——否则引擎会回落渲染 `data.text`，隐藏静默失效。

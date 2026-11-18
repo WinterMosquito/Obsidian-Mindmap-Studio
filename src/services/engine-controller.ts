@@ -56,7 +56,7 @@ import { ViewportSession } from './engine-controller-viewport';
 import { buildCreateOptions } from './engine-controller-options';
 
 // 依赖契约已拆到同模块的 `engine-controller-deps`，此处**转出**保持既有
-// import 路径不变（`features/view.ts` 等按 `from './services/engine-controller'` 取类型）。
+// import 路径不变（`features/view/view.ts` 等按 `from './services/engine-controller'` 取类型）。
 export type { EngineControllerDeps };
 
 /** 节点图片点击的拖拽抑制窗口（拖拽落点在图片上时浏览器仍触发 click） */
@@ -327,7 +327,7 @@ export class EngineController {
 		cancelEngineTimers(this.mindMap);
 		// 引擎归属登记（未定稿数学段）在销毁点清理：此刻该引擎的 holder 必然
 		// 不会再挂载，而其他引擎（多视图 / 嵌入）的条目须原样保留 ⇒ 按实例
-		// 身份精确清（语义见 deps.onEngineDisposed 与 platform/math-jax 的
+		// 身份精确清（语义见 deps.onEngineDisposed 与 platform/rendering/math/math-jax 的
 		// unsettledMath）。放在 destroyMindMap 之前：实例引用仍有效，且
 		// destroy 抛错也不至于把登记面留成孤儿。
 		if (this.mindMap) {
