@@ -163,7 +163,7 @@ describe('parseExemptionRows（豁免表行形态）', () => {
 
 
 describe('组件 CSS 与构建门禁', () => {
-	it.each(['styles.css', 'src/styles/index.css', 'src/ui/toolbar/toolbar.css', 'src/ui/search/search-bar.css', 'esbuild.config.mjs'])(
+	it.each(['styles.css', 'src/styles/index.css', 'src/ui/toolbar/toolbar.css', 'src/ui/search/search-bar.css', 'config/esbuild.config.mjs'])(
 		'%s 同时触发 CSS lint 与真实视觉验证', (file) => {
 			const labels = labelsOf(buildPlan([file]));
 			expect(labels).toContain('npm run lint:css');
@@ -173,6 +173,17 @@ describe('组件 CSS 与构建门禁', () => {
 	it.each(['src/ui/toolbar/toolbar.ts', 'src/ui/search/search-bar.ts', 'src/features/view/view-toolbar.ts', 'src/features/view/view-search.ts', 'scripts/visual-ui.mjs', 'src/ui/node-editor/node-editor.ts', 'src/ui/node-editor/node-editor.styles.ts', 'src/domain/node-edit-key.ts', 'src/ui/node-content/content-quote.ts', 'src/ui/node-content/content-code.styles.ts', 'src/core/node-content-types.ts', 'scripts/visual-node-content.mjs'])(
 		'%s 触发组件 DOM 验证', (file) => {
 			expect(labelsOf(buildPlan([file]))).toContain('npm run verify:visual -- --require-chrome');
+		},
+	);
+});
+
+describe('工具配置迁移后的门禁', () => {
+	it('Stylelint 规则配置变化会运行 CSS 检查', () => {
+		expect(labelsOf(buildPlan(['config/stylelint.config.mjs']))).toContain('npm run lint:css');
+	});
+	it.each(['config/knip.json', 'config/esbuild.config.mjs', 'package.json'])(
+		'%s 变化会运行死代码检查', (file) => {
+			expect(labelsOf(buildPlan([file]))).toContain('npm run check:dead-code');
 		},
 	);
 });

@@ -43,6 +43,12 @@
 - **工程契约**：`tests/contracts/`。
 - **共享支持**：`tests/helpers/`、`tests/mocks/`、`tests/fixtures/` 与 `tests/setup.ts`。
 
+工具文件的归属见 K212，完整清单见 [index.md](index.md#工具配置与脚本)：
+
+- **config/**：esbuild、Stylelint、Knip 的显式配置。
+- **scripts/**：版本同步、门禁、第三方打包与验证入口。
+- **根目录**：TypeScript、ESLint、Vitest 与包管理/编辑器的约定入口。
+
 ### 文件规模与豁免（超限须登记）
 
 官方社区模板建议单文件控制在 200–300 行。本项目**不做机械拆分**——按「拆分会不会把已有收口职责摊开」判定，而不是按行数判定：行数是症状，收口点被拆散才是病。故引入一条硬规则：

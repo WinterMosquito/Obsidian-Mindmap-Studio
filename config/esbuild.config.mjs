@@ -20,11 +20,13 @@ const prod = process.argv[2] === 'production';
  * 这是「不要往 Node 侧解析」的声明；`external` 里的 `obsidian` / `electron` 与
  * 内建模块由宿主提供，不打进包。
  */
+// 路径相对配置目录；从仓库根或其它工作目录执行都产出同一组三件套。
 const options = {
+	absWorkingDir: import.meta.dirname,
 	banner: {
 		js: banner,
 	},
-	entryPoints: ['src/main.ts'],
+	entryPoints: ['../src/main.ts'],
 	bundle: true,
 	platform: 'browser',
 	external: [
@@ -48,7 +50,7 @@ const options = {
 	logLevel: 'info',
 	sourcemap: prod ? false : 'inline',
 	treeShaking: true,
-	outfile: 'main.js',
+	outfile: '../main.js',
 	minify: prod,
 	charset: 'utf8',
 };
@@ -56,9 +58,10 @@ const options = {
 // CSS 独立入口：不从 TS import，避免生成 main.css 或改变宿主加载方式。
 // 保持可读且不降级语法；发布资产只叫 styles.css，无运行时 @import。
 const cssOptions = {
-	entryPoints: ['src/ui/styles/index.css'],
+	absWorkingDir: import.meta.dirname,
+	entryPoints: ['../src/ui/styles/index.css'],
 	bundle: true,
-	outfile: 'styles.css',
+	outfile: '../styles.css',
 	banner: { css: '/* Generated from src/ui/styles/index.css. Do not edit directly. */' },
 	charset: 'utf8',
 	logLevel: 'info',

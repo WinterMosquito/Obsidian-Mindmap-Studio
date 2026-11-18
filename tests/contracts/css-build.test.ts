@@ -4,15 +4,18 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync,
 import { tmpdir } from 'node:os';
 import { clearTimeout as clearNodeTimeout, setTimeout as setNodeTimeout } from 'node:timers';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import stylelint from 'stylelint';
 import { describe, expect, it } from 'vitest';
 
 function fixture(): string {
 	const root = mkdtempSync(join(tmpdir(), 'mindmap-css-build-'));
 	mkdirSync(join(root, 'src/ui/styles'), { recursive: true });
+	mkdirSync(join(root, 'config'));
 	writeFileSync(join(root, 'src/main.ts'), 'export const value = 1;');
 	writeFileSync(join(root, 'src/ui/styles/index.css'), '@import "./component.css";\n.after { color: blue; }');
 	writeFileSync(join(root, 'src/ui/styles/component.css'), '.component { width: 32px; }');
-	writeFileSync(join(root, 'esbuild.config.mjs'), readFileSync(new URL('../../esbuild.config.mjs', import.meta.url)));
+	writeFileSync(join(root, 'config/esbuild.config.mjs'), readFileSync(new URL('../../config/esbuild.config.mjs', import.meta.url)));
 	symlinkSync(new URL('../../node_modules', import.meta.url), join(root, 'node_modules'), 'dir');
 	return root;
 }
@@ -38,10 +41,19 @@ function waitForCss(root: string, text: string): { done: Promise<void>; cancel: 
 }
 
 describe('CSS 发布与开发构建', () => {
+	it('迁移后的 Stylelint 配置继续忽略仓库根目录的覆盖率 CSS', async () => {
+		const result = await stylelint.lint({
+			configFile: fileURLToPath(new URL('../../config/stylelint.config.mjs', import.meta.url)),
+			codeFilename: fileURLToPath(new URL('../../coverage/config-migration.css', import.meta.url)),
+			code: 'a { background: url("https://example.com/image.png"); }',
+		});
+		expect(result.results[0]?.ignored).toBe(true);
+		expect(result.errored).toBe(false);
+	});
 	it('生产构建只产出 main.js / styles.css，展开 imports 且保持级联顺序', () => {
 		const root = fixture();
 		try {
-			const result = spawnSync(process.execPath, ['esbuild.config.mjs', 'production'], { cwd: root, encoding: 'utf8' });
+			const result = spawnSync(process.execPath, [join(root, 'config/esbuild.config.mjs'), 'production'], { cwd: join(root, 'config'), encoding: 'utf8' });
 			expect(result.status, result.stderr).toBe(0);
 			const css = readFileSync(join(root, 'styles.css'), 'utf8');
 			expect(css).not.toContain('@import');
@@ -54,7 +66,7 @@ describe('CSS 发布与开发构建', () => {
 	it('npm run dev 所用配置监听组件 CSS，修改后更新发布资产', async () => {
 		const root = fixture();
 		const first = waitForCss(root, 'width: 32px');
-		const child = spawn(process.execPath, ['esbuild.config.mjs'], { cwd: root, stdio: 'ignore' });
+		const child = spawn(process.execPath, ['config/esbuild.config.mjs'], { cwd: root, stdio: 'ignore' });
 		let update: ReturnType<typeof waitForCss> | undefined;
 		try {
 			await first.done;

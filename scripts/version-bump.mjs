@@ -8,7 +8,7 @@
  *
  * 三条实现约束：
  * - **版本号以 `package.json` 为准**：`npm version` 先改 package.json 再跑本脚本，而
- *   `npm_package_version` 只在生命周期里存在——单跑 `node version-bump.mjs` 时它是
+ *   `npm_package_version` 只在生命周期里存在——单跑 `node scripts/version-bump.mjs` 时它是
  *   undefined，直接赋给 `manifest.version` 会让 `JSON.stringify` **静默丢掉**该键。
  * - **路径锚定脚本自身**：不依赖 cwd（npm 保证 cwd = 包根，手工运行不一定）。
  * - **幂等**：`versions.json` 里已登记也按当前 `minAppVersion` 重算（改过 minAppVersion
@@ -22,7 +22,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** 与 scripts/check-release-metadata.mjs 同口径：只接受 x.y.z */
 const SEMVER = /^\d+\.\d+\.\d+$/;
 

@@ -264,6 +264,11 @@ describe('分层索引链接解析', () => {
 });
 
 describe('AGENTS.md 同步契约：代码文件登记完备性', () => {
+	it('工具配置与脚本清单中的每个链接都指向真实文件', () => {
+		const paths = collectIndexedPaths(INDEX_SOURCE, '工具配置与脚本');
+		expect(paths.length).toBeGreaterThan(0);
+		expect(paths.filter(file => countSourceLines(path.join(ROOT, file)) === null)).toEqual([]);
+	});
 	it('开发入口能定位唯一索引，索引清单也登记自身与决策表', () => {
 		expect(AGENTS_SOURCE).toContain('[docs/agents/index.md](docs/agents/index.md)');
 		expect(collectDeclaredDocs()).toEqual(expect.arrayContaining(['agents/index.md', 'agents/decisions.md']));

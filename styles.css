@@ -1,5 +1,5 @@
 /* Generated from src/ui/styles/index.css. Do not edit directly. */
-/* src/ui/styles/view.css */
+/* ../src/ui/styles/view.css */
 .workspace-leaf.mindmap-view-switching .workspace-leaf-content,
 .workspace-leaf.mindmap-view-switching .view-content {
   visibility: hidden;
@@ -26,7 +26,7 @@
   cursor: pointer;
 }
 
-/* src/ui/toolbar/toolbar.css */
+/* ../src/ui/toolbar/toolbar.css */
 .mindmap-toolbar {
   position: absolute;
   inset: 0;
@@ -113,7 +113,7 @@
   }
 }
 
-/* src/ui/search/search-bar.css */
+/* ../src/ui/search/search-bar.css */
 .mindmap-search-bar {
   position: absolute;
   bottom: 12px;
@@ -176,7 +176,7 @@
   color: var(--text-accent);
 }
 
-/* src/ui/styles/global.css */
+/* ../src/ui/styles/global.css */
 .mindmap-render-hint {
   position: absolute;
   inset: 0;
@@ -496,4 +496,4 @@
   white-space: pre-line;
 }
 
-/* src/ui/styles/index.css */
+/* ../src/ui/styles/index.css */

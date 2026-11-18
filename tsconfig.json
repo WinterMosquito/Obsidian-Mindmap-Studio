@@ -37,14 +37,14 @@
 		"resolveJsonModule": true,
 		"lib": ["ES2021", "DOM"]
 	},
-	// scripts/** 与 version-bump.mjs 仍不在此列：它们是纯 Node 工具链脚本，
-	// 不参与插件打包也不进浏览器类型域（见 eslint.config.mts 的 globalIgnores）。
+	// 工具执行脚本（scripts/**、config/esbuild.config.mjs）不直接列入：它们是纯 Node 工具链脚本，
+	// 类型检查覆盖下列入口及其导入；这些工具不参与插件运行时打包。
 	"include": [
 		"src/**/*.ts",
 		"tests/**/*.ts",
 		"vendor/**/*.d.cts",
 		"eslint.config.mts",
-		"stylelint.config.mjs",
+		"config/stylelint.config.mjs",
 		"manifest.json"
 	]
 }

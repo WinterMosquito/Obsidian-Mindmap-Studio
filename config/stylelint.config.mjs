@@ -21,9 +21,10 @@ export default {
 	plugins: ['stylelint-no-unsupported-browser-features'],
 	// 官方同样开启：禁止用 stylelint-disable 注释压掉 scanner 规则
 	ignoreDisables: true,
+	// ignoreFiles 相对本配置目录，继续指向仓库根。
 	// 只排除生成物：coverage/ 是 lcov 的 HTML 报告（含 base.css / prettify.css），
 	// 不属插件资产；node_modules 本就默认排除，此处显式写出以免读者误判。
-	ignoreFiles: ['coverage/**', 'node_modules/**'],
+	ignoreFiles: ['../coverage/**', '../node_modules/**'],
 	rules: {
 		// —— 唯一 error 级规则：禁止外链资源（主题/插件不得从网络加载资源）——
 		'function-url-scheme-disallowed-list': [

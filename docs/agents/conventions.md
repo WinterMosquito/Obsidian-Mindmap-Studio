@@ -1,4 +1,4 @@
-# 关键约定 K1–K211（详录）
+# 关键约定 K1–K212（详录）
 
 > 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
 > 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
@@ -887,11 +887,11 @@
   故**lint 的可见版本上沿＝安装的 typings 版本**，既不是插件自带的 obsidian 版本，也不是
   官方最新发布版本。升级/降级 `obsidian` 依赖都会改变这条规则的判定基准（缓存自动重建）。
 - [K57] **死代码检查（knip）与导出面基线（2026-09-17 审计，同日常态化）**：`npm run check:dead-code`
-  （knip v6，devDependency + `knip.json`；CI 在 lint 后执行）覆盖**未使用文件 / 导出 / 类型**，当前**基线零残留**。
+  （knip v6，devDependency + `config/knip.json`；CI 在 lint 后执行）覆盖**未使用文件 / 导出 / 类型**，当前**基线零残留**。
   两条口径：① **「仅测试引用」的导出有意保留**——31 项（`DEFAULT_SETTINGS`、`closeSearchBar`/`searchNext`/`searchPrev`/
   `doSearch`/`updateSearchCount`、`computeResizedSize`、`nodeViewportCenter`/`pickNearestNode`/`gapCenter`、
   `applyImageSizeCorrectionsToTree` 一族等）被 13 个测试文件直接 `import`，是「纯逻辑直测」（检查清单 #4）的测试入口；
-  去导出即测试编译失败、且无生产收益（生产侧零跨模块引用已核）——`knip.json` 以 tests 为入口，故此类不产生告警；
+  去导出即测试编译失败、且无生产收益（生产侧零跨模块引用已核）——`config/knip.json` 以 tests 为入口，故此类不产生告警；
   **复核口径**：另以 `vitest: false` + 排除 tests 的对照配置运行可复现该清单，勿机械删除。
   ② **零引用导出/类型一律去除 `export`**（本次已清理 17 个符号去导出 + 1 条死再导出 + 死接口 `TreeNodeLike`，
   `tsc --noUnusedLocals` 同步归零；mock / 垫片删去未引用的 `MarkdownRenderChild`，`plain-text-parser.mjs` 删去未引用的默认导出）——
@@ -899,7 +899,7 @@
   （CI 矩阵 22/24 满足；**插件本体 `engines.node` 已于 2026-10-04 由 `>=18` 提到 `>=20`**，对齐官方
   `obsidianmd/obsidian-workflows` 的 `action.yml:47-51` 最低要求 20——`>=18` 低于官方门槛，虽不影响
   实际发布（CI 固定用 24），但会让本地开发环境声明与官方支持面脱节）。
-  **配置收紧（2026-10-04）**：`knip.json` 原先只有 4 个键（`$schema`/`entry`/`ignore`），
+  **配置收紧（2026-10-04）**：`config/knip.json` 原先只有 4 个键（`$schema`/`entry`/`ignore`），
   项目文件范围靠 knip 启发式推断；现补 `project: ["src/**/*.ts","tests/**/*.ts","vendor/**/*.d.cts"]`
   显式声明边界，并据 knip 提示移除已被 `project` 覆盖的 `ignore: ["vendor/**"]`（两条都收窄而非放宽：
   `project` 只把 `vendor` 下的**手写类型声明** `.d.cts` 纳入，`simple-mind-map.cjs` 与 `upstream/**`
@@ -1402,7 +1402,7 @@
   ① **范围**：以官方 `obsidianmd/obsidian-workflows` v1.0.0 源码（`src/manifest.ts`
   / `repo-checks.ts` / `lint.ts` / `release.ts` / `main.ts`）为**校验面权威定义**，
   逐面审计本仓库工作流。**结论：0 实质缺口，多处更严**——
-  · scanner stylelint：`stylelint.config.mjs` 已照抄官方 ruleset + electron 版本
+  · scanner stylelint：`config/stylelint.config.mjs` 已照抄官方 ruleset + electron 版本
   推导（`minAppVersion 1.13.0 → electron 39`）✓；
   · scanner ESLint：`eslint.config.mts` 已接入 `eslint-plugin-obsidianmd ^0.4.2`
   recommended（比 scanner 固定的 0.4.1 新）+ 项目更严边界，`--max-warnings 0`
@@ -1454,7 +1454,7 @@
 - [K82] **官方模板对照审计：0 缺口（构建配置逐字节同源），开发最佳实践全面满足或超越（2026-09-25，社区目录工作流优化轮续）**：
   ① **范围**：以官方 `obsidianmd/obsidian-sample-plugin`（master，含其 AGENTS.md
   的 18 类最佳实践清单）逐条对照本仓库。**结论：0 缺口**——
-  · 构建配置：`esbuild.config.mjs` 与模板**逐字节同源**（banner / external 列表
+  · 构建配置：`config/esbuild.config.mjs` 与模板**逐字节同源**（banner / external 列表
   / prod 判定 / sourcemap 策略 / treeShaking / minify 全一致），`package.json`
   build 脚本与 `tsconfig.json`（strict + noUncheckedIndexedAccess 等）逐字段
   对齐且多两项（`noImplicitOverride` / `allowJs`）；
@@ -1516,7 +1516,7 @@
   `LICENSE vendor/THIRD-PARTY-NOTICES.md`（与 `main.js` / `manifest.json` /
   `styles.css` 并列）；Obsidian 目录解析只读三件套，**多带文件不影响目录校验**。
   本轮同步修正：`THIRD-PARTY-NOTICES.md` §3 与 `BUILD.md` 改实测口径、`release.yml`
-  注释（原「0 命中」为 2026-09-17 审计时点口径）、`stylelint.config.mjs` 悬空审计
+  注释（原「0 命中」为 2026-09-17 审计时点口径）、`config/stylelint.config.mjs` 悬空审计
   文档引用清理。
   ④ **政策边界**：已发布版本的 `docs/release-notes-<tag>.md` 是**历史快照**——时点
   口径与失效引用**不改**（保持发布记录原样）；现行文档/配置内的悬空引用按「移除或
@@ -2252,3 +2252,5 @@
 - [K210] **目录按能力组织，索引按完整路径登记**：`platform/` 分为 `rendering/`、`workspace/`、`system/`，`features/` 分为 `view/`、`content/`、`editing/`、`canvas/`、`media/`、`navigation/`、`relations/`；一级目录仍是依赖层，子目录不增加层级许可或转发入口。只迁移文件与引用，不改编辑、保存、Markdown 与引擎行为。唯一文件清单在 `docs/agents/index.md`：目录分层 bullet、每文件独立可点击链接；`agents-md-sync` 解析链接目标并校验缺失、陈旧与重复路径，避免只按 basename 登记时旧目录也能通过。`architecture.md` 只保留职责说明与索引指针。迁移须同步 lint 特定文件路径、测试 mock、探针与门禁触发面；Chrome 比较基线仍取 HEAD 独立快照，按该快照真实存在的目录入口选择，不读当前源码充当基线。历史发布说明与账本保留当时路径。
 
 - [K211] **测试按主要被测职责对齐源码目录，公共测试资源独立保留**：`tests/{domain,core,links,markdown,media,engine,platform,ui,services,features}/` 跟随源码模块与能力子目录，保留现有测试文件名与断言，不强求一源文件一测试。创建、文件菜单、语言刷新与设置的组合入口测试留在根目录；`tests/contracts/` 集中索引、文档、模块边界、vendor、构建、门禁和许可证解析校验。`setup.ts`、`helpers/`、`mocks/`、`fixtures/` 保持独立位置，Vitest 与 tsc 的递归匹配沿用。迁移必须校正静态/动态/type import、vi.mock/importActual、真实 vendor createRequire、相对 URL、从测试目录推算的仓库根与 fixture 位置；不通过删断言或换假件绕开路径错误。分层索引同步所有精确路径，当前开发文档与工具提示同步命令，历史发布说明与账本保留当时路径。
+
+- [K212] **显式加载的工具配置归 config，执行脚本归 scripts**：esbuild、Stylelint、Knip 配置集中于 `config/`，版本同步脚本在 `scripts/version-bump.mjs`；tsconfig、ESLint、Vitest 与 npm/编辑器约定入口留根目录以保自动发现。npm 命令显式指定迁移后的路径。esbuild 输入/输出相对配置目录，`absWorkingDir` 固定该目录，根产物文件名与 dev watch 行为保持；版本脚本 ROOT 取自身目录的上一级，不依赖 cwd。Stylelint ignoreFiles 相对 config 指向根目录 coverage/node_modules；Knip 扫描范围仍以工作区根为基准，显式登记 esbuild/Stylelint 配置，使配置依赖和生产入口继续被分析。工具配置变化必须触发相应门禁：CSS 检查配置 → lint:css；Knip/构建入口/package.json → check:dead-code；esbuild → 原视觉验证。迁移验证用真实隔离构建/watch、Stylelint 忽略与版本同步/幂等/非法版本回归，不在工作区执行 npm version，也不改发布版本。工具文件清单在 index 分层 bullet，历史记录保持当时路径。

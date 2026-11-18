@@ -40,7 +40,7 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint → `lint:css`
 
 **CSS 检查（stylelint）**：`styles.css` 是发布资产，而官方目录 scanner 在 release 模式
 **强制**对该文件跑 stylelint（`obsidian-workflows/src/lint.ts:246-329`、`:565`，目标 `**/*.css`）。
-本地配置在 `stylelint.config.mjs`，规则面照抄官方 `SCANNER_STYLELINT_CONFIG`
+本地配置在 `config/stylelint.config.mjs`，规则面照抄官方 `SCANNER_STYLELINT_CONFIG`
 （`src/lint.ts:10-123`），其中**唯一 error 级**规则是 `function-url-scheme-disallowed-list`
 （禁止 `url()` 里出现 `http`/`https`/`file`，只允许 `data:`）——这是「主题/插件不得从网络
 加载资源」的机械落点。三条维护要点：
@@ -177,7 +177,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
   （`el.setAttribute('style', …)` 会触发 `no-static-styles-assignment`）。
   **这类测试替代不了真实浏览器**：CSS 级联与布局仍归 `verify:visual`（小地图那部分见本文件前段「已知缺口」）。
 - `tsconfig.json` 纳入 `src/`、`tests/`、`vendor/**/*.d.cts`，**以及三个发布相关配置
-  （`eslint.config.mts` / `stylelint.config.mjs` / `manifest.json`）**；`npm run build` 先
+  （`eslint.config.mts` / `config/stylelint.config.mjs` / `manifest.json`）**；`npm run build` 先
   `tsc -noEmit` 类型检查全部。2026-10-04 为此开了 `checkJs`（否则 `.mjs` 只过语法
   不过是语义）与 `resolveJsonModule`（让 manifest 进项目文件集，JSON 语法错即 build 失败），
   并因此**退役了 ESLint 的 `allowDefaultProject`**——那三个文件不再靠「默认工程」兜底，
@@ -266,3 +266,5 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 **目录与分层索引（K210）**：`agents-md-sync.test.ts` 从「代码结构索引」的 bullet 链接解析完整 `src/`、`tests/` 路径，双向检查漏登、陈旧与重复，并校验「参考文档」的具体链接；解析用例覆盖嵌套目录、同名文件、旧目录与段落隔离。`check-gates.test.ts` 覆盖迁移后的内容、编辑、画布与平台渲染触发面。`scripts/visual-node-content.mjs` 依据 HEAD 独立快照实际存在的旧/新入口生成比较页，入口不存在即报错，不回落当前源码；临时快照测试验证两种结构与缺失失败。模块边界仍由同一一级目录矩阵校验。
 
 **测试目录对齐（K211）**：模块测试按 `src` 一级组与能力子目录归档，工程契约在 `tests/contracts/`；根目录保留组合入口测试和 `setup.ts`，共享 `helpers/`、`mocks/` 与 `fixtures/` 不移动。定位方式是「被测源码目录 → 同目录测试组」，文件名与既有断言保持。Vitest 的 `tests/**/*.test.ts`、tsc 的 `tests/**/*.ts` 和宿主 alias/setup 位置已支持递归，不改匹配范围；单文件命令使用索引中的真实路径。依赖矩阵仍只约束 src，测试可组合多个模块验证行为。目录迁移校验既有测试总数与 baseline 相等，并确认根目录、Markdown 语料、CSS 隔离构建和真实 vendor 加载仍指向原文件。
+
+**工具配置归档（K212）**：`tests/contracts/css-build.test.ts` 复制真实 `config/esbuild.config.mjs` 到同构隔离目录，验证从其它 cwd 的生产输出与 dev CSS watch；同文件通过真实 Stylelint API 断言 coverage CSS 仍被忽略。`tests/contracts/version-bump.test.ts` 在隔离包中执行 `scripts/version-bump.mjs`，覆盖其它 cwd、三处版本同步、历史保留、无差异不写盘及非法版本不改文件。`check-gates.test.ts` 锁住移动后的构建/CSS/Knip 触发面。全量工具入口继续通过 npm 命令执行；Knip 显式配置插件位置，避免配置移出根目录后漏掉配置依赖或生产入口。

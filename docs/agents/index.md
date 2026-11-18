@@ -243,6 +243,7 @@
     - [module-boundaries.test.ts](../../tests/contracts/module-boundaries.test.ts)
     - [plain-text-parser.test.ts](../../tests/contracts/plain-text-parser.test.ts)
     - [vendor-contract.test.ts](../../tests/contracts/vendor-contract.test.ts)
+    - [version-bump.test.ts](../../tests/contracts/version-bump.test.ts)
   - **domain/**：领域规则
     - [callout.test.ts](../../tests/domain/callout.test.ts)
     - [color-directive.test.ts](../../tests/domain/color-directive.test.ts)
@@ -398,6 +399,36 @@
   - [settings.test.ts](../../tests/settings.test.ts)
   - [setup.ts](../../tests/setup.ts)
 
+## 工具配置与脚本
+
+- **config/**：显式加载的构建与检查配置（K212）。
+  - [esbuild.config.mjs](../../config/esbuild.config.mjs)
+  - [knip.json](../../config/knip.json)
+  - [stylelint.config.mjs](../../config/stylelint.config.mjs)
+- **scripts/**：工具执行入口与共享工具逻辑。
+  - [build-vendor.mjs](../../scripts/build-vendor.mjs)
+  - [check-gates.d.mts](../../scripts/check-gates.d.mts)
+  - [check-gates.mjs](../../scripts/check-gates.mjs)
+  - [check-release-metadata.mjs](../../scripts/check-release-metadata.mjs)
+  - [gen-perf-fixture.mjs](../../scripts/gen-perf-fixture.mjs)
+  - [module-boundaries.mjs](../../scripts/module-boundaries.mjs)
+  - [plain-text-parser.mjs](../../scripts/plain-text-parser.mjs)
+  - [scanner-lint.mjs](../../scripts/scanner-lint.mjs)
+  - [verify-visual.mjs](../../scripts/verify-visual.mjs)
+  - [version-bump.mjs](../../scripts/version-bump.mjs)
+  - [visual-node-content.mjs](../../scripts/visual-node-content.mjs)
+  - [visual-ui.mjs](../../scripts/visual-ui.mjs)
+- **根目录约定入口**
+  - [package.json](../../package.json)
+  - [package-lock.json](../../package-lock.json)
+  - [tsconfig.json](../../tsconfig.json)
+  - [eslint.config.mts](../../eslint.config.mts)
+  - [vitest.config.ts](../../vitest.config.ts)
+  - [.npmrc](../../.npmrc)
+  - [.node-version](../../.node-version)
+  - [.editorconfig](../../.editorconfig)
+  - [.gitignore](../../.gitignore)
+
 ## 文件规模与豁免（超 300 行须登记；唯一登记处，行数流水见 docs/agents/line-count-log.md）
 
 > **口径**：行数一律按 `tests/contracts/agents-md-sync.test.ts` 的 `countSourceLines`（按 `\n` 切分、末尾换行不计行）；**不要**用 PowerShell 的 `Measure-Object -Line` 或 `wc -l`——口径不同会使登记值与实测对不上。
@@ -469,7 +500,7 @@
     - [README.md](README.md)：按需阅读、权威边界与文档规模
     - [architecture.md](architecture.md)：模块职责、数据流与依赖层
     - [baseline-metrics.md](baseline-metrics.md)：可复现基线与静态指标
-    - [conventions.md](conventions.md)：关键约定 K1–K211，按编号读取
+    - [conventions.md](conventions.md)：关键约定 K1–K212，按编号读取
     - [line-count-log.md](line-count-log.md)：历次规模与验证记录，只追加
     - [testing.md](testing.md)：测试分层、CI 与验证流程
     - [process.md](process.md)：维护义务与发布流程
