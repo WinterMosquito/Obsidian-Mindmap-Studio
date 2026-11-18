@@ -989,6 +989,8 @@ export const MINIMAP_IDLE_FADE_MS = 30_000;
  * 每次渲染都付。1s 足够「拉宽窗口 / 换布局」即时反应。
  */
 export const MINIMAP_REFRESH_CHECK_MS = 1000;
+/** 常驻侧栏合并分片渲染事件；平移缩放仍只更新视口框。 */
+export const MINIMAP_SIDEBAR_REFRESH_MS = 100;
 /**
  * 缩略图标记上限：超过即按步长抽样。
  *

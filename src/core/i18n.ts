@@ -134,6 +134,7 @@ const ZH = {
 
 	// ===== 通用提示/通知 =====
 	'common.mindMap': '思维导图',
+	'minimap.title': '缩略图',
 	'common.notLoaded': '思维导图尚未加载',
 	'common.arrangeDone': '已整理思维导图',
 	'common.arrangeFailed': '无法整理思维导图',
@@ -526,6 +527,7 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 通用提示/通知 =====
 	'common.mindMap': 'Mind map',
+	'minimap.title': 'Minimap',
 	'common.notLoaded': 'Mind map not loaded yet',
 	'common.arrangeDone': 'Mind map arranged',
 	'common.arrangeFailed': 'Could not arrange the mind map',

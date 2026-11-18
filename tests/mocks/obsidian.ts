@@ -133,6 +133,9 @@ export class Component {
 	}
 }
 
+/** ItemView 仅保证可继承/instanceof；侧栏行为由专属 fixture 提供。 */
+export class ItemView extends Component {}
+
 /**
  * MarkdownRenderChild 桩：`features/mindmap-codeblock` 的渲染子基类。
  *

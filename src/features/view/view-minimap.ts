@@ -1,7 +1,9 @@
 /**
- * 小地图（F12-M）：左下角的自动浮层——俯瞰全图 + 当前视口方框。
+ * 小地图（K215）：主窗口移到右侧 Outline；popout 保留原浮层回退。
+ * 侧栏常驻且按实际承载尺寸等比显示全图，渲染事件短节流刷新，平移/缩放只更新框。
+ * 未挂载的主窗口会话与隐藏承载区不取样；几何/SVG/拖拽/滚轮复用原实现。
  *
- * 三条产品口径（2026-10-24 用户裁决，实现即此）：
+ * 下述三条浮层口径仅用于 popout 回退（2026-10-24）：
  * 1. **无入口**：100% 缩放下内容装不进画布时自动出现，装得下立即消失；
  *    不设按钮 / 命令 / 设置项，也不写 `data.json`；
  * 2. **省**：**启用瞬间就画**（首屏不等节拍），之后每 30s 最多换一次且只在
@@ -28,6 +30,7 @@ import {
 	MINIMAP_MIN_CANVAS_WIDTH_PX,
 	MINIMAP_REFRESH_CHECK_MS,
 	MINIMAP_REFRESH_INTERVAL_MS,
+	MINIMAP_SIDEBAR_REFRESH_MS,
 } from '../../core/constants';
 import {
 	miniMapScale,
@@ -80,6 +83,10 @@ interface MiniMapSession {
 	view: MiniMapContext;
 	win: Window;
 	panel: HTMLElement;
+	/** 主窗口侧栏承载；popout 沿用本窗口浮层（K215）。 */
+	floating: boolean;
+	host: HTMLElement | null;
+	observer: ResizeObserver | null;
 	image: HTMLImageElement;
 	viewBox: HTMLElement;
 	geometry: MiniMapGeometry | null;
@@ -132,18 +139,72 @@ interface MiniMapSession {
 /** 每个视图一份会话（避免给 view.ts 再加字段；引擎换代时整体重建） */
 const sessions = new WeakMap<object, MiniMapSession>();
 
+const sessionListeners = new Set<() => void>();
+
+/** 组合根驱动侧栏重新绑定；不让 platform 反向依赖 features。 */
+export function onMiniMapSessionChange(listener: () => void): () => void {
+	sessionListeners.add(listener);
+	return () => sessionListeners.delete(listener);
+}
+
+/** 移动同一块组件，保留取样、投影与导航会话，不重建引擎。 */
+export function attachMiniMap(view: MiniMapContext, host: HTMLElement): (() => void) | null {
+	const session = sessions.get(view);
+	if (!session || session.disposed || host.win !== session.win) {
+		return null;
+	}
+	session.host = host;
+	host.appendChild(session.panel);
+	session.panel.addClass('is-docked');
+	const Ctor = (session.win as unknown as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+	if (Ctor) {
+		session.observer = new Ctor(() => {
+			if (!session.disposed && session.host === host) {
+				refresh(session);
+				refreshAttachedMiniMap(view);
+			}
+		});
+		session.observer.observe(host);
+	}
+	refresh(session);
+	return () => {
+		if (session.host !== host) { return; }
+		session.observer?.disconnect();
+		session.observer = null;
+		session.drag?.end();
+		session.drag = null;
+		session.host = null;
+		session.panel.removeClass('is-docked');
+		session.panel.remove();
+		disable(session);
+	};
+}
+
+/** 布局/可见性变化时补画侧栏；尺寸不变且无修改时只复用已有图。 */
+export function refreshAttachedMiniMap(view: MiniMapContext): void {
+	const session = sessions.get(view);
+	if (!session?.host) { return; }
+	const size = readPanelSize(session);
+	if (size && (session.dirty || !session.ready
+		|| size.width !== session.geometry?.panel.width || size.height !== session.geometry.panel.height)) {
+		draw(session);
+		if (session.ready) { show(session); }
+	}
+}
+
 /**
  * 装配小地图（`setupFeatures` 里每代引擎调用一次）。
  *
  * 幂等：先拆旧会话再建新的——引擎重建时旧面板的闭包会持有旧引擎引用。
  */
-export function setupMiniMap(view: MiniMapContext): void {
+export function setupMiniMap(view: MiniMapContext, options: { floating: boolean } = { floating: true }): void {
 	teardownMiniMap(view);
 	if (!view.mindMap || !view.canvasEl) {
 		return;
 	}
 	const win = view.containerEl.win;
 	const panel = view.containerEl.createDiv({ cls: 'mindmap-minimap' });
+	if (!options.floating) { panel.remove(); }
 	// **刻意不设 `aria-label`**：Obsidian 核心在 `body` 上委托 `pointerover` + 选择器
 	// `[aria-label]`，任何带该属性（哪怕不是 `setTooltip` 写的）的元素都会被弹成可见
 	// 的 `div.tooltip`（默认延迟 1s）。面板要「无提示无弹窗」，故只留 `role="group"`
@@ -158,6 +219,9 @@ export function setupMiniMap(view: MiniMapContext): void {
 		view,
 		win,
 		panel,
+		floating: options.floating,
+		host: null,
+		observer: null,
 		image,
 		viewBox,
 		geometry: null,
@@ -174,7 +238,7 @@ export function setupMiniMap(view: MiniMapContext): void {
 		drag: null,
 		hovering: false,
 		drawAfterRender: false,
-		refreshThrottler: createThrottler(MINIMAP_REFRESH_CHECK_MS),
+		refreshThrottler: createThrottler(options.floating ? MINIMAP_REFRESH_CHECK_MS : MINIMAP_SIDEBAR_REFRESH_MS),
 		disposed: false,
 	};
 	sessions.set(view, session);
@@ -217,6 +281,7 @@ export function setupMiniMap(view: MiniMapContext): void {
 	binder.onDom(panel, 'mouseleave', () => setHovering(session, false));
 
 	refresh(session);
+	for (const listener of sessionListeners) { listener(); }
 }
 
 /**
@@ -263,6 +328,7 @@ export function teardownMiniMap(view: MiniMapContext): void {
 	}
 	sessions.delete(view);
 	session.disposed = true;
+	session.observer?.disconnect();
 	session.refreshThrottler.cancel();
 	clearTimer(session);
 	session.drag?.end();
@@ -273,6 +339,7 @@ export function teardownMiniMap(view: MiniMapContext): void {
 	}
 	session.image.removeAttribute('src');
 	session.panel.remove();
+	for (const listener of sessionListeners) { listener(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +359,10 @@ function noteChange(session: MiniMapSession): void {
 		return;
 	}
 	session.dirty = true;
-	session.refreshThrottler.run(() => refresh(session));
+	session.refreshThrottler.run(() => {
+		refresh(session);
+		if (session.host) { refreshAttachedMiniMap(session.view); }
+	});
 	if (session.visible) {
 		wake(session);
 	}
@@ -311,15 +381,17 @@ function refresh(session: MiniMapSession): void {
 		return;
 	}
 	const mindMap = session.view.mindMap;
-	if (!mindMap) {
+	if (!mindMap || (!session.floating && !session.host)) {
 		disable(session);
 		return;
 	}
+	const panelSize = readPanelSize(session);
+	if (session.host && (!panelSize || panelSize.width < 1 || panelSize.height < 1)) { return; }
 	// 画布尺寸只有一个来源（`getCanvasSize`：实时矩形 → 引擎缓存 → elRect 兜底）：
 	// 此前这里读 `canvasEl.clientWidth`、判据那边另读引擎尺寸，窄画布时两者会差一帧。
 	// 取不到就必须早退：下面的全树测量与判据都依赖它，先测一遍等于白遍历。
 	const canvasSize = getCanvasSize(mindMap);
-	if (!canvasSize || canvasSize.width < MINIMAP_MIN_CANVAS_WIDTH_PX) {
+	if (!canvasSize || (!session.host && canvasSize.width < MINIMAP_MIN_CANVAS_WIDTH_PX)) {
 		disable(session);
 		return;
 	}
@@ -329,7 +401,7 @@ function refresh(session: MiniMapSession): void {
 	// 判据与首帧取图共用**同一份**全树测量：同一时刻、同一口径，且省一遍遍历
 	// （此前判据 1 次 + `buildMiniMapMarks` 内部 1 次 + 取图 1 次）。
 	const measured = measureMiniMapContent(mindMap);
-	if (contentExceedsCanvasAtFullScale(mindMap, measured, canvasSize) !== true) {
+	if (!session.host && contentExceedsCanvasAtFullScale(mindMap, measured, canvasSize) !== true) {
 		disable(session);
 		return;
 	}
@@ -428,6 +500,8 @@ function schedule(session: MiniMapSession): void {
 	if (session.disposed) {
 		return;
 	}
+	// 常驻侧栏按渲染事件/短节流刷新，没有浮层的淡出与 30s 换图定时器。
+	if (session.host) { clearTimer(session); return; }
 	const now = Date.now();
 	const deadline = nextMiniMapDeadline(
 		{
@@ -437,7 +511,7 @@ function schedule(session: MiniMapSession): void {
 			dirty: session.dirty,
 			lastDrawAt: session.lastDrawAt,
 			lastActivityAt: session.lastActivityAt,
-			hovering: session.hovering,
+			hovering: session.host !== null || session.hovering,
 		},
 		now,
 		MINIMAP_REFRESH_INTERVAL_MS,
@@ -479,7 +553,7 @@ function tick(session: MiniMapSession): void {
 	}
 	// 淡出优先：同一时刻既该换图又该淡出时**先藏**（脏标记保留，等用户动图
 	// 回来时再补画）——否则会为一张立刻要藏起来的图白跑一次取样
-	if (now - session.lastActivityAt >= MINIMAP_IDLE_FADE_MS) {
+	if (!session.host && !session.hovering && now - session.lastActivityAt >= MINIMAP_IDLE_FADE_MS) {
 		hide(session);
 		clearTimer(session);
 		return;
@@ -507,6 +581,10 @@ function draw(
 		return;
 	}
 	const mindMap = session.view.mindMap;
+	const panelSize = readPanelSize(session);
+	if (session.host && (!panelSize || panelSize.width < 1 || panelSize.height < 1)) {
+		return;
+	}
 	// 注意：这是**尝试**时刻，不是「上一次成功」——失败时也必须推进，否则
 	// `nextMiniMapDeadline` 会算出「立刻到期」，tick 与 draw 互相唤醒成自旋。
 	session.lastDrawAt = Date.now();
@@ -514,7 +592,7 @@ function draw(
 		return;
 	}
 	// 不传测量/画布亦可：`captureMiniMap` 自己会测（两个入参只用来省那两遍读取）
-	const frame = captureMiniMap(mindMap, measured, canvasSize);
+	const frame = captureMiniMap(mindMap, measured, canvasSize, panelSize);
 	if (!frame) {
 		// 取样失败（渲染树正处在换代窗口）：把补画挂到下一次渲染落地，
 		// 不再等 30s 节拍——否则这次失败会白吃一整个刷新窗口。
@@ -522,6 +600,11 @@ function draw(
 		return;
 	}
 	applyFrame(session, frame);
+}
+
+function readPanelSize(session: MiniMapSession): MiniMapSize | undefined {
+	const rect = session.host?.getBoundingClientRect();
+	return rect ? { width: Math.floor(rect.width), height: Math.floor(rect.height) } : undefined;
 }
 
 /** 把一帧落到面板上（唯一的写入点；**已含**视口框那一帧的排期，调用方勿重复排） */
@@ -558,6 +641,8 @@ function applyFrame(session: MiniMapSession, frame: MiniMapFrame): void {
  *   `refreshMiniMapAfterRender` 里已经发生过，到这一步通常本来就可见。
  */
 function drawWhenLanded(session: MiniMapSession): void {
+	const panelSize = readPanelSize(session);
+	if (session.host && (!panelSize || panelSize.width < 1 || panelSize.height < 1)) { return; }
 	if (session.disposed || !session.drawAfterRender) {
 		return;
 	}
@@ -568,7 +653,7 @@ function drawWhenLanded(session: MiniMapSession): void {
 	const mindMap = session.view.mindMap;
 	// 同一份测量既给取图、也给下面的帧判等（不可在两次取样之间变）
 	const measured = mindMap ? measureMiniMapContent(mindMap) : null;
-	const frame = mindMap ? captureMiniMap(mindMap, measured) : null;
+	const frame = mindMap ? captureMiniMap(mindMap, measured, undefined, readPanelSize(session)) : null;
 	if (!frame) {
 		return;
 	}
@@ -727,6 +812,8 @@ function forwardWheel(session: MiniMapSession, event: WheelEvent): void {
 	// 先掐掉自身默认行为：不掐会让页面跟着滚
 	event.preventDefault();
 	event.stopPropagation();
+	// 侧栏指针在画布外；将滚轮锚点放在画布中心，沿用同一引擎缩放/平移管线。
+	const anchor = session.host ? canvas.getBoundingClientRect() : null;
 	canvas.dispatchEvent(
 		new Ctor('wheel', {
 			deltaX: event.deltaX,
@@ -736,8 +823,8 @@ function forwardWheel(session: MiniMapSession, event: WheelEvent): void {
 			shiftKey: event.shiftKey,
 			altKey: event.altKey,
 			metaKey: event.metaKey,
-			clientX: event.clientX,
-			clientY: event.clientY,
+			clientX: anchor ? anchor.left + anchor.width / 2 : event.clientX,
+			clientY: anchor ? anchor.top + anchor.height / 2 : event.clientY,
 			bubbles: true,
 			cancelable: true,
 		}),

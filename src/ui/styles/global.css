@@ -18,10 +18,10 @@
   font-size: var(--font-ui-small);
 }
 
-/* ========== 小地图（左下角自动浮层，F12-M） ==========
-   口径：宽度随内容比例收在 160–220、高度随内容比例（上限 = 画布高 × 0.6）；
-   **底边钉住**（bottom 固定，高度变化只向上长）。
-   可见性由 JS 切 .is-visible（自动出现 → 动图后 30s 淡出），本文件不设任何常显状态。 */
+/* ========== 小地图（K215） ==========
+   主窗口 .is-docked 使用右侧承载区的完整尺寸、常驻显示、不遮盖画布；
+   popout 保留左下自动浮层：宽 160–220、高度随内容比例，上限为画布高 × 0.6，
+   底边钉住，.is-visible 由 JS 控制出现和 30s 空闲淡出。 */
 .mindmap-minimap {
   position: absolute;
   bottom: 16px;
@@ -90,6 +90,31 @@
 /* 几何未就绪 / 面板不可见：框收起（避免停在上一位置误导） */
 .mindmap-minimap-view.is-hidden {
   display: none;
+}
+
+/* K215：只暂借一枚 Outline 的公开容器，恢复时移除两个 class。 */
+.mindmap-outline-host > :not(.mindmap-outline-content),
+.mindmap-outline-content > :not(.mindmap-sidebar-mount) {
+  display: none;
+}
+
+.mindmap-outline-content {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+}
+
+.mindmap-sidebar-mount {
+  position: absolute;
+  inset: 0;
+}
+
+.mindmap-minimap.is-docked {
+  inset: 0;
+  opacity: 1;
+  border-radius: 2px;
+  box-shadow: none;
+  transition: none;
 }
 
 /* ========== 滚动条样式 ========== */

@@ -33,8 +33,8 @@ vi.mock('obsidian', async (importOriginal) => {
 	return {
 		...actual,
 		FileView: class {
-			app = { isDarkMode: () => false };
-			constructor(_leaf: unknown) {}
+			app = { isDarkMode: () => false, workspace: { rootSplit: {} } };
+			constructor(readonly leaf: unknown) {}
 		},
 	};
 });
@@ -94,7 +94,7 @@ function setupView(newMapSyntax: NewMapSyntax = 'list') {
 		on: (name: string, listener: (...args: unknown[]) => void) => listeners.set(name, listener),
 		off: (name: string) => listeners.delete(name),
 	};
-	const view = new MindMapView({} as WorkspaceLeaf, {
+	const view = new MindMapView({ getContainer: () => ({}) } as WorkspaceLeaf, {
 		settings: { defaultLayout: 'logicalStructure', language: 'zh', newMapSyntax },
 	} as ViewPluginContext);
 	view.canvasEl = canvas as unknown as HTMLElement;

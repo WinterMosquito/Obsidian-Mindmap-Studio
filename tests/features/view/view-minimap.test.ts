@@ -23,6 +23,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MiniMapContext } from '../../../src/features/view/view-minimap';
 import {
+	attachMiniMap,
+	refreshAttachedMiniMap,
 	refreshMiniMap,
 	refreshMiniMapAfterRender,
 	setupMiniMap,
@@ -31,7 +33,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
 	captureMiniMap: vi.fn<
-		(mindMap: unknown, measured?: unknown, canvasSize?: unknown) => unknown
+		(mindMap: unknown, measured?: unknown, canvasSize?: unknown, panelSize?: unknown) => unknown
 	>(),
 	contentExceedsCanvasAtFullScale: vi.fn<() => unknown>(),
 	getCanvasSize: vi.fn<() => unknown>(),
@@ -95,6 +97,21 @@ class FakeEl {
 	style = createStyle();
 	parent: FakeEl | null = null;
 	removed = false;
+	win?: FakeWin;
+	width = 360;
+	height = 400;
+
+	getBoundingClientRect(): { width: number; height: number; left: number; top: number } {
+		return { width: this.width, height: this.height, left: 900, top: 0 };
+	}
+
+	appendChild(child: FakeEl): FakeEl {
+		child.remove();
+		child.parent = this;
+		child.removed = false;
+		this.children.push(child);
+		return child;
+	}
 	/** `<img>` 的 src：模块以**属性写法**赋值（`image.src = …`） */
 	src = '';
 
@@ -146,11 +163,11 @@ class FakeEl {
 	}
 
 	createDiv(options?: string | { cls?: string }): FakeEl {
-		return this.appendChild('div', options);
+		return this.createChild('div', options);
 	}
 
 	createEl(tag: string, options?: string | { cls?: string }): FakeEl {
-		return this.appendChild(tag, options);
+		return this.createChild(tag, options);
 	}
 
 	contains(node: unknown): boolean {
@@ -178,7 +195,7 @@ class FakeEl {
 		}
 	}
 
-	private appendChild(tag: string, options?: string | { cls?: string }): FakeEl {
+	private createChild(tag: string, options?: string | { cls?: string }): FakeEl {
 		const el = new FakeEl(tag);
 		const cls = typeof options === 'string' ? options : options?.cls;
 		if (cls) {
@@ -788,5 +805,104 @@ describe('悬停与滚轮（2026-10-25 两条用户裁决）', () => {
 		});
 		const canvas = active.view.canvasEl as unknown as FakeEl;
 		expect(canvas.dispatched).toHaveLength(0);
+	});
+});
+
+describe('侧栏小地图 K215', () => {
+	function dock(harness: Harness): { host: FakeEl; release: () => void; panel: FakeEl } {
+		const host = new FakeEl('div');
+		host.win = harness.win;
+		const release = attachMiniMap(harness.view, host as unknown as HTMLElement);
+		expect(release).not.toBeNull();
+		return { host, release: release!, panel: host.children[0]! };
+	}
+
+	it('小导图常驻、画布没有重复浮层，且不保留淡出定时器', () => {
+		active = createHarness();
+		mocks.contentExceedsCanvasAtFullScale.mockReturnValue(false);
+		setupMiniMap(active.view, { floating: false });
+		expect(active.container.children).toHaveLength(0);
+		expect(mocks.captureMiniMap).not.toHaveBeenCalled();
+		const { panel, release } = dock(active);
+		expect(panel.className).toContain('is-visible');
+		expect(mocks.captureMiniMap.mock.calls.at(-1)?.[3]).toEqual({ width: 360, height: 400 });
+		vi.advanceTimersByTime(60_000);
+		expect(panel.className).toContain('is-visible');
+		expect(vi.getTimerCount()).toBe(0);
+		release();
+		expect(panel.removed).toBe(true);
+		expect(active.container.children).toHaveLength(0);
+	});
+
+	it('渲染事件短节流刷新图片，平移缩放只投影视口框', () => {
+		active = createHarness();
+		setupMiniMap(active.view, { floating: false });
+		dock(active);
+		mocks.captureMiniMap.mockClear();
+		active.binder.emitEngine('view_data_change');
+		active.win.runFrames();
+		expect(mocks.captureMiniMap).not.toHaveBeenCalled();
+		active.binder.emitEngine('node_tree_render_end');
+		expect(mocks.captureMiniMap).toHaveBeenCalledTimes(1);
+		active.binder.emitEngine('node_tree_render_end');
+		vi.advanceTimersByTime(1000);
+		expect(mocks.captureMiniMap).toHaveBeenCalledTimes(2);
+	});
+
+	it('隐藏面板停止取样，重新出现后补画脏内容并使用新尺寸', () => {
+		active = createHarness();
+		setupMiniMap(active.view, { floating: false });
+		const { host } = dock(active);
+		mocks.captureMiniMap.mockClear();
+		host.width = 0;
+		mocks.measureMiniMapContent.mockClear();
+		active.binder.emitEngine('node_tree_render_end');
+		expect(mocks.captureMiniMap).not.toHaveBeenCalled();
+		expect(mocks.measureMiniMapContent).not.toHaveBeenCalled();
+		host.width = 500;
+		refreshAttachedMiniMap(active.view);
+		expect(mocks.captureMiniMap.mock.calls.at(-1)?.[3]).toEqual({ width: 500, height: 400 });
+	});
+
+	it('侧栏滚轮锚点回到画布内，缩放/Alt平移仍走原轮子管线', () => {
+		active = createHarness();
+		setupMiniMap(active.view, { floating: false });
+		const { panel } = dock(active);
+		active.binder.emitDom(panel, 'wheel', {
+			deltaY: -120, ctrlKey: true, clientX: 1300, clientY: 10,
+			preventDefault: vi.fn(), stopPropagation: vi.fn(),
+		});
+		const canvas = active.view.canvasEl as unknown as FakeEl;
+		expect(canvas.dispatched[0]?.event).toMatchObject({ clientX: 1080, clientY: 200, ctrlKey: true });
+	});
+
+	it('跨窗口承载被拒绝，保留本窗口浮层', () => {
+		active = createHarness();
+		setupMiniMap(active.view);
+		const host = new FakeEl('div');
+		host.win = new FakeWin();
+		expect(attachMiniMap(active.view, host as unknown as HTMLElement)).toBeNull();
+		expect(panelOf(active).className).toContain('is-visible');
+	});
+
+	it('ResizeObserver 回调刷新实际尺寸，卸载取消观察', () => {
+		active = createHarness();
+		let notify = (): void => {};
+		const disconnect = vi.fn();
+		const observe = vi.fn();
+		Object.assign(active.win, { ResizeObserver: class {
+			constructor(callback: () => void) { notify = callback; }
+			observe = observe;
+			disconnect = disconnect;
+		} });
+		setupMiniMap(active.view, { floating: false });
+		const { host, release } = dock(active);
+		expect(observe).toHaveBeenCalledWith(host);
+		mocks.captureMiniMap.mockClear();
+		host.width = 500;
+		notify();
+		expect(mocks.captureMiniMap.mock.calls.at(-1)?.[3]).toEqual({ width: 500, height: 400 });
+		release();
+		expect(disconnect).toHaveBeenCalledOnce();
 	});
 });

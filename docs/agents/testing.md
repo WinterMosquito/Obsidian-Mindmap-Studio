@@ -67,8 +67,8 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 
 **已知缺口：小地图没有视觉门禁**（2026-10-24 登记；判定为「不需要常驻补」，理由见下）。
 `features/view/view-minimap`、`core/minimap-geometry` 与引擎读取面已由
-`tests/features/view/view-minimap.test.ts`（**22** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
-`tests/core/minimap-geometry.test.ts`（**69** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
+`tests/features/view/view-minimap.test.ts`（**29** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
+`tests/core/minimap-geometry.test.ts`（**74** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
 `tests/engine/engine-minimap-capture.test.ts`（**15** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
 **肉眼一眼可见**的风险：CSS 级联（面板定位/层级/pointer-events/过渡）与 `<img>` 对
 data-URL SVG 的解码。往 `verify:visual` 加场景需要把 features 层也 bundle 进页面并补
@@ -270,3 +270,11 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 **工具配置归档（K212）**：`tests/contracts/css-build.test.ts` 复制真实 `config/esbuild.config.mjs` 到同构隔离目录，验证从其它 cwd 的生产输出与 dev CSS watch；同文件通过真实 Stylelint API 断言 coverage CSS 仍被忽略。`tests/contracts/version-bump.test.ts` 在隔离包中执行 `scripts/version-bump.mjs`，覆盖其它 cwd、三处版本同步、历史保留、无差异不写盘及非法版本不改文件。`check-gates.test.ts` 锁住移动后的构建/CSS/Knip 触发面。全量工具入口继续通过 npm 命令执行；Knip 显式配置插件位置，避免配置移出根目录后漏掉配置依赖或生产入口。
 
 **去除历史兼容（K213）**：删除旧属性迁移测试，当前声明测试验证旧长布局名不被识别；嵌入测试验证旧指令显示非法值并回落默认，手动打开测试验证使用当前种子布局。配色测试覆盖所有现值及旧名回退，设置测试验证数字字符串被拒绝并记录字段；视图状态测试验证当前字段投影、不修改冻结输入和不触发持久化。图片回写测试验证显式文件名文本被保留。既有 Markdown 往返、保存、文档会话、撤销及真实 Chrome 探针继续运行。
+
+### 右侧缩略图（K215）
+
+`tests/platform/workspace/minimap-sidebar.test.ts` 验证只借一枚右侧 Outline、Markdown/卸载恢复、来源切换、原容器清理、边栏折叠与异步 fallback 跨生命周期清理；`view-minimap.test.ts` 补侧栏常驻、小图显示、隐藏不测树、短节流刷新、滚轮锚点与跨窗口拒绝。原几何与浮层回退测试继续保留。
+
+`verify:visual` 的独立 `visual-minimap-sidebar.mjs` 页使用真实引擎和 CSS 检查 SVG 解码、整个面板尺寸、多源绑定、视口拖动/滚轮缩放、切布局、尺寸变化（虚拟时钟页经官方 layout-change；ResizeObserver 回调另有直测）、隐藏/折叠恢复与 Outline 原内容/导航控件还原，tag 面板保持可见。Workspace/ItemView 是官方接口替身；不把 Chrome 结果当成真实 Obsidian 已加载或主题手感验收。
+
+独立真实时钟 Chrome CDP 验证另跑同一侧栏页：不启用 virtual-time-budget，拉宽时不发 workspace/layout 事件，真实 ResizeObserver 自动将组件与图片更新到 500px，17 项场景通过。该复核覆盖真实观察器交付；完整 leaf/引擎不重建的跨窗口搬运仍需实际 Obsidian 手验。

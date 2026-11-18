@@ -46,7 +46,7 @@ export interface MiniMapFrame {
 	content: MiniMapBox;
 	/** 画布尺寸（像素） */
 	canvas: MiniMapSize;
-	/** 面板尺寸（宽 160–220、高随比例） */
+	/** 面板尺寸（浮层宽 160–220；侧栏为完整承载区） */
 	panel: MiniMapSize;
 	/** 标记指纹：判「换没换图」的第三项（见 `sameMiniMapFrame`） */
 	signature: number;
@@ -100,11 +100,13 @@ interface MiniMapAppearance {
  * @param canvasSize 调用方刚读到的画布尺寸：传入即省一次实时矩形读取
  *   （`getBoundingClientRect` 会强制布局）。视图层让「窄画布门禁 / 启用判据 /
  *   取图」共用这一次读数。
+ * @param panelSize 侧栏可用尺寸；仅改变同一几何模型的面板坐标系，不重写绘图。
  */
 export function captureMiniMap(
 	mindMap: MindMap | null,
 	measured?: MiniMapMeasure | null,
 	canvasSize?: MiniMapSize | null,
+	panelSize?: MiniMapSize,
 ): MiniMapFrame | null {
 	if (!mindMap) {
 		return null;
@@ -129,6 +131,7 @@ export function captureMiniMap(
 		const panel = computeMiniMapSize(
 			sampled.bounds,
 			size.height * MINIMAP_MAX_HEIGHT_RATIO,
+			panelSize,
 		);
 		if (!panel) {
 			return null;

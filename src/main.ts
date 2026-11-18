@@ -47,6 +47,8 @@ import type { StatusBarService } from './services/status-bar';
 import { updateStatusBar } from './features/view/view-status';
 import { pruneViewSwitchNoise } from './platform/workspace/nav-history';
 import { MindMapAutoOpener } from './platform/workspace/mindmap-auto-open';
+import { MiniMapSidebar } from './platform/workspace/minimap-sidebar';
+import { attachMiniMap, onMiniMapSessionChange, refreshAttachedMiniMap } from './features/view/view-minimap';
 
 export default class MindMapStudioPlugin extends Plugin {
 	override settings!: MindMapStudioSettings;
@@ -141,6 +143,17 @@ export default class MindMapStudioPlugin extends Plugin {
 		this.sessions = new DocumentSessionRegistry(this.app);
 
 		this.registerView(VIEW_TYPE, (leaf) => new MindMapView(leaf, this));
+		const sidebar = new MiniMapSidebar(this, (leaf) => {
+			const view = leaf.view;
+			return view instanceof MindMapView && view.mindMap
+				? {
+					key: view.mindMap,
+					mount: (host) => attachMiniMap(view, host),
+					refresh: () => refreshAttachedMiniMap(view),
+				}
+				: null;
+		}, () => this.settings.language);
+		this.register(onMiniMapSessionChange(() => sidebar.refresh()));
 
 		// ```` ```mindmap ```` 代码块：普通笔记中**只读**渲染块体大纲为导图。
 		// 渲染子交给官方 `ctx.addChild` 托管（容器脱离 DOM 即自动卸载，

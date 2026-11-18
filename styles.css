@@ -241,6 +241,26 @@
 .mindmap-minimap-view.is-hidden {
   display: none;
 }
+.mindmap-outline-host > :not(.mindmap-outline-content),
+.mindmap-outline-content > :not(.mindmap-sidebar-mount) {
+  display: none;
+}
+.mindmap-outline-content {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+}
+.mindmap-sidebar-mount {
+  position: absolute;
+  inset: 0;
+}
+.mindmap-minimap.is-docked {
+  inset: 0;
+  opacity: 1;
+  border-radius: 2px;
+  box-shadow: none;
+  transition: none;
+}
 .mindmap-canvas-container::-webkit-scrollbar {
   width: 8px;
   height: 8px;

@@ -618,8 +618,10 @@ export class MindMapView
 				setupImageResize(this);
 				// 拖左右边框改宽结束 → 重建自绘内容（节点高度方能跟随新宽度）
 				setupNodeWidthRefresh(this);
-				// 左下角小地图（自动出现/淡出，无手动入口；见 view-minimap 文件头）
-				setupMiniMap(this);
+				// 主窗口右侧常驻缩略图；popout 保留本窗口浮层（K215）。
+				setupMiniMap(this, {
+					floating: this.leaf.getContainer() !== this.app.workspace.rootSplit,
+				});
 				// 层级语法守卫：拖拽开始/结束的时序感知（见 view-syntax 文件头）
 				setupSyntaxGuard(this);
 			},

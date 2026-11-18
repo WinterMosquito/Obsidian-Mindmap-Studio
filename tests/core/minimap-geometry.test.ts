@@ -33,6 +33,13 @@ import {
 import { MINIMAP_LINK_MAX_DEPTH, MINIMAP_MAX_MARKS } from '../../src/core/constants';
 
 describe('computeMiniMapSize：宽度随比例收窄、高度随比例', () => {
+	it('侧栏使用完整可用面板，SVG/投影/导航仍沿用等比坐标系', () => {
+		expect(computeMiniMapSize({ width: 1000, height: 500 }, 280, { width: 360.8, height: 420.2 }))
+			.toEqual({ width: 360, height: 420 });
+	});
+	it.each([0, -1, Infinity, NaN])('侧栏退化尺寸 %s 不生成半张图', (width) => {
+		expect(computeMiniMapSize({ width: 1000, height: 500 }, 280, { width, height: 420 })).toBeNull();
+	});
 	it('2:1 的内容 → 220×110', () => {
 		expect(computeMiniMapSize({ width: 800, height: 400 })).toEqual({
 			width: 220,

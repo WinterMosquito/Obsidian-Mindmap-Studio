@@ -81,9 +81,10 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
+import { buildMiniMapSidebarProbe } from './visual-minimap-sidebar.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -456,6 +457,7 @@ export class Component {
 	registerEvent() {}
 	registerDomEvent() {}
 }
+export class ItemView extends Component {}
 export class MarkdownRenderChild extends Component {
 	constructor(containerEl) {
 		super();
@@ -7340,7 +7342,16 @@ async function main() {
 		diag.log('  ' + (contentFailures.length ? '✗' : '✓') + ' node-content-compare HEAD 与当前 DOM、尺寸、导出及注入调用对比（' + (contentRead.probe?.compared ?? 0) + ' 组）');
 		for (const failure of contentFailures) diag.log('      - ' + failure);
 
-		failed = uiFailures.length + contentFailures.length + await runChecks(dom, diag);
+		await writeFile(join(workDir, 'minimap-entry.mjs'), buildMiniMapSidebarProbe(ROOT));
+		await writeFile(join(workDir, 'minimap.html'), '<!doctype html><html><head><link rel="stylesheet" href="' + pathToFileURL(join(ROOT, 'styles.css')).href + '"></head><body><script src="minimap-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'minimap-entry.mjs')], outfile: join(workDir, 'minimap-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
+		const minimapDom = await dumpDom(chromePath, join(workDir, 'minimap.html'), join(workDir, 'minimap-profile'), diag, { marker: 'id="minimap-sidebar-probe"' });
+		await diag.file('13-minimap-sidebar.html', minimapDom);
+		const minimapRead = readProbe(minimapDom, 'minimap-sidebar-probe', '侧栏缩略图');
+		const minimapFailures = minimapRead.failures ?? (minimapRead.probe?.ok ? [] : [minimapRead.probe?.error ?? '侧栏缩略图验证未完成']);
+		diag.log('  ' + (minimapFailures.length ? '✗' : '✓') + ' minimap-sidebar 真实尺寸、导航、切源、隐藏/恢复及 Outline 还原');
+		for (const failure of minimapFailures) diag.log('      - ' + failure);
+		failed = uiFailures.length + contentFailures.length + minimapFailures.length + await runChecks(dom, diag);
 
 		// 真实墙钟基线（opt-in：默认不跑，避免给常规校验加一次重页面渲染）
 		if (ARGS.has('--perf')) {

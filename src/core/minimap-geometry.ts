@@ -49,16 +49,25 @@ export interface MiniMapSize {
  * 再窄就放不下「根 + 两级」的横向层级（极端比例仍会留白，属已知边界）。
  *
  * `maxHeight` 的缺省 `MINIMAP_MAX_HEIGHT_PX`（280）只服务裸调用（测试 / 兜底）；
- * 生产路径恒传「画布高 × `MINIMAP_MAX_HEIGHT_RATIO`」。
+ * 浮层路径传「画布高 × `MINIMAP_MAX_HEIGHT_RATIO`」；侧栏传 available，
+ * 整个承载区作为坐标系，既有 miniMapScale 为图、框与导航统一等比居中（K215）。
  *
  * 内容几何不可得（零/负数）返回 null——调用方保持上一帧，不画半张图。
  */
 export function computeMiniMapSize(
 	content: MiniMapSize,
 	maxHeight: number = MINIMAP_MAX_HEIGHT_PX,
+	available?: MiniMapSize,
 ): MiniMapSize | null {
 	if (!(content.width > 0) || !(content.height > 0)) {
 		return null;
+	}
+	// 侧栏以整个承载区为坐标系；既有 SVG/投影/导航共用 miniMapScale 等比居中。
+	if (available) {
+		return Number.isFinite(available.width) && Number.isFinite(available.height)
+			&& available.width >= 1 && available.height >= 1
+			? { width: Math.floor(available.width), height: Math.floor(available.height) }
+			: null;
 	}
 	// 上限先夹到最小高度，避免调用方传入退化值（画布极矮）时算出 0
 	const heightCap = Math.max(MINIMAP_MIN_HEIGHT_PX, maxHeight);
