@@ -27,6 +27,8 @@ export interface EngineSetupOptions {
 	/** 配色 id（default/mint/…；与 themePref、themeStyle 三维正交） */
 	palette: string;
 	enableDrag: boolean;
+	/** 空白画布的热键平移模式；缺省按引擎创建默认开启。 */
+	dragCanvasWithModifier?: boolean;
 	// 性能模式与阈值**不经过设置**（2026-10-09 减法：常开 + 常量阈值），
 	// 故不在此列——`createMindMap` 的缺省值即判据
 }

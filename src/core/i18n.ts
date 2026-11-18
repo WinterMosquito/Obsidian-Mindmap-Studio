@@ -274,6 +274,9 @@ const ZH = {
 	'settings.autoSplitMixedLinksDesc':
 		'编辑节点时，若正文混有链接与描述文字，自动把链接拆成子节点\n仅处理文档与附件链接（图片和外链不动）；会改写文件结构，默认关闭\n整篇处理可用命令「拆分文档内全部混排双链」',
 	'settings.enableDrag': '启用节点拖拽',
+	'settings.dragCanvasWithModifier': '基于热键拖拽(若不开启则按住鼠标拖拽时移动导图)',
+	'settings.dragCanvasWithModifierDesc':
+		'开启：左键拖拽画布空白处框选，按住 Cmd（macOS）/ Ctrl（Windows）再拖拽移动导图\n关闭：左键拖拽空白处移动导图，按住 Cmd / Ctrl 再拖拽框选\n右键菜单、中键拖动与滚轮缩放保持可用；节点拖拽由上方设置控制',
 	'settings.enableDragDesc':
 		'允许拖动节点调整层级与顺序\n关闭后只能通过编辑文本改变层级',
 	'settings.exportScale': '导出图片倍率',
@@ -665,6 +668,9 @@ const EN: Record<TranslationKey, string> = {
 	'settings.autoSplitMixedLinksDesc':
 		'When an edited node mixes links with description text, split the links into child nodes\nOnly document and attachment links are handled (images and external URLs are untouched); this rewrites the file structure and is off by default\nUse the command "Split all mixed links in document" for the whole file',
 	'settings.enableDrag': 'Enable node dragging',
+	'settings.dragCanvasWithModifier': 'Drag with a hotkey (when off, drag with the mouse to move the map)',
+	'settings.dragCanvasWithModifierDesc':
+		'On: drag blank canvas with the left button to select; hold Cmd (macOS) / Ctrl (Windows) while dragging to move the map\nOff: drag blank canvas to move the map; hold Cmd / Ctrl while dragging to select\nContext menus, middle-button dragging and wheel zoom stay available; node dragging is controlled above',
 	'settings.enableDragDesc':
 		'Allow dragging nodes to change hierarchy and order\nWhen off, hierarchy can only be changed by editing text',
 	'settings.exportScale': 'Export image scale',

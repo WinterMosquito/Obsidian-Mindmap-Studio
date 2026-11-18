@@ -75,6 +75,7 @@
  * 退出码：0 = 通过或（未要求时）缺浏览器跳过；1 = 断言失败或缺浏览器但要求了。
  */
 import { buildUiEntrySource, UI_SHIM_SOURCE } from './visual-ui.mjs';
+import { buildCanvasDragEntrySource } from './visual-canvas-drag.mjs';
 import { buildNodeContentCompareSource } from './visual-node-content.mjs';
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -7340,7 +7341,16 @@ async function main() {
 		diag.log('  ' + (contentFailures.length ? '✗' : '✓') + ' node-content-compare HEAD 与当前 DOM、尺寸、导出及注入调用对比（' + (contentRead.probe?.compared ?? 0) + ' 组）');
 		for (const failure of contentFailures) diag.log('      - ' + failure);
 
-		failed = uiFailures.length + contentFailures.length + await runChecks(dom, diag);
+		await writeFile(join(workDir, 'canvas-drag-entry.mjs'), buildCanvasDragEntrySource(ROOT));
+		await writeFile(join(workDir, 'canvas-drag.html'), '<!doctype html><html><body><script src="canvas-drag-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'canvas-drag-entry.mjs')], outfile: join(workDir, 'canvas-drag-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
+		const canvasDom = await dumpDom(chromePath, join(workDir, 'canvas-drag.html'), join(workDir, 'canvas-profile'), diag, { marker: 'id="canvas-drag-probe"', budgetMs: 24000 });
+		await diag.file('13-canvas-drag.html', canvasDom);
+		const canvasRead = readProbe(canvasDom, 'canvas-drag-probe', '画布拖拽');
+		const canvasFailures = canvasRead.failures ?? (canvasRead.probe?.ok ? [] : [canvasRead.probe?.error ?? '画布拖拽验证未完成']);
+		diag.log('  ' + (canvasFailures.length ? '✗' : '✓') + ' canvas-drag 两档设置 × Cmd/Ctrl × 缩放及独立 Window、节点/输入/中键/右键/滚轮与中途切换');
+		for (const failure of canvasFailures) diag.log('      - ' + failure);
+		failed = uiFailures.length + contentFailures.length + canvasFailures.length + await runChecks(dom, diag);
 
 		// 真实墙钟基线（opt-in：默认不跑，避免给常规校验加一次重页面渲染）
 		if (ARGS.has('--perf')) {

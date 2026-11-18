@@ -45,8 +45,8 @@
   （svg.js 横幅，`main.js` 同步保留）——逐库声明义务由 `vendor/THIRD-PARTY-NOTICES.md`
   承担（主载体），内联注释仅为补充佐证；其 §3 已按实测口径更新。
 
-**产物字节级身份**（2026-11-17 补丁 18 结构拖动后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
-`3c9449a2545e23dd027c7acba18c8ef903a36243c1930fb5b0ee70919603ab00`（418,554 B），
+**产物字节级身份**（2026-11-18 补丁 19 画布热键拖拽后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
+`005e6866d3aa51ea109b2e3e1dbdc1454b95425c5e585920cc78ecfc03d6f73b`（419,237 B），
 由 `tests/contracts/vendor-contract.test.ts` 断言。**重新打包后必须同步更新此处与该测试里的常量**——
 它是最外层护栏：其余契约断言（导出类 / 原型方法 / 命令名 / 事件名令牌）都只钉在
 **API 面**上，对字节改动无感。（缺口来源：本文件第 22 行要求「不可手工编辑」，
@@ -658,3 +658,10 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
 
 **补丁 18｜`patches/structural-drag.js` · 结构拖动的坐标、邻近容差与最终确认**
 复用 Drag 原生布局分区/连线预览/松手命令，统一导图坐标计算（原分区把未缩放 originHeight/Width 的四分之一用在屏幕坐标上，密集节点 50% 缩放时子节点命中区消失）。检测取所属窗口 rAF 合帧（32ms 兜底，先到者取消另一条），结束时取消并同步确认最新指针及变换，reset/解绑取消未决帧。精确命中优先，最近可见目标 12px 屏幕容差、退出 16px，兄弟轴仍由原生前后插入分区判断；过滤折叠后代、未挂载与被拖分支。无目标由插件关闭 enableFreeDrag 保持原位；不逐帧执行结构命令、不全图整理、不改变 Markdown 格式。新增副作用 import 由 build-vendor.mjs 固化。基线重建已确认逐字一致，补丁增量由该模块引入；维护策略与回归见 K205 / tests/engine/engine-drag-target.test.ts / verify:visual。
+
+
+**补丁 19｜`patches/canvas-drag.js` / `canvas-drag-transform.mjs` · 画布热键拖拽（K216）**
+
+原生 `useLeftKeySelectionRightKeyDrag` 只交换左/右键，View 仍拒绝 Ctrl/Meta，Select 又无条件将修饰键当框选，无法实现 Cmd/Ctrl 左拖平移且保留右键菜单。构建期 esbuild onLoad 通过唯一精确锚点改 Event/View/Select/Drag 判据（锚点漂移立即构建失败）；不改 upstream、不复制事件绑定、框选、平移或节点落点循环。`dragCanvasWithModifier` 为 boolean 时在空白 mousedown 决定 pan/select 并锁定至 mouseup；设置未指定仍保留上游语义。节点/输入起手排除画布（中键仍放行），开启时 Mod 节点拖动不建立 Drag。主视图默认开启、运行时 updateConfig，readonly 嵌入不注入此选项且不注册交互插件。两档开关均保留右键框选、中键平移与滚轮缩放。
+
+打包面实际使用 svg.js 3.2.0 / deepmerge 1.5.2 / eventemitter3 4.0.7 / uuid 9.0.1；禁用补丁重建得到原基线 sha256 `3c9449a2545e23dd027c7acba18c8ef903a36243c1930fb5b0ee70919603ab00`，证明第三方依赖没有额外漂移。补丁新身份见本文顶部；回归 engine-canvas-drag、settings-canvas-drag 和独立 Chrome canvas-drag 页面，现有六布局结构拖动/撤销探针继续运行。

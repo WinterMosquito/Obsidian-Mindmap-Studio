@@ -270,3 +270,5 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 **工具配置归档（K212）**：`tests/contracts/css-build.test.ts` 复制真实 `config/esbuild.config.mjs` 到同构隔离目录，验证从其它 cwd 的生产输出与 dev CSS watch；同文件通过真实 Stylelint API 断言 coverage CSS 仍被忽略。`tests/contracts/version-bump.test.ts` 在隔离包中执行 `scripts/version-bump.mjs`，覆盖其它 cwd、三处版本同步、历史保留、无差异不写盘及非法版本不改文件。`check-gates.test.ts` 锁住移动后的构建/CSS/Knip 触发面。全量工具入口继续通过 npm 命令执行；Knip 显式配置插件位置，避免配置移出根目录后漏掉配置依赖或生产入口。
 
 **去除历史兼容（K213）**：删除旧属性迁移测试，当前声明测试验证旧长布局名不被识别；嵌入测试验证旧指令显示非法值并回落默认，手动打开测试验证使用当前种子布局。配色测试覆盖所有现值及旧名回退，设置测试验证数字字符串被拒绝并记录字段；视图状态测试验证当前字段投影、不修改冻结输入和不触发持久化。图片回写测试验证显式文件名文本被保留。既有 Markdown 往返、保存、文档会话、撤销及真实 Chrome 探针继续运行。
+
+画布热键拖拽（K216）：`settings-canvas-drag.test.ts` 锁定默认开启、false 持久化/加载、坏值归一、双语原名、声明式控件和差集刷新；`engine-canvas-drag.test.ts` 直测互斥判据与真实 vendor 的 Mod 节点起手；`view-canvas-interaction.test.ts` 验证原地设置应用不重建或投影会话快照。`verify:visual` 的 `visual-canvas-drag.mjs` 使用独立页面/Chrome profile，在真实浏览器派发 DOM 鼠标手势，覆盖两档设置 × plain/Ctrl/Meta × 0.5/1/2.35 缩放、真实选区与平移、中键/右键/菜单/滚轮、节点/输入起手、中途切换与独立 Window、只读嵌入，并断言画布操作无 data_change/内容历史。该页与原结构拖动探针隔离；Obsidian 实机鼠标/触控板手感、平台原生 Ctrl 点击菜单及完整 popout 生命周期仍需人工验收。

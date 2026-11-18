@@ -41,6 +41,7 @@ export function buildCreateOptions(
 		palette: setup.palette,
 		isDark: deps.isDark(),
 		enableDrag: setup.enableDrag,
+		dragCanvasWithModifier: setup.dragCanvasWithModifier,
 		lang: deps.getLang(),
 		onHyperlinkJump: (link) => deps.openHyperlink(link),
 		// 快捷键前置钩子（剪贴板三键回收，见 deps.beforeShortcutRun）：
