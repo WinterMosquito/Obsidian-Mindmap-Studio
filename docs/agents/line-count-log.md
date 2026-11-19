@@ -691,3 +691,15 @@
 > **2026-11-18 创建 UI 合入本地主干（K217）**：用户实机验收后明确授权合入 main。提交前在原项目目录运行 npm run check:gates 完整通过：构建、124文件/3327项测试、lint、CSS lint、knip、真实Chrome与release；日志 /tmp/mindmap-native-ui-main-merge-gates.log。styles.css 按源文件重建，功能提交不包含原有 colu mn 手改，提交后将该局部改动留回工作区。以「K217 创建入口与命名弹窗原生化」保存功能提交并快进 main；提交说明经用户 scripts/check-commit.py 在提交前、commit-msg 最后一步和实际Git对象读取后校验，保留原有钩子与正常作者元数据。scripts/check-commit.py 仍为用户未跟踪文件，不纳入功能提交。未推送、未修改版本或 vault 产物。
 
 > **2026-11-18 普通笔记临时导图与专用后缀（K218）**：按用户裁决，普通 Markdown 从原生标题栏快捷按钮、菜单或命令进入导图时不写属性；节点正文仍经文档会话保存和撤销。移除打开/返回的属性升级与降级流程；专用 .mindmap.md 且启用属性命中时默认导图，普通 .md 的布局/视口/外观只在当前视图内存中生效。WeakMap 保留当前标签选择，TFile 重命名沿用选择、导航换文件清除，重启恢复普通笔记为 Markdown；同标签并发同文件去重、不同文件排队，返回 Markdown 不被后台自动打开反转。标题栏官方 addAction 按 MarkdownView 归属注册，覆盖文件尚未绑定、分屏、语言、DOM 重建和卸载。新建仅属性块与空正文，使用名称.mindmap.md；重名编号在完整后缀之前，输入扩展名只归一一次；中心与标签隐藏格式后缀，中心改名保留后缀并经官方 FileManager 更新引用，根目录用 TFolder.isRoot 归一。未改标题/列表层级、引擎 vendor、插件标识/版本或旧笔记内容。新增 domain/mindmap-file 与 platform/workspace/markdown-mindmap-action 及对应回归；权威 Markdown 标准、README 双语、K218/索引、测试与视觉门禁触发同步。md-open 338→221 行，移出豁免；现有46条豁免/未登记超限0。原项目目录 feat/temporary-mindmap-view 上 npm run check:gates 全绿：构建、128文件/3342测试、lint、knip、真实Chrome（标题栏实际DOM点击/清理与原UI/内容/拖拽/小地图/导出回归）、release；日志 /tmp/mindmap-temporary-gates.log。三件套已覆盖云笔记 vault 并核对 SHA256，备份与证据 /tmp/mindmap-temporary-install.json；未自动重启 Obsidian，实际未保存 Markdown 编辑切换、标题栏位置/独立窗口及重启恢复仍需用户验收。主目录原有 styles.css 输出手改与未跟踪 check-commit.py 保留；未提交、合入 main 或推送。
+
+
+> **2026-11-19 节点内插件内容渲染桥（K219）**
+
+- 分支：MindMap Studio 在主干 a93735c 基线上建立 feat/plugin-content-rendering；CodeTab 在 8ccf88b 基线上建立 feat/mindmap-render-host，均在原目录开发。
+- 实现：平台桥管理官方 Markdown 渲染、适配器、惰性挂载、活动 DOM 迁移、ResizeObserver、焦点恢复、静态导出与生命周期；TikZ 等最终 SVG，CodeTab 注入真实路径、组 ID、Component 和正文回调。编辑经原文定位与现有共享文档会话，陈旧源码/视图拒绝提交；已登记围栏不截断源码，必要时只延长外层围栏。只读嵌入可切页，禁用写入与标签管理。
+- 文档：K219、决策、分层索引、双语 README、Markdown 标准、测试说明和两仓库的宿主协议说明同步；未改 AGENTS.md、vendor、版本或插件标识。
+- 规模：源码 192 文件，新增实现文件均不超过 300 行；豁免 46 条，未登记超限 0；构建 main.js 为 1,512,856 字节。
+- 门禁：主仓库 check:gates 全绿，构建、131 文件/3356 项测试、lint、CSS lint、knip、真实 Chrome（含桥 8 项和 720 组节点内容对照）及 release metadata；日志 /tmp/mindmap-plugin-gates.log。CodeTab 52 项单测、类型/构建、lint、五组真实 Obsidian 原有交互回归通过；日志 /tmp/codetab-host-obsidian-final.log。
+- 实际第三方验证：Obsidian 1.15.1 + TikZJax 0.5.2 + 配套 CodeTab 2.2.1，在独立临时 vault 通过 8 项，覆盖零写盘打开、切页增高、编辑增高焦点、正文保存、共享撤销、新增/改名标签、SVG 冻结和只读嵌入。报告 /var/folders/zf/srfxv0kd7vn459nd5bs72j0c0000gn/T/mindmap-plugin-e2e-O6jIpN/report.json，无运行时错误；导出触发既有空 MathJax 字体诊断。最终三件套与测试副本逐项 SHA256 一致。
+- 安装：已备份并覆盖云笔记 vault 中 MindMap Studio 与 CodeTab 的 main.js/manifest.json/styles.css，六项 SHA256 核对通过；记录 /tmp/mindmap-plugin-install.json。日常 vault 的实际主题与操作体验留待用户重启 Obsidian 后验收；笔记和插件设置未改写。
+- Git：两个仓库均保留未提交工作区改动，未提交、推送或创建远程 PR。

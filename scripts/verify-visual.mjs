@@ -75,6 +75,7 @@
  * 退出码：0 = 通过或（未要求时）缺浏览器跳过；1 = 断言失败或缺浏览器但要求了。
  */
 import { buildUiEntrySource, UI_SHIM_SOURCE } from './visual-ui.mjs';
+import { buildPluginProbe, PLUGIN_SHIM_SOURCE } from './visual-plugin-content.mjs';
 import { buildCanvasDragEntrySource } from './visual-canvas-drag.mjs';
 import { buildNodeContentCompareSource } from './visual-node-content.mjs';
 import { execFile, execFileSync } from 'node:child_process';
@@ -448,6 +449,7 @@ export class TFile {}
 export class TFolder {}
 export class MarkdownView {}
 export class WorkspaceLeaf {}
+export class MarkdownRenderer { static async render() {} }
 export class Plugin {}
 /**
  * Component / MarkdownRenderChild：代码块嵌入探针要用**真实**渲染子
@@ -7315,7 +7317,13 @@ async function main() {
 		await diag.file('10-dom.html', dom);
 
 		// UI 页独立运行，避免它的焦点/样式对引擎和拖动探针产生影响。
-		const baselineCss = execFileSync('git', ['show', 'HEAD:styles.css'], { cwd: ROOT, encoding: 'utf8' });
+		const baselineDir = join(workDir, 'baseline');
+		await mkdir(baselineDir);
+		const baselineArchive = join(workDir, 'baseline.tar');
+		execFileSync('git', ['archive', '--output', baselineArchive, 'HEAD', 'src'], { cwd: ROOT });
+		execFileSync('tar', ['-xf', baselineArchive, '-C', baselineDir]);
+		await build({ entryPoints: [join(baselineDir, 'src/ui/styles/index.css')], outfile: join(workDir, 'baseline.css'), bundle: true, logLevel: 'warning' });
+		const baselineCss = await readFile(join(workDir, 'baseline.css'), 'utf8');
 		const currentCss = await readFile(join(ROOT, 'styles.css'), 'utf8');
 		await writeFile(join(workDir, 'ui-entry.mjs'), buildUiEntrySource(ROOT, baselineCss, currentCss));
 		await writeFile(join(workDir, 'ui-shim.mjs'), UI_SHIM_SOURCE);
@@ -7329,11 +7337,7 @@ async function main() {
 		for (const failure of uiFailures) diag.log('      - ' + failure);
 
 		// 从 HEAD 提取完整 src 快照，避免基线导入当前修改后的组件而使比较空转。
-		const baselineDir = join(workDir, 'baseline');
-		await mkdir(baselineDir);
-		const baselineArchive = join(workDir, 'baseline.tar');
-		execFileSync('git', ['archive', '--output', baselineArchive, 'HEAD', 'src'], { cwd: ROOT });
-		execFileSync('tar', ['-xf', baselineArchive, '-C', baselineDir]);
+
 		await writeFile(join(workDir, 'content-entry.mjs'), buildNodeContentCompareSource(ROOT, baselineDir));
 		await writeFile(join(workDir, 'content.html'), '<!doctype html><html><body><script src="content-bundle.js"></script></body></html>');
 		await build({ entryPoints: [join(workDir, 'content-entry.mjs')], outfile: join(workDir, 'content-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
@@ -7343,6 +7347,17 @@ async function main() {
 		const contentFailures = contentRead.failures ?? (contentRead.probe?.ok ? [] : ['节点内容对比未完成']);
 		diag.log('  ' + (contentFailures.length ? '✗' : '✓') + ' node-content-compare HEAD 与当前 DOM、尺寸、导出及注入调用对比（' + (contentRead.probe?.compared ?? 0) + ' 组）');
 		for (const failure of contentFailures) diag.log('      - ' + failure);
+
+		await writeFile(join(workDir, 'plugin-entry.mjs'), buildPluginProbe(ROOT));
+		await writeFile(join(workDir, 'plugin-shim.mjs'), PLUGIN_SHIM_SOURCE);
+		await writeFile(join(workDir, 'plugin.html'), '<!doctype html><html><body><script src="plugin-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'plugin-entry.mjs')], outfile: join(workDir, 'plugin-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'plugin-shim.mjs') } });
+		const pluginDom = await dumpChromePage(chromePath, join(workDir, 'plugin.html'), join(workDir, 'plugin-profile'), 'plugin-content-probe');
+		await diag.file('plugin-content.html', pluginDom);
+		const pluginRead = readProbe(pluginDom, 'plugin-content-probe', '插件内容');
+		const pluginFailures = pluginRead.failures ?? (pluginRead.probe?.ok ? [] : [pluginRead.probe?.error ?? '插件内容验证未完成']);
+		diag.log('  ' + (pluginFailures.length ? '✗' : '✓') + ' plugin-content 活组件、异步 SVG、重排、尺寸与导出');
+		for (const failure of pluginFailures) diag.log('      - ' + failure);
 
 		await writeFile(join(workDir, 'minimap-entry.mjs'), buildMiniMapSidebarProbe(ROOT));
 		await writeFile(join(workDir, 'minimap.html'), '<!doctype html><html><head><link rel="stylesheet" href="' + pathToFileURL(join(ROOT, 'styles.css')).href + '"></head><body><script src="minimap-bundle.js"></script></body></html>');
@@ -7363,7 +7378,7 @@ async function main() {
 		const canvasFailures = canvasRead.failures ?? (canvasRead.probe?.ok ? [] : [canvasRead.probe?.error ?? '画布拖拽验证未完成']);
 		diag.log('  ' + (canvasFailures.length ? '✗' : '✓') + ' canvas-drag 两档设置 × Cmd/Ctrl × 缩放及独立 Window、节点/输入/中键/右键/滚轮与中途切换');
 		for (const failure of canvasFailures) diag.log('      - ' + failure);
-		failed = uiFailures.length + contentFailures.length + minimapFailures.length + canvasFailures.length + await runChecks(dom, diag);
+		failed = pluginFailures.length + uiFailures.length + contentFailures.length + minimapFailures.length + canvasFailures.length + await runChecks(dom, diag);
 
 		// 真实墙钟基线（opt-in：默认不跑，避免给常规校验加一次重页面渲染）
 		if (ARGS.has('--perf')) {

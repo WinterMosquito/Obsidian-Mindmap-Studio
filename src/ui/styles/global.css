@@ -400,7 +400,8 @@
 
   /* mermaid 图容器复用同一个复制按钮（`tmm-code-copy` + `data-code`），故显隐
      规则与代码块成对：外观仍全内联，这里只加一条「不悬停就藏」。 */
-  .tmm-mermaid:not(:hover) > .tmm-code-copy {
+  .tmm-mermaid:not(:hover) > .tmm-code-copy,
+  .mindmap-plugin-card:not(:hover) > .tmm-code-copy {
     display: none;
   }
 }

@@ -90,6 +90,16 @@ describe('buildPlan（变更集 → 门禁清单）', () => {
 		expect(gate?.why).toContain('src/features/content/node-inline-content.ts');
 	});
 
+	it('插件渲染桥与共享接口变化必须触发真实 Chrome 门禁', () => {
+		for (const file of [
+			'src/platform/rendering/plugins/owner.ts',
+			'src/core/plugin-content-types.ts',
+			'scripts/visual-plugin-content.mjs',
+		]) {
+			expect(labelsOf(buildPlan([file]))).toContain('npm run verify:visual -- --require-chrome');
+		}
+	});
+
 	it('发布元数据 → 加跑 check:release（README / manifest / versions / LICENSE / release-notes）', () => {
 		for (const file of [
 			'README.md',

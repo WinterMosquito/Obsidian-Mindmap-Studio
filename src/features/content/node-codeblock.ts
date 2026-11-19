@@ -1,3 +1,4 @@
+import { freezePluginContents } from '../../platform/rendering/plugins/bridge';
 /**
  * 代码块复制交互（视图层）：节点内块级代码块的「悬停复制按钮」行为，
  * 对齐 Obsidian 阅读视图的代码块复制（悬停显形 → 点击复制 → 短暂 ✓）。
@@ -135,6 +136,7 @@ function showCopiedFeedback(button: HTMLElement): void {
  * `injectMathStylesIntoExportSvg`）；形态不符时原样返回（安全 no-op）。
  */
 export function hideCopyButtonsInExportSvg(svgElement: unknown): unknown {
+	freezePluginContents(svgElement);
 	const root = (svgElement as { node?: Element } | null)?.node;
 	if (!root) {
 		return svgElement;

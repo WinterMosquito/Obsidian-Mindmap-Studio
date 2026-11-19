@@ -5,6 +5,7 @@ import { type NodeContentTones } from '../../domain/color';
 
 /** `buildContentElement` 的构建参数（一次装配读一次的取值，随段递归下传） */
 export interface BuildContentParams {
+	pluginScope?: { nodeId: string; nextIndex: number };
 	/** 原入口注入的段解析与装配，引用/表格/轻标记共用。 */
 	renderer: InlineContentRenderer;
 	/**

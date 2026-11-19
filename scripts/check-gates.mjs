@@ -51,6 +51,9 @@ const EXEMPTION_ROW_RE = /^(\|\s*`(src\/[^`]+\.ts)`\s*\|\s*)(\d+)(\s*\|)/;
 const VISUAL_MATCHERS = [
 	'scripts/verify-visual.mjs',
 	'scripts/visual-ui.mjs',
+	'scripts/visual-plugin-content.mjs',
+	'src/platform/rendering/plugins/',
+	'src/core/plugin-content-types.ts',
 	'scripts/visual-canvas-drag.mjs',
 	'scripts/visual-minimap-sidebar.mjs',
 	'scripts/chrome-page.mjs',

@@ -1,3 +1,4 @@
+import { preparePluginExport } from './content/plugin-content-session';
 /**
  * 导出子系统：图片（PNG / SVG）导出与下载工具。
  * （导出 JSON / 导入 JSON 已随专有格式支持删除）
@@ -57,6 +58,7 @@ export async function exportImageAs(
 	// 慢路径（首次字体预取可达数十秒）期间的可见反馈；快路径不闪。
 	const dismissProgress = showExportProgress(view.lang);
 	try {
+		if (view.mindMap) await preparePluginExport(view.mindMap);
 		// 数学字体内联的前提：导出钩子（handleBeingExportSvg）是同步的，
 		// 字体缓存必须先就绪，否则这一次导出仍走「无字体」回退（stretchy 缺失）。
 		// 幂等、并发去重、失败不抛（返回 false → 导出自动回退）。

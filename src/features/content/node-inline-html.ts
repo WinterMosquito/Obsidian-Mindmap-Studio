@@ -3,6 +3,8 @@
  * 各类 DOM 与内联样式内聚于 ui/node-content；语法解析仍在 node-inline-tokenize。
  * UI 通过窄回调递归本管线，保持段顺序、缓存、测量和导出输出（K209）。
  */
+import { readNodeDataString } from '../../core/node-data';
+import { buildPluginBlock } from '../../ui/node-content/content-plugin';
 import { normalizeHexColor, nodeContentTones, type NodeContentTones } from '../../domain/color';
 import { t, type Language } from '../../core/i18n';
 import type { MindMapNode } from '../../core/engine-types';
@@ -75,7 +77,9 @@ export function buildInlineNodeContent(
 	// 超限判定按原文长度，标记按**实际丢弃**（clamped.truncated）——两者可能不同
 	// （见 clampSegments）
 	const clamped = overlong
-		? clampSegments(segments, MAX_INLINE_CONTENT_CHARS)
+		? clampSegments(segments, MAX_INLINE_CONTENT_CHARS, segment =>
+			segment.style === 'code' && segment.block === true &&
+			(options.pluginContent?.supports(segment.lang ?? '') ?? false))
 		: { segments, truncated: false };
 	return buildContentElement(
 		doc,
@@ -83,6 +87,7 @@ export function buildInlineNodeContent(
 		style,
 		{
 			renderer: contentRenderer,
+			pluginScope: { nodeId: readNodeDataString(node.getData?.(), 'uid'), nextIndex: 0 },
 		truncationTitle: clamped.truncated
 				? t(lang, 'nodeTextTruncated')
 				: null,
@@ -243,6 +248,11 @@ function buildTextElement(
 		return buildMathElement(doc, segment, params.options, params.owner);
 	}
 	if (segment.style === 'code' && segment.block === true) {
+		const blockIndex = params.pluginScope ? params.pluginScope.nextIndex++ : 0;
+		if (params.options.pluginContent?.supports(segment.lang ?? '')) {
+			return buildPluginBlock(doc, segment, params.options, params.lang, params.tones,
+				params.pluginScope?.nodeId ?? '', blockIndex, params.owner, params.explicitWidth);
+		}
 		// mermaid 围栏优先走图通道；画不了（语法错误 / 未注册类型 / 超限）时
 		// **静默回落**到下面的代码块——源码仍然完整可见可编辑
 		if (isMermaidFence(segment)) {

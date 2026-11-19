@@ -279,6 +279,7 @@ export class MindmapEmbedRenderChild extends MarkdownRenderChild {
 		});
 		// 自绘内容装配：平台实现固定、宿主相关两项注入（与文件视图同一工厂）
 		this.inlineContentOptions = createInlineContentOptions({
+			app: this.app, sourcePath: () => this.sourcePath,
 			isResolvedLink: (linkpath) =>
 				isResolvedWikiLinkpath(this.linkHost(), linkpath),
 			onSettled: (holder) => this.remeasure.schedule(holder),

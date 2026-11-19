@@ -12,6 +12,7 @@
  * 判定一律「必须接管才吞键」：这些键在核心与其他视图里都有原生语义，吞错一个就是
  * 「导图里用不了官方快捷键」。
  */
+import { isPluginContentTarget } from '../../core/plugin-content-types';
 import { Platform, Scope } from 'obsidian';
 import { ENGINE_COMMANDS, getActiveNode } from '../../engine/mindmap';
 import { isAnyNodeEditing } from './node-inline-editor';
@@ -60,7 +61,15 @@ export function ensureViewScope(view: ViewHotkeyHost): Scope {
  */
 export function registerViewHotkeys(view: ViewHotkeyHost): void {
 	const scope = ensureViewScope(view);
-	scope.register(['Mod'], 'f', () => {
+	const register = (...args: Parameters<typeof scope.register>) => {
+		const [modifiers, key, handler] = args;
+		return scope.register(modifiers, key, (event, context) => {
+			if (isPluginContentTarget(event.target)) return true;
+			const result: unknown = handler(event, context);
+			return typeof result === 'boolean' ? result : undefined;
+		});
+	};
+	register(['Mod'], 'f', () => {
 		view.openSearchBar();
 		return false;
 	});
@@ -68,7 +77,7 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 	// Undo = Mod+Z；Redo = Mod+Shift+Z（macOS 官方仅此一种）或 Mod+Y
 	// （Windows/Linux）。属系统级编辑快捷键（非命令默认热键，不违反社区
 	// 规范的 no-default-hotkeys），引擎自身未绑定，此处接管并阻止冒泡。
-	scope.register(['Mod'], 'z', () => {
+	register(['Mod'], 'z', () => {
 		// 会话是唯一撤销源（Level B）：所有视图共享同一条时间线；
 		// 无会话的桩（测试 / 只读嵌入）退回引擎历史。
 		if (view.undo) {
@@ -78,7 +87,7 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 		}
 		return false;
 	});
-	scope.register(['Mod', 'Shift'], 'z', () => {
+	register(['Mod', 'Shift'], 'z', () => {
 		if (view.redo) {
 			view.redo();
 		} else {
@@ -88,7 +97,7 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 	});
 	if (!Platform.isMacOS) {
 		// macOS 官方未提供 Mod+Y 重做（Cmd+Y 是其他语义），不注册以免冲突
-		scope.register(['Mod'], 'y', () => {
+		register(['Mod'], 'y', () => {
 			if (view.redo) {
 				view.redo();
 			} else {
@@ -98,7 +107,7 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 		});
 	}
 	// F2 = 编辑当前激活节点（引擎自带 F2 判定苛刻，见 handleEditNodeHotkey）
-	scope.register([], 'F2', (evt) => handleEditNodeHotkey(view, evt));
+	register([], 'F2', (evt) => handleEditNodeHotkey(view, evt));
 	// 删除选中节点 / 选中联系线：`Delete` / `Backspace`（官方 Canvas 同款：
 	// Backspace 或 Delete 删除选中卡片，见 en/Plugins/Canvas.md）。
 	//
@@ -111,14 +120,14 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 	// 删除因此只有本 scope 这一条通道，不再依赖「scope 先于引擎 window 监听命中」
 	// 的事件传播顺序（引擎先删会自动激活兄弟节点，随后删掉的就不是原节点；
 	// 线同理，引擎那份会把「删文件里的边」变成「只清屏上的线」）。
-	scope.register([], 'Delete', (evt) => handleDeleteNodeHotkey(view, evt));
-	scope.register([], 'Backspace', (evt) => handleDeleteNodeHotkey(view, evt));
+	register([], 'Delete', (evt) => handleDeleteNodeHotkey(view, evt));
+	register([], 'Backspace', (evt) => handleDeleteNodeHotkey(view, evt));
 	// 点选模式（联系 / 概要共用的会话）：`Esc` 取消。
 	//
 	// Notice 文案一直承诺着「Esc 取消」，而实现里只有「点空白」一个退出口
 	// （2026-10-30 补上）：Esc 落在别处会把视图/标签页一起带走，比「没反应」更糟。
 	// 只在**确实在选点**时接管——其余 Esc 必须交回核心（关闭弹窗/退出全屏/关标签页）。
-	scope.register([], 'Escape', (evt) => {
+	register([], 'Escape', (evt) => {
 		if (isTextEntryTarget(evt.target)) {
 			return true; // 输入框 / 内联编辑器里的 Esc 归它们自己
 		}
@@ -131,14 +140,14 @@ export function registerViewHotkeys(view: ViewHotkeyHost): void {
 	// 画布缩放：官方 Canvas 的 `Shift+1`（缩放至全览）与 `Shift+2`（缩放至选区）。
 	// 输入类目标让位（返回 true）：`Shift+1` / `Shift+2` 在输入框里是打 `!` / `@`，
 	// 不能拿来缩放画布。
-	scope.register(['Shift'], '1', (evt) => {
+	register(['Shift'], '1', (evt) => {
 		if (isTextEntryTarget(evt.target)) {
 			return true;
 		}
 		fitToScreen(view);
 		return false;
 	});
-	scope.register(['Shift'], '2', (evt) => {
+	register(['Shift'], '2', (evt) => {
 		if (isTextEntryTarget(evt.target)) {
 			return true;
 		}

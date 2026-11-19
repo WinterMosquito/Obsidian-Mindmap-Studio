@@ -51,6 +51,8 @@ const ZH = {
 	// （2026-11-11 用户裁决：只显示「脚注」）
 	'footnote.summaryLabel': '脚注',
 	'codeBlock.copy': '复制代码',
+	'pluginContent.nodeMissing': '节点已被删除或替换',
+	'pluginContent.blockChanged': '代码块已发生变化，请重新打开后编辑',
 	// mermaid 图容器的复制按钮（复制的是图的**源码**，不是渲染产物）
 	'mermaid.copy': '复制 Mermaid 源码',
 	// 任务复选框的无障碍标签（点击切换，无右键入口）
@@ -449,6 +451,8 @@ const EN: Record<TranslationKey, string> = {
 	'footnote.revealFailed': 'Could not jump to the definition of footnote [^{id}]',
 	'footnote.summaryLabel': 'Footnotes',
 	'codeBlock.copy': 'Copy code',
+	'pluginContent.nodeMissing': 'The node was deleted or replaced',
+	'pluginContent.blockChanged': 'The code block changed; reopen it before editing',
 	'mermaid.copy': 'Copy Mermaid source',
 	'node.task.markDone': 'Mark as done',
 	'node.task.markUndone': 'Mark as not done',

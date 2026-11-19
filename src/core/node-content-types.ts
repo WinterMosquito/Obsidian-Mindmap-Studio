@@ -1,4 +1,5 @@
 /** 节点内容的共享数据与渲染注入契约；不依赖 features/UI/引擎实现。 */
+import type { PluginContentRenderer } from './plugin-content-types';
 import type { CalloutHeader } from '../domain/callout';
 import type { PipeTable } from '../domain/pipe-table';
 
@@ -22,6 +23,7 @@ export type InlineTextStyle =
  * 以便在无运行时环境打包/单测，见 InlineContentDocument 的说明）。
  */
 export interface InlineContentOptions {
+	pluginContent?: PluginContentRenderer;
 	/**
 	 * 库内 linkpath 是否**已解析**到文件（缺省视为已解析）。
 	 *

@@ -674,3 +674,18 @@ describe('普通 Markdown 的导图编辑', () => {
 		await h.session.detach(view);
 	});
 });
+
+
+describe('插件编辑前的视图版本', () => {
+	it('另一视图提交之后，尚未应用广播的组件不允许修改旧树', async () => {
+		const h = makeHarness(); await open(h);
+		const a = new FakeView(FILE_PATH); const b = new FakeView(FILE_PATH);
+		h.session.attach(a); h.session.attach(b);
+		expect(h.session.isViewCurrent(b)).toBe(true);
+		h.session.commit(tree('B'), a);
+		expect(h.session.isViewCurrent(a)).toBe(true);
+		expect(h.session.isViewCurrent(b)).toBe(false);
+		await delay(20);
+		expect(h.session.isViewCurrent(b)).toBe(true);
+	});
+});

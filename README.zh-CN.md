@@ -42,6 +42,8 @@ MindMap Studio 是一个**渲染层**，而非格式转换器。它读取笔记�
 
 ### 节点像笔记一样工作
 
+- **插件内容渲染**：TikZJax 图形与 CodeTab 标签通过[渲染桥](docs/plugin-content-rendering.md)显示在节点内。CodeTab 保留切页、内联编辑和标签管理；修改走导图文档会话与同一撤销历史，尺寸随内容变化，SVG/PNG 导出冻结当前展示。TikZJax 需启用，CodeTab 需配套宿主渲染接口；打开与切页不改 Markdown。
+
 - **Obsidian 原生双链**：`[[笔记]]` 显示为链接文本，支持悬停预览与逐级修饰键跳转（与 Obsidian 官方一致）。
   - **修饰键跳转**：普通点击＝当前标签、`Ctrl`/`Command`+点击＝新标签、`Ctrl`/`Command`+`Alt`+点击＝新标签组、再按 `Shift`＝新窗口
   - **添加链接的可选面**：联想笔记与其它文档（`.canvas` / `.base`）及非图片的库内文件（按附件处理）；图片请走「添加图片」

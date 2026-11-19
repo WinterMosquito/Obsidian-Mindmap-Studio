@@ -42,6 +42,8 @@ MindMap Studio is a **rendering layer**, not a file-format converter. It reads a
 
 ### Nodes look like your notes
 
+- **Plugin-rendered blocks**: TikZJax diagrams and CodeTab tabs render inside nodes through the [plugin content bridge](docs/plugin-content-rendering.md). CodeTab keeps tab switching, inline editing and tab management; edits use the map's document session and undo history. Node sizes follow content changes, and SVG/PNG export freezes the current presentation. TikZJax must be enabled; CodeTab requires the companion host-rendering interface. Opening or switching tabs never rewrites the Markdown.
+
 - **Obsidian-native wikilinks**: `[[note]]` shows as its link text, with hover preview and graded modifier clicks (matching Obsidian).
   - **Modifier clicks**: plain click = current tab, `Ctrl`/`Command`+click = new tab, `+Alt` = new tab group, plus `Shift` = new window
   - **What the add-link dialog searches**: notes and other documents (`.canvas` / `.base`) plus non-image vault files (attachments); images go through **Add image**

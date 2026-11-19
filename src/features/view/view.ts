@@ -1,3 +1,4 @@
+import { commitPluginBlock } from '../content/plugin-content-session';
 /**
  * 思维导图视图（Controller）：Obsidian 生命周期、DOM 装配与编排委托。
  *
@@ -398,6 +399,11 @@ export class MindMapView
 	 */
 	private readonly inlineContentOptions: InlineContentOptions =
 		createInlineContentOptions({
+			app: this.app, sourcePath: () => this.file?.path ?? '',
+			onPluginChange: async (nodeId, index, expected, next) => {
+				if (!this.commitsArmed || !this.session?.isViewCurrent(this)) throw new Error(t(this.lang, 'save.staleCommit'));
+				await commitPluginBlock(this, nodeId, index, expected, next);
+			},
 			// 宿主面就是本视图（结构化满足 MindMapLinkHost：app / file / lang）
 			isResolvedLink: (linkpath) => isResolvedWikiLinkpath(this, linkpath),
 			// 定稿回调交给本视图的尺寸同步会话（平台通道的回调绑定收口见
@@ -570,7 +576,7 @@ export class MindMapView
 			onNodeImageClick: (node) => openNodeImageFullscreen(this, node),
 			onNodeAttachmentClick: (node) => {
 				const url = readNodeDataString(
-					node.getData() as Record<string, unknown>,
+					node.getData(),
 					'attachmentUrl',
 				);
 				if (url) {

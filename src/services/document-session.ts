@@ -759,6 +759,9 @@ export class DocumentSession {
 		}
 	}
 
+	/** 插件组件修改引擎数据前复用同一份陈旧提交判据。 */
+	isViewCurrent(origin: SessionViewPort): boolean { return !this.isStaleOrigin(origin); }
+
 	/**
 	 * 该视图的引擎是否还停在旧版本（它的提交基于过期树）。
 	 *
