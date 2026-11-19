@@ -189,7 +189,7 @@ export function findNodesByContentProducts(
 	// 缓存命中、构建期同步放置，故正常）。holder 类名不受替换影响，是稳定锚点。
 	const products = Array.from(
 		svg.querySelectorAll(
-			'.mindmap-node-inline-math, .mjx-container, .tmm-code-hl',
+			'.mindmap-node-inline-math, .mjx-container, .tmm-code-hl, .mindmap-plugin-block',
 		),
 	);
 	// 批量反查：一次遍历建表 + 逐元素沿祖先链查表，取代逐元素全树
@@ -413,7 +413,7 @@ export function getNodeGroupEl(node: MindMapNode): Element | null {
 export function getNodeDataString(node: MindMapNode, key: string): string {
 	// 归一语义的唯一实现在 core/node-data（本入口只做「按节点取 data」这一步）
 	return readNodeDataString(
-		node.getData?.() as Record<string, unknown> | null | undefined,
+		node.getData?.(),
 		key,
 	);
 }
@@ -939,4 +939,26 @@ function focusNodeTextEdit(mindMap: MindMap | null): void {
 			| undefined
 	)?.textEdit;
 	textEdit?.textEditNode?.focus();
+}
+
+
+/** 按 uid 查询完整渲染树，不激活、不居中，也不修改数据。 */
+export function findRenderNodeByUid(mindMap: MindMap | null, uid: string): MindMapNode | null {
+	const root = getRenderRoot(mindMap);
+	if (!root) return null;
+	const stack = [root];
+	while (stack.length) {
+		const node = stack.pop()!;
+		if (readNodeDataString(node.getData?.(), 'uid') === uid) return node;
+		stack.push(...(node.children ?? []));
+	}
+	return null;
+}
+
+
+/** 导出前等待自定义内容重建；运行时 render 支持回调，声明缺口仅在引擎层收口。 */
+export function renderWithCallback(mindMap: MindMap): Promise<void> {
+	return new Promise(resolve => {
+		(mindMap as unknown as { render: (callback: () => void) => void }).render(resolve);
+	});
 }

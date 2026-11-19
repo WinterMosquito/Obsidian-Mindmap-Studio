@@ -6,7 +6,7 @@
 }
 .mindmap-view-container {
   display: flex;
-  flex-direction: colu mn;
+  flex-direction: column;
   height: 100%;
   width: 100%;
   overflow: hidden;
@@ -459,7 +459,8 @@
   .tmm-codeblock:not(:hover) > .tmm-code-copy {
     display: none;
   }
-  .tmm-mermaid:not(:hover) > .tmm-code-copy {
+  .tmm-mermaid:not(:hover) > .tmm-code-copy,
+  .mindmap-plugin-card:not(:hover) > .tmm-code-copy {
     display: none;
   }
 }

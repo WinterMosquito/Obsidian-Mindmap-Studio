@@ -286,3 +286,12 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 创建入口与命名弹窗（K217）：`language-refresh.test.ts` 验证命令注册/语言刷新不注册丝带按钮且保留两个创建命令，既有 ID/语言刷新顺序继续直测；`modal-input.test.ts` 与 `creation-folder.test.ts` 保留空名、确认、取消及落点回归。`verify:visual` 的 `visual-ui.mjs` 页使用真实命名表单代码与官方 Modal/按钮的最小 DOM 替身，覆盖窄宽 × 明暗四组，验证中号弹窗圆角、宿主输入圆角、输入宽度、空名禁用及 Enter/Esc。替身不证明实际 Obsidian 已重载，主题和操作手感留实机验收。
 
 临时导图与专用文件（K218）：`md-open-trigger` 直测打开/返回零属性写入及标签选择隔离；`mindmap-auto-open` 覆盖普通笔记重启恢复、显式临时打开保留与专用图返回不被后台反转。`markdown-mindmap-action` 验证标题栏去重、语言、分屏文件归属和卸载；`view-temporary-state` / `engine-controller` 验证普通笔记布局/视口/外观不持久化，`document-session` 验证无属性文件节点编辑仍保存正文、撤销仍原样恢复。`mindmap-file` / `creation-folder` / `view-title-renamer` 锁定后缀、编号与改名；`verify:visual` 的 UI 页覆盖真实 DOM 标题栏按钮点击与清理，使用官方 API 替身，实际 Obsidian 的未保存编辑切换、后台标签/独立窗口、重启恢复仍需实机验收。
+
+
+## 插件内容渲染桥（K219）
+
+- 纯逻辑：`tests/markdown/md-codeblocks.test.ts` 覆盖围栏顺序、嵌套、引用、CRLF、删除与陈旧源码拒绝；`tests/core/plugin-content-types.test.ts` 覆盖跨窗口事件能力判定。
+- 内容装配：节点内容测试覆盖超长已登记围栏的完整源码；共享会话测试覆盖陈旧视图不能提交。
+- `scripts/visual-plugin-content.mjs` 进入 `verify:visual`，用真实 Chrome 的替身处理器验证惰性启动、活动 DOM/按钮复用、异步 SVG、尺寸、导出及删除/关闭清理；桥与接口变更触发门禁。
+- `scripts/verify-plugin-obsidian.mjs` 使用实际 TikZJax 与配套 CodeTab，在独立临时 Obsidian 库验证零写盘打开、标签切换增高、编辑焦点、正文保存、共享撤销、增改标签、SVG 冻结与只读嵌入。运行参数、版本依赖和边界见 [渲染桥说明](../plugin-content-rendering.md)。
+- 替身 Chrome 验证不等同于第三方插件实际运行；两类证据分别记录。实际库中的主题、缩放和日常插件组合仍由用户验收。

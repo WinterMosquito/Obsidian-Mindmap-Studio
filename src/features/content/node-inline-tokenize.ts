@@ -1644,6 +1644,7 @@ function isAtomicBlock(segment: InlineSegment): boolean {
 export function clampSegments(
 	segments: readonly InlineSegment[],
 	max: number,
+	preserveBlock?: (segment: InlineSegment) => boolean,
 ): ClampedSegments {
 	const out: InlineSegment[] = [];
 	let used = 0;
@@ -1652,7 +1653,7 @@ export function clampSegments(
 		// 「要么整枚要么不算」同一理由），且图的体积由渲染侧的长度门限
 		// （`platform/rendering/mermaid.MERMAID_SOURCE_MAX_CHARS`）单独管——那里超限是
 		// **整张回退成代码块**，而不是画半张
-		if (isMermaidFence(segment)) {
+		if (isMermaidFence(segment) || preserveBlock?.(segment)) {
 			out.push(segment);
 			continue;
 		}

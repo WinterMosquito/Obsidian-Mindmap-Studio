@@ -51,10 +51,10 @@ const NODE_REFERENCE_FIELDS = [
  * （links/markdown/features 都可依赖 core）。
  */
 export function readNodeDataString(
-	data: Record<string, unknown> | null | undefined,
+	data: unknown,
 	key: string,
 ): string {
-	const value = data?.[key];
+	const value = data && typeof data === 'object' ? (data as Record<string, unknown>)[key] : undefined;
 	return typeof value === 'string' ? value : '';
 }
 

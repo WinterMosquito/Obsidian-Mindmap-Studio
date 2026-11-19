@@ -24,6 +24,8 @@ const engine = vi.hoisted(() => ({
 	findNodesByContentProducts: vi.fn(),
 	refreshNodesCustomContent: vi.fn(),
 	isNodeCollapsed: vi.fn(),
+	getRenderRoot: vi.fn(),
+	collectRenderNodeData: vi.fn(),
 }));
 
 vi.mock('../../../src/engine/mindmap', () => ({
@@ -31,7 +33,14 @@ vi.mock('../../../src/engine/mindmap', () => ({
 	findNodesByContentProducts: engine.findNodesByContentProducts,
 	refreshNodesCustomContent: engine.refreshNodesCustomContent,
 	isNodeCollapsed: engine.isNodeCollapsed,
+	getRenderRoot: engine.getRenderRoot,
+	collectRenderNodeData: engine.collectRenderNodeData,
 }));
+
+const plugins = vi.hoisted(() => ({
+	hasPluginContents: vi.fn(), syncPluginContents: vi.fn(), disposePluginContents: vi.fn(),
+}));
+vi.mock('../../../src/platform/rendering/plugins/bridge', () => plugins);
 
 /** 平台层（未定稿修复 / 登记面清理）：本套件只验证会话的**调用编排** */
 const platform = vi.hoisted(() => ({
@@ -117,12 +126,35 @@ describe('ContentRemeasureSession（自绘内容定稿 → 尺寸同步会话）
 		engine.refreshNodesCustomContent.mockReset();
 		engine.isNodeCollapsed.mockReset();
 		engine.isNodeCollapsed.mockReturnValue(true);
+		engine.getRenderRoot.mockReset();
+		engine.collectRenderNodeData.mockReset();
+		plugins.hasPluginContents.mockReset(); plugins.hasPluginContents.mockReturnValue(false);
+		plugins.syncPluginContents.mockReset(); plugins.disposePluginContents.mockReset();
 	});
 
 	afterEach(() => {
 		session.dispose();
 		vi.useRealTimers();
 		vi.restoreAllMocks();
+	});
+
+	it('渲染树中间态为空时不清插件；树就绪后才同步权威原文', () => {
+		plugins.hasPluginContents.mockReturnValue(true);
+		engine.getRenderRoot.mockReturnValue(null);
+		session.retryDeferred();
+		expect(plugins.syncPluginContents).not.toHaveBeenCalled();
+		expect(engine.collectRenderNodeData).not.toHaveBeenCalled();
+		engine.getRenderRoot.mockReturnValue(node('root'));
+		engine.collectRenderNodeData.mockReturnValue([{ uid: 'tab', mdRaw: '原始围栏' }]);
+		session.retryDeferred();
+		expect(plugins.syncPluginContents).toHaveBeenCalledWith(contentRoot, map, new Map([['tab', '原始围栏']]));
+	});
+
+	it('无插件内容的普通图不查询插件来源；关闭释放本引擎会话', () => {
+		session.retryDeferred();
+		expect(engine.getRenderRoot).not.toHaveBeenCalled();
+		session.forgetEngine(map);
+		expect(plugins.disposePluginContents).toHaveBeenCalledWith(map);
 	});
 
 	it('批量合并：同帧三段定稿 → 恰好一次批量重排（resolve 一次、refresh 一次）', () => {

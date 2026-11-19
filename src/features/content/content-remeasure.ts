@@ -54,6 +54,8 @@
  * 各自守卫），而 `isVisible()` 在无头运行时不存在——高频路径不得依赖宿主面
  * 缺口（论证见 `repairUnsettled` 方法注释）。
  */
+import { hasPluginContents, syncPluginContents, disposePluginContents } from '../../platform/rendering/plugins/bridge';
+import { collectRenderNodeData, getRenderRoot } from '../../engine/mindmap';
 import type { MindMap, MindMapNode } from '../../core/engine-types';
 import { createWarnOnce } from '../../core/errors';
 import {
@@ -231,6 +233,15 @@ export class ContentRemeasureSession {
 		const root = this.host.getContentRoot();
 		if (root) {
 			repairUnsettledMath(root);
+			const owner = this.host.getMindMap();
+			if (owner && hasPluginContents(owner) && getRenderRoot(owner)) {
+				const sources = new Map<string, string>();
+				for (const data of collectRenderNodeData(owner)) {
+					if (typeof data.uid === 'string') sources.set(data.uid,
+						typeof data.mdRaw === 'string' ? data.mdRaw : typeof data.text === 'string' ? data.text : '');
+				}
+				syncPluginContents(root as HTMLElement, owner, sources);
+			}
 		}
 	}
 
@@ -298,6 +309,7 @@ export class ContentRemeasureSession {
 			return;
 		}
 		pruneUnsettledMathOwnedBy(owner);
+		disposePluginContents(owner);
 	}
 
 	/**

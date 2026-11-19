@@ -17,6 +17,7 @@
 | `baseline-metrics.md` | ≈470 行 | 只读你要用来判回归的那一行；其余是历史读数 |
 | `testing.md` | ≈200 行 | 改测试/CI 前读一遍；`verify:visual` 那段含历史加固，读「断言什么」即可；有 DOM 副作用的模块看「fake DOM 手法」小节 |
 | `process.md` | < 100 行 | 发版前整读（短） |
+| `../plugin-content-rendering.md` | < 100 行 | 修改插件桥或接入处理器时查接口与生命周期 |
 
 规模只写到**量级**（一个数量级内不重排本表）：精确值用 `wc -l docs/agents/*.md` 现算，
 口径差异见 §5 最后一条。

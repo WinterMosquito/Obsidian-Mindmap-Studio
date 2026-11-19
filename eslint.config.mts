@@ -310,4 +310,6 @@ export default defineConfig(
 			'obsidianmd/no-global-this': 'off',
 		},
 	},
+	// 插件桥冻结副本与跨窗口迁移使用标准 DOM，不依赖未声明的 Window 创建助手。
+	{ files: ['src/platform/rendering/plugins/**/*.ts'], rules: { 'obsidianmd/prefer-create-el': 'off' } },
 );

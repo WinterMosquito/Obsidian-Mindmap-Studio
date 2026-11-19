@@ -1725,6 +1725,29 @@ describe('渲染期缓存与超长回落（性能收口）', () => {
 		expect((childrenOf(el)[1] as FakeTextNode).text).toBe('…');
 	});
 
+	it('已登记插件收到完整的超长围栏源码，其他代码块仍按原有预算展示', () => {
+		const body = 'tab: Long\n' + '完整内容'.repeat(MAX_INLINE_CONTENT_CHARS);
+		const raw = `\`\`\`\`tab\n${body}\n\`\`\`\``;
+		const seen: string[] = [];
+		const element = buildInlineNodeContent(
+			fakeNode({ uid: 'plugin-node', text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()), {}, 'zh', {
+				pluginContent: {
+					supports: language => language === 'tab',
+					mode: () => 'live',
+					render: request => { seen.push(request.source); return null; },
+				},
+			},
+		)!;
+		expect(seen).toEqual([body]);
+		expect(attrsOf(element).has('data-truncated')).toBe(false);
+		const ordinary = buildInlineNodeContent(
+			fakeNode({ text: raw, mdRaw: raw, mdDerivedText: raw }),
+			asDocument(new FakeDocument()),
+		)!;
+		expect(attrsOf(ordinary).get('data-truncated')).toBe('true');
+	});
+
 	it('超长 mermaid 节点：图**不参与截断预算**（整段进渲染通道，源码不丢）', () => {
 		// 图不能被切一半：源码超 MAX_INLINE_CONTENT_CHARS 时仍整段交给渲染通道；
 		// 体积门限在 platform/rendering/mermaid（超限是**整张回退成代码块**，不是画半张）

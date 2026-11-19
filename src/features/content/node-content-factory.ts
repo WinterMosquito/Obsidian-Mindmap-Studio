@@ -16,6 +16,8 @@
  * - `onSettled`：异步内容定稿（公式替换 / 代码块高亮）后的**尺寸同步**入口。
  *   两者各持自己的 `ContentRemeasureSession`（同一实现、两个宿主）。
  */
+import type { App } from 'obsidian';
+import { PluginContentBridge } from '../../platform/rendering/plugins/bridge';
 import {
 	getRenderedMathNode,
 	renderMathWithMathJax,
@@ -36,6 +38,9 @@ import type { InlineContentOptions } from './node-inline-content';
  * `unbound-method` 告警。
  */
 export interface NodeContentWiringDeps {
+	app?: App;
+	sourcePath?: () => string;
+	onPluginChange?: (nodeId: string, index: number, expected: string, next: string | null) => Promise<void>;
 	/** 库内 linkpath 是否已解析到真实文件（未解析 → 弱化配色） */
 	isResolvedLink: (linkpath: string) => boolean;
 	/** 异步内容定稿（公式替换 / 代码块高亮）后请求尺寸重测 */
@@ -46,7 +51,11 @@ export interface NodeContentWiringDeps {
 export function createInlineContentOptions(
 	deps: NodeContentWiringDeps,
 ): InlineContentOptions {
+	const bridge = deps.app && deps.sourcePath ? new PluginContentBridge({
+		app: deps.app, sourcePath: deps.sourcePath, onSettled: deps.onSettled, onChange: deps.onPluginChange,
+	}) : undefined;
 	return {
+		pluginContent: bridge,
 		isResolvedLink: deps.isResolvedLink,
 		// 定稿回调经平台入口的第 4 参绑定（platform 层不得依赖 features，
 		// 故回调只能在上层绑定，见 node-inline-content 的 renderCode 注释）；
