@@ -21,7 +21,7 @@ import type { MdNodeMeta } from '../domain/md-meta';
  *   `getData(){let e=this.command.getCopyData(), …}`（另外补 `uid`/`smmVersion`）。
  *   `splitAllLinks` 之类「改树后整树回灌」的路径依赖这个拷贝。
  *
- * 两侧形态都由 `tests/vendor-contract.test.ts` 钉住：引擎升级若改成另一侧，
+ * 两侧形态都由 `tests/contracts/vendor-contract.test.ts` 钉住：引擎升级若改成另一侧，
  * 先红灯，而不是让「清标记」「帧内预览」静默失效。
  */
 export type MdNodeData = MindMapNodeData & MdNodeMeta;
@@ -51,10 +51,10 @@ const NODE_REFERENCE_FIELDS = [
  * （links/markdown/features 都可依赖 core）。
  */
 export function readNodeDataString(
-	data: Record<string, unknown> | null | undefined,
+	data: unknown,
 	key: string,
 ): string {
-	const value = data?.[key];
+	const value = data && typeof data === 'object' ? (data as Record<string, unknown>)[key] : undefined;
 	return typeof value === 'string' ? value : '';
 }
 

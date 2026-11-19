@@ -7,22 +7,14 @@
  *
  * 状态：
  * - lineStyle: 连线样式偏好（straight/curve）
- * - palette: 配色（预设 id `default/mint/amber/wisteria/forest/slate`，或「自定义」
+ * - palette: 配色（预设 id `见 PALETTE_OPTIONS`，或「自定义」
  *   写入的 `#rrggbb`；**按文件记**，由右键菜单「配色」切换——配色不是全局设置，
  *   见 `core/constants.PALETTE_OPTIONS` / `normalizePalettePreference`）
  * - themeStyle: 边框样式（default＝有边框 / borderless＝无边框；**按文件记**，由右缘
  *   竖栏「边框」开关切换——同样不是全局设置，见 `core/constants.THEME_STYLE_OPTIONS`）
  * - view: 引擎 view.getTransformData() 输出（{transform, state}）
  *
- * **布局不在这里（2026-10-29 重构）**：逐文件布局只存在于文件属性
- * （frontmatter 的 `Mindmap` 值，见 `domain/mindmap-property`）。旧版的
- * `viewState[*].layout` 在 hydrate 时被剔除（返回 `true` 让调用方补一次写盘），
- * 此后不再读、也不再写这个键。
- *
- * **写盘只写变化（2026-11-11）**：`patch` 先按序列化结果比较，与已有条目逐字
- * 相同则不落盘（`isSamePathState`）。关掉视图时会读一次引擎视口，而「没动过
- * 就关」是常态——旧实现每次都整表重写 data.json（实机 26 KB / 39 条，其中
- * 23 条只是打开时自动设置的默认视口）。
+ * 布局只读文件属性，不在视图状态中存取。加载只投影当前字段，不改写磁盘。
  */
 import { createDebouncer, type Debouncer } from '../core/concurrency';
 import { VIEW_STATE_PERSIST_MS } from '../core/constants';
@@ -33,7 +25,8 @@ export type PathState = Record<string, unknown>;
  * 按文件记的三项偏好键——既是 `viewState` 条目里的字段名，也是外观三项
  * （连线 / 配色 / 边框）的键。命名与字段一一对应，勿再起别名。
  */
-export type PreferenceKey = 'lineStyle' | 'palette' | 'themeStyle';
+const PREFERENCE_KEYS = ['lineStyle', 'palette', 'themeStyle'] as const;
+export type PreferenceKey = (typeof PREFERENCE_KEYS)[number];
 
 /** 视图按文件记忆的三项偏好（全部有全局默认值或内置默认值） */
 export interface FilePreferences {
@@ -146,51 +139,33 @@ export class ViewStateStore {
 	 * @param data 必须是**完整的 data.json 顶层对象**（{viewState, ...settings}），
 	 *   不是 viewState 子对象——hydrate 内部从 data[VIEW_STATE_KEY] 提取视图状态。
 	 *   误传子对象时函数静默不加载任何状态，这里加了类型提示和 console.warn 提醒。
-	 * @returns 是否**剔除了残留字段**（旧版逐文件布局 `layout`）。调用方据此决定
-	 *   是否补一次写盘：值为 `false` 时 data.json 已是新形态，不必每次启动都写。
 	 */
-	hydrate(data: unknown): boolean {
+	hydrate(data: unknown): void {
 		this.map.clear();
 		if (!data || typeof data !== 'object') {
-			return false;
+			return;
 		}
 		const raw = (data as Record<string, unknown>)[VIEW_STATE_KEY];
 		if (!raw || typeof raw !== 'object') {
 			// 误传 viewState 子对象而非 data.json 顶层的防御提示
 			const top = data as Record<string, unknown>;
-			if (['lineStyle', 'palette', 'themeStyle', 'view'].some((key) => key in top)) {
+			if ([...PREFERENCE_KEYS, 'view'].some((key) => key in top)) {
 				console.warn(
 					'ViewStateStore.hydrate 期望完整 data.json 对象，疑似收到 viewState 子对象',
 				);
 			}
-			return false;
+			return;
 		}
-		let cleaned = false;
-		for (const [path, state] of Object.entries(
-			raw as Record<string, unknown>,
-		)) {
-			if (state && typeof state === 'object') {
-				const s = state as Record<string, unknown>;
-				// 旧版把逐文件布局记在这里；布局现在只存在于文件属性 ⇒ 残留一律剔除
-				//（条目里的 view / 连线 / 配色 / 边框不受影响）。
-				if ('layout' in s) {
-					delete s.layout;
-					cleaned = true;
-				}
-				// 形状校验：只接受含已知字段的视图状态，丢弃畸形/异常条目
-				// （防手改 data.json、引擎升级后 view 结构变化等导致的坏数据渗入）。
-				// `view` 另做**可用性**校验（见 isUsableSavedView）：不可恢复的形态
-				// 只丢该字段，同条目的 lineStyle 照样生效。
-				if ('view' in s && !isUsableSavedView(s.view)) {
-					delete s.view;
-				}
-				// 只剩空洞（例如原本只有 layout）⇒ 整条丢弃，不留空壳键
-				if ('lineStyle' in s || 'palette' in s || 'themeStyle' in s || 'view' in s) {
-					this.map.set(path, s);
-				}
+		for (const [path, state] of Object.entries(raw as Record<string, unknown>)) {
+			if (!state || typeof state !== 'object' || Array.isArray(state)) continue;
+			const input = state as Record<string, unknown>;
+			const current: PathState = {};
+			for (const key of PREFERENCE_KEYS) {
+				if (typeof input[key] === 'string') current[key] = input[key];
 			}
+			if (isUsableSavedView(input.view)) current.view = input.view;
+			if (Object.keys(current).length > 0) this.map.set(path, current);
 		}
-		return cleaned;
 	}
 
 	/** 序列化视图状态（供写盘；也会随 settings 全量保存时一并带上） */

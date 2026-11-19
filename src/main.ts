@@ -5,7 +5,7 @@
  * - onload: 设置载入、注册视图/扩展名/事件监听/设置面板；
  *   「声明为导图 ⇒ 自动切导图视图」的时机与启动恢复委托给 mindmap-auto-open.ts；
  * - onunload: 排空未落盘的视图状态后清理。
- * 业务逻辑分别位于 settings.ts / commands.ts / creation.ts / features/view.ts /
+ * 业务逻辑分别位于 settings.ts / commands.ts / creation.ts / features/view/view.ts /
  * mindmap.ts / images-*.ts / links-*.ts / markdown.ts / modal-*.ts。
  */
 import { Menu, Plugin, TFile, TFolder } from 'obsidian';
@@ -19,23 +19,22 @@ import {
 	sanitizeSettings,
 	type SettingsSanitizeReport,
 } from './settings';
-import { MindMapView } from './features/view';
-import { offerColorSentinelCleanup } from './features/view-node-color';
+import { MindMapView } from './features/view/view';
+import { offerColorSentinelCleanup } from './features/editing/view-node-color';
 import { MindmapEmbedRenderChild } from './features/mindmap-codeblock';
 import { createNewMindMap } from './creation';
 import {
 	isMindMapFile,
-	declareAndOpenAsMindMap,
+	openAsMindMap,
 	openAsMarkdown,
 	setViewSwitchDoneHook,
 } from './markdown/md-open';
 import {
-	addMindMapRibbonIcon,
 	refreshCommandLabels,
 	registerCommands,
 } from './commands';
 import { t } from './core/i18n';
-import { VaultSyncService } from './platform/vault-sync';
+import { VaultSyncService } from './platform/workspace/vault-sync';
 import { fileLookupIndex } from './links/file-lookup';
 import { setImageSizeCacheStore } from './media/images-path';
 import { ViewStateStore } from './services/view-state';
@@ -44,25 +43,22 @@ import { notifyError } from './core/errors';
 import { PluginDataWriter } from './core/persistence';
 import { ElementStatusBarService } from './services/status-bar';
 import type { StatusBarService } from './services/status-bar';
-import { updateStatusBar } from './features/view-status';
-import { pruneViewSwitchNoise } from './platform/nav-history';
-import { MindMapAutoOpener } from './platform/mindmap-auto-open';
-// 【0.4.0 删除】一次性迁移：旧属性值 → Mindmap + Mindmap Layout
-import {
-	LEGACY_MIGRATION_DELAY_MS,
-	migrateLegacyMindmapProperties,
-} from './platform/legacy-mindmap-migration';
+import { updateStatusBar } from './features/view/view-status';
+import { pruneViewSwitchNoise } from './platform/workspace/nav-history';
+import { MindMapAutoOpener } from './platform/workspace/mindmap-auto-open';
+import { MarkdownMindMapAction } from './platform/workspace/markdown-mindmap-action';
+import { MiniMapSidebar } from './platform/workspace/minimap-sidebar';
+import { attachMiniMap, onMiniMapSessionChange, refreshAttachedMiniMap } from './features/view/view-minimap';
 
 export default class MindMapStudioPlugin extends Plugin {
 	override settings!: MindMapStudioSettings;
 	statusBarEl: HTMLElement | null = null;
+	private markdownAction: MarkdownMindMapAction | null = null;
 	/**
 	 * 插件是否已卸载。`workspace.onLayoutReady` 回调不可注销（返回 void，
 	 * 非 EventRef），布局就绪前禁用插件时回调仍会执行——须自行判定。
 	 */
 	private unloaded = false;
-	/** 丝带图标元素（官方无移除 API；语言变更时就地更新提示文案） */
-	ribbonEl: HTMLElement | null = null;
 	/**
 	 * 状态栏服务（节点计数展示/清空）：DOM 与 i18n 格式化归插件层，
 	 * 视图侧只广播计数；元素/语言经惰性取值器获取，onunload 后静默。
@@ -146,6 +142,17 @@ export default class MindMapStudioPlugin extends Plugin {
 		this.sessions = new DocumentSessionRegistry(this.app);
 
 		this.registerView(VIEW_TYPE, (leaf) => new MindMapView(leaf, this));
+		const sidebar = new MiniMapSidebar(this, (leaf) => {
+			const view = leaf.view;
+			return view instanceof MindMapView && view.mindMap
+				? {
+					key: view.mindMap,
+					mount: (host) => attachMiniMap(view, host),
+					refresh: () => refreshAttachedMiniMap(view),
+				}
+				: null;
+		}, () => this.settings.language);
+		this.register(onMiniMapSessionChange(() => sidebar.refresh()));
 
 		// ```` ```mindmap ```` 代码块：普通笔记中**只读**渲染块体大纲为导图。
 		// 渲染子交给官方 `ctx.addChild` 托管（容器脱离 DOM 即自动卸载，
@@ -184,9 +191,10 @@ export default class MindMapStudioPlugin extends Plugin {
 			defaultMod: false,
 		});
 
-		// 命令面板命令与丝带图标（用户入口）
+		// 命令面板入口；文件夹右键入口在下方的 file-menu 监听中注册。
 		registerCommands(this);
-		this.ribbonEl = addMindMapRibbonIcon(this);
+		this.markdownAction = new MarkdownMindMapAction(this.app.workspace, () => this.settings.language);
+		this.markdownAction.register(this);
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.refreshStatusBarLabel();
@@ -249,13 +257,7 @@ export default class MindMapStudioPlugin extends Plugin {
 		);
 	}
 
-	/**
-	 * 声明式自动打开：frontmatter 声明为导图的文件以 markdown 视图出现时，自动
-	 * 切入导图视图（运行期事件 + 启动多档延时恢复）。打开方式不记入 data.json
-	 * ——文件属性即声明，没有第二份状态可失配。
-	 *
-	 * `opener` 只在本方法内被事件回调与启动恢复引用，故不必成为类字段。
-	 */
+	/** 专用导图按属性自动打开；显式 Markdown 选择和普通笔记临时模式只属于当前标签。 */
 	private registerAutoOpen(): void {
 		const opener = new MindMapAutoOpener(
 			this.app.workspace,
@@ -311,21 +313,6 @@ export default class MindMapStudioPlugin extends Plugin {
 				return;
 			}
 			opener.scheduleStartupRestore();
-			// 【一次性迁移，0.4.0 删除】旧属性值 → `Mindmap: Mindmap` +
-			// `Mindmap Layout: <kebab>`。延迟执行，避开启动恢复的 I/O；失败只留痕
-			// （下次启动重试），不打断启动。迁移后文件不再命中，无「已迁移」标记。
-			window.setTimeout(() => {
-				if (this.unloaded) {
-					return;
-				}
-				void migrateLegacyMindmapProperties(this.app).then((count) => {
-					if (count > 0) {
-						console.debug(
-							`已迁移 ${count} 个旧格式导图属性（0.4.0 将删除迁移逻辑）`,
-						);
-					}
-				});
-			}, LEGACY_MIGRATION_DELAY_MS);
 		});
 	}
 
@@ -406,7 +393,7 @@ export default class MindMapStudioPlugin extends Plugin {
 	 * 按**文件**查找而非活跃 leaf：导图在后台标签时也应切它，而不是顶掉当前标签页；
 	 * 全库至多一个导图实例（见 onLoadFile 的 P0 互斥），故命中即停。
 	 *
-	 * @returns 是否命中；未命中时调用方走 `openAsMarkdown` 降级路径
+	 * @returns 是否命中；未命中时调用方走 `openAsMarkdown` 返回路径
 	 */
 	private revealOpenMindMap(file: TFile): boolean {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
@@ -420,13 +407,7 @@ export default class MindMapStudioPlugin extends Plugin {
 		return false;
 	}
 
-	/**
-	 * md 文件的右键项（**互斥**一项，避免同名动作两种行为）：
-	 * - 声明为导图（frontmatter `Mindmap` 的值为布局枚举）→「以 Markdown 打开」，
-	 *   点击**持久降级**（属性改写为 `Markdown`），此后不再自动进导图视图；
-	 * - 其他 md →「以思维导图打开」，把当前标签切到导图视图
-	 *   （「任意笔记可预览为导图」的入口），并按设置的种子布局写声明。
-	 */
+	/** Markdown 文件菜单：打开与返回只切视图，正文保存由已有文档会话负责。 */
 	private addMarkdownFileMenuItems(menu: Menu, file: TFile): void {
 		const lang = this.settings.language;
 		if (isMindMapFile(this.app, file)) {
@@ -439,11 +420,9 @@ export default class MindMapStudioPlugin extends Plugin {
 						// auto-open 未跑）直接切回 Markdown
 						if (!this.revealOpenMindMap(file)) {
 							void openAsMarkdown(
-								this.app,
 								this.app.workspace.getLeaf(false),
 								file,
 								'source',
-								lang,
 							);
 						}
 					}),
@@ -455,12 +434,9 @@ export default class MindMapStudioPlugin extends Plugin {
 				.setTitle(t(lang, 'command.openAsMindMap'))
 				.setIcon('dot-network')
 				.onClick(() => {
-					void declareAndOpenAsMindMap(
-						this.app,
+					void openAsMindMap(
 						this.app.workspace.getLeaf(false),
 						file,
-						lang,
-						this.settings.defaultLayout,
 					);
 				}),
 		);
@@ -482,15 +458,8 @@ export default class MindMapStudioPlugin extends Plugin {
 		const raw = data as Record<string, unknown>;
 		// hydrate 期望收到「整个 data.json 对象」（内部读取 data['viewState']），
 		// 而非视图状态对象本身；传错会导致 viewState 映射从未载入，重启后视口丢失。
-		const cleanedViewState = this.viewState.hydrate(raw);
+		this.viewState.hydrate(raw);
 		delete raw.viewState;
-		// 旧版把逐文件布局记在 `viewState[*].layout`；布局现在只存在于文件属性，
-		// 残留键已在 hydrate 里剔除。**只在确实有残留时**补一次写盘：写盘是整棵
-		// viewState 替换（合并写按顶层键覆盖），无残留时写会把启动变成一次多余的
-		// 磁盘 IO。幂等：清理后第二次启动 `cleanedViewState` 为 false。
-		if (cleanedViewState) {
-			void this.dataWriter.write({ viewState: this.viewState.serialize() });
-		}
 		// 坏值静默回退会让用户看到「设置没生效」——汇总留痕一次（进程内）
 		const report: SettingsSanitizeReport = { dropped: [] };
 		this.settings = sanitizeSettings(raw, report);
@@ -560,15 +529,16 @@ export default class MindMapStudioPlugin extends Plugin {
 	}
 
 	/**
-	 * 语言变更后刷新用户入口文案：命令面板（注册时缓存 name）与丝带提示
-	 * 重注册/更新，状态栏与已打开视图的搜索栏就地刷新。
+	 * 语言变更后刷新用户入口文案：命令面板重注册，
+	 * 状态栏与已打开视图的搜索栏就地刷新。
 	 * 视图工具栏已由 applySettingsToViews（language 属 LIVE_REFRESH 键）重建。
 	 *
 	 * **不触碰任何文件**：导图声明键恒为标准键 `Mindmap`，与界面语言无关
 	 * （2026-10-28 单键化，全库键名迁移已删除）。
 	 */
 	refreshLanguageUi(): void {
-		refreshCommandLabels(this, this.ribbonEl);
+		refreshCommandLabels(this);
+		this.markdownAction?.refresh();
 		this.refreshStatusBarLabel();
 		this.forEachMindMapView((view) => {
 			view.refreshSearchBarLabels();

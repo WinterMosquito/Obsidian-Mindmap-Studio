@@ -40,7 +40,7 @@ import { getActiveNodes, getRenderRoot, topMostNodes } from './mindmap-nodes';
  * - **不碰激活态**：引擎 `copyNode` 剥的是节点实例上的 `isActive`，`nodeData` 无该字段。
  *
  * @returns 引擎树上的只读子树（无选中节点、或**只选中了根**时为空数组；
- *   调用方不得改写。空结果由 `features/view-clipboard.copySelectedNodes` 决定
+ *   调用方不得改写。空结果由 `features/editing/view-clipboard.copySelectedNodes` 决定
  *   下一步——它把空结果当「无选中」回退到整图大纲，不再弹「请先选择节点」）
  */
 export function collectSelectedSubtrees(
@@ -87,7 +87,7 @@ export function collectWholeTreeSubtrees(
  *
  * ⚠ **空结果不得写剪贴板**：只选中根节点时引擎把根过滤掉、仍以空数组回调
  * （上游 `Render.js` 的 `cutNode`），照写会把用户的剪贴板清空。调用方据此
- * 保持剪贴板原样（见 `features/view-clipboard`）。
+ * 保持剪贴板原样（见 `features/editing/view-clipboard`）。
  *
  * 回调数据已是引擎 `copyNodeTree` 产出的**独立副本**（`removeId`/`removeActiveState`
  * 均取默认 true ⇒ 不含 uid / `isActive`，`_` 前缀字段也不带出），且插件只把它
@@ -117,7 +117,7 @@ export function cutSelectedSubtrees(mindMap: MindMap | null): MindMapTreeNode[] 
  *
  * 走引擎 `INSERT_MULTI_CHILD_NODE`（appointNodes = `[parent]`）：引擎自己补
  * uid、逐层展开与激活态覆盖，插件不需要「插入后取回新节点」（引擎没有该
- * 公开途径，见 `features/view-common.insertChildNodeWithData` 的说明）。
+ * 公开途径，见 `features/view/view-common.insertChildNodeWithData` 的说明）。
  *
  * @returns 是否已提交给引擎（引擎缺失 / 父节点缺失 / 无内容时为 false）
  */

@@ -221,7 +221,7 @@ export function applyRelationPlan(
 	// 旧值必须按**目标 uid** 反查再取：两个数组是按 `associativeLineTargets` 的
 	// 下标对齐的，目标集合一变（删一条边 / 插入一条带 `geo=` 的边）下标就不再
 	// 指向同一目标；按下标复用会把这标的几何安到另一条边上，还会经
-	// `features/view-node-relation` 的几何回写把错误几何写进文件。
+	// `features/relations/view-node-relation` 的几何回写把错误几何写进文件。
 	const prevPoints = Array.isArray(data[RELATION_POINT_KEY])
 		? (data[RELATION_POINT_KEY] as unknown[])
 		: [];
@@ -664,7 +664,7 @@ export function collectRelationIds(mindMap: MindMap | null): Set<string> {
  * 全树里仍被 `%%rel%%` 指向的 id 集合（`collectRelationIds` 的对偶：一个收身份、
  * 一个收引用）。
  *
- * 唯一消费者是 `features/view-node-relation` 的**孤儿 id 回收**：删边 / 删节点
+ * 唯一消费者是 `features/relations/view-node-relation` 的**孤儿 id 回收**：删边 / 删节点
  * 之后，`%%id%%` 若已无任何入边就一并摘掉（否则正文里永久留一条没人引用的
  * `%%id:xxxxxx%%`，还会出现在该节点的原文编辑框预填里）。
  *
@@ -748,7 +748,7 @@ export function relationLineAt(
 /**
  * 当前被引擎**激活**的那条联系线（点线之后插件记录在 `activeLine` 里的那一条）。
  *
- * 为什么需要它：`Delete` / `Backspace` 的落点是**视图 scope**（`features/view-hotkeys`），
+ * 为什么需要它：`Delete` / `Backspace` 的落点是**视图 scope**（`features/editing/view-hotkeys`），
  * 那里只有按键、没有事件目标 ⇒ 不能像双击 / 右键那样按 `event.target` 命中，只能
  * 问引擎「此刻选中了哪条线」。条目形态与 `lineList` 同族（多一个 `markerPath` 尾项）。
  */

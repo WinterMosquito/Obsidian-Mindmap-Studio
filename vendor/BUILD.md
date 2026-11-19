@@ -45,9 +45,9 @@
   （svg.js 横幅，`main.js` 同步保留）——逐库声明义务由 `vendor/THIRD-PARTY-NOTICES.md`
   承担（主载体），内联注释仅为补充佐证；其 §3 已按实测口径更新。
 
-**产物字节级身份**（2026-11-07 补丁 16/17 代码与注释整理后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
-`2d5c69e330dcdc95c56e14092d5de8f63c584957f88621da8d72badff3e70433`（415,727 B），
-由 `tests/vendor-contract.test.ts` 断言。**重新打包后必须同步更新此处与该测试里的常量**——
+**产物字节级身份**（2026-11-18 补丁 19 画布热键拖拽后）：`vendor/simple-mind-map.cjs` 的 sha256（**按 LF 归一后**计算）=
+`005e6866d3aa51ea109b2e3e1dbdc1454b95425c5e585920cc78ecfc03d6f73b`（419,237 B），
+由 `tests/contracts/vendor-contract.test.ts` 断言。**重新打包后必须同步更新此处与该测试里的常量**——
 它是最外层护栏：其余契约断言（导出类 / 原型方法 / 命令名 / 事件名令牌）都只钉在
 **API 面**上，对字节改动无感。（缺口来源：本文件第 22 行要求「不可手工编辑」，
 但此前没有任何机械保障。）
@@ -323,8 +323,8 @@ drain 内继续入队是常态，若按「队列空否」重新派发，每层�
 后插入 `if (this.mindMap.opt.readonly) return`，其余交互一律不绑。`unBindEvent` 无需
 改（`off` 未绑处理器无害）。只读态没有编辑入口，连线只用于"看见结构"。
 **影响面**：仅 `opt.readonly === true` 的实例（即 ```mindmap 嵌入）；视图实例行为不变。
-**回归**：`tests/vendor-contract.test.ts` 的字节护栏与导出面断言；插件侧
-`tests/relation-directive.test.ts` / `verify:visual` 的关联线探针。
+**回归**：`tests/contracts/vendor-contract.test.ts` 的字节护栏与导出面断言；插件侧
+`tests/domain/relation-directive.test.ts` / `verify:visual` 的关联线探针。
 
 **补丁 14｜`upstream/src/plugins/associativeLine/associativeLineText.js` · 标签光晕 / 位置错开 / 独立顶层**
 **立项依据**（2026-10-30 实机截图）：关联线是两点贝塞尔、**无任何避让**，画在节点之上
@@ -342,8 +342,8 @@ drain 内继续入队是常态，若按「队列空否」重新派发，每层�
 无需另加清理。**图层引用要做失联检测**：`reRender()`（切布局 / 换主题）会 `clearDraw()`
 清空 `nodeDraw`，缓存引用随之游离——只在 `layer.node.parentNode` 仍存在时复用，否则重建。
 **影响面**：所有注册了 `AssociativeLine` 的实例（视图 + 只读嵌入）；不改变数据模型与命中逻辑。
-**回归**：`tests/vendor-contract.test.ts` 字节护栏 + `__assocTextT` 令牌断言；插件侧
-`tests/mindmap-theme.test.ts`（新增关联线主题键）与 `verify:visual` 关联线探针。
+**回归**：`tests/contracts/vendor-contract.test.ts` 字节护栏 + `__assocTextT` 令牌断言；插件侧
+`tests/engine/mindmap-theme.test.ts`（新增关联线主题键）与 `verify:visual` 关联线探针。
 
 **补丁 15｜`upstream/src/plugins/associativeLine/associativeLineUtils.js` · 控制点沿锚点外法线伸出**
 **立项依据**（2026-10-30 实机采样）：`getNodeLinePath` 在没有保存控制点时用
@@ -363,7 +363,7 @@ drain 内继续入队是常态，若按「队列空否」重新派发，每层�
 「无保存控制点时的外法线兜底」这一件事。
 **影响面**：所有**未写 `geo=`** 的联系线（视图 + 只读嵌入）——手绘过的边走
 `associativeLineTargetControlOffsets` 分支。
-**回归**：`tests/vendor-contract.test.ts` 字节护栏；实机采样脚本（沿 path 取点判定是否
+**回归**：`tests/contracts/vendor-contract.test.ts` 字节护栏；实机采样脚本（沿 path 取点判定是否
 落在任一节点框内）改写后 4 条边均无自穿透。
 
 **补丁 16｜`upstream/src/layouts/Base.js` + `MindMap.js` + `OrganizationStructure.js` +
@@ -610,7 +610,7 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
    运行时注入，见上方说明）；若出现非 Quill 规则，则 vendor 该 CSS 并恢复
    `scripts/sync-vendor-css.mjs` 与 `package.json` 的 `sync-vendor-css` 脚本；
 5. `npm run build && npm test && npm run lint` 全量验证；其中
-   `tests/vendor-contract.test.ts`（vendor 契约冒烟）自动执行——它锁定
+   `tests/contracts/vendor-contract.test.ts`（vendor 契约冒烟）自动执行——它锁定
    「导出类 ↔ d.cts 双向一致 / d.cts 声明的方法 ↔ bundle 原型 / ENGINE_COMMANDS
    全表命令名、防腐层触碰的内部字段、插件依赖的引擎事件名 ↔ bundle 令牌」三层
    契约，任何断言失败即契约漂移：先对照更新 `d.cts` 与 `mindmap.ts` 防腐层，再继续；
@@ -631,7 +631,7 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
   为 nodeDraw 层兄弟节点互不嵌套）——`findNodeByDom` 已改为「group 包含目标元素」
   的对象身份匹配（2026-09-07），勿再依赖任何 DOM uid 属性；
 - bundle 顶层求值即触碰 `document.documentElement`（全屏 API 探测），纯 Node
-  环境加载 vendor 需先打最小 document 桩（见 tests/vendor-contract.test.ts 顶部）。
+  环境加载 vendor 需先打最小 document 桩（见 tests/contracts/vendor-contract.test.ts 顶部）。
 
 ## 历史登记
 
@@ -639,7 +639,7 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
 | --- | --- | --- |
 | （vendoring 时） | 0.14.0-fix.3 | 采用思绪思维导图发布的第三方修订版（fix 清单见上），按需 tree-shake 重打包 |
 | 2026-09-06 | 0.14.0-fix.3 | 查明来源与完整修订清单（上游 0.14.0 ↔ fix.3 源码 diff + 产物双锚点校验）；本文档重写 |
-| 2026-09-25 | 0.14.0-fix.3 | ① 上游版本核对（结论：无新版可升级，证据链见「上游版本核对结论」节）；② 按配方含 `--legal-comments=inline` 重打包替换 vendor（406,583 B，第三方许可注释内联进产物）；③ 与旧产物双锚点校验（字符串字面量 1018/1018 零增减、数字仅新增注释年份 2 个，差异仅注释）；④ sha256 常量同步更新（本文件 + `tests/vendor-contract.test.ts`）；⑤ `THIRD-PARTY-NOTICES.md` §3 同步 |
+| 2026-09-25 | 0.14.0-fix.3 | ① 上游版本核对（结论：无新版可升级，证据链见「上游版本核对结论」节）；② 按配方含 `--legal-comments=inline` 重打包替换 vendor（406,583 B，第三方许可注释内联进产物）；③ 与旧产物双锚点校验（字符串字面量 1018/1018 零增减、数字仅新增注释年份 2 个，差异仅注释）；④ sha256 常量同步更新（本文件 + `tests/contracts/vendor-contract.test.ts`）；⑤ `THIRD-PARTY-NOTICES.md` §3 同步 |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 | **性能轮**：① fix.3 源码入仓 `vendor/upstream/` + 建 `scripts/build-vendor.mjs`（`npm run build:vendor`），无补丁重打包与现产物**字节一致**（入仓可信校验）；② 引入 3 处自有补丁（见「补丁清单」节）；③ 真实墙钟实测：空 render 落地 **26.1ms → 2.7ms**、一次编辑 **47.6ms → 21.4ms**（`--perf-ops` 变体链）；④ 重打包产物 408,032 B、sha256 更新（本文件 + 契约测试）；⑤ 全量回归：1578 测试 / 全部视觉探针 / lint / 打开基准 5000 节点 1298ms |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×4 | 补丁 4（自绘测量缓存）入册：**重复打开** 5000 节点 **1276→≈810ms（-37%）**；`verify:visual` 新增 `clockcheck`（页内时钟定论：不可用）与 `BENCH_TWICE` 同页销毁重建通道；sha256/字节数同步（`09718fde…` / 408,449 B）；生产口径追加实测：一次编辑 29.4→**5.3ms（-82%）**、空 render 落地 28.1→**3.0ms（-89%）** |
 | 2026-09-25 | 0.14.0-fix.3 + 补丁 ×5 | 补丁 5（首帧前预测量 + 元素复用 + 门禁实例化）：首次打开 5000 节点 **1258→1151ms（-8%）**；**负结论与修正入册**——只预测量不保留元素（A1）净零（两遍构建抵消），测量段真实成本 ≈100–150ms（K72/K74 高估约 5 倍，twice 的 -37% 主体为热页红利）；sha256/字节数同步（`48300fb2…` / 410,217 B） |
@@ -654,3 +654,14 @@ themetick / rafonly / mutation / copy / stringify / compare / history / undo / c
 | 2026-11-04 | 0.14.0-fix.3 + 补丁 ×17 | 补丁 17（**时间轴 / 鱼骨图 top 轴延迟物化**）：两布局的 `updateBrothersTop` 递归同样逐次平移兄弟子树——10000 节点 **84,856 次调用 / 9962 万节点次 / 单次编辑 6.8s**（两布局计数逐位相同，同一递归形状）。难点是镜像收尾在同一 task 内读绝对 `top`，故新增 `Base.matTop`（祖先链求和，O(层数)）代替「前移 `applyOffsets`」（那会退化成 O(n·k)）；left 轴保持立即应用（root 一次 O(n)，`getNodeBoundaries('h')` 只读横向）。实机：timeline/fishbone 单次重排 **7.3s/7.0s → 37ms/36ms**、单次编辑 **6841ms → 123ms**；几何 A/B（8 组场景：普通/自定义位置/概要/折叠 × 两布局，1000–1202 节点）**0 差异**。sha256/字节数同步（`e45b9fec…` / 415,674 B） |
 | 2026-11-04 | 0.14.0-fix.3 + 补丁 ×16 | 补丁 16（**布局平移延迟物化推广**）：补丁 9 只覆盖逻辑结构图，其余布局仍逐次立即平移。计数探针（10000 节点 Mindmap）：`updateChildren` **88,103 次 / 1.322 亿节点次**，逻辑结构同树 **0 次**；CDP 采样显示它占打开 ~99%。实现抽到 `Base`（单/双轴记账 + 一次物化），MindMap / OrganizationStructure / CatalogOrganization 接入，LogicalStructure 改复用（不留第二份）。实机：打开 10000 **8.89s → 0.32s**（最长长任务 8.65s → 170ms）、单次编辑 10000 **1.5–9.5s → 131ms**、布局重排 5000 三布局 **2.1–2.6s → 0.12–0.23s**、自动整理最长长任务 **2220ms → 88ms**；几何 A/B（6 布局 × 800 + 4 布局 × 5000，逐节点 `_top`/`_left`）**0 差异**。Timeline / VerticalTimeline / Fishbone 因读绝对坐标的累计式暂不纳入。sha256/字节数同步（`9ce643a0…` / 415,476 B） |
 | 2026-11-07 | 0.14.0-fix.3 + 补丁 ×17 | 补丁 16/17 代码与注释整理（**无行为变更**）：`Base` 账本字段在构造函数定形；`applyOffsets` 内层 `forEach` 改显式下标循环（少一层闭包分配）、`matTop` 自身位移单次取值；各布局接入处把未重新赋值的局部变量改 `const`，`fishboneUtils` 的 `_top` / `_left` 改语义化命名（`topOffset` / `prevLeft`）；压缩与本文档重复的注释，并补注「0 位移不写」这一已知差异。sha256/字节数同步（`2d5c69e3…` / 415,727 B） |
+
+
+**补丁 18｜`patches/structural-drag.js` · 结构拖动的坐标、邻近容差与最终确认**
+复用 Drag 原生布局分区/连线预览/松手命令，统一导图坐标计算（原分区把未缩放 originHeight/Width 的四分之一用在屏幕坐标上，密集节点 50% 缩放时子节点命中区消失）。检测取所属窗口 rAF 合帧（32ms 兜底，先到者取消另一条），结束时取消并同步确认最新指针及变换，reset/解绑取消未决帧。精确命中优先，最近可见目标 12px 屏幕容差、退出 16px，兄弟轴仍由原生前后插入分区判断；过滤折叠后代、未挂载与被拖分支。无目标由插件关闭 enableFreeDrag 保持原位；不逐帧执行结构命令、不全图整理、不改变 Markdown 格式。新增副作用 import 由 build-vendor.mjs 固化。基线重建已确认逐字一致，补丁增量由该模块引入；维护策略与回归见 K205 / tests/engine/engine-drag-target.test.ts / verify:visual。
+
+
+**补丁 19｜`patches/canvas-drag.js` / `canvas-drag-transform.mjs` · 画布热键拖拽（K216）**
+
+原生 `useLeftKeySelectionRightKeyDrag` 只交换左/右键，View 仍拒绝 Ctrl/Meta，Select 又无条件将修饰键当框选，无法实现 Cmd/Ctrl 左拖平移且保留右键菜单。构建期 esbuild onLoad 通过唯一精确锚点改 Event/View/Select/Drag 判据（锚点漂移立即构建失败）；不改 upstream、不复制事件绑定、框选、平移或节点落点循环。`dragCanvasWithModifier` 为 boolean 时在空白 mousedown 决定 pan/select 并锁定至 mouseup；设置未指定仍保留上游语义。节点/输入起手排除画布（中键仍放行），开启时 Mod 节点拖动不建立 Drag。主视图及引擎创建选项缺省关闭（空白左拖平移、Cmd/Ctrl 左拖框选），显式偏好保留、运行时 updateConfig；readonly 嵌入不注入此选项且不注册交互插件。两档开关均保留右键框选、中键平移与滚轮缩放。
+
+打包面实际使用 svg.js 3.2.0 / deepmerge 1.5.2 / eventemitter3 4.0.7 / uuid 9.0.1；禁用补丁重建得到原基线 sha256 `3c9449a2545e23dd027c7acba18c8ef903a36243c1930fb5b0ee70919603ab00`，证明第三方依赖没有额外漂移。补丁新身份见本文顶部；回归 engine-canvas-drag、settings-canvas-drag 和独立 Chrome canvas-drag 页面，现有六布局结构拖动/撤销探针继续运行。

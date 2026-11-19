@@ -2,14 +2,14 @@
  * 模块依赖矩阵的**唯一定义**（AGENTS.md K51）。
  *
  * 为什么单独成文件：矩阵此前只以字面量形式存在于 `eslint.config.mts`，而
- * `tests/module-boundaries.test.ts` 要校验的性质（无环、层许可、组合根独占）
+ * `tests/contracts/module-boundaries.test.ts` 要校验的性质（无环、层许可、组合根独占）
  * 必须与 lint **同源**——两份矩阵必然漂移，届时「测试绿、lint 红」或反之，
  * 判定就失去意义（硬规则 5：不造第二份判定）。
  *
  * 消费方（本文件只导出它们实际用到的四组符号，勿凭方便扩大导出面）：
  * - `eslint.config.mts`：`MODULE_GROUPS` / `forbiddenSpecifierPatterns` /
  *   `COMBO_ROOT_SPECIFIER_PATTERN`（生成每组 zone 块）；
- * - `tests/module-boundaries.test.ts`：`MODULE_GROUPS` / `MODULE_DEPENDENCIES` /
+ * - `tests/contracts/module-boundaries.test.ts`：`MODULE_GROUPS` / `MODULE_DEPENDENCIES` /
  *   `COMBO_ROOT_MODULES` / `allowedTargets` / `forbiddenSpecifierPatterns`
  *   （按解析后的真实路径校验依赖图）。
  *

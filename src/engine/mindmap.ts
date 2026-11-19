@@ -13,6 +13,7 @@
  * - `mindmap-viewport`  画布几何 / 视口（适配、居中、缩放、平移、视口状态）
  * - `mindmap-viewport-canvas` 引擎几何与实时容器的唯一同步点
  * - `mindmap-nodes`     节点查询与工具 + 节点文本编辑
+ * - `mindmap-editor`    两条节点编辑通道的外观与临时显示管理
  * - `mindmap-clipboard` 选中子树的复制/剪切/粘贴
  * - `mindmap-search`    搜索子系统防腐收口
  * - `mindmap-export`    导出（PNG/SVG）
@@ -52,6 +53,8 @@ import {
 } from './mindmap-commands';
 import { applyHistoryLimitOnCreate, seedInitialHistory } from './mindmap-history';
 import { countTreeNodes, getRenderRoot } from './mindmap-nodes';
+import { installNodeEditorAppearance } from './mindmap-editor';
+export { hideNodeForEditing, readNodeEditorAppearance } from './mindmap-editor';
 import {
 	applyLiveColorDirectives,
 	type ColorDirectiveReader,
@@ -151,6 +154,8 @@ export interface CreateMindMapOptions {
 	palette: string;
 	isDark: boolean;
 	enableDrag: boolean;
+	/** 空白画布热键平移；缺省关闭（直接左拖平移）。节点 Drag 插件与只读嵌入独立。 */
+	dragCanvasWithModifier?: boolean;
 	/**
 	 * **只读嵌入**（Markdown ```mindmap 代码块，可选；缺省 = 可编辑视图）。
 	 *
@@ -188,7 +193,7 @@ export interface CreateMindMapOptions {
 	 * 快捷键**前置钩子**（可选；引擎 `opt.beforeShortcutRun`，返回 `true` 即
 	 * 取消该快捷键的引擎行为）。当前唯一用途：把 `Ctrl+C` / `Ctrl+X` / `Ctrl+V`
 	 * 从引擎的「内部 JSON 剪贴板」收回到插件的 Markdown 剪贴板
-	 * （2026-10-13 用户裁决，见 `features/view-clipboard`）。
+	 * （2026-10-13 用户裁决，见 `features/editing/view-clipboard`）。
 	 *
 	 * ⚠ 引擎对**每一个**快捷键都会调用它（Tab / Enter / Ctrl+数字…），
 	 * 实现必须只对剪贴板三键返回 `true`，其余返回 `false` 放行——否则
@@ -358,7 +363,7 @@ export function createMindMap(
 	const createNodeContent = options.createNodeContent ?? null;
 	/**
 	 * 本次创建的引擎实例（未定稿数学段的**归属 token**，经构建回调透传给
-	 * `platform/math-jax` 的登记面；语义见那里 `unsettledMath`）。
+	 * `platform/rendering/math/math-jax` 的登记面；语义见那里 `unsettledMath`）。
 	 * `new MindMap` 完成前为 null——构建回调的实际调用（首帧前的预测量与
 	 * 首帧的节点内容创建）都发生在其后，闭包读取到的恒为已赋值的实例。
 	 */
@@ -394,7 +399,8 @@ export function createMindMap(
 				defaultInsertBelowSecondLevelNodeText: '',
 				openPerformance: performanceEnabled,
 				performanceConfig: { ...PERFORMANCE_CONFIG },
-				enableFreeDrag: options.enableDrag,
+				// 拖动只改变层级/顺序：没有有效落点时回原位，不留下未持久化的自由坐标。
+				enableFreeDrag: false,
 				readonly: isReadonly,
 				// 画布拖动（视图平移）：嵌入置 false（见 CreateMindMapOptions.enableViewDrag）
 				isDisableDrag: options.enableViewDrag === false,
@@ -408,10 +414,12 @@ export function createMindMap(
 				// 走引擎 event 模块的 isLeft/isMiddleMousedown → 'drag'，由
 				// `isDisableDrag` 统一切断（见 CreateMindMapOptions.enableViewDrag）。
 				// 插件侧**不得**再注册 wheel / pointer 平移（会双重生效或成死代码，
-				// 见 features/view-viewport.ts 文件头；契约测试 tests/vendor-contract）。
+				// 见 features/canvas/view-viewport.ts 文件头；契约测试 tests/vendor-contract）。
 				// 唯一例外：`Alt + 滚轮` 横轴由插件在**画布祖先的 capture** 阶段接管
 				// （引擎不读 altKey；同元素 capture 会被引擎按注册顺序抢先）。
 				mousewheelAction: 'move',
+				// 补丁 19 只改起手判据，使用原生 Event/View/Select 循环（K216）。
+				dragCanvasWithModifier: isReadonly ? undefined : options.dragCanvasWithModifier ?? false,
 				disableMouseWheelZoom: false,
 				// 历史收集节流（上游 100 ms → 16 ms）：`data_change` 是本插件
 				// 的编辑提交信号，越早到越接近官方的即时同步（K185）。
@@ -518,6 +526,7 @@ export function createMindMap(
 		}
 	};
 
+	if (!isReadonly) installNodeEditorAppearance(mindMap);
 	// 只读嵌入（```mindmap 代码块）不注册任何交互插件：Search / KeyboardNavigation
 	// 经 KeyCommand 在 window 上抢宿主笔记的 Ctrl+F 与方向键，TouchEvent 抢触屏手势，
 	// DoExport 没有入口，Select / Drag 在 readonly 下恒早退（逐条理由见
@@ -535,7 +544,7 @@ export function createMindMap(
 	// 联系（关系连线）的渲染插件：**两种模式都要注册**（只读嵌入同样要看见线）。
 	// 它的交互副作用由 vendor 补丁 13 在只读态整段跳过（不绑 Del / contextmenu /
 	// mousemove / node_click），视图态的创建入口由插件自己的右键菜单提供
-	// （features/view-node-relation，不配置 `opt.contextmenu`，引擎自带入口不可达）。
+	// （features/relations/view-node-relation，不配置 `opt.contextmenu`，引擎自带入口不可达）。
 	// ⚠ 注册位置必须在下方 `removeEngineShortcut('Del|Backspace')` **之前**：
 	// `KeyCommand.shortcutMap[key]` 是数组，插件会往里 push 一个「删除选中线」的
 	// handler，不摘掉就会出现「一次 Delete 同时删节点与线」。
@@ -574,7 +583,7 @@ export function createMindMap(
 		// 引擎（核心 Render）另绑 `Del|Backspace` → REMOVE_NODE（上游
 		// `core/render/Render.js`，bundle 同源；AssociativeLine / OuterFrame 也有
 		// 同键绑定，但本插件不注册这两个插件）。插件 scope 同样注册了这两个键
-		// （删除选中节点，见 features/view-hotkeys），两条通道并存只靠「scope 先于
+		// （删除选中节点，见 features/editing/view-hotkeys），两条通道并存只靠「scope 先于
 		// 引擎 window 监听」的顺序假设避免双删——引擎先删会自动激活兄弟节点，
 		// 随后插件删掉的就不再是原节点。显式摘除引擎那份，**归属唯一**。
 		removeEngineShortcut(mindMap, 'Del|Backspace');
@@ -733,7 +742,7 @@ export function applyThemeConfig(
  * 按**实时节点树**重算 `%%#hex%%` 配色指令，并在样式确有变化时重渲染一次。
  *
  * 调用时机：视图挂在 `node_tree_render_end`（**不是** `data_change`，理由见
- * `features/view` 的装配注释：插件内联编辑不发 `data_change`，撤销时它又早于
+ * `features/view/view` 的装配注释：插件内联编辑不发 `data_change`，撤销时它又早于
  * 新树落地）。此刻根节点已是新树、数据已定稿，全部编辑通道都在这里对齐。
  *
  * 四处口径：

@@ -59,8 +59,7 @@ export interface MindMapStudioSettings {
 	 */
 	defaultLayout: string;
 	/**
-	 * 默认连线样式：`straight`（折线）/ `curve`（曲线）；旧 `auto` / `direct`
-	 * 在读取侧归一为折线（见 `core/constants.normalizeLineStylePreference`）。
+	 * 默认连线样式：`straight`（折线）/ `curve`（曲线）；非法值回退折线。
 	 */
 	defaultLineStyle: string;
 	/** 主题（明暗配色）：default＝跟随 Obsidian / light / dark */
@@ -113,6 +112,8 @@ export interface MindMapStudioSettings {
 	autoSplitMixedLinks: boolean;
 	exportScale: number;
 	enableDrag: boolean;
+	/** 空白画布左拖：true＝框选，Cmd/Ctrl 左拖平移；false＝反向。 */
+	dragCanvasWithModifier: boolean;
 	/** 导出图片格式（png 位图 / svg 矢量）；点击导出按钮时按此直接导出 */
 	exportImageFormat: ExportImageFormat;
 	language: Language;
@@ -121,7 +122,7 @@ export interface MindMapStudioSettings {
 export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	defaultLayout: 'logicalStructure',
 	// 折线（正交折线）：2026-10-21 用户裁决——连线样式收敛为折线/曲线两态，
-	// 新建默认折线；存量的 auto/direct 在读取侧归一为折线（见 constants 归一函数）
+	// 新建默认折线；非法值在读取侧回退为折线（见 constants 归一函数）
 	defaultLineStyle: DEFAULT_LINE_STYLE,
 	defaultTheme: 'default',
 	// 新建导图默认**有边框**（2026-11-05 改回：字号 / 内边距调整后，无边框档
@@ -141,6 +142,7 @@ export const DEFAULT_SETTINGS: MindMapStudioSettings = {
 	autoSplitMixedLinks: false,
 	exportScale: 2,
 	enableDrag: true,
+	dragCanvasWithModifier: false,
 	exportImageFormat: 'png',
 	language: 'zh',
 };
@@ -159,7 +161,7 @@ export interface SettingsSanitizeReport {
  * 「非法设置被回退/钳制」的汇总留痕（进程内一次）。
  *
  * 为什么必须留痕：data.json 可被手工编辑或来自旧版本，坏值**静默**换掉之后，
- * 用户看到的现象是「设置没生效」——属无痕退化（AGENTS.md 决策表：
+ * 用户看到的现象是「设置没生效」——属无痕退化（docs/agents/decisions.md 决策表：
  * 静默跳过会让问题无痕退化）。汇总一次而不是逐键刷屏。
  */
 const warnDroppedSettings = createWarnOnce();
@@ -203,28 +205,13 @@ export function sanitizeSettings(
 		}
 		return undefined;
 	};
-	/**
-	 * 数值候选：数字原型，或**非空白**数字字符串（历史 data.json 的 `"2"` / `" 3 "`）；
-	 * 其余一律 NaN（由调用方判定回退）。拆出来是为了让 `pickNumber` 只表达
-	 * 「缺失 → 跳过、非有限 → 留痕回退」这一层语义。
-	 */
-	const toNumber = (value: unknown): number => {
-		if (typeof value === 'number') {
-			return value;
-		}
-		if (typeof value === 'string' && value.trim() !== '') {
-			return Number(value);
-		}
-		return Number.NaN;
-	};
 	const pickNumber = (key: keyof MindMapStudioSettings): number | undefined => {
 		const value = raw[key];
 		if (value === undefined) {
 			return undefined;
 		}
-		const num = toNumber(value);
-		if (Number.isFinite(num)) {
-			return num;
+		if (typeof value === 'number' && Number.isFinite(value)) {
+			return value;
 		}
 		drop(key);
 		return undefined;
@@ -313,6 +300,8 @@ export function sanitizeSettings(
 			pickClampedInt('exportScale', EXPORT_SCALE_MIN, EXPORT_SCALE_MAX) ??
 			DEFAULT_SETTINGS.exportScale,
 		enableDrag: pickBool('enableDrag') ?? DEFAULT_SETTINGS.enableDrag,
+		dragCanvasWithModifier:
+			pickBool('dragCanvasWithModifier') ?? DEFAULT_SETTINGS.dragCanvasWithModifier,
 		exportImageFormat:
 			pickFrom('exportImageFormat', EXPORT_IMAGE_FORMAT_OPTIONS) ??
 			DEFAULT_SETTINGS.exportImageFormat,
@@ -336,9 +325,10 @@ const LIVE_REFRESH_SETTING_KEYS = [
 	'defaultTheme',
 	'defaultThemeStyle',
 	'enableDrag',
+	'dragCanvasWithModifier',
 	'language',
 	// 作用范围切换要当场看到连接线变化；视图走原地重算（见
-	// features/view.applySettingsChange），不重建引擎
+	// features/view/view.applySettingsChange），不重建引擎
 	'nodeColorScope',
 ] as const satisfies readonly (keyof MindMapStudioSettings)[];
 
@@ -361,7 +351,7 @@ function isLiveRefreshKey(key: string): key is LiveRefreshSettingKey {
  * **重建引擎 + 全量重渲染**，而其中多数键**根本不影响已打开的图**——默认连线样式在文件
  * 加载时已定为「文件显式选择 ?? 默认值」，之后再改默认值不会改变已打开的图；主题则有
  * 引擎的原地通道（`setThemeConfig`）。算出差集后，视图只做真会改变渲染的事
- * （`features/view.applySettingsChange`）。
+ * （`features/view/view.applySettingsChange`）。
  *
  * `defaultLayout` **不在本表**（2026-10-29）：它是新建文件的种子值，逐文件布局只存在
  * 于文件属性，改了它对任何已打开/已存在文件都无影响。
@@ -576,6 +566,11 @@ export class MindMapStudioSettingTab extends PluginSettingTab {
 						name: t(this.lang, 'settings.enableDrag'),
 						desc: t(this.lang, 'settings.enableDragDesc'),
 						control: { type: 'toggle', key: 'enableDrag' },
+					},
+					{
+						name: t(this.lang, 'settings.dragCanvasWithModifier'),
+						desc: t(this.lang, 'settings.dragCanvasWithModifierDesc'),
+						control: { type: 'toggle', key: 'dragCanvasWithModifier' },
 					},
 					{
 						name: t(this.lang, 'settings.exportScale'),

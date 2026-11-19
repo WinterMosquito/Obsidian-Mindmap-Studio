@@ -12,7 +12,7 @@
  * - 覆盖：三类图标的分流与存在性、图标尺寸（18×18，防 `foreignObject` 里
  *   0×0 不可见的旧故障）、回形针标题、画布铺满容器、节点测宽随文本变化
  *   （不被容器宽度拉平）；
- * - 覆盖（方案 B 原型，`features/node-inline-content.ts`）：自绘节点内联内容是否
+ * - 覆盖（方案 B 原型，`features/content/node-inline-content.ts`）：自绘节点内联内容是否
  *   真的进入 foreignObject、离屏克隆测宽是否与渲染宽度同源、以及**点击命中契约**
  *   ——合成的 click 事件经引擎 `node_click` 派发后，`event.target` 必须就是锚点本体
  *   且落在节点 group 内（= view-wikilink.findAnchorInNode 的两个前置判据），
@@ -74,14 +74,20 @@
  *
  * 退出码：0 = 通过或（未要求时）缺浏览器跳过；1 = 断言失败或缺浏览器但要求了。
  */
-import { execFile } from 'node:child_process';
+import { buildUiEntrySource, UI_SHIM_SOURCE } from './visual-ui.mjs';
+import { buildPluginProbe, PLUGIN_SHIM_SOURCE } from './visual-plugin-content.mjs';
+import { buildCanvasDragEntrySource } from './visual-canvas-drag.mjs';
+import { buildNodeContentCompareSource } from './visual-node-content.mjs';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
+import { buildMiniMapSidebarProbe } from './visual-minimap-sidebar.mjs';
+import { dumpChromePage } from './chrome-page.mjs';
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -263,7 +269,7 @@ const SCENARIOS = [
 		data: {
 			// 2026-09-27（G4）：数学段必须被自绘接管（引擎 SVG 文本恒为字面）。
 			// 单行 `$$…$$` 渲染为 display 数学；无头页没有真 MathJax（替换链路由
-			// tests/math-jax.test.ts 的假件与实机 CDP 断言覆盖），此处锁定
+			// tests/platform/rendering/math/math-jax.test.ts 的假件与实机 CDP 断言覆盖），此处锁定
 			// 「识别 → 占位（与原文定界符同形）→ 接管」三段确定性行为。
 			text: '方程 $E=mc^2$、$x$ 与 $$y^2$$',
 			mdDerivedText: '方程 $E=mc^2$、$x$ 与 $$y^2$$',
@@ -278,10 +284,10 @@ const SCENARIOS = [
 			// 2026-09-28：围栏代码块必须被自绘接管（引擎 SVG 文本恒为字面围栏）。
 			// 无头页锁定「识别 → 结构（.tmm-codeblock + pre/code + 复制按钮）→
 			// 原文保真（信息行剥离、缩进保留）」；复制写剪贴板链路由
-			// tests/node-codeblock.test.ts 与视图层委托覆盖，此处不涉及剪贴板。
+			// tests/features/content/node-codeblock.test.ts 与视图层委托覆盖，此处不涉及剪贴板。
 			// 2026-10-06：新增语言类与「无运行时则停在字面」的断言（Prism 高亮需要
 			// Obsidian 的 loadPrism，头less 拿不到——token 元素本身由
-			// tests/prism-code.test.ts 的桩面覆盖）。
+			// tests/platform/rendering/code/prism-code.test.ts 的桩面覆盖）。
 			text: '示例\n```js\nconst a = 1;\n  echo hi\n```',
 			mdDerivedText: '示例\n```js\nconst a = 1;\n  echo hi\n```',
 			mdRaw: '示例\n```js\nconst a = 1;\n  echo hi\n```',
@@ -306,7 +312,7 @@ const SCENARIOS = [
 		label: '表格：GFM 管道表自绘为内联样式 <table>（表宽不撑爆节点）',
 		data: {
 			// 2026-10-14：plain 多行节点里的表格块独立成段（识别在 domain/pipe-table，
-			// 装配在 features/node-inline-content），产出 table/thead/tbody，样式
+			// 装配在 features/content/node-inline-content），产出 table/thead/tbody，样式
 			// **全内联**（导出 SVG 不含 styles.css）。第二列分隔行写 `---:` ⇒ 该列
 			// 对齐必须落到内联 text-align（本场景是「对齐不是摆设」的锁定用例）
 			text: '上文\n| 名称 | 数量 |\n| --- | ---: |\n| 甲 | 2 |\n下文',
@@ -428,7 +434,7 @@ function findChrome() {
 /**
  * `obsidian` 的最小垫片（仅在无头验证页里使用）。
  *
- * 为什么需要：本页要加载的模块图包含 `features/view-wikilink.ts`（探针用它的
+ * 为什么需要：本页要加载的模块图包含 `features/navigation/view-wikilink.ts`（探针用它的
  * `ensureOffsetSize`），而它现在会经 `view-link-navigator.ts` 触达 `obsidian`
  * 的运行时导出（Notice / Platform / normalizePath…）。obsidian 包只发布类型、
  * 没有 JS，故打包时会报「Could not resolve "obsidian"」。
@@ -443,6 +449,7 @@ export class TFile {}
 export class TFolder {}
 export class MarkdownView {}
 export class WorkspaceLeaf {}
+export class MarkdownRenderer { static async render() {} }
 export class Plugin {}
 /**
  * Component / MarkdownRenderChild：代码块嵌入探针要用**真实**渲染子
@@ -454,6 +461,7 @@ export class Component {
 	registerEvent() {}
 	registerDomEvent() {}
 }
+export class ItemView extends Component {}
 export class MarkdownRenderChild extends Component {
 	constructor(containerEl) {
 		super();
@@ -518,7 +526,7 @@ export function normalizePath(p) {
 	return String(p).replace(/\\\\/g, '/');
 }
 export function setIcon() {}
-// 标注图标（platform/callout-icon 的具名导入）：垫片返回 null = 宿主没有这个图标，
+// 标注图标（platform/rendering/callout-icon 的具名导入）：垫片返回 null = 宿主没有这个图标，
 // 即**生产环境的降级路径**（图标缺失 ⇒ 省略图标、保留标题与类型色）。探针因此
 // 断言的是"无图标时盒子仍成立"，图标本身的取用由 platform 层直连宿主 getIcon。
 export function getIcon() {
@@ -544,21 +552,17 @@ export function requestUrl() {
 /** 生成浏览器入口：按场景逐个渲染导图（与插件同款容器类名） */
 function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps = 'edit' } = {}) {
 	const mindmapModule = join(ROOT, 'src', 'engine', 'mindmap.ts').replaceAll('\\', '/');
-	const wikilinkModule = join(ROOT, 'src', 'features', 'view-wikilink.ts').replaceAll(
+	const wikilinkModule = join(ROOT, 'src', 'features', 'navigation', 'view-wikilink.ts').replaceAll(
 		'\\',
 		'/',
 	);
 	const inlineContentModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-inline-content.ts',
+		'src', 'features', 'content', 'node-inline-content.ts',
 	).replaceAll('\\', '/');
 	const nodeWidthModule = join(
 		ROOT,
-		'src',
-		'features',
-		'view-node-width.ts',
+		'src', 'features', 'canvas', 'view-node-width.ts',
 	).replaceAll('\\', '/');
 	const imagesPathModule = join(ROOT, 'src', 'media', 'images-path.ts').replaceAll(
 		'\\',
@@ -566,15 +570,11 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 	);
 	const codeblockModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-codeblock.ts',
+		'src', 'features', 'content', 'node-codeblock.ts',
 	).replaceAll('\\', '/');
 	const inlineEditorModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-inline-editor.ts',
+		'src', 'features', 'editing', 'node-inline-editor.ts',
 	).replaceAll('\\', '/');
 	// 导出 SVG 后处理链的模块（与生产 view.ts 的 exportSvgTransforms 同源同序）
 	const exportPostprocessModule = join(
@@ -583,7 +583,7 @@ function buildEntrySource({ workloadEdits = 0, memoryProbe = false, workloadOps 
 		'platform',
 		'export-svg-postprocess.ts',
 	).replaceAll('\\', '/');
-	const mathJaxModule = join(ROOT, 'src', 'platform', 'math-jax.ts').replaceAll(
+	const mathJaxModule = join(ROOT, 'src', 'platform', 'rendering', 'math', 'math-jax.ts').replaceAll(
 		'\\',
 		'/',
 	);
@@ -604,7 +604,7 @@ import { ensureOffsetSize } from ${JSON.stringify(wikilinkModule)};
 import { buildInlineNodeContent, segmentCacheStats } from ${JSON.stringify(inlineContentModule)};
 import { gateNodeWidthHandles } from ${JSON.stringify(nodeWidthModule)};
 import { hideCopyButtonsInExportSvg, registerCodeBlockInteractions } from ${JSON.stringify(codeblockModule)};
-import { openNodeInlineEditor } from ${JSON.stringify(inlineEditorModule)};
+import { openNodeInlineEditor, closeInlineEditor } from ${JSON.stringify(inlineEditorModule)};
 import { postProcessExportSvg } from ${JSON.stringify(exportPostprocessModule)};
 import { injectMathStylesIntoExportSvg, pinMathContainerHeightsInExportSvg } from ${JSON.stringify(mathJaxModule)};
 import { EMBED_CANVAS_CLASS, EMBED_NOTICE_CLASS, EMBED_OUTLINE_CLASS, EMBED_READONLY_CLASS, MindmapEmbedRenderChild } from ${JSON.stringify(mindmapCodeblockModule)};
@@ -663,7 +663,7 @@ for (const { name, data } of scenarios) {
 }
 
 // —— mindmap 代码块嵌入探针（features/mindmap-codeblock，2026-10-13）——
-// 五条契约只有真实 DOM 能验（单测只覆盖纯判据，见 tests/mindmap-codeblock.test.ts）：
+// 五条契约只有真实 DOM 能验（单测只覆盖纯判据，见 tests/features/mindmap-codeblock.test.ts）：
 // ① 只读引擎**真建起来了**（.smm-node 出现 ⇒ 解析 → 图片/uid → 引擎装配整链通）；
 // ② 普通滚轮**不**被 preventDefault——引擎 Event.onMousewheel 无条件
 //    preventDefault（vendor upstream core/event/Event.js:148-150），嵌入若不拦，
@@ -1535,7 +1535,7 @@ window.setTimeout(() => {
 // 这一步验证的是「单测覆盖不到」的引擎运行时装配：HTML 是否真进了 foreignObject、
 // 引擎是否按离屏克隆测出了尺寸、以及节点内锚点点击后 event.target 是否就是锚点
 // （= view-wikilink.findAnchorInNode 的两个前置判据；其后的跳转分流已由
-// tests/view-wikilink.test.ts 覆盖）。
+// tests/features/navigation/view-wikilink.test.ts 覆盖）。
 const inlineProbe = document.createElement('pre');
 inlineProbe.id = 'inline-probe';
 document.body.appendChild(inlineProbe);
@@ -1706,6 +1706,115 @@ window.setTimeout(() => {
 					inlineData.mdType = 'plain';
 				}
 				const saves = [];
+				const alignment = [];
+				const alignmentView = {
+					mindMap: inlineMap, app: null, lang: 'zh', scheduleSave: () => saves.push(1),
+					engineEvents: { onEngine: (m, name, fn) => m.on(name, fn) },
+				};
+				for (const scale of [0.5, 1, 1.5]) {
+					inlineMap.view.setScale(scale);
+					for (const node of [inlineMap.renderer.root, inlineNode]) {
+						openNodeInlineEditor(alignmentView, node);
+						const input = document.querySelector('.mindmap-node-inline-editor');
+						const content = node.group.node.querySelector('.mindmap-node-inline-content');
+						const inputBox = input.getBoundingClientRect();
+						const contentBox = content.getBoundingClientRect();
+						const inputStyle = getComputedStyle(input);
+						const contentStyle = getComputedStyle(content);
+						alignment.push({
+							scale,
+							dx: inputBox.left + parseFloat(inputStyle.paddingLeft) - contentBox.left - parseFloat(contentStyle.paddingLeft) * scale,
+							dy: inputBox.top + parseFloat(inputStyle.paddingTop) - contentBox.top - parseFloat(contentStyle.paddingTop) * scale,
+							fontDelta: parseFloat(inputStyle.fontSize) - parseFloat(contentStyle.fontSize) * scale,
+							lineDelta: parseFloat(inputStyle.lineHeight) - parseFloat(contentStyle.lineHeight) * scale,
+							widthDelta: inputBox.width - contentBox.width,
+							heightDelta: inputBox.height - contentBox.height,
+							scrollHeight: input.scrollHeight, clientHeight: input.clientHeight, scrollTop: input.scrollTop,
+							originalHidden: node.group.node.getAttribute('visibility') === 'hidden',
+							background: inputStyle.backgroundColor,
+						});
+						closeInlineEditor(alignmentView);
+					}
+				}
+				const sizing = [];
+				const editorMetrics = (input) => {
+					const box = input.getBoundingClientRect();
+					return { width: box.width, height: box.height, scrollHeight: input.scrollHeight, clientHeight: input.clientHeight, scrollTop: input.scrollTop };
+				};
+				for (const scale of [0.5, 1, 1.5, 2.35]) {
+					inlineMap.view.setScale(scale);
+					for (const node of [inlineMap.renderer.root, inlineNode]) {
+						node.active();
+						const originalText = node.getData('text');
+						openNodeInlineEditor(alignmentView, node);
+						const input = document.querySelector('.mindmap-node-inline-editor');
+						const original = input.value;
+						input.value = '思维导图';
+						input.dispatchEvent(new Event('input'));
+						const short = editorMetrics(input);
+						input.value = '思维导图'.repeat(50);
+						input.dispatchEvent(new Event('input'));
+						const long = editorMetrics(input);
+						input.value = '思维导图';
+						input.dispatchEvent(new Event('input'));
+						const shrink = editorMetrics(input);
+						input.value = original;
+						closeInlineEditor(alignmentView);
+						sizing.push({ scale, isRoot: node.isRoot, short, long, shrink, unchanged: node.getData('text') === originalText,
+							restored: node.group.node.getAttribute('visibility') !== 'hidden' });
+					}
+				}
+				inlineMap.view.setScale(1);
+				const engineSurfaces = [];
+				const emptyMap = scenarioMaps.empty;
+				const emptyNode = emptyMap.renderer.root.children[0];
+				const canvas = emptyMap.opt.el;
+				const initialBackground = canvas.style.backgroundColor;
+				const initialFill = emptyNode.getData('fillColor');
+				for (const scale of [0.5, 1, 1.5, 2.35]) {
+					emptyMap.view.setScale(scale);
+					for (const sample of [
+						{ fill: 'transparent', canvas: '#252837', expected: 'rgb(37, 40, 55)' },
+						{ fill: 'transparent', canvas: '#f0ece5', expected: 'rgb(240, 236, 229)' },
+						{ fill: '#89cff0', canvas: '#252837', expected: 'rgb(137, 207, 240)' },
+					]) {
+						canvas.style.backgroundColor = sample.canvas;
+						emptyNode.setData({ fillColor: sample.fill });
+						emptyNode.active();
+						emptyMap.emit('node_dblclick', emptyNode, null, true);
+						const input = emptyMap.renderer.textEdit.textEditNode;
+						const style = getComputedStyle(input);
+						const originalText = emptyNode.getData('text');
+						const initialWidth = input.getBoundingClientRect().width;
+						input.textContent = '内容边长的时候';
+						input.dispatchEvent(new Event('input'));
+						const short = editorMetrics(input);
+						input.textContent = '内容边长的时候'.repeat(40);
+						input.dispatchEvent(new Event('input'));
+						const long = editorMetrics(input);
+						input.textContent = '内容边长的时候';
+						input.dispatchEvent(new Event('input'));
+						const shrink = editorMetrics(input);
+						const highlight = emptyNode.group.node.querySelector('.smm-hover-node');
+						const groupStyle = getComputedStyle(emptyNode.group.node);
+						const metrics = editorMetrics(input);
+						const result = { scale, background: style.backgroundColor, expected: sample.expected, shadow: style.boxShadow,
+							grown: input.getBoundingClientRect().width > initialWidth,
+							originalHidden: groupStyle.visibility === 'hidden' || groupStyle.opacity === '0',
+							highlightShown: getComputedStyle(highlight).display !== 'none',
+							highlightHidden: getComputedStyle(highlight).visibility === 'hidden',
+							unchanged: emptyNode.getData('text') === originalText,
+							fits: [metrics, long].every((state) => state.scrollHeight <= state.clientHeight && state.scrollTop === 0),
+							resized: long.height > short.height && Math.abs(shrink.width - short.width) < 0.5 && Math.abs(shrink.height - short.height) < 0.5 };
+						input.textContent = originalText;
+						emptyMap.renderer.textEdit.hideEditTextBox();
+						result.restored = emptyNode.group.node.getAttribute('visibility') !== 'hidden';
+						engineSurfaces.push(result);
+					}
+				}
+				emptyMap.view.setScale(1);
+				emptyNode.setData({ fillColor: initialFill });
+				canvas.style.backgroundColor = initialBackground;
 				openNodeInlineEditor(
 					{
 						mindMap: inlineMap,
@@ -1723,20 +1832,34 @@ window.setTimeout(() => {
 				const prefilled = editor ? editor.value : null;
 				let afterText = null;
 				let removed = false;
+				let inputWidthDelta = null;
+				let inputHeightDelta = null;
+				let inputFits = false;
+				let originalRestored = false;
 				if (editor) {
-					editor.value = '内联改过的 [[笔记A]] 与 https://example.com';
+					editor.value = '内联改过的 [[笔记A]] 与 https://example.com\\n' + '较长的中文内容'.repeat(35);
+					editor.dispatchEvent(new Event('input', { bubbles: true }));
+					const afterInputBox = editor.getBoundingClientRect();
+					inputWidthDelta = afterInputBox.width - box.width;
+					inputHeightDelta = afterInputBox.height - box.height;
+					inputFits = editor.scrollHeight <= editor.clientHeight && editor.scrollTop === 0;
 					editor.dispatchEvent(
 						new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
 					);
 					afterText = inlineNode.getData('text');
 					removed = !document.querySelector('.mindmap-node-inline-editor');
+					originalRestored = inlineNode.group.node.getAttribute('visibility') !== 'hidden';
 				}
 				inlineEditProbe.textContent = JSON.stringify({
 					opened: !!editor,
 					positioned,
+					alignment, sizing,
+					engineSurfaces,
 					prefilled,
 					afterText,
 					removed,
+					inputWidthDelta,
+					inputHeightDelta, inputFits, originalRestored,
 					saves: saves.length,
 				});
 			} catch (error) {
@@ -1971,7 +2094,7 @@ window.setTimeout(() => {
 				: -1,
 			codeInlineMask: codeCopyButton ? codeCopyButton.style.maskImage : null,
 			// 语言类契约（2026-10-06）：围栏信息行必须落到 code.language-js
-			// ——它既是宿主主题/Prism 的选择器口径，也是 platform/prism-code 查语法的
+			// ——它既是宿主主题/Prism 的选择器口径，也是 platform/rendering/code/prism-code 查语法的
 			// 依据。无头页**没有 Obsidian 运行时**（loadPrism 不可用），故这里断言的是
 			// 高亮**前**的字面形态：类名已就位、代码仍是字面（占位即回退，不空白）。
 			codeLanguageClass: codeBlock
@@ -2156,7 +2279,7 @@ window.setTimeout(() => {
 // 引擎的 checkEnableDragModifyNodeWidth() 只看全局开关（本插件恒开），于是
 // 纯文本 / 含图节点上也会出现左右边框手柄，而引擎的 SVG 文本路径不认
 // customTextWidth（拖了毫无反应＝死手柄，用户实测 2026-09-16）。插件侧给该判定
-// 加了「且会被自绘接管」这一层（features/view-node-width.gateNodeWidthHandles）。
+// 加了「且会被自绘接管」这一层（features/canvas/view-node-width.gateNodeWidthHandles）。
 // 手柄是激活时懒创建的无类名透明 rect（inline cursor: ew-resize），故按此计数。
 const handleProbe = document.createElement('pre');
 handleProbe.id = 'handle-probe';
@@ -2780,6 +2903,110 @@ window.setTimeout(() => {
 	}
 	imageProbe.textContent = JSON.stringify(report);
 }, 200);
+
+// —— 结构拖动：真实 DOM 手势、邻近落点、自动布局与撤销（K205） ——
+const structuralDragProbe = document.createElement('pre');
+structuralDragProbe.id = 'structural-drag-probe';
+document.body.appendChild(structuralDragProbe);
+window.setTimeout(async () => {
+	const report = { cases: [] };
+	const pause = (ms) => new Promise(resolve => window.setTimeout(resolve, ms));
+	const find = (root, uid) => {
+		if (root.getData('uid') === uid) return root;
+		for (const child of root.children) { const found = find(child, uid); if (found) return found; }
+		return null;
+	};
+	try {
+		let index = 0;
+		for (const layout of ['logicalStructure', 'mindMap', 'organizationStructure', 'catalogOrganization', 'timeline', 'fishbone']) {
+			for (const scale of [0.5, 1, 1.5, 2.35]) {
+				const holder = document.createElement('div');
+				holder.id = 'map-structural-' + index++;
+				holder.className = 'mindmap-canvas-container';
+				holder.style.width = '1200px'; holder.style.height = '400px';
+				document.body.appendChild(holder);
+				const map = createMindMap(holder, {
+					data: { text: '检索增强 RAG', uid: 'drag-root' },
+					children: [
+						{ data: { text: '怎样形成可信回答（23、25-27）', uid: 'drag-target' }, children: [
+							{ data: { text: '证据引用、追问与拒答', uid: 'drag-leaf' }, children: [] },
+						] },
+						{ data: { text: '量化指标', uid: 'drag-source' }, children: [] },
+					],
+				}, { ...options, layout });
+				await new Promise(resolve => whenMapReady(map, holder, resolve, 10, 1200, true));
+				map.view.setScale(scale);
+				map.renderer.moveNodeToCenter(map.renderer.root);
+				// 隔离边缘自动平移；本探针测落点与结构，不测边缘导航。
+				map.opt.selectTranslateStep = 0;
+				let lastDrop = null;
+				map.on('node_dragend', state => { lastDrop = state; });
+				const point = (x, y) => {
+					const transform = map.draw.transform();
+					return { clientX: map.elRect.left + x * transform.scaleX + transform.translateX,
+						clientY: map.elRect.top + y * transform.scaleY + transform.translateY };
+				};
+				const begin = () => {
+					const source = find(map.renderer.root, 'drag-source');
+					const pos = point(source.left + source.width / 2, source.top + source.height / 2);
+					source.group.node.dispatchEvent(new MouseEvent('mousedown', { ...pos, bubbles: true, button: 0, buttons: 1 }));
+				};
+				const move = (pos) => window.dispatchEvent(new MouseEvent('mousemove', { ...pos, bubbles: true, button: 0, buttons: 1 }));
+				const end = (pos) => window.dispatchEvent(new MouseEvent('mouseup', { ...pos, bubbles: true, button: 0, buttons: 0 }));
+				const before = JSON.stringify(map.getData());
+				const viewport = JSON.stringify(map.view.getTransformData());
+				const history = map.command.history.length;
+				begin(); const blank = point(-1000, -1000); move(blank); end(blank); await pause(35);
+				const row = { layout, scale, freeDragDisabled: map.opt.enableFreeDrag === false,
+					blankUnchanged: JSON.stringify(map.getData()) === before && map.command.history.length === history };
+				const target = find(map.renderer.root, 'drag-target');
+				const horizontal = layout === 'organizationStructure' ||
+					(['catalogOrganization', 'timeline', 'fishbone'].includes(layout) && target.layerIndex === 1);
+				const near = horizontal
+					? point(target.left + target.width / 2, target.top + target.height + 10 / scale)
+					: point(target.left + target.width + 10 / scale, target.top + target.height / 2);
+				begin(); move(near); await pause(40);
+				row.previewTarget = map.drag.overlapNode?.getData('uid');
+				row.previewState = { dragging: map.drag.isDragging, down: map.drag.isMousedown,
+					prev: map.drag.prevNode?.getData('uid'), next: map.drag.nextNode?.getData('uid') };
+				const selected = map.drag.overlapNode || map.drag.prevNode || map.drag.nextNode;
+				row.previewParent = (map.drag.overlapNode || selected?.parent)?.getData('uid');
+				row.previewUnchanged = JSON.stringify(map.getData()) === before && map.command.history.length === history;
+				row.previewVisible = map.drag.overlapNode
+					? selected.group.node.classList.contains('active') && getComputedStyle(selected.group.node.querySelector('.smm-hover-node')).display !== 'none'
+					: Number(map.drag.placeholder?.attr('width')) > 0 && map.drag.placeHolderLine?.attr('d')?.length > 0;
+				end(near); await pause(60);
+				row.previewMatchesDrop = lastDrop?.overlapNodeUid === (row.previewTarget || '') &&
+					lastDrop?.prevNodeUid === (row.previewState.prev || '') && lastDrop?.nextNodeUid === (row.previewState.next || '');
+				const moved = find(map.renderer.root, 'drag-source');
+				row.parent = moved.parent.getData('uid');
+				row.noFreePosition = moved.getData('customLeft') === undefined && moved.getData('customTop') === undefined;
+				row.historyDelta = map.command.history.length - history;
+				row.viewportUnchanged = JSON.stringify(map.view.getTransformData()) === viewport;
+				if (layout === 'logicalStructure') {
+					// 对齐用户截图：已有子节点在空白处松手后仍保持自动布局。
+					const organized = JSON.stringify(map.getData());
+					const position = { left: moved.left, top: moved.top };
+					begin(); move(blank); end(blank); await pause(35);
+					const unchanged = find(map.renderer.root, 'drag-source');
+					row.childBlankUnchanged = JSON.stringify(map.getData()) === organized &&
+						unchanged.left === position.left && unchanged.top === position.top;
+					map.execCommand('BACK'); await pause(60);
+					row.undoRestored = JSON.stringify(map.getData()) === before;
+					// 同级后插同样走真实手势；恢复后重新取节点实例。
+					const sibling = find(map.renderer.root, 'drag-target');
+					const after = point(sibling.left + sibling.width / 2, sibling.top + sibling.height + 3);
+					begin(); move(after); end(after); await pause(60);
+					row.siblingOrder = map.renderer.root.children.map(node => node.getData('uid')).join(',');
+					row.siblingParent = find(map.renderer.root, 'drag-source').parent.getData('uid');
+				}
+				report.cases.push(row); map.destroy(); holder.remove();
+			}
+		}
+	} catch (error) { report.error = String(error); }
+	structuralDragProbe.textContent = JSON.stringify(report);
+// 等其它鼠标探针收尾后再开始，避免它们的合成 mouseup 结束本手势。
+}, 2000);
 
 // —— 节点计数探针：性能模式下渲染树结构必须完整（状态栏计数不得漏计） ——
 // 术语澄清（vendor 0.14.0-fix.3 实测）：removeNodeWhenOutCanvas 走 node.removeSelf()
@@ -4071,9 +4298,9 @@ function buildPageSource({
 		     ① document.win.createSvg（Obsidian 的 Document 扩展，appendSvgStyle 依赖）；
 		     ② :root CSS 变量（值 = 自绘内容兜底值，几何零扰动，供 export-svg-postprocess 注入）；
 		     ③ #MJX-CHTML-styles 假样式表（供 math-jax 的 readMathJaxCss 读取）。 -->
-		<style id="verify-export-css-vars">:root{--font-interface:sans-serif;--font-monospace:monospace;}</style>
+		<style id="verify-export-css-vars">:root{--font-interface:sans-serif;--font-monospace:monospace;--interactive-accent:#5ec8f8;}</style>
 		<style id="MJX-CHTML-styles">.mjx-c.mjx-c1D438::before{content:"E";padding:0.68em 0.764em 0 0;}</style>
-		<script>document.win={createSvg:function(t){return document.createElementNS("http://www.w3.org/2000/svg",t);}};</script>
+		<script>document.win={createSvg:function(t){return document.createElementNS("http://www.w3.org/2000/svg",t);},createEl:function(t){return document.createElement(t);}};</script>
 	</head>
 	<body>
 ${benchScript}\t\t<script src="${bundleFile}"></script>
@@ -4156,7 +4383,7 @@ function chromeArgs(profileDir, { memoryProbe = false, budgetMs = 8000 } = {}) {
  * 每个模式再重试一次——无头渲染在 CI 上有偶发空白输出的历史。
  * 每次尝试的退出码与 stderr 尾部都会进诊断日志。
  */
-async function dumpDom(chromePath, pagePath, profileDir, diag, { memoryProbe = false, budgetMs = 8000 } = {}) {
+async function dumpDom(chromePath, pagePath, profileDir, diag, { memoryProbe = false, budgetMs = 8000, marker = 'id="map-' } = {}) {
 	const args = chromeArgs(profileDir, { memoryProbe, budgetMs });
 	const attempts = [];
 	let lastError = null;
@@ -4170,7 +4397,7 @@ async function dumpDom(chromePath, pagePath, profileDir, diag, { memoryProbe = f
 					[mode, ...args, '--dump-dom', pagePath],
 					{ maxBuffer: 96 * 1024 * 1024, windowsHide: true },
 				);
-				if (stdout.includes('id="map-')) {
+				if (stdout.includes(marker)) {
 					attempts.push(`${label}: ok（DOM ${stdout.length} 字节）`);
 					diag.log(`    · Chrome ${label} 成功（DOM ${stdout.length} 字节）`);
 					diag.file('05-chrome-stderr.txt', String(stderr ?? ''));
@@ -5359,7 +5586,7 @@ function checkInline(dom) {
 		);
 	}
 	// 行内数学（2026-09-27）：数学段必须被自绘接管（引擎 SVG 文本恒为字面 `$…$`），
-	// 且定界符回填进占位文本。MathJax 替换链路由 tests/math-jax.test.ts（假件）
+	// 且定界符回填进占位文本。MathJax 替换链路由 tests/platform/rendering/math/math-jax.test.ts（假件）
 	// 与实机 CDP 断言覆盖——无头页没有真 MathJax，不在此断言替换产物。
 	if (probe.mathInForeignObject !== true) {
 		failures.push(
@@ -5711,6 +5938,48 @@ function checkInlineEdit(dom) {
 	if (!probe.positioned) {
 		failures.push('内联编辑器无实际几何（节点 group 矩形 → textarea 定位失败）');
 	}
+	if (!Array.isArray(probe.alignment) || probe.alignment.length !== 6) {
+		failures.push('缺少中心/分支在 50%、100%、150% 缩放下的编辑文字对齐数据');
+	} else {
+		for (const sample of probe.alignment) {
+			if (sample.scrollHeight > sample.clientHeight || sample.scrollTop !== 0 || !sample.originalHidden) {
+				failures.push(`编辑器 ${sample.scale} 倍出现内部滚动或原节点外框仍可见`);
+			}
+			for (const key of ['dx', 'dy', 'fontDelta', 'lineDelta']) {
+				if (!Number.isFinite(sample[key]) || Math.abs(sample[key]) > 0.5) {
+					failures.push(`编辑文字 ${sample.scale} 倍 ${key} 偏差 ${sample[key]} 超过 0.5px`);
+				}
+			}
+		}
+	}
+	if (!Array.isArray(probe.sizing) || probe.sizing.length !== 8) {
+		failures.push('缺少中心/普通节点在四档缩放下的长短文本自适应数据');
+	} else {
+		for (const row of probe.sizing) {
+			if (!(row.long.height > row.short.height) || row.long.width < row.short.width ||
+				(row.isRoot && !(row.long.width > row.short.width)) ||
+				Math.abs(row.shrink.height - row.short.height) > 0.5 ||
+				Math.abs(row.shrink.width - row.short.width) > 0.5 || !row.unchanged || !row.restored) {
+				failures.push(`编辑器 ${row.scale} 倍未随长短文本增减尺寸或预览污染了节点`);
+			}
+			for (const state of [row.short, row.long, row.shrink]) {
+				if (state.scrollHeight > state.clientHeight || state.scrollTop !== 0) {
+					failures.push(`编辑器 ${row.scale} 倍内容被内部滚动裁切`);
+				}
+			}
+		}
+	}
+	if (!(probe.inputHeightDelta > 0) || !probe.inputFits || !probe.originalRestored) {
+		failures.push('长文本编辑未自适应高度、发生内部滚动或关闭后原节点未恢复');
+	}
+	if (!Array.isArray(probe.engineSurfaces) || probe.engineSurfaces.length !== 12) {
+		failures.push('缺少引擎编辑框的亮/暗画布与节点配色探针');
+	} else if (probe.engineSurfaces.some((sample) => sample.background !== sample.expected || sample.shadow === 'none' || sample.shadow.includes('20px'))) {
+		failures.push('引擎编辑框未跟随节点/画布底色，或仍有厚重阴影');
+	}
+	if (probe.engineSurfaces?.some((sample) => !sample.grown || !sample.originalHidden || !sample.highlightShown || !sample.highlightHidden || !sample.unchanged || !sample.fits || !sample.resized || !sample.restored)) {
+		failures.push('选中的空节点输入增长时原高亮框仍可见，或预览修改了节点数据');
+	}
 	if (!String(probe.prefilled || '').includes('[[笔记A]]')) {
 		failures.push(
 			'内联编辑器预填不是原文（应含 [[笔记A]] 语法），实际=' +
@@ -5936,6 +6205,21 @@ function checkLayouts(dom) {
  * 任何断言函数抛异常都转成一条失败项（而不是让整个脚本静默退出）——
  * CI 上曾出现「场景全过后脚本无输出地退出」，此处保证异常可见且计入失败数。
  */
+function checkStructuralDrag(dom) {
+	const { probe, failures } = readProbe(dom, 'structural-drag-probe', '结构拖动');
+	if (failures) return failures;
+	if (probe.error) return ['结构拖动探针异常：' + probe.error];
+	if (probe.cases?.length !== 24) return ['结构拖动未完成六布局 × 四档缩放（已完成 ' + (probe.cases?.length ?? 0) + '）'];
+	return probe.cases.flatMap(row => {
+		const failed = [];
+		if (!row.freeDragDisabled || !row.blankUnchanged) failed.push('无目标拖动改变了数据或历史');
+		if (row.previewParent !== 'drag-target' || !row.previewUnchanged || !row.previewVisible || !row.previewMatchesDrop) failed.push('邻近预览未命中目标、改变了结构或与松手结果不符');
+		if (row.parent !== 'drag-target' || !row.noFreePosition || row.historyDelta !== 1 || !row.viewportUnchanged) failed.push('落点、自由坐标、撤销步数或缩放不正确');
+		if (row.layout === 'logicalStructure' && (!row.childBlankUnchanged || !row.undoRestored || row.siblingParent !== 'drag-root' || row.siblingOrder !== 'drag-target,drag-source')) failed.push('已有子节点拖空白未归位、撤销未复原或同级插入异常');
+		return failed.map(message => row.layout + ' / ' + row.scale + '：' + message);
+	});
+}
+
 async function runChecks(dom, diag) {
 	let failed = 0;
 	const safe = (label, fn) => {
@@ -5952,6 +6236,10 @@ async function runChecks(dom, diag) {
 		failed += metricsRead.failures.length;
 	}
 	const metrics = metricsRead.probe ?? null;
+	const dragFailures = safe('结构拖动', () => checkStructuralDrag(dom));
+	diag.log('  ' + (dragFailures.length ? '✗' : '✓') + ' structural-drag 六布局 × 四档缩放的真实 DOM 拖动、布局与撤销');
+	for (const failure of dragFailures) diag.log('      - ' + failure);
+	failed += dragFailures.length;
 	for (const scenario of SCENARIOS) {
 		const fragment = containerOf(dom, scenario.name);
 		const failures = safe(`场景 ${scenario.name}`, () =>
@@ -6319,11 +6607,9 @@ function buildBenchEntrySource() {
 	const mindmapModule = join(ROOT, 'src', 'engine', 'mindmap.ts').replaceAll('\\', '/');
 	const inlineContentModule = join(
 		ROOT,
-		'src',
-		'features',
-		'node-inline-content.ts',
+		'src', 'features', 'content', 'node-inline-content.ts',
 	).replaceAll('\\', '/');
-	const nodeWidthModule = join(ROOT, 'src', 'features', 'view-node-width.ts').replaceAll(
+	const nodeWidthModule = join(ROOT, 'src', 'features', 'canvas', 'view-node-width.ts').replaceAll(
 		'\\',
 		'/',
 	);
@@ -7030,7 +7316,69 @@ async function main() {
 		// 完整 dump-dom 归档：失败时这是唯一能离线复现 DOM 现场的东西
 		await diag.file('10-dom.html', dom);
 
-		failed = await runChecks(dom, diag);
+		// UI 页独立运行，避免它的焦点/样式对引擎和拖动探针产生影响。
+		const baselineDir = join(workDir, 'baseline');
+		await mkdir(baselineDir);
+		const baselineArchive = join(workDir, 'baseline.tar');
+		execFileSync('git', ['archive', '--output', baselineArchive, 'HEAD', 'src'], { cwd: ROOT });
+		execFileSync('tar', ['-xf', baselineArchive, '-C', baselineDir]);
+		await build({ entryPoints: [join(baselineDir, 'src/ui/styles/index.css')], outfile: join(workDir, 'baseline.css'), bundle: true, logLevel: 'warning' });
+		const baselineCss = await readFile(join(workDir, 'baseline.css'), 'utf8');
+		const currentCss = await readFile(join(ROOT, 'styles.css'), 'utf8');
+		await writeFile(join(workDir, 'ui-entry.mjs'), buildUiEntrySource(ROOT, baselineCss, currentCss));
+		await writeFile(join(workDir, 'ui-shim.mjs'), UI_SHIM_SOURCE);
+		await writeFile(join(workDir, 'ui.html'), '<!doctype html><html><body><script src="ui-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'ui-entry.mjs')], outfile: join(workDir, 'ui-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'ui-shim.mjs') } });
+		const uiDom = await dumpDom(chromePath, join(workDir, 'ui.html'), join(workDir, 'ui-profile'), diag, { marker: 'id="ui-components-probe"' });
+		await diag.file('11-ui-dom.html', uiDom);
+		const uiRead = readProbe(uiDom, 'ui-components-probe', 'UI 组件');
+		const uiFailures = uiRead.failures ?? (uiRead.probe?.ok ? [] : ['UI 组件验证未完成']);
+		diag.log('  ' + (uiFailures.length ? '✗' : '✓') + ' ui-components 真实 DOM、生命周期及亮暗 × 窄宽 CSS 计算值对比');
+		for (const failure of uiFailures) diag.log('      - ' + failure);
+
+		// 从 HEAD 提取完整 src 快照，避免基线导入当前修改后的组件而使比较空转。
+
+		await writeFile(join(workDir, 'content-entry.mjs'), buildNodeContentCompareSource(ROOT, baselineDir));
+		await writeFile(join(workDir, 'content.html'), '<!doctype html><html><body><script src="content-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'content-entry.mjs')], outfile: join(workDir, 'content-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
+		const contentDom = await dumpDom(chromePath, join(workDir, 'content.html'), join(workDir, 'content-profile'), diag, { marker: 'id="node-content-compare-probe"' });
+		await diag.file('12-node-content-compare.html', contentDom);
+		const contentRead = readProbe(contentDom, 'node-content-compare-probe', '节点内容对比');
+		const contentFailures = contentRead.failures ?? (contentRead.probe?.ok ? [] : ['节点内容对比未完成']);
+		diag.log('  ' + (contentFailures.length ? '✗' : '✓') + ' node-content-compare HEAD 与当前 DOM、尺寸、导出及注入调用对比（' + (contentRead.probe?.compared ?? 0) + ' 组）');
+		for (const failure of contentFailures) diag.log('      - ' + failure);
+
+		await writeFile(join(workDir, 'plugin-entry.mjs'), buildPluginProbe(ROOT));
+		await writeFile(join(workDir, 'plugin-shim.mjs'), PLUGIN_SHIM_SOURCE);
+		await writeFile(join(workDir, 'plugin.html'), '<!doctype html><html><body><script src="plugin-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'plugin-entry.mjs')], outfile: join(workDir, 'plugin-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'plugin-shim.mjs') } });
+		const pluginDom = await dumpChromePage(chromePath, join(workDir, 'plugin.html'), join(workDir, 'plugin-profile'), 'plugin-content-probe');
+		await diag.file('plugin-content.html', pluginDom);
+		const pluginRead = readProbe(pluginDom, 'plugin-content-probe', '插件内容');
+		const pluginFailures = pluginRead.failures ?? (pluginRead.probe?.ok ? [] : [pluginRead.probe?.error ?? '插件内容验证未完成']);
+		diag.log('  ' + (pluginFailures.length ? '✗' : '✓') + ' plugin-content 活组件、异步 SVG、重排、尺寸与导出');
+		for (const failure of pluginFailures) diag.log('      - ' + failure);
+
+		await writeFile(join(workDir, 'minimap-entry.mjs'), buildMiniMapSidebarProbe(ROOT));
+		await writeFile(join(workDir, 'minimap.html'), '<!doctype html><html><head><link rel="stylesheet" href="' + pathToFileURL(join(ROOT, 'styles.css')).href + '"></head><body><script src="minimap-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'minimap-entry.mjs')], outfile: join(workDir, 'minimap-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
+		// 真实时钟覆盖 ResizeObserver/rAF 的实际交付与屏幕几何，不能用虚拟时钟替代。
+		const minimapDom = await dumpChromePage(chromePath, join(workDir, 'minimap.html'), join(workDir, 'minimap-profile'), 'minimap-sidebar-probe');
+		await diag.file('13-minimap-sidebar.html', minimapDom);
+		const minimapRead = readProbe(minimapDom, 'minimap-sidebar-probe', '侧栏缩略图');
+		const minimapFailures = minimapRead.failures ?? (minimapRead.probe?.ok ? [] : [minimapRead.probe?.error ?? '侧栏缩略图验证未完成']);
+		diag.log('  ' + (minimapFailures.length ? '✗' : '✓') + ' minimap-sidebar 真实尺寸、导航、切源、隐藏/恢复及 Outline 还原');
+		for (const failure of minimapFailures) diag.log('      - ' + failure);
+		await writeFile(join(workDir, 'canvas-drag-entry.mjs'), buildCanvasDragEntrySource(ROOT));
+		await writeFile(join(workDir, 'canvas-drag.html'), '<!doctype html><html><body><script src="canvas-drag-bundle.js"></script></body></html>');
+		await build({ entryPoints: [join(workDir, 'canvas-drag-entry.mjs')], outfile: join(workDir, 'canvas-drag-bundle.js'), bundle: true, format: 'iife', platform: 'browser', logLevel: 'warning', alias: { obsidian: join(workDir, 'obsidian-shim.mjs') } });
+		const canvasDom = await dumpDom(chromePath, join(workDir, 'canvas-drag.html'), join(workDir, 'canvas-profile'), diag, { marker: 'id="canvas-drag-probe"', budgetMs: 24000 });
+		await diag.file('13-canvas-drag.html', canvasDom);
+		const canvasRead = readProbe(canvasDom, 'canvas-drag-probe', '画布拖拽');
+		const canvasFailures = canvasRead.failures ?? (canvasRead.probe?.ok ? [] : [canvasRead.probe?.error ?? '画布拖拽验证未完成']);
+		diag.log('  ' + (canvasFailures.length ? '✗' : '✓') + ' canvas-drag 两档设置 × Cmd/Ctrl × 缩放及独立 Window、节点/输入/中键/右键/滚轮与中途切换');
+		for (const failure of canvasFailures) diag.log('      - ' + failure);
+		failed = pluginFailures.length + uiFailures.length + contentFailures.length + minimapFailures.length + canvasFailures.length + await runChecks(dom, diag);
 
 		// 真实墙钟基线（opt-in：默认不跑，避免给常规校验加一次重页面渲染）
 		if (ARGS.has('--perf')) {

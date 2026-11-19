@@ -9,7 +9,7 @@
  * 「同一根因只告警一次」此前在 prism-code / math-jax（两处）/ view 各写了一份
  * 模块级或实例级去重标记，连 `MindMap Studio：` 前缀也各写一遍——收口为
  * `createWarnOnce` 后调用方只给正文。内部告警（console）的呈现口径见
- * AGENTS.md 决策表：用户可感 → `notifyError`；内部 → `console.error/warn`。
+ * docs/agents/decisions.md 决策表：用户可感 → `notifyError`；内部 → `console.error/warn`。
  */
 import { Notice } from 'obsidian';
 import { t, type Language, type TranslationKey } from './i18n';

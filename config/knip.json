@@ -1,0 +1,7 @@
+{
+	"$schema": "https://unpkg.com/knip@6/schema.json",
+	"entry": ["tests/setup.ts"],
+	"project": ["src/**/*.ts", "tests/**/*.ts", "vendor/**/*.d.cts"],
+	"esbuild": { "config": ["config/esbuild.config.mjs"] },
+	"stylelint": { "config": ["config/stylelint.config.mjs"] }
+}

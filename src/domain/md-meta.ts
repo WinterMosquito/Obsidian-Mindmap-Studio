@@ -90,7 +90,7 @@ type MdLinkStyle = 'wiki' | 'md';
  * 来源两处、语义不同：
  * - **解析期**：按原文形态记录（保往返——未编辑时 mdRaw 逐字回写，编辑后合成回写
  *   也须保持用户原本的写法，不能把 `![a](b.png)` 翻成 `![[b.png]]`）；
- * - **新建/换图**：跟随官方设置「Use \[\[Wikilinks\]\]」（见 platform/vault-prefs），
+ * - **新建/换图**：跟随官方设置「Use \[\[Wikilinks\]\]」（见 platform/workspace/vault-prefs），
  *   关闭时写 md 形态——官方该设置同时管 links 与 images。
  */
 type MdImageStyle = 'wiki' | 'md';
@@ -194,7 +194,8 @@ export interface MdNodeMeta {
 	 */
 	mdContinuationIndents?: number[];
 	/**
-	 * 本文档**顶层标题的起始级别**（1–6，只记在**虚拟根**的 data 上）。
+	 * 本文档**顶层标题的起始级别**（1–6，只记在**虚拟根**的 data 上）；
+	 * 空文档按列表设置初始化时记 null，表示根级新节点使用列表（见 K201）。
 	 *
 	 * 解析侧实测（顶层 heading 的**最小** `mdLevel`；无顶层标题时不记），写入侧
 	 * `md-heading-syntax.readHeadingStart` 读取并钳制，序列化用它决定「根级新建
@@ -206,7 +207,7 @@ export interface MdNodeMeta {
 	 * 为什么必须实测而不是读设置：逐文件的语法风格只存在于正文（设置项只管
 	 * 新建导图的种子与空文档），否则「改设置」会改写所有存量文件的行为。
 	 */
-	mdHeadingStart?: number;
+	mdHeadingStart?: number | null;
 	/** 链接样式：wiki 双链 / md 标准链接 */
 	mdLinkStyle?: MdLinkStyle;
 	/** md 链接的标签文本（autolink 时为目标 URL） */

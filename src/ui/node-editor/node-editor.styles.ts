@@ -1,0 +1,25 @@
+/** 编辑组件的基态样式：保持全内联，动态定位/字号/底色由组件布局更新。 */
+export const EDITOR_STYLES: Partial<CSSStyleDeclaration> = {
+	position: 'fixed',
+	zIndex: '3000',
+	boxSizing: 'border-box',
+	minWidth: '0',
+	minHeight: '0',
+	maxWidth: 'none',
+	maxHeight: 'none',
+	margin: '0',
+	padding: '4px 6px',
+	border: 'none',
+	borderRadius: '6px',
+	background: 'var(--background-primary)',
+	color: 'var(--text-normal)',
+	fontFamily: 'inherit',
+	fontSize: '14px',
+	lineHeight: '1.4',
+	resize: 'none',
+	overflow: 'hidden',
+	outline: 'none',
+	whiteSpace: 'pre-wrap',
+	wordBreak: 'break-word',
+};
+

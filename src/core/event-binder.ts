@@ -6,8 +6,8 @@
  * （与 `engine/mindmap-nodes.isNodeImageElement` 同族的坑）。这里按能力判定：
  * 有 `closest` 就当元素用；非元素（`window` / `null`）返回 null。
  *
- * 放 core 的理由：任务复选框（`features/view-node-task`）与标签 pill
- * （`features/view-tag`，含只读嵌入宿主）共用同一份判定，而它**不能**寄在
+ * 放 core 的理由：任务复选框（`features/content/view-node-task`）与标签 pill
+ * （`features/content/view-tag`，含只读嵌入宿主）共用同一份判定，而它**不能**寄在
  * 依赖引擎的模块里——嵌入路径的模块图不该为八行能力判定拖进 vendor。
  */
 export function elementFromTarget(

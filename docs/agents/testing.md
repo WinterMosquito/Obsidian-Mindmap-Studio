@@ -1,9 +1,15 @@
 # 测试与 CI（详录）
 
-> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留硬规则、决策表、命令与索引；
-> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 AGENTS.md 索引**。
+> 本文件由 AGENTS.md 迁出（2026-10-04 瘦身）。AGENTS.md 只保留固定规则、命令与读取入口；可变清单见 index.md，实现决策见 decisions.md；
+> 本文是**详录**，改代码前按需查阅，改约定时**同步更新 index.md / decisions.md 的对应记录**。
 
 ## 测试与 CI
+
+编辑态外观（K199）：`engine-editor.test.ts` 验证节点/画布取色与原显示方法只调用一次；`node-inline-editor.test.ts` 验证缩放后的内容盒起点、字体与自适应宽高（现行策略见 K203）。`verify:visual` 的 `inline-edit` 探针在真实 Chrome 中覆盖中心/分支的三档缩放与亮暗画布、节点配色，不替代 Obsidian 实机的 IME、主题 CSS 与操作手感验收。
+
+画布交互（K200）：`view-canvas-interaction.test.ts` 捕获真实 `MindMapView` 构造器交给控制器的特性装配回调，保留真实节点动作与事件绑定后派发空白连续点击 / 双击，断言不插入节点；同时验证节点双击仍编辑、显式新建仍立即编辑。其它特性使用局部桩，右键菜单行为由 `view-context-menu.test.ts` 另测；Obsidian 实机仍需验证空白点击结束编辑、取消选中与 Tab / Enter / 加号手感。
+
+新建空图（K201）：`creation-folder.test.ts` 验证中英文创建内容均为空正文，并复用空文档播种入口验证列表/一级标题/二级标题的首个分支与子分支往返；`view-canvas-interaction.test.ts` 验证应用空会话快照后重新播种且不修改输入；`save-pipeline.test.ts` 验证仅打开空图再关闭不写盘。Obsidian 实机的创建弹窗、首个 Tab 节点与撤销手感仍需人工确认。
 
 ```bash
 npm test            # vitest run（CI 在 build 后、lint 前执行）
@@ -16,7 +22,7 @@ npm run check:gates  # 上链的可执行形态：按 git 变更集算附加门�
 ```
 
 `check:gates` 的边界：豁免表行数对账（精确差）与「未登记超限」核对**每次都跑**，前者可用
-`--fix-lines` 回填（`AGENTS.md` 唯一那张）；`--all` 会连 `build:vendor` 一起跑——重打包依赖须先
+`--fix-lines` 回填（`docs/agents/index.md` 唯一那张）；`--all` 会连 `build:vendor` 一起跑——重打包依赖须先
 安装（`@svgdotjs/svg.js` 等，见 `vendor/BUILD.md`「打包面依赖」，本仓库 `package.json` **有意**不
 声明），只改普通源文件时**不要**加 `--all`（变更集规则会自动跳过它）。
 
@@ -34,7 +40,7 @@ coverage（主矩阵版本，并上传 coverage 产物）→ lint → `lint:css`
 
 **CSS 检查（stylelint）**：`styles.css` 是发布资产，而官方目录 scanner 在 release 模式
 **强制**对该文件跑 stylelint（`obsidian-workflows/src/lint.ts:246-329`、`:565`，目标 `**/*.css`）。
-本地配置在 `stylelint.config.mjs`，规则面照抄官方 `SCANNER_STYLELINT_CONFIG`
+本地配置在 `config/stylelint.config.mjs`，规则面照抄官方 `SCANNER_STYLELINT_CONFIG`
 （`src/lint.ts:10-123`），其中**唯一 error 级**规则是 `function-url-scheme-disallowed-list`
 （禁止 `url()` 里出现 `http`/`https`/`file`，只允许 `data:`）——这是「主题/插件不得从网络
 加载资源」的机械落点。三条维护要点：
@@ -60,10 +66,10 @@ app 版本，唯一正确的不变式是「当前版本」那一条。
 浏览器缺失仍然直接失败（`--require-chrome`），不静默跳过。
 
 **已知缺口：小地图没有视觉门禁**（2026-10-24 登记；判定为「不需要常驻补」，理由见下）。
-`features/view-minimap`、`core/minimap-geometry` 与引擎读取面已由
-`tests/view-minimap.test.ts`（**22** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
-`tests/minimap-geometry.test.ts`（**69** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
-`tests/engine-minimap-capture.test.ts`（**15** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
+`features/view/view-minimap`、`core/minimap-geometry` 与引擎读取面已由
+`tests/features/view/view-minimap.test.ts`（**29** 例，fake DOM + fake window；2026-10-26 补两条：淡出后渲染落地不复活 / `resize` 算用户手势可复活）、
+`tests/core/minimap-geometry.test.ts`（**80** 例纯几何；2026-10-27 补三条＝节点配色逐块上色、颜色进帧指纹、SVG 单块 `fill`）与
+`tests/engine/engine-minimap-capture.test.ts`（**16** 例，`captureMiniMap` 的 unknown 收窄与回落 +「>500 只画前 7 层」的分档）覆盖，剩下只有两类
 **肉眼一眼可见**的风险：CSS 级联（面板定位/层级/pointer-events/过渡）与 `<img>` 对
 data-URL SVG 的解码。往 `verify:visual` 加场景需要把 features 层也 bundle 进页面并补
 Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— 投入产出比不划算。
@@ -76,7 +82,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 > **obsidian 替身必须与源码的具名导入同步**：`verify:visual` 把真实 `src/**` 打进浏览器，
 > 任何模块新增 `import { x } from 'obsidian'` 都要在 `scripts/verify-visual.mjs` 的
 > `OBSIDIAN_SHIM_SOURCE` 补同名导出，否则会停在构建阶段 `No matching export … for import "x"`
-> （2026-10-23 因 `platform/math-jax-fonts.ts` 新增 `requestUrl` 踩到；同期 `tests/mocks/obsidian.ts` 也要补）。
+> （2026-10-23 因 `platform/rendering/math/math-jax-fonts.ts` 新增 `requestUrl` 踩到；同期 `tests/mocks/obsidian.ts` 也要补）。
 - `verify:visual`：把 `src/engine/mindmap.ts`（纯模块）esbuild 成浏览器 IIFE，配仓库真实
   `styles.css` 在无头 Chrome 里渲染 **16 个场景**（plain / doc / url / empty / attach / docnode / long / inline / markup / syntax / math / codeblock / paragraph / table / callout / hugeline；2026-11-11 加 `callout`，逐项 ✓）并断言 `--dump-dom`——三类链接图标分流与
   图标尺寸（18×18）、回形针标题、画布铺满容器、节点测宽随文本（不被容器拉平）、
@@ -157,7 +163,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
   `CHROME_PATH` 指定浏览器，路径不存在时自动回落到平台默认安装位置）。
 - vitest 配置 `vitest.config.ts`：`obsidian` → `tests/mocks/obsidian.ts` alias（包仅有类型声明，无运行时 JS）。
   coverage 含 `src/**`（排除 `core/i18n`、`core/constants` 纯文案与常量表），vendor 为预打包产物不纳入。
-- **有 DOM 副作用的模块怎么测（fake DOM 手法，`tests/view-minimap.test.ts` 为范式）**：环境是
+- **有 DOM 副作用的模块怎么测（fake DOM 手法，`tests/features/view/view-minimap.test.ts` 为范式）**：环境是
   `node`、**没有 jsdom**（引入即触发依赖审批），故不要为了测一个会话状态机去装 DOM 库。
   做法是跑**真实模块** + 最小替身：`FakeEl` 只实现模块实际调用的 Obsidian DOM 子集
   （`createDiv` / `createEl` / `addClass` / `removeClass` / `setAttribute` / `removeAttribute` /
@@ -171,7 +177,7 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
   （`el.setAttribute('style', …)` 会触发 `no-static-styles-assignment`）。
   **这类测试替代不了真实浏览器**：CSS 级联与布局仍归 `verify:visual`（小地图那部分见本文件前段「已知缺口」）。
 - `tsconfig.json` 纳入 `src/`、`tests/`、`vendor/**/*.d.cts`，**以及三个发布相关配置
-  （`eslint.config.mts` / `stylelint.config.mjs` / `manifest.json`）**；`npm run build` 先
+  （`eslint.config.mts` / `config/stylelint.config.mjs` / `manifest.json`）**；`npm run build` 先
   `tsc -noEmit` 类型检查全部。2026-10-04 为此开了 `checkJs`（否则 `.mjs` 只过语法
   不过是语义）与 `resolveJsonModule`（让 manifest 进项目文件集，JSON 语法错即 build 失败），
   并因此**退役了 ESLint 的 `allowDefaultProject`**——那三个文件不再靠「默认工程」兜底，
@@ -215,13 +221,13 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 ## 文档契约测试（`agents-md-sync` / `docs-standard`）
 
 文档不是「写完就算」：**它的关键不变量由测试兜住**，漏做是红灯，不靠自觉。六条契约在
-`tests/agents-md-sync.test.ts`：
+`tests/contracts/agents-md-sync.test.ts`：
 
 1. **源文件登记**：`src/**` 与 `tests/**` 每个 `.ts` 的 basename 都要以**独立 token** 出现在
-   `AGENTS.md` 的代码结构清单里（按 `[^\w.-]+` 切词——`tree.ts` 不会被 `links-tree.ts` 误命中）。
-2. **文档登记**：`AGENTS.md` 的 `docs/` 清单里列出的每个具体文档必须真实存在
+   `docs/agents/index.md` 的代码结构清单里（按 `[^\w.-]+` 切词——`tree.ts` 不会被 `links-tree.ts` 误命中）。
+2. **文档登记**：`docs/agents/index.md` 的 `docs/` 清单里列出的每个具体文档必须真实存在
    （`release-notes-<tag>.md` 是模式行，跳过）。
-3. **K 区间**：`AGENTS.md` docs 清单与 `conventions.md` 标题里的 `K1–K<n>` 必须等于
+3. **K 区间**：`index.md` docs 清单与 `conventions.md` 标题里的 `K1–K<n>` 必须等于
    `conventions.md` 的**实际最大编号**（2026-11-06 加；此前靠人工追，日志里连改过三次）。
 4. **K 交叉引用**：全仓（`src` / `tests` / `docs` / `AGENTS.md` / `README.md` / `vendor/BUILD.md`）
    引用的 `K<n>` 都要有 `- [K<n>]` 条目，悬空引用红灯。**扫面刻意排除** `vendor/upstream/` 与
@@ -229,11 +235,63 @@ Obsidian DOM 助手，而这道门禁在 CI 里是 `continue-on-error` —— �
 5. **表格列数**：每张 Markdown 表的每个数据行都要与表头**同列数**——行内代码（代码示例、
    正则、wikilink 尺寸）里的 `|` 必须写成 `\|`。GFM 把它当列分隔符，不转义就多出几列、内容被
    截断，而源码里几乎看不出来（2026-11-06 审计一次抓出 6 行 / 13 个）。围栏代码块内的行不参与。
-6. **豁免表行数**：`AGENTS.md` 登记的行数与实测偏差不得超过 `min(登记值 +15%, 登记值 +50 行)`
-   ——文件改大/缩小后忘回填会红灯。精确回填跑 `npm run check:gates -- --fix-lines`（`AGENTS.md` 唯一那张表；`architecture.md` 自 2026-11-09 起不再复制）。
+6. **豁免表行数**：`index.md` 登记的行数与实测偏差不得超过 `min(登记值 +15%, 登记值 +50 行)`
+   ——文件改大/缩小后忘回填会红灯。精确回填跑 `npm run check:gates -- --fix-lines`（`docs/agents/index.md` 唯一那张表；`architecture.md` 自 2026-11-09 起不再复制）。
 
-另两条独立契约：`tests/docs-standard.test.ts`（标准文档引用的符号真实存在 ＋ 附录版本指针
-== `manifest.version`）、`tests/module-boundaries.test.ts`（依赖图 / 组内成环 / 新组未登记）。
+另两条独立契约：`tests/contracts/docs-standard.test.ts`（标准文档引用的符号真实存在 ＋ 附录版本指针
+== `manifest.version`）、`tests/contracts/module-boundaries.test.ts`（依赖图 / 组内成环 / 新组未登记）。
 
 **改这些判据时**：口径写进**测试文件头注释**（为什么这样写、换一种写法会误伤什么），别只写进
 提交信息——那段注释才是下一个人（或 agent）的上下文。
+
+索引迁移（K202）：`agents-md-sync.test.ts` 从 `index.md` 校验源码/测试清单、文档入口、K 区间及规模表，并验证入口链接可定位索引。`check-gates.test.ts` 在隔离临时目录执行真实 `--fix-lines` 脚本，断言只回填索引、入口逐字不变。
+
+编辑框自适应（K203）：`node-inline-editor.test.ts` 验证增长与无滚动、预览不写树/排保存，以及关闭时恢复原节点显示。浏览器探针覆盖根/普通节点在四档缩放下的短中文→长中文→短中文，断言尺寸增长/收回、内容无滚动裁切、预览不改变节点与关闭恢复。IME 和实际主题下的操作手感仍需 Obsidian 人工确认。
+
+编辑态高亮（K204）：原生空节点与插件原文编辑共用暂藏/恢复和细高亮。`engine-editor.test.ts` 直测显示/关闭一次、精确且幂等恢复原属性、缩放重开、移除/销毁及私有关闭方法缺失；`verify:visual` 先选中再编辑，四档缩放 × 亮/暗/节点底色验证原生空节点短→长→短的自适应、旧 SVG 高亮隐藏、编辑面细高亮存在、输入不改节点及关闭恢复。人工补验：新建节点即时输入、已有节点双击/F2、中文 IME、Enter 提交/撤销与保存重开。
+
+结构拖动（K205）：`engine-drag-target.test.ts` 调用实际 vendor 方法，替换的只是 SVG 绘制面；覆盖密集节点缩放分区、固定屏幕容差/退出滞后、精确命中优先、同级前后插入、折叠/被拖分支过滤、所属窗口 rAF 与 32ms 兜底、实时视口变换、松手刷新/取消帧、无目标回原位及多选一次命令。`verify:visual` 的 structural-drag 探针覆盖六布局 × 四档缩放的真实 DOM 鼠标手势，验证预览不改数据/历史、落点预览与 node_dragend 一致、无自由坐标、一次历史及默认逻辑布局下的撤销/同级插入；子节点高亮与同级插入槽均按各布局原生显示验证。探针在其它合成鼠标用例收尾后启动，避免它们的 mouseup 抢先结束本手势。Obsidian 人工补验：实际长节点/密集导图的拖动手感、折叠目标、松手后保存重开、多视图及撤销/重做。
+
+常驻工具栏（K206）：四组共 10 个按钮，视图组不含整理/sparkles；整理的三种结果仍由原用例覆盖，右键与命令入口保留。
+
+
+**UI 组件与 CSS 汇总（K207）**：`view-toolbar.test.ts` / `view-search.test.ts` 保留动作与搜索行为回归，增加重建/销毁解绑、任务取消、就地历史刷新；`css-build.test.ts` 在隔离目录执行真实 esbuild 配置，校验发布文件名、import 展开、级联顺序及 dev CSS 监听，未修改仓库产物。`check-gates.test.ts` 覆盖新触发路径。`verify:visual` 复用 Chrome 驱动运行独立 UI 页（探针在 `scripts/visual-ui.mjs`），检验真实 DOM、disabled、键盘、焦点与解绑，并将当前生成 CSS 与 `HEAD:styles.css` 在两档宽度 × 两种底色变量下逐项比较计算值。Obsidian 图标/tooltip 用最小宿主替身；本项不能证明真实 Obsidian 插件已加载或主题手感正常，实机仍需人工验收。
+
+
+**节点编辑第二批（K208）**：`node-edit-key.test.ts` 直接覆盖 16 种 Enter 修饰键组合；`node-editor.test.ts` 不加载导图，验证尺寸、按键/IME、事件隔离、焦点和销毁。DOM 夹具共用 `tests/helpers/node-editor-dom.ts`，输入监听真实记录/移除。`node-inline-editor.test.ts` 保留提交/图片兼容回归，并验证单次会话引擎监听解绑、重复打开不累积、DOM 换代恢复与两个引擎独立。`node-content-write.test.ts` 用真实解析/序列化验证批量写回顺序、行内空白和结构字段、一次历史/保存以及 afterCommit:false。原 `verify:visual` 的内联编辑/原生空节点探针继续覆盖四档缩放、自适应无滚动、原节点暂藏/恢复与保存次数；`src/ui/node-editor/` 与按键语义文件均进入视觉门禁触发面。真实 Obsidian IME/主题/多视图编辑手感仍需实机验收。
+
+
+**节点内容第三批（K209）**：`node-content-components.test.ts` 直测组件的递归回调、缓存同步、占位归属、任务基线/勾色、脚注 id 与锚点契约；它与 `node-inline-content.test.ts` 共用 `tests/helpers/node-content-dom.ts`，装配回归仍从既有入口运行。`math-placeholder.test.ts` 的构建消费方改指 `content-math.ts`，占位模板仍只有一份。`verify:visual` 复用 Chrome 驱动执行 `scripts/visual-node-content.mjs` 的独立比较页：用 Git/tar 从 HEAD 提取完整 src 快照后分别打包（避免基线读取当前已改组件），将 HEAD 与当前的 DOM/内联样式/测量键、XML 导出序列化、尺寸和注入调用逐项比较，并检查输入树未修改。图像/公式/代码的实际异步平台路径仍由原探针覆盖；实机 Obsidian 的主题、IME、悬停与编辑手感仍留人工验收。
+
+**目录与分层索引（K210）**：`agents-md-sync.test.ts` 从「代码结构索引」的 bullet 链接解析完整 `src/`、`tests/` 路径，双向检查漏登、陈旧与重复，并校验「参考文档」的具体链接；解析用例覆盖嵌套目录、同名文件、旧目录与段落隔离。`check-gates.test.ts` 覆盖迁移后的内容、编辑、画布与平台渲染触发面。`scripts/visual-node-content.mjs` 依据 HEAD 独立快照实际存在的旧/新入口生成比较页，入口不存在即报错，不回落当前源码；临时快照测试验证两种结构与缺失失败。模块边界仍由同一一级目录矩阵校验。
+
+**测试目录对齐（K211）**：模块测试按 `src` 一级组与能力子目录归档，工程契约在 `tests/contracts/`；根目录保留组合入口测试和 `setup.ts`，共享 `helpers/`、`mocks/` 与 `fixtures/` 不移动。定位方式是「被测源码目录 → 同目录测试组」，文件名与既有断言保持。Vitest 的 `tests/**/*.test.ts`、tsc 的 `tests/**/*.ts` 和宿主 alias/setup 位置已支持递归，不改匹配范围；单文件命令使用索引中的真实路径。依赖矩阵仍只约束 src，测试可组合多个模块验证行为。目录迁移校验既有测试总数与 baseline 相等，并确认根目录、Markdown 语料、CSS 隔离构建和真实 vendor 加载仍指向原文件。
+
+**工具配置归档（K212）**：`tests/contracts/css-build.test.ts` 复制真实 `config/esbuild.config.mjs` 到同构隔离目录，验证从其它 cwd 的生产输出与 dev CSS watch；同文件通过真实 Stylelint API 断言 coverage CSS 仍被忽略。`tests/contracts/version-bump.test.ts` 在隔离包中执行 `scripts/version-bump.mjs`，覆盖其它 cwd、三处版本同步、历史保留、无差异不写盘及非法版本不改文件。`check-gates.test.ts` 锁住移动后的构建/CSS/Knip 触发面。全量工具入口继续通过 npm 命令执行；Knip 显式配置插件位置，避免配置移出根目录后漏掉配置依赖或生产入口。
+
+**去除历史兼容（K213）**：删除旧属性迁移测试，当前声明测试验证旧长布局名不被识别；嵌入测试验证旧指令显示非法值并回落默认，手动打开测试验证使用当前种子布局。配色测试覆盖所有现值及旧名回退，设置测试验证数字字符串被拒绝并记录字段；视图状态测试验证当前字段投影、不修改冻结输入和不触发持久化。图片回写测试验证显式文件名文本被保留。既有 Markdown 往返、保存、文档会话、撤销及真实 Chrome 探针继续运行。
+
+### 右侧缩略图（K215）
+
+`tests/platform/workspace/minimap-sidebar.test.ts` 验证只借一枚右侧 Outline、Markdown/卸载恢复、来源切换、原容器清理、边栏折叠与异步 fallback 跨生命周期清理；`view-minimap.test.ts` 补侧栏常驻、小图显示、隐藏不测树、短节流刷新、滚轮锚点与跨窗口拒绝。原几何与浮层回退测试继续保留。
+
+`verify:visual` 的独立 `visual-minimap-sidebar.mjs` 页经 `scripts/chrome-page.mjs` 的真实时钟 CDP pipe（兼容 Node20，不依赖 WebSocket 全局或额外包）运行，使用真实引擎和 CSS 检查 SVG 解码、整个面板尺寸、多源绑定、视口拖动/滚轮缩放、切布局、真实 ResizeObserver 尺寸变化、隐藏/折叠恢复与 Outline 原内容/导航控件还原，tag 面板保持可见。Workspace/ItemView 是官方接口替身；不把 Chrome 结果当成真实 Obsidian 已加载或主题手感验收。
+
+侧栏页保留 17 项交互/生命周期检查，并对宽图、高图、2300 节点抽样大图、六布局与 RTL 做 20 组绘制 fit 检查：逐个量取真实 SVG rect/path 的 bbox，要求至少 10px 实际边缘空白，图/面板/承载原点与尺寸一致，无水平滚动隐藏溢出，当前 capture 与显示图片同帧，蓝框实际屏幕矩形与唯一投影一致。页面使用真实 ItemView 层级及宿主 specificity 的盒模型/图片样式压力；ResizeObserver 拉宽至 500px 不手动发 workspace/layout 事件。核心 geometry/capture 与 CDP helper 均触发视觉门禁并有触发契约直测。实际 Obsidian 主题手感与完整 leaf/引擎不重建的跨窗口搬运仍需手验。
+
+画布热键拖拽（K216）：`settings-canvas-drag.test.ts` 锁定默认关闭、显式 true/false 持久化/加载、坏值归一、双语原名、声明式控件和差集刷新；`engine-canvas-drag.test.ts` 直测互斥判据与真实 vendor 的 Mod 节点起手；`mindmap-wiki-icon.test.ts` 的现有引擎构造捕获桩验证未传选项默认 false、显式 true/false 保留及只读配置省略；`view-canvas-interaction.test.ts` 验证原地设置应用不重建或投影会话快照。`verify:visual` 的 `visual-canvas-drag.mjs` 使用独立页面/Chrome profile，在真实浏览器派发 DOM 鼠标手势，覆盖两档设置 × plain/Ctrl/Meta × 0.5/1/2.35 缩放、真实选区与平移、中键/右键/菜单/滚轮、节点/输入起手、中途切换与独立 Window、只读嵌入，并断言画布操作无 data_change/内容历史。该页与原结构拖动探针隔离；Obsidian 实机鼠标/触控板手感、平台原生 Ctrl 点击菜单及完整 popout 生命周期仍需人工验收。
+
+侧栏承载、view-minimap 或 visual-minimap-sidebar 探针变化会触发真实视觉门禁，触发面由 check-gates 与其契约测试共同维护。组合版本同时运行侧栏与热键拖拽两份独立浏览器页面，不因合并而遗漏其中一项。
+
+创建入口与命名弹窗（K217）：`language-refresh.test.ts` 验证命令注册/语言刷新不注册丝带按钮且保留两个创建命令，既有 ID/语言刷新顺序继续直测；`modal-input.test.ts` 与 `creation-folder.test.ts` 保留空名、确认、取消及落点回归。`verify:visual` 的 `visual-ui.mjs` 页使用真实命名表单代码与官方 Modal/按钮的最小 DOM 替身，覆盖窄宽 × 明暗四组，验证中号弹窗圆角、宿主输入圆角、输入宽度、空名禁用及 Enter/Esc。替身不证明实际 Obsidian 已重载，主题和操作手感留实机验收。
+
+临时导图与专用文件（K218）：`md-open-trigger` 直测打开/返回零属性写入及标签选择隔离；`mindmap-auto-open` 覆盖普通笔记重启恢复、显式临时打开保留与专用图返回不被后台反转。`markdown-mindmap-action` 验证标题栏去重、语言、分屏文件归属和卸载；`view-temporary-state` / `engine-controller` 验证普通笔记布局/视口/外观不持久化，`document-session` 验证无属性文件节点编辑仍保存正文、撤销仍原样恢复。`mindmap-file` / `creation-folder` / `view-title-renamer` 锁定后缀、编号与改名；`verify:visual` 的 UI 页覆盖真实 DOM 标题栏按钮点击与清理，使用官方 API 替身，实际 Obsidian 的未保存编辑切换、后台标签/独立窗口、重启恢复仍需实机验收。
+
+
+## 插件内容渲染桥（K219）
+
+- 纯逻辑：`tests/markdown/md-codeblocks.test.ts` 覆盖围栏顺序、嵌套、引用、CRLF、删除与陈旧源码拒绝；`tests/core/plugin-content-types.test.ts` 覆盖跨窗口事件能力判定。
+- 内容装配：节点内容测试覆盖超长已登记围栏的完整源码；共享会话测试覆盖陈旧视图不能提交。
+- `scripts/visual-plugin-content.mjs` 进入 `verify:visual`，用真实 Chrome 的替身处理器验证惰性启动、活动 DOM/按钮复用、异步 SVG、尺寸、导出及删除/关闭清理；桥与接口变更触发门禁。
+- `scripts/verify-plugin-obsidian.mjs` 使用实际 TikZJax 与配套 CodeTab，在独立临时 Obsidian 库验证零写盘打开、标签切换增高、编辑焦点、正文保存、共享撤销、增改标签、SVG 冻结与只读嵌入。运行参数、版本依赖和边界见 [渲染桥说明](../plugin-content-rendering.md)。
+- 替身 Chrome 验证不等同于第三方插件实际运行；两类证据分别记录。实际库中的主题、缩放和日常插件组合仍由用户验收。

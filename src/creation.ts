@@ -1,14 +1,15 @@
 /**
- * 新建思维导图：创建普通 `命名.md` 文件，正文带启用信号与布局键
+ * 新建思维导图：创建普通 `命名.mindmap.md` 文件，正文带启用信号与布局键
  * （`Mindmap: Mindmap` + `Mindmap Layout: <kebab>`）。
  *
- * 渲染层定位：新文件是标准 Markdown（属性块 + 提示列表），双击/链接打开落在
+ * 渲染层定位：新文件是标准 Markdown（属性块 + 空正文），双击/链接打开落在
  * Obsidian markdown 视图；本模块负责流程（命名、落盘、打开），并在创建后自动
  * 把当前标签切换到导图视图（openAsMindMap）。
  *
  * 布局取设置 `defaultLayout`（**种子值**：写进新文件的属性后，该文件此后只认
- * 自己的属性，改设置不会影响它）。
+ * 自己的属性，改设置不会影响它）。仅有中心节点，不预置提示分支（见 K201）。
  */
+import { MINDMAP_FILE_SUFFIX, mindMapFileName } from './domain/mindmap-file';
 import { App, Notice, normalizePath, type TFile, type TFolder } from 'obsidian';
 import { notifyError } from './core/errors';
 import { t } from './core/i18n';
@@ -58,18 +59,15 @@ export async function createNewMindMap(
 	if (name === null) {
 		return; // 用户取消
 	}
-	// 用户可能在弹窗里连扩展名一起输入：容忍 `.md` 后缀，不产生 `x.md.md`
-	const baseName = (name || defaultName).replace(/\.md$/i, '');
-	const fileName = ensureUniqueFileName(app, folder, `${baseName}.md`);
+	// 名称输入可带 .md 或 .mindmap.md；完整格式后缀只附加一次。
+	const enteredName = mindMapFileName(name || defaultName);
+	const fileName = ensureUniqueFileName(app, folder,
+		enteredName === MINDMAP_FILE_SUFFIX ? mindMapFileName(defaultName) : enteredName);
 	const path = toVaultPath(folder, fileName);
-	// 新建内容为标准 Markdown 大纲；中心主题 = 文件名（虚拟文档根）。
+	// 新建内容只有属性块，正文为空；中心主题 = 文件名去掉 .mindmap.md 后缀（虚拟文档根）。
 	// 布局写的是**种子值**（设置 defaultLayout 的标准属性值）：之后该文件只认
 	// 自己的属性，改设置不会回头影响它。
-	const content = createDefaultMarkdownContent(
-		language,
-		settings.defaultLayout,
-		settings.newMapSyntax,
-	);
+	const content = createDefaultMarkdownContent(settings.defaultLayout);
 
 	let file: TFile;
 	try {
@@ -129,7 +127,7 @@ function resolveNewMindMapFolder(
 			// 的求解目标（鸡生蛋）且不参与该推断，故只传不含目录的占位名。
 			return app.fileManager.getNewFileParent(
 				activeFile?.path ?? '',
-				'UNTITLED.md',
+				'UNTITLED.mindmap.md',
 			);
 	}
 }
@@ -163,15 +161,15 @@ function toVaultPath(folder: string, name: string): string {
 }
 
 /** 同一目录下重名时自动追加序号（Obsidian 惯例：名称 1、名称 2...）。
- *  序号插在扩展名之前（名称 1.md）。纯同步查询（`getFileByPath`/`getFolderByPath`）。 */
+ *  序号插在完整格式后缀之前（名称 1.mindmap.md）。纯同步查询（`getFileByPath`/`getFolderByPath`）。 */
 function ensureUniqueFileName(
 	app: App,
 	folder: string,
 	fileName: string,
 ): string {
-	// 拆分 stem 与扩展名（调用方保证传入 `*.md`；无扩展名时整体当 stem）
-	const stem = fileName.replace(/\.[^.]+$/, '') || fileName;
-	const extension = fileName.slice(stem.length);
+	// 调用方保证完整 .mindmap.md 后缀；编号后依然能按专用导图识别。
+	const stem = fileName.slice(0, -MINDMAP_FILE_SUFFIX.length);
+	const extension = MINDMAP_FILE_SUFFIX;
 	let candidate = fileName;
 	let index = 1;
 	// 性能：候选路径存在性检查代替全库路径 Set 构建（大库下每次创建 O(1)）；

@@ -25,6 +25,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { App } from 'obsidian';
+import { parseMdOutline } from '../src/markdown/md-outline';
+import { serializeMdBody } from '../src/markdown/md-serialize';
+import { seedHeadingStart } from '../src/markdown/md-heading-syntax';
+import { headingStartOfSyntax, type NewMapSyntax } from '../src/core/constants';
 import { createNewMindMap, type NewMindMapSettings } from '../src/creation';
 
 /** 用例间清空 mock 调用记录（两个 describe 共用，故置于文件级） */
@@ -171,8 +175,45 @@ function settingsStub(
 
 /** 期望的文件名（新建一律是普通 `.md`；导图身份靠正文的属性声明） */
 function expectedFileName(): string {
-	return `${TYPED_NAME}.md`;
+	return `${TYPED_NAME}.mindmap.md`;
 }
+
+describe('新建导图从中心节点开始（K201）', () => {
+	it.each(['zh', 'en'] as const)('语言 %s：实际创建文件只含属性块与空正文', async (language) => {
+		const stub = createStubApp();
+		await createNewMindMap(stub.app, settingsStub({ language }), '');
+		expect(stub.created).toHaveLength(1);
+		expect(stub.created[0]!.content).toBe(
+			'---\nMindmap: Mindmap\nMindmap Layout: logical\n---\n\n',
+		);
+		const parsed = parseMdOutline(stub.created[0]!.content, TYPED_NAME);
+		expect(parsed.tree.data.text).toBe(TYPED_NAME);
+		expect(parsed.tree.children).toEqual([]);
+	});
+
+	it.each<[NewMapSyntax, string]>([
+		['list', '- 第一分支\n  - 子分支'],
+		['h1', '# 第一分支\n\n## 子分支'],
+		['h2', '## 第一分支\n\n### 子分支'],
+	])('空图 %s 模式：首次新增分支按设置序列化，并保留层级', async (syntax, expected) => {
+		const stub = createStubApp();
+		await createNewMindMap(stub.app, settingsStub({ newMapSyntax: syntax }), '');
+		const tree = parseMdOutline(stub.created[0]!.content, TYPED_NAME).tree;
+		expect(tree.children).toEqual([]);
+		// 复用视图加载空文档时的同一个初始化入口；新增节点没有旧行可跟随。
+		seedHeadingStart(tree, headingStartOfSyntax(syntax));
+		tree.children.push({
+			data: { text: '第一分支' },
+			children: [{ data: { text: '子分支' }, children: [] }],
+		});
+		const out = serializeMdBody(tree);
+		expect(out).toBe(expected);
+		const reopened = parseMdOutline(out, TYPED_NAME).tree;
+		expect(reopened.children.map((node) => node.data.text)).toEqual(['第一分支']);
+		expect(reopened.children[0]!.children.map((node) => node.data.text)).toEqual(['子分支']);
+		expect(serializeMdBody(reopened)).toBe(out);
+	});
+});
 
 describe('新建思维导图的落点判定', () => {
 	describe('显式落点（右键文件夹 /「在当前文件夹新建」）：不受设置影响', () => {
@@ -318,7 +359,7 @@ describe('新建思维导图的落点判定', () => {
 		await createNewMindMap(stub.app, settingsStub(), '');
 		// 首次探针用库根口径（不带前导斜杠），命中后追加序号 1
 		expect(stub.probedPaths[0]).toBe(expectedFileName());
-		expect(stub.created[0]?.path).toBe('测试导图 1.md');
+		expect(stub.created[0]?.path).toBe('测试导图 1.mindmap.md');
 	});
 });
 

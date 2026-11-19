@@ -1,0 +1,73 @@
+/* ========== 搜索栏 ========== */
+
+/* 搜索栏：底部居中的临时浮条（2026-10-22 从流内一条改为浮层）。
+   打开时不再挤占画布高度；层级高于右缘竖栏（`z-index: 20`），避免被其遮挡。 */
+.mindmap-search-bar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 6px 12px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-s);
+}
+
+.mindmap-search-bar-hidden {
+  display: none;
+}
+
+.mindmap-search-input {
+  flex: 1;
+  max-width: 300px;
+  padding: 6px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 13px;
+  outline: none;
+}
+
+.mindmap-search-input:focus {
+  border-color: var(--text-accent);
+  box-shadow: 0 0 0 2px var(--text-accent-hover);
+}
+
+.mindmap-search-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 50px;
+  text-align: center;
+}
+
+.mindmap-search-count.mindmap-search-no-result {
+  color: var(--text-error);
+}
+
+.mindmap-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mindmap-search-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+

@@ -4,6 +4,7 @@
  * 本模块是**叶子**（不依赖 engine/ 内其它模块）：`mindmap.ts` / `mindmap-nodes` /
  * `mindmap-clipboard` 都引用它——若留在 `mindmap.ts` 会与拆分后的子模块**构成环**。
  */
+import { isPluginContentTarget } from '../core/plugin-content-types';
 import type { MindMap } from '../../vendor/simple-mind-map.cjs';
 
 /**
@@ -85,6 +86,7 @@ export function shortcutGateAllows(
 	canvasEl: HTMLElement,
 	event: KeyboardEvent,
 ): boolean {
+	if (isPluginContentTarget(event.target)) return false;
 	const target = event.target as Node | null;
 	if (!target) {
 		return true; // 无目标（合成事件）：按默认放行

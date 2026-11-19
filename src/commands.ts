@@ -1,17 +1,17 @@
 /**
- * 用户入口注册：命令面板命令与丝带图标。
+ * 用户入口注册：命令面板命令。
  * 生命周期（registerView、事件监听、设置面板）由 main.ts 负责。
  */
-import { MarkdownView, Plugin, setTooltip, type TFile } from 'obsidian';
-import { MindMapView } from './features/view';
+import { MarkdownView, Plugin, type TFile } from 'obsidian';
+import { MindMapView } from './features/view/view';
 import { createNewMindMap, type NewMindMapSettings } from './creation';
-import { fitToScreen } from './features/view-viewport';
-import { declareAndOpenAsMindMap } from './markdown/md-open';
+import { fitToScreen } from './features/canvas/view-viewport';
+import { openAsMindMap } from './markdown/md-open';
 import { t, type TranslationKey } from './core/i18n';
 
 /**
  * commands 模块对宿主插件的窄化契约。
- * 仅用 addCommand/addRibbonIcon（Obsidian Plugin 基类）+ settings（命令文案
+ * 仅用 addCommand/removeCommand（Obsidian Plugin 基类）+ settings（命令文案
  * 语言 + 新建导图的落点设置，见 `NewMindMapSettings`）。
  * 替代 MindMapStudioPlugin 具体类引用，打破 commands ↔ main 循环。
  */
@@ -205,18 +205,15 @@ function registerDocumentCommands(plugin: CommandsHost): void {
 			if (checking) {
 				return true;
 			}
-			void declareAndOpenAsMindMap(
-				plugin.app,
+			void openAsMindMap(
 				view.leaf,
 				file,
-				plugin.settings.language,
-				plugin.settings.defaultLayout,
 			);
 			return true;
 		},
 	});
 
-	// md 文档：从导图视图切回 Markdown（并把导图声明持久降级为 Markdown）
+	// md 文档：从导图视图切回 Markdown（恢复进入前的编辑/阅读模式）
 	plugin.addCommand({
 		id: COMMAND_IDS.backToMarkdown,
 		name: t(plugin.settings.language, 'command.backToMarkdown'),
@@ -236,37 +233,12 @@ function registerDocumentCommands(plugin: CommandsHost): void {
 }
 
 /**
- * 创建丝带图标（onload 时调用一次）。
- * @returns 图标元素——官方无 removeRibbonIcon，语言变更时就地经官方
- * `setTooltip` 更新提示文案
- */
-export function addMindMapRibbonIcon(
-	plugin: CommandsHost,
-): HTMLElement {
-	return plugin.addRibbonIcon(
-		'network',
-		t(plugin.settings.language, 'command.createMindMap'),
-		() => {
-			void createNewMindMap(plugin.app, plugin.settings);
-		},
-	);
-}
-
-/**
  * 语言变更后刷新用户入口文案：命令面板在注册时缓存 `name`，故按 id
- * 先 `removeCommand` 再重注册（官方 1.7.2+ 提供 removeCommand）；
- * 丝带图标无移除 API，经官方 `setTooltip` 就地更新提示文案。
+ * 先 `removeCommand` 再重注册（官方 1.7.2+ 提供 removeCommand）。
  */
-export function refreshCommandLabels(
-	plugin: CommandsHost,
-	ribbonEl: HTMLElement | null,
-): void {
+export function refreshCommandLabels(plugin: CommandsHost): void {
 	for (const id of ALL_COMMAND_IDS) {
 		plugin.removeCommand(id);
 	}
 	registerCommands(plugin);
-	// 丝带图标无移除 API：经官方 setTooltip 就地更新提示（aria-label）
-	if (ribbonEl) {
-		setTooltip(ribbonEl, t(plugin.settings.language, 'command.createMindMap'));
-	}
 }

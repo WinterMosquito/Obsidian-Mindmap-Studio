@@ -189,7 +189,7 @@ export function findNodesByContentProducts(
 	// 缓存命中、构建期同步放置，故正常）。holder 类名不受替换影响，是稳定锚点。
 	const products = Array.from(
 		svg.querySelectorAll(
-			'.mindmap-node-inline-math, .mjx-container, .tmm-code-hl',
+			'.mindmap-node-inline-math, .mjx-container, .tmm-code-hl, .mindmap-plugin-block',
 		),
 	);
 	// 批量反查：一次遍历建表 + 逐元素沿祖先链查表，取代逐元素全树
@@ -335,7 +335,7 @@ export function revealNodeByUid(
  *
  * 两个消费方共用一份判定：
  * - 复制/剪切（`mindmap-clipboard`）——与引擎 `copyNode` 的选面语义一致；
- * - 节点配色（`features/view-node-color`）——颜色沿子树继承，只给顶层节点写
+ * - 节点配色（`features/editing/view-node-color`）——颜色沿子树继承，只给顶层节点写
  *   指令即可，多写只会让文件里堆一串重复注释。
  *
  * 保持输入顺序（调用方需要文档序时自行排序）。
@@ -370,7 +370,7 @@ export function getRenderRoot(mindMap: MindMap | null): MindMapNode | null {
 /**
  * 「分支层」：从根往下第一层**有多个兄弟**的节点。
  *
- * 用途：按分支自动上色（`features/view-node-color.applyBranchColors`）——不按
+ * 用途：按分支自动上色（`features/editing/view-node-color.applyBranchColors`）——不按
  * 固定深度取，因为 `# 标题` + `- 列表` 与 `# 项目` + `## 模块` 两种常见结构的
  * 分支分别落在第 1 / 2 层（根是文件名，比「文档标题」多占一层）。一路单链
  * （每层都只有一个孩子）时没有可分配的对象，返回空数组。
@@ -389,7 +389,7 @@ export function branchLayerOf(
  * 整棵**渲染树**的节点数（大图判定、状态栏计数共用口径）。
  *
  * 为什么按渲染树而不是 DOM：性能模式的 `removeSelf` 只把 group 摘下、不改
- * `parent.children`（实证见 `features/view-status` 文件头），故渲染树恒为全量
+ * `parent.children`（实证见 `features/view/view-status` 文件头），故渲染树恒为全量
  * ——视口外节点照样计数，也不受剪枝影响，零 DOM 查询。
  *
  * 此前「`countTreeNodes(getRenderRoot(mm))`」这层组合在 3 处各写一遍（状态栏、
@@ -413,7 +413,7 @@ export function getNodeGroupEl(node: MindMapNode): Element | null {
 export function getNodeDataString(node: MindMapNode, key: string): string {
 	// 归一语义的唯一实现在 core/node-data（本入口只做「按节点取 data」这一步）
 	return readNodeDataString(
-		node.getData?.() as Record<string, unknown> | null | undefined,
+		node.getData?.(),
 		key,
 	);
 }
@@ -535,7 +535,7 @@ export function isNodeCollapsed(node: MindMapNode): boolean {
  * **最后一次** `render()`——N 个节点 1 次重排。
  *
  * 收敛性：重建会重新调用 `customCreateNodeContent` → `buildMathElement`；
- * 因 `platform/math-jax` 的产物缓存已命中（定稿即入缓存），重建路径是**同步**
+ * 因 `platform/rendering/math/math-jax` 的产物缓存已命中（定稿即入缓存），重建路径是**同步**
  * 放置产物、**不再触发异步替换**，故不会再回调重排（无循环）。
  *
  * ⚠ `reRender` 缺失时**显式告警**（K85 ① 教训：静默跳过会让功能以无痕方式
@@ -604,7 +604,7 @@ export function setNodeImageSize(
  * popout（「在新窗口打开」）里的元素来自**另一个 realm**，对主窗口构造器的
  * `instanceof` 恒为 false。该判定散在调用点会裂成两种半失效：帧内预览静默不生效
  * （图不跟手）、hover 手柄永不出现——同一个图片元素、两条通道。故收在此处：
- * `previewNodeImageSize`（本模块）与 `features/image-resize` 共用同一实现。
+ * `previewNodeImageSize`（本模块）与 `features/media/image-resize` 共用同一实现。
  */
 export function isNodeImageElement(value: unknown): value is SVGImageElement {
 	const el = value as
@@ -939,4 +939,26 @@ function focusNodeTextEdit(mindMap: MindMap | null): void {
 			| undefined
 	)?.textEdit;
 	textEdit?.textEditNode?.focus();
+}
+
+
+/** 按 uid 查询完整渲染树，不激活、不居中，也不修改数据。 */
+export function findRenderNodeByUid(mindMap: MindMap | null, uid: string): MindMapNode | null {
+	const root = getRenderRoot(mindMap);
+	if (!root) return null;
+	const stack = [root];
+	while (stack.length) {
+		const node = stack.pop()!;
+		if (readNodeDataString(node.getData?.(), 'uid') === uid) return node;
+		stack.push(...(node.children ?? []));
+	}
+	return null;
+}
+
+
+/** 导出前等待自定义内容重建；运行时 render 支持回调，声明缺口仅在引擎层收口。 */
+export function renderWithCallback(mindMap: MindMap): Promise<void> {
+	return new Promise(resolve => {
+		(mindMap as unknown as { render: (callback: () => void) => void }).render(resolve);
+	});
 }

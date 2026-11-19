@@ -56,7 +56,7 @@ import { ViewportSession } from './engine-controller-viewport';
 import { buildCreateOptions } from './engine-controller-options';
 
 // 依赖契约已拆到同模块的 `engine-controller-deps`，此处**转出**保持既有
-// import 路径不变（`features/view.ts` 等按 `from './services/engine-controller'` 取类型）。
+// import 路径不变（`features/view/view.ts` 等按 `from './services/engine-controller'` 取类型）。
 export type { EngineControllerDeps };
 
 /** 节点图片点击的拖拽抑制窗口（拖拽落点在图片上时浏览器仍触发 click） */
@@ -297,7 +297,7 @@ export class EngineController {
 			return;
 		}
 		// 数据来源：引擎 `getData()` **本身已是深拷贝**（`command.getCopyData()`
-		// → `copyRenderTree` + `simpleDeepClone`，契约由 tests/vendor-contract.test.ts
+		// → `copyRenderTree` + `simpleDeepClone`，契约由 tests/contracts/vendor-contract.test.ts
 		// 钉住），initMindMap 内部还会再克隆一次（`handleData`）——2026-10-02 删除了
 		// 此前的第三份 `structuredClone`（其注释声称「防传活引用被就地修改」，该论据
 		// 在当前 vendor 行为下不成立；一轮重建原为 3 次全树拷贝）。
@@ -310,7 +310,7 @@ export class EngineController {
 			this.initMindMap(this.mindMap.getData());
 		} catch (error) {
 			// 用户可感：设置已改但界面停在旧布局，无任何提示会被当成「设置没生效」
-			//（AGENTS.md 决策表：静默跳过会让问题无痕退化）。
+			//（docs/agents/decisions.md 决策表：静默跳过会让问题无痕退化）。
 			console.error('重建引擎失败，保留当前实例', error);
 			notifyError(this.deps.getLang(), 'common.refreshFailed', error);
 		}
@@ -327,7 +327,7 @@ export class EngineController {
 		cancelEngineTimers(this.mindMap);
 		// 引擎归属登记（未定稿数学段）在销毁点清理：此刻该引擎的 holder 必然
 		// 不会再挂载，而其他引擎（多视图 / 嵌入）的条目须原样保留 ⇒ 按实例
-		// 身份精确清（语义见 deps.onEngineDisposed 与 platform/math-jax 的
+		// 身份精确清（语义见 deps.onEngineDisposed 与 platform/rendering/math/math-jax 的
 		// unsettledMath）。放在 destroyMindMap 之前：实例引用仍有效，且
 		// destroy 抛错也不至于把登记面留成孤儿。
 		if (this.mindMap) {
@@ -448,6 +448,7 @@ export class EngineController {
 	 * 纯浏览照样写盘）。视图的两条关闭路径（`onUnloadFile` / `onClose`）已按此排序。
 	 */
 	persistViewport(): void {
+		if (this.deps.shouldPersistViewState?.() === false) return;
 		const file = this.deps.getFile();
 		if (!file) {
 			return;
@@ -501,7 +502,7 @@ export class EngineController {
 			return;
 		}
 		const savedView =
-			this.viewport.defaultSignature === null
+			this.viewport.defaultSignature === null && this.deps.shouldPersistViewState?.() !== false
 				? this.deps.viewState.getView(file.path)
 				: null;
 		try {

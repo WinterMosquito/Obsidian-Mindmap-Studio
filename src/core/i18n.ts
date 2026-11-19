@@ -35,8 +35,6 @@ const ZH = {
 	'command.openAsMindMap': '以思维导图打开',
 	'command.openAsMarkdown': '以 Markdown 打开',
 	'command.backToMarkdown': '切换回 Markdown',
-	'command.downgradeFailed': '切换为 Markdown 文档失败：',
-	'command.upgradeFailed': '切换为思维导图文档失败：',
 	'command.splitLinksAll': '拆分文档内全部混排双链',
 	'modal.text.titleRaw': '编辑节点原文（Markdown）',
 	'modal.text.hintRaw':
@@ -53,6 +51,8 @@ const ZH = {
 	// （2026-11-11 用户裁决：只显示「脚注」）
 	'footnote.summaryLabel': '脚注',
 	'codeBlock.copy': '复制代码',
+	'pluginContent.nodeMissing': '节点已被删除或替换',
+	'pluginContent.blockChanged': '代码块已发生变化，请重新打开后编辑',
 	// mermaid 图容器的复制按钮（复制的是图的**源码**，不是渲染产物）
 	'mermaid.copy': '复制 Mermaid 源码',
 	// 任务复选框的无障碍标签（点击切换，无右键入口）
@@ -79,7 +79,6 @@ const ZH = {
 	'toolbar.resetZoom': '重置',
 	'toolbar.exportImage': '导出',
 	'toolbar.tipFit': '总览',
-	'toolbar.tipArrange': '整理',
 
 	// ===== 层级语法（标题 / 无序列表）=====
 	'syntax.title': '层级语法',
@@ -135,6 +134,7 @@ const ZH = {
 
 	// ===== 通用提示/通知 =====
 	'common.mindMap': '思维导图',
+	'minimap.title': '缩略图',
 	'common.notLoaded': '思维导图尚未加载',
 	'common.arrangeDone': '已整理思维导图',
 	'common.arrangeFailed': '无法整理思维导图',
@@ -170,10 +170,10 @@ const ZH = {
 	'common.nodeCreatedAndLinked': '已创建节点并链接到',
 	'common.cannotOpen': '无法打开该文件类型',
 	// 「用系统默认应用打开」的失败：主因是系统里没有关联应用，与「文件类型不受支持」
-	// 不同源，故独立成键（见 platform/system-open.surfaceOpenResult）
+	// 不同源，故独立成键（见 platform/system/system-open.surfaceOpenResult）
 	'common.systemOpenFailed': '无法用系统默认应用打开该文件',
 	'common.refreshFailed': '应用设置后重绘导图失败，已保留当前视图：',
-	// 官方 Canvas：双击画布空白新建卡片 / 空白右键「新建节点」
+	// 空白右键菜单：显式新建节点（空白双击不新建，见 K200）
 	'menu.newNode': '新建节点',
 
 	// ===== 拖拽/导入 =====
@@ -269,12 +269,15 @@ const ZH = {
 		'「指定的文件夹」模式使用的目录\n目录不存在时，新建导图保存到仓库根目录',
 	'settings.newMapSyntax': '新建导图的层级语法',
 	'settings.newMapSyntaxDesc':
-		'新建导图的正文语法\n列表：用无序列表表达层级；标题：用 Markdown 标题表达层级（可从一级或二级开始，六级之后回落列表）\n只影响新建与空的导图；已有导图按自身写法回写，可在右键菜单「层级语法」中转换',
+		'空导图首次新增节点的语法\n列表：用无序列表表达层级；标题：用 Markdown 标题表达层级（可从一级或二级开始，六级之后回落列表）\n只影响新建与空的导图；已有导图按自身写法回写，可在右键菜单「层级语法」中转换',
 	'settings.saveFolderPlaceholder': '文件夹路径',
 	'settings.autoSplitMixedLinks': '自动拆分混排双链',
 	'settings.autoSplitMixedLinksDesc':
 		'编辑节点时，若正文混有链接与描述文字，自动把链接拆成子节点\n仅处理文档与附件链接（图片和外链不动）；会改写文件结构，默认关闭\n整篇处理可用命令「拆分文档内全部混排双链」',
 	'settings.enableDrag': '启用节点拖拽',
+	'settings.dragCanvasWithModifier': '基于热键拖拽(若不开启则按住鼠标拖拽时移动导图)',
+	'settings.dragCanvasWithModifierDesc':
+		'开启：左键拖拽画布空白处框选，按住 Cmd（macOS）/ Ctrl（Windows）再拖拽移动导图\n关闭：左键拖拽空白处移动导图，按住 Cmd / Ctrl 再拖拽框选\n右键菜单、中键拖动与滚轮缩放保持可用；节点拖拽由上方设置控制',
 	'settings.enableDragDesc':
 		'允许拖动节点调整层级与顺序\n关闭后只能通过编辑文本改变层级',
 	'settings.exportScale': '导出图片倍率',
@@ -376,9 +379,6 @@ const ZH = {
 
 	// ===== 大图首帧渲染 =====
 	'view.renderingLargeMap': '正在渲染 {count} 个节点…',
-	// 「返回」把文件属性降级为 Markdown 是持久改动（下次不再自动进导图），
-	// 而界面只表现为换了个视图 ⇒ 必须告知，否则用户以为只是切换显示
-	'view.backToMarkdownDone': '已切回 Markdown；该文件属性已改为 Mindmap: Markdown',
 
 	// ===== 导出 =====
 	'export.exporting': '正在导出图片…（首次导出需准备数学字体，可能较慢）',
@@ -419,9 +419,6 @@ const ZH = {
 		'此处忽略布局指令「{value}」（不是六种布局之一），已改用默认布局',
 
 	// ===== 默认内容（新建思维导图） =====
-	'default.shortcutHint': '示例：把想法拆成子节点',
-	'default.tabHint': 'Tab：添加子节点',
-	'default.enterHint': 'Enter：添加同级节点',
 	'default.fileNamePrefix': '思维导图',
 } as const;
 
@@ -443,8 +440,6 @@ const EN: Record<TranslationKey, string> = {
 	'command.openAsMindMap': 'Open as mind map',
 	'command.openAsMarkdown': 'Open as Markdown',
 	'command.backToMarkdown': 'Switch to Markdown',
-	'command.downgradeFailed': 'Failed to switch to a Markdown document: ',
-	'command.upgradeFailed': 'Failed to switch to a mind map document: ',
 	'command.splitLinksAll': 'Split all mixed links in document',
 	'modal.text.titleRaw': 'Edit node source (Markdown)',
 	'modal.text.hintRaw':
@@ -456,6 +451,8 @@ const EN: Record<TranslationKey, string> = {
 	'footnote.revealFailed': 'Could not jump to the definition of footnote [^{id}]',
 	'footnote.summaryLabel': 'Footnotes',
 	'codeBlock.copy': 'Copy code',
+	'pluginContent.nodeMissing': 'The node was deleted or replaced',
+	'pluginContent.blockChanged': 'The code block changed; reopen it before editing',
 	'mermaid.copy': 'Copy Mermaid source',
 	'node.task.markDone': 'Mark as done',
 	'node.task.markUndone': 'Mark as not done',
@@ -478,7 +475,6 @@ const EN: Record<TranslationKey, string> = {
 	'toolbar.resetZoom': 'Reset',
 	'toolbar.exportImage': 'Export',
 	'toolbar.tipFit': 'Fit',
-	'toolbar.tipArrange': 'Tidy',
 
 	// ===== Heading / bullet syntax =====
 	'syntax.title': 'Syntax',
@@ -531,6 +527,7 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 通用提示/通知 =====
 	'common.mindMap': 'Mind map',
+	'minimap.title': 'Minimap',
 	'common.notLoaded': 'Mind map not loaded yet',
 	'common.arrangeDone': 'Mind map arranged',
 	'common.arrangeFailed': 'Could not arrange the mind map',
@@ -567,7 +564,7 @@ const EN: Record<TranslationKey, string> = {
 	'common.systemOpenFailed': 'Could not open the file with the system default app',
 	'common.refreshFailed':
 		'Failed to redraw the mind map after applying settings — the current view was kept: ',
-	// Official Canvas: double-click blank canvas / blank context menu to create a node
+	// Blank context menu: explicitly create a node (blank double-click does not create one)
 	'menu.newNode': 'New node',
 
 	// ===== 拖拽/导入 =====
@@ -664,12 +661,15 @@ const EN: Record<TranslationKey, string> = {
 		'Folder used by the "In the folder specified below" mode\nIf it does not exist, new mind maps go to the vault root',
 	'settings.newMapSyntax': 'Syntax for new mind maps',
 	'settings.newMapSyntaxDesc':
-		'How the body of new mind maps is written\nList: hierarchy as bullet lists; Headings: hierarchy as Markdown headings (start at level 1 or 2; falls back to lists after level 6)\nOnly affects new and empty maps; existing maps keep their own syntax and can be converted from the right-click "Syntax" menu',
+		'Syntax for the first nodes added to an empty mind map\nList: hierarchy as bullet lists; Headings: hierarchy as Markdown headings (start at level 1 or 2; falls back to lists after level 6)\nOnly affects new and empty maps; existing maps keep their own syntax and can be converted from the right-click "Syntax" menu',
 	'settings.saveFolderPlaceholder': 'Folder path',
 	'settings.autoSplitMixedLinks': 'Auto-split mixed links',
 	'settings.autoSplitMixedLinksDesc':
 		'When an edited node mixes links with description text, split the links into child nodes\nOnly document and attachment links are handled (images and external URLs are untouched); this rewrites the file structure and is off by default\nUse the command "Split all mixed links in document" for the whole file',
 	'settings.enableDrag': 'Enable node dragging',
+	'settings.dragCanvasWithModifier': 'Drag with a hotkey (when off, drag with the mouse to move the map)',
+	'settings.dragCanvasWithModifierDesc':
+		'On: drag blank canvas with the left button to select; hold Cmd (macOS) / Ctrl (Windows) while dragging to move the map\nOff: drag blank canvas to move the map; hold Cmd / Ctrl while dragging to select\nContext menus, middle-button dragging and wheel zoom stay available; node dragging is controlled above',
 	'settings.enableDragDesc':
 		'Allow dragging nodes to change hierarchy and order\nWhen off, hierarchy can only be changed by editing text',
 	'settings.exportScale': 'Export image scale',
@@ -771,10 +771,6 @@ const EN: Record<TranslationKey, string> = {
 
 	// ===== 大图首帧渲染 =====
 	'view.renderingLargeMap': 'Rendering {count} nodes…',
-	// "Back" downgrades the file property to Markdown (persistent) while the UI
-	// only looks like a view switch — say so, or it reads as a display toggle
-	'view.backToMarkdownDone':
-		'Switched back to Markdown; the file property is now Mindmap: Markdown',
 
 	// ===== 导出 =====
 	'export.exporting':
@@ -817,9 +813,6 @@ const EN: Record<TranslationKey, string> = {
 		'Layout directive "{value}" is ignored here (not one of the six layouts); the default layout is used instead',
 
 	// ===== 默认内容（新建思维导图） =====
-	'default.shortcutHint': 'Example: break an idea into child nodes',
-	'default.tabHint': 'Tab: add a child node',
-	'default.enterHint': 'Enter: add a sibling node',
 	'default.fileNamePrefix': 'MindMap',
 };
 

@@ -163,5 +163,5 @@ export function currentDocumentSyntax(root: MindMapTreeNode): DocumentSyntax {
 	if (headings.length === 0) {
 		return 'list';
 	}
-	return readHeadingStart(root.data) >= 2 ? 2 : 1;
+	return (readHeadingStart(root.data) ?? 1) >= 2 ? 2 : 1;
 }

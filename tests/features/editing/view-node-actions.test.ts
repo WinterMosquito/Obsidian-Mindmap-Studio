@@ -1,0 +1,1814 @@
+/**
+ * view-node-actions 回归：节点操作编排（链接三通道分流 / 删除兜底 / 视图剪贴板 /
+ * 自兜错误）与 view-common 的两个前置守卫。
+ *
+ * 关注点（模块自身的分支与入参，非 mock 行为）：
+ * - 链接通道分流：URL/协议链接 → 引擎 hyperlink；指向 .md 笔记 → mdWikiLinkpath
+ *   （自绘文档页图标）；附件/库内路径 → attachmentUrl（原生回形针）。表驱动覆盖
+ *   已解析库内文件 / 未解析（按目标串扩展名）两条判定路径与别名、显式 label 的
+ *   可见名优先级；
+ * - 链接写入语义（决策 R4「新行为优先」）：空节点 / 纯双链节点（改链）→ 覆盖节点
+ *   文字为链接显示名（纯双链化）；**已有描述文字** → 保留正文，链接建成子节点；
+ * - 防御：弹窗取消、弹窗期间引擎换代、无激活节点都不触碰引擎；
+ * - 删除：根节点拒绝提示 + uid 异常时按对象身份兜底强制清除；
+ * - 剪贴板：WeakMap 按视图隔离、深拷贝、粘贴剥离 uid/isActive、未指定父节点挂根；
+ * - 自兜错误：内部异常转成用户可见 Notice（工具栏/菜单以 void 调用，不能外抛）。
+ * - 弹窗备选入口（editNodeTextInModal，2026-09-28 收编）：纯链接节点 → 别名模式
+ *   （提交经 setNodeText，纯双链节点即改别名，见 K6）；其余富节点 → 原文模式
+ *   （预填 composeNodeContent 的「下次写盘那一行」，提交值未变则不写盘）。
+ *
+ * mindmap 防腐层与弹窗/解析模块以 stub 替换：本文件只验证 view-node-actions
+ * 自己的编排。Notice 断言用 `t(lang, key)` 取真实文案，手写字符串会让测试与实现脱钩。
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import type { App } from 'obsidian';
+import { TFile } from 'obsidian';
+import { t, type Language, type TranslationKey } from '../../../src/core/i18n';
+import type { MindMapNode } from '../../../vendor/simple-mind-map.cjs';
+import type { MindMapViewContext } from '../../../src/features/view/view-context';
+import {
+	addImageToActiveNode,
+	addLinkToActiveNode,
+	applyDocWikiLink,
+	applyMdLink,
+	applyNodeAttachment,
+	clearNodeHyperlink,
+	createImageChildNode,
+	deleteActiveNode,
+	editNodeTextInModal,
+	moveNodeDown,
+	moveNodeUp,
+	removeNodeImage,
+	removeNodeText,
+} from '../../../src/features/editing/view-node-actions';
+import {
+	insertChildNodeWithData,
+	requireActiveNode,
+} from '../../../src/features/view/view-common';
+
+const {
+	noticeCalls,
+	ENGINE,
+	setNodeTextMock,
+	markNodeNeedLayoutMock,
+	siblingMoveMock,
+	forceRemoveMock,
+	openLinkMock,
+	openImageMock,
+	resolveMock,
+	setImageOptionsMock,
+	aspectImageOptionsMock,
+	openNodeModalMock,
+	applyRawMock,
+} = vi.hoisted(() => ({
+	noticeCalls: [] as string[],
+	// 命令名取值与 src/engine/mindmap.ts 的 ENGINE_COMMANDS 一致；常量表本身的 token
+	// 契约由 vendor-contract 测试把关，这里只验证编排传了哪一个命令。
+	ENGINE: {
+		BACK: 'BACK',
+		FORWARD: 'FORWARD',
+		INSERT_CHILD_NODE: 'INSERT_CHILD_NODE',
+		INSERT_NODE: 'INSERT_NODE',
+		REMOVE_NODE: 'REMOVE_NODE',
+		RESET_LAYOUT: 'RESET_LAYOUT',
+		SET_NODE_DATA: 'SET_NODE_DATA',
+		SET_NODE_HYPERLINK: 'SET_NODE_HYPERLINK',
+		SET_NODE_IMAGE: 'SET_NODE_IMAGE',
+	},
+	setNodeTextMock: vi.fn<(...args: unknown[]) => void>(),
+	markNodeNeedLayoutMock: vi.fn<(...args: unknown[]) => void>(),
+	// 兄弟上/下移的防腐入口（兄弟判定与清坐标在 engine/mindmap.ts，
+	// 由 tests/engine/engine-node-move.test.ts 直测；本文件只验编排与提示映射）
+	siblingMoveMock: vi.fn<(...args: unknown[]) => unknown>(),
+	forceRemoveMock: vi.fn<(...args: unknown[]) => void>(),
+	openLinkMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+	openImageMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+	resolveMock: vi.fn<(...args: unknown[]) => unknown>(),
+	setImageOptionsMock: vi.fn<(...args: unknown[]) => unknown>(),
+	aspectImageOptionsMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+	// 弹窗备选入口的预填/返回值由用例控制；原文模式写回路径为独立 spy
+	openNodeModalMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+	applyRawMock: vi.fn<(...args: unknown[]) => void>(),
+}));
+
+vi.mock('obsidian', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('obsidian')>();
+	return {
+		...actual,
+		Notice: class {
+			constructor(message?: string) {
+				noticeCalls.push(message ?? '');
+			}
+		},
+	};
+});
+
+vi.mock('../../../src/engine/mindmap', () => ({
+	ENGINE_COMMANDS: ENGINE,
+	setNodeText: (...args: unknown[]): void => {
+		setNodeTextMock(...args);
+	},
+	moveNodeInSiblings: (...args: unknown[]): unknown => siblingMoveMock(...args),
+	markNodeNeedLayout: (...args: unknown[]): void => {
+		markNodeNeedLayoutMock(...args);
+	},
+	forceRemoveNodeData: (...args: unknown[]): void => {
+		forceRemoveMock(...args);
+	},
+	// 以下三个保持生产语义：桩成常量会让「按节点数据分流」的分支永远走同一路，
+	// 断言全部失真（renderer 缺失 ⇒ 无激活节点/无根，与 src/engine/mindmap.ts 一致）。
+	getActiveNode: (mindMap: unknown): unknown => {
+		const renderer = (
+			mindMap as { renderer?: { activeNodeList?: unknown[] } } | null
+		)?.renderer;
+		return renderer ? (renderer.activeNodeList?.[0] ?? null) : null;
+	},
+	getRenderRoot: (mindMap: unknown): unknown =>
+		(mindMap as { renderer?: { root?: unknown } } | null)?.renderer?.root ?? null,
+	getNodeDataString: (node: unknown, key: string): string => {
+		const value = (
+			node as { getData?: (name: string) => unknown } | null
+		)?.getData?.(key);
+		return typeof value === 'string' ? value : '';
+	},
+	// 概要节点：删除 / 编辑入口都先判它（概要不在 data 树 children 里，
+	// 交给 REMOVE_NODE 会删错兄弟）。本文件只覆盖正文节点的编排，恒 false。
+	isSummaryNode: (): boolean => false,
+	summaryAnchorOf: (): null => null,
+}));
+
+vi.mock('../../../src/ui/modal-link', () => ({
+	openLinkEditorModal: (...args: unknown[]): Promise<unknown> =>
+		openLinkMock(...args),
+}));
+
+vi.mock('../../../src/ui/modal-image', () => ({
+	openImageEditorModal: (...args: unknown[]): Promise<unknown> =>
+		openImageMock(...args),
+}));
+
+// 弹窗备选入口（右键「在弹窗中编辑」）在 Node 环境无法开窗：替换为 spy，
+// 预填值与提交值由用例控制（openNodeModalMock）
+vi.mock('../../../src/ui/modal-text', () => ({
+	openNodeTextModal: (...args: unknown[]): Promise<unknown> =>
+		openNodeModalMock(...args),
+}));
+
+// 内联编辑器（自绘节点的主编辑入口）非本文件关注点：仅桩掉导入面，
+// 原文模式的写回经 applyRawMock 断言（编辑器内部行为由
+// tests/features/editing/node-inline-editor.test.ts 覆盖）
+vi.mock('../../../src/features/editing/node-inline-editor', () => ({
+	isAnyNodeEditing: vi.fn(() => false),
+	isInlineNodeEditing: vi.fn(() => false),
+	resolveInlineEditKey: vi.fn(() => 'none'),
+	openNodeInlineEditor: vi.fn(),
+	closeInlineEditor: vi.fn(),
+}));
+
+vi.mock('../../../src/features/content/node-content-write', () => ({
+	applyRawNodeContent: (...args: unknown[]): void => applyRawMock(...args),
+}));
+
+// 库内解析结果由用例决定：未解析（null）= 按目标串扩展名判定；
+// 返回 TFile 形态对象 = 按真实扩展名判定。真实现依赖全库索引，与编排无关。
+vi.mock('../../../src/links/links-resolve', () => ({
+	resolvePathToFile: (...args: unknown[]): unknown => resolveMock(...args),
+}));
+
+// 尺寸探测要读 DOM 图片原始尺寸（node 环境无 Image）：桩掉选项构造器，
+// 只验证编排把「显示地址」交给了 SET_NODE_IMAGE。
+vi.mock('../../../src/media/images-path', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../src/media/images-path')>();
+	return {
+		...actual,
+		createSetNodeImageOptions: (...args: unknown[]): unknown =>
+			setImageOptionsMock(...args),
+		createNaturalSizeSetNodeImageOptions: (...args: unknown[]): Promise<unknown> =>
+			aspectImageOptionsMock(...args),
+	};
+});
+
+/** 取真实中文文案（key 拼错即编译失败） */
+function zh(key: TranslationKey): string {
+	return t('zh', key);
+}
+
+/** 取第 n 次调用的完整入参（避免 noUncheckedIndexedAccess 噪声与静默 undefined） */
+function callArgs(spy: { mock: { calls: unknown[][] } }, index = 0): unknown[] {
+	const call = spy.mock.calls[index];
+	if (!call) {
+		throw new Error(`第 ${index + 1} 次调用不存在`);
+	}
+	return call;
+}
+
+/**
+ * 节点桩：getData() 返回节点 data 对象本身、getData(key) 返回字段（引擎语义）；
+ * 用例需要断言「数据被改写」时经 dataOf(node) 取同一对象。
+ */
+function fakeNode(
+	options: {
+		data?: Record<string, unknown>;
+		isRoot?: boolean;
+		parent?: unknown;
+		/** false = 模拟无 getData 的节点（走 nodeData.data 兜底读法） */
+		withGetData?: boolean;
+	} = {},
+): MindMapNode {
+	const data: Record<string, unknown> = { text: '', ...options.data };
+	const node: Record<string, unknown> = {
+		isRoot: options.isRoot ?? false,
+		parent:
+			options.parent === undefined
+				? { nodeData: { children: [] } }
+				: options.parent,
+		nodeData: { data },
+	};
+	if (options.withGetData !== false) {
+		node['getData'] = (key?: string): unknown =>
+			key === undefined ? data : data[key];
+	}
+	return node as unknown as MindMapNode;
+}
+
+/** 节点数据对象（与 getData() 返回的是同一个引用） */
+function dataOf(node: MindMapNode): Record<string, unknown> {
+	return (node as unknown as { nodeData: { data: Record<string, unknown> } })
+		.nodeData.data;
+}
+
+/**
+ * 视图原始桩：mindMap 声明为 unknown 且可写——用例需要模拟「弹窗期间引擎被
+ * 重建」把它换成另一棵树的引擎（换成具体引擎形状会锁死赋值类型）。
+ */
+interface RawViewStub {
+	mindMap: unknown;
+	lang: Language;
+	app: App;
+	scheduleSave: Mock;
+}
+
+/** 引擎桩：execCommand/render 记录调用，renderer 提供激活列表与渲染根 */
+function makeEngine(activeNode: MindMapNode | null = null, root: unknown = null) {
+	const execCommand = vi.fn<(...args: unknown[]) => void>();
+	const render = vi.fn<() => void>();
+	return {
+		execCommand,
+		render,
+		renderer: {
+			activeNodeList: activeNode ? [activeNode] : [],
+			root,
+		},
+	};
+}
+
+/**
+ * 视图桩：返回原始对象（非只读 cast），便于用例模拟「弹窗期间引擎被重建」。
+ */
+function makeView(
+	options: {
+		activeNode?: MindMapNode | null;
+		root?: unknown;
+		lang?: Language;
+		/** false = 无引擎实例（视图已关闭/重建中） */
+		withEngine?: boolean;
+		/**
+		 * 官方设置「使用 \[\[Wikilinks\]\]」被关闭（底层 `vault.getConfig('useMarkdownLinks')`）。
+		 * 默认 false = 官方默认（写 `[[双链]]`）。
+		 */
+		useMarkdownLinks?: boolean;
+	} = {},
+) {
+	const engine = makeEngine(options.activeNode ?? null, options.root ?? null);
+	const scheduleSave = vi.fn<() => void>();
+	const getResourcePath = vi.fn<(file: unknown) => string>(
+		(file: unknown) => `app://local/${(file as { path: string }).path}`,
+	);
+	const getConfig = vi.fn((key: string) =>
+		key === 'useMarkdownLinks' ? options.useMarkdownLinks === true : undefined,
+	);
+	const raw: RawViewStub = {
+		mindMap: options.withEngine === false ? null : engine,
+		lang: options.lang ?? 'zh',
+		app: { vault: { getResourcePath, getConfig } } as unknown as App,
+		scheduleSave,
+	};
+	return {
+		view: raw as unknown as MindMapViewContext,
+		raw,
+		engine,
+		execCommand: engine.execCommand,
+		render: engine.render,
+		scheduleSave,
+		getResourcePath,
+		getConfig,
+	};
+}
+
+/** 库内文件桩（按扩展名判定分支只读 extension/path/name） */
+function fakeFile(path: string, extension: string): TFile {
+	const name = path.split('/').pop() ?? path;
+	return Object.assign(new TFile(), { path, name, extension });
+}
+
+beforeEach(() => {
+	noticeCalls.length = 0;
+	vi.clearAllMocks();
+	// 默认：弹窗取消、解析失败（按目标串扩展名判定）、图片选项桩吐标记对象
+	resolveMock.mockReturnValue(null);
+	openLinkMock.mockResolvedValue(null);
+	openImageMock.mockResolvedValue(null);
+	setImageOptionsMock.mockImplementation((url: unknown) => ({ url }));
+	aspectImageOptionsMock.mockResolvedValue({ aspect: true });
+	// 兄弟上/下移默认「成功」；拒绝分支由用例按需 mockReturnValueOnce
+	siblingMoveMock.mockReturnValue('moved');
+});
+
+afterEach(() => {
+	noticeCalls.length = 0;
+});
+
+describe('insertChildNodeWithData（插入子节点的唯一入口）', () => {
+	it('携带初始数据插入到指定父节点，并统一 isActive=false（新节点不抢激活态）', () => {
+		const parent = fakeNode({ data: { text: '父' } });
+		const { view, execCommand } = makeView();
+
+		expect(
+			insertChildNodeWithData(view, parent, { text: '子', image: 'a.png' }),
+		).toBe(true);
+		// appointNodes=[parent] 是引擎唯一可靠入口（空数组会被静默忽略）
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[parent],
+			{ text: '子', image: 'a.png', isActive: false },
+		]);
+	});
+
+	it('调用方传入的 isActive=true 被覆盖：初始数据里的激活态不生效', () => {
+		const parent = fakeNode();
+		const { view, execCommand } = makeView();
+
+		insertChildNodeWithData(view, parent, { text: '子', isActive: true });
+		const [, , , payload] = callArgs(execCommand);
+		expect((payload as Record<string, unknown>)['isActive']).toBe(false);
+	});
+
+	it('父节点缺失：返回 false 且不调用引擎', () => {
+		const { view, execCommand } = makeView();
+		expect(insertChildNodeWithData(view, null, { text: 'x' })).toBe(false);
+		expect(execCommand).not.toHaveBeenCalled();
+	});
+
+	it('引擎缺失（视图重建中）：返回 false 且不调用引擎', () => {
+		const { view, execCommand } = makeView({ withEngine: false });
+		expect(
+			insertChildNodeWithData(view, fakeNode(), { text: 'x' }),
+		).toBe(false);
+		expect(execCommand).not.toHaveBeenCalled();
+	});
+});
+
+describe('requireActiveNode（前置守卫）', () => {
+	it('无激活节点：返回 null 并提示「请先选择一个节点」', () => {
+		const { view } = makeView();
+		expect(requireActiveNode(view)).toBeNull();
+		expect(noticeCalls).toEqual([zh('common.selectNodeFirst')]);
+	});
+
+	it('有激活节点：返回节点且不提示', () => {
+		const node = fakeNode();
+		const { view } = makeView({ activeNode: node });
+		expect(requireActiveNode(view)).toBe(node);
+		expect(noticeCalls).toHaveLength(0);
+	});
+
+	it('提示文案随视图语言（英文视图弹英文提示）', () => {
+		const { view } = makeView({ lang: 'en' });
+		requireActiveNode(view);
+		expect(noticeCalls).toEqual([t('en', 'common.selectNodeFirst')]);
+	});
+});
+
+/** 链接通道分流用例：同一条弹窗结果按形态落到不同通道 */
+interface LinkChannelCase {
+	name: string;
+	link: string;
+	label?: string;
+	/** 库内解析结果（null = 未解析，按目标串扩展名判定） */
+	resolved: { path: string; extension: string } | null;
+	channel: 'wiki' | 'attachment' | 'hyperlink';
+	/** 期望同步到节点文本的可见名（wiki/attachment 通道） */
+	display: string;
+	/** attachment 通道的引擎字段值 */
+	url?: string;
+	/**
+	 * 期望写入通道的链接串（缺省 = 原样 `link`）。
+	 * 已解析到库内文件时会按官方「New link format」取路径（默认最短路径）。
+	 */
+	written?: string;
+	/** 覆盖写入后应补齐的行级原文（applyInlineRawMeta 产出，渲染源/rawOk 共同前提） */
+	mdRaw: string;
+}
+
+const LINK_CHANNEL_CASES: LinkChannelCase[] = [
+	{
+		name: '文档双链 → mdWikiLinkpath（自绘文档页图标）',
+		link: '[[新笔记]]',
+		resolved: null,
+		channel: 'wiki',
+		display: '新笔记',
+		mdRaw: '[[新笔记]]',
+	},
+	{
+		name: '文档双链带别名 → 可见名取别名',
+		link: '[[笔记|别名]]',
+		resolved: null,
+		channel: 'wiki',
+		display: '别名',
+		mdRaw: '[[笔记|别名]]',
+	},
+	{
+		name: '带区块引用且已解析到库内 .md → mdWikiLinkpath',
+		link: '[[归档/笔记#小节]]',
+		resolved: { path: '归档/笔记.md', extension: 'md' },
+		channel: 'wiki',
+		// 官方「New link format」默认最短路径：目录前缀去掉、`.md` 省略，
+		// 用户写的 `#区块` 保留（不是路径的一部分）
+		written: '[[笔记#小节]]',
+		// 可见文本取 linkpath 末段（区块引用保留在文本里），解析才用去掉 # 的 target
+		display: '笔记#小节',
+		mdRaw: '[[笔记#小节]]',
+	},
+	{
+		name: '附件双链（[[报告.pdf]]）→ attachmentUrl（回形针）',
+		link: '[[报告.pdf]]',
+		resolved: null,
+		channel: 'attachment',
+		display: '报告.pdf',
+		url: '报告.pdf',
+		mdRaw: '[[报告.pdf]]',
+	},
+	{
+		name: '附件双链带别名 → 回形针标题与节点文本都用别名',
+		link: '[[报告.pdf|说明]]',
+		resolved: null,
+		channel: 'attachment',
+		display: '说明',
+		url: '报告.pdf',
+		mdRaw: '[[报告.pdf|说明]]',
+	},
+	{
+		name: '无扩展名目标但库内实际是图片：按真实扩展名走附件通道',
+		link: '[[插图]]',
+		resolved: { path: '资产/插图.png', extension: 'png' },
+		channel: 'attachment',
+		display: '插图',
+		url: '插图',
+		mdRaw: '[[插图]]',
+	},
+	{
+		name: '库内路径（非双链）→ attachmentUrl，目标取整串路径',
+		link: 'assets/图.png',
+		resolved: { path: 'assets/图.png', extension: 'png' },
+		channel: 'attachment',
+		display: '图.png',
+		url: 'assets/图.png',
+		mdRaw: '[[assets/图.png]]',
+	},
+	{
+		name: 'http 外链 → 引擎 hyperlink（原生链接图标）',
+		link: 'https://example.com/a',
+		resolved: null,
+		channel: 'hyperlink',
+		display: '',
+		// hyperlink 分支的 mdRaw 断言在下方动态构造（`<url>`）；此处仅为类型完整
+		mdRaw: '<https://example.com/a>',
+	},
+	{
+		name: 'obsidian:// 协议链接 → 引擎 hyperlink',
+		link: 'obsidian://open?vault=v&file=n',
+		resolved: null,
+		channel: 'hyperlink',
+		display: '',
+		mdRaw: '<obsidian://open?vault=v&file=n>',
+	},
+];
+
+describe('addLinkToActiveNode：链接通道分流（表驱动）', () => {
+	it.each(LINK_CHANNEL_CASES)('$name', async (testCase) => {
+		const node = fakeNode();
+		const { view, execCommand, render, scheduleSave } = makeView({
+			activeNode: node,
+		});
+		resolveMock.mockReturnValue(
+			testCase.resolved ? fakeFile(testCase.resolved.path, testCase.resolved.extension) : null,
+		);
+		openLinkMock.mockResolvedValue(
+			testCase.label === undefined
+				? { link: testCase.link }
+				: { link: testCase.link, label: testCase.label },
+		);
+
+		await addLinkToActiveNode(view);
+
+		const data = dataOf(node);
+		expect(markNodeNeedLayoutMock).toHaveBeenCalledWith(node);
+		expect(scheduleSave).toHaveBeenCalled();
+
+		if (testCase.channel === 'hyperlink') {
+			// URL 覆盖空白节点：hyperlink 字段直写（数据自含）+ 引擎命令维护图标状态
+			expect(callArgs(execCommand)).toEqual([
+				ENGINE.SET_NODE_HYPERLINK,
+				node,
+				testCase.link,
+			]);
+			expect(data.hyperlink).toBe(testCase.link);
+			expect(data.mdWikiLinkpath).toBeUndefined();
+			expect(data.mdLinkText).toBeUndefined();
+			// 行级元数据补齐：空文本 URL 节点的原文 = autolink `<url>`
+			//（与「URL 建为子节点」/粘贴路径及重解析后的呈现同口径）
+			expect(data.mdRaw).toBe(`<${testCase.link}>`);
+			expect(data.mdDerivedText).toBe('');
+			// 节点文本不被 URL 污染，也不需要本地重绘
+			expect(setNodeTextMock).not.toHaveBeenCalled();
+			expect(render).not.toHaveBeenCalled();
+			return;
+		}
+
+		// 文档双链/附件都不走引擎 hyperlink（否则原生图标与自绘图标/回形针双显）
+		expect(execCommand).not.toHaveBeenCalled();
+		expect(data.hyperlink).toBeUndefined();
+		expect(data.mdLinkStyle).toBe('wiki');
+		expect(setNodeTextMock).toHaveBeenCalledWith(
+			view.mindMap,
+			node,
+			testCase.display,
+		);
+		// 渲染由 setNodeText（真实实现内部 `render()`）完成，**本模块不得再补一次**：
+		// 多一次就是整树重排白跑（2026-09-16 简化，见 applyDocWikiLink 注释）。
+		// 本文件里 setNodeText 是桩，故这里观察到的就是「模块自身没有渲染」。
+		expect(render).not.toHaveBeenCalled();
+
+		if (testCase.channel === 'wiki') {
+			expect(data.mdWikiLinkpath).toBe(testCase.written ?? testCase.link);
+			expect(data.mdLinkText).toBe(testCase.display);
+			expect(data.attachmentUrl).toBeUndefined();
+		} else {
+			// 附件：点击打开用目标路径，可见名与节点文本同口径
+			expect(data.attachmentUrl).toBe(testCase.url);
+			expect(data.mdAttachmentLinkpath).toBe(testCase.url);
+			expect(data.attachmentName).toBe(testCase.display);
+			expect(data.mdWikiLinkpath).toBeUndefined();
+		}
+		// 覆盖分支的行级元数据（渲染源与 rawOk 逐字回写的共同前提）：五条通道
+		// 写入路径必须同口径补齐——applyAttachmentLink 曾在 R4 修订与 2026-10-02
+		// 行级元数据修复中两度漏步，本断言防第三次
+		expect(data.mdRaw).toBe(testCase.mdRaw);
+		expect(data.mdDerivedText).toBe(testCase.display);
+		});
+});
+
+describe('addLinkToActiveNode：库内解析入参', () => {
+	it('解析用去掉 #区块 的 target；写入按官方 New link format 取最短路径', async () => {
+		const node = fakeNode();
+		const { view } = makeView({ activeNode: node });
+		resolveMock.mockReturnValue(fakeFile('归档/笔记.md', 'md'));
+		openLinkMock.mockResolvedValue({ link: '[[归档/笔记#小节]]' });
+
+		await addLinkToActiveNode(view);
+
+		// 区块引用不是路径的一部分，交给解析会找不到文件（退回非 .md 判定）
+		expect(resolveMock).toHaveBeenCalledWith('归档/笔记', view.app);
+		// 官方默认「最短路径」：目录前缀去掉、`.md` 省略；`#区块` 是用户意图，保留
+		expect(dataOf(node).mdWikiLinkpath).toBe('[[笔记#小节]]');
+	});
+
+	it('非双链的库内路径：整串交给解析，写通道时不做末段裁剪', async () => {
+		const node = fakeNode();
+		const { view } = makeView({ activeNode: node });
+		resolveMock.mockReturnValue(fakeFile('归档/报告.pdf', 'pdf'));
+		openLinkMock.mockResolvedValue({ link: '归档/报告.pdf' });
+
+		await addLinkToActiveNode(view);
+
+		expect(resolveMock).toHaveBeenCalledWith('归档/报告.pdf', view.app);
+		expect(dataOf(node).mdAttachmentLinkpath).toBe('归档/报告.pdf');
+		expect(dataOf(node).attachmentName).toBe('报告.pdf');
+	});
+});
+
+describe('addLinkToActiveNode：可见名与可见文本同步规则', () => {
+	it('显式 label（联想选择）优先于双链别名', async () => {
+		const node = fakeNode();
+		const { view } = makeView({ activeNode: node });
+		openLinkMock.mockResolvedValue({ link: '[[笔记]]', label: '自定义名' });
+
+		await addLinkToActiveNode(view);
+
+		expect(dataOf(node).mdLinkText).toBe('自定义名');
+		expect(setNodeTextMock).toHaveBeenCalledWith(
+			view.mindMap,
+			node,
+			'自定义名',
+		);
+	});
+
+	it('纯双链节点改链 → 链接建为子节点，节点原链接与文字不动（R4 修订）', async () => {
+		const node = fakeNode({ data: { text: '旧笔记', mdWikiLinkpath: '[[旧笔记]]' } });
+		const { view, execCommand } = makeView({ activeNode: node });
+		openLinkMock.mockResolvedValue({ link: '[[新笔记]]' });
+
+		await addLinkToActiveNode(view);
+
+		// R4 修订（2026-09-13）：节点已有内容 → 不覆盖；一键改链入口取消
+		//（改链 = 先「清除链接」再添加，或直接编辑节点文本）
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).mdWikiLinkpath, '原链接不动').toBe('[[旧笔记]]');
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '新笔记',
+				mdWikiLinkpath: '[[新笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '新笔记',
+				// 行级元数据补齐：新子节点立即按原文渲染出锚点（不再等重解析）
+				mdRaw: '[[新笔记]]',
+				mdDerivedText: '新笔记',
+				isActive: false,
+			},
+		]);
+	});
+
+	it('已有用户正文：保留正文，链接建成子节点（决策 R4「新行为优先」）', async () => {
+		const node = fakeNode({
+			data: { text: '我的正文', mdWikiLinkpath: '[[旧笔记]]' },
+		});
+		const { view, execCommand } = makeView({ activeNode: node });
+		openLinkMock.mockResolvedValue({ link: '[[新笔记]]' });
+
+		await addLinkToActiveNode(view);
+
+		// 父节点：文字与既有链接字段都不动（不再被新链接顶替）
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).mdWikiLinkpath).toBe('[[旧笔记]]');
+		// 新链接作为子节点插入（纯双链节点改链仍走覆盖，见上例）
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '新笔记',
+				mdWikiLinkpath: '[[新笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '新笔记',
+				mdRaw: '[[新笔记]]',
+				mdDerivedText: '新笔记',
+				isActive: false,
+			},
+		]);
+	});
+
+	it('URL 改链（节点有内容）→ URL 链接建为子节点，原链接与文字不动（R4 修订）', async () => {
+		const node = fakeNode({
+			data: { text: 'https://old.example.com', hyperlink: 'https://old.example.com' },
+		});
+		const { view, execCommand } = makeView({ activeNode: node });
+		openLinkMock.mockResolvedValue({ link: 'https://new.example.com' });
+
+		await addLinkToActiveNode(view);
+
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).hyperlink, '原链接不动').toBe('https://old.example.com');
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '',
+				hyperlink: 'https://new.example.com',
+				mdLinkStyle: 'md',
+				mdLinkText: 'https://new.example.com',
+				hyperlinkTitle: 'https://new.example.com',
+				// URL 子节点（无显示名）的原文形态是 autolink；重解析亦得同形
+				mdRaw: '<https://new.example.com>',
+				mdDerivedText: '',
+				isActive: false,
+			},
+		]);
+	});
+
+	it('URL 改链（节点有用户正文）→ 不动文本、链接建为子节点（R4 修订）', async () => {
+		const node = fakeNode({
+			data: { text: '参考链接', hyperlink: 'https://old.example.com' },
+		});
+		const { view, execCommand } = makeView({ activeNode: node });
+		openLinkMock.mockResolvedValue({ link: 'https://new.example.com' });
+
+		await addLinkToActiveNode(view);
+
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).text, '原文字不动').toBe('参考链接');
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '',
+				hyperlink: 'https://new.example.com',
+				mdLinkStyle: 'md',
+				mdLinkText: 'https://new.example.com',
+				hyperlinkTitle: 'https://new.example.com',
+				mdRaw: '<https://new.example.com>',
+				mdDerivedText: '',
+				isActive: false,
+			},
+		]);
+	});
+
+	it('节点已有文档双链时设置 URL：原字段不动、URL 建为子节点（R4 修订）', async () => {
+		const node = fakeNode({
+			data: { mdWikiLinkpath: '[[旧笔记]]', mdLinkText: '旧笔记' },
+		});
+		const { view, execCommand } = makeView({ activeNode: node });
+		openLinkMock.mockResolvedValue({ link: 'https://example.com' });
+
+		await addLinkToActiveNode(view);
+
+		expect(dataOf(node).mdWikiLinkpath, '原文档双链字段不被覆盖').toBe('[[旧笔记]]');
+		expect(dataOf(node).mdLinkText).toBe('旧笔记');
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '',
+				hyperlink: 'https://example.com',
+				mdLinkStyle: 'md',
+				mdLinkText: 'https://example.com',
+				hyperlinkTitle: 'https://example.com',
+				mdRaw: '<https://example.com>',
+				mdDerivedText: '',
+				isActive: false,
+			},
+		]);
+	});
+
+	it('纯图节点（有图片即"有内容"）→ 链接建为子节点，不覆盖为文字+链接（R4 修订）', async () => {
+		const node = fakeNode({ data: { text: '', image: 'app://local/a.png' } });
+		const { view, execCommand } = makeView({ activeNode: node });
+		openLinkMock.mockResolvedValue({ link: '[[笔记]]' });
+
+		await addLinkToActiveNode(view);
+
+		expect(dataOf(node).image, '图片不动').toBe('app://local/a.png');
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '笔记',
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '笔记',
+				mdRaw: '[[笔记]]',
+				mdDerivedText: '笔记',
+				isActive: false,
+			},
+		]);
+	});
+});
+
+describe('addLinkToActiveNode：守卫、取消与自兜错误', () => {
+	it('无激活节点：只提示，不打开弹窗（守卫在弹窗之前）', async () => {
+		const { view, execCommand } = makeView();
+		await addLinkToActiveNode(view);
+		expect(noticeCalls).toEqual([zh('common.selectNodeFirst')]);
+		expect(openLinkMock).not.toHaveBeenCalled();
+		expect(execCommand).not.toHaveBeenCalled();
+	});
+
+	it('弹窗取消（null）：不触碰引擎、不调度保存', async () => {
+		const node = fakeNode({ data: { text: '正文' } });
+		const { view, execCommand, scheduleSave } = makeView({ activeNode: node });
+		openLinkMock.mockResolvedValue(null);
+
+		await addLinkToActiveNode(view);
+
+		expect(execCommand).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+		expect(dataOf(node).mdWikiLinkpath).toBeUndefined();
+		expect(noticeCalls).toHaveLength(0);
+	});
+
+	it('弹窗预填当前链接（文档双链通道优先于引擎 hyperlink）', async () => {
+		const node = fakeNode({
+			data: { mdWikiLinkpath: '[[文档]]', hyperlink: 'https://example.com' },
+		});
+		const { view } = makeView({ activeNode: node });
+		await addLinkToActiveNode(view);
+		expect(openLinkMock).toHaveBeenCalledWith(view.app, '[[文档]]', 'zh');
+	});
+
+	it('清空输入（空链接）= 清除链接：清两个通道并重绘', async () => {
+		const node = fakeNode({ data: { mdWikiLinkpath: '[[旧笔记]]' } });
+		const { view, execCommand, render, scheduleSave } = makeView({
+			activeNode: node,
+		});
+		openLinkMock.mockResolvedValue({ link: '' });
+
+		await addLinkToActiveNode(view);
+
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.SET_NODE_HYPERLINK,
+			node,
+			'',
+		]);
+		expect(dataOf(node).mdWikiLinkpath).toBeUndefined();
+		expect(render).toHaveBeenCalled();
+		expect(scheduleSave).toHaveBeenCalled();
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+	});
+
+	it('弹窗期间引擎被重建：旧节点不在新树上，不写入也不保存', async () => {
+		const node = fakeNode({ data: { text: '正文' } });
+		const harness = makeView({ activeNode: node });
+		const rebuilt = makeEngine();
+		openLinkMock.mockImplementation(async () => {
+			// 模拟弹窗打开期间换文件/重建引擎
+			harness.raw.mindMap = rebuilt;
+			return { link: '[[新笔记]]' };
+		});
+
+		await addLinkToActiveNode(harness.view);
+
+		expect(dataOf(node).mdWikiLinkpath).toBeUndefined();
+		expect(harness.scheduleSave).not.toHaveBeenCalled();
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		// 新引擎同样不该被写入：旧节点已不属于这棵树
+		expect(rebuilt.execCommand).not.toHaveBeenCalled();
+		expect(rebuilt.render).not.toHaveBeenCalled();
+	});
+
+	it('内部异常不外抛：转成用户可见提示（工具栏 void 调用不产生未处理拒绝）', async () => {
+		const node = fakeNode();
+		const { view } = makeView({ activeNode: node });
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		openLinkMock.mockRejectedValue(new Error('boom'));
+
+		await expect(addLinkToActiveNode(view)).resolves.toBeUndefined();
+
+		expect(noticeCalls).toEqual([`${zh('common.insertLinkFailed')}boom`]);
+		expect(errorSpy).toHaveBeenCalledWith('插入链接失败', expect.any(Error));
+		errorSpy.mockRestore();
+	});
+
+	it('非 Error 抛出（字符串）：经 errorMessage 归一后仍给出提示', async () => {
+		const node = fakeNode();
+		const { view } = makeView({ activeNode: node });
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		openLinkMock.mockRejectedValue('断网');
+
+		await expect(addLinkToActiveNode(view)).resolves.toBeUndefined();
+
+		expect(noticeCalls).toEqual([`${zh('common.insertLinkFailed')}断网`]);
+		errorSpy.mockRestore();
+	});
+});
+
+describe('applyDocWikiLink / applyNodeAttachment（导出通道写入）', () => {
+	it('官方关闭「使用 \\[\\[Wikilinks\\]\\]」：文档链接改写 md 形态 `[显示名](路径.md)`', () => {
+		const node = fakeNode();
+		const { view, execCommand } = makeView({ useMarkdownLinks: true });
+
+		applyDocWikiLink(view, node, '[[folder/笔记|别名]]', undefined);
+
+		// 走 hyperlink 通道（引擎原生链接图标）而非 mdWikiLinkpath（自绘文档页图标）
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.SET_NODE_HYPERLINK,
+			node,
+			'folder/笔记.md',
+		]);
+		const data = dataOf(node);
+		expect(data.mdLinkStyle).toBe('md');
+		expect(data.mdLinkText, '显示名 = 别名').toBe('别名');
+		expect(data.mdWikiLinkpath, '不写双链通道字段').toBeUndefined();
+		// md 形态行的原文一并补齐（hyperlink 字段直写 + 行级元数据重算）
+		expect(data.hyperlink).toBe('folder/笔记.md');
+		expect(data.mdRaw).toBe('[别名](folder/笔记.md)');
+		expect(data.mdDerivedText).toBe('别名');
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '别名');
+	});
+
+	it('官方 Wikilinks 开启（默认）：仍是双链形态（行为不变）', () => {
+		const node = fakeNode();
+		const { view } = makeView();
+
+		applyDocWikiLink(view, node, '[[folder/笔记]]', undefined);
+
+		const data = dataOf(node);
+		expect(data.mdWikiLinkpath).toBe('[[folder/笔记]]');
+		expect(data.hyperlink).toBeUndefined();
+		// 行级元数据同步补齐（渲染源 / rawOk 未编辑判定的共同前提）
+		expect(data.mdRaw).toBe('[[folder/笔记]]');
+		expect(data.mdDerivedText).toBe('笔记');
+	});
+
+	it('applyDocWikiLink（完全空白节点）：覆盖为纯双链节点（便捷路径保留）', () => {
+		const node = fakeNode();
+		const { view, execCommand, scheduleSave } = makeView();
+
+		applyDocWikiLink(view, node, '[[笔记|别名]]', undefined);
+
+		const data = dataOf(node);
+		expect(data.mdWikiLinkpath).toBe('[[笔记|别名]]');
+		expect(data.mdLinkStyle).toBe('wiki');
+		expect(data.mdLinkText).toBe('别名');
+		// 行级元数据同步补齐（渲染源 / rawOk 未编辑判定的共同前提）
+		expect(data.mdRaw).toBe('[[笔记|别名]]');
+		expect(data.mdDerivedText).toBe('别名');
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '别名');
+		expect(execCommand, '空白节点不建子节点').not.toHaveBeenCalled();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyDocWikiLink（空白节点 + 显式 label ≠ 链接显示名）：mdRaw 合成为别名形态', () => {
+		const node = fakeNode();
+		const { view } = makeView();
+
+		applyDocWikiLink(view, node, '[[笔记]]', '自定义名');
+
+		const data = dataOf(node);
+		// 纯双链语义「节点文本即别名」：原文行 = [[目标|文本]]（别名改写走
+		// editedWikilinkAlias 权威闸门，经 composeNodeContent 唯一来源合成）
+		expect(data.mdRaw).toBe('[[笔记|自定义名]]');
+		expect(data.mdDerivedText).toBe('自定义名');
+	});
+
+	it('applyDocWikiLink（节点有链接）：链接建为子节点，原字段与文字不动（R4 修订）', () => {
+		const node = fakeNode({ data: { hyperlink: 'https://旧', hyperlinkTitle: '旧' } });
+		const { view, execCommand, scheduleSave } = makeView();
+
+		applyDocWikiLink(view, node, '[[笔记|别名]]', undefined);
+
+		const data = dataOf(node);
+		expect(data.hyperlink, '原链接不动').toBe('https://旧');
+		expect(data.hyperlinkTitle).toBe('旧');
+		expect(data.mdWikiLinkpath).toBeUndefined();
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '别名',
+				mdWikiLinkpath: '[[笔记|别名]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '别名',
+				mdRaw: '[[笔记|别名]]',
+				mdDerivedText: '别名',
+				isActive: false,
+			},
+		]);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyDocWikiLink（仅 extra 孤存：移除首图后残留 ![[b.png]]）→ 建为子节点、extra 不动（R4 修订）', () => {
+		// 场景：多图行移除首图（removeNodeImage 不清 extra）→ 节点 text / image /
+		// 链接字段全空、仅台账里有额外 token。此前该形态被判「完全空白」而覆盖
+		const node = fakeNode({
+			data: {
+				text: '',
+				mdSegments: [
+					{ kind: 'image', text: 'b.png', raw: '![[b.png]]', first: false },
+				],
+			},
+		});
+		const { view, execCommand, scheduleSave } = makeView();
+
+		applyDocWikiLink(view, node, '[[笔记]]', undefined);
+
+		const data = dataOf(node);
+		expect(data.mdSegments, '额外 token 原样保留（未被覆盖改写）').toEqual([
+			{ kind: 'image', text: 'b.png', raw: '![[b.png]]', first: false },
+		]);
+		expect(data.mdWikiLinkpath, '父节点未被覆盖为纯双链').toBeUndefined();
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '笔记',
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '笔记',
+				mdRaw: '[[笔记]]',
+				mdDerivedText: '笔记',
+				isActive: false,
+			},
+		]);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyDocWikiLink：显式 label 为空串 → 子节点无显示文本、不写节点文字', () => {
+		const node = fakeNode({ data: { text: '正文' } });
+		const { view, execCommand } = makeView();
+
+		applyDocWikiLink(view, node, '[[笔记]]', '');
+
+		expect(dataOf(node).mdLinkText, '父节点原样不动').toBeUndefined();
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '',
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '',
+				mdRaw: '[[笔记]]',
+				mdDerivedText: '',
+				isActive: false,
+			},
+		]);
+	});
+
+	it('applyNodeAttachment（节点已有链接）：附件建为子节点，原字段与文字不动（R4 修订）', () => {
+		const node = fakeNode({
+			data: {
+				text: '',
+				hyperlink: 'https://旧',
+				mdWikiLinkpath: '[[旧]]',
+				mdLinkText: '旧',
+			},
+		});
+		const file = fakeFile('附件/报告.pdf', 'pdf');
+		const { view, execCommand, scheduleSave, getResourcePath } = makeView();
+
+		applyNodeAttachment(view, node, file);
+
+		const data = dataOf(node);
+		expect(getResourcePath, '子节点同样走资源地址').toHaveBeenCalledWith(file);
+		expect(data.hyperlink, '原链接字段不动').toBe('https://旧');
+		expect(data.mdWikiLinkpath).toBe('[[旧]]');
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '报告.pdf',
+				attachmentUrl: 'app://local/附件/报告.pdf',
+				attachmentName: '报告.pdf',
+				// basename 会被 Obsidian 去掉扩展名，回写必须用完整库内路径
+				mdAttachmentLinkpath: '附件/报告.pdf',
+				mdLinkStyle: 'wiki',
+				// PDF 可嵌入 → 写嵌入语法 `![[报告.pdf]]`（与 Obsidian 拖放一致）
+				mdEmbed: true,
+				// 附件嵌入的原文 = 纯嵌入 token（此前合成会退化成「文本 + 尾链」重复）
+				mdRaw: '![[附件/报告.pdf]]',
+				mdDerivedText: '报告.pdf',
+				isActive: false,
+			},
+		]);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyMdLink（空白节点）：写 hyperlink 通道 + md 链接形态（[名](url)）', () => {
+		const node = fakeNode();
+		const { view, execCommand, scheduleSave, render } = makeView();
+
+		applyMdLink(view, node, 'file:///C:/x/%E6%8A%A5%E5%91%8A.pdf', '报告.pdf');
+
+		const data = dataOf(node);
+		// 与「添加链接」的 URL 分支同一命令（引擎同时维护 hyperlink 与链接图标状态）
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.SET_NODE_HYPERLINK,
+			node,
+			'file:///C:/x/%E6%8A%A5%E5%91%8A.pdf',
+		]);
+		// 带显示名的 md 链接形态（`mdLinkText` ≠ 地址 ⇒ 回写 `[名](url)`，不是 autolink）：
+		// 拖入系统文件按住 Ctrl/Option 时 Obsidian 写出的就是这种形态
+		expect(data.mdLinkStyle).toBe('md');
+		expect(data.mdLinkText).toBe('报告.pdf');
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '报告.pdf');
+		expect(markNodeNeedLayoutMock).toHaveBeenCalledWith(node);
+		// 重绘有两处来源，本模块**不补第三次**：① SET_NODE_HYPERLINK 命令在引擎侧
+		// 走 setNodeDataRender → reRender → render（本文件里 execCommand 是桩，
+		// 故观察不到）；② 有文本时 setNodeText 内部 render。故此处 render 为 0。
+		expect(render).not.toHaveBeenCalled();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyMdLink（已有内容）：链接建为子节点，父节点字段不动', () => {
+		const node = fakeNode({ data: { text: '正文' } });
+		const { view, execCommand, scheduleSave } = makeView();
+
+		applyMdLink(view, node, 'file:///D:/a%20b.pdf', 'a b.pdf');
+
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: 'a b.pdf',
+				hyperlink: 'file:///D:/a%20b.pdf',
+				mdLinkStyle: 'md',
+				mdLinkText: 'a b.pdf',
+				hyperlinkTitle: 'file:///D:/a%20b.pdf',
+				// 带显示名的 md 链接原文 = `[名](url)`（无原始空格/括号不加尖括号）
+				mdRaw: '[a b.pdf](file:///D:/a%20b.pdf)',
+				mdDerivedText: 'a b.pdf',
+				isActive: false,
+			},
+		]);
+		expect(dataOf(node).hyperlink, '父节点不被改写').toBeUndefined();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyMdLink：空白节点上的残留字段被清（回写不凭空多出旧引用）', () => {
+		// hasAnyContent 只认「文字 / 图片 / mdWikiLinkpath / attachmentUrl / hyperlink /
+		// 额外 token」——「移除引用」后残留的 mdAttachmentLinkpath / mdEmbed 不算内容，
+		// 故这类节点走**覆盖**路径，覆盖时必须把残渣一并清掉
+		const node = fakeNode({
+			data: { mdAttachmentLinkpath: '附件/旧.pdf', mdEmbed: true },
+		});
+		const { view } = makeView();
+
+		applyMdLink(view, node, 'file:///C:/x.pdf', 'x.pdf');
+
+		const data = dataOf(node);
+		expect(data.mdAttachmentLinkpath).toBeUndefined();
+		expect(data.mdEmbed).toBeUndefined();
+	});
+
+	it('applyNodeAttachment（不可嵌入的附件，如 zip）：写普通链接（不置 mdEmbed）', () => {
+		const node = fakeNode();
+		const file = fakeFile('附件/归档.zip', 'zip');
+		const { view } = makeView();
+
+		applyNodeAttachment(view, node, file);
+
+		const data = dataOf(node);
+		expect(data.attachmentUrl).toBe('app://local/附件/归档.zip');
+		// 不可嵌入 ⇒ 无 mdEmbed：回写为 `[[归档.zip]]`（Obsidian 对这类文件也只插链接）
+		expect(data.mdEmbed).toBeUndefined();
+		// 行级元数据同步补齐：原文 = 纯双链 token
+		expect(data.mdRaw).toBe('[[附件/归档.zip]]');
+		expect(data.mdDerivedText).toBe('归档.zip');
+	});
+
+	it('applyNodeAttachment（完全空白节点）：覆盖为附件链接（便捷路径保留）', () => {
+		const node = fakeNode();
+		const file = fakeFile('附件/报告.pdf', 'pdf');
+		const { view, execCommand, scheduleSave, getResourcePath } = makeView();
+
+		applyNodeAttachment(view, node, file);
+
+		const data = dataOf(node);
+		expect(getResourcePath).toHaveBeenCalledWith(file);
+		expect(data.attachmentUrl).toBe('app://local/附件/报告.pdf');
+		expect(data.attachmentName).toBe('报告.pdf');
+		expect(data.mdAttachmentLinkpath).toBe('附件/报告.pdf');
+		// PDF 可嵌入 → 嵌入语法（保存后文件里是 `![[报告.pdf]]`）
+		expect(data.mdEmbed).toBe(true);
+		// 行级元数据同步补齐：原文 = 纯嵌入 token（不再是「文本 + 尾链」重复形态）
+		expect(data.mdRaw).toBe('![[附件/报告.pdf]]');
+		expect(data.mdDerivedText).toBe('报告.pdf');
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '报告.pdf');
+		expect(execCommand, '空白节点不建子节点').not.toHaveBeenCalled();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('applyNodeAttachment：已有描述文字 → 保留正文，附件引用建成子节点（R4）', () => {
+		const node = fakeNode({ data: { text: '正文' } });
+		const file = fakeFile('附件/报告.pdf', 'pdf');
+		const { view, execCommand, scheduleSave } = makeView();
+
+		applyNodeAttachment(view, node, file);
+
+		// 父节点文字不被顶替；附件字段也不写到父节点上
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(dataOf(node).attachmentUrl).toBeUndefined();
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[node],
+			{
+				text: '报告.pdf',
+				attachmentUrl: 'app://local/附件/报告.pdf',
+				attachmentName: '报告.pdf',
+				mdAttachmentLinkpath: '附件/报告.pdf',
+				mdLinkStyle: 'wiki',
+				mdEmbed: true,
+				mdRaw: '![[附件/报告.pdf]]',
+				mdDerivedText: '报告.pdf',
+				isActive: false,
+			},
+		]);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+});
+
+describe('removeNodeText / clearNodeHyperlink', () => {
+	it('移除文字：清空节点文本并调度保存（图片/链接等其余数据保留）', () => {
+		const node = fakeNode({ data: { text: '文字', image: 'a.png' } });
+		const { view, scheduleSave } = makeView();
+
+		removeNodeText(view, node);
+
+		expect(setNodeTextMock).toHaveBeenCalledWith(view.mindMap, node, '');
+		expect(scheduleSave).toHaveBeenCalled();
+		expect(dataOf(node).image).toBe('a.png');
+	});
+
+	it('移除文字：引擎缺失时静默返回（视图重建中不抛错）', () => {
+		const { view, scheduleSave } = makeView({ withEngine: false });
+		removeNodeText(view, fakeNode());
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('清除链接：两个通道都为空时直接返回（不重绘、不保存）', () => {
+		const node = fakeNode({ data: { text: '正文' } });
+		const { view, execCommand, render, scheduleSave } = makeView();
+
+		clearNodeHyperlink(view, node);
+
+		expect(execCommand).not.toHaveBeenCalled();
+		expect(render).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('清除链接：文档双链通道非引擎字段，先删字段再发引擎清空命令并重绘', () => {
+		const node = fakeNode({
+			data: { mdWikiLinkpath: '[[笔记]]', mdLinkText: '笔记' },
+		});
+		const { view, execCommand, render, scheduleSave } = makeView();
+
+		clearNodeHyperlink(view, node);
+
+		expect(dataOf(node).mdWikiLinkpath).toBeUndefined();
+		expect(dataOf(node).mdLinkText).toBeUndefined();
+		expect(markNodeNeedLayoutMock).toHaveBeenCalledWith(node);
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.SET_NODE_HYPERLINK,
+			node,
+			'',
+		]);
+		expect(render).toHaveBeenCalled();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('清除链接：引擎 hyperlink 通道同样被清空（双通道都识别）', () => {
+		const node = fakeNode({ data: { hyperlink: 'https://example.com' } });
+		const { view, execCommand } = makeView();
+
+		clearNodeHyperlink(view, node);
+
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.SET_NODE_HYPERLINK,
+			node,
+			'',
+		]);
+	});
+
+	it('清除链接：台账里链接类的**额外**段被清、图片类与首链段保留', () => {
+		const node = fakeNode({
+			data: {
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkText: '笔记',
+				mdSegments: [
+					{ kind: 'link', text: '笔记', raw: '[[笔记]]', first: true },
+					{ kind: 'link', text: '笔记B', raw: '[[笔记B]]', first: false },
+					{ kind: 'image', text: '图.png', raw: '![[图.png]]', first: false },
+				],
+			},
+		});
+		const { view } = makeView();
+
+		clearNodeHyperlink(view, node);
+
+		expect(
+			dataOf(node).mdSegments,
+			'链接类额外段被清；图片类（非链接，见 K9）与首链段保留',
+		).toEqual([
+			{ kind: 'link', text: '笔记', raw: '[[笔记]]', first: true },
+			{ kind: 'image', text: '图.png', raw: '![[图.png]]', first: false },
+		]);
+	});
+
+	it('清除链接：额外段全为链接类时字段被删除（不留空数组）', () => {
+		const node = fakeNode({
+			data: {
+				mdWikiLinkpath: '[[笔记]]',
+				mdLinkText: '笔记',
+				mdSegments: [
+					{ kind: 'link', text: '笔记B', raw: '[[笔记B]]', first: false },
+				],
+			},
+		});
+		const { view } = makeView();
+
+		clearNodeHyperlink(view, node);
+
+		expect(dataOf(node).mdSegments).toBeUndefined();
+	});
+});
+
+describe('deleteActiveNode（删除编排与兜底）', () => {
+	it('常规路径：引擎 REMOVE_NODE + 按对象身份兜底清除 + 保存调度', () => {
+		const node = fakeNode({ data: { text: '待删' } });
+		const { view, execCommand, scheduleSave } = makeView({ activeNode: node });
+
+		deleteActiveNode(view);
+
+		expect(callArgs(execCommand)).toEqual([ENGINE.REMOVE_NODE]);
+		// 兜底：uid 重复/缺失时引擎删除可能失败，父节点按对象身份再清一次
+		expect(forceRemoveMock).toHaveBeenCalledWith(
+			view.mindMap,
+			node.parent,
+			node.nodeData,
+		);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('根节点不可删除：提示且不触碰引擎、不保存', () => {
+		const node = fakeNode({ isRoot: true });
+		const { view, execCommand, scheduleSave } = makeView({ activeNode: node });
+
+		deleteActiveNode(view);
+
+		expect(noticeCalls).toEqual([zh('common.rootCannotDelete')]);
+		expect(execCommand).not.toHaveBeenCalled();
+		expect(forceRemoveMock).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('无激活节点：提示且不触碰引擎', () => {
+		const { view, execCommand } = makeView();
+		deleteActiveNode(view);
+		expect(noticeCalls).toEqual([zh('common.selectNodeFirst')]);
+		expect(execCommand).not.toHaveBeenCalled();
+	});
+
+	it('无父节点（游离节点）：仍走 REMOVE_NODE，但跳过兜底清除', () => {
+		const node = fakeNode({ parent: null });
+		const { view, execCommand, scheduleSave } = makeView({ activeNode: node });
+
+		deleteActiveNode(view);
+
+		expect(execCommand).toHaveBeenCalledTimes(1);
+		expect(forceRemoveMock).not.toHaveBeenCalled();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+});
+
+describe('moveNodeUp / moveNodeDown（编排：入参转发与结果 → 提示）', () => {
+	it('上移：把 mindMap / 节点 / 方向 -1 交给防腐入口（不依赖激活列表）', () => {
+		const node = fakeNode({ data: { text: 'n' } });
+		const { view } = makeView();
+
+		moveNodeUp(view, node);
+
+		expect(callArgs(siblingMoveMock)).toEqual([view.mindMap, node, -1]);
+		expect(noticeCalls).toHaveLength(0);
+	});
+
+	it('下移：方向 +1（其余入参同）', () => {
+		const node = fakeNode({ data: { text: 'n' } });
+		const { view } = makeView();
+
+		moveNodeDown(view, node);
+
+		expect(callArgs(siblingMoveMock)).toEqual([view.mindMap, node, 1]);
+		expect(noticeCalls).toHaveLength(0);
+	});
+
+	it('node 传 null 时回落到激活节点（工具栏形态预留）', () => {
+		const node = fakeNode({ data: { text: 'n' } });
+		const { view } = makeView({ activeNode: node });
+
+		moveNodeDown(view, null);
+
+		expect(callArgs(siblingMoveMock)).toEqual([view.mindMap, node, 1]);
+	});
+
+	it('未指定节点且无激活节点：走通用守卫提示，不调防腐入口', () => {
+		const { view } = makeView();
+
+		moveNodeUp(view, null);
+
+		expect(noticeCalls).toEqual([zh('common.selectNodeFirst')]);
+		expect(siblingMoveMock).not.toHaveBeenCalled();
+	});
+
+	it('拒绝分支 root / atTop / atBottom：各弹对应文案（表驱动）', () => {
+		const cases = [
+			['root', 'common.rootCannotMove'],
+			['atTop', 'common.moveAtTop'],
+			['atBottom', 'common.moveAtBottom'],
+		] as const;
+		for (const [outcome, key] of cases) {
+			noticeCalls.length = 0;
+			siblingMoveMock.mockReturnValueOnce(outcome);
+			const { view } = makeView();
+
+			moveNodeUp(view, fakeNode({ data: { text: 'n' } }));
+
+			expect(noticeCalls).toEqual([zh(key)]);
+		}
+	});
+
+	it('moved / detached 不提示：后者是无父坏形态，静默对齐引擎 no-op', () => {
+		for (const outcome of ['moved', 'detached'] as const) {
+			noticeCalls.length = 0;
+			siblingMoveMock.mockReturnValueOnce(outcome);
+			const { view } = makeView();
+
+			moveNodeDown(view, fakeNode({ data: { text: 'n' } }));
+
+			expect(noticeCalls).toHaveLength(0);
+		}
+	});
+
+	it('拒绝提示随视图语言（英文视图弹英文提示）', () => {
+		siblingMoveMock.mockReturnValueOnce('root');
+		const { view } = makeView({ lang: 'en' });
+
+		moveNodeDown(view, fakeNode({ data: { text: 'n' } }));
+
+		expect(noticeCalls).toEqual([t('en', 'common.rootCannotMove')]);
+	});
+});
+
+describe('图片操作（re-export 契约与自兜错误）', () => {
+	it('removeNodeImage：SET_NODE_IMAGE 清空图片并删掉 md 回写元数据', () => {
+		const node = fakeNode({
+			data: {
+				text: '图',
+				image: 'app://local/a.png',
+				mdImageTarget: 'a.png',
+				mdImageWidth: 300,
+				mdImageHeight: 150,
+				mdImageAlt: '说明',
+			},
+		});
+		const { view, execCommand, scheduleSave } = makeView();
+
+		removeNodeImage(view, node);
+
+		// 用 createSetNodeImageOptions(null) 清空；md 回写元数据随后全删（数据卫生，
+		// 防复活判定已两路覆盖、不依赖字段残留，见 md-serialize.rawOk）
+		expect(setImageOptionsMock).toHaveBeenCalledWith(null);
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.SET_NODE_IMAGE,
+			node,
+			{ url: null },
+		]);
+		const data = dataOf(node);
+		expect(data.mdImageTarget).toBeUndefined();
+		expect(data.mdImageWidth).toBeUndefined();
+		expect(data.mdImageHeight).toBeUndefined();
+		expect(data.mdImageAlt).toBeUndefined();
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('addImageToActiveNode：无激活节点只提示，不打开弹窗', async () => {
+		const { view, execCommand } = makeView();
+
+		await addImageToActiveNode(view);
+
+		expect(noticeCalls).toEqual([zh('common.selectNodeFirst')]);
+		expect(openImageMock).not.toHaveBeenCalled();
+		expect(execCommand).not.toHaveBeenCalled();
+	});
+
+	it('addImageToActiveNode：弹窗取消不触碰引擎', async () => {
+		const node = fakeNode();
+		const { view, execCommand, scheduleSave } = makeView({ activeNode: node });
+		openImageMock.mockResolvedValue(null);
+
+		await addImageToActiveNode(view);
+
+		expect(execCommand).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('addImageToActiveNode：确认后库内路径归一为资源地址并记录回写目标', async () => {
+		const node = fakeNode();
+		const { view, execCommand, scheduleSave } = makeView({ activeNode: node });
+		const file = fakeFile('assets/图.png', 'png');
+		resolveMock.mockReturnValue(file);
+		openImageMock.mockResolvedValue('assets/图.png');
+
+		await addImageToActiveNode(view);
+
+		expect(openImageMock).toHaveBeenCalledWith(
+			view.app,
+			'',
+			expect.any(Function),
+			'zh',
+		);
+		// 显示走资源地址（app://），回写目标跟随官方「New link format」
+		expect(aspectImageOptionsMock).toHaveBeenCalledWith('app://local/assets/图.png');
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.SET_NODE_IMAGE,
+			node,
+			{ aspect: true },
+		]);
+		// 默认 shortest + 库内唯一 ⇒ 只写文件名（与 Obsidian 生成链接的写法一致；
+		// 2026-10-20 起图片新建/换图不再无条件写完整库内路径）
+		expect(dataOf(node).mdImageTarget).toBe('图.png');
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('addImageToActiveNode：弹窗期间引擎被重建则不写入', async () => {
+		const node = fakeNode();
+		const harness = makeView({ activeNode: node });
+		const rebuilt = makeEngine();
+		openImageMock.mockImplementation(async () => {
+			harness.raw.mindMap = rebuilt;
+			return 'assets/图.png';
+		});
+
+		await addImageToActiveNode(harness.view);
+
+		expect(harness.execCommand).not.toHaveBeenCalled();
+		expect(rebuilt.execCommand).not.toHaveBeenCalled();
+		expect(dataOf(node).mdImageTarget).toBeUndefined();
+		expect(harness.scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('addImageToActiveNode：内部异常不外抛，转成用户可见提示', async () => {
+		const node = fakeNode();
+		const { view } = makeView({ activeNode: node });
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		openImageMock.mockRejectedValue(new Error('boom'));
+
+		await expect(addImageToActiveNode(view)).resolves.toBeUndefined();
+
+		expect(noticeCalls).toEqual([`${zh('common.insertImageFailed')}boom`]);
+		expect(errorSpy).toHaveBeenCalledWith('插入图片失败', expect.any(Error));
+		errorSpy.mockRestore();
+	});
+});
+
+/**
+ * createImageChildNode：图片「贴入导图」的**唯一落点实现**（2026-10-13 收口——
+ * 此前 view-dnd 的私有 `insertImageChildNode` 与粘贴路径的建图逻辑各持一份）。
+ * 契约：
+ * - 在**调用方指定的父节点**下建纯图节点（拖入多图的其余各占一个子节点、拖入/
+ *   粘贴未选中节点时由调用方传渲染根）；
+ * - 初始数据一次给全：image/imageTitle/imageSize 与引擎 SET_NODE_IMAGE 命令的
+ *   写入面一致（vendor `setNodeImage` 实测；缺 imageSize 会让 createImgNode →
+ *   getImgShowSize 解构 TypeError、该节点渲染链中断）；
+ * - md 回写字段与 applyNodeImage 同口径：mdImageTarget 取**新建引用的路径形态**
+ *   （官方「New link format」，默认 shortest = 最短唯一路径；md 形态仍写完整
+ *   路径）、mdImageStyle 跟随官方「Use \[\[Wikilinks\]\]」（同一份判定）；
+ * - 探测尺寸期间引擎换代 → 不插入、不保存、返回 false（静默丢失守卫）；
+ * - 引擎缺失（视图重建中）→ 返回 false。
+ */
+describe('createImageChildNode（图片建节点的唯一入口）', () => {
+	it('在指定父节点下建纯图节点：初始数据一次给全（引擎图片三字段 + md 回写字段）', async () => {
+		const parent = fakeNode({ data: { text: '主题' } });
+		const { view, execCommand, scheduleSave, getResourcePath } = makeView();
+		const file = fakeFile('attachments/b.png', 'png');
+		aspectImageOptionsMock.mockResolvedValue({
+			url: 'app://local/attachments/b.png',
+			title: '探测标题',
+			width: 100,
+			height: 60,
+			custom: true,
+		});
+
+		await expect(createImageChildNode(view, parent, file)).resolves.toBe(true);
+
+		// 引擎渲染地址走资源地址（app://…），md 回写目标取库内路径
+		expect(getResourcePath).toHaveBeenCalledWith(file);
+		expect(callArgs(execCommand)).toEqual([
+			ENGINE.INSERT_CHILD_NODE,
+			false,
+			[parent],
+			{
+				text: '',
+				image: 'app://local/attachments/b.png',
+				imageTitle: '探测标题',
+				imageSize: { width: 100, height: 60, custom: true },
+				// 官方默认：Wikilinks 开 + New link format = shortest（唯一 ⇒ 只写文件名）
+				// ⇒ 回写 `![[b.png|100x60]]`
+				mdImageTarget: 'b.png',
+				mdImageStyle: 'wiki',
+				isActive: false,
+			},
+		]);
+		expect(scheduleSave).toHaveBeenCalled();
+	});
+
+	it('官方关闭「使用 [[Wikilinks]]」：md 回写形态记 md（与 applyNodeImage 同口径）', async () => {
+		const parent = fakeNode();
+		const { view, execCommand } = makeView({ useMarkdownLinks: true });
+		aspectImageOptionsMock.mockResolvedValue({
+			url: 'app://local/a.png',
+			title: '',
+			width: 10,
+			height: 10,
+			custom: true,
+		});
+
+		await createImageChildNode(view, parent, fakeFile('a.png', 'png'));
+
+		const [, , , payload] = callArgs(execCommand);
+		expect((payload as Record<string, unknown>)['mdImageStyle']).toBe('md');
+	});
+
+	it('探测尺寸期间引擎被重建：不插入、不保存、返回 false（静默丢失守卫）', async () => {
+		const parent = fakeNode();
+		const harness = makeView();
+		aspectImageOptionsMock.mockImplementation(async () => {
+			// 探测是异步的（真实实现要解码图片）：期间换文件/重建引擎
+			harness.raw.mindMap = makeEngine();
+			return {
+				url: 'app://local/a.png',
+				title: '',
+				width: 10,
+				height: 10,
+				custom: true,
+			};
+		});
+
+		await expect(
+			createImageChildNode(harness.view, parent, fakeFile('a.png', 'png')),
+		).resolves.toBe(false);
+
+		expect(harness.execCommand).not.toHaveBeenCalled();
+		expect(harness.scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('引擎缺失（视图重建中）：返回 false，不插入不保存', async () => {
+		const { view, execCommand, scheduleSave } = makeView({ withEngine: false });
+
+		await expect(
+			createImageChildNode(view, fakeNode(), fakeFile('a.png', 'png')),
+		).resolves.toBe(false);
+
+		expect(execCommand).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+	});
+});
+
+/** 排空 microtask 队列：弹窗 promise 链的写回发生在 then 回调中 */
+async function flushAsync(): Promise<void> {
+	await Promise.resolve();
+	await Promise.resolve();
+}
+
+/**
+ * 弹窗备选入口（editNodeTextInModal）：自绘节点的**别名 / 原文**双模式分流
+ * 与两道「不写盘」守卫（取消、原文未改动）。内联编辑器是自绘节点的主入口
+ * （分流见 view-hotkeys 用例），本组只锁弹窗这条备选通道的编排契约。
+ */
+describe('editNodeTextInModal（弹窗备选入口）', () => {
+	/** 纯链接节点桩（文本即链接显示名，isPureLinkNode = true） */
+	const pureLinkNode = () =>
+		fakeNode({
+			data: {
+				text: '笔记A',
+				mdDerivedText: '笔记A',
+				mdWikiLinkpath: '[[笔记A]]',
+				mdLinkStyle: 'wiki',
+				mdLinkText: '笔记A',
+			},
+		});
+
+	/** 富节点桩（混排链接，非纯 token）：未编辑（rawOk）→ 预填 mdRaw 原文 */
+	const richNode = () =>
+		fakeNode({
+			data: {
+				text: '说明 [[链接]]',
+				mdDerivedText: '说明 [[链接]]',
+				mdRaw: '说明 [[链接]]',
+			},
+		});
+
+	it('纯链接节点 → 别名模式：提交经 setNodeText（纯双链节点即改别名，K6）并调度保存', async () => {
+		const node = pureLinkNode();
+		const { view, raw, scheduleSave } = makeView();
+		openNodeModalMock.mockResolvedValue('新名');
+
+		await editNodeTextInModal(view, node);
+		await flushAsync();
+
+		// 别名模式：不传第 4 参（rawMode 缺省），弹窗行为与历史一致
+		expect(openNodeModalMock).toHaveBeenCalledWith(view.app, '笔记A', 'zh');
+		expect(setNodeTextMock).toHaveBeenCalledWith(raw.mindMap, node, '新名');
+		expect(scheduleSave).toHaveBeenCalledTimes(1);
+		expect(applyRawMock, '别名模式不走原文写回').not.toHaveBeenCalled();
+	});
+
+	it('别名模式取消（null）：不触碰引擎、不调度保存', async () => {
+		const node = pureLinkNode();
+		const { view, scheduleSave } = makeView();
+		openNodeModalMock.mockResolvedValue(null);
+
+		await editNodeTextInModal(view, node);
+		await flushAsync();
+
+		expect(openNodeModalMock, '弹窗照常打开（取消发生在用户侧）').toHaveBeenCalledTimes(1);
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+	});
+
+	it('其余富节点 → 原文模式：预填「下次写盘那一行」+ 实时预览，改动经 applyRawNodeContent 写回', async () => {
+		const node = richNode();
+		const { view } = makeView();
+		openNodeModalMock.mockResolvedValue('改后 [[链接]]');
+
+		await editNodeTextInModal(view, node);
+		await flushAsync();
+
+		const [appArg, rawArg, langArg, optionsArg] = callArgs(openNodeModalMock);
+		expect(appArg).toBe(view.app);
+		expect(rawArg, '未编辑（rawOk）→ 预填 mdRaw 原文').toBe('说明 [[链接]]');
+		expect(langArg).toBe('zh');
+		const options = optionsArg as {
+			rawMode?: boolean;
+			preview?: (value: string) => string;
+		};
+		expect(options.rawMode, '原文模式').toBe(true);
+		expect(typeof options.preview, '实时预览随选项传入').toBe('function');
+		expect(applyRawMock).toHaveBeenCalledWith(view, node, '改后 [[链接]]');
+		expect(setNodeTextMock, '原文模式不改别名通道').not.toHaveBeenCalled();
+	});
+
+	it('原文模式未改动（提交值 === 预填原文）：不写盘、不重渲染', async () => {
+		const node = richNode();
+		const { view } = makeView();
+		// 提交值取弹窗收到的预填值原样（用户打开后直接确认）
+		openNodeModalMock.mockImplementation(
+			(_app: unknown, prefill: unknown) => Promise.resolve(prefill),
+		);
+
+		await editNodeTextInModal(view, node);
+		await flushAsync();
+
+		expect(
+			applyRawMock,
+			'未改动不写盘（避免无意义的保存与重渲染）',
+		).not.toHaveBeenCalled();
+	});
+
+	it('引擎未就绪（mindMap 为 null）：不打开弹窗', async () => {
+		const node = pureLinkNode();
+		const { view } = makeView({ withEngine: false });
+
+		await editNodeTextInModal(view, node);
+
+		expect(openNodeModalMock).not.toHaveBeenCalled();
+	});
+
+	/**
+	 * 弹窗 Promise 拒绝必须**自兜**成用户可见提示。
+	 * 调用点是右键菜单 `.onClick(() => editNodeTextInModal(...))`——返回值不被
+	 * await，故不能依赖调用方挂 `.catch`；此处拒绝若无兜底就是静默失败
+	 * （用户点了「在弹窗中编辑」却毫无反应）。两条模式都要覆盖：别名模式先
+	 * `setNodeText` 再保存、原文模式先 `applyRawNodeContent`，兜底须在两者之前。
+	 * 断言走本文件既有 Notice 桩（`noticeCalls` + `zh(key)` 真实文案，见文件头）。
+	 */
+	it('别名模式：弹窗 Promise 拒绝 → 用户可见提示，不产生未处理拒绝', async () => {
+		const node = pureLinkNode();
+		const { view, scheduleSave } = makeView();
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		openNodeModalMock.mockRejectedValue(new Error('boom'));
+
+		await expect(editNodeTextInModal(view, node)).resolves.toBeUndefined();
+
+		expect(noticeCalls, '编辑失败必须通知用户').toEqual([
+			`${zh('common.editTextFailed')}boom`,
+		]);
+		expect(errorSpy).toHaveBeenCalledWith('编辑节点文本失败', expect.any(Error));
+		expect(setNodeTextMock).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+		errorSpy.mockRestore();
+	});
+
+	it('原文模式：弹窗 Promise 拒绝 → 用户可见提示，不触碰写回通道', async () => {
+		const node = richNode();
+		const { view, scheduleSave } = makeView();
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		openNodeModalMock.mockRejectedValue(new Error('boom'));
+
+		await expect(editNodeTextInModal(view, node)).resolves.toBeUndefined();
+
+		expect(noticeCalls).toEqual([`${zh('common.editTextFailed')}boom`]);
+		expect(applyRawMock).not.toHaveBeenCalled();
+		expect(scheduleSave).not.toHaveBeenCalled();
+		errorSpy.mockRestore();
+	});
+});
